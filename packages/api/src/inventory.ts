@@ -1,0 +1,128 @@
+import type { ApiClient, Page } from './client.ts';
+import type { OrderStatus } from './pharmacyOrders.ts';
+
+/** Mirrors src1/modules/pharmacyInventory (model, batchQuality.ts, sellable.ts); only fields the screens read. */
+export type BatchStatus = 'active' | 'depleted' | 'expired' | 'recalled' | 'quarantined';
+
+export interface Batch {
+  _id: string;
+  batchNumber: string;
+  /** YYYYMMDD */
+  expiryDate: string;
+  /** Unreserved units in this batch. */
+  availableQty: number;
+  reservedQty: number;
+  status: BatchStatus;
+  holdReason?: string;
+  heldAt?: string;
+  recallReference?: string;
+}
+
+export interface MedicineRef { _id: string; name?: string; genericName?: string; brandName?: string; strength?: string; dosageForm?: string }
+
+export interface InventoryItem {
+  _id: string;
+  medicineId: MedicineRef | string;
+  availableQty: number;
+  reservedQty: number;
+  reorderThreshold: number;
+  rackLocation?: string;
+  isActive?: boolean;
+  batches?: Batch[];
+  upcomingRefills?: unknown[];
+}
+
+export interface HeldUnit { medicineId: string; medicineName?: string; batchId: string; batchNumber: string; quantity: number }
+export interface ImpactedOrder { orderId: string; orderNumber?: string; status: OrderStatus; heldUnits: HeldUnit[] }
+
+export interface QualityHoldRow {
+  inventoryItemId: string;
+  medicineId: string;
+  medicineName?: string;
+  batchId: string;
+  batchNumberRaw?: string;
+  expiryDateRaw?: string;
+  storedQualityStatus: BatchStatus;
+  availableQty: number;
+  reservedQty: number;
+}
+
+export type SupplierReturnReason = 'expired' | 'damaged' | 'recalled' | 'near_expiry' | 'other';
+
+export interface SupplierReturn {
+  _id: string;
+  supplierId: string;
+  medicineId: string;
+  batchNumber: string;
+  quantity: number;
+  reason: SupplierReturnReason;
+  notes?: string;
+  batchStatusAtReturn: BatchStatus;
+  createdAt: string;
+}
+
+export interface Dispensed { orderId: string; orderNumber?: string; customerId?: string; completedAt?: string; quantity: number; returnedQty?: number }
+export interface RecallTrace { batch: Batch; openOrders: ImpactedOrder[]; dispensedTo: Dispensed[]; dispensedTruncated: boolean }
+
+export interface Supplier { _id: string; name: string; state: 'active' | 'archived' }
+
+/** States each batch action accepts (batchQuality.ts). */
+export const BATCH_ACTION_FROM = {
+  quarantine: ['active', 'expired'],
+  release: ['quarantined'],
+  supplierReturn: ['active', 'expired', 'quarantined', 'recalled'],
+  recall: ['active', 'expired', 'quarantined', 'depleted'],
+} as const satisfies Record<string, readonly BatchStatus[]>;
+
+/** Orders whose held units can still move to another batch (batchQuality.ts REALLOCATABLE_ORDER_STATUSES). */
+export const REALLOCATABLE_ORDER_STATUSES: readonly OrderStatus[] = ['placed', 'accepted', 'packed', 'ready_for_pickup', 'delivery_failed'];
+
+export const todayYyyymmdd = (now = new Date()) => now.toISOString().slice(0, 10).replace(/-/g, '');
+
+/** Sellable stock, the backend's rule (sellable.ts): active, unexpired batch units; legacy items without batches use availableQty. */
+export function sellableQty(item: Pick<InventoryItem, 'availableQty' | 'batches'>, today = todayYyyymmdd()): number {
+  const batches = item.batches ?? [];
+  if (!batches.length) return Number(item.availableQty ?? 0);
+  return batches.filter((b) => b.status === 'active' && String(b.expiryDate) >= today).reduce((a, b) => a + Number(b.availableQty ?? 0), 0);
+}
+
+const hex = /^[0-9a-fA-F]{24}$/;
+const batchPath = (itemId: string, batchId: string) => {
+  if (!hex.test(itemId) || !hex.test(batchId)) throw new Error('Invalid batch reference');
+  return `/pharmacy-inventory/${itemId}/batches/${batchId}`;
+};
+
+export function inventoryApi(c: ApiClient) {
+  return {
+    list: (q: { search?: string; page?: number; limit?: number } = {}): Promise<Page<InventoryItem>> =>
+      c.page<InventoryItem>('/pharmacy-inventory', { query: { ...q, includeBatches: 'true' } }),
+    lowStock: (q: { page?: number; limit?: number } = {}) =>
+      c.page<InventoryItem>('/pharmacy-inventory/low-stock', { query: { ...q, includeBatches: 'true' } }),
+    qualityHolds: (q: { qualityStatus?: 'recalled' | 'quarantined' | 'expired'; page?: number; limit?: number } = {}) =>
+      c.page<QualityHoldRow>('/pharmacy-inventory/quality-holds', { query: { ...q } }),
+    heldBatchOrders: () => c.get<ImpactedOrder[]>('/pharmacy-inventory/held-batch-orders'),
+    supplierReturns: (q: { page?: number; limit?: number } = {}) =>
+      c.page<SupplierReturn>('/pharmacy-inventory/supplier-returns', { query: { ...q } }),
+    quarantine: (itemId: string, batchId: string, reason: string) =>
+      c.post<{ batch: Batch; impactedOrders: ImpactedOrder[] }>(`${batchPath(itemId, batchId)}/quarantine`, { body: { reason } }),
+    release: (itemId: string, batchId: string, body: { writeOffQty: number; reason: string }) =>
+      c.post<{ batch: Batch }>(`${batchPath(itemId, batchId)}/release`, { body }),
+    supplierReturn: (itemId: string, batchId: string,
+      body: { supplierId: string; quantity: number; reason: SupplierReturnReason; notes?: string }) =>
+      c.post<SupplierReturn>(`${batchPath(itemId, batchId)}/supplier-return`, { body }),
+    recall: (itemId: string, batchId: string, body: { reason: string; reference?: string }) =>
+      c.post<RecallTrace & { impactedOrders: ImpactedOrder[] }>(`${batchPath(itemId, batchId)}/recall`, { body }),
+    recallTrace: (itemId: string, batchId: string) => c.get<RecallTrace>(`${batchPath(itemId, batchId)}/recall-trace`),
+    suppliers: () => c.page<Supplier>('/pharmacy-suppliers', { query: { state: 'active', limit: 50 } }),
+  };
+}
+
+export const medicineName = (m: InventoryItem['medicineId']) =>
+  typeof m === 'object' && m ? [m.name ?? m.brandName ?? m.genericName ?? m._id, m.strength].filter(Boolean).join(' ') : String(m);
+
+/** YYYYMMDD → "30 Jun 2027". */
+export function formatExpiry(yyyymmdd: string | undefined): string {
+  if (!yyyymmdd || !/^\d{8}$/.test(yyyymmdd)) return yyyymmdd || '—';
+  const d = new Date(Date.UTC(+yyyymmdd.slice(0, 4), +yyyymmdd.slice(4, 6) - 1, +yyyymmdd.slice(6, 8)));
+  return new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(d);
+}

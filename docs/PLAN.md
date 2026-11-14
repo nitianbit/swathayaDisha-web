@@ -37,8 +37,10 @@ uses a Capacitor plugin for that one thing (the NIYA employee app model).
    - **W2a (built):** pharmacy orders list and order page: forward status moves with the backend's payment and
      prescription preconditions shown before the click, record payment (counter/COD), delivery exceptions (P7),
      refund status and retry (P2), customer returns with an idempotent request key (P3b), unpaid-only cancel/reject.
-   - **W2b:** low-stock list (P7c), quality holds: quarantine/release and supplier returns (P3), recall and trace,
-     held-stock swap and stock-hold cancel (P3b).
+   - **W2b (built):** Stock (search, batches with sellable/reserved units by the backend's rule, batch actions offered
+     only in the states the backend accepts: quarantine, release with write-off, return to supplier, recall with
+     immediate trace, recall trace), Low stock (P7c, refills due), Quality worklist (orders holding held stock: swap
+     to good stock or cancel with refund; batches on hold; recent supplier returns).
    - **W2c:** admin: prescription refunds needing attention (P2), external cancellations waiting for an admin (A2b
      `reconcile-cancellation`; needs a backend list endpoint: the booking list cannot filter
      `cancellation_requested` and hides `providerOps`).
@@ -79,4 +81,5 @@ uses a Capacitor plugin for that one thing (the NIYA employee app model).
 |---|---|---|
 | 2026-11-14 | W1 (first cut) | typecheck clean; Vitest 10/10; Playwright 14/14; release build guards. Codex review: 6 findings (file URL shape, queue scope x2, late 401 across sign-ins, "opened" ≠ readable, body timeout). |
 | 2026-11-14 | W1 (fixes) | typecheck clean; Vitest 16/16; Playwright 22/22 (desktop + tablet, mocked API, incl. corrupt image, download-only file, buyer/cancelled read-only, late 401 after re-sign-in); backend P1 integration 16/16 on the local replica set (new queue check). Not yet run against a real backend. |
+| 2026-11-14 | W2b | typecheck clean; Vitest 24/24 (+ sellable rule, expiry format); Playwright 50/50 (+ 6 stock journeys x 2 devices: actions per batch state, quarantine/release validation, supplier return validation, recall with trace, low stock, held-order swap/cancel incl. a non-swappable order). |
 | 2026-11-14 | W2a | typecheck clean; Vitest 22/22 (+ status preconditions, rupee parsing, request keys); Playwright 38/38 (+ 8 order journeys x 2 devices: full delivery flow incl. failed/retried delivery, unpaid cannot pack, paid cannot be cancelled, reject with confirmation, COD payment then complete, refund retry, customer return retried after a lost answer sends the same key, buying order read-only). |

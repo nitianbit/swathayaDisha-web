@@ -11,3 +11,10 @@ export type {
   DeliveryExceptionType, OrderItem, OrderQuery, OrderStatus, PaymentMode, PaymentStatus, PharmacyOrder,
   PrescriptionRefund, PrescriptionRefundStatus, PrescriptionReview, PrescriptionReviewRequest, PrescriptionStatus, Ref,
 } from './pharmacyOrders.ts';
+export {
+  BATCH_ACTION_FROM, formatExpiry, inventoryApi, medicineName, REALLOCATABLE_ORDER_STATUSES, sellableQty, todayYyyymmdd,
+} from './inventory.ts';
+export type {
+  Batch, BatchStatus, Dispensed, HeldUnit, ImpactedOrder, InventoryItem, MedicineRef, QualityHoldRow, RecallTrace, Supplier,
+  SupplierReturn, SupplierReturnReason,
+} from './inventory.ts';

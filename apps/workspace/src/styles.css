@@ -93,6 +93,15 @@
 .confirm-text { font-weight: 500; }
 .confirm-actions { display: flex; gap: var(--space-3); flex-wrap: wrap; }
 
+.ws-search { display: flex; gap: var(--space-3); align-items: end; flex-wrap: wrap; }
+.ws-search .j-field { flex: 1 1 280px; max-width: 480px; }
+.stock-list { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-4); }
+.stock-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3); }
+.stock-head h2 { font-size: var(--text-lg); }
+.batch-actions { display: grid; gap: var(--space-2); min-width: 220px; }
+.batch-actions .j-btn { min-height: 36px; }
+.held-orders li { display: grid; gap: var(--space-2); padding-bottom: var(--space-3); border-bottom: 1px solid var(--line); }
+
 @media (max-width: 760px) {
   .ws { grid-template-columns: 1fr; }
   .ws-side { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }

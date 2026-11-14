@@ -1,12 +1,15 @@
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { ClipboardCheck, House, Package } from 'lucide-react';
+import { Boxes, ClipboardCheck, House, Package, ShieldAlert, TrendingDown } from 'lucide-react';
 import type { StaffRole } from './session.tsx';
 import { HomeScreen } from './screens/HomeScreen.tsx';
+import { LowStockScreen } from './screens/pharmacy/LowStockScreen.tsx';
 import { OrderScreen } from './screens/pharmacy/OrderScreen.tsx';
 import { OrdersScreen } from './screens/pharmacy/OrdersScreen.tsx';
 import { RxQueueScreen } from './screens/pharmacy/RxQueueScreen.tsx';
+import { QualityScreen } from './screens/pharmacy/QualityScreen.tsx';
 import { RxReviewScreen } from './screens/pharmacy/RxReviewScreen.tsx';
+import { StockScreen } from './screens/pharmacy/StockScreen.tsx';
 
 /**
  * Every workspace page is declared here with the roles that may open it. A path not listed here does not exist, and
@@ -32,6 +35,15 @@ export const PAGES: readonly WorkspacePage[] = [
     nav: { label: 'Prescription review', icon: ClipboardCheck, section: 'Pharmacy' },
   },
   { path: '/pharmacy/prescriptions/:orderId', roles: ['pharmacy'], element: <RxReviewScreen /> },
+  { path: '/pharmacy/stock', roles: ['pharmacy'], element: <StockScreen />, nav: { label: 'Stock', icon: Boxes, section: 'Pharmacy' } },
+  {
+    path: '/pharmacy/low-stock', roles: ['pharmacy'], element: <LowStockScreen />,
+    nav: { label: 'Low stock', icon: TrendingDown, section: 'Pharmacy' },
+  },
+  {
+    path: '/pharmacy/quality', roles: ['pharmacy'], element: <QualityScreen />,
+    nav: { label: 'Quality', icon: ShieldAlert, section: 'Pharmacy' },
+  },
 ];
 
 export function pagesFor(role: StaffRole): WorkspacePage[] {

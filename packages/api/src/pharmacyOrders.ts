@@ -194,6 +194,10 @@ export function pharmacyOrdersApi(c: ApiClient) {
       c.post<PharmacyOrder>(`${idPath(id)}/delivery-exception`, { body: { type, ...(reason ? { reason } : {}) } }),
     /** Re-attempts a `wallet_pending` refund. */
     retryRefund: (id: string) => c.post<PharmacyOrder>(`${idPath(id)}/prescription-refund/retry`),
+    /** Moves this order's units off held (quarantined/recalled/expired) batches onto sellable ones. */
+    reallocateHeldStock: (id: string) => c.post<{ order: PharmacyOrder; moves: unknown[] }>(`${idPath(id)}/reallocate-held-stock`),
+    /** Cancels an order that holds units of a held batch; releases its stock and refunds it if paid. */
+    stockHoldCancel: (id: string, reason: string) => c.post<PharmacyOrder>(`${idPath(id)}/stock-hold-cancel`, { body: { reason } }),
     customerReturn: (id: string, body: CustomerReturnRequest) =>
       c.post<CustomerReturn & { duplicate?: boolean }>(`${idPath(id)}/customer-returns`, { body }),
     /** A prescription file, fetched with the staff token (`GET /file/fetch?url=`). */
