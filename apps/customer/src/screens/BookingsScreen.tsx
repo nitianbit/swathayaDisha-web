@@ -1,13 +1,11 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { customerApi, type ExternalBooking } from '@jansetu/api';
 import { Badge, Button, Empty, ErrorState, formatRupees, Loading } from '@jansetu/ui';
 import { BOOKING_STATUS, formatAppointment, messageOf, PageHeading } from '../common.tsx';
+import { usePagedList } from '../paging.ts';
 import { useSession } from '../session.tsx';
 
-const STEP = 20;
-const MAX = 100; // the backend's page-size limit
+const PAGE = 20;
 
 const BOOKING_TYPE: Record<string, string> = {
   package: 'Health package', consultation: 'Doctor consultation', 'second-opinion': 'Second opinion', surgery: 'Surgery',
@@ -25,17 +23,16 @@ export function BookingsScreen() {
 
 function OrdinaryBookings() {
   const { api } = useSession();
-  const [limit, setLimit] = useState(STEP);
-  const q = useQuery({ queryKey: ['bookings', limit], queryFn: () => customerApi(api).bookings(1, limit), placeholderData: (p) => p });
+  const { q, items, total } = usePagedList(['bookings'], (page) => customerApi(api).bookings(page, PAGE));
   return (
     <section aria-labelledby="ord-h" className="stack">
       <h2 id="ord-h">Doctors and health packages</h2>
       {q.isPending ? <Loading /> : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : q.data.items.length === 0 ? <Empty title="No bookings yet" />
+        : items.length === 0 ? <Empty title="No bookings yet" />
         : (
           <>
             <ul className="list">
-              {q.data.items.map((b) => (
+              {items.map((b) => (
                 <li key={b._id}>
                   <Link to={`/bookings/${b._id}`} className="list-row link-row">
                     <strong>{b.doctorName ?? b.packageName ?? BOOKING_TYPE[b.bookingType] ?? 'Booking'}</strong>
@@ -45,8 +42,9 @@ function OrdinaryBookings() {
                 </li>
               ))}
             </ul>
-            {q.data.total > q.data.items.length && limit < MAX && (
-              <Button variant="secondary" busy={q.isFetching} onClick={() => setLimit((l) => Math.min(MAX, l + STEP))}>Show more</Button>
+            <p className="muted">Showing {items.length} of {total}.</p>
+            {q.hasNextPage && (
+              <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>Show more</Button>
             )}
           </>
         )}
@@ -57,26 +55,24 @@ function OrdinaryBookings() {
 /** Lab tests and provider visits come from two providers; the backend lists one provider per request. */
 function ProviderBookings() {
   const { api } = useSession();
-  const [limit, setLimit] = useState(STEP);
-  const q = useQuery({
-    queryKey: ['external-bookings', limit],
-    queryFn: async () => {
-      const c = customerApi(api);
-      const [lab, hl] = await Promise.all([c.externalBookings('labstack', 1, limit), c.externalBookings('healthians', 1, limit)]);
-      const items = [...lab.items, ...hl.items].sort(newestFirst);
-      return { items, more: lab.total > lab.items.length || hl.total > hl.items.length };
-    },
-    placeholderData: (p) => p,
-  });
+  const c = customerApi(api);
+  // One list per provider, each paged to its own end, merged for display.
+  const lab = usePagedList(['external-bookings', 'labstack'], (page) => c.externalBookings('labstack', page, PAGE));
+  const hl = usePagedList(['external-bookings', 'healthians'], (page) => c.externalBookings('healthians', page, PAGE));
+  const pending = lab.q.isPending || hl.q.isPending;
+  const failed = lab.q.isError ? lab.q : hl.q.isError ? hl.q : null;
+  const items = [...lab.items, ...hl.items].sort(newestFirst);
+  const total = lab.total + hl.total;
+  const more = lab.q.hasNextPage || hl.q.hasNextPage;
   return (
     <section aria-labelledby="ext-h" className="stack">
       <h2 id="ext-h">Lab tests</h2>
-      {q.isPending ? <Loading /> : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : q.data.items.length === 0 ? <Empty title="No lab tests yet" />
+      {pending ? <Loading /> : failed ? <ErrorState message={messageOf(failed.error)} onRetry={() => void failed.refetch()} />
+        : items.length === 0 ? <Empty title="No lab tests yet" />
         : (
           <>
             <ul className="list">
-              {q.data.items.map((b) => (
+              {items.map((b) => (
                 <li key={b._id}>
                   <Link to={`/lab-bookings/${b._id}`} className="list-row link-row">
                     <strong>{titleOf(b)}</strong>
@@ -86,8 +82,12 @@ function ProviderBookings() {
                 </li>
               ))}
             </ul>
-            {q.data.more && limit < MAX && (
-              <Button variant="secondary" busy={q.isFetching} onClick={() => setLimit((l) => Math.min(MAX, l + STEP))}>Show more</Button>
+            <p className="muted">Showing {items.length} of {total}.</p>
+            {more && (
+              <Button variant="secondary" busy={lab.q.isFetchingNextPage || hl.q.isFetchingNextPage}
+                onClick={() => { if (lab.q.hasNextPage) void lab.q.fetchNextPage(); if (hl.q.hasNextPage) void hl.q.fetchNextPage(); }}>
+                Show more
+              </Button>
             )}
           </>
         )}

@@ -18,7 +18,12 @@ describe('cancellation window (mirrors the backend rule)', () => {
     const mon = '20261123'; // Monday 09:30 IST = 04:00Z; 48 h earlier = Sat 04:00Z
     expect(canCancelNow(mon, '09:30', true, new Date('2026-11-21T04:00:00.000Z'))).toEqual({ ok: false, reason: 'window_closed', cutoffHours: 48 });
     expect(canCancelNow(mon, '09:30', true, new Date('2026-11-21T03:59:59.000Z'))).toMatchObject({ ok: true });
-    expect(canCancelNow(fri, '09:30', false, new Date('2026-11-20T04:00:00.000Z'))).toEqual({ ok: false, reason: 'started' });
-    expect(canCancelNow(fri, 'soon', false)).toEqual({ ok: false, reason: 'invalid_time' });
+    expect(canCancelNow(fri, '09:30', true, new Date('2026-11-20T04:00:00.000Z'))).toEqual({ ok: false, reason: 'started' });
+    expect(canCancelNow(fri, 'soon', true)).toEqual({ ok: false, reason: 'invalid_time' });
+  });
+  it('exempts unpaid bookings from every time check, as the backend does', () => {
+    expect(canCancelNow('20261120', '09:30', false, new Date('2026-11-21T00:00:00.000Z'))).toEqual({ ok: true, deadline: null }); // started
+    expect(canCancelNow('20261120', 'soon', false)).toEqual({ ok: true, deadline: null }); // unreadable legacy time
+    expect(canCancelNow('bad', '09:30', false)).toEqual({ ok: true, deadline: null });
   });
 });

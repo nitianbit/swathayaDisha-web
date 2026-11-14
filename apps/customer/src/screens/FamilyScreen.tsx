@@ -1,33 +1,42 @@
 import { useState, type FormEvent } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import { customerApi, RELATIONSHIPS, type Gender, type NewDependent, type Relationship } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { messageOf, PageHeading } from '../common.tsx';
+import { usePagedList } from '../paging.ts';
 import { useCustomer, useSession } from '../session.tsx';
 
 /** Family members the customer books for (dependents). */
 export function FamilyScreen() {
   const { api } = useSession();
   const me = useCustomer();
-  const q = useQuery({ queryKey: ['dependents', me.id], queryFn: () => customerApi(api).dependents(me.id) });
+  // Active members only, filtered by the server, paged to the end.
+  const { q, items, total } = usePagedList(['dependents', me.id], (page) => customerApi(api).dependents(me.id, page));
   const [adding, setAdding] = useState(false);
   return (
     <>
       <Link to="/profile" className="back"><ArrowLeft size={16} aria-hidden="true" /> Profile</Link>
       <PageHeading title="Family members">People you can book appointments and tests for.</PageHeading>
       {q.isPending ? <Loading /> : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : q.data.items.length === 0 ? <Empty title="No family members yet" />
+        : items.length === 0 ? <Empty title="No family members yet" />
         : (
+          <>
           <ul className="list">
-            {q.data.items.filter((d) => d.isActive !== false).map((d) => (
+            {items.map((d) => (
               <li key={d._id} className="list-row">
                 <strong>{d.name}</strong>
                 <span className="muted">{d.relationship}{d.gender ? ` · ${d.gender}` : ''}{d.age ? ` · ${d.age} years` : ''}</span>
               </li>
             ))}
           </ul>
+          {q.hasNextPage && (
+            <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
+              Show more ({items.length} of {total})
+            </Button>
+          )}
+          </>
         )}
       {adding ? <AddMember onDone={() => setAdding(false)} /> : <Button onClick={() => setAdding(true)}>Add a family member</Button>}
     </>

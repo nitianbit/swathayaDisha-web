@@ -14,13 +14,16 @@ function istAt(hours: number) {
   return { bookingDate: `${ist.getUTCFullYear()}${p(ist.getUTCMonth() + 1)}${p(ist.getUTCDate())}`, bookingTime: `${p(ist.getUTCHours())}:${p(ist.getUTCMinutes())}` };
 }
 
-interface Backend { calls: { method: string; path: string; query: string; body: unknown }[]; profile: Record<string, unknown>; revoked: boolean }
+interface Backend {
+  calls: { method: string; path: string; query: string; body: unknown }[]; profile: Record<string, unknown>; revoked: boolean;
+  bookings: Record<string, Record<string, unknown>>; ext: Record<string, Record<string, unknown>>;
+  deps: Record<string, unknown>[]; tx: Record<string, unknown>[];
+}
 
 async function mockBackend(page: Page): Promise<Backend> {
   // Avoid Monday appointments so the 24-hour rule is the one exercised.
   let far = istAt(24 * 5);
   if (new Date(Date.now() + 24 * 5 * HOUR + 5.5 * HOUR).getUTCDay() === 1) far = istAt(24 * 6);
-  const state: Backend = { calls: [], revoked: false, profile: { _id: ME, phone: '9876543210', name: '', email: null } };
   const bookings: Record<string, Record<string, unknown>> = {
     [B_PAID]: { _id: B_PAID, bookingType: 'consultation', doctorName: 'Dr. Iyer', ...far, price: 500, status: 'confirmed', paymentStatus: 'paid' },
     [B_SOON]: { _id: B_SOON, bookingType: 'package', packageName: 'Full body check', ...istAt(5), price: 1200, status: 'confirmed', paymentStatus: 'paid' },
@@ -29,9 +32,16 @@ async function mockBackend(page: Page): Promise<Backend> {
     [X_LAB]: { _id: X_LAB, integration: 'labstack', packageNames: ['Thyroid profile'], ...istAt(24 * 3), patientName: 'Asha', price: 400, paymentStatus: 'paid', status: 'confirmed' },
     [X_HL]: { _id: X_HL, integration: 'healthians', testNames: ['HbA1c'], ...istAt(24 * 4), patientName: 'Ravi', price: 300, paymentStatus: 'paid', status: 'confirmed' },
   };
-  const deps: Record<string, unknown>[] = [];
+  const state: Backend = { calls: [], revoked: false, profile: { _id: ME, phone: '9876543210', name: '', email: null }, bookings, ext,
+    deps: [], tx: [{ _id: 't1', transactionType: 'refund', amount: 250, balanceAfter: 250, status: 'completed', description: 'Refund for a cancelled booking', createdAt: '2026-11-10T06:00:00.000Z' }] };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
-  const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
+  /** Pages like the backend: by page and limit from the query. */
+  const paged = (route: Route, url: URL, all: unknown[]) => {
+    const page = Number(url.searchParams.get('page') ?? 1);
+    const limit = Number(url.searchParams.get('limit') ?? 20);
+    return json(route, 200, { success: true, data: all.slice((page - 1) * limit, page * limit),
+      pagination: { page, limit, total: all.length, totalPages: Math.max(1, Math.ceil(all.length / limit)) } });
+  };
 
   await page.route('**/api/v1/**', async (route) => {
     const req = route.request();
@@ -52,16 +62,17 @@ async function mockBackend(page: Page): Promise<Backend> {
       return json(route, 200, { success: true, data: { user: state.profile } });
     }
     if (path === `/wallet/user/${ME}`) return json(route, 200, { success: true, data: { _id: 'w', userId: ME, balance: 250, isActive: true } });
-    if (path === `/wallet/user/${ME}/transactions`) {
-      return page1(route, [{ _id: 't1', transactionType: 'refund', amount: 250, balanceAfter: 250, status: 'completed', description: 'Refund for a cancelled booking', createdAt: '2026-11-10T06:00:00.000Z' }]);
+    if (path === `/wallet/user/${ME}/transactions`) return paged(route, url, state.tx);
+    if (path === '/dependents' && req.method() === 'GET') {
+      const active = url.searchParams.get('isActive');
+      return paged(route, url, state.deps.filter((d) => active === null || String((d as { isActive: boolean }).isActive) === active));
     }
-    if (path === '/dependents' && req.method() === 'GET') return page1(route, deps);
     if (path === '/dependents' && req.method() === 'POST') {
-      const d = { _id: String(deps.length + 1).padStart(24, 'd'), isActive: true, ...(body as object) };
-      deps.push(d);
+      const d = { _id: String(state.deps.length + 1).padStart(24, 'd'), isActive: true, ...(body as object) };
+      state.deps.push(d);
       return json(route, 201, { success: true, data: d });
     }
-    if (path === '/bookings') return page1(route, Object.values(bookings));
+    if (path === '/bookings') return paged(route, url, Object.values(bookings));
     const b = /^\/bookings\/(\w{24})(\/cancel)?$/.exec(path);
     if (b) {
       const bk = bookings[b[1]!]!;
@@ -70,7 +81,7 @@ async function mockBackend(page: Page): Promise<Backend> {
     }
     if (path === '/external-bookings/bookings') {
       const integration = url.searchParams.get('integration');
-      return page1(route, Object.values(ext).filter((e) => e.integration === integration));
+      return paged(route, url, Object.values(ext).filter((e) => e.integration === integration));
     }
     const x = /^\/external-bookings\/bookings\/(\w{24})(\/cancel)?$/.exec(path);
     if (x) {
@@ -215,4 +226,76 @@ test('sign out on all devices ends the session; a reload also signs out (memory-
   expect(backend.calls.some((c) => c.path === '/auth/sessions/revoke')).toBe(true);
   const stored = await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }));
   expect(stored).not.toContain('t-cust');
+});
+
+test('wallet history pages to the end, past 100 transactions', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.tx = Array.from({ length: 130 }, (_, i) => ({ _id: `tx${i}`, transactionType: 'debit', amount: i + 1, balanceAfter: 0,
+    status: 'completed', description: `Payment ${i + 1}`, createdAt: new Date(Date.UTC(2026, 10, 1, 0, 130 - i)).toISOString() }));
+  await signIn(page);
+  await tab(page, 'Wallet').click();
+  await expect(page.getByText('Showing 20 of 130.')).toBeVisible();
+  for (let shown = 40; shown <= 120; shown += 20) {
+    await page.getByRole('button', { name: 'Show older' }).click();
+    await expect(page.getByText(`Showing ${shown} of 130.`)).toBeVisible();
+  }
+  await page.getByRole('button', { name: 'Show older' }).click();
+  await expect(page.getByText('Showing 130 of 130.')).toBeVisible();
+  await expect(page.getByText('Payment 130', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Show older' })).toHaveCount(0);
+});
+
+test('bookings page to the end per list and per provider', async ({ page }) => {
+  const backend = await mockBackend(page);
+  for (let i = 0; i < 105; i++) {
+    backend.bookings['f' + String(i).padStart(23, '0')] = { _id: 'f' + String(i).padStart(23, '0'), bookingType: 'consultation', doctorName: `Dr. ${i}`,
+      bookingDate: '20250101', bookingTime: '10:00', price: 100, status: 'completed', paymentStatus: 'paid' };
+  }
+  for (let i = 0; i < 25; i++) {
+    backend.ext['e' + String(i).padStart(23, '0')] = { _id: 'e' + String(i).padStart(23, '0'), integration: 'healthians', testNames: [`Test H${i}`],
+      bookingDate: '20250101', bookingTime: '08:00', price: 50, paymentStatus: 'paid', status: 'completed' };
+  }
+  await signIn(page);
+  await tab(page, 'Bookings').click();
+  const ord = page.getByRole('region', { name: 'Doctors and health packages' });
+  const lab = page.getByRole('region', { name: 'Lab tests' });
+  for (const shown of [40, 60, 80, 100, 107]) {
+    await ord.getByRole('button', { name: 'Show more' }).click();
+    await expect(ord.getByText(`Showing ${shown} of 107.`)).toBeVisible();
+  }
+  await expect(ord.getByRole('button', { name: 'Show more' })).toHaveCount(0);
+  await expect(lab.getByText('Showing 21 of 27.')).toBeVisible(); // 20 Healthians + 1 LabStack loaded; 6 more Healthians
+  await lab.getByRole('button', { name: 'Show more' }).click();
+  await expect(lab.getByText('Showing 27 of 27.')).toBeVisible();
+  await expect(lab.getByRole('button', { name: 'Show more' })).toHaveCount(0);
+});
+
+test('family shows active members even when many archived ones exist', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.deps = Array.from({ length: 120 }, (_, i) => ({ _id: 'd' + String(i).padStart(23, '0'), name: `Archived ${i}`, relationship: 'Other', isActive: false }));
+  await signIn(page);
+  await page.getByRole('link', { name: 'Family members' }).click();
+  await expect(page.getByText('No family members yet')).toBeVisible();
+  await page.getByRole('button', { name: 'Add a family member' }).click();
+  await page.getByLabel('Name').fill('Kamala Rao');
+  await page.getByLabel('Relationship').selectOption('Mother');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(page.getByText('Kamala Rao')).toBeVisible();
+  await expect(page.getByText(/Archived/)).toHaveCount(0);
+  const q = new URLSearchParams(backend.calls.filter((c) => c.path === '/dependents' && c.method === 'GET').at(-1)!.query);
+  expect(q.get('isActive')).toBe('true');
+});
+
+test('an unpaid booking that has already started can still be cancelled (no time rule without payment)', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const id = 'a5'.repeat(12);
+  backend.bookings[id] = { _id: id, bookingType: 'consultation', doctorName: 'Dr. Unpaid', ...istAt(-2), price: 300, status: 'pending', paymentStatus: 'pending' };
+  await signIn(page);
+  await tab(page, 'Bookings').click();
+  await page.getByRole('link', { name: /Dr\. Unpaid/ }).click();
+  await page.getByRole('button', { name: 'Cancel this booking' }).click();
+  await expect(page.getByText('The booking is cancelled.')).toBeVisible();
+  await page.getByRole('button', { name: 'Yes, cancel it' }).click();
+  await expect(page.getByText('Cancelled', { exact: true })).toBeVisible();
+  expect(backend.calls.some((c) => c.path === `/bookings/${id}/cancel`)).toBe(true);
 });

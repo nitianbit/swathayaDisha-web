@@ -128,7 +128,9 @@ export function customerApi(c: ApiClient) {
     updateProfile: (userId: string, body: ProfileUpdate) => c.put<{ user: CustomerProfile }>(`/users/${id(userId, 'user')}`, { body })
       .then((d) => d.user),
 
-    dependents: (userId: string) => c.page<Dependent>('/dependents', { query: { userId, page: 1, limit: 100, sortBy: 'createdAt', sortOrder: 'asc' } }),
+    /** Active family members only, filtered by the server before paging (archived ones must not use up pages). */
+    dependents: (userId: string, page = 1, limit = 50) =>
+      c.page<Dependent>('/dependents', { query: { userId, isActive: 'true', page, limit, sortBy: 'createdAt', sortOrder: 'asc' } }),
     addDependent: (userId: string, body: NewDependent) => c.post<Dependent>('/dependents', { body: { ...body, userId } }),
 
     wallet: (userId: string) => c.get<Wallet>(`/wallet/user/${id(userId, 'user')}`),

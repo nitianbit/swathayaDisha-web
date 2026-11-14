@@ -2,7 +2,8 @@
  * The backend's customer cancellation rule (src1/modules/common/utils/cancellationWindow.ts), mirrored so the app can
  * say BEFORE a tap whether a paid booking can still be cancelled. The server still decides.
  * Appointment time = bookingDate (YYYYMMDD) + bookingTime ("HH:MM[:SS] [AM|PM]") in IST. Paid bookings close 24 hours
- * before the appointment (48 hours for a Monday appointment); nobody can cancel once it has started.
+ * before the appointment (48 hours for a Monday appointment) and cannot be cancelled once it has started. Unpaid
+ * bookings are exempt from every time check.
  */
 const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -31,10 +32,12 @@ export type CancelCheck =
 
 /** `paid`: money was taken (only then does the 24/48-hour window apply). */
 export function canCancelNow(bookingDate: string, bookingTime: string, paid: boolean, now = new Date()): CancelCheck {
+  // The backend applies the whole time check only when money was captured (bookings/holds.ts, providerOps.ts):
+  // an unpaid booking can be cancelled even if it has started or its time cannot be read.
+  if (!paid) return { ok: true, deadline: null };
   const a = appointmentInstant(bookingDate, bookingTime);
   if (!a) return { ok: false, reason: 'invalid_time' };
   if (a.at.getTime() <= now.getTime()) return { ok: false, reason: 'started' };
-  if (!paid) return { ok: true, deadline: null };
   const cutoffHours = a.weekday === 1 ? 48 : 24;
   const deadline = new Date(a.at.getTime() - cutoffHours * HOUR_MS);
   return now.getTime() >= deadline.getTime() ? { ok: false, reason: 'window_closed', cutoffHours } : { ok: true, deadline };

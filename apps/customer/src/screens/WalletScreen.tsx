@@ -1,20 +1,19 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { customerApi } from '@jansetu/api';
 import { Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { messageOf, PageHeading } from '../common.tsx';
+import { usePagedList } from '../paging.ts';
 import { useCustomer, useSession } from '../session.tsx';
 
 const CREDIT = new Set(['credit', 'refund', 'cashback', 'promotion']);
-const STEP = 20;
+const PAGE = 20;
 
 export function WalletScreen() {
   const { api } = useSession();
   const me = useCustomer();
   const c = customerApi(api);
   const wallet = useQuery({ queryKey: ['wallet', me.id], queryFn: () => c.wallet(me.id) });
-  const [limit, setLimit] = useState(STEP);
-  const tx = useQuery({ queryKey: ['wallet', me.id, 'tx', limit], queryFn: () => c.transactions(me.id, 1, limit), placeholderData: (p) => p });
+  const { q: tx, items, total } = usePagedList(['wallet', me.id, 'tx'], (page) => c.transactions(me.id, page, PAGE));
 
   return (
     <>
@@ -27,11 +26,11 @@ export function WalletScreen() {
       <section aria-labelledby="tx-h" className="stack">
         <h2 id="tx-h">History</h2>
         {tx.isPending ? <Loading /> : tx.isError ? <ErrorState message={messageOf(tx.error)} onRetry={() => void tx.refetch()} />
-          : tx.data.items.length === 0 ? <Empty title="No transactions yet" />
+          : items.length === 0 ? <Empty title="No transactions yet" />
           : (
             <>
               <ul className="list">
-                {tx.data.items.map((t) => (
+                {items.map((t) => (
                   <li key={t._id} className="list-row">
                     <strong className={CREDIT.has(t.transactionType) ? 'amount-in' : 'amount-out'}>
                       {CREDIT.has(t.transactionType) ? '+' : '−'}{formatRupees(t.amount)}
@@ -43,8 +42,9 @@ export function WalletScreen() {
                   </li>
                 ))}
               </ul>
-              {tx.data.total > tx.data.items.length && limit < 100 && (
-                <Button variant="secondary" busy={tx.isFetching} onClick={() => setLimit((l) => Math.min(100, l + STEP))}>Show more</Button>
+              <p className="muted">Showing {items.length} of {total}.</p>
+              {tx.hasNextPage && (
+                <Button variant="secondary" busy={tx.isFetchingNextPage} onClick={() => void tx.fetchNextPage()}>Show older</Button>
               )}
             </>
           )}
