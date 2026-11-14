@@ -97,7 +97,9 @@ test('external cancellations: the admin records what the provider says; the opti
   const arun = page.getByRole('listitem').filter({ hasText: 'Arun Das' });
   await expect(meera).toContainText('HL-101');
   await expect(meera.getByRole('button', { name: 'No booking at the provider…' })).toBeDisabled();
-  await expect(arun.getByRole('button', { name: 'Provider confirms cancelled…' })).toBeDisabled();
+  // With no references both are possible: "cancelled" also settles an unknown reschedule, which "absent" does not.
+  await expect(arun.getByRole('button', { name: 'Provider confirms cancelled…' })).toBeEnabled();
+  await expect(arun.getByRole('button', { name: 'No booking at the provider…' })).toBeEnabled();
 
   await meera.getByRole('button', { name: 'Provider confirms cancelled…' }).click();
   await expect(meera.getByText(/including HL-101/)).toBeVisible();

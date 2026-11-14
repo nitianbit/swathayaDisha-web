@@ -105,11 +105,13 @@ function CancellationCard({ c }: { c: OpenCancellation }) {
         <Alert tone="warn">Check with {c.integration} before recording anything. What you record releases the refund.</Alert>
       )}
       <div className="ws-actions">
+        {/* Always possible (reconcileProviderState): it also settles an attempt or a reschedule whose outcome is unknown. */}
         <ConfirmAction label="Provider confirms cancelled…" confirmLabel="Record: cancelled at the provider" danger
-          disabled={c.providerRefs.length === 0}
-          consequence={<>You confirm that the provider has cancelled every booking listed above
-            {open.length ? <> (including <code>{open.map((r) => r.ref).join(', ')}</code>)</> : null}. The customer is then refunded.</>}
+          consequence={<>You confirm that the provider holds no active booking for this: every booking it had
+            {open.length ? <> (including <code>{open.map((r) => r.ref).join(', ')}</code>)</> : null}, also any made by a
+            reschedule, is cancelled. The customer is then refunded.</>}
           onConfirm={() => reconcile('cancelled')} />
+        {/* Refused by the backend while references exist (EXTERNAL_PROVIDER_REFERENCE_EXISTS). */}
         <ConfirmAction label="No booking at the provider…" confirmLabel="Record: no provider booking exists" danger
           disabled={c.providerRefs.length > 0}
           consequence="You confirm that the provider holds no booking for this at all. The customer is then refunded."
