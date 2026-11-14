@@ -53,7 +53,10 @@ uses a Capacitor plugin for that one thing (the NIYA employee app model).
    a missing email can be added), family members, bookings (doctors/packages and lab tests from both providers, always
    paginated), booking detail with cancellation (paid bookings: IST 24 h / 48 h-Monday window shown before the tap,
    refund to wallet; lab tests: "cancelling" until the lab confirms), wallet history, sign out / sign out on all
-   devices. Next: W3b booking flows (search, slots, payment with Razorpay), reports, Capacitor shell.
+   devices. W3b (built, approved): book and pay for a doctor consultation (search, 14-day slots, for self or family,
+   mode, concern, coupon, wallet; Razorpay Checkout; verify with server-side gateway check as fallback; a keyed,
+   resumable create; "Pay now" reuses the open order; booking page checks every payment attempt). Next: lab tests and
+   health packages booking, reports, Capacitor shell.
    Original scope: OTP login, profile and family, bookings (with the A1/A2 cancellation rules and the
    `cancellation_requested` state), lab tests/diagnostics, wallet, coupons, Razorpay, reports, notifications; English
    and Hindi; Capacitor shell.
@@ -98,13 +101,15 @@ Stacked on `m0/a2b-external-cancel` (284e24c), in the worktree `SwasthaDisha-wor
 | `m0/w1-rx-review-queue` | f1fbec5 | `GET /pharmacy-orders/prescription-reviews` | none |
 | `m0/w2c-admin-queues` | 815f93e | `GET /external-bookings/bookings/cancellations/attention` | none |
 | `m0/w2b-supplier-return-key` | 00554f2 | supplier-return `requestKey` replay | `sync-indexes`: unique partial `{pharmacyId, requestKey}` on `pharmacy_supplier_returns` |
+| `m0/w3b-booking-safety` | 5e94bb7 | booking-level payment reconcile, open-order reuse, recovery sweep (scheduler), keyed create with stored terms, free bookings inserted unpaid | `sync-indexes`: `{userId, createRequestKey}` unique partial on `bookings`; `{context, status, recoveryNextAt, createdAt}` on `paymentrecords` |
 | `m0/w3b-payment-reconcile` | bc855da | `POST /payments/reconcile` (settle a captured payment whose verify never arrived) | none |
 | `m0/w2c-obligation-fence` | 7eb93c8 | obligation fingerprint; `GET /external-bookings/bookings/:id/obligations`; `POST .../reconcile-cancellation` now REQUIRES `expectedObligations` | any caller of reconcile-cancellation must send the reviewed fingerprint (only the new workspace calls it) |
 
-`m0/w3b-payment-reconcile` contains all of them (top of the stack). To release, merge it instead of `m0/a2b-external-cancel` in the backend merge plan.
+`m0/w3b-booking-safety` contains all of them (top of the stack). To release, merge it instead of `m0/a2b-external-cancel` in the backend merge plan.
 
 ## Follow-ups
 
+- Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
 - Backend: unpaid internal (doctor/package) bookings never expire; they keep the slot and any wallet debit until
   the customer cancels. Needs a payment timeout like external bookings have.
 - Workspace screen for paid bookings with an unknown provider attempt that are not being cancelled (backend snapshot exists; a list endpoint for them does not).
@@ -117,6 +122,7 @@ Stacked on `m0/a2b-external-cancel` (284e24c), in the worktree `SwasthaDisha-wor
 |---|---|---|
 | 2026-11-14 | W1 (first cut) | typecheck clean; Vitest 10/10; Playwright 14/14; release build guards. Codex review: 6 findings (file URL shape, queue scope x2, late 401 across sign-ins, "opened" ≠ readable, body timeout). |
 | 2026-11-14 | W1 (fixes) | typecheck clean; Vitest 16/16; Playwright 22/22 (desktop + tablet, mocked API, incl. corrupt image, download-only file, buyer/cancelled read-only, late 401 after re-sign-in); backend P1 integration 16/16 on the local replica set (new queue check). Not yet run against a real backend. |
+| 2026-11-14 | W3b approved | Codex approved W3b after 3 re-reviews: backend 5e94bb7 (booking-level reconcile, open-order reuse, fair 5-minute recovery sweep, keyed create with stored validated terms, free bookings inserted unpaid — closes C7b), frontend 8963313. Final: backend w3b-reconcile 17/17, retry-integrity 26/26, A2a 14/14, A2b 18/18, A1 12/12; customer Vitest 37/37, Playwright 46/46. Real hosted Checkout, CSP and devices not yet exercised. |
 | 2026-11-14 | W3b-pay approved | Codex approved backend payment reconciliation (41e2081 + bc855da): w3b-reconcile 7/7, retry-integrity 26/26, A2b 18/18, A2a 14/14. |
 | 2026-11-14 | W3a approved | Codex approved W3a at 17f491d (customer app core). |
 | 2026-11-14 | W3a fixes | Codex W3a: 3 findings (unpaid exemption after time checks; lists capped at 100; family paged before filtering archived). Fixed: unpaid bookings skip every time check (as the backend); wallet, bookings (per provider) and family read real successive pages to the reported total; family asks the server for active members. Vitest 35/35; Playwright customer 24/24. |
