@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
-import { canCancelNow, customerApi, type Booking } from '@jansetu/api';
+import { BOOKING_PAYMENT_WINDOW_MIN, canCancelNow, customerApi, payByTime, type Booking } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { Confirm, formatAppointment, messageOf, PageHeading } from '../common.tsx';
 import { payOrder, type PaymentOutcome } from '../payments.ts';
@@ -47,12 +47,18 @@ function BookingView({ booking: b }: { booking: Booking }) {
       <PageHeading title={b.doctorName ?? b.packageName ?? 'Booking'}>{formatAppointment(b.bookingDate, b.bookingTime)}</PageHeading>
       <section className="card stack">
         <dl className="details">
-          <dt>Status</dt><dd><StatusBadge status={b.status} /></dd>
+          <dt>Status</dt><dd><StatusBadge status={b.status} cause={b.cancellationCause} /></dd>
           {b.consultationMode && <><dt>Mode</dt><dd>{b.consultationMode.replace(/_/g, ' ')}</dd></>}
           <dt>Price</dt><dd>{formatRupees(b.price)} · {b.paymentStatus === 'paid' ? 'paid' : b.paymentStatus === 'refunded' ? 'refunded' : 'not paid'}</dd>
           {b.cancelledAt && <><dt>Cancelled</dt><dd>{formatDateTime(b.cancelledAt)}{b.cancellationReason ? ` · ${b.cancellationReason}` : ''}</dd></>}
         </dl>
       </section>
+      {b.status === 'cancelled' && b.cancellationCause === 'payment_timeout' && (
+        <Alert tone="warn">
+          This booking expired because it was not paid within {BOOKING_PAYMENT_WINDOW_MIN} minutes, so the time was released.
+          Any wallet money used for it is back in your wallet. You can book a new time with the doctor.
+        </Alert>
+      )}
       {paymentError && b.paymentStatus !== 'paid' && <Alert>The payment page could not open: {paymentError} You can pay below.</Alert>}
       {b.status === 'pending' && b.paymentStatus === 'pending' && b.paymentTransactionId && Number(b.price ?? 0) > 0 && (
         <PaymentPanel booking={b} />
@@ -88,7 +94,8 @@ function BookingView({ booking: b }: { booking: Booking }) {
 function PaymentPanel({ booking: b }: { booking: Booking }) {
   const { api } = useSession();
   const queryClient = useQueryClient();
-  const [state, setState] = useState<'checking' | PaymentOutcome | 'paying'>('checking');
+  const [state, setState] = useState<'checking' | PaymentOutcome | 'paying' | 'expired'>('checking');
+  const payBy = payByTime(b.createdAt);
   const [error, setError] = useState<string | null>(null);
   const checked = useRef(false);
   const refresh = async () => {
@@ -124,6 +131,8 @@ function PaymentPanel({ booking: b }: { booking: Booking }) {
       await refresh();
     } catch (err) {
       if (err instanceof ApiError && err.code === 'BOOKING_ALREADY_PAID') { setState('paid'); await refresh(); return; }
+      // The payment window has passed: no new order; the server releases the booking.
+      if (err instanceof ApiError && err.code === 'BOOKING_PAYMENT_EXPIRED') { setState('expired'); await refresh(); return; }
       setError(messageOf(err));
       // The server refuses a new order while an earlier payment cannot be checked.
       setState(err instanceof ApiError && err.code === 'PAYMENT_STATE_UNKNOWN' ? 'unknown' : 'unpaid');
@@ -135,12 +144,14 @@ function PaymentPanel({ booking: b }: { booking: Booking }) {
       <h2 id="pay-h">Payment</h2>
       {state === 'checking' ? <Loading label="Checking your payment…" />
         : state === 'paid' ? <Alert tone="ok">Payment received. Your booking is confirmed.</Alert>
-        : (
+        : state === 'expired' ? (
+          <Alert tone="warn">The time to pay for this booking has passed, so it is being released. Please book a new time.</Alert>
+        ) : (
           <>
             <Alert tone="warn">
               {state === 'unknown'
                 ? 'We could not check your payment just now. If you have paid, it will show here once we can.'
-                : 'This booking is not paid yet. Your time is held for you until you pay or cancel.'}
+                : `This booking is not paid yet. Your time is held ${payBy ? `until ${formatDateTime(payBy.toISOString())}` : `for ${BOOKING_PAYMENT_WINDOW_MIN} minutes from booking`}; after that it is released.`}
             </Alert>
             {error && <Alert>{error}</Alert>}
             <div className="row">

@@ -121,8 +121,10 @@ Build in this order (money/security first):
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
-- Backend: unpaid internal (doctor/package) bookings never expire; they keep the slot and any wallet debit until
-  the customer cancels. Needs a payment timeout like external bookings have.
+- Backend: unpaid internal (doctor/package) bookings expire after 30 minutes (decision 2): backend branch
+  `m0/d2-booking-payment-timeout` (on top of `m0/w3b-booking-safety`). The sweep checks Razorpay first, backs off while
+  the gateway cannot answer, and never expires free bookings; `retry-payment` answers 409 `BOOKING_PAYMENT_EXPIRED`
+  after the window. Customer app (branch `d2/payment-expiry`): "pay by" time, Expired status, the 409 handled.
 - Workspace screen for paid bookings with an unknown provider attempt that are not being cancelled (backend snapshot exists; a list endpoint for them does not).
 - Backend MONEY: fenced, refund-aware order cancellation (then re-enable Cancel/Reject in the workspace).
 - Backend SECURITY: authenticate `/api/static/*` uploads.
@@ -150,3 +152,4 @@ Build in this order (money/security first):
 | 2026-11-14 | W2c | typecheck clean; Vitest 24/24; Playwright 58/58 (+ 4 admin journeys x 2 devices); backend A2b integration 18/18 (+ worklist check: scopes, order, pagination, refs/acked flags, no private fields, admin-only route, query validation). |
 | 2026-11-14 | W2b | typecheck clean; Vitest 24/24 (+ sellable rule, expiry format); Playwright 50/50 (+ 6 stock journeys x 2 devices: actions per batch state, quarantine/release validation, supplier return validation, recall with trace, low stock, held-order swap/cancel incl. a non-swappable order). |
 | 2026-11-14 | W2a | typecheck clean; Vitest 22/22 (+ status preconditions, rupee parsing, request keys); Playwright 38/38 (+ 8 order journeys x 2 devices: full delivery flow incl. failed/retried delivery, unpaid cannot pack, paid cannot be cancelled, reject with confirmation, COD payment then complete, refund retry, customer return retried after a lost answer sends the same key, buying order read-only). |
+| 2026-11-14 | D2 (customer) | typecheck clean; Vitest 37/37; Playwright customer 48/48 (new: Pay now after the window → no new order, Expired shown in booking and list), workspace 82/82. Backend D2 integration 8/8. |

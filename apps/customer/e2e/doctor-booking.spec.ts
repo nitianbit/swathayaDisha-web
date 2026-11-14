@@ -21,6 +21,8 @@ interface Backend {
   byKey: Map<string, string>;
   gatewayDown: boolean;
   refuseCreate: boolean;
+  /** The 30-minute payment window has passed: "Pay now" is refused and the booking is released (backend D2). */
+  windowPassed: boolean;
 }
 
 /** Fake Razorpay Checkout: `window.__rz` = 'pay' | 'close'. Paying marks the order captured at the fake gateway. */
@@ -40,7 +42,7 @@ window.Razorpay = function (o) {
 };`;
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const state: Backend = { calls: [], bookings: new Map(), records: new Map(), verifyFails: false, createDrops: false, byKey: new Map(), gatewayDown: false, refuseCreate: false };
+  const state: Backend = { calls: [], bookings: new Map(), records: new Map(), verifyFails: false, createDrops: false, byKey: new Map(), gatewayDown: false, refuseCreate: false, windowPassed: false };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
   let n = 0;
@@ -79,6 +81,8 @@ async function mockBackend(page: Page): Promise<Backend> {
       return json(route, 200, { success: true, data: [{ _id: SLOT, specialistId: DOC, date: url.searchParams.get('date'), startTime: '11:30 PM', endTime: '11:45 PM', maxBookings: 1, currentBookings: 0 }] });
     }
     if (path === '/coupons/validate') return json(route, 200, { success: true, data: { isValid: true, discountAmount: 50, finalAmount: 450, coupon: { code: 'WELCOME50' } } });
+    if (path === '/bookings' && req.method() === 'GET') return page1(route, [...state.bookings.values()]);
+    if (path.startsWith('/external-bookings')) return page1(route, []);
     if (path === '/bookings' && req.method() === 'POST') {
       const b = body as Record<string, unknown>;
       const known = state.byKey.get(String(b.requestKey));
@@ -97,7 +101,7 @@ async function mockBackend(page: Page): Promise<Backend> {
       state.byKey.set(String(b.requestKey), id);
       const free = b.specialistId === FREE_DOC;
       const booking = { _id: id, bookingType: 'consultation', doctorName: free ? 'Dr. Free Clinic' : 'Dr. Meena Iyer', bookingDate: b.bookingDate,
-        bookingTime: b.bookingTime, price: free ? 0 : 450, status: free ? 'confirmed' : 'pending', paymentStatus: free ? 'paid' : 'pending' } as Record<string, unknown>;
+        bookingTime: b.bookingTime, createdAt: new Date().toISOString(), price: free ? 0 : 450, status: free ? 'confirmed' : 'pending', paymentStatus: free ? 'paid' : 'pending' } as Record<string, unknown>;
       state.bookings.set(id, booking);
       if (free) return json(route, 201, { success: true, data: { booking, paymentRequired: false } });
       const payment = order(id);
@@ -119,6 +123,11 @@ async function mockBackend(page: Page): Promise<Backend> {
       if (m[2]) {
         if (settleAll(m[1]!)) return json(route, 503, { error: 503, code: 'PAYMENT_STATE_UNKNOWN', message: 'We could not check your earlier payment for this booking. Please try again in a few minutes.' });
         if (b.paymentStatus === 'paid') return json(route, 400, { error: 400, code: 'BOOKING_ALREADY_PAID', message: 'Booking is already paid' });
+        if (state.windowPassed) {
+          Object.assign(b, { status: 'cancelled', paymentStatus: 'refunded', cancellationCause: 'payment_timeout',
+            cancellationReason: 'Payment was not completed in time', cancelledAt: new Date().toISOString() });
+          return json(route, 409, { error: 409, code: 'BOOKING_PAYMENT_EXPIRED', message: 'The time to pay for this booking has passed. Please book again.' });
+        }
         const open = state.records.get(String(b.paymentTransactionId));
         if (open && !open.captured) { // same terms: the backend reuses the open order
           return json(route, 200, { success: true, data: { booking: b, paymentRequired: true, payment: { paymentTransactionId: b.paymentTransactionId, razorpayOrderId: open.orderId, razorpayKeyId: 'rzp_test_x', amount: 450, currency: 'INR' } } });
@@ -327,4 +336,22 @@ test('a free consultation is booked without the payment page', async ({ page }) 
   await page.getByRole('button', { name: 'Book', exact: true }).click();
   await expect(page.getByText('Confirmed', { exact: true })).toBeVisible();
   expect(posts(backend, '/payments/verify')).toHaveLength(0);
+});
+
+test('after the 30-minute payment window "Pay now" is refused and the booking shows as expired, without a new order', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'close'; });
+  await bookPaid(page);
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect(page.getByText(/This booking is not paid yet\. Your time is held until/)).toBeVisible();
+  backend.windowPassed = true;
+  await page.getByRole('button', { name: 'Pay now' }).click();
+  await expect(page.getByText(/expired because it was not paid within 30 minutes/)).toBeVisible();
+  await expect(page.getByText('Expired', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pay now' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel this booking' })).toHaveCount(0);
+  expect(backend.records.size).toBe(1); // no new chargeable order
+  await page.getByRole('link', { name: 'My bookings' }).click();
+  await expect(page.getByRole('link', { name: /Dr\. Meena Iyer/ }).getByText('Expired', { exact: true })).toBeVisible();
 });

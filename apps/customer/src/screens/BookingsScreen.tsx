@@ -37,7 +37,7 @@ function OrdinaryBookings() {
                   <Link to={`/bookings/${b._id}`} className="list-row link-row">
                     <strong>{b.doctorName ?? b.packageName ?? BOOKING_TYPE[b.bookingType] ?? 'Booking'}</strong>
                     <span className="muted">{formatAppointment(b.bookingDate, b.bookingTime)}</span>
-                    <span><StatusBadge status={b.status} /> {b.price != null && <span className="muted">{formatRupees(b.price)}</span>}</span>
+                    <span><StatusBadge status={b.status} cause={b.cancellationCause} /> {b.price != null && <span className="muted">{formatRupees(b.price)}</span>}</span>
                   </Link>
                 </li>
               ))}
@@ -101,7 +101,8 @@ export const titleOf = (b: ExternalBooking) =>
 const newestFirst = (a: ExternalBooking, b: ExternalBooking) =>
   `${b.bookingDate}${b.bookingTime}`.localeCompare(`${a.bookingDate}${a.bookingTime}`);
 
-export function StatusBadge({ status }: { status: string }) {
-  const s = BOOKING_STATUS[status] ?? { label: status.replace(/_/g, ' ') };
+export function StatusBadge({ status, cause }: { status: string; cause?: string }) {
+  const s = status === 'cancelled' && cause === 'payment_timeout' ? { label: 'Expired', tone: 'danger' as const }
+    : BOOKING_STATUS[status] ?? { label: status.replace(/_/g, ' ') };
   return <Badge tone={s.tone}>{s.label}</Badge>;
 }

@@ -22,7 +22,7 @@ export { adminQueuesApi } from './adminQueues.ts';
 export type { CancelState, OpenCancellation, ProviderOutcome, RefundAttentionRow } from './adminQueues.ts';
 export { appointmentInstant, canCancelNow } from './cancellationWindow.ts';
 export type { CancelCheck } from './cancellationWindow.ts';
-export { COUPON_PATTERN, customerApi, RELATIONSHIPS } from './customer.ts';
+export { BOOKING_PAYMENT_WINDOW_MIN, COUPON_PATTERN, customerApi, payByTime, RELATIONSHIPS } from './customer.ts';
 export type {
   Booking, BookingPayment, BookingStatus, ConsultationMode, CouponCheck, CustomerProfile, NewConsultation, PaymentOrder, Slot, Specialist, Dependent, ExternalBooking, ExternalIntegration, Gender, NewDependent,
   ProfileUpdate, Relationship, Wallet, WalletTransaction,

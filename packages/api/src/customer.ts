@@ -95,8 +95,19 @@ export interface Booking {
   status: BookingStatus;
   paymentStatus: 'pending' | 'paid' | 'failed' | 'refunded';
   cancellationReason?: string;
+  /** Why the server cancelled it: 'payment_timeout' = not paid within the payment window (backend D2). */
+  cancellationCause?: string;
   cancelledAt?: string;
   createdAt?: string;
+}
+
+/** An unpaid priced booking is held this long from its creation, then released (backend D2). */
+export const BOOKING_PAYMENT_WINDOW_MIN = 30;
+
+/** When the hold of an unpaid booking ends, or null if its creation time is unknown. The server decides; this is a hint. */
+export function payByTime(createdAt?: string): Date | null {
+  const t = createdAt ? Date.parse(createdAt) : NaN;
+  return Number.isFinite(t) ? new Date(t + BOOKING_PAYMENT_WINDOW_MIN * 60_000) : null;
 }
 
 export type ExternalIntegration = 'labstack' | 'healthians';
