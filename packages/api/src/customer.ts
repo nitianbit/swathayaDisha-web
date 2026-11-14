@@ -82,6 +82,8 @@ export type BookingStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled';
 export interface Booking {
   _id: string;
   bookingType: 'package' | 'consultation' | 'second-opinion' | 'surgery';
+  specialistId?: string;
+  paymentTransactionId?: string;
   dependentId?: string | null;
   packageName?: string;
   doctorName?: string;
@@ -119,6 +121,75 @@ export interface ExternalBooking {
   createdAt?: string;
 }
 
+/** GET /specialists (verified, active; corporate-scoped by the server). Only public fields are read. */
+export interface Specialist {
+  _id: string;
+  name: string;
+  specialization?: string;
+  degree?: string;
+  experienceYears?: number;
+  languages?: string[];
+  bio?: string;
+  rating?: number;
+  city?: string;
+  hospitalOrClinic?: string;
+  profilePictureUrl?: string;
+  consultationFee?: number;
+  isConsultationFree?: boolean;
+  availability?: { acceptVideoConsultations?: boolean; acceptChatConsultations?: boolean };
+}
+
+/** GET /slots/specialist/:id?date= — only bookable slots are returned. */
+export interface Slot {
+  _id: string;
+  specialistId: string;
+  /** YYYYMMDD */
+  date: string;
+  /** "9:30 AM" */
+  startTime: string;
+  endTime: string;
+  maxBookings: number;
+  currentBookings: number;
+}
+
+export type ConsultationMode = 'chat' | 'call' | 'video' | 'in-person';
+
+export interface NewConsultation {
+  specialistId: string;
+  slotId: string;
+  /** The slot's own date and start time (the server overwrites the time with the slot's). */
+  bookingDate: string;
+  bookingTime: string;
+  consultationMode: ConsultationMode;
+  primaryConcern: string;
+  dependentId?: string;
+  couponCode?: string;
+  useWalletBalance?: boolean;
+}
+
+/** Razorpay order details for Checkout; `amount` in rupees (already net of wallet and coupon). */
+export interface PaymentOrder {
+  paymentTransactionId: string;
+  razorpayOrderId: string;
+  razorpayKeyId: string;
+  amount: number;
+  currency: string;
+  baseAmount?: number;
+  discountAmount?: number;
+  walletDeductedAmount?: number;
+}
+
+export interface BookingPayment {
+  booking: Booking & { paymentTransactionId?: string };
+  paymentRequired: boolean;
+  walletDeductedAmount?: number;
+  payment?: PaymentOrder;
+}
+
+export interface CouponCheck { isValid: boolean; discountAmount?: number; finalAmount?: number; coupon?: { code: string; title?: string } }
+
+export const COUPON_PATTERN = /^[A-Z0-9]{3,50}$/;
+
 const hex = /^[0-9a-fA-F]{24}$/;
 const id = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; };
 
@@ -145,6 +216,29 @@ export function customerApi(c: ApiClient) {
     /** Paid bookings refund to the wallet. Repeating a cancel is harmless. */
     cancelBooking: (bookingId: string, reason?: string) =>
       c.post<Booking>(`/bookings/${id(bookingId, 'booking')}/cancel`, { body: reason ? { cancellationReason: reason } : {} }),
+
+    doctors: (page = 1, limit = 20, search?: string) =>
+      c.page<Specialist>('/specialists', { query: { page, limit, sortBy: 'rating', sortOrder: 'desc', search: search || undefined } }),
+    doctor: (specialistId: string) => c.get<Specialist>(`/specialists/${id(specialistId, 'doctor')}`),
+    doctorSlots: (specialistId: string, date: string) => {
+      if (!/^\d{8}$/.test(date)) throw new Error('Invalid date');
+      return c.get<Slot[]>(`/slots/specialist/${id(specialistId, 'doctor')}`, { query: { date } });
+    },
+    /** Not idempotent: never resend after an unknown outcome (a second booking would hold another slot). */
+    bookConsultation: (body: NewConsultation) =>
+      c.post<BookingPayment>('/bookings', { body: { bookingType: 'consultation', ...body } }),
+    /** A new Razorpay order for an unpaid booking. */
+    retryPayment: (bookingId: string, body: { useWalletBalance?: boolean; couponCode?: string } = {}) =>
+      c.post<BookingPayment>(`/bookings/${id(bookingId, 'booking')}/retry-payment`, { body }),
+    /** Browser-side proof from Razorpay Checkout's handler. Safe to repeat. */
+    verifyPayment: (p: { paymentTransactionId: string; razorpayOrderId: string; razorpayPaymentId: string; razorpaySignature: string }) =>
+      c.post<{ context: string; paymentRecord: { status: string; isProcessed?: boolean }; entity: unknown }>('/payments/verify', { body: p }),
+    /** Server asks Razorpay for this payment's own order; settles a captured payment whose verify never arrived. */
+    reconcilePayment: (paymentTransactionId: string) =>
+      c.post<{ state: 'paid' | 'unpaid'; paymentRecord?: { status: string } }>('/payments/reconcile', { body: { paymentTransactionId: id(paymentTransactionId, 'payment') } }),
+    checkCoupon: (b: { code: string; specialistId: string; purchaseAmount: number; dependentId?: string }) =>
+      c.post<CouponCheck>('/coupons/validate', { body: { code: b.code, bookingType: 'consultation', bookingId: b.specialistId,
+        purchaseAmount: b.purchaseAmount, ...(b.dependentId ? { dependentId: b.dependentId } : {}) } }),
 
     /** One provider per call: the backend defaults a missing integration to 'labstack'. */
     externalBookings: (integration: ExternalIntegration, page = 1, limit = 20) =>

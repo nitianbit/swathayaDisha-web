@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { CalendarDays, Users, Wallet } from 'lucide-react';
+import { CalendarDays, Stethoscope, Users, Wallet } from 'lucide-react';
 import { customerApi } from '@jansetu/api';
 import { Alert, formatRupees, Loading } from '@jansetu/ui';
 import { PageHeading } from '../common.tsx';
@@ -30,6 +30,7 @@ export function HomeScreen() {
         </Alert>
       )}
       <ul className="tiles">
+        <li><Link to="/doctors" className="tile"><Stethoscope aria-hidden="true" /><span>Book a doctor</span></Link></li>
         <li><Link to="/bookings" className="tile"><CalendarDays aria-hidden="true" /><span>My bookings</span></Link></li>
         <li>
           <Link to="/wallet" className="tile">

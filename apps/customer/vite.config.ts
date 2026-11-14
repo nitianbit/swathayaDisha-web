@@ -28,11 +28,12 @@ export default defineConfig(({ command, mode }) => {
     .filter(Boolean).join(' ');
   const policy = [
     "default-src 'self'",
-    `script-src 'self'${command === 'serve' ? " 'unsafe-inline'" : ''}`,
+    // Razorpay Checkout: its script, and its payment page in a frame (the only third parties).
+    `script-src 'self' https://checkout.razorpay.com${command === 'serve' ? " 'unsafe-inline'" : ''}`,
     "style-src 'self' 'unsafe-inline'",
     // Prescription files are fetched with the token and shown from blob: URLs.
     "img-src 'self' data: blob:",
-    "frame-src blob:",
+    "frame-src blob: https://api.razorpay.com https://checkout.razorpay.com",
     "font-src 'self'",
     `connect-src ${connect}`,
     "object-src 'none'",

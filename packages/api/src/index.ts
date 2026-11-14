@@ -22,8 +22,8 @@ export { adminQueuesApi } from './adminQueues.ts';
 export type { CancelState, OpenCancellation, ProviderOutcome, RefundAttentionRow } from './adminQueues.ts';
 export { appointmentInstant, canCancelNow } from './cancellationWindow.ts';
 export type { CancelCheck } from './cancellationWindow.ts';
-export { customerApi, RELATIONSHIPS } from './customer.ts';
+export { COUPON_PATTERN, customerApi, RELATIONSHIPS } from './customer.ts';
 export type {
-  Booking, BookingStatus, CustomerProfile, Dependent, ExternalBooking, ExternalIntegration, Gender, NewDependent,
+  Booking, BookingPayment, BookingStatus, ConsultationMode, CouponCheck, CustomerProfile, NewConsultation, PaymentOrder, Slot, Specialist, Dependent, ExternalBooking, ExternalIntegration, Gender, NewDependent,
   ProfileUpdate, Relationship, Wallet, WalletTransaction,
 } from './customer.ts';

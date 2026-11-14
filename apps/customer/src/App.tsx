@@ -11,6 +11,8 @@ import { ExternalBookingScreen } from './screens/ExternalBookingScreen.tsx';
 import { WalletScreen } from './screens/WalletScreen.tsx';
 import { ProfileScreen } from './screens/ProfileScreen.tsx';
 import { FamilyScreen } from './screens/FamilyScreen.tsx';
+import { DoctorsScreen } from './screens/DoctorsScreen.tsx';
+import { DoctorScreen } from './screens/DoctorScreen.tsx';
 
 const TABS = [
   { to: '/', label: 'Home', icon: House },
@@ -55,6 +57,8 @@ function router() {
       { path: '/bookings', element: <BookingsScreen /> },
       { path: '/bookings/:bookingId', element: <BookingScreen /> },
       { path: '/lab-bookings/:bookingId', element: <ExternalBookingScreen /> },
+      { path: '/doctors', element: <DoctorsScreen /> },
+      { path: '/doctors/:doctorId', element: <DoctorScreen /> },
       { path: '/wallet', element: <WalletScreen /> },
       { path: '/profile', element: <ProfileScreen /> },
       { path: '/profile/family', element: <FamilyScreen /> },

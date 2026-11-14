@@ -1,9 +1,11 @@
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import { canCancelNow, customerApi, type Booking } from '@jansetu/api';
-import { Alert, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { Confirm, formatAppointment, messageOf, PageHeading } from '../common.tsx';
+import { checkPayment, payOrder, type PaymentOutcome } from '../payments.ts';
 import { useSession } from '../session.tsx';
 import { StatusBadge } from './BookingsScreen.tsx';
 
@@ -49,6 +51,9 @@ function BookingView({ booking: b }: { booking: Booking }) {
           {b.cancelledAt && <><dt>Cancelled</dt><dd>{formatDateTime(b.cancelledAt)}{b.cancellationReason ? ` · ${b.cancellationReason}` : ''}</dd></>}
         </dl>
       </section>
+      {b.status === 'pending' && b.paymentStatus === 'pending' && b.paymentTransactionId && Number(b.price ?? 0) > 0 && (
+        <PaymentPanel booking={b} />
+      )}
       {cancellable && (
         <section className="card stack" aria-labelledby="cancel-h">
           <h2 id="cancel-h">Cancel</h2>
@@ -70,5 +75,69 @@ function BookingView({ booking: b }: { booking: Booking }) {
         </section>
       )}
     </>
+  );
+}
+
+/**
+ * An unpaid booking: on opening, the server checks the payment with Razorpay once (a payment whose confirmation was
+ * lost is applied then); the customer can pay (a new order) or check again.
+ */
+function PaymentPanel({ booking: b }: { booking: Booking }) {
+  const { api } = useSession();
+  const queryClient = useQueryClient();
+  const [state, setState] = useState<'checking' | PaymentOutcome | 'paying'>('checking');
+  const [error, setError] = useState<string | null>(null);
+  const checked = useRef(false);
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: ['booking', b._id] });
+    await queryClient.invalidateQueries({ queryKey: ['bookings'] });
+    await queryClient.invalidateQueries({ queryKey: ['wallet'] });
+  };
+  const check = async () => {
+    setState('checking');
+    const r = await checkPayment(api, b.paymentTransactionId!);
+    setState(r);
+    if (r === 'paid') await refresh();
+  };
+  useEffect(() => { if (!checked.current) { checked.current = true; void check(); } }, []);
+
+  async function payNow() {
+    setError(null);
+    setState('paying');
+    try {
+      const r = await customerApi(api).retryPayment(b._id, {});
+      if (r.paymentRequired && r.payment) {
+        const outcome = await payOrder(api, r.payment, {}, b.doctorName ? `Consultation with ${b.doctorName}` : 'Booking');
+        setState(outcome);
+      } else {
+        setState('paid');
+      }
+      await refresh();
+    } catch (err) {
+      setError(messageOf(err));
+      setState('unpaid');
+    }
+  }
+
+  return (
+    <section className="card stack" aria-labelledby="pay-h">
+      <h2 id="pay-h">Payment</h2>
+      {state === 'checking' ? <Loading label="Checking your payment…" />
+        : state === 'paid' ? <Alert tone="ok">Payment received. Your booking is confirmed.</Alert>
+        : (
+          <>
+            <Alert tone="warn">
+              {state === 'unknown'
+                ? 'We could not check your payment just now. If you have paid, it will show here once we can.'
+                : 'This booking is not paid yet. Your time is held for you until you pay or cancel.'}
+            </Alert>
+            {error && <Alert>{error}</Alert>}
+            <div className="row">
+              <Button busy={state === 'paying'} onClick={() => void payNow()}>Pay now</Button>
+              <Button variant="secondary" disabled={state === 'paying'} onClick={() => void check()}>I have paid, check again</Button>
+            </div>
+          </>
+        )}
+    </section>
   );
 }
