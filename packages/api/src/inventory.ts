@@ -29,7 +29,8 @@ export interface InventoryItem {
   rackLocation?: string;
   isActive?: boolean;
   batches?: Batch[];
-  upcomingRefills?: unknown[];
+  /** How many active refill subscriptions need this medicine soon (low-stock list only). */
+  upcomingRefills?: number;
 }
 
 export interface HeldUnit { medicineId: string; medicineName?: string; batchId: string; batchNumber: string; quantity: number }
@@ -58,13 +59,24 @@ export interface SupplierReturn {
   reason: SupplierReturnReason;
   notes?: string;
   batchStatusAtReturn: BatchStatus;
+  requestKey?: string;
   createdAt: string;
+}
+
+export interface SupplierReturnRequest {
+  supplierId: string;
+  quantity: number;
+  reason: SupplierReturnReason;
+  notes?: string;
+  /** Same key again = the same return: the server answers with the first record (backend W2b). */
+  requestKey: string;
 }
 
 export interface Dispensed { orderId: string; orderNumber?: string; customerId?: string; completedAt?: string; quantity: number; returnedQty?: number }
 export interface RecallTrace { batch: Batch; openOrders: ImpactedOrder[]; dispensedTo: Dispensed[]; dispensedTruncated: boolean }
 
-export interface Supplier { _id: string; name: string; state: 'active' | 'archived' }
+/** pharmacySuppliers SupplierDto (only the fields used). */
+export interface Supplier { supplierId: string; displayName: string; state: 'active' | 'archived' }
 
 /** States each batch action accepts (batchQuality.ts). */
 export const BATCH_ACTION_FROM = {
@@ -108,8 +120,8 @@ export function inventoryApi(c: ApiClient) {
     release: (itemId: string, batchId: string, body: { writeOffQty: number; reason: string }) =>
       c.post<{ batch: Batch }>(`${batchPath(itemId, batchId)}/release`, { body }),
     supplierReturn: (itemId: string, batchId: string,
-      body: { supplierId: string; quantity: number; reason: SupplierReturnReason; notes?: string }) =>
-      c.post<SupplierReturn>(`${batchPath(itemId, batchId)}/supplier-return`, { body }),
+      body: SupplierReturnRequest) =>
+      c.post<SupplierReturn & { duplicate?: boolean }>(`${batchPath(itemId, batchId)}/supplier-return`, { body }),
     recall: (itemId: string, batchId: string, body: { reason: string; reference?: string }) =>
       c.post<RecallTrace & { impactedOrders: ImpactedOrder[] }>(`${batchPath(itemId, batchId)}/recall`, { body }),
     recallTrace: (itemId: string, batchId: string) => c.get<RecallTrace>(`${batchPath(itemId, batchId)}/recall-trace`),

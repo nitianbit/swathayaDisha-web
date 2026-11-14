@@ -1,11 +1,13 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  BATCH_ACTION_FROM, inventoryApi, type Batch, type RecallTrace, type SupplierReturnReason,
+  BATCH_ACTION_FROM, inventoryApi, type Batch, type RecallTrace, type SupplierReturn, type SupplierReturnReason,
+  type SupplierReturnRequest,
 } from '@jansetu/api';
 import { Alert, Button, formatDateTime, Loading, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
+import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 
 type Panel = null | 'release' | 'supplier' | 'recall' | 'trace';
@@ -20,9 +22,11 @@ const RETURN_REASONS: { value: SupplierReturnReason; label: string }[] = [
 
 /** Quality actions for one batch, offered only in the states the backend accepts (batchQuality.ts). */
 export function BatchActions({ itemId, batch, onChanged }: { itemId: string; batch: Batch; onChanged: () => Promise<unknown> }) {
-  const { api } = useSession();
+  const { api, memory } = useSession();
   const inv = inventoryApi(api);
-  const [panel, setPanel] = useState<Panel>(null);
+  // An unconfirmed supplier return reopens its (locked) form, wherever staff left it.
+  const [panel, setPanel] = useState<Panel>(() => (memory.get(supplierPendingKey(batch._id)) ? 'supplier' : null));
+  const [notice, setNotice] = useState<string | null>(null);
   const can = (a: keyof typeof BATCH_ACTION_FROM) => (BATCH_ACTION_FROM[a] as readonly string[]).includes(batch.status);
   const done = async () => { setPanel(null); await onChanged(); };
 
@@ -35,8 +39,8 @@ export function BatchActions({ itemId, batch, onChanged }: { itemId: string; bat
             onConfirm={async (reason) => { await inv.quarantine(itemId, batch._id, reason); await onChanged(); }} />
         )}
         {can('release') && <Button variant="secondary" onClick={() => setPanel(panel === 'release' ? null : 'release')}>Release…</Button>}
-        {can('supplierReturn') && batch.availableQty > 0 && (
-          <Button variant="secondary" onClick={() => setPanel(panel === 'supplier' ? null : 'supplier')}>Return to supplier…</Button>
+        {can('supplierReturn') && batch.availableQty > 0 && panel !== 'supplier' && (
+          <Button variant="secondary" onClick={() => { setNotice(null); setPanel('supplier'); }}>Return to supplier…</Button>
         )}
         {can('recall') && <Button variant="secondary" onClick={() => setPanel(panel === 'recall' ? null : 'recall')}>Recall…</Button>}
         {batch.status === 'recalled' && (
@@ -44,7 +48,14 @@ export function BatchActions({ itemId, batch, onChanged }: { itemId: string; bat
         )}
       </div>
       {panel === 'release' && <ReleaseForm itemId={itemId} batch={batch} onDone={done} onCancel={() => setPanel(null)} />}
-      {panel === 'supplier' && <SupplierReturnForm itemId={itemId} batch={batch} onDone={done} onCancel={() => setPanel(null)} />}
+      {notice && <Alert tone="ok">{notice}</Alert>}
+      {panel === 'supplier' && (
+        <SupplierReturnForm itemId={itemId} batch={batch} onCancel={() => setPanel(null)}
+          onDone={async (r) => {
+            setNotice(`${r.duplicate ? 'Already recorded' : 'Recorded'}: ${r.quantity} units of batch ${r.batchNumber} returned (${r.reason.replace(/_/g, ' ')}).`);
+            await done();
+          }} />
+      )}
       {panel === 'recall' && <RecallForm itemId={itemId} batch={batch} onDone={onChanged} onCancel={() => setPanel(null)} />}
       {panel === 'trace' && <TraceLoader itemId={itemId} batchId={batch._id} />}
     </div>
@@ -105,23 +116,72 @@ function ReleaseForm({ itemId, batch, onDone, onCancel }: { itemId: string; batc
   );
 }
 
-function SupplierReturnForm({ itemId, batch, onDone, onCancel }: { itemId: string; batch: Batch; onDone: () => Promise<unknown>; onCancel: () => void }) {
-  const { api } = useSession();
+const supplierPendingKey = (batchId: string) => `supplier-return:${batchId}`;
+interface PendingSupplierReturn { body: SupplierReturnRequest; supplierName: string; error?: string }
+
+/**
+ * A supplier return removes stock, so it must happen once. Each submission carries a request key; while its outcome
+ * is unknown the form is locked to "send the same return again" (same key, same details), which the backend answers
+ * with the first record. The unconfirmed return is kept in session memory, so it survives leaving the page.
+ */
+function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
+  itemId: string; batch: Batch; onDone: (r: SupplierReturn & { duplicate?: boolean }) => Promise<unknown>; onCancel: () => void;
+}) {
+  const { api, memory } = useSession();
+  const key = supplierPendingKey(batch._id);
   const suppliers = useQuery({ queryKey: ['pharmacy-suppliers', 'active'], queryFn: () => inventoryApi(api).suppliers() });
+  const [pending, setPendingState] = useState<PendingSupplierReturn | undefined>(() => memory.get<PendingSupplierReturn>(key));
   const [supplierId, setSupplierId] = useState('');
   const [qty, setQty] = useState('');
   const [reason, setReason] = useState<SupplierReturnReason>(batch.status === 'recalled' ? 'recalled' : batch.status === 'expired' ? 'expired' : 'damaged');
   const [notes, setNotes] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const { busy, error, run } = useSubmit();
+  const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
+
+  const setPending = (p: PendingSupplierReturn | undefined) => {
+    if (p) memory.set(key, p); else memory.delete(key);
+    setPendingState(p);
+  };
+
+  async function send(p: PendingSupplierReturn) {
+    setBusy(true);
+    setRefused(null);
+    setPending({ ...p, error: undefined });
+    try {
+      const r = await inventoryApi(api).supplierReturn(itemId, batch._id, p.body);
+      setPending(undefined);
+      await onDone(r);
+    } catch (err) {
+      if (definitelyNotRecorded(err)) { setPending(undefined); setRefused(messageOf(err)); }
+      else setPending({ ...p, error: messageOf(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (pending) {
+    const b = pending.body;
+    return (
+      <div className="confirm" role="group" aria-label={`Unconfirmed return of batch ${batch.batchNumber}`}>
+        <Alert tone="warn">
+          This return was sent but its answer did not arrive{pending.error ? ` (${pending.error})` : ''}. It may already be
+          recorded. Send the same return again to find out; it will not be recorded twice.
+        </Alert>
+        <div>{b.quantity} units to {pending.supplierName} · {b.reason.replace(/_/g, ' ')}{b.notes ? ` · “${b.notes}”` : ''}</div>
+        <div className="confirm-actions"><Button busy={busy} onClick={() => void send(pending)}>Send the same return again</Button></div>
+      </div>
+    );
+  }
 
   if (suppliers.isPending) return <Loading label="Loading suppliers…" />;
   if (suppliers.isError) return <Alert>{messageOf(suppliers.error)}</Alert>;
-  if (suppliers.data.items.length === 0) return <Alert tone="warn">Add a supplier first; returns go to one of your active suppliers.</Alert>;
+  const active = suppliers.data.items.filter((s) => s.state === 'active');
+  if (active.length === 0) return <Alert tone="warn">Add a supplier first; returns go to one of your active suppliers.</Alert>;
 
   return (
     <FormShell name={`Return batch ${batch.batchNumber}`} title={`Send unreserved units of batch ${batch.batchNumber} back to a supplier. They leave your stock.`}
-      submitLabel="Record supplier return" danger busy={busy} error={error} onCancel={onCancel}
+      submitLabel="Record supplier return" danger busy={busy} error={refused ? `Not recorded: ${refused}` : null} onCancel={onCancel}
       onSubmit={() => {
         const n = wholeNumber(qty);
         const e: Record<string, string> = {};
@@ -129,9 +189,9 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: { itemId: strin
         if (!Number.isInteger(n) || n < 1 || n > batch.availableQty) e.qty = `Enter a whole number from 1 to ${batch.availableQty}.`;
         setErrors(e);
         if (Object.keys(e).length === 0) {
-          void run(async () => {
-            await inventoryApi(api).supplierReturn(itemId, batch._id, { supplierId, quantity: n, reason, ...(notes.trim() ? { notes: notes.trim() } : {}) });
-            await onDone();
+          void send({
+            supplierName: active.find((s) => s.supplierId === supplierId)?.displayName ?? 'the supplier',
+            body: { supplierId, quantity: n, reason, ...(notes.trim() ? { notes: notes.trim() } : {}), requestKey: newRequestKey() },
           });
         }
       }}>
@@ -139,7 +199,7 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: { itemId: strin
         <label htmlFor={`sup-${batch._id}`}>Supplier</label>
         <select id={`sup-${batch._id}`} value={supplierId} aria-invalid={errors.supplier ? true : undefined} onChange={(e) => setSupplierId(e.target.value)}>
           <option value="">Choose…</option>
-          {suppliers.data.items.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
+          {active.map((s) => <option key={s.supplierId} value={s.supplierId}>{s.displayName}</option>)}
         </select>
         {errors.supplier && <span className="j-field__error">{errors.supplier}</span>}
       </div>

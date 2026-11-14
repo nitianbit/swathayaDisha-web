@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import {
-  ApiError, pharmacyOrdersApi, type CustomerReturn, type Page, type CustomerReturnLine, type CustomerReturnRequest, type PharmacyOrder,
+  pharmacyOrdersApi, type CustomerReturn, type Page, type CustomerReturnLine, type CustomerReturnRequest, type PharmacyOrder,
 } from '@jansetu/api';
 import { Alert, Button, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
+import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 
 interface Row { key: string; medicineId: string; medicineName: string; batchId: string; batchNumber: string; sold: number }
@@ -13,21 +14,11 @@ interface Row { key: string; medicineId: string; medicineName: string; batchId: 
 interface Pending { requestKey: string; body: CustomerReturnRequest; error?: string }
 type Receipt = CustomerReturn & { duplicate?: boolean };
 
-export const newRequestKey = () => crypto.randomUUID().replace(/-/g, '');
-
 /** Rupees with at most two decimals, as the backend's Joi rule accepts (`precision(2).strict()`). */
 export function parseRupees(text: string): number | null {
   const t = text.trim();
   if (!/^\d{1,7}(\.\d{1,2})?$/.test(t)) return null;
   return Number(t);
-}
-
-/**
- * The server refused the request itself (validation, state, limits): nothing was recorded, so the details may be
- * changed and sent under a new key. Anything else (no answer, timeout, 5xx, rate limit) may have been recorded.
- */
-export function definitelyNotRecorded(err: unknown): boolean {
-  return err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429;
 }
 
 const pendingKey = (orderId: string) => `customer-return:${orderId}`;

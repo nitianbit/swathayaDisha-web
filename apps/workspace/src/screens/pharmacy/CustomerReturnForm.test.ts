@@ -1,5 +1,6 @@
 import { ApiError } from '@jansetu/api';
-import { definitelyNotRecorded, newRequestKey, parseRupees } from './CustomerReturnForm.tsx';
+import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
+import { parseRupees } from './CustomerReturnForm.tsx';
 
 describe('customer return helpers', () => {
   it('accepts rupees with at most two decimals, as the backend does', () => {

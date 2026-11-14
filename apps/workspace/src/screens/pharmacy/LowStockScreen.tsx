@@ -42,7 +42,7 @@ export function LowStockScreen() {
                         <td><Link to={`/pharmacy/stock?q=${encodeURIComponent(term)}`}>{name}</Link></td>
                         <td>{sellableQty(item)}</td>
                         <td>{item.reorderThreshold}</td>
-                        <td>{item.upcomingRefills?.length ?? 0}</td>
+                        <td>{typeof item.upcomingRefills === 'number' ? item.upcomingRefills : 0}</td>
                       </tr>
                     );
                   })}

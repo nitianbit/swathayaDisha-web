@@ -18,11 +18,14 @@ const FROM: Record<string, string[]> = {
   'supplier-return': ['active', 'expired', 'quarantined', 'recalled'], recall: ['active', 'expired', 'quarantined', 'depleted'],
 };
 
-interface Backend { batches: Batch[]; calls: { path: string; body: unknown }[]; heldOrders: Record<string, unknown>[] }
+interface Backend {
+  batches: Batch[]; calls: { path: string; body: unknown }[]; heldOrders: Record<string, unknown>[];
+  returnsByKey: Map<string, Record<string, unknown>>; loseNextAnswer: boolean;
+}
 
 async function mockBackend(page: Page): Promise<Backend> {
   const state: Backend = {
-    calls: [],
+    calls: [], returnsByKey: new Map(), loseNextAnswer: false,
     batches: [
       { _id: A, batchNumber: 'PCM-A', expiryDate: '20990101', availableQty: 10, reservedQty: 2, status: 'active' },
       { _id: Q, batchNumber: 'PCM-Q', expiryDate: '20990101', availableQty: 6, reservedQty: 1, status: 'quarantined', holdReason: 'Seal broken' },
@@ -39,7 +42,7 @@ async function mockBackend(page: Page): Promise<Backend> {
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const item = () => ({
     _id: ITEM, medicineId: { _id: MED, name: 'Paracetamol', strength: '650mg' }, availableQty: 70, reservedQty: 3,
-    reorderThreshold: 20, rackLocation: 'B2', batches: state.batches, upcomingRefills: [{}, {}],
+    reorderThreshold: 20, rackLocation: 'B2', batches: state.batches,
   });
 
   await page.route('**/api/v1/**', async (route) => {
@@ -58,7 +61,7 @@ async function mockBackend(page: Page): Promise<Backend> {
       const s = (url.searchParams.get('search') ?? '').toLowerCase();
       return page1(!s || 'paracetamol'.includes(s) ? [item()] : []);
     }
-    if (path === '/pharmacy-inventory/low-stock') return page1([{ ...item(), reorderThreshold: 30 }]);
+    if (path === '/pharmacy-inventory/low-stock') return page1([{ ...item(), reorderThreshold: 30, upcomingRefills: 12 }]); // a count, as the backend sends it
     if (path === '/pharmacy-inventory/held-batch-orders') return json(route, 200, { success: true, data: state.heldOrders });
     if (path === '/pharmacy-inventory/quality-holds') {
       return page1(state.batches.filter((b) => ['quarantined', 'recalled'].includes(b.status)).map((b) => ({
@@ -67,7 +70,7 @@ async function mockBackend(page: Page): Promise<Backend> {
       })));
     }
     if (path === '/pharmacy-inventory/supplier-returns') return page1([]);
-    if (path === '/pharmacy-suppliers') return page1([{ _id: SUPPLIER, name: 'Sun Distributors', state: 'active' }]);
+    if (path === '/pharmacy-suppliers') return page1([{ supplierId: SUPPLIER, displayName: 'Sun Distributors', state: 'active', revision: 1, contactName: null }]); // SupplierDto
 
     const m = /^\/pharmacy-inventory\/(\w{24})\/batches\/(\w{24})\/([a-z-]+)$/.exec(path);
     if (m) {
@@ -77,10 +80,21 @@ async function mockBackend(page: Page): Promise<Backend> {
         return json(route, 200, { success: true, data: { batch: b, openOrders: [], dispensedTo: [{ orderId: '8'.repeat(24), orderNumber: 'PO-1', quantity: 3, completedAt: '2026-11-01T10:00:00.000Z' }], dispensedTruncated: false } });
       }
       state.calls.push({ path: `${batchId}/${action}`, body });
+      if (action === 'supplier-return') {
+        const seen = state.returnsByKey.get(String(body?.requestKey));
+        if (seen) return json(route, 200, { success: true, data: { ...seen, duplicate: true } }); // replay before any check
+      }
       if (!FROM[action!]!.includes(b.status)) return json(route, 409, { error: 409, code: 'BATCH_STATE', message: `A ${b.status} batch cannot do that` });
       if (action === 'quarantine') b.status = 'quarantined';
       if (action === 'release') { b.status = 'active'; b.availableQty -= Number(body?.writeOffQty); }
-      if (action === 'supplier-return') b.availableQty -= Number(body?.quantity);
+      if (action === 'supplier-return') {
+        if (Number(body?.quantity) > b.availableQty) return json(route, 400, { error: 400, code: 'VALIDATION_ERROR', message: `Quantity must be between 1 and ${b.availableQty} (unreserved units)` });
+        b.availableQty -= Number(body?.quantity);
+        const rec = { _id: '9'.repeat(24), batchNumber: b.batchNumber, quantity: body?.quantity, reason: body?.reason, requestKey: body?.requestKey };
+        state.returnsByKey.set(String(body?.requestKey), rec);
+        if (state.loseNextAnswer) { state.loseNextAnswer = false; return route.abort('connectionreset'); }
+        return json(route, 201, { success: true, data: rec });
+      }
       if (action === 'recall') {
         b.status = 'recalled';
         return json(route, 200, { success: true, data: { batch: b, impactedOrders: [state.heldOrders[0]], dispensedTo: [], dispensedTruncated: false } });
@@ -162,7 +176,48 @@ test('a supplier return needs a supplier and a quantity within the unreserved un
   await row(page, 'PCM-R').getByLabel('Units', { exact: true }).fill('4');
   await row(page, 'PCM-R').getByRole('button', { name: 'Record supplier return' }).click();
   await expect(row(page, 'PCM-R').getByRole('button', { name: 'Return to supplier…' })).toHaveCount(0); // nothing unreserved left
-  expect(backend.calls).toEqual([{ path: `${R}/supplier-return`, body: { supplierId: SUPPLIER, quantity: 4, reason: 'recalled' } }]);
+  await expect(page.getByText('Recorded: 4 units of batch PCM-R returned (recalled).')).toBeVisible();
+  expect(backend.calls).toEqual([{ path: `${R}/supplier-return`, body: { supplierId: SUPPLIER, quantity: 4, reason: 'recalled', requestKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/) } }]);
+});
+
+test('a supplier return whose answer is lost is locked, survives leaving the page, and is resent unchanged', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.loseNextAnswer = true; // recorded, answer lost
+  await signIn(page, 'Stock');
+  await row(page, 'PCM-A').getByRole('button', { name: 'Return to supplier…' }).click();
+  await row(page, 'PCM-A').getByLabel('Supplier', { exact: true }).selectOption('Sun Distributors');
+  await row(page, 'PCM-A').getByLabel('Units', { exact: true }).fill('3');
+  await row(page, 'PCM-A').getByRole('button', { name: 'Record supplier return' }).click();
+  const locked = page.getByRole('group', { name: 'Unconfirmed return of batch PCM-A' });
+  await expect(locked).toContainText('3 units to Sun Distributors · damaged');
+  await expect(row(page, 'PCM-A').getByLabel('Units', { exact: true })).toHaveCount(0);
+
+  await page.getByRole('link', { name: 'Low stock' }).click();
+  await page.getByRole('link', { name: 'Stock', exact: true }).click();
+  await expect(locked).toBeVisible(); // reopened on its own
+  await locked.getByRole('button', { name: 'Send the same return again' }).click();
+  await expect(page.getByText('Already recorded: 3 units of batch PCM-A returned (damaged).')).toBeVisible();
+  const sent = backend.calls.filter((c) => c.path === `${A}/supplier-return`).map((c) => c.body);
+  expect(sent).toHaveLength(2);
+  expect(sent[1]).toEqual(sent[0]);
+  expect(backend.batches.find((b) => b._id === A)!.availableQty).toBe(7); // 10 - 3, once
+});
+
+test('a refused supplier return records nothing and can be corrected', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page, 'Stock');
+  await expect(page.getByText('10 sellable')).toBeVisible();
+  backend.batches.find((b) => b._id === A)!.availableQty = 2; // someone else took units meanwhile; the page still says 10
+  await row(page, 'PCM-A').getByRole('button', { name: 'Return to supplier…' }).click();
+  await row(page, 'PCM-A').getByLabel('Supplier', { exact: true }).selectOption('Sun Distributors');
+  await row(page, 'PCM-A').getByLabel('Units', { exact: true }).fill('5');
+  await row(page, 'PCM-A').getByRole('button', { name: 'Record supplier return' }).click();
+  await expect(row(page, 'PCM-A').getByText('Not recorded: Quantity must be between 1 and 2 (unreserved units)')).toBeVisible();
+  await row(page, 'PCM-A').getByLabel('Units', { exact: true }).fill('2');
+  await row(page, 'PCM-A').getByRole('button', { name: 'Record supplier return' }).click();
+  await expect(page.getByText('Recorded: 2 units of batch PCM-A returned (damaged).')).toBeVisible();
+  const keys = backend.calls.filter((c) => c.path === `${A}/supplier-return`).map((c) => (c.body as { requestKey: string }).requestKey);
+  expect(new Set(keys).size).toBe(2);
 });
 
 test('a recall is confirmed and immediately shows who is affected; a recalled batch keeps its trace', async ({ page }) => {
@@ -187,7 +242,7 @@ test('low stock lists medicines below their level with refills due', async ({ pa
   const r = page.getByRole('row').filter({ hasText: 'Paracetamol 650mg' });
   await expect(r).toContainText('10');
   await expect(r).toContainText('30');
-  await expect(r).toContainText('2');
+  await expect(r.getByRole('cell').nth(3)).toHaveText('12');
   await r.getByRole('link').click();
   await expect(page.getByRole('heading', { name: 'Stock' })).toBeVisible();
   await expect(page.getByLabel('Medicine')).toHaveValue('Paracetamol');
