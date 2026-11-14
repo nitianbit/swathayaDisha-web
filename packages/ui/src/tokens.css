@@ -1,0 +1,124 @@
+/* Jansetu design tokens. The brand lives here only: change these to rebrand. See docs/DESIGN.md. */
+:root {
+  --ink: #10222b;
+  --muted: #56666e;
+  --line: #d9e2e5;
+  --canvas: #f4f7f7;
+  --surface: #ffffff;
+  --brand: #0b6e70;
+  --brand-strong: #075456;
+  --brand-ink: #ffffff;
+  --brand-soft: #e2f1f0;
+  --accent: #c9551f;
+  --danger: #b42318;
+  --danger-soft: #fdeceb;
+  --ok: #1a7343;
+  --ok-soft: #e5f3eb;
+  --warn: #8a5a00;
+  --warn-soft: #fff3d6;
+  --focus: #1f6feb;
+
+  --radius: 8px;
+  --tap: 44px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Noto Sans Devanagari', sans-serif;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5rem;
+
+  color-scheme: light;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: var(--text-md);
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--canvas);
+}
+h1, h2, h3 { line-height: 1.25; margin: 0; }
+a { color: var(--brand-strong); }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+.j-btn {
+  min-height: var(--tap);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  text-decoration: none;
+}
+.j-btn[disabled] { opacity: 0.55; cursor: not-allowed; }
+.j-btn--primary { background: var(--brand); color: var(--brand-ink); }
+.j-btn--primary:not([disabled]):hover { background: var(--brand-strong); }
+.j-btn--secondary { background: var(--surface); color: var(--ink); border-color: var(--line); }
+.j-btn--danger { background: var(--danger); color: #fff; }
+.j-btn--ghost { background: transparent; color: var(--brand-strong); }
+
+.j-field { display: grid; gap: var(--space-1); }
+.j-field label { font-weight: 600; font-size: var(--text-sm); }
+.j-field input, .j-field textarea, .j-field select {
+  min-height: var(--tap);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font: inherit;
+  background: var(--surface);
+  color: var(--ink);
+}
+.j-field textarea { min-height: 96px; resize: vertical; }
+.j-field [aria-invalid='true'] { border-color: var(--danger); }
+.j-field__hint { color: var(--muted); font-size: var(--text-sm); }
+.j-field__error { color: var(--danger); font-size: var(--text-sm); }
+
+.j-alert { padding: var(--space-3) var(--space-4); border-radius: var(--radius); border: 1px solid; }
+.j-alert--error { background: var(--danger-soft); border-color: #f3c2bd; color: var(--danger); }
+.j-alert--ok { background: var(--ok-soft); border-color: #b9dcc8; color: var(--ok); }
+.j-alert--warn { background: var(--warn-soft); border-color: #f0d79a; color: var(--warn); }
+
+.j-badge {
+  display: inline-block;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  white-space: nowrap;
+}
+.j-badge--warn { background: var(--warn-soft); color: var(--warn); }
+.j-badge--danger { background: var(--danger-soft); color: var(--danger); }
+.j-badge--ok { background: var(--ok-soft); color: var(--ok); }
+
+.j-state { padding: var(--space-6) var(--space-4); text-align: center; color: var(--muted); display: grid; gap: var(--space-3); justify-items: center; }
+
+.j-table { width: 100%; border-collapse: collapse; background: var(--surface); }
+.j-table th, .j-table td { text-align: left; padding: var(--space-3); border-bottom: 1px solid var(--line); vertical-align: top; }
+.j-table th { font-size: var(--text-sm); color: var(--muted); font-weight: 600; }
+.j-table tbody tr:hover { background: var(--canvas); }
+
+.j-sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

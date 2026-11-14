@@ -1,0 +1,41 @@
+import { useEffect, useMemo, useRef } from 'react';
+import { createHashRouter, Outlet, RouterProvider, useLocation } from 'react-router';
+import { Empty } from '@jansetu/ui';
+import { Shell } from './Shell.tsx';
+import { pagesFor } from './modules.tsx';
+import { useSession } from './session.tsx';
+import { LoginScreen } from './screens/LoginScreen.tsx';
+import type { StaffRole } from './session.tsx';
+
+/** Moves focus to the page title after navigation so screen readers announce the new page. */
+function FocusOnNavigate() {
+  const { pathname } = useLocation();
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    document.getElementById('page-title')?.focus();
+  }, [pathname]);
+  return null;
+}
+
+function routerFor(role: StaffRole) {
+  return createHashRouter([{
+    element: <Shell><FocusOnNavigate /><Outlet /></Shell>,
+    children: [
+      ...pagesFor(role).map((p) => ({ path: p.path, element: p.element })),
+      { path: '*', element: <Empty title="Page not found">This page does not exist or is not available to your account.</Empty> },
+    ],
+  }]);
+}
+
+/** A fresh router per sign-in; it starts at the current hash, so a deep link survives signing in again. */
+function SignedIn({ role, sessionKey }: { role: StaffRole; sessionKey: object }) {
+  const router = useMemo(() => routerFor(role), [role, sessionKey]);
+  return <RouterProvider router={router} />;
+}
+
+export function App() {
+  const { state } = useSession();
+  if (state.status !== 'signed_in') return <LoginScreen notice={state.notice} />;
+  return <SignedIn role={state.user.role} sessionKey={state.user} />;
+}

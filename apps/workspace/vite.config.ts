@@ -1,0 +1,56 @@
+import { defineConfig, loadEnv } from 'vite';
+import react from '@vitejs/plugin-react';
+
+/**
+ * Staff workspace. `VITE_API_BASE_URL` is the backend origin (no path); it must be HTTPS except for local
+ * development. In development, leave it empty: the dev server proxies `/api` to the local backend (port 4031).
+ * A Content-Security-Policy meta tag is injected so the page can only talk to that origin.
+ */
+export default defineConfig(({ command, mode }) => {
+  const env = loadEnv(mode, process.cwd(), 'VITE_');
+  const apiBase = env.VITE_API_BASE_URL?.trim() || '';
+  const development = command === 'serve' || mode === 'development' || mode === 'test';
+  let apiOrigin = '';
+  if (apiBase) {
+    const url = new URL(apiBase);
+    if (url.username || url.password || url.search || url.hash || url.pathname !== '/') {
+      throw new Error('VITE_API_BASE_URL must be an origin without credentials or a path.');
+    }
+    const local = ['localhost', '127.0.0.1'].includes(url.hostname);
+    if (url.protocol !== 'https:' && !(development && local && url.protocol === 'http:')) {
+      throw new Error('VITE_API_BASE_URL must use HTTPS outside local development.');
+    }
+    apiOrigin = url.origin;
+  } else if (!development) {
+    throw new Error('Set VITE_API_BASE_URL to the HTTPS backend origin before building for release.');
+  }
+  const connect = ["'self'", apiOrigin, ...(command === 'serve' ? ['ws://127.0.0.1:*', 'ws://localhost:*'] : [])]
+    .filter(Boolean).join(' ');
+  const policy = [
+    "default-src 'self'",
+    `script-src 'self'${command === 'serve' ? " 'unsafe-inline'" : ''}`,
+    "style-src 'self' 'unsafe-inline'",
+    // Prescription files are fetched with the token and shown from blob: URLs.
+    "img-src 'self' data: blob:",
+    "frame-src blob:",
+    "font-src 'self'",
+    `connect-src ${connect}`,
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join('; ');
+  return {
+    base: './',
+    plugins: [react(), {
+      name: 'jansetu-content-security-policy',
+      transformIndexHtml() {
+        return [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: policy }, injectTo: 'head-prepend' }];
+      },
+    }],
+    server: {
+      host: '127.0.0.1', port: 5174, strictPort: true,
+      proxy: { '/api': { target: env.VITE_DEV_BACKEND || 'http://localhost:4031', changeOrigin: true } },
+      headers: { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' },
+    },
+  };
+});

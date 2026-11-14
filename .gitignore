@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+test-results/
+playwright-report/
+*.local
+.env
+.env.*
+!.env.example
+.DS_Store
+# Capacitor copies built web assets into the native projects; the projects themselves are committed.
+apps/customer/android/app/src/main/assets/public/
+apps/customer/ios/App/App/public/
