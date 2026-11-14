@@ -94,7 +94,10 @@ function BookingView({ booking: b }: { booking: Booking }) {
 function PaymentPanel({ booking: b }: { booking: Booking }) {
   const { api } = useSession();
   const queryClient = useQueryClient();
-  const [state, setState] = useState<'checking' | PaymentOutcome | 'paying' | 'expired'>('checking');
+  // 'closed' = the server refused a new payment because the window passed. That is not the final answer: an earlier
+  // payment may still be captured (then the booking is confirmed), otherwise the sweep cancels it. Keep checking.
+  const [state, setState] = useState<'checking' | PaymentOutcome | 'paying' | 'closed'>('checking');
+  const closed = useRef(false);
   const payBy = payByTime(b.createdAt);
   const [error, setError] = useState<string | null>(null);
   const checked = useRef(false);
@@ -105,17 +108,24 @@ function PaymentPanel({ booking: b }: { booking: Booking }) {
   };
   // Every payment attempt of the booking is checked (an older order replaced by "Pay now" too).
   const check = async () => {
-    setState('checking');
+    if (!closed.current) setState('checking');
     try {
       const r = await customerApi(api).reconcileBookingPayments(b._id);
       const paid = r.booking.paymentStatus === 'paid';
-      setState(paid ? 'paid' : r.unknown > 0 ? 'unknown' : 'unpaid');
-      if (paid || r.booking.status !== b.status) await refresh();
+      if (paid) setState('paid');
+      else if (!closed.current) setState(r.unknown > 0 ? 'unknown' : 'unpaid');
+      if (paid || r.booking.status !== b.status || r.booking.paymentStatus !== b.paymentStatus) await refresh();
     } catch {
-      setState('unknown');
+      if (!closed.current) setState('unknown');
     }
   };
   useEffect(() => { if (!checked.current) { checked.current = true; void check(); } }, []);
+  // While the window is closed but the booking is still pending, look again every minute for the final state.
+  useEffect(() => {
+    if (state !== 'closed') return;
+    const t = setInterval(() => void check(), 60_000);
+    return () => clearInterval(t);
+  }, [state]);
 
   async function payNow() {
     setError(null);
@@ -131,8 +141,8 @@ function PaymentPanel({ booking: b }: { booking: Booking }) {
       await refresh();
     } catch (err) {
       if (err instanceof ApiError && err.code === 'BOOKING_ALREADY_PAID') { setState('paid'); await refresh(); return; }
-      // The payment window has passed: no new order; the server releases the booking.
-      if (err instanceof ApiError && err.code === 'BOOKING_PAYMENT_EXPIRED') { setState('expired'); await refresh(); return; }
+      // The payment window has passed: no new order. The booking's final state is still to come.
+      if (err instanceof ApiError && err.code === 'BOOKING_PAYMENT_EXPIRED') { closed.current = true; setState('closed'); await refresh(); return; }
       setError(messageOf(err));
       // The server refuses a new order while an earlier payment cannot be checked.
       setState(err instanceof ApiError && err.code === 'PAYMENT_STATE_UNKNOWN' ? 'unknown' : 'unpaid');
@@ -144,8 +154,16 @@ function PaymentPanel({ booking: b }: { booking: Booking }) {
       <h2 id="pay-h">Payment</h2>
       {state === 'checking' ? <Loading label="Checking your payment…" />
         : state === 'paid' ? <Alert tone="ok">Payment received. Your booking is confirmed.</Alert>
-        : state === 'expired' ? (
-          <Alert tone="warn">The time to pay for this booking has passed, so it is being released. Please book a new time.</Alert>
+        : state === 'closed' ? (
+          <>
+            <Alert tone="warn">
+              The time to pay for this booking has passed, so a new payment cannot be started. If you already paid, the
+              booking will be confirmed; otherwise it will be released. This page checks again every minute.
+            </Alert>
+            <div className="row">
+              <Button variant="secondary" onClick={() => void check()}>Check now</Button>
+            </div>
+          </>
         ) : (
           <>
             <Alert tone="warn">

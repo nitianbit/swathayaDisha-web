@@ -21,7 +21,7 @@ interface Backend {
   byKey: Map<string, string>;
   gatewayDown: boolean;
   refuseCreate: boolean;
-  /** The 30-minute payment window has passed: "Pay now" is refused and the booking is released (backend D2). */
+  /** The 30-minute payment window has passed: "Pay now" is refused (409); the booking stays pending until the sweep (backend D2). */
   windowPassed: boolean;
 }
 
@@ -124,8 +124,6 @@ async function mockBackend(page: Page): Promise<Backend> {
         if (settleAll(m[1]!)) return json(route, 503, { error: 503, code: 'PAYMENT_STATE_UNKNOWN', message: 'We could not check your earlier payment for this booking. Please try again in a few minutes.' });
         if (b.paymentStatus === 'paid') return json(route, 400, { error: 400, code: 'BOOKING_ALREADY_PAID', message: 'Booking is already paid' });
         if (state.windowPassed) {
-          Object.assign(b, { status: 'cancelled', paymentStatus: 'refunded', cancellationCause: 'payment_timeout',
-            cancellationReason: 'Payment was not completed in time', cancelledAt: new Date().toISOString() });
           return json(route, 409, { error: 409, code: 'BOOKING_PAYMENT_EXPIRED', message: 'The time to pay for this booking has passed. Please book again.' });
         }
         const open = state.records.get(String(b.paymentTransactionId));
@@ -338,8 +336,15 @@ test('a free consultation is booked without the payment page', async ({ page }) 
   expect(posts(backend, '/payments/verify')).toHaveLength(0);
 });
 
-test('after the 30-minute payment window "Pay now" is refused and the booking shows as expired, without a new order', async ({ page }) => {
-  const backend = await mockBackend(page);
+/** The backend sweep cancels an unpaid booking after the window (backend D2). */
+function sweep(backend: Backend) {
+  for (const b of backend.bookings.values()) {
+    if (b.status === 'pending' && b.paymentStatus === 'pending') Object.assign(b, { status: 'cancelled', paymentStatus: 'refunded',
+      cancellationCause: 'payment_timeout', cancellationReason: 'Payment was not completed in time', cancelledAt: new Date().toISOString() });
+  }
+}
+
+async function bookUnpaidThenWindowPasses(page: Page, backend: Backend) {
   await signIn(page);
   await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'close'; });
   await bookPaid(page);
@@ -347,11 +352,32 @@ test('after the 30-minute payment window "Pay now" is refused and the booking sh
   await expect(page.getByText(/This booking is not paid yet\. Your time is held until/)).toBeVisible();
   backend.windowPassed = true;
   await page.getByRole('button', { name: 'Pay now' }).click();
+  // Refused, but not yet final: no advice to rebook, no new order, the booking still pending.
+  await expect(page.getByText(/a new payment cannot be started/)).toBeVisible();
+  await expect(page.getByText(/Please book a new time|book a new time with the doctor/)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Pay now' })).toHaveCount(0);
+  await expect(page.getByText('Awaiting confirmation', { exact: true })).toBeVisible();
+  expect(backend.records.size).toBe(1);
+}
+
+test('after the payment window "Pay now" is refused; if the earlier payment is captured later the booking is confirmed', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await bookUnpaidThenWindowPasses(page, backend);
+  for (const r of backend.records.values()) r.captured = true;
+  await page.getByRole('button', { name: 'Check now' }).click();
+  await expect(page.getByText('Confirmed', { exact: true })).toBeVisible();
+  await expect(page.getByText(/expired because/)).toHaveCount(0);
+  expect(backend.records.size).toBe(1);
+});
+
+test('after the payment window, once the server releases the booking it shows as expired (booking and list)', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await bookUnpaidThenWindowPasses(page, backend);
+  sweep(backend);
+  await page.getByRole('button', { name: 'Check now' }).click();
   await expect(page.getByText(/expired because it was not paid within 30 minutes/)).toBeVisible();
   await expect(page.getByText('Expired', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Pay now' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel this booking' })).toHaveCount(0);
-  expect(backend.records.size).toBe(1); // no new chargeable order
   await page.getByRole('link', { name: 'My bookings' }).click();
   await expect(page.getByRole('link', { name: /Dr\. Meena Iyer/ }).getByText('Expired', { exact: true })).toBeVisible();
 });
