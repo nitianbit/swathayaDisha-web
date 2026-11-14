@@ -90,7 +90,8 @@ function useCreateBooking(doctor: Specialist) {
     await queryClient.invalidateQueries({ queryKey: ['bookings'] });
     await queryClient.invalidateQueries({ queryKey: ['wallet'] });
     const bookingPath = `/bookings/${created.booking._id}`;
-    if (!created.replayed && created.paymentRequired && created.payment) {
+    // A resent create that finished an interrupted creation also returns its payment order: pay it now.
+    if (created.paymentRequired && created.payment) {
       try {
         await payOrder(api, created.payment, payer, `Consultation with ${doctor.name}`);
       } catch (err) {
