@@ -7,10 +7,11 @@
     "apps/*"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit -p packages/api && tsc --noEmit -p packages/ui && tsc --noEmit -p apps/workspace",
+    "typecheck": "tsc --noEmit -p packages/api && tsc --noEmit -p packages/ui && tsc --noEmit -p apps/workspace && tsc --noEmit -p apps/customer",
     "test": "vitest run",
     "build": "npm run typecheck && npm run build --workspace apps/workspace",
     "dev:workspace": "npm run dev --workspace apps/workspace",
+    "dev:customer": "npm run dev --workspace apps/customer",
     "e2e": "npm run e2e --workspace apps/workspace"
   },
   "devDependencies": {

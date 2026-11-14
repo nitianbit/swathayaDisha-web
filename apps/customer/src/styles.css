@@ -1,0 +1,76 @@
+/* Customer app: phone first (360px), readable up to tablet/desktop width. Tokens from @jansetu/ui/tokens.css. */
+body { background: var(--canvas); }
+.app { min-height: 100vh; display: flex; flex-direction: column; }
+.app-skip { position: absolute; left: -9999px; }
+.app-skip:focus { left: var(--space-3); top: var(--space-3); z-index: 20; background: var(--surface); padding: var(--space-2) var(--space-3); }
+.app-main {
+  flex: 1;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: calc(var(--space-4) + env(safe-area-inset-top)) var(--space-4) calc(88px + env(safe-area-inset-bottom));
+  display: grid;
+  gap: var(--space-4);
+  align-content: start;
+}
+.app-tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  background: var(--surface); border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.app-tab {
+  min-height: 60px; display: grid; justify-items: center; align-content: center; gap: 2px;
+  color: var(--muted); text-decoration: none; font-size: var(--text-sm);
+}
+.app-tab.active { color: var(--brand-strong); font-weight: 700; }
+
+.page-head { display: grid; gap: var(--space-1); }
+.page-head h1 { font-size: var(--text-xl); }
+.page-head h1:focus { outline: none; }
+.page-sub { margin: 0; color: var(--muted); }
+.back { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--text-sm); min-height: var(--tap); }
+.muted { color: var(--muted); }
+.stack { display: grid; gap: var(--space-3); }
+.row { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+.row-between { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-4); }
+.card h2, section > h2 { font-size: var(--text-lg); margin: 0; }
+
+.tiles { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-3); }
+.tile {
+  display: grid; gap: var(--space-2); align-content: center; min-height: 96px; padding: var(--space-4);
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  color: var(--ink); text-decoration: none; font-weight: 600;
+}
+.tile svg { color: var(--brand); }
+.tile-value { display: block; font-size: var(--text-lg); color: var(--brand-strong); }
+
+.list { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.list > li + li { border-top: 1px solid var(--line); }
+.list-row { display: grid; gap: 2px; padding: var(--space-3) var(--space-4); }
+.link-row { color: var(--ink); text-decoration: none; min-height: var(--tap); }
+.link-row:hover { background: var(--canvas); }
+.amount-in { color: var(--ok); }
+.amount-out { color: var(--ink); }
+
+.balance { display: grid; gap: var(--space-1); }
+.balance strong { font-size: 2rem; color: var(--brand-strong); }
+
+.details { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-4); margin: 0; }
+.details dt { color: var(--muted); }
+.details dd { margin: 0; }
+.field-static { display: grid; gap: 2px; }
+.field-static span { font-weight: 600; font-size: var(--text-sm); }
+.field-static small { color: var(--muted); }
+.choice { border: 0; padding: 0; margin: 0; display: flex; gap: var(--space-4); flex-wrap: wrap; }
+.choice legend { font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--space-2); }
+.choice label { display: flex; align-items: center; gap: var(--space-2); min-height: var(--tap); }
+
+.confirm { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius); background: var(--canvas); }
+.confirm-actions { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+
+.login { min-height: 100vh; display: grid; place-items: center; padding: var(--space-4); }
+.login-card { width: min(420px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-6) var(--space-5); display: grid; gap: var(--space-4); }
+.login-card h1:focus { outline: none; }
+.brand { font-weight: 800; font-size: var(--text-lg); color: var(--brand-strong); }

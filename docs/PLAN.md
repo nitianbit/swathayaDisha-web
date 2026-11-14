@@ -48,7 +48,13 @@ uses a Capacitor plugin for that one thing (the NIYA employee app model).
      `GET /external-bookings/bookings/cancellations/attention` (branch `m0/w2c-admin-queues`) with every provider
      reference and its cancelled flag; the admin records "cancelled at the provider" or "no provider booking" (each
      offered only when it can apply), which releases the refund.
-3. **W3 customer app core.** OTP login, profile and family, bookings (with the A1/A2 cancellation rules and the
+3. **W3 customer app core.** W3a (built, browser): phone OTP sign-in (account created on first code), home with
+   profile-completion prompt and wallet balance, profile (an existing phone/email is shown read-only and never sent;
+   a missing email can be added), family members, bookings (doctors/packages and lab tests from both providers, always
+   paginated), booking detail with cancellation (paid bookings: IST 24 h / 48 h-Monday window shown before the tap,
+   refund to wallet; lab tests: "cancelling" until the lab confirms), wallet history, sign out / sign out on all
+   devices. Next: W3b booking flows (search, slots, payment with Razorpay), reports, Capacitor shell.
+   Original scope: OTP login, profile and family, bookings (with the A1/A2 cancellation rules and the
    `cancellation_requested` state), lab tests/diagnostics, wallet, coupons, Razorpay, reports, notifications; English
    and Hindi; Capacitor shell.
 4. **W4 pharmacy operations.** Medicines, inventory and Excel import, counter orders, customers, subscriptions;
@@ -108,6 +114,7 @@ Stacked on `m0/a2b-external-cancel` (284e24c), in the worktree `SwasthaDisha-wor
 |---|---|---|
 | 2026-11-14 | W1 (first cut) | typecheck clean; Vitest 10/10; Playwright 14/14; release build guards. Codex review: 6 findings (file URL shape, queue scope x2, late 401 across sign-ins, "opened" ≠ readable, body timeout). |
 | 2026-11-14 | W1 (fixes) | typecheck clean; Vitest 16/16; Playwright 22/22 (desktop + tablet, mocked API, incl. corrupt image, download-only file, buyer/cancelled read-only, late 401 after re-sign-in); backend P1 integration 16/16 on the local replica set (new queue check). Not yet run against a real backend. |
+| 2026-11-14 | W3a | customer app: typecheck clean; Vitest 34/34 (+ cancellation-window mirror incl. IST and Monday 48 h); Playwright customer 16/16 (desktop + Pixel 7, mocked API); release build refuses non-HTTPS and pins connect-src. Workspace 82/82 unchanged. |
 | 2026-11-14 | W2c approved | Codex approved W2c (frontend dc1543d; backend c82c2ff + 7eb93c8: obligation fingerprint and per-booking admin snapshot). W1, W2a, W2b, W2c all approved at their pins (review approval only; nothing pushed or deployed). |
 | 2026-11-14 | W2c fix | Codex W2c: HIGH stale provider attestation. Backend c82c2ff (branch m0/w2c-obligation-fence): obligation fingerprint per worklist row, required by reconcile-cancellation and checked in the fenced transaction (409 EXTERNAL_OBLIGATIONS_CHANGED); A2b 18/18. Frontend: sends the reviewed fingerprint, cards keyed by it, a refused stale confirmation locks the card until the admin re-checks. Playwright 82/82. |
 | 2026-11-14 | W2a, W2b approved | Codex approved W2a (frontend 904cc4d) and W2b (frontend 904cc4d, backend 00554f2). |

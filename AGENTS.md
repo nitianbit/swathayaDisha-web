@@ -33,5 +33,6 @@ apps/customer       (W3) customer app, browser + Capacitor
 npm run typecheck
 npx vitest run
 cd apps/workspace && npx playwright test
+cd apps/customer && npx playwright test
 VITE_API_BASE_URL=https://<api-origin> npm run build --workspace apps/workspace   # for UI changes
 ```
