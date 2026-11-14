@@ -28,6 +28,20 @@ export interface Profile {
 export const PHONE_PATTERN = /^[0-9]{10}$/;
 export const OTP_PATTERN = /^[0-9]{6}$/;
 
+/** D4: once-only operations whose outcome a reloaded page never saw. */
+export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_create';
+
+/**
+ * Abandons an unresolved request key on the server: afterwards the old request can never be performed, so a new one
+ * is safe. 'used' means the old request WAS performed (look for its record instead).
+ */
+export function requestKeysApi(c: ApiClient) {
+  return {
+    abandon: async (kind: OnceOnlyKind, key: string) =>
+      (await c.post<{ state: 'abandoned' | 'used' }>('/request-keys/abandon', { body: { kind, key } })).state,
+  };
+}
+
 export function authApi(c: ApiClient) {
   return {
     sendOtp: (userType: UserType, target: OtpTarget) =>

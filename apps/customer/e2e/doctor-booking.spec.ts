@@ -26,6 +26,7 @@ interface Backend {
   /** D4: model cookie sessions (off by default: then a reload signs out, as the older tests expect). */
   sessions: boolean;
   live: boolean;
+  abandoned: Set<string>;
 }
 
 /** Fake Razorpay Checkout: `window.__rz` = 'pay' | 'close'. Paying marks the order captured at the fake gateway. */
@@ -45,7 +46,7 @@ window.Razorpay = function (o) {
 };`;
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const state: Backend = { calls: [], bookings: new Map(), records: new Map(), verifyFails: false, createDrops: false, byKey: new Map(), gatewayDown: false, refuseCreate: false, windowPassed: false, sessions: false, live: false };
+  const state: Backend = { calls: [], bookings: new Map(), records: new Map(), verifyFails: false, createDrops: false, byKey: new Map(), gatewayDown: false, refuseCreate: false, windowPassed: false, sessions: false, live: false, abandoned: new Set() };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
   let n = 0;
@@ -79,6 +80,12 @@ async function mockBackend(page: Page): Promise<Backend> {
       return json(route, 200, { success: true, data: { token: 't2', expiresIn: 900, principal: { userId: ME, userType: 'user', sid: 's' } } });
     }
     if (path === '/auth/session/logout') { state.live = false; return json(route, 200, { success: true }); }
+    if (path === '/request-keys/abandon') {
+      const { key } = body as { key: string };
+      if (state.byKey.has(key)) return json(route, 200, { success: true, data: { state: 'used' } });
+      state.abandoned.add(key);
+      return json(route, 200, { success: true, data: { state: 'abandoned' } });
+    }
     if (path === '/auth/profile') return json(route, 200, { success: true, data: { user: { _id: ME, name: 'Asha Rao', phone: '9876543210', email: 'a@x.in', gender: 'Female', dateOfBirth: '19900101' }, userRole: 'user' } });
     if (path === `/wallet/user/${ME}`) return json(route, 200, { success: true, data: { _id: 'w', userId: ME, balance: 50, isActive: true } });
     if (path === '/dependents') return page1(route, [{ _id: MOTHER, userId: ME, name: 'Kamala Rao', relationship: 'Mother', isActive: true }]);
@@ -414,9 +421,27 @@ test('D4: a booking request whose answer was lost comes back after a reload and 
   await expect(page.getByRole('group', { name: 'Unconfirmed booking request' })).toBeVisible();
   await page.reload();
   const restored = page.getByRole('group', { name: 'Unconfirmed booking request' });
-  await expect(restored).toContainText('made before this page was reloaded');
+  await expect(restored).toContainText('made earlier on this device');
   await expect(page.getByRole('button', { name: 'Book and pay' })).toHaveCount(0);
   await restored.getByRole('button', { name: 'Check my bookings' }).click();
   await expect(page.getByText('Awaiting confirmation', { exact: true })).toBeVisible(); // its booking page
   expect(backend.bookings.size).toBe(1);
+});
+
+test('D4: a booking request lost before reaching the server, then a reload: check, cancel it on the server, book again', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.sessions = true;
+  await signIn(page);
+  await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'close'; });
+  await bookPaid(page);
+  backend.createDrops = 'before';
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed booking request' })).toBeVisible();
+  await page.reload();
+  const restored = page.getByRole('group', { name: 'Unconfirmed booking request' });
+  await restored.getByRole('button', { name: 'Check my bookings' }).click();
+  await restored.getByRole('button', { name: 'Cancel it and book again' }).click();
+  await expect(page.getByRole('button', { name: '11:30 PM' })).toBeVisible();
+  expect(backend.abandoned.size).toBe(1);
+  expect(backend.bookings.size).toBe(0);
 });

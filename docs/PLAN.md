@@ -126,9 +126,9 @@ Build in this order (money/security first):
 - **Lifetimes**: customers stay signed in up to 30 days (14 days idle); staff up to 7 days (12 hours idle).
 - **Strict rotation**: two tabs presenting the same old cookie end the session (the cross-tab lock prevents it in
   normal use); a refresh answer lost on the network means signing in again.
-- **Reload during an unconfirmed once-only request** (customer return, supplier return, booking): after the reload the
-  screen asks to check the records first; a new request is allowed only once the old one is found or provably never
-  recorded (not found 5 minutes after it was sent).
+- **Reload or sign-out during an unconfirmed once-only request** (customer return, supplier return, booking): the same
+  person sees a check-only panel; a new request is allowed only once the old key is found, or cancelled on the server
+  (`POST /request-keys/abandon`: from then on that request can never be recorded). No time-based guess.
 
 ## Follow-ups
 
@@ -167,4 +167,5 @@ Build in this order (money/security first):
 | 2026-11-14 | W2a | typecheck clean; Vitest 22/22 (+ status preconditions, rupee parsing, request keys); Playwright 38/38 (+ 8 order journeys x 2 devices: full delivery flow incl. failed/retried delivery, unpaid cannot pack, paid cannot be cancelled, reject with confirmation, COD payment then complete, refund retry, customer return retried after a lost answer sends the same key, buying order read-only). |
 | 2026-11-14 | D2 (customer) | typecheck clean; Vitest 37/37; Playwright customer 50/50 (new: Pay now after the window → 409, no new order, booking still pending and checked every minute; then either a late capture confirms it or the sweep shows Expired in booking and list), workspace 82/82. Backend D2 integration 8/8. |
 | 2026-11-14 | D2 approved | Codex approved D2: backend `m0/d2-booking-payment-timeout` c6d8fda (after 1 re-review: free bookings exempt from the deadline on resume; counted back-off) and customer app 3f98b03 (after 1 re-review: a 409 after the window is not treated as cancellation; the panel keeps checking until the server's final state). |
+| 2026-11-15 | D4 (web, rev 2) | Abandon-based resolution (server admission fence) replaces the 5-minute rule; markers kept per person through sign-out. Vitest 40/40; Playwright workspace 94/94, customer 56/56; release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-15 | D4 (web) | typecheck clean; Vitest 40/40 (session header/credentials, renew-and-retry once); Playwright workspace 92/92 (new session.spec: reload keeps sign-in, sign-out ends the server session, cross-tab sign-out, 401 renew + same request resent, other person's renewal refused; reload with an unconfirmed return restores a check-only panel), customer 54/54 (reload keeps sign-in; lost booking answer found by key after reload); release build with VITE_API_SAME_ORIGIN=true. |

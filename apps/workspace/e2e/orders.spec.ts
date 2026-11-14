@@ -38,12 +38,13 @@ interface Backend {
   /** Record the next return, then drop the answer (committed, response lost). */ loseNextAnswer: boolean;
   refuseNextReturn: boolean;
   /** Drop the next return before recording it (nothing recorded, answer lost). */ dropNextRequest: boolean;
+  /** D4: keys abandoned through POST /request-keys/abandon (never recorded afterwards). */ abandoned: Set<string>;
   /** Refuse returns at the access check, before the key is looked up (pharmacy temporarily not operational). */ notOperational: boolean;
   delayMs: number;
 }
 
 async function mockBackend(page: Page, initial: Order): Promise<Backend> {
-  const state: Backend = { order: initial, calls: [], returns: new Map(), loseNextAnswer: false, refuseNextReturn: false, dropNextRequest: false, notOperational: false, delayMs: 0 };
+  const state: Backend = { order: initial, calls: [], returns: new Map(), loseNextAnswer: false, refuseNextReturn: false, dropNextRequest: false, abandoned: new Set(), notOperational: false, delayMs: 0 };
   const json = (route: Route, status: number, body: unknown) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const refuse = (route: Route, status: number, code: string, message: string) => json(route, status, { error: status, code, message });
@@ -89,6 +90,13 @@ async function mockBackend(page: Page, initial: Order): Promise<Backend> {
     if (path === `/pharmacy-orders/${ID}/prescription-refund/retry`) {
       state.order = { ...o, prescriptionRefund: { ...(o.prescriptionRefund as object), status: 'wallet_credited', walletCreditedAt: '2026-11-14T07:05:00.000Z' } };
       return json(route, 200, { success: true, data: state.order });
+    }
+    if (path === '/request-keys/abandon') {
+      const { kind, key } = req.postDataJSON() as { kind: string; key: string };
+      if (kind !== 'customer_return') return refuse(route, 400, 'VALIDATION_ERROR', 'bad kind');
+      if (state.returns.has(key)) return json(route, 200, { success: true, data: { state: 'used' } });
+      state.abandoned.add(key);
+      return json(route, 200, { success: true, data: { state: 'abandoned' } });
     }
     if (path === `/pharmacy-orders/${ID}/customer-returns`) {
       if (state.notOperational) return refuse(route, 403, 'PHARMACY_NOT_VERIFIED', 'Pharmacy is not verified');
@@ -279,7 +287,7 @@ test('after a reload, the recorded return is listed before another can be starte
   await expect(page.getByText(/Paracetamol 650mg × 1 back to stock · refund ₹10/)).toBeVisible();
   // D4: the unresolved request comes back from its reload marker (no details kept): no new return until it is resolved.
   const restored = page.getByRole('group', { name: 'Unconfirmed return' });
-  await expect(restored).toContainText('made before this page was reloaded');
+  await expect(restored).toContainText('made earlier on this device');
   await expect(page.getByRole('button', { name: 'Record return' })).toHaveCount(0);
   await expect(restored.getByRole('button', { name: 'Send the same request again' })).toHaveCount(0);
   await restored.getByRole('button', { name: 'Check whether it was recorded' }).click();
@@ -414,7 +422,7 @@ test('a late answer for an older return does not clear a newer unconfirmed retur
   expect(backend.returns.size).toBe(2);
 });
 
-test('a return still running at sign-out does not appear in the next session', async ({ page }) => {
+test('D4: a return still running at sign-out stays unresolved for the same person after signing back in, until found', async ({ page }) => {
   const backend = await mockBackend(page, order({ status: 'completed' }));
   await openOrder(page);
   backend.delayMs = 1500;
@@ -430,7 +438,11 @@ test('a return still running at sign-out does not appear in the next session', a
   await page.getByRole('link', { name: 'Orders' }).first().click();
   await page.getByRole('link', { name: 'PO-2001' }).click();
   await expect(page.getByRole('heading', { name: /Already recorded|Customer return/ }).first()).toBeVisible();
-  await expect(page.getByRole('group', { name: 'Unconfirmed return' })).toHaveCount(0);
+  // The earlier session's request may have been recorded after it ended: no new return until that is settled.
+  const restored = page.getByRole('group', { name: 'Unconfirmed return' });
+  await expect(restored).toContainText('made earlier on this device');
+  await restored.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByRole('group', { name: 'Recorded return' })).toBeVisible();
 });
 
 test('the recorded-return history pages past the newest 50', async ({ page }) => {
@@ -454,4 +466,27 @@ test('an order this pharmacy is buying shows no actions', async ({ page }) => {
   await openOrder(page);
   await expect(page.getByText('Your pharmacy is the buyer on this order')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Next step' })).toHaveCount(0);
+});
+
+test('D4: a return lost before reaching the server, then a reload: check, cancel it on the server, start again', async ({ page }) => {
+  const backend = await mockBackend(page, order({ status: 'completed' }));
+  await openOrder(page);
+  backend.dropNextRequest = true;
+  await page.getByRole('button', { name: 'Record a return…' }).click();
+  await fillReturn(page, '1');
+  await page.getByRole('button', { name: 'Record return' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed return' })).toBeVisible();
+  const lostKey = (returnCalls(backend)[0] as { requestKey: string }).requestKey;
+  await page.reload();
+  await page.getByLabel('Mobile number').fill('9876543210');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await page.getByLabel('6-digit code').fill('123456');
+  await page.getByRole('button', { name: 'Verify and sign in' }).click();
+  const restored = page.getByRole('group', { name: 'Unconfirmed return' });
+  await expect(restored).toContainText('made earlier on this device');
+  await expect(restored.getByRole('button', { name: 'Cancel it and start again' })).toHaveCount(0); // look first
+  await restored.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await restored.getByRole('button', { name: 'Cancel it and start again' }).click();
+  await expect(page.getByRole('button', { name: 'Record a return…' })).toBeVisible();
+  expect(backend.abandoned.has(lostKey)).toBe(true);
 });

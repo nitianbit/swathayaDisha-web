@@ -8,12 +8,10 @@ import { ApiError } from '@jansetu/api';
 export interface PendingOp<B> {
   requestKey: string; body: B; attempts: number; uncertain: boolean; error?: string;
   firstAttemptAt: number; lastAttemptAt: number;
-  /** D4: brought back after a reload from its body-less marker: can be looked up, not resent. */
+  /** D4: brought back after a reload from its body-less marker: can be looked up or abandoned, not resent. */
   restored?: boolean;
 }
 
-/** D4: a restored request not found this long after its last attempt was never recorded (server transactions end in 60 s). */
-export const provenNotRecorded = (op: { lastAttemptAt: number }, now = Date.now(), afterMs = 5 * 60_000) => now - op.lastAttemptAt > afterMs;
 
 export const newRequestKey = () => crypto.randomUUID().replace(/-/g, '');
 

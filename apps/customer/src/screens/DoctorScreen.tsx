@@ -3,12 +3,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  COUPON_PATTERN, customerApi, type ConsultationMode, type CouponCheck, type NewConsultation, type Slot, type Specialist,
-} from '@jansetu/api';
+  COUPON_PATTERN, customerApi, type ConsultationMode, type CouponCheck, type NewConsultation, type Slot, type Specialist, requestKeysApi } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { messageOf, PageHeading } from '../common.tsx';
 import { payOrder } from '../payments.ts';
-import { afterFailure, beginAttempt, provenNotRecorded, startOp, stillCurrent, type PendingOp } from '../pending.ts';
+import { afterFailure, beginAttempt, startOp, stillCurrent, type PendingOp } from '../pending.ts';
 import { useCustomer, useSession } from '../session.tsx';
 
 /** The next `n` days as IST calendar dates (YYYYMMDD) with a short label. */
@@ -116,43 +115,62 @@ function useCreateBooking(doctor: Specialist) {
 
 /**
  * D4: a booking request made before the page was reloaded whose answer was never seen. Its details are not kept on this
- * device, so it cannot be resent from here: the customer's bookings are searched for its key; only when it is provably
- * not recorded (not found long after it was sent) can a new booking be made.
+ * device, so it cannot be resent from here: the customer's bookings are searched for its key; a new booking is allowed
+ * only after the server has abandoned the old key (then the old request can never be booked).
  */
 function RestoredRequest({ pending, onFound, onDiscard }: {
   pending: PendingCreate; onFound: (bookingId: string) => void; onDiscard: () => void;
 }) {
   const { api } = useSession();
-  const [checking, setChecking] = useState(false);
+  const [busy, setBusy] = useState<'check' | 'cancel' | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [notRecorded, setNotRecorded] = useState(false);
+  const [notFound, setNotFound] = useState(false);
+  async function find(): Promise<string | null> {
+    for (let page = 1; page <= 5; page++) {
+      const p = await customerApi(api).bookings(page, 50);
+      const hit = p.items.find((b) => b.createRequestKey === pending.requestKey);
+      if (hit) return hit._id;
+      if (page >= p.totalPages) break;
+    }
+    return null;
+  }
   async function check() {
-    setChecking(true); setNote(null);
+    setBusy('check'); setNote(null);
     try {
-      for (let page = 1; page <= 5; page++) {
-        const p = await customerApi(api).bookings(page, 50);
-        const hit = p.items.find((b) => b.createRequestKey === pending.requestKey);
-        if (hit) { onFound(hit._id); return; }
-        if (page >= p.totalPages) break;
-      }
-      if (provenNotRecorded(pending)) { setNotRecorded(true); setNote('It was not booked. You can choose a time and book again.'); }
-      else setNote('Not found yet. It may still be finishing; check again in a few minutes before booking again.');
+      const id = await find();
+      if (id) { onFound(id); return; }
+      setNotFound(true);
+      setNote('Not found in your bookings. It may still be on its way. To book again, first cancel this request: once cancelled it can never be booked.');
     } catch (err) {
       setNote(`Could not check your bookings: ${messageOf(err)}`);
     } finally {
-      setChecking(false);
+      setBusy(null);
+    }
+  }
+  async function cancelIt() {
+    setBusy('cancel'); setNote(null);
+    try {
+      if (await requestKeysApi(api).abandon('booking_create', pending.requestKey) === 'abandoned') { onDiscard(); return; }
+      const id = await find();
+      if (id) { onFound(id); return; }
+      setNotFound(false);
+      setNote('It was booked. It will appear in your bookings shortly; check again in a moment.');
+    } catch (err) {
+      setNote(`Could not cancel it: ${messageOf(err)}`);
+    } finally {
+      setBusy(null);
     }
   }
   return (
     <section className="card stack" role="group" aria-label="Unconfirmed booking request">
       <Alert tone="warn">
-        A booking request made before this page was reloaded has not been confirmed yet. Check whether it was booked before
-        booking again.
+        A booking request made earlier on this device (before the page was reloaded, or before you signed out) has not
+        been confirmed yet. Check whether it was booked before booking again.
       </Alert>
       {note && <Alert>{note}</Alert>}
       <div className="row">
-        <Button busy={checking} onClick={() => void check()}>Check my bookings</Button>
-        {notRecorded && <Button variant="secondary" onClick={onDiscard}>Book again</Button>}
+        <Button busy={busy === 'check'} disabled={busy === 'cancel'} onClick={() => void check()}>Check my bookings</Button>
+        {notFound && <Button variant="secondary" busy={busy === 'cancel'} disabled={busy === 'check'} onClick={() => void cancelIt()}>Cancel it and book again</Button>}
       </div>
     </section>
   );

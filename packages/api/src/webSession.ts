@@ -2,7 +2,8 @@
  * D4 helpers shared by the web apps: one cross-tab lock for every cookie-changing command (sign-in, refresh, sign-out),
  * identity announcements between tabs, and reload markers for once-only requests whose outcome is not known yet.
  * Markers hold only an opaque request key, a slot name and timestamps - never a request body, names, health data or
- * credentials - in the tab's sessionStorage, under the signed-in person's id.
+ * credentials - in the tab's sessionStorage, under the signed-in person's id. They are kept through sign-out and
+ * account switches (another person never sees them) until the server resolves the key: found, or abandoned.
  */
 
 export interface Principal { userId: string; userType: string }
@@ -39,9 +40,6 @@ export function sessionChannel(app: string): { post: (m: SessionAnnouncement) =>
 /** A once-only request whose outcome is unknown, as remembered across a reload (no body). */
 export interface PendingMarker { requestKey: string; attempts: number; firstAttemptAt: number; lastAttemptAt: number }
 
-/** A restored request cannot have committed after this long without being found (server transactions end in 60 s). */
-export const PROVEN_NOT_RECORDED_AFTER_MS = 5 * 60_000;
-
 const PREFIX = 'sd:pend:';
 function storage(): Storage | null {
   try { return typeof sessionStorage === 'undefined' ? null : sessionStorage; } catch { return null; }
@@ -70,10 +68,3 @@ export function markerStore(app: string, userId: string) {
   };
 }
 
-/** Removes every reload marker of this app in this tab (sign-out, identity change). */
-export function clearMarkers(app: string): void {
-  const s = storage(); if (!s) return;
-  const doomed: string[] = [];
-  for (let i = 0; i < s.length; i++) { const k = s.key(i); if (k?.startsWith(`${PREFIX}${app}:`)) doomed.push(k); }
-  for (const k of doomed) { try { s.removeItem(k); } catch { /* ignore */ } }
-}

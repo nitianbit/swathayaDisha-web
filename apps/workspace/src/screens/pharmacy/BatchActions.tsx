@@ -2,8 +2,7 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   BATCH_ACTION_FROM, inventoryApi, type Batch, type RecallTrace, type SupplierReturn, type SupplierReturnReason,
-  type SupplierReturnRequest,
-} from '@jansetu/api';
+  type SupplierReturnRequest, requestKeysApi } from '@jansetu/api';
 import { Alert, Button, formatDateTime, Loading, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
@@ -179,6 +178,7 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
         fetchPage={(page) => inventoryApi(api).supplierReturns({ page, limit: 100 })}
         onFound={(r) => { recorded(pending.requestKey); void onDone({ ...r, duplicate: true }); }}
         onDiscard={() => setPending(undefined)}
+        abandon={() => requestKeysApi(api).abandon('supplier_return', pending.requestKey)}
         summary={pending.restored || !b ? null : <div>{b.quantity} units to {pending.supplierName} · {b.reason.replace(/_/g, ' ')}{b.notes ? ` · “${b.notes}”` : ''}</div>} />
     );
   }

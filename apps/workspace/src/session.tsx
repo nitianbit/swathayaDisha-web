@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  ApiError, authApi, clearMarkers, createApiClient, markerStore, samePrincipal, sessionChannel, withSessionLock,
+  ApiError, authApi, createApiClient, markerStore, samePrincipal, sessionChannel, withSessionLock,
   type ApiClient, type OtpTarget, type PendingMarker, type Principal, type UserType,
 } from '@jansetu/api';
 
@@ -87,14 +87,13 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
   const [state, setState] = useState<SessionState>({ status: 'restoring' });
   const authRef = useRef<ReturnType<typeof authApi> | null>(null);
 
-  /** Ends this tab's session locally: token, requests, queries, memory and reload markers. */
+  /** Ends this tab's session locally: token, requests, queries and memory (reload markers stay, per person). */
   const endLocally = useCallback((notice?: string) => {
     generation.current += 1;
     token.current = null;
     principal.current = null;
     markers.current = null;
     clearTimeout(renewTimer.current);
-    clearMarkers(APP);
     sessionAbort.current.abort();
     sessionAbort.current = new AbortController();
     setStore(new Map());

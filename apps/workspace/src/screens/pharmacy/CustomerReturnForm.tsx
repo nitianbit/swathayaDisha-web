@@ -1,8 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import {
-  pharmacyOrdersApi, type CustomerReturn, type Page, type CustomerReturnLine, type CustomerReturnRequest, type PharmacyOrder,
-} from '@jansetu/api';
+  pharmacyOrdersApi, type CustomerReturn, type Page, type CustomerReturnLine, type CustomerReturnRequest, type PharmacyOrder, requestKeysApi } from '@jansetu/api';
 import { Alert, Button, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
@@ -134,6 +133,7 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
           fetchPage={(page) => orders.customerReturnsFor(order._id, 50, page)}
           onFound={(r) => recorded({ ...r, duplicate: true }, pending.requestKey)}
           onDiscard={() => setPending(undefined)}
+          abandon={() => requestKeysApi(api).abandon('customer_return', pending.requestKey)}
           summary={pending.restored ? null : <>
             <ReturnLines lines={pending.body.lines.map((l) => ({ ...l, ...nameOf(l.medicineId, l.batchId) }))} />
             <div>Reason: “{pending.body.reason}” · Refund: {pending.body.refundAmount != null ? formatRupees(pending.body.refundAmount) : 'none'}</div>

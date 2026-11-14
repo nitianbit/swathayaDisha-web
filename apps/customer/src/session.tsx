@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  ApiError, authApi, clearMarkers, createApiClient, markerStore, samePrincipal, sessionChannel, withSessionLock,
+  ApiError, authApi, createApiClient, markerStore, samePrincipal, sessionChannel, withSessionLock,
   type ApiClient, type PendingMarker, type Principal,
 } from '@jansetu/api';
 
@@ -71,7 +71,6 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     principal.current = null;
     markers.current = null;
     clearTimeout(renewTimer.current);
-    clearMarkers(APP);
     sessionAbort.current.abort();
     sessionAbort.current = new AbortController();
     setStore(new Map());
