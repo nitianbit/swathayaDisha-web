@@ -8,9 +8,13 @@ const B2 = '62'.repeat(12);
 
 interface Backend { calls: { path: string; body: unknown }[]; refunds: Record<string, unknown>[]; cancels: Record<string, unknown>[] }
 
+const fingerprint = (refs: { ref: string; cancelled: boolean }[]) =>
+  refs.map((r) => `${r.ref}:${r.cancelled ? 1 : 0}`).sort().join('|').padEnd(64, '0').slice(0, 64).replace(/[^0-9a-f]/g, 'a');
+
 function cancellation(id: string, patient: string, refs: { ref: string; cancelled: boolean }[], needsAdmin = true) {
   return { _id: id, status: 'cancellation_requested', integration: 'healthians', bookingDate: '20261120', bookingTime: '09:00',
     patientName: patient, labName: 'City Lab', packageNames: ['Full body'], price: 1499, paymentStatus: 'paid', providerRefs: refs,
+    obligations: fingerprint(refs),
     cancel: { by: 'user', at: '2026-11-14T05:00:00.000Z', state: 'unknown', calls: 5, needsAdmin, blockedBy: 'provider_unknown', error: 'timeout' } };
 }
 
@@ -50,6 +54,10 @@ async function mockBackend(page: Page): Promise<Backend> {
     const m = /^\/external-bookings\/bookings\/(\w+)\/reconcile-cancellation$/.exec(path);
     if (m) {
       state.calls.push({ path: `${m[1]}/reconcile`, body });
+      const current = state.cancels.find((c) => c._id === m[1]) as { providerRefs: { ref: string; cancelled: boolean }[] } | undefined;
+      if (current && (body as { expectedObligations?: string }).expectedObligations !== fingerprint(current.providerRefs)) {
+        return json(route, 409, { error: 409, code: 'EXTERNAL_OBLIGATIONS_CHANGED', message: 'The provider bookings changed since you checked them; review them again' });
+      }
       state.cancels = state.cancels.filter((c) => c._id !== m[1]);
       return json(route, 200, { success: true, data: { _id: m[1], status: 'cancelled' } });
     }
@@ -110,9 +118,34 @@ test('external cancellations: the admin records what the provider says; the opti
   await arun.getByRole('button', { name: 'Record: no provider booking exists' }).click();
   await expect(page.getByText('Nothing is waiting for an admin')).toBeVisible();
   expect(backend.calls).toEqual([
-    { path: `${B1}/reconcile`, body: { providerOutcome: 'cancelled' } },
-    { path: `${B2}/reconcile`, body: { providerOutcome: 'absent' } },
+    { path: `${B1}/reconcile`, body: { providerOutcome: 'cancelled', expectedObligations: fingerprint([{ ref: 'HL-100', cancelled: true }, { ref: 'HL-101', cancelled: false }]) } },
+    { path: `${B2}/reconcile`, body: { providerOutcome: 'absent', expectedObligations: fingerprint([]) } },
   ]);
+});
+
+test('a provider booking that appears during the review makes the confirmation stale: refused, shown, re-checked', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page, 'External cancellations');
+  const meera = page.getByRole('listitem').filter({ hasText: 'Meera Rao' });
+  await meera.getByRole('button', { name: 'Provider confirms cancelled…' }).click();
+  // Meanwhile a late provider result adds HL-102.
+  const row = backend.cancels.find((c) => c._id === B1) as { providerRefs: { ref: string; cancelled: boolean }[]; obligations: string };
+  row.providerRefs = [...row.providerRefs, { ref: 'HL-102', cancelled: false }];
+  row.obligations = fingerprint(row.providerRefs);
+  await meera.getByRole('button', { name: 'Record: cancelled at the provider' }).click();
+
+  const fresh = page.getByRole('listitem').filter({ hasText: 'Meera Rao' });
+  await expect(fresh).toContainText('HL-102');
+  await expect(fresh.getByText(/changed while you were reviewing/)).toBeVisible();
+  await expect(fresh.getByRole('button', { name: 'Provider confirms cancelled…' })).toBeDisabled();
+  await fresh.getByRole('button', { name: 'I have checked the updated list' }).click();
+  await fresh.getByRole('button', { name: 'Provider confirms cancelled…' }).click();
+  await expect(fresh.getByText(/including HL-101, HL-102/)).toBeVisible();
+  await fresh.getByRole('button', { name: 'Record: cancelled at the provider' }).click();
+  await expect(page.getByRole('listitem').filter({ hasText: 'Meera Rao' })).toHaveCount(0);
+  const sent = backend.calls.map((c) => (c.body as { expectedObligations: string }).expectedObligations);
+  expect(sent[0]).not.toBe(sent[1]);
+  expect(sent[1]).toBe(row.obligations);
 });
 
 test('external cancellations: "All open" also shows ones still retried automatically, with a caution', async ({ page }) => {

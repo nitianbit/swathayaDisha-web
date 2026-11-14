@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
-import { adminQueuesApi, formatExpiry, type OpenCancellation } from '@jansetu/api';
+import { adminQueuesApi, ApiError, formatExpiry, type OpenCancellation } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
@@ -24,6 +25,8 @@ export function ExternalCancellationsScreen() {
   const [params, setParams] = useSearchParams();
   const scope = params.get('scope') === 'open' ? 'open' : 'admin';
   const page = Math.max(1, Number.parseInt(params.get('page') ?? '1', 10) || 1);
+  // Bookings whose obligations changed under an open review: their cards say so until the admin re-checks.
+  const [changed, setChanged] = useState<ReadonlySet<string>>(new Set());
   const q = useQuery({
     queryKey: ['admin', 'external-cancellations', scope, page],
     queryFn: () => adminQueuesApi(api).openCancellations({ scope, page, limit: PAGE_SIZE }),
@@ -49,7 +52,14 @@ export function ExternalCancellationsScreen() {
         ) : (
           <>
             <p className="ws-count">{q.data.total} {scope === 'admin' ? 'waiting for an admin' : 'open'}</p>
-            <ul className="stock-list">{q.data.items.map((c) => <CancellationCard key={c._id} c={c} />)}</ul>
+            <ul className="stock-list">
+              {q.data.items.map((c) => (
+                // Keyed by the obligations: if they change, the card (and any open confirmation) starts over.
+                <CancellationCard key={`${c._id}:${c.obligations}`} c={c} changed={changed.has(c._id)}
+                  onChanged={() => setChanged((s) => new Set(s).add(c._id))}
+                  onReviewed={() => setChanged((s) => { const n = new Set(s); n.delete(c._id); return n; })} />
+              ))}
+            </ul>
             {q.data.totalPages > 1 && (
               <nav className="ws-pager" aria-label="Pages">
                 <Button variant="secondary" disabled={page <= 1}
@@ -65,14 +75,22 @@ export function ExternalCancellationsScreen() {
   );
 }
 
-function CancellationCard({ c }: { c: OpenCancellation }) {
+function CancellationCard({ c, changed, onChanged, onReviewed }:
+  { c: OpenCancellation; changed: boolean; onChanged: () => void; onReviewed: () => void }) {
   const { api } = useSession();
   const queryClient = useQueryClient();
   const what = [c.labName ?? c.doctorName, ...(c.packageNames ?? []), ...(c.testNames ?? [])].filter(Boolean).join(' · ');
   const open = c.providerRefs.filter((r) => !r.cancelled);
   const reconcile = async (outcome: 'absent' | 'cancelled') => {
-    try { await adminQueuesApi(api).reconcileCancellation(c._id, outcome); }
-    finally { await queryClient.invalidateQueries({ queryKey: ['admin', 'external-cancellations'] }); }
+    try {
+      // Attests exactly the obligations on this card; refused if they changed since it was loaded.
+      await adminQueuesApi(api).reconcileCancellation(c._id, outcome, c.obligations);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'EXTERNAL_OBLIGATIONS_CHANGED') onChanged();
+      throw err;
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ['admin', 'external-cancellations'] });
+    }
   };
 
   return (
@@ -99,6 +117,13 @@ function CancellationCard({ c }: { c: OpenCancellation }) {
           )}
         </dd>
       </dl>
+      {changed && (
+        <Alert>
+          The provider bookings changed while you were reviewing. Check every booking listed above with the provider again
+          before recording anything.{' '}
+          <Button variant="ghost" onClick={onReviewed}>I have checked the updated list</Button>
+        </Alert>
+      )}
       {!c.cancel.needsAdmin ? (
         <span className="ws-muted">Still being retried automatically. Act only if the provider has already told you the outcome.</span>
       ) : (
@@ -106,14 +131,14 @@ function CancellationCard({ c }: { c: OpenCancellation }) {
       )}
       <div className="ws-actions">
         {/* Always possible (reconcileProviderState): it also settles an attempt or a reschedule whose outcome is unknown. */}
-        <ConfirmAction label="Provider confirms cancelled…" confirmLabel="Record: cancelled at the provider" danger
+        <ConfirmAction label="Provider confirms cancelled…" confirmLabel="Record: cancelled at the provider" danger disabled={changed}
           consequence={<>You confirm that the provider holds no active booking for this: every booking it had
             {open.length ? <> (including <code>{open.map((r) => r.ref).join(', ')}</code>)</> : null}, also any made by a
             reschedule, is cancelled. The customer is then refunded.</>}
           onConfirm={() => reconcile('cancelled')} />
         {/* Refused by the backend while references exist (EXTERNAL_PROVIDER_REFERENCE_EXISTS). */}
         <ConfirmAction label="No booking at the provider…" confirmLabel="Record: no provider booking exists" danger
-          disabled={c.providerRefs.length > 0}
+          disabled={changed || c.providerRefs.length > 0}
           consequence="You confirm that the provider holds no booking for this at all. The customer is then refunded."
           onConfirm={() => reconcile('absent')} />
       </div>

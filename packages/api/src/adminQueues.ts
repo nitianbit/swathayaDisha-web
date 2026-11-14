@@ -33,6 +33,8 @@ export interface OpenCancellation {
   paymentStatus?: string;
   /** Every booking the provider may hold for it; `cancelled` = the provider acknowledged that one's cancellation. */
   providerRefs: { ref: string; cancelled: boolean }[];
+  /** Fingerprint of exactly these provider obligations; a reconciliation must send it back unchanged. */
+  obligations: string;
   cancel: {
     by: 'user' | 'admin' | 'system';
     reason?: string;
@@ -58,10 +60,11 @@ export function adminQueuesApi(c: ApiClient) {
      * Admin attestation after checking with the provider: 'cancelled' = every provider booking of it is cancelled;
      * 'absent' = no provider booking exists. Either settles the cancellation (refund) when nothing else is open.
      */
-    reconcileCancellation: (bookingId: string, providerOutcome: ProviderOutcome) => {
+    reconcileCancellation: (bookingId: string, providerOutcome: ProviderOutcome, expectedObligations: string) => {
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(bookingId)) throw new Error('Invalid booking id');
+      // Refused with 409 EXTERNAL_OBLIGATIONS_CHANGED if the obligations differ from what the admin reviewed.
       return c.post<{ _id: string; status?: string }>(`/external-bookings/bookings/${bookingId}/reconcile-cancellation`,
-        { body: { providerOutcome } });
+        { body: { providerOutcome, expectedObligations } });
     },
   };
 }
