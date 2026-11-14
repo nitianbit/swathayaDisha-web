@@ -7,7 +7,8 @@ import {
 import { Alert, Button, formatDateTime, Loading, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
-import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
+import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
+import { afterFailure, newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 
 type Panel = null | 'release' | 'supplier' | 'recall' | 'trace';
@@ -117,7 +118,7 @@ function ReleaseForm({ itemId, batch, onDone, onCancel }: { itemId: string; batc
 }
 
 const supplierPendingKey = (batchId: string) => `supplier-return:${batchId}`;
-interface PendingSupplierReturn { body: SupplierReturnRequest; supplierName: string; error?: string }
+type PendingSupplierReturn = PendingOp<SupplierReturnRequest> & { supplierName: string };
 
 /**
  * A supplier return removes stock, so it must happen once. Each submission carries a request key; while its outcome
@@ -144,17 +145,19 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
     setPendingState(p);
   };
 
+  /** Sends exactly `p`. Only a success, or a definite refusal of its FIRST attempt, ends it (requests.ts). */
   async function send(p: PendingSupplierReturn) {
     setBusy(true);
     setRefused(null);
-    setPending({ ...p, error: undefined });
+    setPending(p);
     try {
       const r = await inventoryApi(api).supplierReturn(itemId, batch._id, p.body);
       setPending(undefined);
       await onDone(r);
     } catch (err) {
-      if (definitelyNotRecorded(err)) { setPending(undefined); setRefused(messageOf(err)); }
-      else setPending({ ...p, error: messageOf(err) });
+      const next = afterFailure(p, err, messageOf(err));
+      setPending(next ? { ...next, supplierName: p.supplierName } : undefined);
+      if (!next) setRefused(messageOf(err));
     } finally {
       setBusy(false);
     }
@@ -163,14 +166,12 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
   if (pending) {
     const b = pending.body;
     return (
-      <div className="confirm" role="group" aria-label={`Unconfirmed return of batch ${batch.batchNumber}`}>
-        <Alert tone="warn">
-          This return was sent but its answer did not arrive{pending.error ? ` (${pending.error})` : ''}. It may already be
-          recorded. Send the same return again to find out; it will not be recorded twice.
-        </Alert>
-        <div>{b.quantity} units to {pending.supplierName} · {b.reason.replace(/_/g, ' ')}{b.notes ? ` · “${b.notes}”` : ''}</div>
-        <div className="confirm-actions"><Button busy={busy} onClick={() => void send(pending)}>Send the same return again</Button></div>
-      </div>
+      <PendingOpPanel label={`Unconfirmed return of batch ${batch.batchNumber}`} op={pending} busy={busy}
+        onResend={() => void send(pending)}
+        fetchPage={(page) => inventoryApi(api).supplierReturns({ page, limit: 100 })}
+        onFound={(r) => { setPending(undefined); void onDone({ ...r, duplicate: true }); }}
+        onDiscard={() => setPending(undefined)}
+        summary={<div>{b.quantity} units to {pending.supplierName} · {b.reason.replace(/_/g, ' ')}{b.notes ? ` · “${b.notes}”` : ''}</div>} />
     );
   }
 
@@ -189,9 +190,10 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
         if (!Number.isInteger(n) || n < 1 || n > batch.availableQty) e.qty = `Enter a whole number from 1 to ${batch.availableQty}.`;
         setErrors(e);
         if (Object.keys(e).length === 0) {
+          const requestKey = newRequestKey();
           void send({
+            ...startOp(requestKey, { supplierId, quantity: n, reason, ...(notes.trim() ? { notes: notes.trim() } : {}), requestKey }),
             supplierName: active.find((s) => s.supplierId === supplierId)?.displayName ?? 'the supplier',
-            body: { supplierId, quantity: n, reason, ...(notes.trim() ? { notes: notes.trim() } : {}), requestKey: newRequestKey() },
           });
         }
       }}>

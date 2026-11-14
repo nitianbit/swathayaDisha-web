@@ -37,17 +37,21 @@ interface Backend {
   order: Order; calls: { path: string; body: unknown }[]; returns: Map<string, Record<string, unknown>>;
   /** Record the next return, then drop the answer (committed, response lost). */ loseNextAnswer: boolean;
   refuseNextReturn: boolean;
+  /** Drop the next return before recording it (nothing recorded, answer lost). */ dropNextRequest: boolean;
+  /** Refuse returns at the access check, before the key is looked up (pharmacy temporarily not operational). */ notOperational: boolean;
+  delayMs: number;
 }
 
 async function mockBackend(page: Page, initial: Order): Promise<Backend> {
-  const state: Backend = { order: initial, calls: [], returns: new Map(), loseNextAnswer: false, refuseNextReturn: false };
+  const state: Backend = { order: initial, calls: [], returns: new Map(), loseNextAnswer: false, refuseNextReturn: false, dropNextRequest: false, notOperational: false, delayMs: 0 };
   const json = (route: Route, status: number, body: unknown) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const refuse = (route: Route, status: number, code: string, message: string) => json(route, status, { error: status, code, message });
 
   await page.route('**/api/v1/**', async (route) => {
     const req = route.request();
-    const path = new URL(req.url()).pathname.replace('/api/v1', '');
+    const url = new URL(req.url());
+    const path = url.pathname.replace('/api/v1', '');
     const body = req.method() === 'POST' ? (req.postDataJSON() as Record<string, unknown> | null) : null;
     if (path === '/auth/pharmacy/send') return json(route, 200, { success: true });
     if (path === '/auth/pharmacy/verify') return json(route, 200, { success: true, data: { token: 't1', user: {} } });
@@ -87,6 +91,9 @@ async function mockBackend(page: Page, initial: Order): Promise<Backend> {
       return json(route, 200, { success: true, data: state.order });
     }
     if (path === `/pharmacy-orders/${ID}/customer-returns`) {
+      if (state.notOperational) return refuse(route, 403, 'PHARMACY_NOT_VERIFIED', 'Pharmacy is not verified');
+      if (state.dropNextRequest) { state.dropNextRequest = false; return route.abort('connectionreset'); }
+      if (state.delayMs) await new Promise((r) => setTimeout(r, state.delayMs));
       if (state.refuseNextReturn) {
         state.refuseNextReturn = false;
         return refuse(route, 409, 'RETURN_EXCEEDS_DISPENSED', 'More units than were dispensed from this batch');
@@ -97,14 +104,17 @@ async function mockBackend(page: Page, initial: Order): Promise<Backend> {
       const rec = { _id: String(state.returns.size + 1).padStart(24, '9'), requestKey: key, reason: body?.reason,
         lines: (body?.lines as Record<string, unknown>[]).map((l) => ({ ...l, medicineName: 'Paracetamol 650mg', batchNumber: 'PCM-24A', valuePaise: 6000 })),
         returnValuePaise: 6000 * (body?.lines as unknown[]).length, refundPaise: Math.round(Number(body?.refundAmount ?? 0) * 100),
-        createdAt: '2026-11-14T08:00:00.000Z' };
+        createdAt: new Date().toISOString() };
       state.returns.set(key, rec);
       if (state.loseNextAnswer) { state.loseNextAnswer = false; return route.abort('connectionreset'); }
       return json(route, 201, { success: true, data: rec });
     }
     if (path === '/pharmacy-inventory/customer-returns') {
-      const items = [...state.returns.values()].reverse();
-      return json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 50, total: items.length, totalPages: 1 } });
+      const all = [...state.returns.values()].reverse();
+      const page = Number(url.searchParams.get('page') ?? 1);
+      const limit = Number(url.searchParams.get('limit') ?? 20);
+      const items = all.slice((page - 1) * limit, page * limit);
+      return json(route, 200, { success: true, data: items, pagination: { page, limit, total: all.length, totalPages: Math.max(1, Math.ceil(all.length / limit)) } });
     }
     return refuse(route, 404, 'NOT_FOUND', 'Not found');
   });
@@ -219,7 +229,7 @@ test('a return whose answer is lost is locked and resent unchanged; the receipt 
   await expect(locked).toContainText('Paracetamol 650mg (batch PCM-24A) × 1, back to stock');
   await expect(page.getByLabel('What happens to Paracetamol 650mg, batch PCM-24A')).toHaveCount(0); // nothing to edit
 
-  await locked.getByRole('button', { name: 'Send the same return again' }).click();
+  await locked.getByRole('button', { name: 'Send the same request again' }).click();
   const receipt = page.getByRole('group', { name: 'Recorded return' });
   await expect(receipt).toContainText('This return had already been recorded');
   await expect(receipt).toContainText('Paracetamol 650mg (batch PCM-24A) × 1, back to stock');
@@ -245,7 +255,7 @@ test('an unconfirmed return survives leaving the order; nothing is recorded twic
   const locked = page.getByRole('group', { name: 'Unconfirmed return' });
   await expect(locked).toBeVisible();
   await expect(page.getByRole('button', { name: 'Record a return…' })).toHaveCount(0);
-  await locked.getByRole('button', { name: 'Send the same return again' }).click();
+  await locked.getByRole('button', { name: 'Send the same request again' }).click();
   await expect(page.getByRole('group', { name: 'Recorded return' })).toBeVisible();
   expect(backend.returns.size).toBe(1);
   expect(new Set(returnCalls(backend).map((b) => b.requestKey)).size).toBe(1);
@@ -284,6 +294,96 @@ test('a definite refusal records nothing: the form stays editable and the next t
   const [first, second] = returnCalls(backend);
   expect(first!.requestKey).not.toBe(second!.requestKey);
   expect(second).toMatchObject({ refundAmount: 10, lines: [{ medicineId: MED, batchId: BATCH, quantity: 2, disposition: 'discard' }] });
+});
+
+test('a refused RETRY proves nothing: the return stays locked until the server shows its record', async ({ page }) => {
+  const backend = await mockBackend(page, order({ status: 'completed' }));
+  await openOrder(page);
+  backend.loseNextAnswer = true; // recorded, answer lost
+  await page.getByRole('button', { name: 'Record a return…' }).click();
+  await fillReturn(page, '1');
+  await page.getByRole('button', { name: 'Record return' }).click();
+  const locked = page.getByRole('group', { name: 'Unconfirmed return' });
+  await expect(locked).toBeVisible();
+
+  backend.notOperational = true; // the access check now refuses before the key is looked up
+  await locked.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(locked).toContainText('Pharmacy is not verified');
+  await expect(page.getByRole('button', { name: 'Record a return…' })).toHaveCount(0); // still locked
+  await expect(page.getByText(/^Not recorded/)).toHaveCount(0);
+
+  backend.notOperational = false;
+  await locked.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(page.getByRole('group', { name: 'Recorded return' })).toContainText('This return had already been recorded');
+  expect(backend.returns.size).toBe(1);
+});
+
+test('checking the records finds a recorded return by its key', async ({ page }) => {
+  const backend = await mockBackend(page, order({ status: 'completed' }));
+  await openOrder(page);
+  backend.loseNextAnswer = true;
+  await page.getByRole('button', { name: 'Record a return…' }).click();
+  await fillReturn(page, '1');
+  await page.getByRole('button', { name: 'Record return' }).click();
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByRole('group', { name: 'Recorded return' })).toContainText('× 1, back to stock');
+  expect(returnCalls(backend)).toHaveLength(1); // found, not resent
+});
+
+test('an unrecorded return can be discarded only after the settle time, when the records do not have it', async ({ page }) => {
+  await page.clock.install();
+  const backend = await mockBackend(page, order({ status: 'completed' }));
+  await openOrder(page);
+  backend.dropNextRequest = true; // nothing recorded, answer lost
+  await page.getByRole('button', { name: 'Record a return…' }).click();
+  await fillReturn(page, '1');
+  await page.getByRole('button', { name: 'Record return' }).click();
+  const locked = page.getByRole('group', { name: 'Unconfirmed return' });
+  await locked.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(locked).toContainText('Not in the records yet');
+  await expect(locked.getByRole('button', { name: 'Discard it' })).toHaveCount(0);
+
+  await page.clock.fastForward('02:05');
+  await locked.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(locked).toContainText('it was not recorded');
+  await locked.getByRole('button', { name: 'Discard it' }).click();
+  await expect(page.getByLabel('Returned quantity of Paracetamol 650mg, batch PCM-24A')).toBeVisible();
+  expect(backend.returns.size).toBe(0);
+});
+
+test('a return still running at sign-out does not appear in the next session', async ({ page }) => {
+  const backend = await mockBackend(page, order({ status: 'completed' }));
+  await openOrder(page);
+  backend.delayMs = 1500;
+  await page.getByRole('button', { name: 'Record a return…' }).click();
+  await fillReturn(page, '1');
+  await page.getByRole('button', { name: 'Record return' }).click();
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.waitForTimeout(1800);
+  await page.getByLabel('Mobile number').fill('9876543210');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await page.getByLabel('6-digit code').fill('123456');
+  await page.getByRole('button', { name: 'Verify and sign in' }).click();
+  await page.getByRole('link', { name: 'Orders' }).first().click();
+  await page.getByRole('link', { name: 'PO-2001' }).click();
+  await expect(page.getByRole('heading', { name: /Already recorded|Customer return/ }).first()).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Unconfirmed return' })).toHaveCount(0);
+});
+
+test('the recorded-return history pages past the newest 50', async ({ page }) => {
+  const backend = await mockBackend(page, order({ status: 'completed' }));
+  for (let i = 0; i < 60; i++) {
+    backend.returns.set(`seed-${i}`, { _id: String(i).padStart(24, '8'), requestKey: `seed-${i}`, reason: `Seeded ${i}`,
+      lines: [{ medicineId: MED, batchId: BATCH, quantity: 1, disposition: 'discard', medicineName: 'Paracetamol 650mg' }],
+      returnValuePaise: 6000, refundPaise: 0, createdAt: new Date(Date.UTC(2026, 10, 1, 0, i)).toISOString() });
+  }
+  await openOrder(page);
+  await expect(page.getByRole('heading', { name: 'Already recorded (60)' })).toBeVisible();
+  await expect(page.getByText('Showing 1–50 of 60, newest first.')).toBeVisible();
+  await expect(page.getByText('“Seeded 0”')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Older' }).click();
+  await expect(page.getByText('Showing 51–60 of 60, newest first.')).toBeVisible();
+  await expect(page.getByText(/“Seeded 0”/)).toBeVisible();
 });
 
 test('an order this pharmacy is buying shows no actions', async ({ page }) => {

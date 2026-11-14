@@ -58,12 +58,14 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
   const generation = useRef(0);
   // Aborted on sign-out: every request issued under the ended session is cancelled.
   const sessionAbort = useRef(new AbortController());
-  const store = useRef(new Map<string, unknown>());
+  // One map per session. A handler still running from an ended session holds that session's memory object and
+  // writes only into its discarded map, never into the next session's.
+  const [store, setStore] = useState(() => new Map<string, unknown>());
   const memory = useMemo<SessionMemory>(() => ({
-    get: <T,>(key: string) => store.current.get(key) as T | undefined,
-    set: (key, value) => { store.current.set(key, value); },
-    delete: (key) => { store.current.delete(key); },
-  }), []);
+    get: <T,>(key: string) => store.get(key) as T | undefined,
+    set: (key, value) => { store.set(key, value); },
+    delete: (key) => { store.delete(key); },
+  }), [store]);
   const [state, setState] = useState<SessionState>({ status: 'signed_out' });
 
   const signOut = useCallback((notice?: string) => {
@@ -71,7 +73,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     token.current = null;
     sessionAbort.current.abort();
     sessionAbort.current = new AbortController();
-    store.current = new Map();
+    setStore(new Map());
     queryClient.clear();
     setState({ status: 'signed_out', notice });
   }, [queryClient]);

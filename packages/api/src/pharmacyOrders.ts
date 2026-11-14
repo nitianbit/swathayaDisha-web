@@ -199,9 +199,9 @@ export function pharmacyOrdersApi(c: ApiClient) {
     /** Cancels an order that holds units of a held batch; releases its stock and refunds it if paid. */
     stockHoldCancel: (id: string, reason: string) => c.post<PharmacyOrder>(`${idPath(id)}/stock-hold-cancel`, { body: { reason } }),
     /** Returns already recorded for this order (newest first). */
-    customerReturnsFor: (id: string, limit = 50) => {
+    customerReturnsFor: (id: string, limit = 50, page = 1) => {
       idPath(id);
-      return c.page<CustomerReturn>('/pharmacy-inventory/customer-returns', { query: { orderId: id, limit } });
+      return c.page<CustomerReturn>('/pharmacy-inventory/customer-returns', { query: { orderId: id, limit, page } });
     },
     customerReturn: (id: string, body: CustomerReturnRequest) =>
       c.post<CustomerReturn & { duplicate?: boolean }>(`${idPath(id)}/customer-returns`, { body }),

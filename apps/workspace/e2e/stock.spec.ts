@@ -195,7 +195,7 @@ test('a supplier return whose answer is lost is locked, survives leaving the pag
   await page.getByRole('link', { name: 'Low stock' }).click();
   await page.getByRole('link', { name: 'Stock', exact: true }).click();
   await expect(locked).toBeVisible(); // reopened on its own
-  await locked.getByRole('button', { name: 'Send the same return again' }).click();
+  await locked.getByRole('button', { name: 'Send the same request again' }).click();
   await expect(page.getByText('Already recorded: 3 units of batch PCM-A returned (damaged).')).toBeVisible();
   const sent = backend.calls.filter((c) => c.path === `${A}/supplier-return`).map((c) => c.body);
   expect(sent).toHaveLength(2);
