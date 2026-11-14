@@ -530,7 +530,7 @@ test('D3: a paid order waits for a decision; approving names the request and ref
   await page.getByRole('button', { name: 'Yes, request cancellation' }).click();
   const panel = page.getByRole('region', { name: 'Cancellation requested' });
   await expect(panel).toContainText('Customer no longer needs it');
-  await expect(panel).toContainText("goes back to the customer's Jansetu wallet first");
+  await expect(panel).toContainText("What the customer paid online goes back to their Jansetu wallet first");
   await expect(page.getByRole('button', { name: 'Packed' })).toHaveCount(0);
   await panel.getByRole('button', { name: 'Approve cancellation' }).click();
   await panel.getByRole('button', { name: 'Yes, cancel the order' }).click();
@@ -564,4 +564,23 @@ test('D3: once the payment was returned, the order cannot be kept: only approval
   const panel = page.getByRole('region', { name: 'Cancellation requested' });
   await expect(panel).toContainText('The payment was already returned to the customer.');
   await expect(panel.getByRole('button', { name: 'Keep the order' })).toBeDisabled();
+});
+
+test('D3: a newer request replacing the one on screen closes the open confirmation; nothing is decided on it', async ({ page }) => {
+  test.setTimeout(45_000);
+  const backend = await mockBackend(page, order({ status: 'pending_cancel',
+    cancelRequest: { requestId: 'c'.repeat(24), state: 'pending', fromStatus: 'accepted', paymentStatusAtRequest: 'paid', requestedByType: 'user',
+      requestedAt: '2026-11-15T05:00:00.000Z', reason: 'First request' } } as never));
+  await openOrder(page);
+  const panel = page.getByRole('region', { name: 'Cancellation requested' });
+  await panel.getByRole('button', { name: 'Approve cancellation' }).click();
+  await expect(panel.getByRole('button', { name: 'Yes, cancel the order' })).toBeVisible();
+  // Meanwhile R1 was declined elsewhere and the customer asked again (R2); the screen refreshes.
+  backend.order = { ...backend.order, cancelRequest: { requestId: 'e'.repeat(24), state: 'pending', fromStatus: 'accepted',
+    paymentStatusAtRequest: 'paid', requestedByType: 'user', requestedAt: '2026-11-15T06:00:00.000Z', reason: 'Second request' } } as never;
+  await page.waitForTimeout(15_500); // past the 15 s stale time: a focus refresh re-reads the order
+  await page.evaluate(() => { window.dispatchEvent(new Event('visibilitychange')); document.dispatchEvent(new Event('visibilitychange')); });
+  await expect(panel).toContainText('Second request');
+  await expect(panel.getByRole('button', { name: 'Yes, cancel the order' })).toHaveCount(0);
+  expect(backend.calls.filter((c) => c.path === '/cancel-request/approve')).toHaveLength(0);
 });

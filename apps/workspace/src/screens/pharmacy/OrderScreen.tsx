@@ -109,9 +109,11 @@ function OrderView({ order }: { order: PharmacyOrder }) {
       </section>
 
       {order.status === 'pending_cancel' && order.cancelRequest?.state === 'pending' && (
-        <CancelRequestPanel order={order} seller={seller}
-          onApprove={(note) => act(() => orders.approveCancel(order._id, order.cancelRequest!.requestId, note || undefined))}
-          onReject={(note) => act(() => orders.rejectCancel(order._id, order.cancelRequest!.requestId, note))} />
+        // Keyed by the request: a newer request (after a refresh) replaces the panel and closes any open confirmation,
+        // and each decision sends the id of the request that was on screen.
+        <CancelRequestPanel key={order.cancelRequest.requestId} order={order} seller={seller}
+          onApprove={(requestId, note) => act(() => orders.approveCancel(order._id, requestId, note || undefined))}
+          onReject={(requestId, note) => act(() => orders.rejectCancel(order._id, requestId, note))} />
       )}
 
       {order.prescriptionRefund && <RefundPanel order={order} seller={seller} onRetry={() => act(() => orders.retryRefund(order._id))} />}
@@ -218,16 +220,19 @@ const EXCEPTION_CONSEQUENCE: Record<DeliveryExceptionType, string> = {
  * fail with "changed" instead of deciding the wrong one).
  */
 function CancelRequestPanel({ order, seller, onApprove, onReject }: {
-  order: PharmacyOrder; seller: boolean; onApprove: (note: string) => Promise<unknown>; onReject: (note: string) => Promise<unknown>;
+  order: PharmacyOrder; seller: boolean;
+  onApprove: (requestId: string, note: string) => Promise<unknown>; onReject: (requestId: string, note: string) => Promise<unknown>;
 }) {
   const r = order.cancelRequest!;
+  const requestId = r.requestId; // fixed for this panel's life (the panel is keyed by it)
   const by = r.requestedByType === 'user' ? 'the customer' : r.requestedByType === 'admin' ? 'an admin' : 'your pharmacy';
   const returned = order.paymentStatus === 'refunded';
-  const manual = order.paymentMode !== 'online_payment' && order.paymentStatus === 'paid';
+  const online = order.paymentMode === 'online_payment';
+  // Amount-free on purpose: the refund is what the payment records show was paid (it can differ from the order total).
   const refund = returned ? 'The payment was already returned to the customer.'
-    : manual ? 'The refund is not automatic for a cash or counter payment: an admin arranges it.'
     : order.paymentStatus === 'authorized' ? 'The payment is still being confirmed; decide in a few minutes.'
-    : `${formatRupees(order.grandTotal)} goes back to the customer's Jansetu wallet first (they can ask for it on their card/UPI).`;
+    : !online ? 'The refund is not automatic for a cash or counter payment: an admin arranges it.'
+    : "What the customer paid online goes back to their Jansetu wallet first (they can ask for it on their card/UPI). If the payment cannot be matched to its record, an admin reviews the refund.";
   return (
     <section className="ws-section" aria-labelledby="cancel-h">
       <h2 id="cancel-h">Cancellation requested</h2>
@@ -238,11 +243,11 @@ function CancelRequestPanel({ order, seller, onApprove, onReject }: {
       {seller && (
         <div className="ws-actions">
           <ConfirmAction label="Approve cancellation" confirmLabel="Yes, cancel the order" danger reason="optional" reasonLabel="Note"
-            consequence={`The order is cancelled and its stock goes back to inventory. ${refund}`} onConfirm={onApprove} />
+            consequence={`The order is cancelled and its stock goes back to inventory. ${refund}`} onConfirm={(note) => onApprove(requestId, note)} />
           <ConfirmAction label="Keep the order" confirmLabel="Yes, keep it" reason reasonLabel="Why it is kept (shown to the customer)"
             disabled={returned}
             consequence={`The request is declined and the order continues from “${ORDER_STATUS_LABEL[r.fromStatus]}”.`}
-            onConfirm={onReject} />
+            onConfirm={(note) => onReject(requestId, note)} />
           {returned && <span className="ws-muted">The payment was already returned, so the order cannot continue: approve to complete the cancellation.</span>}
         </div>
       )}
