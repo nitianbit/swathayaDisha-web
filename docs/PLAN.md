@@ -107,6 +107,17 @@ Stacked on `m0/a2b-external-cancel` (284e24c), in the worktree `SwasthaDisha-wor
 
 `m0/w3b-booking-safety` contains all of them (top of the stack). To release, merge it instead of `m0/a2b-external-cancel` in the backend merge plan.
 
+## Owner decisions (2026-11-14, second round)
+
+Build in this order (money/security first):
+1. **Lock `/api/static/*`.** Uploaded files need a login; clients read them through the authenticated file route.
+2. **Unpaid doctor/package bookings expire after 30 minutes**: the payment is first checked with Razorpay, then the
+   booking is cancelled and the slot and wallet money released (like external bookings).
+3. **Paid pharmacy order cancel → `pending_cancel`**, approved by a platform admin or by the pharmacy (until staff/owner
+   roles exist inside a pharmacy, the pharmacy account can approve its own request; both steps are recorded). On
+   approval the customer is refunded as for rejected prescriptions (P2): wallet first, then card/UPI if the customer asks.
+4. **Cookie sessions**: an HttpOnly session cookie with a refresh endpoint, so a reload keeps staff and customers signed in.
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
