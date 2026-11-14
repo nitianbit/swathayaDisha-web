@@ -6,7 +6,7 @@ import {
 import { Alert, Button, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
-import { afterFailure, beginAttempt, newRequestKey, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
+import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 
 interface Row { key: string; medicineId: string; medicineName: string; batchId: string; batchNumber: string; sold: number }
@@ -67,7 +67,14 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
     setPendingState(p);
   };
 
-  const recorded = (r: Receipt) => { setPending(undefined); setReceipt(r); setOpen(false); onDone(); };
+  /** `requestKey` was recorded: end it, and only it (a different return may have been started since). */
+  const recorded = (r: Receipt, requestKey: string) => {
+    resolveStored(memory, pendingKey(order._id), requestKey);
+    setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
+    setReceipt(r);
+    setOpen(false);
+    onDone();
+  };
 
   /** Sends exactly `p`. Only a success, or a definite refusal of its FIRST attempt, ends it (requests.ts). */
   async function send(p: Pending) {
@@ -76,7 +83,7 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
     setRefused(null);
     setPending(attempt);
     try {
-      recorded(await orders.customerReturn(order._id, attempt.body));
+      recorded(await orders.customerReturn(order._id, attempt.body), attempt.requestKey);
     } catch (err) {
       // A newer attempt of the same return owns the state now; this older answer changes nothing.
       if (!stillCurrent(memory.get<Pending>(pendingKey(order._id)), attempt)) return;
@@ -125,7 +132,7 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
       {pending ? (
         <PendingOpPanel key={pending.attempts} label="Unconfirmed return" op={pending} busy={busy} onResend={() => void send(pending)}
           fetchPage={(page) => orders.customerReturnsFor(order._id, 50, page)}
-          onFound={(r) => recorded({ ...r, duplicate: true })}
+          onFound={(r) => recorded({ ...r, duplicate: true }, pending.requestKey)}
           summary={<>
             <ReturnLines lines={pending.body.lines.map((l) => ({ ...l, ...nameOf(l.medicineId, l.batchId) }))} />
             <div>Reason: “{pending.body.reason}” · Refund: {pending.body.refundAmount != null ? formatRupees(pending.body.refundAmount) : 'none'}</div>

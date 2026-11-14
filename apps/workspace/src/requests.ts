@@ -65,3 +65,12 @@ export async function findByKey<T extends { requestKey?: string; createdAt?: str
   }
   return null;
 }
+
+/**
+ * Ends the stored operation `requestKey` after it was recorded (answer or found record) — and only that one. A late
+ * answer of an older operation must not clear a different operation started since (e.g. after a remount).
+ */
+export function resolveStored(memory: { get<T>(key: string): T | undefined; delete(key: string): void }, slot: string, requestKey: string): void {
+  const stored = memory.get<PendingOp<unknown>>(slot);
+  if (!stored || stored.requestKey === requestKey) memory.delete(slot);
+}

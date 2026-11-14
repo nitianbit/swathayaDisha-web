@@ -8,7 +8,7 @@ import { Alert, Button, formatDateTime, Loading, TextArea, TextField } from '@ja
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
-import { afterFailure, beginAttempt, newRequestKey, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
+import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 
 type Panel = null | 'release' | 'supplier' | 'recall' | 'trace';
@@ -144,6 +144,11 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
     if (p) memory.set(key, p); else memory.delete(key);
     setPendingState(p);
   };
+  /** `requestKey` was recorded: end it, and only it (a different return may have been started since). */
+  const recorded = (requestKey: string) => {
+    resolveStored(memory, key, requestKey);
+    setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
+  };
 
   /** Sends exactly `p`. Only a success, or a definite refusal of its FIRST attempt, ends it (requests.ts). */
   async function send(p: PendingSupplierReturn) {
@@ -153,7 +158,7 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
     setPending(attempt);
     try {
       const r = await inventoryApi(api).supplierReturn(itemId, batch._id, attempt.body);
-      setPending(undefined);
+      recorded(attempt.requestKey);
       await onDone(r);
     } catch (err) {
       // A newer attempt of the same return owns the state now; this older answer changes nothing.
@@ -172,7 +177,7 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
       <PendingOpPanel key={pending.attempts} label={`Unconfirmed return of batch ${batch.batchNumber}`} op={pending} busy={busy}
         onResend={() => void send(pending)}
         fetchPage={(page) => inventoryApi(api).supplierReturns({ page, limit: 100 })}
-        onFound={(r) => { setPending(undefined); void onDone({ ...r, duplicate: true }); }}
+        onFound={(r) => { recorded(pending.requestKey); void onDone({ ...r, duplicate: true }); }}
         summary={<div>{b.quantity} units to {pending.supplierName} · {b.reason.replace(/_/g, ' ')}{b.notes ? ` · “${b.notes}”` : ''}</div>} />
     );
   }

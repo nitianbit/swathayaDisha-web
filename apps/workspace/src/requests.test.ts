@@ -1,5 +1,5 @@
 import { ApiError, type Page } from '@jansetu/api';
-import { afterFailure, beginAttempt, findByKey, startOp, stillCurrent } from './requests.ts';
+import { afterFailure, beginAttempt, findByKey, resolveStored, startOp, stillCurrent } from './requests.ts';
 
 const T0 = Date.UTC(2026, 10, 14, 10, 0);
 const refused = new ApiError(403, 'Pharmacy is not verified');
@@ -53,5 +53,18 @@ describe('findByKey', () => {
     const capped = vi.fn(pages(many));
     await expect(findByKey(capped, op, 2)).resolves.toBeNull();
     expect(capped).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('resolveStored', () => {
+  it('ends only the operation that was recorded', () => {
+    const store = new Map<string, unknown>();
+    const memory = { get: <T,>(k: string) => store.get(k) as T | undefined, delete: (k: string) => { store.delete(k); } };
+    store.set('slot', beginAttempt(startOp('K2', {})));
+    resolveStored(memory, 'slot', 'K1'); // a late answer for an older return
+    expect(store.has('slot')).toBe(true);
+    resolveStored(memory, 'slot', 'K2');
+    expect(store.has('slot')).toBe(false);
+    resolveStored(memory, 'slot', 'K3'); // nothing stored: fine
   });
 });

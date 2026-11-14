@@ -379,6 +379,35 @@ test('a first attempt still running when the page is reopened is not treated as 
   expect(backend.returns.size).toBe(1);
 });
 
+test('a late answer for an older return does not clear a newer unconfirmed return', async ({ page }) => {
+  const backend = await mockBackend(page, order({ status: 'completed' }));
+  await openOrder(page);
+  backend.delayMs = 3000; // K1: slow first answer
+  await page.getByRole('button', { name: 'Record a return…' }).click();
+  await fillReturn(page, '1');
+  await page.getByRole('button', { name: 'Record return' }).click();
+  backend.delayMs = 0;
+  await page.getByRole('link', { name: 'Orders', exact: true }).first().click();
+  await page.getByRole('link', { name: 'PO-2001' }).click();
+  await page.getByRole('group', { name: 'Unconfirmed return' }).getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(page.getByRole('group', { name: 'Recorded return' })).toBeVisible(); // K1 settled in this mount
+
+  backend.loseNextAnswer = true; // K2: recorded, answer lost
+  await page.getByRole('button', { name: 'Record another return…' }).click();
+  await fillReturn(page, '2', 'Discard');
+  await page.getByRole('button', { name: 'Record return' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed return' })).toContainText('× 2, discarded');
+
+  await page.waitForTimeout(3500); // K1's first answer now reaches the old, unmounted page
+  await page.getByRole('link', { name: 'Orders', exact: true }).first().click();
+  await page.getByRole('link', { name: 'PO-2001' }).click();
+  const k2 = page.getByRole('group', { name: 'Unconfirmed return' });
+  await expect(k2).toContainText('× 2, discarded'); // still locked: K2 was not cleared
+  await k2.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(page.getByRole('group', { name: 'Recorded return' })).toContainText('This return had already been recorded');
+  expect(backend.returns.size).toBe(2);
+});
+
 test('a return still running at sign-out does not appear in the next session', async ({ page }) => {
   const backend = await mockBackend(page, order({ status: 'completed' }));
   await openOrder(page);
