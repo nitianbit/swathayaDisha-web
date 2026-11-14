@@ -23,6 +23,9 @@ interface Backend {
   refuseCreate: boolean;
   /** The 30-minute payment window has passed: "Pay now" is refused (409); the booking stays pending until the sweep (backend D2). */
   windowPassed: boolean;
+  /** D4: model cookie sessions (off by default: then a reload signs out, as the older tests expect). */
+  sessions: boolean;
+  live: boolean;
 }
 
 /** Fake Razorpay Checkout: `window.__rz` = 'pay' | 'close'. Paying marks the order captured at the fake gateway. */
@@ -42,7 +45,7 @@ window.Razorpay = function (o) {
 };`;
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const state: Backend = { calls: [], bookings: new Map(), records: new Map(), verifyFails: false, createDrops: false, byKey: new Map(), gatewayDown: false, refuseCreate: false, windowPassed: false };
+  const state: Backend = { calls: [], bookings: new Map(), records: new Map(), verifyFails: false, createDrops: false, byKey: new Map(), gatewayDown: false, refuseCreate: false, windowPassed: false, sessions: false, live: false };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
   let n = 0;
@@ -67,7 +70,15 @@ async function mockBackend(page: Page): Promise<Backend> {
     const body = req.method() === 'POST' ? req.postDataJSON() : null;
     state.calls.push({ method: req.method(), path, body });
     if (path === '/auth/user/send') return json(route, 200, { success: true });
-    if (path === '/auth/user/verify') return json(route, 200, { success: true, data: { token: 't', user: {} } });
+    if (path === '/auth/user/verify') {
+      if (state.sessions && (body as { session?: string }).session === 'cookie') state.live = true;
+      return json(route, 200, { success: true, data: { token: 't', expiresIn: 900, user: {} } });
+    }
+    if (path === '/auth/session/refresh') {
+      if (!state.sessions || !state.live) return json(route, 401, { error: 401, code: 'SESSION_ENDED', message: 'Please sign in again' });
+      return json(route, 200, { success: true, data: { token: 't2', expiresIn: 900, principal: { userId: ME, userType: 'user', sid: 's' } } });
+    }
+    if (path === '/auth/session/logout') { state.live = false; return json(route, 200, { success: true }); }
     if (path === '/auth/profile') return json(route, 200, { success: true, data: { user: { _id: ME, name: 'Asha Rao', phone: '9876543210', email: 'a@x.in', gender: 'Female', dateOfBirth: '19900101' }, userRole: 'user' } });
     if (path === `/wallet/user/${ME}`) return json(route, 200, { success: true, data: { _id: 'w', userId: ME, balance: 50, isActive: true } });
     if (path === '/dependents') return page1(route, [{ _id: MOTHER, userId: ME, name: 'Kamala Rao', relationship: 'Mother', isActive: true }]);
@@ -99,9 +110,10 @@ async function mockBackend(page: Page): Promise<Backend> {
       if (state.refuseCreate) { state.refuseCreate = false; return json(route, 400, { error: 400, code: 'SLOT_FULL', message: 'This time is no longer available' }); }
       const id = String(state.bookings.size + 1).padStart(24, 'b');
       state.byKey.set(String(b.requestKey), id);
+      const createRequestKey = String(b.requestKey);
       const free = b.specialistId === FREE_DOC;
       const booking = { _id: id, bookingType: 'consultation', doctorName: free ? 'Dr. Free Clinic' : 'Dr. Meena Iyer', bookingDate: b.bookingDate,
-        bookingTime: b.bookingTime, createdAt: new Date().toISOString(), price: free ? 0 : 450, status: free ? 'confirmed' : 'pending', paymentStatus: free ? 'paid' : 'pending' } as Record<string, unknown>;
+        bookingTime: b.bookingTime, createdAt: new Date().toISOString(), createRequestKey, price: free ? 0 : 450, status: free ? 'confirmed' : 'pending', paymentStatus: free ? 'paid' : 'pending' } as Record<string, unknown>;
       state.bookings.set(id, booking);
       if (free) return json(route, 201, { success: true, data: { booking, paymentRequired: false } });
       const payment = order(id);
@@ -380,4 +392,31 @@ test('after the payment window, once the server releases the booking it shows as
   await expect(page.getByRole('button', { name: 'Cancel this booking' })).toHaveCount(0);
   await page.getByRole('link', { name: 'My bookings' }).click();
   await expect(page.getByRole('link', { name: /Dr\. Meena Iyer/ }).getByText('Expired', { exact: true })).toBeVisible();
+});
+
+test('D4: with a cookie session, a reload keeps the customer signed in', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.sessions = true;
+  await signIn(page);
+  await page.reload();
+  await expect(page.getByRole('link', { name: /Dr\. Meena Iyer/ })).toBeVisible();
+  await expect(page.getByLabel('Mobile number')).toHaveCount(0);
+});
+
+test('D4: a booking request whose answer was lost comes back after a reload and is found by its key', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.sessions = true;
+  await signIn(page);
+  await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'close'; });
+  await bookPaid(page);
+  backend.createDrops = 'after'; // recorded, answer lost
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed booking request' })).toBeVisible();
+  await page.reload();
+  const restored = page.getByRole('group', { name: 'Unconfirmed booking request' });
+  await expect(restored).toContainText('made before this page was reloaded');
+  await expect(page.getByRole('button', { name: 'Book and pay' })).toHaveCount(0);
+  await restored.getByRole('button', { name: 'Check my bookings' }).click();
+  await expect(page.getByText('Awaiting confirmation', { exact: true })).toBeVisible(); // its booking page
+  expect(backend.bookings.size).toBe(1);
 });

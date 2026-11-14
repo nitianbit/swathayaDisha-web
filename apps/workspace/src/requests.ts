@@ -25,6 +25,11 @@ export interface PendingOp<B> {
   firstAttemptAt: number;
   lastAttemptAt: number;
   error?: string;
+  /**
+   * D4: brought back after a page reload from its body-less marker. Its details are not kept on this device, so it
+   * cannot be resent; it can be looked up by key, and discarded only once provably never recorded.
+   */
+  restored?: boolean;
 }
 
 export function startOp<B>(requestKey: string, body: B, now = Date.now()): PendingOp<B> {
@@ -73,4 +78,12 @@ export async function findByKey<T extends { requestKey?: string; createdAt?: str
 export function resolveStored(memory: { get<T>(key: string): T | undefined; delete(key: string): void }, slot: string, requestKey: string): void {
   const stored = memory.get<PendingOp<unknown>>(slot);
   if (!stored || stored.requestKey === requestKey) memory.delete(slot);
+}
+
+/**
+ * D4: a restored operation that was looked up and not found can be discarded only after this time since its last
+ * attempt: the server records these in transactions that cannot commit later than 60 seconds after they start.
+ */
+export function provenNotRecorded(op: PendingOp<unknown>, now = Date.now(), afterMs = 5 * 60_000): boolean {
+  return now - op.lastAttemptAt > afterMs;
 }

@@ -277,7 +277,13 @@ test('after a reload, the recorded return is listed before another can be starte
   await page.getByRole('button', { name: 'Verify and sign in' }).click();
   await expect(page.getByRole('heading', { name: 'Already recorded (1)' })).toBeVisible();
   await expect(page.getByText(/Paracetamol 650mg × 1 back to stock · refund ₹10/)).toBeVisible();
-  await expect(page.getByText('Check the returns above first: do not record the same return again.')).toBeVisible();
+  // D4: the unresolved request comes back from its reload marker (no details kept): no new return until it is resolved.
+  const restored = page.getByRole('group', { name: 'Unconfirmed return' });
+  await expect(restored).toContainText('made before this page was reloaded');
+  await expect(page.getByRole('button', { name: 'Record return' })).toHaveCount(0);
+  await expect(restored.getByRole('button', { name: 'Send the same request again' })).toHaveCount(0);
+  await restored.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByRole('group', { name: 'Recorded return' })).toBeVisible();
 });
 
 test('a definite refusal records nothing: the form stays editable and the next try uses a new key', async ({ page }) => {

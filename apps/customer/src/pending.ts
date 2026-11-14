@@ -5,7 +5,15 @@ import { ApiError } from '@jansetu/api';
  * stored with its key BEFORE it is sent; a resend uses the same key and details (the server answers a known key with
  * the first result); only a definite refusal of the sole first attempt ends it without a result.
  */
-export interface PendingOp<B> { requestKey: string; body: B; attempts: number; uncertain: boolean; error?: string }
+export interface PendingOp<B> {
+  requestKey: string; body: B; attempts: number; uncertain: boolean; error?: string;
+  firstAttemptAt: number; lastAttemptAt: number;
+  /** D4: brought back after a reload from its body-less marker: can be looked up, not resent. */
+  restored?: boolean;
+}
+
+/** D4: a restored request not found this long after its last attempt was never recorded (server transactions end in 60 s). */
+export const provenNotRecorded = (op: { lastAttemptAt: number }, now = Date.now(), afterMs = 5 * 60_000) => now - op.lastAttemptAt > afterMs;
 
 export const newRequestKey = () => crypto.randomUUID().replace(/-/g, '');
 
@@ -13,11 +21,12 @@ export function definitelyNotDone(err: unknown): boolean {
   return err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429;
 }
 
-export const startOp = <B,>(body: B): PendingOp<B> => ({ requestKey: newRequestKey(), body, attempts: 0, uncertain: false });
+export const startOp = <B,>(body: B, now = Date.now()): PendingOp<B> =>
+  ({ requestKey: newRequestKey(), body, attempts: 0, uncertain: false, firstAttemptAt: now, lastAttemptAt: now });
 
 /** Stored before each send. A resend makes the operation uncertain (an earlier attempt may still take effect). */
-export const beginAttempt = <B,>(p: PendingOp<B>): PendingOp<B> =>
-  ({ ...p, attempts: p.attempts + 1, uncertain: p.uncertain || p.attempts > 0, error: undefined });
+export const beginAttempt = <B,>(p: PendingOp<B>, now = Date.now()): PendingOp<B> =>
+  ({ ...p, attempts: p.attempts + 1, uncertain: p.uncertain || p.attempts > 0, lastAttemptAt: now, error: undefined });
 
 /** null = forget it (only a sole first attempt definitely refused); otherwise keep it, uncertain. */
 export function afterFailure<B>(attempt: PendingOp<B>, err: unknown, message: string): PendingOp<B> | null {

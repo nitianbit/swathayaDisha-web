@@ -1,6 +1,7 @@
 /**
  * The one HTTP client for the SwasthaDisha backend (`/api/v1`). Every screen goes through it, so these rules hold
- * everywhere: a bearer token only (no cookies), no caching, no redirects, a timeout, and one error type.
+ * everywhere: a bearer token (cookies only for the three web-session commands, D4), no caching, no redirects, a
+ * timeout, and one error type.
  *
  * Backend response shapes (src1): success `{ success, message?, data, pagination? }`, failure `{ error, message, code }`.
  */
@@ -26,6 +27,11 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** Default true. Login calls pass false so no stale token is sent. */
   auth?: boolean;
+  /**
+   * D4 web-session commands (OTP verify with a cookie session, refresh, logout): sends `X-Jansetu-Session: 1` and the
+   * app's own first-party cookie (`credentials: 'same-origin'`). Every other request sends no cookie.
+   */
+  session?: boolean;
 }
 
 export interface Page<T> {
@@ -47,6 +53,11 @@ export interface ApiClientOptions {
   getSessionSignal?: () => AbortSignal | undefined;
   /** A request that carried `token` got 401. The session decides whether that token is still the current one. */
   onUnauthorized?: (token: string) => void;
+  /**
+   * D4: called once when a request with `token` gets 401. Returns a renewed token for the SAME signed-in person, or
+   * null. With a token, the request is sent once more unchanged (same body, same request key).
+   */
+  renew?: (token: string) => Promise<string | null>;
   /** Covers the whole exchange: connecting, headers and reading the body. */
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -80,13 +91,14 @@ export function createApiClient(options: ApiClientOptions) {
   }
 
   /** One exchange; `read` consumes the body of a successful response under the same timeout and cancellation. */
-  async function request<T>(method: string, path: string, o: RequestOptions, read: (res: Response) => Promise<T>): Promise<T> {
+  async function request<T>(method: string, path: string, o: RequestOptions, read: (res: Response) => Promise<T>, renewed = false): Promise<T> {
     const target = url(path, o.query); // before the try: a bad path is a programming error, not a network one
     const headers: Record<string, string> = { Accept: 'application/json' };
     const token = o.auth === false ? null : options.getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
     if (o.body !== undefined) headers['Content-Type'] = 'application/json';
     if (o.idempotencyKey) headers['Idempotency-Key'] = o.idempotencyKey;
+    if (o.session) headers['X-Jansetu-Session'] = '1';
 
     const sessionSignal = token ? options.getSessionSignal?.() : undefined;
     const timeout = new AbortController();
@@ -109,7 +121,7 @@ export function createApiClient(options: ApiClientOptions) {
           method,
           headers,
           body: o.body === undefined ? undefined : JSON.stringify(o.body),
-          credentials: 'omit',
+          credentials: o.session ? 'same-origin' : 'omit',
           cache: 'no-store',
           redirect: 'error',
           signal,
@@ -120,6 +132,10 @@ export function createApiClient(options: ApiClientOptions) {
       if (!res.ok) {
         // A late answer for a session that has already ended is not news about the current one.
         if (sessionSignal?.aborted) throw new DOMException('The session ended', 'AbortError');
+        if (res.status === 401 && token && options.renew && !renewed) {
+          const next = await options.renew(token);
+          if (next && next !== token) return request(method, path, o, read, true);
+        }
         if (res.status === 401 && token) options.onUnauthorized?.(token);
         const text = await res.text().catch((err: unknown) => { throw translate(err); });
         const body = parseJson(text) as { message?: unknown; code?: unknown } | null;

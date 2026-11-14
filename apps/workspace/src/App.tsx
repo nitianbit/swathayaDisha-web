@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { createHashRouter, Outlet, RouterProvider, useLocation } from 'react-router';
-import { Empty } from '@jansetu/ui';
+import { Empty, Loading } from '@jansetu/ui';
 import { Shell } from './Shell.tsx';
 import { pagesFor } from './modules.tsx';
 import { useSession } from './session.tsx';
@@ -36,6 +36,8 @@ function SignedIn({ role, sessionKey }: { role: StaffRole; sessionKey: object })
 
 export function App() {
   const { state } = useSession();
+  // D4: a reload resumes the cookie session before deciding to show the sign-in screen.
+  if (state.status === 'restoring') return <main className="login"><Loading label="Signing you in…" /></main>;
   if (state.status !== 'signed_in') return <LoginScreen notice={state.notice} />;
   return <SignedIn role={state.user.role} sessionKey={state.user} />;
 }

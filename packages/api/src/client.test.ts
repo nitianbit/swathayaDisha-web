@@ -46,6 +46,46 @@ describe('api client', () => {
     expect(onUnauthorized).toHaveBeenCalledExactlyOnceWith('tok');
   });
 
+  it('D4: session commands send the session header and the first-party cookie; nothing else does', async () => {
+    const { client, calls } = setup(async () => json(200, { success: true, data: {} }));
+    await client.post('/auth/session/refresh', { body: {}, auth: false, session: true });
+    expect(calls[0]!.init).toMatchObject({ credentials: 'same-origin' });
+    expect(calls[0]!.init.headers).toMatchObject({ 'X-Jansetu-Session': '1' });
+    expect((calls[0]!.init.headers as Record<string, string>).Authorization).toBeUndefined();
+    await client.get('/x');
+    expect(calls[1]!.init).toMatchObject({ credentials: 'omit' });
+    expect((calls[1]!.init.headers as Record<string, string>)['X-Jansetu-Session']).toBeUndefined();
+  });
+
+  it('D4: a 401 renews once for the same person and resends the same request unchanged', async () => {
+    let token = 'old';
+    const calls: { headers: Record<string, string>; body: unknown }[] = [];
+    const renew = vi.fn(async () => { token = 'new'; return 'new'; });
+    const onUnauthorized = vi.fn();
+    const client = createApiClient({ baseUrl: '', getToken: () => token, renew, onUnauthorized, fetchImpl: async (_u, init) => {
+      calls.push({ headers: init!.headers as Record<string, string>, body: init!.body });
+      return calls.length === 1 ? json(401, { code: 'TOKEN_EXPIRED' }) : json(200, { success: true, data: { ok: true } });
+    } });
+    await expect(client.post('/returns', { body: { requestKey: 'k1', qty: 2 } })).resolves.toEqual({ ok: true });
+    expect(renew).toHaveBeenCalledExactlyOnceWith('old');
+    expect(calls.map((c) => c.headers.Authorization)).toEqual(['Bearer old', 'Bearer new']);
+    expect(calls[1]!.body).toBe(calls[0]!.body);
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it('D4: no renewal (or a second 401) ends the session; never more than one retry', async () => {
+    const onUnauthorized = vi.fn();
+    let n = 0;
+    const client = createApiClient({ baseUrl: '', getToken: () => (n === 0 ? 't0' : 't1'), onUnauthorized,
+      renew: async () => 't1', fetchImpl: async () => { n++; return json(401, { code: 'X' }); } });
+    await expect(client.get('/x')).rejects.toMatchObject({ status: 401 });
+    expect(n).toBe(2);
+    expect(onUnauthorized).toHaveBeenCalledExactlyOnceWith('t1');
+    const none = createApiClient({ baseUrl: '', getToken: () => 't', onUnauthorized, renew: async () => null, fetchImpl: async () => json(401, {}) });
+    await expect(none.get('/x')).rejects.toMatchObject({ status: 401 });
+    expect(onUnauthorized).toHaveBeenLastCalledWith('t');
+  });
+
   it('cancels a request when its session ends, and never reports its late 401', async () => {
     const session = new AbortController();
     const onUnauthorized = vi.fn();

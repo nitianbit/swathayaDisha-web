@@ -178,7 +178,8 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
         onResend={() => void send(pending)}
         fetchPage={(page) => inventoryApi(api).supplierReturns({ page, limit: 100 })}
         onFound={(r) => { recorded(pending.requestKey); void onDone({ ...r, duplicate: true }); }}
-        summary={<div>{b.quantity} units to {pending.supplierName} · {b.reason.replace(/_/g, ' ')}{b.notes ? ` · “${b.notes}”` : ''}</div>} />
+        onDiscard={() => setPending(undefined)}
+        summary={pending.restored || !b ? null : <div>{b.quantity} units to {pending.supplierName} · {b.reason.replace(/_/g, ' ')}{b.notes ? ` · “${b.notes}”` : ''}</div>} />
     );
   }
 

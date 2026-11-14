@@ -97,6 +97,8 @@ export interface Booking {
   cancellationReason?: string;
   /** Why the server cancelled it: 'payment_timeout' = not paid within the payment window (backend D2). */
   cancellationCause?: string;
+  /** Request key of the create that made it (keyed creates only): finds a booking whose answer was lost. */
+  createRequestKey?: string;
   cancelledAt?: string;
   createdAt?: string;
 }

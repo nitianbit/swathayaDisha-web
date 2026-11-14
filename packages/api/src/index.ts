@@ -1,7 +1,7 @@
 export { ApiError, createApiClient } from './client.ts';
 export type { ApiClient, ApiClientOptions, Page, QueryValue, RequestOptions } from './client.ts';
 export { authApi, OTP_PATTERN, PHONE_PATTERN } from './auth.ts';
-export type { OtpTarget, Profile, SignedIn, UserType } from './auth.ts';
+export type { OtpTarget, Profile, SessionRefreshed, SessionSignedIn, SignedIn, UserType } from './auth.ts';
 export {
   DELIVERY_EXCEPTION_FROM, fetchableFileUrl, ORDER_TRANSITIONS, pharmacyOrdersApi, PRESCRIPTION_REVIEWABLE_STATUSES,
   refId, REGISTRATION_NUMBER_PATTERN,
@@ -27,3 +27,5 @@ export type {
   Booking, BookingPayment, BookingStatus, ConsultationMode, CouponCheck, CustomerProfile, NewConsultation, PaymentOrder, Slot, Specialist, Dependent, ExternalBooking, ExternalIntegration, Gender, NewDependent,
   ProfileUpdate, Relationship, Wallet, WalletTransaction,
 } from './customer.ts';
+export { clearMarkers, markerStore, PROVEN_NOT_RECORDED_AFTER_MS, samePrincipal, sessionChannel, withSessionLock } from './webSession.ts';
+export type { PendingMarker, Principal, SessionAnnouncement } from './webSession.ts';

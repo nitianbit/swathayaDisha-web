@@ -21,8 +21,10 @@ export default defineConfig(({ command, mode }) => {
       throw new Error('VITE_API_BASE_URL must use HTTPS outside local development.');
     }
     apiOrigin = url.origin;
-  } else if (!development) {
-    throw new Error('Set VITE_API_BASE_URL to the HTTPS backend origin before building for release.');
+  } else if (!development && env.VITE_API_SAME_ORIGIN !== 'true') {
+    // D4: cookie sessions need the API on this app's own host (the host forwards /api to the backend); say so
+    // explicitly with VITE_API_SAME_ORIGIN=true. Otherwise name the HTTPS backend origin (bearer-only, no reload).
+    throw new Error('Set VITE_API_SAME_ORIGIN=true (this host forwards /api) or VITE_API_BASE_URL to the HTTPS backend origin before building for release.');
   }
   const connect = ["'self'", apiOrigin, ...(command === 'serve' ? ['ws://127.0.0.1:*', 'ws://localhost:*'] : [])]
     .filter(Boolean).join(' ');

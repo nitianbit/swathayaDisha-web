@@ -13,7 +13,7 @@ uses a Capacitor plugin for that one thing (the NIYA employee app model).
 | Stack | Vite 8, React 19, TypeScript 6 strict, React Router 8 (hash routes: static hosting and Capacitor need no rewrites), TanStack Query 5, plain CSS tokens, lucide icons. Vitest + Playwright. |
 | Staff | Admin and pharmacy staff use the web workspace (desk/counter). HR and doctors join when their modules exist. |
 | Brand | Working name Jansetu (the roadmap's product name). The brand lives only in `packages/ui/src/tokens.css`. |
-| Web session | Token in memory only; a reload signs out. Nothing about the session is stored in the browser. Native: secure storage (Keychain/Keystore). Cookie sessions are a later backend packet (W-auth). |
+| Web session | D4 (2026-11-15): access token in memory (15 min); the session is an HttpOnly, first-party `__Host-` cookie the server rotates, so a reload keeps people signed in. Sign-in / refresh / sign-out run under one cross-tab lock; tabs announce identity changes; a renewed token is installed only for the same person. Nothing readable about the session is stored in the browser (only body-less reload markers of unconfirmed once-only requests, in sessionStorage). Native: secure storage (Keychain/Keystore), protocol specified in the backend D4 design. |
 | Access | The backend enforces access. The UI declares every page with its roles and denies anything not declared. |
 
 ## Native only where the web is worse (customer app)
@@ -86,7 +86,7 @@ uses a Capacitor plugin for that one thing (the NIYA employee app model).
   reads, or move clinical files to the private asset routes. The workspace already reads files only through the
   authenticated `GET /file/fetch`.
 
-- **W-auth:** no refresh or logout endpoint; web sessions end on reload until HttpOnly-cookie sessions exist.
+- **W-auth:** done as D4 (backend `m0/d4-cookie-sessions`): cookie sessions, refresh, logout, immediate revocation.
 - **CORS:** production `CORS_ORIGIN` must list the workspace origin and, for the native app, `capacitor://localhost`
   and `https://localhost`.
 - The old customer app calls `/perks`, `/policies`, `/alyve/*` and `/deep-links/resolve`, which `src1` does not
@@ -118,6 +118,18 @@ Build in this order (money/security first):
    approval the customer is refunded as for rejected prescriptions (P2): wallet first, then card/UPI if the customer asks.
 4. **Cookie sessions**: an HttpOnly session cookie with a refresh endpoint, so a reload keeps staff and customers signed in.
 
+## D4 decisions (2026-11-15, taken autonomously at the owner's request)
+
+- **Hosting**: each web app's own HTTPS host forwards `/api/*` to the backend (as the dev servers do). Release builds:
+  `VITE_API_SAME_ORIGIN=true` (no `VITE_API_BASE_URL`). Backend: `SESSION_ORIGINS_CUSTOMER` / `SESSION_ORIGINS_WORKSPACE`
+  list each app's exact origin. A frontend on another site keeps bearer-only (no reload survival).
+- **Lifetimes**: customers stay signed in up to 30 days (14 days idle); staff up to 7 days (12 hours idle).
+- **Strict rotation**: two tabs presenting the same old cookie end the session (the cross-tab lock prevents it in
+  normal use); a refresh answer lost on the network means signing in again.
+- **Reload during an unconfirmed once-only request** (customer return, supplier return, booking): after the reload the
+  screen asks to check the records first; a new request is allowed only once the old one is found or provably never
+  recorded (not found 5 minutes after it was sent).
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -126,7 +138,8 @@ Build in this order (money/security first):
   the gateway cannot answer, and never expires free bookings; `retry-payment` answers 409 `BOOKING_PAYMENT_EXPIRED`
   after the window. Customer app (branch `d2/payment-expiry`): "pay by" time, Expired status, the 409 handled.
 - Workspace screen for paid bookings with an unknown provider attempt that are not being cancelled (backend snapshot exists; a list endpoint for them does not).
-- Backend MONEY: fenced, refund-aware order cancellation (then re-enable Cancel/Reject in the workspace).
+- Workspace + customer screens for D3 cancellation requests (backend approved: `POST /pharmacy-orders/:id/cancel-request`, `.../approve|reject` with `requestId`).
+- Backend: OTP attempt limits / rate limiting (none today) before release.
 - Backend SECURITY: authenticate `/api/static/*` uploads.
 
 ## Verification record
@@ -154,3 +167,4 @@ Build in this order (money/security first):
 | 2026-11-14 | W2a | typecheck clean; Vitest 22/22 (+ status preconditions, rupee parsing, request keys); Playwright 38/38 (+ 8 order journeys x 2 devices: full delivery flow incl. failed/retried delivery, unpaid cannot pack, paid cannot be cancelled, reject with confirmation, COD payment then complete, refund retry, customer return retried after a lost answer sends the same key, buying order read-only). |
 | 2026-11-14 | D2 (customer) | typecheck clean; Vitest 37/37; Playwright customer 50/50 (new: Pay now after the window → 409, no new order, booking still pending and checked every minute; then either a late capture confirms it or the sweep shows Expired in booking and list), workspace 82/82. Backend D2 integration 8/8. |
 | 2026-11-14 | D2 approved | Codex approved D2: backend `m0/d2-booking-payment-timeout` c6d8fda (after 1 re-review: free bookings exempt from the deadline on resume; counted back-off) and customer app 3f98b03 (after 1 re-review: a 409 after the window is not treated as cancellation; the panel keeps checking until the server's final state). |
+| 2026-11-15 | D4 (web) | typecheck clean; Vitest 40/40 (session header/credentials, renew-and-retry once); Playwright workspace 92/92 (new session.spec: reload keeps sign-in, sign-out ends the server session, cross-tab sign-out, 401 renew + same request resent, other person's renewal refused; reload with an unconfirmed return restores a check-only panel), customer 54/54 (reload keeps sign-in; lost booking answer found by key after reload); release build with VITE_API_SAME_ORIGIN=true. |

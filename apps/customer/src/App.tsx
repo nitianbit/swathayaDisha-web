@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { createHashRouter, NavLink, Outlet, RouterProvider, useLocation } from 'react-router';
 import { CalendarDays, House, UserRound, Wallet } from 'lucide-react';
-import { Empty } from '@jansetu/ui';
+import { Empty, Loading } from '@jansetu/ui';
 import { useSession, type Customer } from './session.tsx';
 import { LoginScreen } from './screens/LoginScreen.tsx';
 import { HomeScreen } from './screens/HomeScreen.tsx';
@@ -74,6 +74,8 @@ function SignedIn({ customer }: { customer: Customer }) {
 
 export function App() {
   const { state } = useSession();
+  // D4: a reload resumes the cookie session before deciding to show the sign-in screen.
+  if (state.status === 'restoring') return <main className="login"><Loading label="Signing you in…" /></main>;
   if (state.status !== 'signed_in') return <LoginScreen notice={state.notice} />;
   return <SignedIn customer={state.customer} />;
 }

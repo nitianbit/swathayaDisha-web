@@ -17,4 +17,8 @@ VITE_API_BASE_URL=https://<api-origin> npm run build --workspace apps/workspace
 
 The build refuses a missing or non-HTTPS origin. Add the workspace's origin to the backend's `CORS_ORIGIN`.
 
+**Recommended (D4, sessions survive a reload):** serve each app from its own HTTPS host and forward `/api/*` from that
+host to the backend, then build with `VITE_API_SAME_ORIGIN=true` (no `VITE_API_BASE_URL`), and set the backend's
+`SESSION_ORIGINS_WORKSPACE` / `SESSION_ORIGINS_CUSTOMER` to the apps' exact origins.
+
 See [AGENTS.md](AGENTS.md) for the rules and checks, and [docs/PLAN.md](docs/PLAN.md) for the plan.

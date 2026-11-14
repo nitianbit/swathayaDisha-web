@@ -133,7 +133,8 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
         <PendingOpPanel key={pending.attempts} label="Unconfirmed return" op={pending} busy={busy} onResend={() => void send(pending)}
           fetchPage={(page) => orders.customerReturnsFor(order._id, 50, page)}
           onFound={(r) => recorded({ ...r, duplicate: true }, pending.requestKey)}
-          summary={<>
+          onDiscard={() => setPending(undefined)}
+          summary={pending.restored ? null : <>
             <ReturnLines lines={pending.body.lines.map((l) => ({ ...l, ...nameOf(l.medicineId, l.batchId) }))} />
             <div>Reason: “{pending.body.reason}” · Refund: {pending.body.refundAmount != null ? formatRupees(pending.body.refundAmount) : 'none'}</div>
           </>} />

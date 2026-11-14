@@ -8,7 +8,7 @@ import {
 import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { messageOf, PageHeading } from '../common.tsx';
 import { payOrder } from '../payments.ts';
-import { afterFailure, beginAttempt, startOp, stillCurrent, type PendingOp } from '../pending.ts';
+import { afterFailure, beginAttempt, provenNotRecorded, startOp, stillCurrent, type PendingOp } from '../pending.ts';
 import { useCustomer, useSession } from '../session.tsx';
 
 /** The next `n` days as IST calendar dates (YYYYMMDD) with a short label. */
@@ -103,7 +103,59 @@ function useCreateBooking(doctor: Specialist) {
     navigate(bookingPath);
   }
 
-  return { pending, busy, error, send, start: (body: NewConsultation, label: string) => ({ ...startOp(body), label }) };
+  /** D4: a restored request whose booking was found: end it and open the booking. */
+  const found = (bookingId: string) => {
+    if (pending) setPending(undefined);
+    navigate(`/bookings/${bookingId}`);
+  };
+  /** D4: a restored request proven never recorded: forget it, the form is usable again. */
+  const discard = () => setPending(undefined);
+
+  return { pending, busy, error, send, found, discard, start: (body: NewConsultation, label: string) => ({ ...startOp(body), label }) };
+}
+
+/**
+ * D4: a booking request made before the page was reloaded whose answer was never seen. Its details are not kept on this
+ * device, so it cannot be resent from here: the customer's bookings are searched for its key; only when it is provably
+ * not recorded (not found long after it was sent) can a new booking be made.
+ */
+function RestoredRequest({ pending, onFound, onDiscard }: {
+  pending: PendingCreate; onFound: (bookingId: string) => void; onDiscard: () => void;
+}) {
+  const { api } = useSession();
+  const [checking, setChecking] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [notRecorded, setNotRecorded] = useState(false);
+  async function check() {
+    setChecking(true); setNote(null);
+    try {
+      for (let page = 1; page <= 5; page++) {
+        const p = await customerApi(api).bookings(page, 50);
+        const hit = p.items.find((b) => b.createRequestKey === pending.requestKey);
+        if (hit) { onFound(hit._id); return; }
+        if (page >= p.totalPages) break;
+      }
+      if (provenNotRecorded(pending)) { setNotRecorded(true); setNote('It was not booked. You can choose a time and book again.'); }
+      else setNote('Not found yet. It may still be finishing; check again in a few minutes before booking again.');
+    } catch (err) {
+      setNote(`Could not check your bookings: ${messageOf(err)}`);
+    } finally {
+      setChecking(false);
+    }
+  }
+  return (
+    <section className="card stack" role="group" aria-label="Unconfirmed booking request">
+      <Alert tone="warn">
+        A booking request made before this page was reloaded has not been confirmed yet. Check whether it was booked before
+        booking again.
+      </Alert>
+      {note && <Alert>{note}</Alert>}
+      <div className="row">
+        <Button busy={checking} onClick={() => void check()}>Check my bookings</Button>
+        {notRecorded && <Button variant="secondary" onClick={onDiscard}>Book again</Button>}
+      </div>
+    </section>
+  );
 }
 
 function DoctorView({ doctor: d }: { doctor: Specialist }) {
@@ -130,7 +182,9 @@ function DoctorView({ doctor: d }: { doctor: Specialist }) {
       </section>
       {/* The panel is for a request whose outcome is unknown: after a failed attempt, or one restored from an
           earlier visit (it may still be running). A first attempt in flight keeps the form, with a busy button. */}
-      {create.pending && (create.pending.uncertain || !create.busy) ? (
+      {create.pending?.restored ? (
+        <RestoredRequest pending={create.pending} onFound={create.found} onDiscard={create.discard} />
+      ) : create.pending && (create.pending.uncertain || !create.busy) ? (
         <section className="card stack" role="group" aria-label="Unconfirmed booking request">
           <Alert tone="warn">
             Your booking request for {create.pending.label} did not get an answer{create.pending.error ? ` (${create.pending.error})` : ''}.
