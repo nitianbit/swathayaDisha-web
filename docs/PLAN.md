@@ -36,7 +36,9 @@ uses a Capacitor plugin for that one thing (the NIYA employee app model).
 2. **W2 staff screens for the backend packets on `stage`** (none had a UI):
    - **W2a (built):** pharmacy orders list and order page: forward status moves with the backend's payment and
      prescription preconditions shown before the click, record payment (counter/COD), delivery exceptions (P7),
-     refund status and retry (P2), customer returns with an idempotent request key (P3b), unpaid-only cancel/reject.
+     refund status and retry (P2), customer returns (P3b): a submitted return is locked and resent unchanged until
+     its outcome is known, survives leaving the page (session memory), and recorded returns are listed before
+     another can start. No generic cancel/reject (see MONEY item).
    - **W2b (built):** Stock (search, batches with sellable/reserved units by the backend's rule, batch actions offered
      only in the states the backend accepts: quarantine, release with write-off, return to supplier, recall with
      immediate trace, recall trace), Low stock (P7c, refills due), Quality worklist (orders holding held stock: swap
@@ -63,8 +65,9 @@ uses a Capacitor plugin for that one thing (the NIYA employee app model).
 - **MONEY, open: cancelling or rejecting a paid order does not refund it.** `POST /pharmacy-orders/:id/status`
   (`cancelled`/`rejected`, also `/cancel`) releases stock but never creates a refund (`updateStatus` in
   `pharmacyOrders/services`). Only delivery exceptions, stock-hold cancellation and prescription rejection refund.
-  The workspace therefore offers Cancel/Reject only for unpaid orders. Needs a backend packet: route paid
-  cancellations through the P2 refund ledger.
+  The status update also does not check payment atomically, so hiding the buttons for paid orders is not enough (a
+  payment landing while staff confirm would be kept; Codex W2a #1). The workspace therefore offers no generic
+  Cancel/Reject at all. Needs a backend packet: a fenced, refund-aware cancellation through the P2 refund ledger.
 - **SECURITY, open: uploaded files are public.** The backend serves `GET /api/static/*` without authentication
   (`src1/routes/index.ts`), and uploads (prescriptions included) are stored as `/api/static/<module>/<id>/<name>`.
   Anyone who learns a URL can download the file. Needs its own backend packet: authenticate and authorize file
@@ -83,6 +86,8 @@ uses a Capacitor plugin for that one thing (the NIYA employee app model).
 |---|---|---|
 | 2026-11-14 | W1 (first cut) | typecheck clean; Vitest 10/10; Playwright 14/14; release build guards. Codex review: 6 findings (file URL shape, queue scope x2, late 401 across sign-ins, "opened" ≠ readable, body timeout). |
 | 2026-11-14 | W1 (fixes) | typecheck clean; Vitest 16/16; Playwright 22/22 (desktop + tablet, mocked API, incl. corrupt image, download-only file, buyer/cancelled read-only, late 401 after re-sign-in); backend P1 integration 16/16 on the local replica set (new queue check). Not yet run against a real backend. |
+| 2026-11-14 | W2a fixes | Codex W2a: 3 findings (paid-cancel race; edited retry under one key; key lost on leaving). Fixed on top of W2c. Vitest 25/25; Playwright 62/62 (+ committed-then-lost return: locked, identical resend, canonical receipt; survives navigation; listed after reload; definite refusal unlocks with a new key; no generic cancel/reject). |
+| 2026-11-14 | W1 approved | Codex approved the W1 fixes (43ab156, backend f1fbec5). |
 | 2026-11-14 | W2c | typecheck clean; Vitest 24/24; Playwright 58/58 (+ 4 admin journeys x 2 devices); backend A2b integration 18/18 (+ worklist check: scopes, order, pagination, refs/acked flags, no private fields, admin-only route, query validation). |
 | 2026-11-14 | W2b | typecheck clean; Vitest 24/24 (+ sellable rule, expiry format); Playwright 50/50 (+ 6 stock journeys x 2 devices: actions per batch state, quarantine/release validation, supplier return validation, recall with trace, low stock, held-order swap/cancel incl. a non-swappable order). |
 | 2026-11-14 | W2a | typecheck clean; Vitest 22/22 (+ status preconditions, rupee parsing, request keys); Playwright 38/38 (+ 8 order journeys x 2 devices: full delivery flow incl. failed/retried delivery, unpaid cannot pack, paid cannot be cancelled, reject with confirmation, COD payment then complete, refund retry, customer return retried after a lost answer sends the same key, buying order read-only). |

@@ -12,7 +12,7 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 import { CustomerReturnForm } from './CustomerReturnForm.tsx';
 import {
-  blockedReason, DELIVERY_EXCEPTION_LABEL, FORWARD_LABEL, holdsMoney, ORDER_STATUS_LABEL, orderLabel,
+  blockedReason, DELIVERY_EXCEPTION_LABEL, FORWARD_LABEL, ORDER_STATUS_LABEL, orderLabel,
   PAYMENT_STATUS_LABEL, REFUND_STATUS_LABEL, TERMINAL,
 } from './orderLabels.ts';
 
@@ -153,25 +153,16 @@ function OrderView({ order }: { order: PharmacyOrder }) {
           {(canEnd('rejected') || canEnd('cancelled')) && (
             <>
               <h3>End the order</h3>
-              {holdsMoney(order) ? (
-                <Alert tone="warn">
-                  This order is {PAYMENT_STATUS_LABEL[order.paymentStatus ?? 'pending'].toLowerCase()}. Cancelling it here
-                  would not refund the customer, so it is not offered. Use a delivery exception, or ask an admin.
-                </Alert>
-              ) : (
-                <div className="ws-actions">
-                  {canEnd('rejected') && (
-                    <ConfirmAction label="Reject order" confirmLabel="Reject order" danger reason="optional" reasonLabel="Note"
-                      consequence="The order is rejected and its stock is released. The customer is notified."
-                      onConfirm={(note) => act(() => orders.updateStatus(order._id, 'rejected', note || undefined))} />
-                  )}
-                  {canEnd('cancelled') && (
-                    <ConfirmAction label="Cancel order" confirmLabel="Cancel order" danger reason="optional" reasonLabel="Note"
-                      consequence="The order is cancelled and its stock is released. The customer is notified."
-                      onConfirm={(note) => act(() => orders.updateStatus(order._id, 'cancelled', note || undefined))} />
-                  )}
-                </div>
-              )}
+              {/*
+                Not offered: the backend's generic cancel/reject releases stock but never refunds, and it does not check
+                payment atomically, so a payment landing while staff confirm would be kept. Needs a fenced, refund-aware
+                backend cancellation first (docs/PLAN.md, MONEY item).
+              */}
+              <Alert tone="warn">
+                Cancelling or rejecting an order is not available here yet, because the system cannot yet guarantee the
+                customer’s refund if a payment arrives at the same moment. For a delivery problem use the options above;
+                otherwise ask an admin.
+              </Alert>
             </>
           )}
         </section>

@@ -145,7 +145,7 @@ export interface CustomerReturnRequest {
 export interface CustomerReturn {
   _id: string;
   requestKey: string;
-  lines: (CustomerReturnLine & { medicineName?: string; batchNumber?: string; valuePaise: number })[];
+  lines: (CustomerReturnLine & { medicineName?: string; batchNumber?: string; valuePaise?: number })[];
   reason: string;
   returnValuePaise: number;
   refundPaise: number;
@@ -198,6 +198,11 @@ export function pharmacyOrdersApi(c: ApiClient) {
     reallocateHeldStock: (id: string) => c.post<{ order: PharmacyOrder; moves: unknown[] }>(`${idPath(id)}/reallocate-held-stock`),
     /** Cancels an order that holds units of a held batch; releases its stock and refunds it if paid. */
     stockHoldCancel: (id: string, reason: string) => c.post<PharmacyOrder>(`${idPath(id)}/stock-hold-cancel`, { body: { reason } }),
+    /** Returns already recorded for this order (newest first). */
+    customerReturnsFor: (id: string, limit = 50) => {
+      idPath(id);
+      return c.page<CustomerReturn>('/pharmacy-inventory/customer-returns', { query: { orderId: id, limit } });
+    },
     customerReturn: (id: string, body: CustomerReturnRequest) =>
       c.post<CustomerReturn & { duplicate?: boolean }>(`${idPath(id)}/customer-returns`, { body }),
     /** A prescription file, fetched with the staff token (`GET /file/fetch?url=`). */

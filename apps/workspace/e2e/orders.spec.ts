@@ -33,10 +33,14 @@ const EXCEPTIONS: Record<string, [string[], string]> = {
   refused_at_door: [['out_for_delivery', 'delivery_failed'], 'cancelled'],
 };
 
-interface Backend { order: Order; calls: { path: string; body: unknown }[]; failNextReturn: boolean; returns: Map<string, unknown> }
+interface Backend {
+  order: Order; calls: { path: string; body: unknown }[]; returns: Map<string, Record<string, unknown>>;
+  /** Record the next return, then drop the answer (committed, response lost). */ loseNextAnswer: boolean;
+  refuseNextReturn: boolean;
+}
 
 async function mockBackend(page: Page, initial: Order): Promise<Backend> {
-  const state: Backend = { order: initial, calls: [], failNextReturn: false, returns: new Map() };
+  const state: Backend = { order: initial, calls: [], returns: new Map(), loseNextAnswer: false, refuseNextReturn: false };
   const json = (route: Route, status: number, body: unknown) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const refuse = (route: Route, status: number, code: string, message: string) => json(route, status, { error: status, code, message });
@@ -83,14 +87,24 @@ async function mockBackend(page: Page, initial: Order): Promise<Backend> {
       return json(route, 200, { success: true, data: state.order });
     }
     if (path === `/pharmacy-orders/${ID}/customer-returns`) {
-      if (state.failNextReturn) { state.failNextReturn = false; return route.abort('connectionreset'); }
+      if (state.refuseNextReturn) {
+        state.refuseNextReturn = false;
+        return refuse(route, 409, 'RETURN_EXCEEDS_DISPENSED', 'More units than were dispensed from this batch');
+      }
       const key = String(body?.requestKey);
       const seen = state.returns.get(key);
-      if (seen) return json(route, 200, { success: true, data: { ...(seen as object), duplicate: true } });
-      const rec = { _id: '9'.repeat(24), requestKey: key, lines: body?.lines, reason: body?.reason, returnValuePaise: 12000,
-        refundPaise: Math.round(Number(body?.refundAmount ?? 0) * 100), createdAt: '2026-11-14T08:00:00.000Z' };
+      if (seen) return json(route, 200, { success: true, data: { ...seen, duplicate: true } });
+      const rec = { _id: String(state.returns.size + 1).padStart(24, '9'), requestKey: key, reason: body?.reason,
+        lines: (body?.lines as Record<string, unknown>[]).map((l) => ({ ...l, medicineName: 'Paracetamol 650mg', batchNumber: 'PCM-24A', valuePaise: 6000 })),
+        returnValuePaise: 6000 * (body?.lines as unknown[]).length, refundPaise: Math.round(Number(body?.refundAmount ?? 0) * 100),
+        createdAt: '2026-11-14T08:00:00.000Z' };
       state.returns.set(key, rec);
+      if (state.loseNextAnswer) { state.loseNextAnswer = false; return route.abort('connectionreset'); }
       return json(route, 201, { success: true, data: rec });
+    }
+    if (path === '/pharmacy-inventory/customer-returns') {
+      const items = [...state.returns.values()].reverse();
+      return json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 50, total: items.length, totalPages: 1 } });
     }
     return refuse(route, 404, 'NOT_FOUND', 'Not found');
   });
@@ -145,25 +159,15 @@ test('an unpaid online order cannot be packed, and says why', async ({ page }) =
   await expect(page.getByText('Waiting for payment.')).toBeVisible();
 });
 
-test('a paid order offers no cancel or reject, because that would not refund the customer', async ({ page }) => {
-  const backend = await mockBackend(page, order());
-  await openOrder(page);
-  await expect(page.getByText(/would not refund the customer/)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Cancel order' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Reject order' })).toHaveCount(0);
-  expect(backend.calls).toHaveLength(0);
-});
-
-test('an unpaid order can be rejected after a confirmation', async ({ page }) => {
-  const backend = await mockBackend(page, order({ paymentStatus: 'pending' }));
-  await openOrder(page);
-  await page.getByRole('button', { name: 'Reject order' }).click();
-  await expect(page.getByText('The order is rejected and its stock is released.', { exact: false })).toBeVisible();
-  expect(backend.calls).toHaveLength(0);
-  await page.getByLabel('Note (optional)').fill('Out of stock');
-  await page.getByRole('button', { name: 'Reject order' }).click();
-  await expect(page.getByText('Rejected', { exact: true }).first()).toBeVisible();
-  expect(backend.calls).toEqual([{ path: '/status', body: { status: 'rejected', notes: 'Out of stock' } }]);
+test('no order offers a generic cancel or reject: it could keep a payment that lands meanwhile', async ({ page }) => {
+  for (const paymentStatus of ['paid', 'pending']) {
+    const backend = await mockBackend(page, order({ paymentStatus }));
+    await openOrder(page);
+    await expect(page.getByText(/Cancelling or rejecting an order is not available here yet/)).toBeVisible();
+    await expect(page.getByRole('button', { name: /Cancel order|Reject order/ })).toHaveCount(0);
+    expect(backend.calls).toHaveLength(0);
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+  }
 });
 
 test('cash on delivery: the order can go out unpaid, the payment is recorded, then it completes', async ({ page }) => {
@@ -188,30 +192,98 @@ test('a waiting refund can be retried', async ({ page }) => {
   await expect(page.getByText('Credited to the customer’s wallet')).toBeVisible();
 });
 
-test('a customer return keeps its request key across a lost answer, so it is recorded once', async ({ page }) => {
+async function fillReturn(page: Page, qty: string, disposition: 'Back to stock' | 'Discard' = 'Back to stock') {
+  await page.getByLabel('Returned quantity of Paracetamol 650mg, batch PCM-24A').fill(qty);
+  await page.getByLabel('What happens to Paracetamol 650mg, batch PCM-24A').selectOption({ label: disposition });
+  await page.getByLabel('Reason').fill('Doctor changed the prescription');
+  await page.getByLabel('Refund to the customer’s wallet (₹, optional)').fill('10');
+}
+
+const returnCalls = (b: Backend) => b.calls.filter((c) => c.path === '/customer-returns').map((c) => c.body as Record<string, unknown>);
+
+test('a return whose answer is lost is locked and resent unchanged; the receipt shows what was recorded', async ({ page }) => {
   const backend = await mockBackend(page, order({ status: 'completed' }));
-  backend.failNextReturn = true;
   await openOrder(page);
+  await expect(page.getByText('No return has been recorded for this order.')).toBeVisible();
   await page.getByRole('button', { name: 'Record a return…' }).click();
-  const qty = page.getByLabel('Returned quantity of Paracetamol 650mg, batch PCM-24A');
-  await qty.fill('9');
+  await page.getByLabel('Returned quantity of Paracetamol 650mg, batch PCM-24A').fill('9');
   await page.getByLabel('Reason').fill('Doctor changed the prescription');
   await page.getByRole('button', { name: 'Record return' }).click();
   await expect(page.getByText('Enter a whole number from 1 to 4.')).toBeVisible();
-  await qty.fill('2');
-  await page.getByLabel('Refund to the customer’s wallet (₹, optional)').fill('60.50');
-  await page.getByRole('button', { name: 'Record return' }).click();
-  await expect(page.getByRole('alert')).toContainText('Could not reach the server');
-  await page.getByRole('button', { name: 'Record return' }).click();
-  await expect(page.getByText(/Return recorded\. Value ₹120(\.00)?, refunded to the wallet ₹60\.50\./)).toBeVisible();
 
-  const sent = backend.calls.filter((c) => c.path === '/customer-returns').map((c) => c.body as Record<string, unknown>);
+  backend.loseNextAnswer = true; // recorded on the server, answer lost
+  await fillReturn(page, '1');
+  await page.getByRole('button', { name: 'Record return' }).click();
+  const locked = page.getByRole('group', { name: 'Unconfirmed return' });
+  await expect(locked).toContainText('It may already be recorded');
+  await expect(locked).toContainText('Paracetamol 650mg (batch PCM-24A) × 1, back to stock');
+  await expect(page.getByLabel('What happens to Paracetamol 650mg, batch PCM-24A')).toHaveCount(0); // nothing to edit
+
+  await locked.getByRole('button', { name: 'Send the same return again' }).click();
+  const receipt = page.getByRole('group', { name: 'Recorded return' });
+  await expect(receipt).toContainText('This return had already been recorded');
+  await expect(receipt).toContainText('Paracetamol 650mg (batch PCM-24A) × 1, back to stock');
+  await expect(page.getByRole('heading', { name: 'Already recorded (1)' })).toBeVisible();
+
+  const sent = returnCalls(backend);
   expect(sent).toHaveLength(2);
-  expect(sent[0]!.requestKey).toBe(sent[1]!.requestKey);
-  expect(sent[1]).toMatchObject({
-    reason: 'Doctor changed the prescription', refundAmount: 60.5,
-    lines: [{ medicineId: MED, batchId: BATCH, quantity: 2, disposition: 'restock' }],
-  });
+  expect(sent[1]).toEqual(sent[0]); // same key, same details
+  expect(backend.returns.size).toBe(1);
+});
+
+test('an unconfirmed return survives leaving the order; nothing is recorded twice', async ({ page }) => {
+  const backend = await mockBackend(page, order({ status: 'completed' }));
+  await openOrder(page);
+  backend.loseNextAnswer = true;
+  await page.getByRole('button', { name: 'Record a return…' }).click();
+  await fillReturn(page, '1');
+  await page.getByRole('button', { name: 'Record return' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed return' })).toBeVisible();
+
+  await page.getByRole('link', { name: 'Orders', exact: true }).first().click();
+  await page.getByRole('link', { name: 'PO-2001' }).click();
+  const locked = page.getByRole('group', { name: 'Unconfirmed return' });
+  await expect(locked).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record a return…' })).toHaveCount(0);
+  await locked.getByRole('button', { name: 'Send the same return again' }).click();
+  await expect(page.getByRole('group', { name: 'Recorded return' })).toBeVisible();
+  expect(backend.returns.size).toBe(1);
+  expect(new Set(returnCalls(backend).map((b) => b.requestKey)).size).toBe(1);
+});
+
+test('after a reload, the recorded return is listed before another can be started', async ({ page }) => {
+  const backend = await mockBackend(page, order({ status: 'completed' }));
+  await openOrder(page);
+  backend.loseNextAnswer = true;
+  await page.getByRole('button', { name: 'Record a return…' }).click();
+  await fillReturn(page, '1');
+  await page.getByRole('button', { name: 'Record return' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed return' })).toBeVisible();
+
+  await page.reload(); // session memory is gone with the session; the server's record is not
+  await page.getByLabel('Mobile number').fill('9876543210');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await page.getByLabel('6-digit code').fill('123456');
+  await page.getByRole('button', { name: 'Verify and sign in' }).click();
+  await expect(page.getByRole('heading', { name: 'Already recorded (1)' })).toBeVisible();
+  await expect(page.getByText(/Paracetamol 650mg × 1 back to stock · refund ₹10/)).toBeVisible();
+  await expect(page.getByText('Check the returns above first: do not record the same return again.')).toBeVisible();
+});
+
+test('a definite refusal records nothing: the form stays editable and the next try uses a new key', async ({ page }) => {
+  const backend = await mockBackend(page, order({ status: 'completed' }));
+  await openOrder(page);
+  backend.refuseNextReturn = true;
+  await page.getByRole('button', { name: 'Record a return…' }).click();
+  await fillReturn(page, '4');
+  await page.getByRole('button', { name: 'Record return' }).click();
+  await expect(page.getByText('Not recorded: More units than were dispensed from this batch')).toBeVisible();
+  await fillReturn(page, '2', 'Discard');
+  await page.getByRole('button', { name: 'Record return' }).click();
+  await expect(page.getByRole('group', { name: 'Recorded return' })).toContainText('× 2, discarded');
+  const [first, second] = returnCalls(backend);
+  expect(first!.requestKey).not.toBe(second!.requestKey);
+  expect(second).toMatchObject({ refundAmount: 10, lines: [{ medicineId: MED, batchId: BATCH, quantity: 2, disposition: 'discard' }] });
 });
 
 test('an order this pharmacy is buying shows no actions', async ({ page }) => {

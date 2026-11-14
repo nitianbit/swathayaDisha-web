@@ -18,9 +18,20 @@ type SessionState =
   | { status: 'signed_out'; notice?: string }
   | { status: 'signed_in'; user: StaffUser };
 
+/**
+ * Memory that lives exactly as long as the signed-in session: never written to browser storage, cleared on sign-out.
+ * For work that must survive leaving a page (e.g. an unconfirmed customer return), not for caching server data.
+ */
+export interface SessionMemory {
+  get<T>(key: string): T | undefined;
+  set<T>(key: string, value: T): void;
+  delete(key: string): void;
+}
+
 interface SessionValue {
   state: SessionState;
   api: ApiClient;
+  memory: SessionMemory;
   requestCode: (role: StaffRole, target: OtpTarget) => Promise<void>;
   verifyCode: (role: StaffRole, target: OtpTarget, otp: string) => Promise<void>;
   signOut: (notice?: string) => void;
@@ -47,6 +58,12 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
   const generation = useRef(0);
   // Aborted on sign-out: every request issued under the ended session is cancelled.
   const sessionAbort = useRef(new AbortController());
+  const store = useRef(new Map<string, unknown>());
+  const memory = useMemo<SessionMemory>(() => ({
+    get: <T,>(key: string) => store.current.get(key) as T | undefined,
+    set: (key, value) => { store.current.set(key, value); },
+    delete: (key) => { store.current.delete(key); },
+  }), []);
   const [state, setState] = useState<SessionState>({ status: 'signed_out' });
 
   const signOut = useCallback((notice?: string) => {
@@ -54,6 +71,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     token.current = null;
     sessionAbort.current.abort();
     sessionAbort.current = new AbortController();
+    store.current = new Map();
     queryClient.clear();
     setState({ status: 'signed_out', notice });
   }, [queryClient]);
@@ -102,8 +120,8 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     setState({ status: 'signed_in', user: { role, id, name: displayName(raw, role), raw } });
   }, [auth]);
 
-  const value = useMemo(() => ({ state, api, requestCode, verifyCode, signOut }),
-    [state, api, requestCode, verifyCode, signOut]);
+  const value = useMemo(() => ({ state, api, memory, requestCode, verifyCode, signOut }),
+    [state, api, memory, requestCode, verifyCode, signOut]);
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 

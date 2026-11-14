@@ -1,12 +1,18 @@
 import { useState, type FormEvent } from 'react';
-import { pharmacyOrdersApi, type CustomerReturn, type CustomerReturnLine, type PharmacyOrder } from '@jansetu/api';
-import { Alert, Button, formatRupees, TextArea, TextField } from '@jansetu/ui';
+import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import {
+  ApiError, pharmacyOrdersApi, type CustomerReturn, type Page, type CustomerReturnLine, type CustomerReturnRequest, type PharmacyOrder,
+} from '@jansetu/api';
+import { Alert, Button, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { useSession } from '../../session.tsx';
 
 interface Row { key: string; medicineId: string; medicineName: string; batchId: string; batchNumber: string; sold: number }
 
-/** One key per form: a retried submission (lost answer, double click) returns the first record instead of a second return. */
+/** A submitted return whose outcome is not known yet. Kept in session memory, so leaving the page does not lose it. */
+interface Pending { requestKey: string; body: CustomerReturnRequest; error?: string }
+type Receipt = CustomerReturn & { duplicate?: boolean };
+
 export const newRequestKey = () => crypto.randomUUID().replace(/-/g, '');
 
 /** Rupees with at most two decimals, as the backend's Joi rule accepts (`precision(2).strict()`). */
@@ -16,9 +22,28 @@ export function parseRupees(text: string): number | null {
   return Number(t);
 }
 
-/** Customer brings back medicines from a completed order (P3b). The server checks quantities, batches and refund limits. */
+/**
+ * The server refused the request itself (validation, state, limits): nothing was recorded, so the details may be
+ * changed and sent under a new key. Anything else (no answer, timeout, 5xx, rate limit) may have been recorded.
+ */
+export function definitelyNotRecorded(err: unknown): boolean {
+  return err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429;
+}
+
+const pendingKey = (orderId: string) => `customer-return:${orderId}`;
+const DISPOSITION = { restock: 'back to stock', discard: 'discarded' } as const;
+
+/**
+ * Customer brings back medicines from a completed order (P3b). One physical return must be recorded once:
+ * - each submission has a request key; a retry sends the SAME key and the SAME details (the form is locked until the
+ *   outcome is known), so the server answers with the first record instead of recording twice;
+ * - an unconfirmed submission survives leaving the page (session memory, not browser storage);
+ * - returns already recorded for the order are always listed before another can be started (also after a reload).
+ */
 export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; onDone: () => void }) {
-  const { api } = useSession();
+  const { api, memory } = useSession();
+  const queryClient = useQueryClient();
+  const orders = pharmacyOrdersApi(api);
   const rows: Row[] = order.items
     .filter((it) => (it.itemStatus ?? 'active') === 'active')
     .flatMap((it) => (it.batchAllocations ?? []).map((b) => ({
@@ -26,20 +51,50 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
       batchId: b.batchId, batchNumber: b.batchNumber, sold: b.quantity,
     })));
 
+  const history = useQuery({ queryKey: ['customer-returns', order._id], queryFn: () => orders.customerReturnsFor(order._id) });
+  const [pending, setPendingState] = useState<Pending | undefined>(() => memory.get<Pending>(pendingKey(order._id)));
   const [open, setOpen] = useState(false);
-  const [requestKey, setRequestKey] = useState(newRequestKey);
   const [qty, setQty] = useState<Record<string, string>>({});
   const [disposition, setDisposition] = useState<Record<string, CustomerReturnLine['disposition']>>({});
   const [reason, setReason] = useState('');
   const [refund, setRefund] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<(CustomerReturn & { duplicate?: boolean }) | null>(null);
+  const [refused, setRefused] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<Receipt | null>(null);
 
   if (rows.length === 0) return null;
 
-  async function submit(e: FormEvent) {
+  const setPending = (p: Pending | undefined) => {
+    if (p) memory.set(pendingKey(order._id), p); else memory.delete(pendingKey(order._id));
+    setPendingState(p);
+  };
+
+  /** Sends exactly `p`; only a definite answer clears it. */
+  async function send(p: Pending) {
+    setBusy(true);
+    setRefused(null);
+    setPending({ ...p, error: undefined });
+    try {
+      const result = await orders.customerReturn(order._id, p.body);
+      setPending(undefined);
+      setReceipt(result);
+      setOpen(false);
+      onDone();
+    } catch (err) {
+      if (definitelyNotRecorded(err)) {
+        setPending(undefined);
+        setRefused(messageOf(err)); // the form keeps what was typed; the next submission gets a new key
+      } else {
+        setPending({ ...p, error: messageOf(err) });
+      }
+    } finally {
+      setBusy(false);
+      void queryClient.invalidateQueries({ queryKey: ['customer-returns', order._id] });
+    }
+  }
+
+  function submit(e: FormEvent) {
     e.preventDefault();
     const errs: Record<string, string> = {};
     const lines: CustomerReturnLine[] = [];
@@ -56,43 +111,50 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
     if (refundAmount === null) errs.refund = 'Enter an amount in rupees, like 120 or 120.50.';
     setErrors(errs);
     if (Object.keys(errs).length) return;
-
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await pharmacyOrdersApi(api).customerReturn(order._id, {
-        requestKey, reason: reason.trim(), lines, ...(refundAmount != null ? { refundAmount } : {}),
-      });
-      setDone(result);
-      onDone();
-    } catch (err) {
-      // Same key on the next attempt: if this one was in fact recorded, the server answers with that record.
-      setError(messageOf(err));
-    } finally {
-      setBusy(false);
-    }
+    void send(withKey({ reason: reason.trim(), lines, ...(refundAmount != null ? { refundAmount } : {}) }));
   }
 
-  function reset() {
-    setRequestKey(newRequestKey());
-    setQty({}); setDisposition({}); setReason(''); setRefund(''); setErrors({}); setError(null); setDone(null); setOpen(false);
+  function startAnother() {
+    setReceipt(null); setQty({}); setDisposition({}); setReason(''); setRefund(''); setErrors({}); setRefused(null); setOpen(true);
   }
+
+  const nameOf = (medicineId: string, batchId: string) => rows.find((r) => r.medicineId === medicineId && r.batchId === batchId);
 
   return (
     <section className="ws-section" aria-labelledby="return-h">
       <h2 id="return-h">Customer return</h2>
-      {done ? (
-        <>
-          <Alert tone="ok">
-            {done.duplicate ? 'This return was already recorded. ' : 'Return recorded. '}
-            Value {formatRupees(done.returnValuePaise / 100)}, refunded to the wallet {formatRupees(done.refundPaise / 100)}.
+
+      <ReturnHistory query={history} />
+
+      {pending ? (
+        <div className="confirm" role="group" aria-label="Unconfirmed return">
+          <Alert tone="warn">
+            This return was sent but its answer did not arrive{pending.error ? ` (${pending.error})` : ''}. It may already be
+            recorded. Send the same return again to find out; it will not be recorded twice.
           </Alert>
-          <div><Button variant="secondary" onClick={reset}>Record another return</Button></div>
-        </>
+          <ReturnLines lines={pending.body.lines.map((l) => ({ ...l, ...nameOf(l.medicineId, l.batchId) }))} />
+          <div>Reason: “{pending.body.reason}” · Refund: {pending.body.refundAmount != null ? formatRupees(pending.body.refundAmount) : 'none'}</div>
+          <div className="confirm-actions"><Button busy={busy} onClick={() => void send(pending)}>Send the same return again</Button></div>
+        </div>
+      ) : receipt ? (
+        <div className="confirm" role="group" aria-label="Recorded return">
+          <Alert tone="ok">
+            {receipt.duplicate ? 'This return had already been recorded. These are the recorded details:' : 'Return recorded:'}
+          </Alert>
+          <ReturnLines lines={receipt.lines} />
+          <div>Value {formatRupees(receipt.returnValuePaise / 100)} · refunded to the wallet {formatRupees(receipt.refundPaise / 100)}</div>
+          <div className="confirm-actions"><Button variant="secondary" onClick={startAnother}>Record another return…</Button></div>
+        </div>
       ) : !open ? (
-        <div><Button variant="secondary" onClick={() => setOpen(true)}>Record a return…</Button></div>
+        <div className="ws-action">
+          {/* The recorded returns are the check against recording one twice: no new return without them. */}
+          <Button variant="secondary" onClick={() => setOpen(true)} disabled={!history.isSuccess}>Record a return…</Button>
+          {history.data && history.data.total > 0 && (
+            <span className="ws-muted">Check the returns above first: do not record the same return again.</span>
+          )}
+        </div>
       ) : (
-        <form className="rx-form" noValidate onSubmit={(e) => void submit(e)}>
+        <form className="rx-form" noValidate onSubmit={submit}>
           <div className="ws-table-wrap">
             <table className="j-table">
               <thead>
@@ -129,7 +191,7 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
           <TextField label="Refund to the customer’s wallet (₹, optional)" inputMode="decimal" value={refund}
             onChange={(e) => setRefund(e.target.value)} error={errors.refund}
             hint="Leave empty for no refund. It cannot exceed the value of what is returned or what was paid." />
-          {error && <Alert>{error}</Alert>}
+          {refused && <Alert>Not recorded: {refused}</Alert>}
           <div className="rx-actions">
             <Button type="submit" busy={busy}>Record return</Button>
             <Button variant="ghost" disabled={busy} onClick={() => setOpen(false)}>Cancel</Button>
@@ -137,5 +199,39 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
         </form>
       )}
     </section>
+  );
+}
+
+function withKey(body: Omit<CustomerReturnRequest, 'requestKey'>): Pending {
+  const requestKey = newRequestKey();
+  return { requestKey, body: { ...body, requestKey } };
+}
+
+function ReturnLines({ lines }: { lines: (CustomerReturnLine & { medicineName?: string; batchNumber?: string })[] }) {
+  return (
+    <ul className="ws-list">
+      {lines.map((l, i) => (
+        <li key={i}>{l.medicineName ?? l.medicineId} (batch {l.batchNumber ?? l.batchId}) × {l.quantity}, {DISPOSITION[l.disposition]}</li>
+      ))}
+    </ul>
+  );
+}
+
+function ReturnHistory({ query }: { query: UseQueryResult<Page<CustomerReturn>> }) {
+  if (query.isPending) return <Loading label="Loading recorded returns…" />;
+  if (query.isError) return <ErrorState message={`Could not load recorded returns: ${messageOf(query.error)}`} onRetry={() => void query.refetch()} />;
+  if (query.data.total === 0) return <p className="ws-muted">No return has been recorded for this order.</p>;
+  return (
+    <div>
+      <h3>Already recorded ({query.data.total})</h3>
+      <ul className="ws-list">
+        {query.data.items.map((r) => (
+          <li key={r._id}>
+            {formatDateTime(r.createdAt)} · {r.lines.map((l) => `${l.medicineName ?? l.medicineId} × ${l.quantity} ${DISPOSITION[l.disposition]}`).join('; ')}
+            {' '}· refund {formatRupees(r.refundPaise / 100)} · “{r.reason}”
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
