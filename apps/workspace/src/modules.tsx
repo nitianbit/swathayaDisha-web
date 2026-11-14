@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { ClipboardCheck, House } from 'lucide-react';
+import { ClipboardCheck, House, Package } from 'lucide-react';
 import type { StaffRole } from './session.tsx';
 import { HomeScreen } from './screens/HomeScreen.tsx';
+import { OrderScreen } from './screens/pharmacy/OrderScreen.tsx';
+import { OrdersScreen } from './screens/pharmacy/OrdersScreen.tsx';
 import { RxQueueScreen } from './screens/pharmacy/RxQueueScreen.tsx';
 import { RxReviewScreen } from './screens/pharmacy/RxReviewScreen.tsx';
 
@@ -20,6 +22,11 @@ export interface WorkspacePage {
 
 export const PAGES: readonly WorkspacePage[] = [
   { path: '/', roles: ['admin', 'pharmacy'], element: <HomeScreen />, nav: { label: 'Home', icon: House, section: '' } },
+  {
+    path: '/pharmacy/orders', roles: ['pharmacy'], element: <OrdersScreen />,
+    nav: { label: 'Orders', icon: Package, section: 'Pharmacy' },
+  },
+  { path: '/pharmacy/orders/:orderId', roles: ['pharmacy'], element: <OrderScreen /> },
   {
     path: '/pharmacy/prescriptions', roles: ['pharmacy'], element: <RxQueueScreen />,
     nav: { label: 'Prescription review', icon: ClipboardCheck, section: 'Pharmacy' },

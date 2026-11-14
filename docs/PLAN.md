@@ -34,10 +34,14 @@ uses a Capacitor plugin for that one thing (the NIYA employee app model).
 1. **W1 foundations + first staff module (this packet).** Repo, API client, UI tokens, workspace login (OTP,
    admin/pharmacy), role-based navigation, pharmacist prescription review (P1), unit + browser tests.
 2. **W2 staff screens for the backend packets on `stage`** (none had a UI):
-   - Pharmacy: refunds for rejected orders (P2), refill orders and delivery exceptions (P7), low-stock list (P7c),
-     quarantine/release and supplier returns (P3), recall worklist and customer returns (P3b).
-   - Admin: prescription refunds needing attention (P2), external cancellations waiting for an admin (A2b
-     `reconcile-cancellation`).
+   - **W2a (built):** pharmacy orders list and order page: forward status moves with the backend's payment and
+     prescription preconditions shown before the click, record payment (counter/COD), delivery exceptions (P7),
+     refund status and retry (P2), customer returns with an idempotent request key (P3b), unpaid-only cancel/reject.
+   - **W2b:** low-stock list (P7c), quality holds: quarantine/release and supplier returns (P3), recall and trace,
+     held-stock swap and stock-hold cancel (P3b).
+   - **W2c:** admin: prescription refunds needing attention (P2), external cancellations waiting for an admin (A2b
+     `reconcile-cancellation`; needs a backend list endpoint: the booking list cannot filter
+     `cancellation_requested` and hides `providerOps`).
 3. **W3 customer app core.** OTP login, profile and family, bookings (with the A1/A2 cancellation rules and the
    `cancellation_requested` state), lab tests/diagnostics, wallet, coupons, Razorpay, reports, notifications; English
    and Hindi; Capacitor shell.
@@ -52,6 +56,11 @@ uses a Capacitor plugin for that one thing (the NIYA employee app model).
   the pharmacist work queue. It lists only orders the caller's pharmacy sells, whose prescription is pending, in the
   states the review accepts (`placed`, `accepted`), oldest first. The general order list could not express this
   (it mixes in orders the pharmacy buys and cancelled ones). Test: `test/pharmacy-prescription/p1-review.integration.ts`.
+- **MONEY, open: cancelling or rejecting a paid order does not refund it.** `POST /pharmacy-orders/:id/status`
+  (`cancelled`/`rejected`, also `/cancel`) releases stock but never creates a refund (`updateStatus` in
+  `pharmacyOrders/services`). Only delivery exceptions, stock-hold cancellation and prescription rejection refund.
+  The workspace therefore offers Cancel/Reject only for unpaid orders. Needs a backend packet: route paid
+  cancellations through the P2 refund ledger.
 - **SECURITY, open: uploaded files are public.** The backend serves `GET /api/static/*` without authentication
   (`src1/routes/index.ts`), and uploads (prescriptions included) are stored as `/api/static/<module>/<id>/<name>`.
   Anyone who learns a URL can download the file. Needs its own backend packet: authenticate and authorize file
@@ -70,3 +79,4 @@ uses a Capacitor plugin for that one thing (the NIYA employee app model).
 |---|---|---|
 | 2026-11-14 | W1 (first cut) | typecheck clean; Vitest 10/10; Playwright 14/14; release build guards. Codex review: 6 findings (file URL shape, queue scope x2, late 401 across sign-ins, "opened" ≠ readable, body timeout). |
 | 2026-11-14 | W1 (fixes) | typecheck clean; Vitest 16/16; Playwright 22/22 (desktop + tablet, mocked API, incl. corrupt image, download-only file, buyer/cancelled read-only, late 401 after re-sign-in); backend P1 integration 16/16 on the local replica set (new queue check). Not yet run against a real backend. |
+| 2026-11-14 | W2a | typecheck clean; Vitest 22/22 (+ status preconditions, rupee parsing, request keys); Playwright 38/38 (+ 8 order journeys x 2 devices: full delivery flow incl. failed/retried delivery, unpaid cannot pack, paid cannot be cancelled, reject with confirmation, COD payment then complete, refund retry, customer return retried after a lost answer sends the same key, buying order read-only). |

@@ -7,12 +7,41 @@ export type OrderStatus =
 export type PaymentStatus = 'pending' | 'authorized' | 'paid' | 'failed' | 'refunded' | 'partially_paid';
 export type PrescriptionStatus = 'not_required' | 'pending' | 'approved' | 'rejected';
 
+export interface BatchAllocation { batchId: string; batchNumber: string; expiryDate: string; quantity: number }
+
 export interface OrderItem {
   medicineId: string;
   medicineName?: string;
   orderedQty: number;
   unitPrice: number;
   lineTotal: number;
+  itemStatus?: 'active' | 'replaced' | 'removed';
+  batchAllocations?: BatchAllocation[];
+}
+
+export type PaymentMode = 'online_payment' | 'in_store_payment' | 'cash_on_delivery';
+export type DeliveryExceptionType = 'delivery_failed' | 'retry_delivery' | 'switch_to_pickup' | 'not_collected' | 'refused_at_door';
+
+export interface DeliveryException {
+  type: DeliveryExceptionType;
+  reason?: string;
+  at: string;
+  fromStatus: OrderStatus;
+  toStatus: OrderStatus;
+  refundRequired: boolean;
+}
+
+export type PrescriptionRefundStatus = 'wallet_pending' | 'wallet_credited' | 'source_processing' | 'source_refunded' | 'manual_review';
+
+/** Refund owed after a rejection, a failed delivery or a stock-hold cancellation (P2); amounts as the backend stores them. */
+export interface PrescriptionRefund {
+  cause?: 'prescription_rejected' | 'delivery_not_collected' | 'delivery_refused' | 'stock_hold_cancelled';
+  status: PrescriptionRefundStatus;
+  walletAmount: number;
+  gatewayAmountPaise: number;
+  walletCreditedAt?: string;
+  lastError?: string;
+  updatedAt?: string;
 }
 
 export interface PrescriptionReview {
@@ -40,7 +69,13 @@ export interface PharmacyOrder {
   items: OrderItem[];
   grandTotal?: number;
   paymentStatus?: PaymentStatus;
+  paymentMode?: PaymentMode;
   deliveryMode?: 'pickup' | 'delivery';
+  deliveryAddress?: string;
+  deliveryExceptions?: DeliveryException[];
+  prescriptionRefund?: PrescriptionRefund;
+  customerReturns?: { count: number; refundedPaise: number; lastReturnAt?: string };
+  refill?: { subscriptionId: string; cycleDate: string; paymentDueBy: string };
   prescriptionUrls?: string[];
   prescriptionStatus?: PrescriptionStatus;
   prescriptionReview?: PrescriptionReview;
@@ -63,6 +98,58 @@ export interface PrescriptionReviewRequest {
   reason?: string;
   /** Exactly the order's `prescriptionUrls`, in order: the backend refuses the review if the set changed. */
   reviewedPrescriptionUrls: string[];
+}
+
+/**
+ * Generic status moves the backend allows (pharmacyOrders services, ALLOWED_STATUS_TRANSITIONS). `delivery_failed`
+ * moves only through delivery exceptions.
+ */
+export const ORDER_TRANSITIONS: Readonly<Record<OrderStatus, readonly OrderStatus[]>> = {
+  placed: ['accepted', 'rejected', 'cancelled', 'abandoned'],
+  accepted: ['packed', 'cancelled'],
+  packed: ['ready_for_pickup', 'out_for_delivery', 'cancelled'],
+  ready_for_pickup: ['completed'],
+  out_for_delivery: ['completed'],
+  delivery_failed: [],
+  completed: [],
+  abandoned: [],
+  cancelled: [],
+  rejected: [],
+};
+
+/** Delivery exceptions and the states each starts from (pharmacyOrders services, recordDeliveryException). */
+export const DELIVERY_EXCEPTION_FROM: Readonly<Record<DeliveryExceptionType, readonly OrderStatus[]>> = {
+  delivery_failed: ['out_for_delivery'],
+  retry_delivery: ['delivery_failed'],
+  switch_to_pickup: ['out_for_delivery', 'delivery_failed'],
+  not_collected: ['ready_for_pickup'],
+  refused_at_door: ['out_for_delivery', 'delivery_failed'],
+};
+
+export interface CustomerReturnLine {
+  medicineId: string;
+  batchId: string;
+  quantity: number;
+  disposition: 'restock' | 'discard';
+}
+
+export interface CustomerReturnRequest {
+  /** Same key on a retry returns the first record instead of a second return (pattern ^[A-Za-z0-9_-]{8,64}$). */
+  requestKey: string;
+  reason: string;
+  lines: CustomerReturnLine[];
+  /** Rupees, at most 2 decimals; omitted = no refund. */
+  refundAmount?: number;
+}
+
+export interface CustomerReturn {
+  _id: string;
+  requestKey: string;
+  lines: (CustomerReturnLine & { medicineName?: string; batchNumber?: string; valuePaise: number })[];
+  reason: string;
+  returnValuePaise: number;
+  refundPaise: number;
+  createdAt: string;
 }
 
 /** Order states the backend's review accepts (pharmacyOrders services, PRESCRIPTION_REVIEWABLE_STATUSES). */
@@ -98,6 +185,17 @@ export function pharmacyOrdersApi(c: ApiClient) {
     get: (id: string) => c.get<PharmacyOrder>(idPath(id)),
     reviewPrescription: (id: string, body: PrescriptionReviewRequest) =>
       c.post<PharmacyOrder>(`${idPath(id)}/prescription-review`, { body }),
+    updateStatus: (id: string, status: OrderStatus, notes?: string) =>
+      c.post<PharmacyOrder>(`${idPath(id)}/status`, { body: { status, ...(notes ? { notes } : {}) } }),
+    /** Only for in-store / cash-on-delivery orders. */
+    markPaid: (id: string, body: { paymentSource?: string; notes?: string } = {}) =>
+      c.post<PharmacyOrder>(`${idPath(id)}/mark-paid`, { body }),
+    deliveryException: (id: string, type: DeliveryExceptionType, reason?: string) =>
+      c.post<PharmacyOrder>(`${idPath(id)}/delivery-exception`, { body: { type, ...(reason ? { reason } : {}) } }),
+    /** Re-attempts a `wallet_pending` refund. */
+    retryRefund: (id: string) => c.post<PharmacyOrder>(`${idPath(id)}/prescription-refund/retry`),
+    customerReturn: (id: string, body: CustomerReturnRequest) =>
+      c.post<CustomerReturn & { duplicate?: boolean }>(`${idPath(id)}/customer-returns`, { body }),
     /** A prescription file, fetched with the staff token (`GET /file/fetch?url=`). */
     prescriptionFile: (storedUrl: string, signal?: AbortSignal) =>
       c.blob('/file/fetch', { query: { url: fetchableFileUrl(storedUrl) }, signal }),
