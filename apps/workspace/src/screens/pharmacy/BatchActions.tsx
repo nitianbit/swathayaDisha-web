@@ -177,8 +177,15 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
         onResend={() => void send(pending)}
         fetchPage={(page) => inventoryApi(api).supplierReturns({ page, limit: 100 })}
         onFound={(r) => { recorded(pending.requestKey); void onDone({ ...r, duplicate: true }); }}
-        onDiscard={() => setPending(undefined)}
-        abandon={() => requestKeysApi(api).abandon('supplier_return', pending.requestKey)}
+        onDiscard={() => {
+          const k = pending.requestKey; // only the request this panel was about
+          resolveStored(memory, key, k);
+          setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
+        }}
+        abandon={async () => {
+          const r = await requestKeysApi(api).abandon('supplier_return', pending.requestKey);
+          return { state: r.state, record: r.record as unknown as SupplierReturn | undefined };
+        }}
         summary={pending.restored || !b ? null : <div>{b.quantity} units to {pending.supplierName} · {b.reason.replace(/_/g, ' ')}{b.notes ? ` · “${b.notes}”` : ''}</div>} />
     );
   }

@@ -8,6 +8,8 @@ export type OtpTarget = { phone: string } | { email: string };
 
 export interface SignedIn {
   token: string;
+  /** Seconds the access token lasts (cookie sessions; absent for the legacy long-lived bearer). */
+  expiresIn?: number;
   user: Record<string, unknown>;
 }
 
@@ -37,8 +39,9 @@ export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_crea
  */
 export function requestKeysApi(c: ApiClient) {
   return {
-    abandon: async (kind: OnceOnlyKind, key: string) =>
-      (await c.post<{ state: 'abandoned' | 'used' }>('/request-keys/abandon', { body: { kind, key } })).state,
+    /** 'used' comes with the exact record the key produced (return receipt, or the booking's id). */
+    abandon: (kind: OnceOnlyKind, key: string) =>
+      c.post<{ state: 'abandoned' | 'used'; record?: Record<string, unknown> & { _id: string } }>('/request-keys/abandon', { body: { kind, key } }),
   };
 }
 
@@ -52,8 +55,11 @@ export function authApi(c: ApiClient) {
     verifyOtpSession: (userType: UserType, target: OtpTarget, otp: string) =>
       c.post<SessionSignedIn>(`/auth/${userType}/verify`, { body: { ...target, otp, session: 'cookie' }, auth: false, session: true }),
     refreshSession: () => c.post<SessionRefreshed>('/auth/session/refresh', { body: {}, auth: false, session: true }),
-    logoutSession: () => c.post<unknown>('/auth/session/logout', { body: {}, auth: false, session: true }),
-    profile: () => c.get<Profile>('/auth/profile'),
+    /** Ends the cookie's family and the family of `token` (the access token this tab was using). */
+    logoutSession: (token?: string | null) =>
+      c.post<unknown>('/auth/session/logout', { body: {}, auth: !!token, ...(token ? { token } : {}), session: true }),
+    /** Checked while the session lock is held: a 401 fails it (no renewal, which would wait for the same lock). */
+    profile: () => c.get<Profile>('/auth/profile', { noRenew: true }),
     /** Customers only: every token issued so far stops working. */
     revokeSessions: () => c.post<unknown>('/auth/sessions/revoke'),
   };

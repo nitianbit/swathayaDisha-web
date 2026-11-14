@@ -94,7 +94,7 @@ async function mockBackend(page: Page, initial: Order): Promise<Backend> {
     if (path === '/request-keys/abandon') {
       const { kind, key } = req.postDataJSON() as { kind: string; key: string };
       if (kind !== 'customer_return') return refuse(route, 400, 'VALIDATION_ERROR', 'bad kind');
-      if (state.returns.has(key)) return json(route, 200, { success: true, data: { state: 'used' } });
+      if (state.returns.has(key)) return json(route, 200, { success: true, data: { state: 'used', record: state.returns.get(key) } });
       state.abandoned.add(key);
       return json(route, 200, { success: true, data: { state: 'abandoned' } });
     }

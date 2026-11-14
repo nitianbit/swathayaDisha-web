@@ -15,10 +15,13 @@ interface Backend {
   /** The next list request answers 401 once (the access token expired). */
   expireNext: boolean;
   listCalls: number;
+  /** The next profile check answers 401 (revoked meanwhile). */
+  profileRevokedOnce: boolean;
+  logoutAuth: (string | null)[];
 }
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const b: Backend = { live: false, principal: ME, refreshes: 0, logouts: 0, verifyBodies: [], sessionHeaders: [], expireNext: false, listCalls: 0 };
+  const b: Backend = { live: false, principal: ME, refreshes: 0, logouts: 0, verifyBodies: [], sessionHeaders: [], expireNext: false, listCalls: 0, profileRevokedOnce: false, logoutAuth: [] };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   await page.context().route('**/api/v1/**', async (route) => {
     const req = route.request();
@@ -37,7 +40,14 @@ async function mockBackend(page: Page): Promise<Backend> {
       if (!b.live) return json(route, 401, { error: 401, code: 'SESSION_ENDED', message: 'Please sign in again' });
       return json(route, 200, { success: true, data: { token: `access-r${b.refreshes}`, expiresIn: 900, principal: { userId: b.principal, userType: 'pharmacy', sid: 's1' } } });
     }
-    if (path === '/auth/session/logout') { b.logouts++; b.live = false; return json(route, 200, { success: true, data: { signedOut: true } }); }
+    if (path === '/auth/session/logout') {
+      b.logouts++; b.live = false; b.logoutAuth.push(req.headers()['authorization'] ?? null);
+      return json(route, 200, { success: true, data: { signedOut: true } });
+    }
+    if (path === '/auth/profile' && b.profileRevokedOnce) {
+      b.profileRevokedOnce = false;
+      return json(route, 401, { error: 401, code: 'SESSION_ENDED', message: 'Please sign in again' });
+    }
     if (path === '/auth/profile') return json(route, 200, { success: true, data: { user: { _id: ME, name: 'Asha Medicals' }, userRole: 'pharmacy' } });
     if (req.method() === 'GET' && path === '/pharmacy-orders') {
       b.listCalls++;
@@ -74,6 +84,7 @@ test('signing out ends the server session; a reload then shows the sign-in scree
   await page.getByRole('button', { name: 'Sign out' }).click();
   await expect(page.getByLabel('Mobile number')).toBeVisible();
   await expect.poll(() => backend.logouts).toBe(1);
+  expect(backend.logoutAuth[0]).toMatch(/^Bearer access-/); // the tab's own family ends too
   await page.reload();
   await expect(page.getByLabel('Mobile number')).toBeVisible();
 });
@@ -106,4 +117,20 @@ test('a renewed session that belongs to someone else is not used: this tab signs
   backend.expireNext = true;
   await page.goto('/#/pharmacy/orders');
   await expect(page.getByText('Someone else signed in to the workspace in this browser. Please sign in again.')).toBeVisible();
+});
+
+test('a profile check refused during restore does not hang: the sign-in screen appears and sign-in still works', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  backend.profileRevokedOnce = true;
+  await page.reload();
+  await expect(page.getByLabel('Mobile number')).toBeVisible({ timeout: 5000 });
+  backend.profileRevokedOnce = true; // and once more during the next sign-in
+  await page.getByLabel('Mobile number').fill('9876543210');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await page.getByLabel('6-digit code').fill('123456');
+  await page.getByRole('button', { name: 'Verify and sign in' }).click();
+  await expect(page.getByRole('button', { name: 'Verify and sign in' })).toBeEnabled({ timeout: 5000 });
+  await page.getByRole('button', { name: 'Verify and sign in' }).click();
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
 });

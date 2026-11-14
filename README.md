@@ -19,6 +19,7 @@ The build refuses a missing or non-HTTPS origin. Add the workspace's origin to t
 
 **Recommended (D4, sessions survive a reload):** serve each app from its own HTTPS host and forward `/api/*` from that
 host to the backend, then build with `VITE_API_SAME_ORIGIN=true` (no `VITE_API_BASE_URL`), and set the backend's
-`SESSION_ORIGINS_WORKSPACE` / `SESSION_ORIGINS_CUSTOMER` to the apps' exact origins.
+`SESSION_ORIGINS_WORKSPACE` / `SESSION_ORIGINS_CUSTOMER` to the apps' exact origins. A build with `VITE_API_BASE_URL` (separate API origin)
+keeps the older memory-only bearer session: it works, but a reload signs the user out.
 
 See [AGENTS.md](AGENTS.md) for the rules and checks, and [docs/PLAN.md](docs/PLAN.md) for the plan.

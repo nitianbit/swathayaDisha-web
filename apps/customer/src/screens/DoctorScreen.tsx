@@ -103,12 +103,17 @@ function useCreateBooking(doctor: Specialist) {
   }
 
   /** D4: a restored request whose booking was found: end it and open the booking. */
-  const found = (bookingId: string) => {
-    if (pending) setPending(undefined);
-    navigate(`/bookings/${bookingId}`);
+  /** Ends the stored request `requestKey` only if it is still the stored one (a newer one may exist). */
+  const endIfCurrent = (requestKey: string) => {
+    if (memory.get<PendingCreate>(slotKey)?.requestKey !== requestKey) return false;
+    memory.delete(slotKey);
+    setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
+    return true;
   };
-  /** D4: a restored request proven never recorded: forget it, the form is usable again. */
-  const discard = () => setPending(undefined);
+  /** D4: a restored request whose booking was found: end it and open the booking. */
+  const found = (requestKey: string, bookingId: string) => { if (endIfCurrent(requestKey)) navigate(`/bookings/${bookingId}`); };
+  /** D4: a restored request abandoned on the server: forget it, the form is usable again. */
+  const discard = (requestKey: string) => { endIfCurrent(requestKey); };
 
   return { pending, busy, error, send, found, discard, start: (body: NewConsultation, label: string) => ({ ...startOp(body), label }) };
 }
@@ -150,11 +155,11 @@ function RestoredRequest({ pending, onFound, onDiscard }: {
   async function cancelIt() {
     setBusy('cancel'); setNote(null);
     try {
-      if (await requestKeysApi(api).abandon('booking_create', pending.requestKey) === 'abandoned') { onDiscard(); return; }
-      const id = await find();
-      if (id) { onFound(id); return; }
+      const r = await requestKeysApi(api).abandon('booking_create', pending.requestKey);
+      if (r.state === 'abandoned') { onDiscard(); return; }
+      if (r.record?._id) { onFound(r.record._id); return; } // it was booked: the server names the booking
       setNotFound(false);
-      setNote('It was booked. It will appear in your bookings shortly; check again in a moment.');
+      setNote('It was booked, but the booking could not be shown. Open My bookings.');
     } catch (err) {
       setNote(`Could not cancel it: ${messageOf(err)}`);
     } finally {
@@ -201,7 +206,8 @@ function DoctorView({ doctor: d }: { doctor: Specialist }) {
       {/* The panel is for a request whose outcome is unknown: after a failed attempt, or one restored from an
           earlier visit (it may still be running). A first attempt in flight keeps the form, with a busy button. */}
       {create.pending?.restored ? (
-        <RestoredRequest pending={create.pending} onFound={create.found} onDiscard={create.discard} />
+        <RestoredRequest pending={create.pending} onFound={(id) => create.found(create.pending!.requestKey, id)}
+          onDiscard={() => create.discard(create.pending!.requestKey)} />
       ) : create.pending && (create.pending.uncertain || !create.busy) ? (
         <section className="card stack" role="group" aria-label="Unconfirmed booking request">
           <Alert tone="warn">

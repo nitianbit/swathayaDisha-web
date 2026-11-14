@@ -32,6 +32,10 @@ export interface RequestOptions {
    * app's own first-party cookie (`credentials: 'same-origin'`). Every other request sends no cookie.
    */
   session?: boolean;
+  /** D4: never renew on a 401 (requests made while holding the session lock, e.g. the sign-in profile check). */
+  noRenew?: boolean;
+  /** D4: send this bearer token instead of the current one (sign-out names the token the tab was using). */
+  token?: string;
 }
 
 export interface Page<T> {
@@ -94,7 +98,7 @@ export function createApiClient(options: ApiClientOptions) {
   async function request<T>(method: string, path: string, o: RequestOptions, read: (res: Response) => Promise<T>, renewed = false): Promise<T> {
     const target = url(path, o.query); // before the try: a bad path is a programming error, not a network one
     const headers: Record<string, string> = { Accept: 'application/json' };
-    const token = o.auth === false ? null : options.getToken();
+    const token = o.token ?? (o.auth === false ? null : options.getToken());
     if (token) headers.Authorization = `Bearer ${token}`;
     if (o.body !== undefined) headers['Content-Type'] = 'application/json';
     if (o.idempotencyKey) headers['Idempotency-Key'] = o.idempotencyKey;
@@ -132,7 +136,7 @@ export function createApiClient(options: ApiClientOptions) {
       if (!res.ok) {
         // A late answer for a session that has already ended is not news about the current one.
         if (sessionSignal?.aborted) throw new DOMException('The session ended', 'AbortError');
-        if (res.status === 401 && token && options.renew && !renewed) {
+        if (res.status === 401 && token && options.renew && !renewed && !o.noRenew) {
           const next = await options.renew(token);
           if (next && next !== token) return request(method, path, o, read, true);
         }

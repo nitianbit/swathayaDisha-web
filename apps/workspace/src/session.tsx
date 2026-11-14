@@ -101,11 +101,16 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     setState({ status: 'signed_out', notice });
   }, [queryClient]);
 
+  // D4: cookie sessions only when the API is on this app's own host (it forwards /api). A build that talks to a
+  // separate API origin keeps the memory-only bearer session: a reload signs out (documented in README).
+  const cookieMode = baseUrl === '';
+
   const signOut = useCallback((notice?: string) => {
+    const tabToken = token.current; // the family this tab was using ends too, not only the cookie's
     endLocally(notice);
     channel?.post({ type: 'signed-out' });
-    void withSessionLock(APP, async () => { await authRef.current?.logoutSession(); }).catch(() => undefined);
-  }, [endLocally, channel]);
+    if (cookieMode) void withSessionLock(APP, async () => { await authRef.current?.logoutSession(tabToken); }).catch(() => undefined);
+  }, [endLocally, channel, cookieMode]);
 
   const schedule = useCallback((expiresIn: number | undefined, renewFn: () => void) => {
     clearTimeout(renewTimer.current);
@@ -139,7 +144,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     baseUrl,
     getToken: () => token.current,
     getSessionSignal: () => sessionAbort.current.signal,
-    renew: (sent) => renewRef.current(sent),
+    ...(cookieMode ? { renew: (sent: string) => renewRef.current(sent) } : {}),
     // Only a 401 for the token in use now ends the session; a late answer for an older token changes nothing.
     onUnauthorized: (sent) => {
       if (sent === token.current) signOut('Your session has ended. Please sign in again.');
@@ -185,6 +190,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
   /** After a reload (or another tab's sign-in): resume from the cookie session, if there is one. */
   const restore = useCallback(async () => {
     const gen = generation.current;
+    if (!cookieMode) { setState((s) => (s.status === 'restoring' ? { status: 'signed_out' } : s)); return; }
     try {
       await withSessionLock(APP, async () => {
         const r = await auth.refreshSession();
@@ -194,7 +200,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     } catch {
       if (gen === generation.current) { token.current = null; setState((s) => (s.status === 'restoring' ? { status: 'signed_out' } : s)); }
     }
-  }, [auth, establish]);
+  }, [auth, establish, cookieMode]);
 
   useEffect(() => { void restore(); }, [restore]);
 
@@ -217,14 +223,14 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
   const verifyCode = useCallback(async (role: StaffRole, target: OtpTarget, otp: string) => {
     await withSessionLock(APP, async () => {
       const gen = generation.current;
-      const signedIn = await auth.verifyOtpSession(role, target, otp);
+      const signedIn = cookieMode ? await auth.verifyOtpSession(role, target, otp) : await auth.verifyOtp(role, target, otp);
       if (gen !== generation.current) return;
       if (!signedIn?.token) throw new ApiError(502, 'Sign-in did not return a session. Please try again.');
       if (await establish(gen, signedIn.token, signedIn.expiresIn, role) && principal.current) {
         channel?.post({ type: 'signed-in', ...principal.current });
       }
     });
-  }, [auth, establish, channel]);
+  }, [auth, establish, channel, cookieMode]);
 
   const value = useMemo(() => ({ state, api, memory, requestCode, verifyCode, signOut }),
     [state, api, memory, requestCode, verifyCode, signOut]);

@@ -86,6 +86,20 @@ describe('api client', () => {
     expect(onUnauthorized).toHaveBeenLastCalledWith('t');
   });
 
+  it('D4: noRenew requests never renew (no wait on the session lock); an explicit token is sent as given', async () => {
+    const renew = vi.fn(async () => 'new');
+    const onUnauthorized = vi.fn();
+    const seen: string[] = [];
+    const client = createApiClient({ baseUrl: '', getToken: () => 'cur', renew, onUnauthorized, fetchImpl: async (_u, init) => {
+      seen.push((init!.headers as Record<string, string>).Authorization ?? '');
+      return json(401, {});
+    } });
+    await expect(client.get('/auth/profile', { noRenew: true })).rejects.toMatchObject({ status: 401 });
+    expect(renew).not.toHaveBeenCalled();
+    await expect(client.post('/auth/session/logout', { body: {}, session: true, token: 'tab-token', noRenew: true })).rejects.toMatchObject({ status: 401 });
+    expect(seen).toEqual(['Bearer cur', 'Bearer tab-token']);
+  });
+
   it('cancels a request when its session ends, and never reports its late 401', async () => {
     const session = new AbortController();
     const onUnauthorized = vi.fn();

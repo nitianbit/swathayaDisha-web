@@ -132,8 +132,16 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
         <PendingOpPanel key={pending.attempts} label="Unconfirmed return" op={pending} busy={busy} onResend={() => void send(pending)}
           fetchPage={(page) => orders.customerReturnsFor(order._id, 50, page)}
           onFound={(r) => recorded({ ...r, duplicate: true }, pending.requestKey)}
-          onDiscard={() => setPending(undefined)}
-          abandon={() => requestKeysApi(api).abandon('customer_return', pending.requestKey)}
+          onDiscard={() => {
+            // Only the request this panel was about (a newer one may have been started since).
+            const k = pending.requestKey;
+            resolveStored(memory, pendingKey(order._id), k);
+            setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
+          }}
+          abandon={async () => {
+            const r = await requestKeysApi(api).abandon('customer_return', pending.requestKey);
+            return { state: r.state, record: r.record as unknown as CustomerReturn | undefined };
+          }}
           summary={pending.restored ? null : <>
             <ReturnLines lines={pending.body.lines.map((l) => ({ ...l, ...nameOf(l.medicineId, l.batchId) }))} />
             <div>Reason: “{pending.body.reason}” · Refund: {pending.body.refundAmount != null ? formatRupees(pending.body.refundAmount) : 'none'}</div>

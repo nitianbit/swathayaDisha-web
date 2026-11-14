@@ -82,7 +82,7 @@ async function mockBackend(page: Page): Promise<Backend> {
     if (path === '/auth/session/logout') { state.live = false; return json(route, 200, { success: true }); }
     if (path === '/request-keys/abandon') {
       const { key } = body as { key: string };
-      if (state.byKey.has(key)) return json(route, 200, { success: true, data: { state: 'used' } });
+      if (state.byKey.has(key)) return json(route, 200, { success: true, data: { state: 'used', record: { _id: state.byKey.get(key) } } });
       state.abandoned.add(key);
       return json(route, 200, { success: true, data: { state: 'abandoned' } });
     }
@@ -444,4 +444,25 @@ test('D4: a booking request lost before reaching the server, then a reload: chec
   await expect(page.getByRole('button', { name: '11:30 PM' })).toBeVisible();
   expect(backend.abandoned.size).toBe(1);
   expect(backend.bookings.size).toBe(0);
+});
+
+test('D4: a used key is resolved exactly, even when the booking is not among the listed pages', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.sessions = true;
+  await signIn(page);
+  await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'close'; });
+  await bookPaid(page);
+  backend.createDrops = 'after'; // recorded, answer lost
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed booking request' })).toBeVisible();
+  await page.reload();
+  // The bookings list is long: the booking is not on the pages the check reads.
+  await page.route('**/api/v1/bookings?*', (route) => route.fulfill({ status: 200, contentType: 'application/json',
+    body: JSON.stringify({ success: true, data: [], pagination: { page: 1, limit: 50, total: 400, totalPages: 8 } }) }));
+  const restored = page.getByRole('group', { name: 'Unconfirmed booking request' });
+  await restored.getByRole('button', { name: 'Check my bookings' }).click();
+  await restored.getByRole('button', { name: 'Cancel it and book again' }).click();
+  await expect(page.getByText('Awaiting confirmation', { exact: true })).toBeVisible(); // the booking the server named
+  expect(backend.abandoned.size).toBe(0);
+  expect(backend.bookings.size).toBe(1);
 });

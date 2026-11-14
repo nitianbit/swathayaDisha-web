@@ -16,8 +16,9 @@ interface Props<B, R extends { requestKey?: string; createdAt?: string }> {
   onFound: (record: R) => void;
   /** D4: forget a restored request after the server abandoned its key (then a new one can be made). */
   onDiscard?: () => void;
-  /** D4: abandon the restored request's key on the server: 'abandoned' = it can never be recorded; 'used' = it was. */
-  abandon?: () => Promise<'abandoned' | 'used'>;
+  /** D4: abandon the restored request's key on the server: 'abandoned' = it can never be recorded; 'used' = it was
+   * (then the server returns its exact record). */
+  abandon?: () => Promise<{ state: 'abandoned' | 'used'; record?: R }>;
 }
 
 /**
@@ -38,11 +39,11 @@ export function PendingOpPanel<B, R extends { requestKey?: string; createdAt?: s
     setAbandoning(true);
     setNote(null);
     try {
-      if (await abandon() === 'abandoned') { onDiscard?.(); return; }
-      // The server says it WAS recorded: show it as soon as it is listed.
-      const found = await findByKey(fetchPage, op);
-      if (found) onFound(found);
-      else setNote({ tone: 'warn', text: 'It was recorded. It will appear in the records shortly; check again in a moment.' });
+      const r = await abandon();
+      if (r.state === 'abandoned') { onDiscard?.(); return; }
+      // The server says it WAS recorded and returns that exact record.
+      if (r.record) { onFound(r.record); return; }
+      setNote({ tone: 'error', text: 'It was recorded, but its record could not be shown. Reload the page.' });
       setNotFound(false);
     } catch (err) {
       setNote({ tone: 'error', text: `Could not cancel it: ${messageOf(err)}` });
