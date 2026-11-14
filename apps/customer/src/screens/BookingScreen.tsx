@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router';
+import { Link, useLocation, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import { canCancelNow, customerApi, type Booking } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { Confirm, formatAppointment, messageOf, PageHeading } from '../common.tsx';
-import { checkPayment, payOrder, type PaymentOutcome } from '../payments.ts';
+import { payOrder, type PaymentOutcome } from '../payments.ts';
+import { ApiError } from '@jansetu/api';
 import { useSession } from '../session.tsx';
 import { StatusBadge } from './BookingsScreen.tsx';
 
@@ -36,6 +37,7 @@ export function cancelHint(check: ReturnType<typeof canCancelNow>): string | nul
 
 function BookingView({ booking: b }: { booking: Booking }) {
   const { api } = useSession();
+  const paymentError = (useLocation().state as { paymentError?: string } | null)?.paymentError;
   const queryClient = useQueryClient();
   const paid = isPaid(b.paymentStatus);
   const cancellable = b.status === 'pending' || b.status === 'confirmed';
@@ -51,6 +53,7 @@ function BookingView({ booking: b }: { booking: Booking }) {
           {b.cancelledAt && <><dt>Cancelled</dt><dd>{formatDateTime(b.cancelledAt)}{b.cancellationReason ? ` · ${b.cancellationReason}` : ''}</dd></>}
         </dl>
       </section>
+      {paymentError && b.paymentStatus !== 'paid' && <Alert>The payment page could not open: {paymentError} You can pay below.</Alert>}
       {b.status === 'pending' && b.paymentStatus === 'pending' && b.paymentTransactionId && Number(b.price ?? 0) > 0 && (
         <PaymentPanel booking={b} />
       )}
@@ -93,11 +96,17 @@ function PaymentPanel({ booking: b }: { booking: Booking }) {
     await queryClient.invalidateQueries({ queryKey: ['bookings'] });
     await queryClient.invalidateQueries({ queryKey: ['wallet'] });
   };
+  // Every payment attempt of the booking is checked (an older order replaced by "Pay now" too).
   const check = async () => {
     setState('checking');
-    const r = await checkPayment(api, b.paymentTransactionId!);
-    setState(r);
-    if (r === 'paid') await refresh();
+    try {
+      const r = await customerApi(api).reconcileBookingPayments(b._id);
+      const paid = r.booking.paymentStatus === 'paid';
+      setState(paid ? 'paid' : r.unknown > 0 ? 'unknown' : 'unpaid');
+      if (paid || r.booking.status !== b.status) await refresh();
+    } catch {
+      setState('unknown');
+    }
   };
   useEffect(() => { if (!checked.current) { checked.current = true; void check(); } }, []);
 
@@ -114,8 +123,10 @@ function PaymentPanel({ booking: b }: { booking: Booking }) {
       }
       await refresh();
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'BOOKING_ALREADY_PAID') { setState('paid'); await refresh(); return; }
       setError(messageOf(err));
-      setState('unpaid');
+      // The server refuses a new order while an earlier payment cannot be checked.
+      setState(err instanceof ApiError && err.code === 'PAYMENT_STATE_UNKNOWN' ? 'unknown' : 'unpaid');
     }
   }
 
@@ -133,7 +144,8 @@ function PaymentPanel({ booking: b }: { booking: Booking }) {
             </Alert>
             {error && <Alert>{error}</Alert>}
             <div className="row">
-              <Button busy={state === 'paying'} onClick={() => void payNow()}>Pay now</Button>
+              {/* Never offer a new payment while an earlier one could not be checked: it might already be paid. */}
+              <Button busy={state === 'paying'} disabled={state === 'unknown'} onClick={() => void payNow()}>Pay now</Button>
               <Button variant="secondary" disabled={state === 'paying'} onClick={() => void check()}>I have paid, check again</Button>
             </div>
           </>

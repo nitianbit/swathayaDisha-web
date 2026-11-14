@@ -16,7 +16,11 @@ interface Backend {
   /** Payment records: their order and whether Razorpay captured them. */
   records: Map<string, { bookingId: string; orderId: string; captured: boolean }>;
   verifyFails: boolean;
-  createDrops: boolean;
+  /** 'before' = lost before recording; 'after' = recorded, answer lost. */
+  createDrops: false | 'before' | 'after';
+  byKey: Map<string, string>;
+  gatewayDown: boolean;
+  refuseCreate: boolean;
 }
 
 /** Fake Razorpay Checkout: `window.__rz` = 'pay' | 'close'. Paying marks the order captured at the fake gateway. */
@@ -36,7 +40,7 @@ window.Razorpay = function (o) {
 };`;
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const state: Backend = { calls: [], bookings: new Map(), records: new Map(), verifyFails: false, createDrops: false };
+  const state: Backend = { calls: [], bookings: new Map(), records: new Map(), verifyFails: false, createDrops: false, byKey: new Map(), gatewayDown: false, refuseCreate: false };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
   let n = 0;
@@ -76,9 +80,16 @@ async function mockBackend(page: Page): Promise<Backend> {
     }
     if (path === '/coupons/validate') return json(route, 200, { success: true, data: { isValid: true, discountAmount: 50, finalAmount: 450, coupon: { code: 'WELCOME50' } } });
     if (path === '/bookings' && req.method() === 'POST') {
-      if (state.createDrops) return route.abort('connectionreset');
-      const id = String(state.bookings.size + 1).padStart(24, 'b');
       const b = body as Record<string, unknown>;
+      const known = state.byKey.get(String(b.requestKey));
+      if (known) {
+        const booking = state.bookings.get(known)!;
+        return json(route, 201, { success: true, data: { booking, paymentRequired: booking.paymentStatus !== 'paid', replayed: true } });
+      }
+      if (state.createDrops === 'before') { state.createDrops = false; return route.abort('connectionreset'); }
+      if (state.refuseCreate) { state.refuseCreate = false; return json(route, 400, { error: 400, code: 'SLOT_FULL', message: 'This time is no longer available' }); }
+      const id = String(state.bookings.size + 1).padStart(24, 'b');
+      state.byKey.set(String(b.requestKey), id);
       const free = b.specialistId === FREE_DOC;
       const booking = { _id: id, bookingType: 'consultation', doctorName: free ? 'Dr. Free Clinic' : 'Dr. Meena Iyer', bookingDate: b.bookingDate,
         bookingTime: b.bookingTime, price: free ? 0 : 450, status: free ? 'confirmed' : 'pending', paymentStatus: free ? 'paid' : 'pending' } as Record<string, unknown>;
@@ -86,12 +97,25 @@ async function mockBackend(page: Page): Promise<Backend> {
       if (free) return json(route, 201, { success: true, data: { booking, paymentRequired: false } });
       const payment = order(id);
       booking.paymentTransactionId = payment.paymentTransactionId;
+      if (state.createDrops === 'after') { state.createDrops = false; return route.abort('connectionreset'); }
       return json(route, 201, { success: true, data: { booking, paymentRequired: true, payment } });
     }
+    // Booking-level check of every attempt (backend W3b): applies a captured one.
+    const settleAll = (bookingId: string) => {
+      if (state.gatewayDown) return 1;
+      for (const r of state.records.values()) if (r.bookingId === bookingId && r.captured) confirm(bookingId);
+      return 0;
+    };
+    const rp = /^\/bookings\/(\w{24})\/reconcile-payments$/.exec(path);
+    if (rp) { const unknown = settleAll(rp[1]!); return json(route, 200, { success: true, data: { booking: state.bookings.get(rp[1]!), unknown } }); }
     const m = /^\/bookings\/(\w{24})(\/retry-payment)?$/.exec(path);
     if (m) {
       const b = state.bookings.get(m[1]!)!;
-      if (m[2]) { const payment = order(m[1]!); b.paymentTransactionId = payment.paymentTransactionId; return json(route, 200, { success: true, data: { booking: b, paymentRequired: true, payment } }); }
+      if (m[2]) {
+        if (settleAll(m[1]!)) return json(route, 503, { error: 503, code: 'PAYMENT_STATE_UNKNOWN', message: 'We could not check your earlier payment for this booking. Please try again in a few minutes.' });
+        if (b.paymentStatus === 'paid') return json(route, 400, { error: 400, code: 'BOOKING_ALREADY_PAID', message: 'Booking is already paid' });
+        const payment = order(m[1]!); b.paymentTransactionId = payment.paymentTransactionId; return json(route, 200, { success: true, data: { booking: b, paymentRequired: true, payment } });
+      }
       return json(route, 200, { success: true, data: b });
     }
     if (path === '/payments/verify') {
@@ -143,6 +167,7 @@ test('book a paid consultation for a family member, with a coupon and the wallet
   expect(posts(backend, '/bookings')[0]!.body).toEqual({
     bookingType: 'consultation', specialistId: DOC, slotId: SLOT, bookingDate: todayIst(), bookingTime: '11:30 PM',
     consultationMode: 'video', primaryConcern: 'Chest pain on climbing stairs', dependentId: MOTHER, couponCode: 'WELCOME50', useWalletBalance: true,
+    requestKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/),
   });
   expect(posts(backend, '/payments/verify')[0]!.body).toEqual({
     paymentTransactionId: 'a'.repeat(23) + '1', razorpayOrderId: 'order_1', razorpayPaymentId: 'pay_1', razorpaySignature: 'sig_1',
@@ -189,16 +214,82 @@ test('opening an unpaid booking whose payment was taken applies it (the lost-con
   await expect(page.getByText('Confirmed', { exact: true })).toBeVisible();
 });
 
-test('if the booking request gets no answer, it is not sent again', async ({ page }) => {
+test('a booking request whose answer is lost stays locked for that doctor and is resent unchanged: one booking', async ({ page }) => {
   const backend = await mockBackend(page);
-  backend.createDrops = true;
+  backend.createDrops = 'after'; // booked on the server, answer lost
   await signIn(page);
   await bookPaid(page);
   await page.getByRole('button', { name: 'Book and pay' }).click();
-  await expect(page.getByText(/could not confirm whether your booking was made/)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Book and pay' })).toHaveCount(0);
-  await expect(page.getByRole('link', { name: 'Go to My bookings' })).toBeVisible();
-  expect(posts(backend, '/bookings')).toHaveLength(1);
+  const locked = page.getByRole('group', { name: 'Unconfirmed booking request' });
+  await expect(locked).toContainText('It may already be booked');
+  await expect(page.getByRole('button', { name: '11:30 PM' })).toHaveCount(0); // no new slot choice for this doctor
+
+  await page.getByRole('link', { name: 'Doctors' }).click();
+  await page.getByRole('link', { name: /Dr\. Meena Iyer/ }).click();
+  await expect(locked).toBeVisible(); // survives leaving and coming back
+  await locked.getByRole('button', { name: 'Send it again' }).click();
+  await expect(page.getByRole('heading', { name: 'Payment' })).toBeVisible(); // the existing booking, payment resumable
+  const creates = posts(backend, '/bookings').map((c) => c.body as Record<string, unknown>);
+  expect(creates).toHaveLength(2);
+  expect(creates[1]).toEqual(creates[0]); // same key, same details
+  expect(backend.bookings.size).toBe(1);
+});
+
+test('a booking request lost before reaching the server is locked too, and the resend books once', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.createDrops = 'before';
+  await signIn(page);
+  await bookPaid(page);
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  // A network loss is not a refusal: locked.
+  await expect(page.getByRole('group', { name: 'Unconfirmed booking request' })).toBeVisible();
+  await page.getByRole('button', { name: 'Send it again' }).click();
+  await expect(page.getByText('Confirmed', { exact: true })).toBeVisible();
+  expect(backend.bookings.size).toBe(1);
+});
+
+test('a first booking request refused by the server leaves the form usable', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.refuseCreate = true;
+  await signIn(page);
+  await bookPaid(page);
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect(page.getByText('This time is no longer available')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Unconfirmed booking request' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Book and pay' }).click(); // a new attempt (new key) is fine: nothing was booked
+  await expect(page.getByText('Confirmed', { exact: true })).toBeVisible();
+  const keys = posts(backend, '/bookings').map((c) => (c.body as { requestKey: string }).requestKey);
+  expect(new Set(keys).size).toBe(2);
+  expect(backend.bookings.size).toBe(1);
+});
+
+test('if the payment page cannot open, the customer lands on the booking with a way to pay', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await page.unroute('https://checkout.razorpay.com/v1/checkout.js');
+  await page.route('https://checkout.razorpay.com/v1/checkout.js', (route) => route.abort('connectionfailed'));
+  await bookPaid(page);
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect(page.getByText(/The payment page could not open/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pay now' })).toBeEnabled();
+  expect(backend.bookings.size).toBe(1);
+});
+
+test('"Pay now" is not offered while an earlier payment cannot be checked; a lost earlier payment is applied instead of charging again', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'close'; });
+  await bookPaid(page);
+  backend.gatewayDown = true;
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect(page.getByText(/could not check your payment just now/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pay now' })).toBeDisabled();
+  backend.gatewayDown = false;
+  for (const r of backend.records.values()) r.captured = true; // the first payment had in fact gone through
+  await page.getByRole('button', { name: 'I have paid, check again' }).click();
+  await expect(page.getByText('Confirmed', { exact: true })).toBeVisible();
+  expect(posts(backend, `/bookings/${'b'.repeat(23)}1/retry-payment`)).toHaveLength(0);
+  expect(backend.records.size).toBe(1); // no second order
 });
 
 test('a free consultation is booked without the payment page', async ({ page }) => {

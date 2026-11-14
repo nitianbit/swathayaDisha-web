@@ -3,11 +3,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  ApiError, COUPON_PATTERN, customerApi, type ConsultationMode, type CouponCheck, type Slot, type Specialist,
+  COUPON_PATTERN, customerApi, type ConsultationMode, type CouponCheck, type NewConsultation, type Slot, type Specialist,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { messageOf, PageHeading } from '../common.tsx';
 import { payOrder } from '../payments.ts';
+import { afterFailure, beginAttempt, startOp, stillCurrent, type PendingOp } from '../pending.ts';
 import { useCustomer, useSession } from '../session.tsx';
 
 /** The next `n` days as IST calendar dates (YYYYMMDD) with a short label. */
@@ -49,8 +50,66 @@ export function DoctorScreen() {
   );
 }
 
+type PendingCreate = PendingOp<NewConsultation> & { label: string };
+
+/**
+ * Creating a booking happens once per intent. The request is stored (session memory, per doctor) with its key before
+ * it is sent; after an unanswered attempt the form is replaced by "send it again" (same key and details; the server
+ * returns the first booking for a known key), also after choosing another slot or leaving the page.
+ */
+function useCreateBooking(doctor: Specialist) {
+  const { api, memory } = useSession();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const slotKey = `consult-create:${doctor._id}`;
+  const [pending, setPendingState] = useState<PendingCreate | undefined>(() => memory.get<PendingCreate>(slotKey));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const setPending = (p: PendingCreate | undefined) => { if (p) memory.set(slotKey, p); else memory.delete(slotKey); setPendingState(p); };
+
+  async function send(p: PendingCreate, payer: { name?: string; contact?: string; email?: string }) {
+    const attempt: PendingCreate = { ...beginAttempt(p), label: p.label };
+    setBusy(true);
+    setError(null);
+    setPending(attempt);
+    let created;
+    try {
+      created = await customerApi(api).bookConsultation(attempt.body, attempt.requestKey);
+    } catch (err) {
+      setBusy(false);
+      if (!stillCurrent(memory.get<PendingCreate>(slotKey), attempt)) return; // a newer attempt owns it
+      const next = afterFailure(attempt, err, messageOf(err));
+      if (next) { setPending({ ...next, label: attempt.label }); return; }
+      setPending(undefined);
+      setError(messageOf(err)); // the first attempt was refused: nothing was booked; the form stays as typed
+      return;
+    }
+    // Recorded: end this request (only this one).
+    if (memory.get<PendingCreate>(slotKey)?.requestKey === attempt.requestKey) memory.delete(slotKey);
+    setPendingState(undefined);
+    await queryClient.invalidateQueries({ queryKey: ['bookings'] });
+    await queryClient.invalidateQueries({ queryKey: ['wallet'] });
+    const bookingPath = `/bookings/${created.booking._id}`;
+    if (!created.replayed && created.paymentRequired && created.payment) {
+      try {
+        await payOrder(api, created.payment, payer, `Consultation with ${doctor.name}`);
+      } catch (err) {
+        // The booking exists; the payment page could not open. The booking page offers to pay or check.
+        navigate(bookingPath, { state: { paymentError: messageOf(err) } });
+        return;
+      }
+    }
+    navigate(bookingPath);
+  }
+
+  return { pending, busy, error, send, start: (body: NewConsultation, label: string) => ({ ...startOp(body), label }) };
+}
+
 function DoctorView({ doctor: d }: { doctor: Specialist }) {
   const { api } = useSession();
+  const create = useCreateBooking(d);
+  const profile = useQuery({ queryKey: ['me'], queryFn: () => customerApi(api).profile() });
+  const payer = { name: profile.data?.name, contact: profile.data?.phone, email: profile.data?.email };
   const days = nextDays(14);
   const [date, setDate] = useState(days[0]!.date);
   const [slot, setSlot] = useState<Slot | null>(null);
@@ -68,6 +127,21 @@ function DoctorView({ doctor: d }: { doctor: Specialist }) {
         </dl>
         {d.bio && <p className="muted">{d.bio}</p>}
       </section>
+      {/* The panel is for a request whose outcome is unknown: after a failed attempt, or one restored from an
+          earlier visit (it may still be running). A first attempt in flight keeps the form, with a busy button. */}
+      {create.pending && (create.pending.uncertain || !create.busy) ? (
+        <section className="card stack" role="group" aria-label="Unconfirmed booking request">
+          <Alert tone="warn">
+            Your booking request for {create.pending.label} did not get an answer{create.pending.error ? ` (${create.pending.error})` : ''}.
+            It may already be booked. Send it again to find out: it will not be booked twice.
+          </Alert>
+          <div className="row">
+            <Button busy={create.busy} onClick={() => void create.send(create.pending!, payer)}>Send it again</Button>
+            <Link to="/bookings">My bookings</Link>
+          </div>
+        </section>
+      ) : (
+      <>
       <section className="stack" aria-labelledby="when-h">
         <h2 id="when-h">Choose a time</h2>
         <div className="chips" role="group" aria-label="Day">
@@ -87,18 +161,21 @@ function DoctorView({ doctor: d }: { doctor: Specialist }) {
             </div>
           )}
       </section>
-      {slot && <BookForm key={slot._id} doctor={d} slot={slot} fee={fee} />}
+      {slot && <BookForm key={slot._id} doctor={d} slot={slot} fee={fee} dayLabel={days.find((x) => x.date === date)?.label ?? ''}
+        create={create} payer={payer} />}
+      </>
+      )}
     </>
   );
 }
 
-function BookForm({ doctor: d, slot, fee }: { doctor: Specialist; slot: Slot; fee: number }) {
+function BookForm({ doctor: d, slot, fee, dayLabel, create, payer }: {
+  doctor: Specialist; slot: Slot; fee: number; dayLabel: string; create: ReturnType<typeof useCreateBooking>;
+  payer: { name?: string; contact?: string; email?: string };
+}) {
   const { api } = useSession();
   const me = useCustomer();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const c = customerApi(api);
-  const profile = useQuery({ queryKey: ['me'], queryFn: () => c.profile() });
   const family = useQuery({ queryKey: ['dependents', me.id, 'all-first'], queryFn: () => c.dependents(me.id, 1, 50) });
   const wallet = useQuery({ queryKey: ['wallet', me.id], queryFn: () => c.wallet(me.id) });
   const modes = modesOf(d);
@@ -110,8 +187,6 @@ function BookForm({ doctor: d, slot, fee }: { doctor: Specialist; slot: Slot; fe
   const [couponError, setCouponError] = useState<string | null>(null);
   const [useWallet, setUseWallet] = useState(true);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const afterCoupon = coupon?.isValid ? Number(coupon.finalAmount ?? fee) : fee;
   const walletUse = useWallet ? Math.min(afterCoupon, Number(wallet.data?.balance ?? 0)) : 0;
@@ -127,40 +202,21 @@ function BookForm({ doctor: d, slot, fee }: { doctor: Specialist; slot: Slot; fe
     } catch (err) { setCoupon(null); setCouponError(messageOf(err)); }
   }
 
-  async function submit(e: FormEvent) {
+  function submit(e: FormEvent) {
     e.preventDefault();
     const errs: Record<string, string> = {};
     if (concern.trim().length < 3) errs.concern = 'Tell the doctor briefly what it is about.';
     setErrors(errs);
     if (Object.keys(errs).length) return;
-    setBusy(true);
-    setError(null);
-    let created;
-    try {
-      created = await c.bookConsultation({
-        specialistId: d._id, slotId: slot._id, bookingDate: slot.date, bookingTime: slot.startTime, consultationMode: mode,
-        primaryConcern: concern.trim(), ...(forWhom ? { dependentId: forWhom } : {}),
-        ...(coupon?.isValid ? { couponCode: coupon.code } : {}), useWalletBalance: useWallet,
-      });
-    } catch (err) {
-      setBusy(false);
-      if (err instanceof ApiError && err.status >= 400 && err.status < 500) { setError(messageOf(err)); return; }
-      // No definite answer: the booking may exist. Never resend (it would hold a second slot); show the bookings.
-      setError('We could not confirm whether your booking was made. Please check My bookings before trying again.');
-      await queryClient.invalidateQueries({ queryKey: ['bookings'] });
-      return;
-    }
-    await queryClient.invalidateQueries({ queryKey: ['bookings'] });
-    await queryClient.invalidateQueries({ queryKey: ['wallet'] });
-    if (created.paymentRequired && created.payment) {
-      const p = profile.data;
-      await payOrder(api, created.payment, { name: p?.name, contact: p?.phone, email: p?.email }, `Consultation with ${d.name}`);
-    }
-    navigate(`/bookings/${created.booking._id}`);
+    void create.send(create.start({
+      specialistId: d._id, slotId: slot._id, bookingDate: slot.date, bookingTime: slot.startTime, consultationMode: mode,
+      primaryConcern: concern.trim(), ...(forWhom ? { dependentId: forWhom } : {}),
+      ...(coupon?.isValid ? { couponCode: coupon.code } : {}), useWalletBalance: useWallet,
+    }, `${slot.startTime}, ${dayLabel}`), payer);
   }
 
   return (
-    <form className="card stack" onSubmit={(e) => void submit(e)} noValidate aria-labelledby="book-h">
+    <form className="card stack" onSubmit={submit} noValidate aria-labelledby="book-h">
       <h2 id="book-h">Book {slot.startTime}</h2>
       <div className="j-field">
         <label htmlFor="who">For</label>
@@ -199,12 +255,8 @@ function BookForm({ doctor: d, slot, fee }: { doctor: Specialist; slot: Slot; fe
         <dt>To pay now</dt><dd><strong>{formatRupees(toPay)}</strong></dd>
       </dl>
       <p className="muted">The final amount is worked out by the server and shown on the payment page.</p>
-      {error && <Alert>{error}</Alert>}
-      {error?.startsWith('We could not confirm') ? (
-        <Link to="/bookings">Go to My bookings</Link>
-      ) : (
-        <Button type="submit" busy={busy}>{toPay > 0 ? 'Book and pay' : 'Book'}</Button>
-      )}
+      {create.error && <Alert>{create.error}</Alert>}
+      <Button type="submit" busy={create.busy}>{toPay > 0 ? 'Book and pay' : 'Book'}</Button>
     </form>
   );
 }

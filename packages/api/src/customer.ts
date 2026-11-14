@@ -182,6 +182,8 @@ export interface PaymentOrder {
 export interface BookingPayment {
   booking: Booking & { paymentTransactionId?: string };
   paymentRequired: boolean;
+  /** The create key was already used: this is that booking; resume payment from the booking page. */
+  replayed?: boolean;
   walletDeductedAmount?: number;
   payment?: PaymentOrder;
 }
@@ -224,9 +226,12 @@ export function customerApi(c: ApiClient) {
       if (!/^\d{8}$/.test(date)) throw new Error('Invalid date');
       return c.get<Slot[]>(`/slots/specialist/${id(specialistId, 'doctor')}`, { query: { date } });
     },
-    /** Not idempotent: never resend after an unknown outcome (a second booking would hold another slot). */
-    bookConsultation: (body: NewConsultation) =>
-      c.post<BookingPayment>('/bookings', { body: { bookingType: 'consultation', ...body } }),
+    /** With a request key: the same key and details again return the first booking (`replayed`), never a second. */
+    bookConsultation: (body: NewConsultation, requestKey: string) =>
+      c.post<BookingPayment>('/bookings', { body: { bookingType: 'consultation', ...body, requestKey } }),
+    /** Checks every payment attempt of a booking with Razorpay (applies a lost capture); `unknown` = some not checkable now. */
+    reconcileBookingPayments: (bookingId: string) =>
+      c.post<{ booking: Booking; unknown: number }>(`/bookings/${id(bookingId, 'booking')}/reconcile-payments`),
     /** A new Razorpay order for an unpaid booking. */
     retryPayment: (bookingId: string, body: { useWalletBalance?: boolean; couponCode?: string } = {}) =>
       c.post<BookingPayment>(`/bookings/${id(bookingId, 'booking')}/retry-payment`, { body }),

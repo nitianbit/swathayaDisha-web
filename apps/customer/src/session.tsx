@@ -9,9 +9,17 @@ export interface Customer {
 
 type SessionState = { status: 'signed_out'; notice?: string } | { status: 'signed_in'; customer: Customer };
 
+/** Lives exactly as long as the signed-in session; never browser storage. One map per session. */
+export interface SessionMemory {
+  get<T>(key: string): T | undefined;
+  set<T>(key: string, value: T): void;
+  delete(key: string): void;
+}
+
 interface SessionValue {
   state: SessionState;
   api: ApiClient;
+  memory: SessionMemory;
   requestCode: (phone: string) => Promise<void>;
   verifyCode: (phone: string, otp: string) => Promise<void>;
   signOut: (notice?: string) => void;
@@ -32,12 +40,20 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
   const generation = useRef(0);
   const sessionAbort = useRef(new AbortController());
   const [state, setState] = useState<SessionState>({ status: 'signed_out' });
+  // A handler still running from an ended session holds that session's memory and writes only into its own map.
+  const [store, setStore] = useState(() => new Map<string, unknown>());
+  const memory = useMemo<SessionMemory>(() => ({
+    get: <T,>(key: string) => store.get(key) as T | undefined,
+    set: (key, value) => { store.set(key, value); },
+    delete: (key) => { store.delete(key); },
+  }), [store]);
 
   const signOut = useCallback((notice?: string) => {
     generation.current += 1;
     token.current = null;
     sessionAbort.current.abort();
     sessionAbort.current = new AbortController();
+    setStore(new Map());
     queryClient.clear();
     setState({ status: 'signed_out', notice });
   }, [queryClient]);
@@ -77,8 +93,8 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     signOut('You have been signed out on all your devices.');
   }, [auth, signOut]);
 
-  const value = useMemo(() => ({ state, api, requestCode, verifyCode, signOut, signOutEverywhere }),
-    [state, api, requestCode, verifyCode, signOut, signOutEverywhere]);
+  const value = useMemo(() => ({ state, api, memory, requestCode, verifyCode, signOut, signOutEverywhere }),
+    [state, api, memory, requestCode, verifyCode, signOut, signOutEverywhere]);
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 
