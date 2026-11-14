@@ -6,7 +6,7 @@ import {
 import { Alert, Button, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
-import { afterFailure, newRequestKey, startOp, type PendingOp } from '../../requests.ts';
+import { afterFailure, beginAttempt, newRequestKey, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 
 interface Row { key: string; medicineId: string; medicineName: string; batchId: string; batchNumber: string; sold: number }
@@ -71,13 +71,16 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
 
   /** Sends exactly `p`. Only a success, or a definite refusal of its FIRST attempt, ends it (requests.ts). */
   async function send(p: Pending) {
+    const attempt = beginAttempt(p); // stored before sending: a remount sees it as possibly running
     setBusy(true);
     setRefused(null);
-    setPending(p);
+    setPending(attempt);
     try {
-      recorded(await orders.customerReturn(order._id, p.body));
+      recorded(await orders.customerReturn(order._id, attempt.body));
     } catch (err) {
-      const next = afterFailure(p, err, messageOf(err));
+      // A newer attempt of the same return owns the state now; this older answer changes nothing.
+      if (!stillCurrent(memory.get<Pending>(pendingKey(order._id)), attempt)) return;
+      const next = afterFailure(attempt, err, messageOf(err));
       setPending(next ?? undefined);
       if (!next) setRefused(messageOf(err)); // first attempt refused: the form keeps what was typed
     } finally {
@@ -120,10 +123,9 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
       <ReturnHistory query={history} page={historyPage} onPage={setHistoryPage} />
 
       {pending ? (
-        <PendingOpPanel label="Unconfirmed return" op={pending} busy={busy} onResend={() => void send(pending)}
+        <PendingOpPanel key={pending.attempts} label="Unconfirmed return" op={pending} busy={busy} onResend={() => void send(pending)}
           fetchPage={(page) => orders.customerReturnsFor(order._id, 50, page)}
           onFound={(r) => recorded({ ...r, duplicate: true })}
-          onDiscard={() => { setPending(undefined); setOpen(true); }}
           summary={<>
             <ReturnLines lines={pending.body.lines.map((l) => ({ ...l, ...nameOf(l.medicineId, l.batchId) }))} />
             <div>Reason: “{pending.body.reason}” · Refund: {pending.body.refundAmount != null ? formatRupees(pending.body.refundAmount) : 'none'}</div>

@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import { Alert, Button } from '@jansetu/ui';
-import { messageOf } from '../errors.ts';
-import { findByKey, SETTLE_MS, type KeySearch, type PendingOp } from '../requests.ts';
 import type { Page } from '@jansetu/api';
+import { messageOf } from '../errors.ts';
+import { findByKey, type PendingOp } from '../requests.ts';
 
 interface Props<B, R extends { requestKey?: string; createdAt?: string }> {
   label: string;
@@ -14,54 +14,44 @@ interface Props<B, R extends { requestKey?: string; createdAt?: string }> {
   /** Newest-first list in which a recorded `op` would appear. */
   fetchPage: (page: number) => Promise<Page<R>>;
   onFound: (record: R) => void;
-  onDiscard: () => void;
 }
 
 /**
- * A submission whose outcome is unknown. Staff can resend it unchanged, or check the server's records for its key.
- * It can be discarded only when the records were searched and the key is absent long after the last attempt.
+ * A submission whose outcome is not known. It can only be resent unchanged (safe: the server answers a repeated key
+ * with the first record) or looked up in the records to show its receipt. Nothing here concludes "not recorded".
+ * Render with `key={op.attempts}` so a lookup result never outlives a later attempt.
  */
 export function PendingOpPanel<B, R extends { requestKey?: string; createdAt?: string }>(
-  { label, op, summary, busy, onResend, fetchPage, onFound, onDiscard }: Props<B, R>,
+  { label, op, summary, busy, onResend, fetchPage, onFound }: Props<B, R>,
 ) {
   const [checking, setChecking] = useState(false);
-  const [result, setResult] = useState<KeySearch<R> | { error: string } | null>(null);
+  const [note, setNote] = useState<{ tone: 'warn' | 'error'; text: string } | null>(null);
 
   async function check() {
     setChecking(true);
-    setResult(null);
+    setNote(null);
     try {
-      const r = await findByKey(fetchPage, op);
-      if (r.found) onFound(r.found); else setResult(r);
+      const found = await findByKey(fetchPage, op);
+      if (found) onFound(found);
+      else setNote({ tone: 'warn', text: 'Not found in the recent records. That does not prove it was not recorded: it may still be finishing. Send the same request again; if it was not recorded it will be now, and if it was you get its record.' });
     } catch (err) {
-      setResult({ error: messageOf(err) });
+      setNote({ tone: 'error', text: `Could not check the records: ${messageOf(err)}` });
     } finally {
       setChecking(false);
     }
   }
 
-  const waitMin = Math.max(1, Math.ceil((op.lastAttemptAt + SETTLE_MS - Date.now()) / 60_000));
   return (
     <div className="confirm" role="group" aria-label={label}>
       <Alert tone="warn">
-        This was sent but its outcome is not known{op.error ? ` (${op.error})` : ''}. It may already be recorded. Send the
-        same request again, or check the records; it will not be recorded twice.
+        {busy ? 'Sending… ' : ''}The outcome of this request is not known yet{op.error ? ` (${op.error})` : ''}. It may already be
+        recorded. Sending the same request again is safe: it is never recorded twice. If it keeps being refused, ask an admin.
       </Alert>
       {summary}
-      {result && 'error' in result && <Alert>Could not check the records: {result.error}</Alert>}
-      {result && 'incomplete' in result && <Alert tone="warn">The records are too long to search here; ask an admin to check.</Alert>}
-      {result && 'settled' in result && !result.settled && (
-        <Alert tone="warn">Not in the records yet. It could still be finishing; check again in {waitMin} minute{waitMin === 1 ? '' : 's'}.</Alert>
-      )}
-      {result && 'settled' in result && result.settled && (
-        <Alert tone="ok">It is not in the records, and enough time has passed: it was not recorded. You can discard it and start again.</Alert>
-      )}
+      {note && <Alert tone={note.tone}>{note.text}</Alert>}
       <div className="confirm-actions">
         <Button busy={busy} disabled={checking} onClick={onResend}>Send the same request again</Button>
         <Button variant="secondary" busy={checking} disabled={busy} onClick={() => void check()}>Check whether it was recorded</Button>
-        {result && 'settled' in result && result.settled && (
-          <Button variant="ghost" disabled={busy} onClick={onDiscard}>Discard it</Button>
-        )}
       </div>
     </div>
   );

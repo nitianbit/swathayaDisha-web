@@ -2,7 +2,8 @@ import { ApiError, type Page } from '@jansetu/api';
 
 /**
  * Operations that must happen once (a return moves stock and money). Each submission gets a request key; the server
- * answers a repeated key with the first record. The rules below decide when the client may forget a submission.
+ * answers a repeated key with the first record, so resending the same request is always safe. The client therefore
+ * never needs to decide "it was not recorded" except in one provable case: the FIRST and ONLY attempt was refused.
  */
 export const newRequestKey = () => crypto.randomUUID().replace(/-/g, '');
 
@@ -12,14 +13,14 @@ export function definitelyNotRecorded(err: unknown): boolean {
 }
 
 /**
- * A submission not yet known to be recorded or not. `uncertain` becomes true as soon as one attempt ended without a
- * definite answer: from then on a refusal of a RETRY proves nothing about the earlier attempt (e.g. an access check
- * may refuse before the key is looked up), so only finding the key in the server's records, or a successful answer,
- * settles it.
+ * A submission whose outcome is not yet known. `attempts` counts sends (stored BEFORE each send, so a remount sees
+ * an attempt that may still be running); `uncertain` is true once any attempt ended without a definite answer or a
+ * second attempt started. Only success, or a definite refusal of attempt 1 while no other attempt exists, ends it.
  */
 export interface PendingOp<B> {
   requestKey: string;
   body: B;
+  attempts: number;
   uncertain: boolean;
   firstAttemptAt: number;
   lastAttemptAt: number;
@@ -27,41 +28,40 @@ export interface PendingOp<B> {
 }
 
 export function startOp<B>(requestKey: string, body: B, now = Date.now()): PendingOp<B> {
-  return { requestKey, body, uncertain: false, firstAttemptAt: now, lastAttemptAt: now };
+  return { requestKey, body, attempts: 0, uncertain: false, firstAttemptAt: now, lastAttemptAt: now };
 }
 
-/** What to keep after an attempt failed: null = forget it (only a first attempt definitely refused). */
-export function afterFailure<B>(p: PendingOp<B>, err: unknown, message: string, now = Date.now()): PendingOp<B> | null {
-  if (!p.uncertain && definitelyNotRecorded(err)) return null;
-  return { ...p, uncertain: true, lastAttemptAt: now, error: message };
+/** The state to store before sending: a resend makes the operation uncertain (an earlier attempt may still commit). */
+export function beginAttempt<B>(p: PendingOp<B>, now = Date.now()): PendingOp<B> {
+  return { ...p, attempts: p.attempts + 1, uncertain: p.uncertain || p.attempts > 0, lastAttemptAt: now, error: undefined };
+}
+
+/** What to store after `attempt` failed: null = forget it (only a sole first attempt definitely refused). */
+export function afterFailure<B>(attempt: PendingOp<B>, err: unknown, message: string): PendingOp<B> | null {
+  if (attempt.attempts === 1 && !attempt.uncertain && definitelyNotRecorded(err)) return null;
+  return { ...attempt, uncertain: true, error: message };
+}
+
+/** Whether `attempt` still owns the stored state (no newer attempt of the same operation has started). */
+export function stillCurrent<B>(stored: PendingOp<B> | undefined, attempt: PendingOp<B>): boolean {
+  return !!stored && stored.requestKey === attempt.requestKey && stored.attempts === attempt.attempts;
 }
 
 /**
- * A request still running on the server has finished by then: MongoDB aborts a transaction after 60 s
- * (transactionLifetimeLimitSeconds) and the client gives up after 20 s.
- */
-export const SETTLE_MS = 2 * 60_000;
-
-export type KeySearch<T> = { found: T } | { found: null; settled: boolean } | { found: null; incomplete: true };
-
-/**
- * Looks for the record carrying `requestKey` in a newest-first list, stopping once records are older than the
- * submission (minus 5 minutes for clock differences). `settled` = the last attempt is long enough ago that an absent
- * key means it was not recorded.
+ * Looks for the record carrying the operation's key in a newest-first list, so its receipt can be shown. Not finding
+ * it proves nothing (the request may still be running), so the only answer besides the record is "not found".
+ * Stops after records clearly older than the submission or after `maxPages`, to bound the work.
  */
 export async function findByKey<T extends { requestKey?: string; createdAt?: string }>(
-  fetchPage: (page: number) => Promise<Page<T>>, op: PendingOp<unknown>, now = Date.now(), maxPages = 20,
-): Promise<KeySearch<T>> {
-  const since = op.firstAttemptAt - 5 * 60_000;
+  fetchPage: (page: number) => Promise<Page<T>>, op: PendingOp<unknown>, maxPages = 20,
+): Promise<T | null> {
+  const before = op.firstAttemptAt - 60 * 60_000;
   for (let page = 1; page <= maxPages; page++) {
     const p = await fetchPage(page);
     const hit = p.items.find((r) => r.requestKey === op.requestKey);
-    if (hit) return { found: hit };
+    if (hit) return hit;
     const oldest = p.items[p.items.length - 1];
-    const reachedOlder = oldest?.createdAt !== undefined && Date.parse(oldest.createdAt) < since;
-    if (page >= p.totalPages || p.items.length === 0 || reachedOlder) {
-      return { found: null, settled: now - op.lastAttemptAt >= SETTLE_MS };
-    }
+    if (page >= p.totalPages || p.items.length === 0 || (oldest?.createdAt && Date.parse(oldest.createdAt) < before)) break;
   }
-  return { found: null, incomplete: true };
+  return null;
 }

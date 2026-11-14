@@ -330,8 +330,7 @@ test('checking the records finds a recorded return by its key', async ({ page })
   expect(returnCalls(backend)).toHaveLength(1); // found, not resent
 });
 
-test('an unrecorded return can be discarded only after the settle time, when the records do not have it', async ({ page }) => {
-  await page.clock.install();
+test('nothing concludes "not recorded": a lookup that misses says so, is cleared by the next send, and no discard exists', async ({ page }) => {
   const backend = await mockBackend(page, order({ status: 'completed' }));
   await openOrder(page);
   backend.dropNextRequest = true; // nothing recorded, answer lost
@@ -340,15 +339,44 @@ test('an unrecorded return can be discarded only after the settle time, when the
   await page.getByRole('button', { name: 'Record return' }).click();
   const locked = page.getByRole('group', { name: 'Unconfirmed return' });
   await locked.getByRole('button', { name: 'Check whether it was recorded' }).click();
-  await expect(locked).toContainText('Not in the records yet');
-  await expect(locked.getByRole('button', { name: 'Discard it' })).toHaveCount(0);
+  await expect(locked).toContainText('That does not prove it was not recorded');
+  await expect(locked.getByRole('button', { name: /Discard/ })).toHaveCount(0);
 
-  await page.clock.fastForward('02:05');
-  await locked.getByRole('button', { name: 'Check whether it was recorded' }).click();
-  await expect(locked).toContainText('it was not recorded');
-  await locked.getByRole('button', { name: 'Discard it' }).click();
-  await expect(page.getByLabel('Returned quantity of Paracetamol 650mg, batch PCM-24A')).toBeVisible();
-  expect(backend.returns.size).toBe(0);
+  backend.dropNextRequest = true; // the resend is lost too
+  await locked.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(locked).toContainText('Could not reach the server');
+  await expect(locked).not.toContainText('That does not prove'); // the old lookup result is gone
+
+  await locked.getByRole('button', { name: 'Send the same request again' }).click(); // goes through now
+  await expect(page.getByRole('group', { name: 'Recorded return' })).toContainText('Return recorded:');
+  expect(backend.returns.size).toBe(1);
+  expect(new Set(returnCalls(backend).map((b) => b.requestKey)).size).toBe(1);
+});
+
+test('a first attempt still running when the page is reopened is not treated as refused by a later 403', async ({ page }) => {
+  const backend = await mockBackend(page, order({ status: 'completed' }));
+  await openOrder(page);
+  backend.delayMs = 2500; // the first attempt is slow and will commit
+  await page.getByRole('button', { name: 'Record a return…' }).click();
+  await fillReturn(page, '1');
+  await page.getByRole('button', { name: 'Record return' }).click();
+  await page.getByRole('link', { name: 'Orders', exact: true }).first().click();
+  await page.getByRole('link', { name: 'PO-2001' }).click();
+  const locked = page.getByRole('group', { name: 'Unconfirmed return' });
+  await expect(locked).toBeVisible(); // restored while attempt 1 runs
+
+  backend.delayMs = 0;
+  backend.notOperational = true;
+  await locked.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(locked).toContainText('Pharmacy is not verified');
+  await page.waitForTimeout(3000); // attempt 1 commits now; its answer arrives at the unmounted page
+  await expect(locked).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record a return…' })).toHaveCount(0);
+
+  backend.notOperational = false;
+  await locked.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(page.getByRole('group', { name: 'Recorded return' })).toContainText('This return had already been recorded');
+  expect(backend.returns.size).toBe(1);
 });
 
 test('a return still running at sign-out does not appear in the next session', async ({ page }) => {

@@ -8,7 +8,7 @@ import { Alert, Button, formatDateTime, Loading, TextArea, TextField } from '@ja
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
-import { afterFailure, newRequestKey, startOp, type PendingOp } from '../../requests.ts';
+import { afterFailure, beginAttempt, newRequestKey, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 
 type Panel = null | 'release' | 'supplier' | 'recall' | 'trace';
@@ -147,16 +147,19 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
 
   /** Sends exactly `p`. Only a success, or a definite refusal of its FIRST attempt, ends it (requests.ts). */
   async function send(p: PendingSupplierReturn) {
+    const attempt = { ...beginAttempt(p), supplierName: p.supplierName }; // stored before sending
     setBusy(true);
     setRefused(null);
-    setPending(p);
+    setPending(attempt);
     try {
-      const r = await inventoryApi(api).supplierReturn(itemId, batch._id, p.body);
+      const r = await inventoryApi(api).supplierReturn(itemId, batch._id, attempt.body);
       setPending(undefined);
       await onDone(r);
     } catch (err) {
-      const next = afterFailure(p, err, messageOf(err));
-      setPending(next ? { ...next, supplierName: p.supplierName } : undefined);
+      // A newer attempt of the same return owns the state now; this older answer changes nothing.
+      if (!stillCurrent(memory.get<PendingSupplierReturn>(key), attempt)) return;
+      const next = afterFailure(attempt, err, messageOf(err));
+      setPending(next ? { ...next, supplierName: attempt.supplierName } : undefined);
       if (!next) setRefused(messageOf(err));
     } finally {
       setBusy(false);
@@ -166,11 +169,10 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
   if (pending) {
     const b = pending.body;
     return (
-      <PendingOpPanel label={`Unconfirmed return of batch ${batch.batchNumber}`} op={pending} busy={busy}
+      <PendingOpPanel key={pending.attempts} label={`Unconfirmed return of batch ${batch.batchNumber}`} op={pending} busy={busy}
         onResend={() => void send(pending)}
         fetchPage={(page) => inventoryApi(api).supplierReturns({ page, limit: 100 })}
         onFound={(r) => { setPending(undefined); void onDone({ ...r, duplicate: true }); }}
-        onDiscard={() => setPending(undefined)}
         summary={<div>{b.quantity} units to {pending.supplierName} · {b.reason.replace(/_/g, ' ')}{b.notes ? ` · “${b.notes}”` : ''}</div>} />
     );
   }

@@ -1,17 +1,37 @@
 import { ApiError, type Page } from '@jansetu/api';
-import { afterFailure, findByKey, SETTLE_MS, startOp } from './requests.ts';
+import { afterFailure, beginAttempt, findByKey, startOp, stillCurrent } from './requests.ts';
 
 const T0 = Date.UTC(2026, 10, 14, 10, 0);
+const refused = new ApiError(403, 'Pharmacy is not verified');
 
 describe('pending operations', () => {
-  it('forgets a submission only when its FIRST attempt is definitely refused', () => {
-    const op = startOp('k1', { a: 1 }, T0);
-    expect(afterFailure(op, new ApiError(409, 'refused'), 'refused', T0)).toBeNull();
-    const lost = afterFailure(op, new ApiError(0, 'no answer'), 'no answer', T0 + 1);
-    expect(lost).toMatchObject({ uncertain: true, lastAttemptAt: T0 + 1, error: 'no answer', body: { a: 1 }, requestKey: 'k1' });
-    // After an unknown outcome, a refused retry proves nothing about the first attempt (e.g. a 403 access check).
-    expect(afterFailure(lost!, new ApiError(403, 'Pharmacy is not verified'), 'x', T0 + 2)).toMatchObject({ uncertain: true, lastAttemptAt: T0 + 2 });
-    expect(afterFailure(op, new ApiError(503, 'down'), 'down', T0)).toMatchObject({ uncertain: true });
+  it('forgets a submission only when its sole first attempt is definitely refused', () => {
+    const first = beginAttempt(startOp('k1', { a: 1 }, T0), T0);
+    expect(first).toMatchObject({ attempts: 1, uncertain: false });
+    expect(afterFailure(first, new ApiError(409, 'refused'), 'refused')).toBeNull();
+    expect(afterFailure(first, new ApiError(0, 'no answer'), 'no answer')).toMatchObject({ uncertain: true, error: 'no answer', body: { a: 1 } });
+    expect(afterFailure(first, new ApiError(503, 'down'), 'down')).toMatchObject({ uncertain: true });
+  });
+
+  it('never treats a resend as a first attempt, even if the first one is still running', () => {
+    // Attempt 1 is stored before sending; the page is left and reopened while it runs, then the user resends.
+    const first = beginAttempt(startOp('k1', {}, T0), T0);
+    const resend = beginAttempt(first, T0 + 1000);
+    expect(resend).toMatchObject({ attempts: 2, uncertain: true });
+    expect(afterFailure(resend, refused, 'x')).toMatchObject({ uncertain: true, attempts: 2 });
+  });
+
+  it('a refused retry after an unknown outcome proves nothing', () => {
+    const lost = afterFailure(beginAttempt(startOp('k1', {}, T0)), new ApiError(0, 'no answer'), 'no answer')!;
+    expect(afterFailure(beginAttempt(lost), refused, 'x')).toMatchObject({ uncertain: true });
+  });
+
+  it('lets only the newest attempt change the stored state', () => {
+    const first = beginAttempt(startOp('k1', {}, T0));
+    const second = beginAttempt(first);
+    expect(stillCurrent(second, first)).toBe(false); // the late answer of attempt 1 must not clear attempt 2
+    expect(stillCurrent(second, second)).toBe(true);
+    expect(stillCurrent(undefined, second)).toBe(false);
   });
 });
 
@@ -20,24 +40,18 @@ describe('findByKey', () => {
   const pages = (all: ReturnType<typeof rec>[], size = 2) => async (page: number): Promise<Page<ReturnType<typeof rec>>> => ({
     items: all.slice((page - 1) * size, page * size), page, limit: size, total: all.length, totalPages: Math.ceil(all.length / size) || 1,
   });
-  const op = { ...startOp('mine', {}, T0), uncertain: true, lastAttemptAt: T0 + 30_000 };
+  const op = startOp('mine', {}, T0);
 
   it('finds the record on a later page', async () => {
-    const all = [rec('x', 9), rec('y', 8), rec('mine', 1), rec('z', -1)];
-    await expect(findByKey(pages(all), op, T0 + 60_000)).resolves.toEqual({ found: rec('mine', 1) });
+    await expect(findByKey(pages([rec('x', 9), rec('y', 8), rec('mine', 1), rec('z', -1)]), op)).resolves.toEqual(rec('mine', 1));
   });
-  it('says "settled" only when the last attempt is long enough ago', async () => {
-    const all = [rec('x', 9), rec('y', 8)];
-    await expect(findByKey(pages(all), op, T0 + 60_000)).resolves.toEqual({ found: null, settled: false });
-    await expect(findByKey(pages(all), op, op.lastAttemptAt + SETTLE_MS)).resolves.toEqual({ found: null, settled: true });
-  });
-  it('stops at records older than the submission', async () => {
-    const fetch = vi.fn(pages([rec('a', 3), rec('b', -10), rec('c', -20), rec('d', -30)]));
-    await expect(findByKey(fetch, op, op.lastAttemptAt + SETTLE_MS)).resolves.toEqual({ found: null, settled: true });
+  it('answers only "not found" otherwise, and bounds the search', async () => {
+    const fetch = vi.fn(pages([rec('a', 3), rec('b', -120), rec('c', -130), rec('d', -140)]));
+    await expect(findByKey(fetch, op)).resolves.toBeNull();
     expect(fetch).toHaveBeenCalledTimes(1);
-  });
-  it('reports an incomplete search instead of a false "not recorded"', async () => {
     const many = Array.from({ length: 10 }, (_, i) => rec(`r${i}`, 20 - i));
-    await expect(findByKey(pages(many), op, op.lastAttemptAt + SETTLE_MS, 2)).resolves.toEqual({ found: null, incomplete: true });
+    const capped = vi.fn(pages(many));
+    await expect(findByKey(capped, op, 2)).resolves.toBeNull();
+    expect(capped).toHaveBeenCalledTimes(2);
   });
 });
