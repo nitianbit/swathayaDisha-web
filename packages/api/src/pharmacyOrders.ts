@@ -3,7 +3,9 @@ import type { ApiClient, Page } from './client.ts';
 /** Mirrors src1/modules/pharmacyOrders/types (only the fields the screens read). */
 export type OrderStatus =
   | 'placed' | 'accepted' | 'packed' | 'ready_for_pickup' | 'out_for_delivery' | 'delivery_failed'
-  | 'completed' | 'abandoned' | 'cancelled' | 'rejected';
+  | 'completed' | 'abandoned' | 'cancelled' | 'rejected'
+  /** D3: a paid order whose cancellation waits for the pharmacy or an admin (frozen). */
+  | 'pending_cancel';
 export type PaymentStatus = 'pending' | 'authorized' | 'paid' | 'failed' | 'refunded' | 'partially_paid';
 export type PrescriptionStatus = 'not_required' | 'pending' | 'approved' | 'rejected';
 
@@ -57,6 +59,8 @@ export interface PrescriptionReview {
 export type Ref<T> = string | ({ _id: string } & T);
 
 export interface PharmacyOrder {
+  /** D3: the current (or last) cancellation request. */
+  cancelRequest?: CancelRequest;
   _id: string;
   orderNumber?: string;
   /** The selling pharmacy: only it may review the prescription. */
@@ -115,7 +119,27 @@ export const ORDER_TRANSITIONS: Readonly<Record<OrderStatus, readonly OrderStatu
   abandoned: [],
   cancelled: [],
   rejected: [],
+  // Only through the cancellation-request decisions (D3).
+  pending_cancel: [],
 };
+
+/** D3: statuses from which a cancellation can be requested (later ones go through delivery exceptions). */
+export const CANCELLABLE_STATUSES: readonly OrderStatus[] = ['placed', 'accepted', 'packed'];
+
+/** D3: the current (or last) cancellation request of an order. Decisions name `requestId`. */
+export interface CancelRequest {
+  requestId: string;
+  state: 'pending' | 'approved' | 'rejected';
+  fromStatus: OrderStatus;
+  paymentStatusAtRequest: PaymentStatus;
+  requestedByType: 'user' | 'pharmacy' | 'admin';
+  requestedAt: string;
+  reason?: string;
+  decidedByType?: 'pharmacy' | 'admin';
+  decidedAt?: string;
+  decisionNote?: string;
+  restoredStatus?: OrderStatus;
+}
 
 /** Delivery exceptions and the states each starts from (pharmacyOrders services, recordDeliveryException). */
 export const DELIVERY_EXCEPTION_FROM: Readonly<Record<DeliveryExceptionType, readonly OrderStatus[]>> = {
@@ -198,6 +222,13 @@ export function pharmacyOrdersApi(c: ApiClient) {
     reallocateHeldStock: (id: string) => c.post<{ order: PharmacyOrder; moves: unknown[] }>(`${idPath(id)}/reallocate-held-stock`),
     /** Cancels an order that holds units of a held batch; releases its stock and refunds it if paid. */
     stockHoldCancel: (id: string, reason: string) => c.post<PharmacyOrder>(`${idPath(id)}/stock-hold-cancel`, { body: { reason } }),
+    /** D3: an unpaid order is cancelled at once; a paid one becomes pending_cancel until decided. */
+    requestCancel: (id: string, reason?: string) =>
+      c.post<PharmacyOrder>(`${idPath(id)}/cancel-request`, { body: reason ? { reason } : {} }),
+    approveCancel: (id: string, requestId: string, note?: string) =>
+      c.post<PharmacyOrder>(`${idPath(id)}/cancel-request/approve`, { body: { requestId, ...(note ? { note } : {}) } }),
+    rejectCancel: (id: string, requestId: string, note: string) =>
+      c.post<PharmacyOrder>(`${idPath(id)}/cancel-request/reject`, { body: { requestId, note } }),
     /** Returns already recorded for this order (newest first). */
     customerReturnsFor: (id: string, limit = 50, page = 1) => {
       idPath(id);

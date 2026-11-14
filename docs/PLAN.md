@@ -138,7 +138,10 @@ Build in this order (money/security first):
   the gateway cannot answer, and never expires free bookings; `retry-payment` answers 409 `BOOKING_PAYMENT_EXPIRED`
   after the window. Customer app (branch `d2/payment-expiry`): "pay by" time, Expired status, the 409 handled.
 - Workspace screen for paid bookings with an unknown provider attempt that are not being cancelled (backend snapshot exists; a list endpoint for them does not).
-- Workspace + customer screens for D3 cancellation requests (backend approved: `POST /pharmacy-orders/:id/cancel-request`, `.../approve|reject` with `requestId`).
+- Workspace: D3 cancellation built (order screen: Cancel order → immediate for unpaid / request for paid; Cancellation
+  requested panel → approve (wallet-first refund; cash/counter → admin arranges) or keep (reason; refused once the payment
+  was returned); the orders filter lists "Cancellation requested"). Still to do: an admin view of cancellation requests
+  (admins can decide through the API today) and the customer app's pharmacy orders (the customer app has none yet).
 - Backend: OTP attempt limits / rate limiting (none today) before release.
 - Backend SECURITY: authenticate `/api/static/*` uploads.
 

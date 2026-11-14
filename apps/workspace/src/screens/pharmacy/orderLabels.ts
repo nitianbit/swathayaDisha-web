@@ -11,6 +11,7 @@ export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   abandoned: 'Abandoned',
   cancelled: 'Cancelled',
   rejected: 'Rejected',
+  pending_cancel: 'Cancellation requested',
 };
 
 export const PAYMENT_STATUS_LABEL: Record<PaymentStatus, string> = {

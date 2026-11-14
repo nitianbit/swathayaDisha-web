@@ -4,11 +4,11 @@ export { authApi, OTP_PATTERN, PHONE_PATTERN, requestKeysApi } from './auth.ts';
 export type { OnceOnlyKind } from './auth.ts';
 export type { OtpTarget, Profile, SessionRefreshed, SessionSignedIn, SignedIn, UserType } from './auth.ts';
 export {
-  DELIVERY_EXCEPTION_FROM, fetchableFileUrl, ORDER_TRANSITIONS, pharmacyOrdersApi, PRESCRIPTION_REVIEWABLE_STATUSES,
+  CANCELLABLE_STATUSES, DELIVERY_EXCEPTION_FROM, fetchableFileUrl, ORDER_TRANSITIONS, pharmacyOrdersApi, PRESCRIPTION_REVIEWABLE_STATUSES,
   refId, REGISTRATION_NUMBER_PATTERN,
 } from './pharmacyOrders.ts';
 export type {
-  BatchAllocation, CustomerReturn, CustomerReturnLine, CustomerReturnRequest, DeliveryException,
+  BatchAllocation, CancelRequest, CustomerReturn, CustomerReturnLine, CustomerReturnRequest, DeliveryException,
   DeliveryExceptionType, OrderItem, OrderQuery, OrderStatus, PaymentMode, PaymentStatus, PharmacyOrder,
   PrescriptionRefund, PrescriptionRefundStatus, PrescriptionReview, PrescriptionReviewRequest, PrescriptionStatus, Ref,
 } from './pharmacyOrders.ts';

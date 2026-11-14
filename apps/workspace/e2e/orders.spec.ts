@@ -39,12 +39,13 @@ interface Backend {
   refuseNextReturn: boolean;
   /** Drop the next return before recording it (nothing recorded, answer lost). */ dropNextRequest: boolean;
   /** D4: keys abandoned through POST /request-keys/abandon (never recorded afterwards). */ abandoned: Set<string>;
+  /** D3: the next cancellation decision finds a different request. */ requestChanged: boolean;
   /** Refuse returns at the access check, before the key is looked up (pharmacy temporarily not operational). */ notOperational: boolean;
   delayMs: number;
 }
 
 async function mockBackend(page: Page, initial: Order): Promise<Backend> {
-  const state: Backend = { order: initial, calls: [], returns: new Map(), loseNextAnswer: false, refuseNextReturn: false, dropNextRequest: false, abandoned: new Set(), notOperational: false, delayMs: 0 };
+  const state: Backend = { order: initial, calls: [], returns: new Map(), loseNextAnswer: false, refuseNextReturn: false, dropNextRequest: false, abandoned: new Set(), requestChanged: false, notOperational: false, delayMs: 0 };
   const json = (route: Route, status: number, body: unknown) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const refuse = (route: Route, status: number, code: string, message: string) => json(route, status, { error: status, code, message });
@@ -81,6 +82,26 @@ async function mockBackend(page: Page, initial: Order): Promise<Backend> {
       if (body?.type !== 'retry_delivery' && !body?.reason) return refuse(route, 400, 'VALIDATION_ERROR', 'reason is required');
       const ex = { type: body?.type, reason: body?.reason, at: '2026-11-14T07:00:00.000Z', fromStatus: o.status, toStatus: to, refundRequired: false };
       state.order = { ...o, status: to, deliveryExceptions: [...((o.deliveryExceptions as unknown[]) ?? []), ex] };
+      return json(route, 200, { success: true, data: state.order });
+    }
+    if (path === `/pharmacy-orders/${ID}/cancel-request`) {
+      const body = req.postDataJSON() as { reason?: string };
+      const unpaid = o.paymentStatus === 'pending' || o.paymentStatus === 'failed';
+      const request = { requestId: 'c'.repeat(24), fromStatus: o.status, paymentStatusAtRequest: o.paymentStatus, requestedByType: 'pharmacy',
+        requestedAt: '2026-11-15T05:00:00.000Z', reason: body.reason };
+      state.order = unpaid ? { ...o, status: 'cancelled', cancelRequest: { ...request, state: 'approved' } }
+        : { ...o, status: 'pending_cancel', cancelRequest: { ...request, state: 'pending' } };
+      return json(route, 200, { success: true, data: state.order });
+    }
+    if (path === `/pharmacy-orders/${ID}/cancel-request/approve` || path === `/pharmacy-orders/${ID}/cancel-request/reject`) {
+      const body = req.postDataJSON() as { requestId?: string; note?: string };
+      const cr = o.cancelRequest as { requestId: string; fromStatus: string } | undefined;
+      if (!cr || body.requestId !== cr.requestId || state.requestChanged) {
+        return refuse(route, 409, 'CANCEL_REQUEST_CHANGED', 'This cancellation request changed; reload the order and decide again');
+      }
+      state.order = path.endsWith('approve')
+        ? { ...o, status: 'cancelled', cancelRequest: { ...cr, state: 'approved' }, prescriptionRefund: { status: 'wallet_credited', walletAmount: 240 } }
+        : { ...o, status: cr.fromStatus, cancelRequest: { ...cr, state: 'rejected' } };
       return json(route, 200, { success: true, data: state.order });
     }
     if (path === `/pharmacy-orders/${ID}/mark-paid`) {
@@ -489,4 +510,58 @@ test('D4: a return lost before reaching the server, then a reload: check, cancel
   await restored.getByRole('button', { name: 'Cancel it and start again' }).click();
   await expect(page.getByRole('button', { name: 'Record a return…' })).toBeVisible();
   expect(backend.abandoned.has(lostKey)).toBe(true);
+});
+
+test('D3: an unpaid order is cancelled at once', async ({ page }) => {
+  await mockBackend(page, order({ status: 'placed', paymentStatus: 'pending', paymentMode: 'cash_on_delivery' }));
+  await openOrder(page);
+  await page.getByRole('button', { name: 'Cancel order' }).click();
+  await expect(page.getByText('The order is cancelled now and its stock goes back to inventory.', { exact: false })).toBeVisible();
+  await page.getByLabel('Reason').fill('Customer called to cancel');
+  await page.getByRole('button', { name: 'Yes, cancel it' }).click();
+  await expect(page.getByText('Cancelled', { exact: true }).first()).toBeVisible();
+});
+
+test('D3: a paid order waits for a decision; approving names the request and refunds the wallet', async ({ page }) => {
+  const backend = await mockBackend(page, order({ status: 'accepted' }));
+  await openOrder(page);
+  await page.getByRole('button', { name: 'Cancel order' }).click();
+  await page.getByLabel('Reason').fill('Customer no longer needs it');
+  await page.getByRole('button', { name: 'Yes, request cancellation' }).click();
+  const panel = page.getByRole('region', { name: 'Cancellation requested' });
+  await expect(panel).toContainText('Customer no longer needs it');
+  await expect(panel).toContainText("goes back to the customer's Jansetu wallet first");
+  await expect(page.getByRole('button', { name: 'Packed' })).toHaveCount(0);
+  await panel.getByRole('button', { name: 'Approve cancellation' }).click();
+  await panel.getByRole('button', { name: 'Yes, cancel the order' }).click();
+  await expect(page.getByText('Cancelled', { exact: true }).first()).toBeVisible();
+  const approve = backend.calls.find((c) => c.path === '/cancel-request/approve');
+  expect(approve?.body).toMatchObject({ requestId: 'c'.repeat(24) });
+});
+
+test('D3: keeping the order needs a reason; a request that changed meanwhile is not decided', async ({ page }) => {
+  const backend = await mockBackend(page, order({ status: 'packed' }));
+  await openOrder(page);
+  await page.getByRole('button', { name: 'Cancel order' }).click();
+  await page.getByLabel('Reason').fill('Duplicate order');
+  await page.getByRole('button', { name: 'Yes, request cancellation' }).click();
+  const panel = page.getByRole('region', { name: 'Cancellation requested' });
+  backend.requestChanged = true;
+  await panel.getByRole('button', { name: 'Keep the order' }).click();
+  await panel.getByLabel('Why it is kept (shown to the customer)').fill('Already packed and dispatched today');
+  await panel.getByRole('button', { name: 'Yes, keep it' }).click();
+  await expect(panel.getByText('This cancellation request changed', { exact: false })).toBeVisible();
+  backend.requestChanged = false;
+  await panel.getByRole('button', { name: 'Yes, keep it' }).click();
+  await expect(page.getByRole('region', { name: 'Cancellation requested' })).toHaveCount(0);
+  await expect(page.getByText('Packed', { exact: true }).first()).toBeVisible();
+});
+
+test('D3: once the payment was returned, the order cannot be kept: only approval completes it', async ({ page }) => {
+  await mockBackend(page, order({ status: 'pending_cancel', paymentStatus: 'refunded',
+    cancelRequest: { requestId: 'c'.repeat(24), state: 'pending', fromStatus: 'accepted', paymentStatusAtRequest: 'paid', requestedByType: 'user', requestedAt: '2026-11-15T05:00:00.000Z' } } as never));
+  await openOrder(page);
+  const panel = page.getByRole('region', { name: 'Cancellation requested' });
+  await expect(panel).toContainText('The payment was already returned to the customer.');
+  await expect(panel.getByRole('button', { name: 'Keep the order' })).toBeDisabled();
 });
