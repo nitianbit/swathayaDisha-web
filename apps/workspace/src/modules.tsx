@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { Boxes, ClipboardCheck, House, Package, ShieldAlert, TrendingDown } from 'lucide-react';
+import { Ban, Boxes, ClipboardCheck, House, Package, ShieldAlert, TrendingDown, Undo2 } from 'lucide-react';
 import type { StaffRole } from './session.tsx';
+import { ExternalCancellationsScreen } from './screens/admin/ExternalCancellationsScreen.tsx';
+import { RefundsScreen } from './screens/admin/RefundsScreen.tsx';
 import { HomeScreen } from './screens/HomeScreen.tsx';
 import { LowStockScreen } from './screens/pharmacy/LowStockScreen.tsx';
 import { OrderScreen } from './screens/pharmacy/OrderScreen.tsx';
@@ -43,6 +45,14 @@ export const PAGES: readonly WorkspacePage[] = [
   {
     path: '/pharmacy/quality', roles: ['pharmacy'], element: <QualityScreen />,
     nav: { label: 'Quality', icon: ShieldAlert, section: 'Pharmacy' },
+  },
+  {
+    path: '/admin/refunds', roles: ['admin'], element: <RefundsScreen />,
+    nav: { label: 'Refunds needing attention', icon: Undo2, section: 'Admin' },
+  },
+  {
+    path: '/admin/external-cancellations', roles: ['admin'], element: <ExternalCancellationsScreen />,
+    nav: { label: 'External cancellations', icon: Ban, section: 'Admin' },
   },
 ];
 

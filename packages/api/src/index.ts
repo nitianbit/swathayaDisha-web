@@ -18,3 +18,5 @@ export type {
   Batch, BatchStatus, Dispensed, HeldUnit, ImpactedOrder, InventoryItem, MedicineRef, QualityHoldRow, RecallTrace, Supplier,
   SupplierReturn, SupplierReturnReason,
 } from './inventory.ts';
+export { adminQueuesApi } from './adminQueues.ts';
+export type { CancelState, OpenCancellation, ProviderOutcome, RefundAttentionRow } from './adminQueues.ts';
