@@ -8,7 +8,7 @@ import { Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } 
 import { messageOf } from '../../errors.ts';
 import { endOfIstDay, money } from './billing.tsx';
 import { NoSuchPartner, PartnerPageHeading, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
-import { useBranches } from './StaffScreen.tsx';
+import { useBranches } from './scope.tsx';
 
 const PAGE = 50;
 const STATES: InvoiceState[] = ['issued', 'paid', 'cancelled'];

@@ -1,35 +1,34 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  canAddOwner, canEditPermissions, grantablePermissions, hasGlobalScope, MAX_NAME, PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN,
-  PERMISSION_LABEL, removalBlock, scopeProblem, type Branch, type MemberRole, type PartnerMember, type PartnerPermission,
+  ALL_PARTNER_PERMISSIONS, canAddOwner, canChangeBranches, canEditPermissions, grantablePermissions, hasGlobalScope, MAX_NAME,
+  PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN, PERMISSION_LABEL, removalBlock, scopeProblem,
+  type Branch, type MemberRole, type PartnerMember, type PartnerPermission,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
+import { changedFields, staleMessage, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
-import { NoSuchPartner, PartnerPageHeading, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
+import {
+  branchLabel, NoSuchPartner, PartnerPageHeading, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext,
+} from './scope.tsx';
 
 /**
  * Staff of a partner (`staff.manage`). Mirrors the backend's rules (`partners/services`): only owners add owners or
  * change permissions; staff grant only permissions they hold and only within their own branches; nobody removes
- * themselves or the last owner. The server decides and its message is shown.
+ * themselves or the last owner, or changes their own branch access. The server decides and its message is shown.
  */
 export function StaffScreen() {
   const ctx = usePartnerScope();
   if (!ctx) return <NoSuchPartner />;
-  return <Staff ctx={ctx} />;
+  // One subtree per partner: an admin moving from one partner's staff to another's starts with nothing open.
+  return <Staff key={scopeIdentity(ctx)} ctx={ctx} />;
 }
 
-/**
- * Active branches this actor can see. Since Q8 every member may read them (`GET /branches` with no permission; the
- * server returns only the branches in the member's scope).
- */
-export function useBranches(ctx: ScopeContext) {
-  return useQuery({ queryKey: [...ctx.key, 'branches'], queryFn: () => ctx.api.branches() });
-}
+/** Permissions in the backend's order (so equal sets compare equal). */
+const ordered = (perms: Iterable<string>) => { const s = new Set(perms); return ALL_PARTNER_PERMISSIONS.filter((p) => s.has(p)); };
 
-export const branchLabel = (names: Map<string, string>, ids: readonly string[]) =>
-  ids.length === 0 ? 'All branches' : ids.map((id) => names.get(id) ?? `Branch …${id.slice(-6)}`).join(', ');
+type Editing = { kind: 'permissions' | 'branches'; id: string } | null;
 
 function Staff({ ctx }: { ctx: ScopeContext }) {
   const queryClient = useQueryClient();
@@ -37,14 +36,15 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
   const members = useQuery({ queryKey: [...ctx.key, 'members'], queryFn: () => ctx.api.members() });
   const branches = useBranches(ctx);
   const [adding, setAdding] = useState(false);
-  const [editing, setEditing] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Editing>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const names = new Map((branches.data ?? []).map((b) => [b._id, b.name]));
   const refresh = () => Promise.all([
     queryClient.invalidateQueries({ queryKey: [...ctx.key, 'members'] }),
     queryClient.invalidateQueries({ queryKey: [...ctx.key, 'me'] }), // the owner count
   ]);
-  const editTarget = members.data?.find((m) => m._id === editing);
+  const editTarget = editing ? members.data?.find((m) => m._id === editing.id) : undefined;
+  const open = (e: Editing) => { setEditing(e); setNotice(null); };
 
   return (
     <>
@@ -52,8 +52,7 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
       {notice && <Alert tone="ok">{notice}</Alert>}
       {!adding && <div><Button onClick={() => { setAdding(true); setNotice(null); }}>Add a staff member</Button></div>}
       {adding && (
-        <AddMember ctx={ctx} branches={branches.data}
-          branchesError={branches.isError ? messageOf(branches.error) : null}
+        <AddMember ctx={ctx} branches={branches.data} branchesError={branches.isError ? messageOf(branches.error) : null}
           onCancel={() => setAdding(false)}
           onAdded={async (m) => { setAdding(false); setNotice(`${m.name} was added.`); await refresh(); }} />
       )}
@@ -80,7 +79,10 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
                       <td>
                         <div className="ws-actions">
                           {canEditPermissions(ctx.actor, m) && (
-                            <Button variant="secondary" onClick={() => { setEditing(m._id); setNotice(null); }}>Edit permissions</Button>
+                            <Button variant="secondary" onClick={() => open({ kind: 'permissions', id: m._id })}>Edit permissions</Button>
+                          )}
+                          {canChangeBranches(ctx.actor, m) && (
+                            <Button variant="secondary" onClick={() => open({ kind: 'branches', id: m._id })}>Change branch access</Button>
                           )}
                           {block ? <span className="ws-muted">{block}</span> : (
                             <ConfirmAction label="Remove" danger confirmLabel={`Remove ${m.name}`}
@@ -98,27 +100,29 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
             </table>
           </div>
         )}
-      {editTarget && (
-        <EditPermissions key={editTarget._id} ctx={ctx} member={editTarget} onClose={() => setEditing(null)}
+      {editTarget && editing?.kind === 'permissions' && (
+        <EditPermissions key={`p:${editTarget._id}`} ctx={ctx} member={editTarget} onClose={() => setEditing(null)}
           onSaved={async () => { setEditing(null); setNotice(`Permissions for ${editTarget.name} were saved.`); await refresh(); }} />
+      )}
+      {editTarget && editing?.kind === 'branches' && (
+        <EditBranches key={`b:${editTarget._id}`} ctx={ctx} member={editTarget} branches={branches.data}
+          branchesError={branches.isError ? messageOf(branches.error) : null} onClose={() => setEditing(null)}
+          onSaved={async () => { setEditing(null); setNotice(`Branch access for ${editTarget.name} was saved.`); await refresh(); }} />
       )}
     </>
   );
 }
 
 function PermissionChecklist({ legend, allowed, value, onChange, error }:
-  { legend: string; allowed: readonly PartnerPermission[]; value: Set<PartnerPermission>; onChange: (v: Set<PartnerPermission>) => void; error?: string }) {
+  { legend: string; allowed: readonly PartnerPermission[]; value: readonly PartnerPermission[]; onChange: (v: PartnerPermission[]) => void; error?: string }) {
   const shown = PARTNER_PERMISSIONS.filter((p) => allowed.includes(p.value));
   return (
     <fieldset className="ws-checks" aria-describedby={error ? 'perm-error' : undefined}>
       <legend>{legend}</legend>
       {shown.length === 0 ? <p className="ws-muted">You hold no permissions you can give.</p> : shown.map((p) => (
         <label key={p.value} className="ws-check">
-          <input type="checkbox" checked={value.has(p.value)} onChange={(e) => {
-            const next = new Set(value);
-            if (e.target.checked) next.add(p.value); else next.delete(p.value);
-            onChange(next);
-          }} />
+          <input type="checkbox" checked={value.includes(p.value)} onChange={(e) =>
+            onChange(ordered(e.target.checked ? [...value, p.value] : value.filter((x) => x !== p.value)))} />
           {p.label}
         </label>
       ))}
@@ -126,6 +130,35 @@ function PermissionChecklist({ legend, allowed, value, onChange, error }:
     </fieldset>
   );
 }
+
+/** Branch access picker: "all branches" (partner-wide actors only) or some of the branches this actor can see. */
+function BranchPicker({ wide, all, ids, options, loadError, error, onChange }: {
+  wide: boolean; all: boolean; ids: readonly string[]; options: readonly Branch[] | undefined; loadError: string | null; error?: string;
+  onChange: (v: { all: boolean; ids: string[] }) => void;
+}) {
+  return (
+    <fieldset className="ws-checks" aria-describedby={error ? 'branch-error' : undefined}>
+      <legend>Branches</legend>
+      {wide && (
+        <label className="ws-check">
+          <input type="checkbox" checked={all} onChange={(e) => onChange({ all: e.target.checked, ids: [...ids] })} /> All branches, including new ones
+        </label>
+      )}
+      {!all && (options ?? []).map((b) => (
+        <label key={b._id} className="ws-check">
+          <input type="checkbox" checked={ids.includes(b._id)} onChange={(e) =>
+            onChange({ all, ids: (e.target.checked ? [...ids, b._id] : ids.filter((x) => x !== b._id)).sort() })} /> {b.name}
+        </label>
+      ))}
+      {!all && options?.length === 0 && <p className="ws-muted">There are no branches yet.</p>}
+      {!all && loadError && <p className="ws-muted">Branches could not be loaded: {loadError}</p>}
+      {error && <span id="branch-error" className="j-field__error">{error}</span>}
+    </fieldset>
+  );
+}
+
+const branchProblem = (ctx: ScopeContext, all: boolean, ids: string[]) =>
+  !all && ids.length === 0 ? 'Choose at least one branch, or all branches.' : scopeProblem(ctx.actor, all ? [] : ids);
 
 function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
   ctx: ScopeContext; branches: Branch[] | undefined; branchesError: string | null;
@@ -136,17 +169,11 @@ function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [role, setRole] = useState<MemberRole>('staff');
-  const [perms, setPerms] = useState<Set<PartnerPermission>>(new Set());
-  const [allBranches, setAllBranches] = useState(wide);
-  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [perms, setPerms] = useState<PartnerPermission[]>([]);
+  const [scope, setScope] = useState<{ all: boolean; ids: string[] }>({ all: wide, ids: [] });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // The branches this actor may hand out: the ones it can see (already limited to its scope by the server), or, when
-  // branch names cannot be read, its own branch ids.
-  const options: { id: string; name: string }[] = branches
-    ? branches.map((b) => ({ id: b._id, name: b.name }))
-    : wide ? [] : ctx.actor.branchIds.map((id) => ({ id, name: `Branch …${id.slice(-6)}` }));
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -154,18 +181,15 @@ function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
     if (!name.trim()) errs.name = 'Enter the person’s name.';
     else if (name.trim().length > MAX_NAME) errs.name = `Use at most ${MAX_NAME} characters.`;
     if (!PARTNER_PHONE_PATTERN.test(phone)) errs.phone = 'Enter the 10-digit mobile number.';
-    const branchIds = allBranches ? [] : [...chosen];
-    if (role === 'staff') {
-      const problem = !allBranches && branchIds.length === 0 ? 'Choose at least one branch, or all branches.' : scopeProblem(ctx.actor, branchIds);
-      if (problem) errs.branches = problem;
-    }
+    if (role === 'staff') { const problem = branchProblem(ctx, scope.all, scope.ids); if (problem) errs.branches = problem; }
     setErrors(errs); setError(null);
     if (Object.keys(errs).length) return;
     setBusy(true);
     try {
+      // `ctx` is this partner's for the life of the form (the subtree is keyed by partner).
       const added = await ctx.api.addMember(role === 'owner'
         ? { name: name.trim(), phone, role: 'owner', permissions: [] }
-        : { name: name.trim(), phone, role: 'staff', permissions: grantable.filter((p) => perms.has(p)), branchIds });
+        : { name: name.trim(), phone, role: 'staff', permissions: perms.filter((p) => grantable.includes(p)), branchIds: scope.all ? [] : scope.ids });
       await onAdded(added);
     } catch (err) {
       setError(messageOf(err));
@@ -197,27 +221,7 @@ function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
           <>
             <PermissionChecklist legend="Permissions" allowed={grantable} value={perms} onChange={setPerms} />
             {ctx.actor.role !== 'owner' && <p className="ws-muted">You can give only permissions you hold yourself.</p>}
-            <fieldset className="ws-checks" aria-describedby={errors.branches ? 'branch-error' : undefined}>
-              <legend>Branches</legend>
-              {wide && (
-                <label className="ws-check">
-                  <input type="checkbox" checked={allBranches} onChange={(e) => setAllBranches(e.target.checked)} /> All branches, including new ones
-                </label>
-              )}
-              {!allBranches && options.map((b) => (
-                <label key={b.id} className="ws-check">
-                  <input type="checkbox" checked={chosen.has(b.id)} onChange={(e) => {
-                    const next = new Set(chosen);
-                    if (e.target.checked) next.add(b.id); else next.delete(b.id);
-                    setChosen(next);
-                  }} /> {b.name}
-                </label>
-              ))}
-              {!allBranches && options.length === 0 && (
-                <p className="ws-muted">{branchesError ? `Branches could not be loaded: ${branchesError}` : 'There are no branches yet.'}</p>
-              )}
-              {errors.branches && <span id="branch-error" className="j-field__error">{errors.branches}</span>}
-            </fieldset>
+            <BranchPicker wide={wide} all={scope.all} ids={scope.ids} options={branches} loadError={branchesError} error={errors.branches} onChange={setScope} />
           </>
         )}
         {error && <Alert>{error}</Alert>}
@@ -230,19 +234,52 @@ function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
   );
 }
 
+/**
+ * A full replacement (permissions or branch access) edited from a baseline: right before sending, the member is read
+ * again; if the server's value moved away from the baseline while the person was changing it, nothing is sent and the
+ * form shows the saved value to review (a stale form never restores an old grant).
+ */
+function useMemberDraft<T extends object>(ctx: ScopeContext, member: PartnerMember, toDraft: (m: PartnerMember) => T, label: string) {
+  const queryClient = useQueryClient();
+  const d = useDraft(() => toDraft(member));
+  const [stale, setStale] = useState<string | null>(null);
+  const { rebaseTo } = d;
+  const serverValue = JSON.stringify(toDraft(member));
+  useEffect(() => {
+    if (rebaseTo(JSON.parse(serverValue) as T).length) setStale(staleMessage([label]));
+  }, [serverValue, rebaseTo, label]);
+  /** Rebases onto the member as saved now; false (with a message) when the person must review again. */
+  const recheck = async (): Promise<boolean> => {
+    setStale(null);
+    const fresh = await ctx.api.member(member._id);
+    queryClient.setQueryData<PartnerMember[]>([...ctx.key, 'members'], (list) => list?.map((m) => (m._id === fresh._id ? fresh : m)));
+    if (fresh.isActive === false) { setStale(`${member.name} is no longer a member.`); return false; }
+    if (rebaseTo(toDraft(fresh)).length) { setStale(staleMessage([label])); return false; }
+    return true;
+  };
+  return { d, stale, recheck };
+}
+
+const permsDraft = (m: PartnerMember) => ({ permissions: ordered(m.permissions) });
+
 function EditPermissions({ ctx, member, onClose, onSaved }:
   { ctx: ScopeContext; member: PartnerMember; onClose: () => void; onSaved: () => Promise<void> }) {
-  const [perms, setPerms] = useState<Set<PartnerPermission>>(new Set(member.permissions));
+  const { d, stale, recheck } = useMemberDraft(ctx, member, permsDraft, 'permissions');
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const grantable = grantablePermissions(ctx.actor);
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    setError(null);
+    setError(null); setNotice(null);
+    if (!changedFields(d.current()).permissions) { setNotice('Nothing has changed.'); return; }
     setBusy(true);
     try {
-      await ctx.api.setPermissions(member._id, grantable.filter((p) => perms.has(p)));
+      if (!(await recheck())) return;
+      const next = changedFields(d.current()).permissions;
+      if (!next) { setNotice('Nothing has changed.'); return; }
+      await ctx.api.setPermissions(member._id, next.filter((p) => grantable.includes(p)));
       await onSaved();
     } catch (err) {
       setError(messageOf(err));
@@ -254,12 +291,67 @@ function EditPermissions({ ctx, member, onClose, onSaved }:
   return (
     <section className="ws-section" aria-labelledby="perm-h">
       <h2 id="perm-h">Permissions for {member.name}</h2>
-      <p className="ws-muted">Branch access stays as it is: {member.branchIds.length ? 'only the branches given when they were added' : 'all branches'}.</p>
       <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
-        <PermissionChecklist legend="Permissions" allowed={grantable} value={perms} onChange={setPerms} />
+        <PermissionChecklist legend="Permissions" allowed={grantable} value={d.draft.permissions} onChange={(v) => d.set('permissions', v)} />
+        {stale && <Alert tone="warn">{stale}</Alert>}
+        {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}
         <div className="ws-actions">
           <Button type="submit" busy={busy}>Save permissions</Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+/** One value: branch access is replaced whole. */
+const scopeDraft = (m: PartnerMember) => ({ scope: { all: m.branchIds.length === 0, ids: [...m.branchIds].sort() } });
+const scopeOf = (v: { all: boolean; ids: string[] }) => (v.all ? [] : v.ids);
+
+function EditBranches({ ctx, member, branches, branchesError, onClose, onSaved }: {
+  ctx: ScopeContext; member: PartnerMember; branches: Branch[] | undefined; branchesError: string | null;
+  onClose: () => void; onSaved: () => Promise<void>;
+}) {
+  const { d, stale, recheck } = useMemberDraft(ctx, member, scopeDraft, 'branch access');
+  const [error, setError] = useState<string | null>(null);
+  const [fieldError, setFieldError] = useState<string | undefined>();
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const unchanged = () => { const s = d.current(); return JSON.stringify(scopeOf(s.draft.scope)) === JSON.stringify(scopeOf(s.base.scope)); };
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setError(null); setNotice(null);
+    const now = d.current().draft.scope;
+    const problem = branchProblem(ctx, now.all, now.ids);
+    setFieldError(problem ?? undefined);
+    if (problem) return;
+    if (unchanged()) { setNotice('Nothing has changed.'); return; }
+    setBusy(true);
+    try {
+      if (!(await recheck())) return;
+      if (unchanged()) { setNotice('Nothing has changed.'); return; }
+      await ctx.api.setBranches(member._id, scopeOf(d.current().draft.scope));
+      await onSaved();
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="ws-section" aria-labelledby="scope-h">
+      <h2 id="scope-h">Branch access for {member.name}</h2>
+      <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
+        <BranchPicker wide={hasGlobalScope(ctx.actor)} all={d.draft.scope.all} ids={d.draft.scope.ids} options={branches} loadError={branchesError}
+          error={fieldError} onChange={(v) => d.set('scope', v)} />
+        {stale && <Alert tone="warn">{stale}</Alert>}
+        {notice && <Alert tone="ok">{notice}</Alert>}
+        {error && <Alert>{error}</Alert>}
+        <div className="ws-actions">
+          <Button type="submit" busy={busy}>Save branch access</Button>
           <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
         </div>
       </form>

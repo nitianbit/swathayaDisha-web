@@ -3,7 +3,7 @@ import { partnerAdminApi, type Partner } from '@jansetu/api';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { useSession } from '../../session.tsx';
 
-/** Admin: verify a pending partner (opens its workspace) or suspend it (signs its members out; nothing reinstates it). */
+/** Admin: verify a pending partner (opens its workspace), suspend it (signs its members out) or reinstate a suspended one. */
 export function PartnerStateActions({ partner }: { partner: Partner }) {
   const { api } = useSession();
   const queryClient = useQueryClient();
@@ -27,8 +27,13 @@ export function PartnerStateActions({ partner }: { partner: Partner }) {
       )}
       {state !== 'suspended' && (
         <ConfirmAction label="Suspend" danger confirmLabel={`Suspend ${partner.name}`}
-          consequence={`${partner.name} is suspended and deactivated: its members are signed out and cannot sign in. The workspace has no way to undo this.`}
+          consequence={`${partner.name} is suspended and deactivated: its members are signed out and cannot sign in until it is reinstated.`}
           onConfirm={() => act(() => admin.suspend(partner._id))} />
+      )}
+      {state === 'suspended' && (
+        <ConfirmAction label="Reinstate" confirmLabel={`Reinstate ${partner.name}`}
+          consequence={`${partner.name} becomes verified and active again: its members can sign in and it can take bookings.`}
+          onConfirm={() => act(() => admin.reinstate(partner._id))} />
       )}
     </div>
   );

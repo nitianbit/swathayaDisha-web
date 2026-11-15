@@ -14,7 +14,7 @@ import { sniffDocument } from '../pharmacy/documents.ts';
 import { money, useClinicDoctors } from './billing.tsx';
 import { stateTone } from './InvoicesScreen.tsx';
 import { NoSuchPartner, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
-import { useBranches } from './StaffScreen.tsx';
+import { useBranches } from './scope.tsx';
 
 const MODE_LABEL = Object.fromEntries(PAYMENT_MODES.map((m) => [m.value, m.label])) as Record<InvoicePaymentMode, string>;
 const GENDER_LABEL: Record<string, string> = { male: 'Male', female: 'Female', other: 'Other' };

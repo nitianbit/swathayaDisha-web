@@ -8,6 +8,7 @@ import {
 } from '@jansetu/api';
 import { Alert, Button, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
+import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 
@@ -46,46 +47,100 @@ export function newPartnerBody(d: Draft): { body: NewPartner; errors: Record<str
   return { body, errors: e };
 }
 
-/** Admin: create a lab or clinic with its first owner (it starts waiting for verification). */
+/** Session memory slot of an unconfirmed creation (one at a time per admin). */
+const PENDING_SLOT = 'admin-partner-create';
+type Pending = PendingOp<{ body: NewPartner; draft: Draft }>;
+
+const EMPTY: Draft = {
+  kind: 'lab', name: '', legalName: '', gstin: '', pan: '', contactPhone: '', contactEmail: '', taxRegime: 'unregistered', prefix: '',
+  solo: false, ownerName: '', ownerPhone: '',
+};
+
+/**
+ * Admin: create a lab or clinic with its first owner (it starts waiting for verification). Q8: creation is exactly
+ * once per request key. A key is made per submitted form and kept, with the exact request, until the answer is known:
+ * after a lost answer the form is locked and "Send again" resends the same key and content (the server answers with
+ * the partner it already made), so a retry can never create a second partner.
+ */
 export function NewPartnerScreen() {
-  const { api } = useSession();
+  const { api, memory } = useSession();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [d, setD] = useState<Draft>({
-    kind: 'lab', name: '', legalName: '', gstin: '', pan: '', contactPhone: '', contactEmail: '', taxRegime: 'unregistered', prefix: '',
-    solo: false, ownerName: '', ownerPhone: '',
-  });
+  const [pending, setPendingState] = useState<Pending | undefined>(() => memory.get<Pending>(PENDING_SLOT));
+  const [d, setD] = useState<Draft>(() => memory.get<Pending>(PENDING_SLOT)?.body?.draft ?? EMPTY);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const locked = !!pending;
   const text = (k: keyof Draft, digits = false) => ({
-    value: d[k] as string, error: errors[k],
+    value: d[k] as string, error: errors[k], disabled: locked,
     onChange: (e: { target: { value: string } }) => setD((x) => ({ ...x, [k]: digits ? e.target.value.replace(/\D/g, '') : e.target.value })),
   });
+  const setPending = (p: Pending | undefined) => {
+    if (p) memory.set(PENDING_SLOT, p); else memory.delete(PENDING_SLOT);
+    setPendingState(p);
+  };
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    const { body, errors: errs } = newPartnerBody(d);
-    setErrors(errs); setError(null);
-    if (Object.keys(errs).length) return;
+  /** Sends exactly `p` (same key, same content). Only success, or a definite refusal of its first attempt, ends it. */
+  async function send(p: Pending) {
+    const attempt = beginAttempt(p); // stored before sending: leaving and coming back sees it as possibly running
+    setPending(attempt);
     setBusy(true);
+    setError(null);
     try {
-      // Not keyed on the server: a lost answer must not be resent blindly; the list shows whether it was created.
-      const created = await partnerAdminApi(api).create(body);
+      const created = await partnerAdminApi(api).create(attempt.body.body, attempt.requestKey);
+      resolveStored(memory, PENDING_SLOT, attempt.requestKey);
       await queryClient.invalidateQueries({ queryKey: ['admin-partners'] });
       void navigate(`/admin/partners/${created.partner._id}`);
     } catch (err) {
-      setError(messageOf(err));
+      if (!stillCurrent(memory.get<Pending>(PENDING_SLOT), attempt)) return; // a newer attempt owns the state
+      const next = afterFailure(attempt, err, messageOf(err));
+      setPending(next ?? undefined);
+      if (!next) setError(messageOf(err)); // refused, nothing created: the form unlocks with what was typed
       setBusy(false);
     }
+  }
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (pending) return; // resolve the unconfirmed one first
+    const { body, errors: errs } = newPartnerBody(d);
+    setErrors(errs); setError(null);
+    if (Object.keys(errs).length) return;
+    void send(startOp(newRequestKey(), { body, draft: d }));
   }
 
   return (
     <>
       <Link className="ws-back" to="/admin/partners"><ArrowLeft size={16} aria-hidden="true" /> Back to labs and clinics</Link>
       <PageHeading title="Add a lab or clinic">It starts waiting for verification; its owner can use the workspace once it is verified.</PageHeading>
-      <form className="rx-form ws-section" noValidate onSubmit={(e) => void submit(e)}>
-        <fieldset className="ws-checks">
+      {pending?.restored ? (
+        <section className="ws-section" aria-labelledby="unconfirmed-h">
+          <h2 id="unconfirmed-h">A lab or clinic may already have been created</h2>
+          <Alert tone="warn">
+            Before the page reloaded, a new lab or clinic was being created and its answer never arrived. Its details are
+            not kept on this device, so it cannot be sent again. Look for it in the list before adding it again.
+          </Alert>
+          <div className="ws-actions">
+            <Link className="j-btn j-btn--primary" to="/admin/partners">Look in the list</Link>
+            <Button variant="secondary" onClick={() => { setPending(undefined); setD(EMPTY); }}>It is not in the list: start again</Button>
+          </div>
+        </section>
+      ) : (
+      <form className="rx-form ws-section" noValidate onSubmit={submit}>
+        {pending && (
+          <div className="confirm" role="group" aria-label="Unconfirmed creation">
+            <Alert tone="warn">
+              {`We could not confirm whether ${pending.body.body.name} was created${pending.error ? ` (${pending.error})` : ''}. `}
+              Send again to find out: it sends the same request, so it can never create a second one. The form stays
+              locked until then.
+            </Alert>
+            <div className="confirm-actions">
+              <Button busy={busy} onClick={() => void send(pending)}>Send again</Button>
+            </div>
+          </div>
+        )}
+        <fieldset className="ws-checks" disabled={locked}>
           <legend>Type</legend>
           <label className="ws-check"><input type="radio" name="kind" checked={d.kind === 'lab'} onChange={() => setD((x) => ({ ...x, kind: 'lab' }))} /> Lab</label>
           <label className="ws-check"><input type="radio" name="kind" checked={d.kind === 'clinic'} onChange={() => setD((x) => ({ ...x, kind: 'clinic' }))} /> Clinic</label>
@@ -108,7 +163,7 @@ export function NewPartnerScreen() {
           <TextField label="PAN (optional)" maxLength={10} {...text('pan')} />
           <div className="j-field">
             <label htmlFor="np-tax">Tax</label>
-            <select id="np-tax" value={d.taxRegime} onChange={(e) => setD((x) => ({ ...x, taxRegime: e.target.value as TaxRegime }))}>
+            <select id="np-tax" value={d.taxRegime} disabled={locked} onChange={(e) => setD((x) => ({ ...x, taxRegime: e.target.value as TaxRegime }))}>
               {REGIMES.map((r) => <option key={r} value={r}>{TAX_REGIME_LABEL[r]}</option>)}
             </select>
           </div>
@@ -120,8 +175,9 @@ export function NewPartnerScreen() {
           <TextField label="Owner mobile number" inputMode="numeric" maxLength={10} {...text('ownerPhone', true)} />
         </div>
         {error && <Alert>{error}</Alert>}
-        <div><Button type="submit" busy={busy}>Create</Button></div>
+        {!locked && <div><Button type="submit" busy={busy}>Create</Button></div>}
       </form>
+      )}
     </>
   );
 }

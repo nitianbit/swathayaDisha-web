@@ -18,7 +18,7 @@ import { money, useCatalogue, useClinicDoctors } from './billing.tsx';
 import { nextCursor } from './InvoicesScreen.tsx';
 import { Totals } from './InvoiceScreen.tsx';
 import { NoSuchPartner, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
-import { useBranches } from './StaffScreen.tsx';
+import { useBranches } from './scope.tsx';
 
 type Pending = PendingOp<NewInvoice>;
 

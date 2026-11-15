@@ -26,6 +26,12 @@ interface Backend {
   partners: Rec[];
   /** The next add-member answers 409. */
   conflictOnce: boolean;
+  /** Add-member answers this many ms late. */
+  slowAdd: number;
+  /** The next partner create commits but its answer is lost on the network. */
+  dropCreate: boolean;
+  /** requestKey → { hash, partner } (Q8 exactly-once creation). */
+  creates: Map<string, { hash: string; partner: Rec }>;
 }
 
 function partner(id: string, name: string, kind: 'lab' | 'clinic', state = 'verified', owners = 1): Rec {
@@ -34,10 +40,12 @@ function partner(id: string, name: string, kind: 'lab' | 'clinic', state = 'veri
 }
 
 const ownerMe: Me = { _id: OWNER, partnerId: LAB, name: 'Ravi Owner', role: 'owner', permissions: ALL, branchIds: [] };
+const sitaMe: Me = { _id: STAFF, partnerId: LAB, name: 'Sita Staff', role: 'staff', permissions: ['bookings.view'], branchIds: [BR1] };
+const BR_OLD = 'c9'.repeat(12);
 
-async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Backend, 'multi' | 'expired'>> = {}): Promise<Backend> {
+async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Backend, 'multi' | 'expired'>> & { many?: boolean } = {}): Promise<Backend> {
   const b: Backend = {
-    calls: [], me, multi: false, expired: false, conflictOnce: false, ...opts,
+    calls: [], me, multi: false, expired: false, conflictOnce: false, slowAdd: 0, dropCreate: false, creates: new Map(), ...opts,
     members: [
       { _id: OWNER, partnerId: LAB, name: 'Ravi Owner', phone: '9000000001', role: 'owner', permissions: ALL, branchIds: [], isActive: true },
       { _id: STAFF, partnerId: LAB, name: 'Sita Staff', phone: '9000000002', role: 'staff', permissions: ['bookings.view'], branchIds: [BR1], isActive: true },
@@ -45,8 +53,11 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
     branches: [
       { _id: BR1, partnerId: LAB, name: 'Indiranagar', address: { line1: '1 Main Rd', city: 'Bengaluru', state: 'Karnataka', stateCode: '29', pincode: '560038' },
         phone: '9000000010', hours: { mon: { open: '08:00', close: '20:00' } }, holidays: [], services: { homeCollection: true, inLab: true, inClinic: false }, isActive: true },
+      { _id: BR_OLD, partnerId: LAB, name: 'Old Town', address: { line1: '9 Old Rd', city: 'Mysuru', state: 'Karnataka', stateCode: '29', pincode: '570001' },
+        phone: '9000000011', holidays: [], services: { inLab: true }, isActive: false },
     ],
-    partners: [partner(LAB, 'City Lab', 'lab', 'pending'), partner(CLINIC, 'Sunrise Clinic', 'clinic')],
+    partners: [partner(LAB, 'City Lab', 'lab', 'pending'), partner(CLINIC, 'Sunrise Clinic', 'clinic'),
+      ...(opts.many ? Array.from({ length: 21 }, (_, i) => partner(`e${String(i).padStart(2, '0')}`.repeat(8), `Zeta Lab ${String(i + 1).padStart(2, '0')}`, 'lab')) : [])],
   };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const ok = (route: Route, data: unknown, status = 200) => json(route, status, { success: true, data });
@@ -82,19 +93,33 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
       return ok(route, { user: { ...b.me, phone: '9000000001', isActive: true }, partner: { ...p, verification: { state: 'verified' } }, userRole: 'partner' });
     }
 
-    // Admin partner accounts
+    // Admin partner accounts (Q8: search, paging; exactly-once creation by request key)
     if (path === '/partner-workspace/admin' && method === 'GET') {
       const kind = url.searchParams.get('kind');
       const state = url.searchParams.get('verificationState');
-      return ok(route, b.partners.filter((p) => (!kind || p.kind === kind) && (!state || (p.verification as Rec).state === state)));
+      const q = (url.searchParams.get('q') ?? '').toLowerCase();
+      const limit = Number(url.searchParams.get('limit') ?? 50);
+      const pg = Number(url.searchParams.get('page') ?? 1);
+      const all = b.partners.filter((p) => (!kind || p.kind === kind) && (!state || (p.verification as Rec).state === state)
+        && (!q || String(p.name).toLowerCase().includes(q))).sort((x, y) => String(x.name).localeCompare(String(y.name)));
+      return json(route, 200, { success: true, data: all.slice((pg - 1) * limit, pg * limit),
+        pagination: { page: pg, limit, total: all.length, totalPages: Math.max(1, Math.ceil(all.length / limit)) } });
     }
     if (path === '/partner-workspace/admin' && method === 'POST') {
-      const x = body as Rec;
-      const created = { ...partner('a3'.repeat(12), x.name as string, x.kind as 'lab'), contact: { phone: x.contactPhone } };
+      const { requestKey, ...x } = body as Rec;
+      const hash = JSON.stringify(x);
+      const prior = b.creates.get(String(requestKey));
+      if (prior) {
+        if (prior.hash !== hash) return json(route, 409, { error: 409, code: 'REQUEST_KEY_REUSED', message: 'This request key was already used for a different partner' });
+        return ok(route, { partner: prior.partner, owner: { _id: NEWBIE } }, 200);
+      }
+      const created = { ...partner('a3'.repeat(12), x.name as string, x.kind as 'lab', 'pending'), contact: { phone: x.contactPhone } };
       b.partners.push(created);
+      if (requestKey) b.creates.set(String(requestKey), { hash, partner: created });
+      if (b.dropCreate) { b.dropCreate = false; return route.abort('failed'); }
       return ok(route, { partner: created, owner: { _id: NEWBIE, name: (x.firstOwner as Rec).name } }, 201);
     }
-    const adm = /^\/partner-workspace\/admin\/([0-9a-f]{24})(\/verify|\/suspend)?$/.exec(path);
+    const adm = /^\/partner-workspace\/admin\/([0-9a-f]{24})(\/verify|\/suspend|\/reinstate)?$/.exec(path);
     if (adm) {
       const p = b.partners.find((x) => x._id === adm[1]);
       if (!p) return json(route, 404, { error: 404, code: 'PARTNER_NOT_FOUND', message: 'Partner not found' });
@@ -103,6 +128,9 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
         p.verification = { state: 'verified', verifiedAt: '2026-11-15T05:00:00.000Z' };
       } else if (adm[2] === '/suspend') {
         p.verification = { state: 'suspended' }; p.isActive = false;
+      } else if (adm[2] === '/reinstate') {
+        if ((p.verification as Rec).state !== 'suspended') return json(route, 409, { error: 409, code: 'NOT_SUSPENDED', message: 'Only a suspended partner can be reinstated' });
+        p.verification = { state: 'verified' }; p.isActive = true;
       }
       return ok(route, p);
     }
@@ -113,32 +141,47 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
       if (ws[1] && auth !== 'Bearer admin') return json(route, 403, { error: 403, message: 'Admin access is required' });
       const sub = ws[2]!;
       const pid = ws[1] ?? b.me.partnerId;
-      if (sub === '/me') return ok(route, b.partners.find((p) => p._id === pid));
+      if (sub === '/me' && method === 'GET') return ok(route, b.partners.find((p) => p._id === pid));
+      if (sub === '/me' && method === 'PUT') {
+        const p = b.partners.find((x) => x._id === pid)!;
+        if ((body as Rec).name) p.name = (body as Rec).name;
+        return ok(route, p);
+      }
       if (sub === '/members' && method === 'GET') return ok(route, b.members);
       if (sub === '/members' && method === 'POST') {
+        if (b.slowAdd) await new Promise((r) => setTimeout(r, b.slowAdd));
         if (b.conflictOnce) {
           b.conflictOnce = false;
           return json(route, 409, { error: 409, code: 'MEMBER_ALREADY_EXISTS', message: 'An active member with this phone already exists for this partner' });
         }
-        const m = { _id: NEWBIE, partnerId: pid, isActive: true, ...(body as Rec), branchIds: (body as Rec).branchIds ?? [] };
+        const m = { _id: `${NEWBIE.slice(0, -2)}${String(b.members.length).padStart(2, '0')}`, partnerId: pid, isActive: true, ...(body as Rec), branchIds: (body as Rec).branchIds ?? [] };
         b.members.push(m);
         return ok(route, m, 201);
       }
-      const mm = /^\/members\/([0-9a-f]{24})(\/permissions)?$/.exec(sub);
+      const mm = /^\/members\/([0-9a-f]{24})(\/permissions|\/branches)?$/.exec(sub);
       if (mm && method === 'DELETE') { b.members = b.members.filter((m) => m._id !== mm[1]); return json(route, 200, { success: true, message: 'Member removed' }); }
+      if (mm && method === 'GET') return ok(route, b.members.find((x) => x._id === mm[1]));
       if (mm && mm[2]) {
         const m = b.members.find((x) => x._id === mm[1])!;
-        m.permissions = (body as Rec).permissions;
+        if (mm[2] === '/permissions') m.permissions = (body as Rec).permissions; else m.branchIds = (body as Rec).branchIds;
         return ok(route, m);
       }
-      if (sub === '/branches' && method === 'GET') return ok(route, b.branches);
+      if (sub === '/branches' && method === 'GET') {
+        const scoped = b.me.role === 'staff' && b.me.branchIds.length > 0 && !ws[1];
+        const withClosed = url.searchParams.get('includeInactive') === 'true';
+        return ok(route, b.branches.filter((x) => (withClosed || x.isActive) && (!scoped || b.me.branchIds.includes(x._id as string))));
+      }
       if (sub === '/branches' && method === 'POST') {
         const br = { _id: BR2, partnerId: pid, isActive: true, ...(body as Rec) };
         b.branches.push(br);
         return ok(route, br, 201);
       }
-      const bm = /^\/branches\/([0-9a-f]{24})$/.exec(sub);
-      if (bm && method === 'DELETE') { b.branches = b.branches.filter((x) => x._id !== bm[1]); return json(route, 200, { success: true, message: 'Branch deactivated' }); }
+      const bm = /^\/branches\/([0-9a-f]{24})(\/reactivate)?$/.exec(sub);
+      const br = bm ? b.branches.find((x) => x._id === bm[1]) : undefined;
+      if (bm && br && method === 'GET') return ok(route, br);
+      if (bm && br && method === 'PUT') { Object.assign(br, body as Rec); return ok(route, br); }
+      if (bm && br && method === 'DELETE') { br.isActive = false; return json(route, 200, { success: true, message: 'Branch deactivated' }); }
+      if (bm && br && bm[2]) { br.isActive = true; return ok(route, br); }
       if (sub === '/audit') {
         return ok(route, [{ _id: 'e1', partnerId: pid, actorKind: 'member', actorId: OWNER, action: 'member.add', targetKind: 'member', targetId: STAFF,
           detail: { role: 'staff', permissions: ['bookings.view'] }, at: '2026-11-15T04:30:00.000Z' }]);
@@ -228,7 +271,7 @@ test('an expired choice asks for a new code', async ({ page }) => {
 });
 
 test('navigation follows the member’s permissions; a page without them does not exist', async ({ page }) => {
-  await mockBackend(page, { _id: STAFF, partnerId: LAB, name: 'Sita Staff', role: 'staff', permissions: ['bookings.view'], branchIds: [BR1] });
+  await mockBackend(page, sitaMe);
   await signInPartner(page);
   await expect(nav(page).getByRole('link', { name: 'Profile' })).toBeVisible();
   await expect(nav(page).getByRole('link', { name: 'Staff' })).toHaveCount(0);
@@ -340,7 +383,7 @@ test('admin: partners list with filters, create, verify and suspend with confirm
   await expect(page.getByRole('row').filter({ hasText: 'City Lab' })).toContainText('Waiting for verification');
   await page.getByLabel('Type').selectOption('clinic');
   await expect(page.getByRole('row').filter({ hasText: 'City Lab' })).toHaveCount(0);
-  expect(backend.calls.some((c) => c.path === '/partner-workspace/admin?kind=clinic')).toBe(true);
+  expect(backend.calls.some((c) => c.method === 'GET' && c.path.startsWith('/partner-workspace/admin?') && c.path.includes('kind=clinic'))).toBe(true);
   await page.getByLabel('Type').selectOption('');
 
   const lab = page.getByRole('row').filter({ hasText: 'City Lab' });
@@ -370,7 +413,7 @@ test('admin: partners list with filters, create, verify and suspend with confirm
   await expect(page.getByRole('heading', { name: 'Metro Diagnostics' })).toBeVisible();
   expect(backend.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/admin')?.body).toEqual({
     kind: 'lab', name: 'Metro Diagnostics', contactPhone: '9000000030', taxRegime: 'unregistered', invoiceSeriesPrefix: 'MD1',
-    firstOwner: { name: 'Meena', phone: '9000000031' },
+    firstOwner: { name: 'Meena', phone: '9000000031' }, requestKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,100}$/),
   });
 });
 
@@ -394,4 +437,172 @@ test('admin manages a partner as owner through the admin workspace routes', asyn
   await expect(page.getByRole('heading', { name: 'City Lab' })).toBeVisible();
   await page.goto('/#/partner/staff');
   await expect(page.getByText('Page not found')).toBeVisible();
+});
+
+// ── Codex WQ1 review fixes and Q8 actions ──
+
+test('switching partners as admin clears open drafts; a submission stays with the partner it was made for', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await page.goto(`/#/admin/partners/${LAB}/branches`);
+  await page.getByRole('button', { name: 'Add a branch' }).click();
+  await page.getByLabel('Branch name').fill('Typed for City Lab');
+  await page.goto(`/#/admin/partners/${CLINIC}/branches`);
+  await expect(page.getByText('Managing Sunrise Clinic with owner authority.')).toBeVisible();
+  await expect(page.getByLabel('Branch name')).toHaveCount(0);
+
+  await page.goto(`/#/admin/partners/${LAB}/staff`);
+  await page.getByRole('button', { name: 'Add a staff member' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Typed for City Lab');
+  await page.goto(`/#/admin/partners/${CLINIC}/staff`);
+  await expect(page.getByText('Managing Sunrise Clinic with owner authority.')).toBeVisible();
+  await expect(page.getByLabel('Name', { exact: true })).toHaveCount(0);
+
+  // A submission still running when the admin switches belongs to the first partner and reports nothing on the second.
+  await page.goto(`/#/admin/partners/${LAB}/staff`);
+  await page.getByRole('button', { name: 'Add a staff member' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Kiran');
+  await page.getByLabel('Mobile number').fill('9000000003');
+  backend.slowAdd = 800;
+  await page.getByRole('button', { name: 'Add staff member' }).click();
+  await page.goto(`/#/admin/partners/${CLINIC}/staff`);
+  await expect(page.getByText('Managing Sunrise Clinic with owner authority.')).toBeVisible();
+  await expect.poll(() => backend.members.some((m) => m.name === 'Kiran')).toBe(true);
+  await expect(page.getByText('Kiran was added.')).toHaveCount(0);
+  expect(backend.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/members')).map((c) => c.path))
+    .toEqual([`/partner-workspace/admin/${LAB}/workspace/members`]);
+
+  // Starting fresh on the second partner submits there.
+  backend.slowAdd = 0;
+  await page.getByRole('button', { name: 'Add a staff member' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Asha');
+  await page.getByLabel('Mobile number').fill('9000000004');
+  await page.getByRole('button', { name: 'Add staff member' }).click();
+  await expect(page.getByText('Asha was added.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/members')).map((c) => c.path)).toEqual([
+    `/partner-workspace/admin/${LAB}/workspace/members`, `/partner-workspace/admin/${CLINIC}/workspace/members`,
+  ]);
+});
+
+test('a permission revoked by someone else while editing is detected: nothing is sent, the saved value is shown', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  await page.getByRole('row').filter({ hasText: 'Sita Staff' }).getByRole('button', { name: 'Edit permissions' }).click();
+  const editor = page.getByRole('region', { name: 'Permissions for Sita Staff' });
+  await editor.getByLabel('Manage bookings').check();
+  // Meanwhile another owner revokes "View bookings".
+  (backend.members.find((m) => m._id === STAFF)!).permissions = [];
+  await editor.getByRole('button', { name: 'Save permissions' }).click();
+  await expect(editor.getByText(/Someone else changed the permissions while you were editing/)).toBeVisible();
+  await expect(editor.getByLabel('View bookings')).not.toBeChecked();
+  await expect(editor.getByLabel('Manage bookings')).not.toBeChecked();
+  expect(backend.calls.some((c) => c.method === 'PUT')).toBe(false);
+  await editor.getByLabel('Manage bookings').check();
+  await editor.getByRole('button', { name: 'Save permissions' }).click();
+  await expect(page.getByText('Permissions for Sita Staff were saved.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toEqual([{ permissions: ['bookings.manage'] }]);
+});
+
+test('editing a branch name never resends services or holidays someone else changed meanwhile', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Branches' }).click();
+  await page.getByRole('row').filter({ hasText: 'Indiranagar' }).getByRole('button', { name: 'Edit' }).click();
+  await page.getByLabel('Branch name').fill('Indiranagar Main');
+  const br = backend.branches.find((x) => x._id === BR1)!;
+  br.services = { homeCollection: false, inLab: true, inClinic: false };
+  br.holidays = ['2026-12-31'];
+  await page.getByRole('button', { name: 'Save branch' }).click();
+  await expect(page.getByText('Indiranagar Main was saved.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.method === 'PUT').map((c) => ({ path: c.path, body: c.body })))
+    .toEqual([{ path: `/partner-workspace/branches/${BR1}`, body: { name: 'Indiranagar Main' } }]);
+  expect(br.holidays).toEqual(['2026-12-31']);
+});
+
+test('a lost create answer locks the form; sending again reuses the key and content and creates one partner', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.dropCreate = true;
+  await signInAdmin(page);
+  await page.goto('/#/admin/partners/new');
+  await page.getByLabel('Display name').fill('Metro Diagnostics');
+  await page.getByLabel('Contact phone').fill('9000000030');
+  await page.getByLabel('Invoice prefix').fill('MD');
+  await page.getByLabel('Owner name').fill('Meena');
+  await page.getByLabel('Owner mobile number').fill('9000000031');
+  await page.getByRole('button', { name: 'Create' }).click();
+  await expect(page.getByText(/We could not confirm whether Metro Diagnostics was created/)).toBeVisible();
+  await expect(page.getByLabel('Display name')).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Create' })).toHaveCount(0);
+  // Leaving and coming back keeps it unresolved (session memory), still locked.
+  await page.goto('/#/admin/partners');
+  await page.goto('/#/admin/partners/new');
+  await expect(page.getByLabel('Display name')).toHaveValue('Metro Diagnostics');
+  await page.getByRole('button', { name: 'Send again' }).click();
+  await expect(page.getByRole('heading', { name: 'Metro Diagnostics' })).toBeVisible();
+  const creates = backend.calls.filter((c) => c.method === 'POST' && c.path === '/partner-workspace/admin');
+  expect(creates).toHaveLength(2);
+  expect(creates[1]!.body).toEqual(creates[0]!.body);
+  expect((creates[0]!.body as Rec).requestKey).toMatch(/^[A-Za-z0-9_-]{8,100}$/);
+  expect(backend.partners.filter((p) => p.name === 'Metro Diagnostics')).toHaveLength(1);
+  // A new form after that starts with a new key.
+  await page.goto('/#/admin/partners/new');
+  await expect(page.getByLabel('Display name')).toHaveValue('');
+  await expect(page.getByRole('button', { name: 'Create' })).toBeVisible();
+});
+
+test('Q8: change a staff member’s branch access; reopen a closed branch', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  await expect(page.getByRole('row').filter({ hasText: 'Ravi Owner' }).getByRole('button', { name: 'Change branch access' })).toHaveCount(0);
+  await page.getByRole('row').filter({ hasText: 'Sita Staff' }).getByRole('button', { name: 'Change branch access' }).click();
+  const editor = page.getByRole('region', { name: 'Branch access for Sita Staff' });
+  await expect(editor.getByLabel('Indiranagar')).toBeChecked();
+  await editor.getByLabel('All branches, including new ones').check();
+  await editor.getByRole('button', { name: 'Save branch access' }).click();
+  await expect(page.getByText('Branch access for Sita Staff was saved.')).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'Sita Staff' })).toContainText('All branches');
+  expect(backend.calls.find((c) => c.method === 'PUT')).toEqual({ method: 'PUT', path: `/partner-workspace/members/${STAFF}/branches`, body: { branchIds: [] } });
+
+  await nav(page).getByRole('link', { name: 'Branches' }).click();
+  const closed = page.getByRole('region', { name: 'Closed branches' });
+  await closed.getByRole('button', { name: 'Reopen' }).click();
+  await closed.getByRole('button', { name: 'Reopen Old Town' }).click();
+  await expect(page.getByRole('row').filter({ hasText: 'Old Town' })).toBeVisible();
+  expect(backend.calls.some((c) => c.method === 'POST' && c.path === `/partner-workspace/branches/${BR_OLD}/reactivate`)).toBe(true);
+  expect(backend.calls.some((c) => c.path === '/partner-workspace/branches?includeInactive=true')).toBe(true);
+});
+
+test('Q8: only owners edit the profile; staff read it', async ({ page }) => {
+  const backend = await mockBackend(page, sitaMe);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Profile' }).click();
+  await expect(page.getByText('Only an owner can change these details.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save' })).toHaveCount(0);
+  expect(backend.calls.some((c) => c.path.includes('includeInactive'))).toBe(false);
+});
+
+test('Q8: admin searches and pages partners, and reinstates a suspended one', async ({ page }) => {
+  const backend = await mockBackend(page, ownerMe, { many: true });
+  await signInAdmin(page);
+  await nav(page).getByRole('link', { name: 'Labs and clinics' }).click();
+  await expect(page.getByText('23 partners')).toBeVisible();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await expect(page.getByText('Page 2 of 2')).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'Zeta Lab 21' })).toBeVisible();
+  expect(backend.calls.some((c) => c.path.includes('page=2') && c.path.includes('limit=20'))).toBe(true);
+  await page.getByLabel('Search by name').fill('sunrise');
+  await page.getByRole('button', { name: 'Search' }).click();
+  await expect(page.getByText('1 partner', { exact: true })).toBeVisible();
+  expect(backend.calls.some((c) => c.path.includes('q=sunrise') && !c.path.includes('page='))).toBe(true);
+
+  const clinic = page.getByRole('row').filter({ hasText: 'Sunrise Clinic' });
+  await clinic.getByRole('button', { name: 'Suspend' }).click();
+  await clinic.getByRole('button', { name: 'Suspend Sunrise Clinic' }).click();
+  await expect(clinic).toContainText('Suspended');
+  await clinic.getByRole('button', { name: 'Reinstate' }).click();
+  await clinic.getByRole('button', { name: 'Reinstate Sunrise Clinic' }).click();
+  await expect(clinic).toContainText('Verified');
+  expect(backend.calls.some((c) => c.method === 'POST' && c.path === `/partner-workspace/admin/${CLINIC}/reinstate`)).toBe(true);
 });
