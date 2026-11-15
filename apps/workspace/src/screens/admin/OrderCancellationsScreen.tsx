@@ -26,9 +26,11 @@ export function OrderCancellationsScreen() {
   });
   // Deciding the last request of the last page shrinks the queue: go back to the new last page instead of an empty one.
   const lastPage = Math.max(1, q.data?.totalPages ?? 1);
+  // Only on this page's own settled answer: a cached total from an earlier visit must not bounce a fresh "Next".
+  const settled = q.isSuccess && !q.isFetching;
   useEffect(() => {
-    if (q.data && page > lastPage) setParams(lastPage > 1 ? { page: String(lastPage) } : {}, { replace: true });
-  }, [q.data, page, lastPage, setParams]);
+    if (settled && page > lastPage) setParams(lastPage > 1 ? { page: String(lastPage) } : {}, { replace: true });
+  }, [settled, page, lastPage, setParams]);
   const pending = q.data?.items.filter((o) => o.status === 'pending_cancel' && o.cancelRequest?.state === 'pending') ?? [];
 
   return (

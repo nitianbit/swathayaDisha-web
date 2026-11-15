@@ -8,7 +8,7 @@ const O2 = '72'.repeat(12);
 const R1 = 'c1'.repeat(12);
 const R2 = 'c2'.repeat(12);
 
-interface Backend { orders: Record<string, unknown>[]; calls: { path: string; body: unknown }[]; listQueries: string[]; changeNext: boolean }
+interface Backend { orders: Record<string, unknown>[]; calls: { path: string; body: unknown }[]; listQueries: string[]; changeNext: boolean; slowPage2: boolean }
 
 function pendingOrder(id: string, requestId: string, over: Record<string, unknown> = {}) {
   return {
@@ -25,7 +25,7 @@ function pendingOrder(id: string, requestId: string, over: Record<string, unknow
 async function mockBackend(page: Page): Promise<Backend> {
   const b: Backend = {
     orders: [pendingOrder(O1, R1), pendingOrder(O2, R2, { paymentMode: 'cash_on_delivery', orderNumber: 'PO-COD' })],
-    calls: [], listQueries: [], changeNext: false,
+    calls: [], listQueries: [], changeNext: false, slowPage2: false,
   };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   await page.route('**/api/v1/**', async (route) => {
@@ -42,6 +42,7 @@ async function mockBackend(page: Page): Promise<Backend> {
       b.listQueries.push(url.search);
       const all = b.orders.filter((o) => o.status === 'pending_cancel');
       const pg = Number(url.searchParams.get('page') ?? '1'); const limit = Number(url.searchParams.get('limit') ?? '20');
+      if (pg === 2 && b.slowPage2) await new Promise((r) => setTimeout(r, 1500));
       const items = all.slice((pg - 1) * limit, pg * limit);
       return json(route, 200, { success: true, data: items, pagination: { page: pg, limit, total: all.length, totalPages: Math.ceil(all.length / limit) } });
     }
@@ -140,4 +141,27 @@ test('deciding the only request on the last page goes back to the previous page,
   await expect(page.getByText('20 waiting for a decision')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Order PO-1000' })).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Pages' })).toHaveCount(0);
+});
+
+test('a page that shrank earlier does not bounce a later “Next” back while its fresh answer is on the way', async ({ page }) => {
+  const b = await mockBackend(page);
+  const make = (n: number, from = 0) => Array.from({ length: n }, (_, i) => pendingOrder((80 + from + i).toString(16).padStart(2, '0').repeat(12),
+    'e'.repeat(23) + ((from + i) % 10), { orderNumber: `PO-${2000 + from + i}` }));
+  b.orders = make(21);
+  await signIn(page);
+  await page.getByRole('button', { name: 'Next' }).click();
+  const last = card(page, 'PO-2020');
+  await last.getByRole('button', { name: 'Approve cancellation' }).click();
+  await last.getByRole('button', { name: 'Yes, cancel the order' }).click();
+  await expect(page.getByText('20 waiting for a decision')).toBeVisible(); // back on page 1; page 2 cached as "1 page"
+  b.orders = [...b.orders, ...make(5, 30)]; // new requests arrive
+  // Deciding one on page 1 refreshes page 1 (now two pages); page 2 stays cached from before as "one page".
+  const first = card(page, 'PO-2000');
+  await first.getByRole('button', { name: 'Approve cancellation' }).click();
+  await first.getByRole('button', { name: 'Yes, cancel the order' }).click();
+  await expect(page.getByText('24 waiting for a decision')).toBeVisible();
+  b.slowPage2 = true; // page 2's fresh answer takes a while: the cached "one page" must not bounce us back meanwhile
+  await page.getByRole('button', { name: 'Next' }).click();
+  await expect(page.getByText('Page 2 of 2')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Order PO-2034' })).toBeVisible();
 });
