@@ -6,6 +6,7 @@ import {
   type DeliveryExceptionType, type OrderStatus, type PharmacyOrder,
 } from '@jansetu/api';
 import { Alert, Badge, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
+import { CancelRequestPanel } from '../../components/CancelRequestPanel.tsx';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -111,7 +112,7 @@ function OrderView({ order }: { order: PharmacyOrder }) {
       {order.status === 'pending_cancel' && order.cancelRequest?.state === 'pending' && (
         // Keyed by the request: a newer request (after a refresh) replaces the panel and closes any open confirmation,
         // and each decision sends the id of the request that was on screen.
-        <CancelRequestPanel key={order.cancelRequest.requestId} order={order} seller={seller}
+        <CancelRequestPanel key={order.cancelRequest.requestId} order={order} viewer={seller ? 'seller' : 'buyer'}
           onApprove={(requestId, note) => act(() => orders.approveCancel(order._id, requestId, note || undefined))}
           onReject={(requestId, note) => act(() => orders.rejectCancel(order._id, requestId, note))} />
       )}
@@ -214,46 +215,6 @@ const EXCEPTION_CONSEQUENCE: Record<DeliveryExceptionType, string> = {
   not_collected: 'The order is cancelled, its stock is released and, if it was paid, the customer is refunded.',
   refused_at_door: 'The order is cancelled, its stock is released and, if it was paid, the customer is refunded.',
 };
-
-/**
- * D3: a paid order waits for this decision. Each decision names the request it was made on (a newer request makes it
- * fail with "changed" instead of deciding the wrong one).
- */
-function CancelRequestPanel({ order, seller, onApprove, onReject }: {
-  order: PharmacyOrder; seller: boolean;
-  onApprove: (requestId: string, note: string) => Promise<unknown>; onReject: (requestId: string, note: string) => Promise<unknown>;
-}) {
-  const r = order.cancelRequest!;
-  const requestId = r.requestId; // fixed for this panel's life (the panel is keyed by it)
-  const by = r.requestedByType === 'user' ? 'the customer' : r.requestedByType === 'admin' ? 'an admin' : 'your pharmacy';
-  const returned = order.paymentStatus === 'refunded';
-  const online = order.paymentMode === 'online_payment';
-  // Amount-free on purpose: the refund is what the payment records show was paid (it can differ from the order total).
-  const refund = returned ? 'The payment was already returned to the customer.'
-    : order.paymentStatus === 'authorized' ? 'The payment is still being confirmed; decide in a few minutes.'
-    : !online ? 'The refund is not automatic for a cash or counter payment: an admin arranges it.'
-    : "What the customer paid online goes back to their Jansetu wallet first (they can ask for it on their card/UPI). If the payment cannot be matched to its record, an admin reviews the refund.";
-  return (
-    <section className="ws-section" aria-labelledby="cancel-h">
-      <h2 id="cancel-h">Cancellation requested</h2>
-      <Alert tone="warn">
-        Requested by {by} on {formatDateTime(r.requestedAt)}{r.reason ? `: “${r.reason}”` : ''}. Until it is decided the order
-        cannot move. {refund}
-      </Alert>
-      {seller && (
-        <div className="ws-actions">
-          <ConfirmAction label="Approve cancellation" confirmLabel="Yes, cancel the order" danger reason="optional" reasonLabel="Note"
-            consequence={`The order is cancelled and its stock goes back to inventory. ${refund}`} onConfirm={(note) => onApprove(requestId, note)} />
-          <ConfirmAction label="Keep the order" confirmLabel="Yes, keep it" reason reasonLabel="Why it is kept (shown to the customer)"
-            disabled={returned}
-            consequence={`The request is declined and the order continues from “${ORDER_STATUS_LABEL[r.fromStatus]}”.`}
-            onConfirm={(note) => onReject(requestId, note)} />
-          {returned && <span className="ws-muted">The payment was already returned, so the order cannot continue: approve to complete the cancellation.</span>}
-        </div>
-      )}
-    </section>
-  );
-}
 
 function RefundPanel({ order, seller, onRetry }: { order: PharmacyOrder; seller: boolean; onRetry: () => Promise<unknown> }) {
   const r = order.prescriptionRefund!;

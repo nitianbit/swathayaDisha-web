@@ -203,7 +203,9 @@ test('no order offers a generic cancel or reject: it could keep a payment that l
     const backend = await mockBackend(page, order({ paymentStatus }));
     await openOrder(page);
     await expect(page.getByText(/Cancelling or rejecting an order is not available here yet/)).toBeVisible();
-    await expect(page.getByRole('button', { name: /Cancel order|Reject order/ })).toHaveCount(0);
+    // D3: "Cancel order" exists, but only as a cancellation request (refund-aware); no generic cancel or reject.
+    await expect(page.getByRole('button', { name: /Reject order|^Cancelled$|^Rejected$/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Cancel order' })).toHaveCount(1);
     expect(backend.calls).toHaveLength(0);
     await page.unrouteAll({ behavior: 'ignoreErrors' });
   }

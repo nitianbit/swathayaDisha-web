@@ -1,5 +1,5 @@
 import type { ApiClient, Page } from './client.ts';
-import type { OrderStatus, PaymentStatus, PrescriptionRefund } from './pharmacyOrders.ts';
+import type { OrderStatus, PaymentStatus, PharmacyOrder, PrescriptionRefund } from './pharmacyOrders.ts';
 
 /** GET /pharmacy-orders/prescription-refunds/attention row (admin): refunds that did not settle on their own (P2). */
 export interface RefundAttentionRow {
@@ -52,6 +52,15 @@ export type ProviderOutcome = 'absent' | 'cancelled';
 
 export function adminQueuesApi(c: ApiClient) {
   return {
+    /** D3: paid pharmacy orders waiting for a cancellation decision (an admin or the selling pharmacy decides). */
+    orderCancellations: (q: { page?: number; limit?: number } = {}): Promise<Page<PharmacyOrder>> =>
+      c.page<PharmacyOrder>('/pharmacy-orders', { query: { status: 'pending_cancel', ...q } }),
+    /** A pharmacy's name for display (GET /pharmacies/:id). */
+    pharmacyName: async (id: string): Promise<string | undefined> => {
+      if (!/^[0-9a-fA-F]{24}$/.test(id)) return undefined;
+      const p = await c.get<{ name?: unknown } | null>(`/pharmacies/${id}`);
+      return p && typeof p.name === 'string' && p.name.trim() ? p.name.trim() : undefined;
+    },
     refundsNeedingAttention: (limit = 100) =>
       c.get<RefundAttentionRow[]>('/pharmacy-orders/prescription-refunds/attention', { query: { limit } }),
     openCancellations: (q: { scope?: 'admin' | 'open'; page?: number; limit?: number } = {}): Promise<Page<OpenCancellation>> =>
