@@ -70,10 +70,15 @@ export interface CheckoutResult {
   order: PharmacyOrder;
   paymentRequired: boolean;
   payment?: PaymentOrder;
+  /** P8: the request key had already placed this order (a repeat); nothing new was placed. */
+  replayed?: boolean;
 }
 
-/** The time an unpaid online order is kept before the system cancels it (backend UNPAID_ORDER_ABANDON_WINDOW_MS). */
-export const PHARMACY_PAYMENT_WINDOW_MIN = 35;
+/**
+ * Minutes after placing an online order within which a payment is applied (backend PHARMACY_ORDER_PAYMENT_WINDOW_MS);
+ * a later capture is returned to the wallet, and the order is cancelled a few minutes later.
+ */
+export const PHARMACY_PAYMENT_WINDOW_MIN = 30;
 
 const hex = /^[0-9a-fA-F]{24}$/;
 const id = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; };
@@ -136,7 +141,9 @@ export function customerPharmacyApi(c: ApiClient) {
     removeFromCart: (medicineId: string) => c.delete<unknown>(`/pharmacy-cart/items/${id(medicineId, 'medicine')}`).then(normalizeCart),
     clearCart: () => c.delete<unknown>('/pharmacy-cart'),
     /** Places the order (the server prices it again; 409 CART_PRICE_CHANGED if a price moved). Never retried automatically. */
-    checkout: (body: Checkout) => c.post<CheckoutResult>('/pharmacy-cart/checkout', { body: {
+    /** With a request key a repeat answers with the first order (`replayed`), never a second one. */
+    checkout: (body: Checkout, requestKey?: string) => c.post<CheckoutResult>('/pharmacy-cart/checkout', { body: {
+      ...(requestKey ? { requestKey } : {}),
       paymentMode: body.paymentMode, deliveryMode: body.deliveryMode,
       ...(body.deliveryMode === 'delivery' ? { deliveryAddress: body.deliveryAddress } : {}),
       ...(body.notes ? { notes: body.notes } : {}),
@@ -144,6 +151,11 @@ export function customerPharmacyApi(c: ApiClient) {
 
     orders: (page = 1, limit = 20) => c.page<PharmacyOrder>('/pharmacy-orders', { query: { page, limit } }),
     order: (orderId: string) => c.get<PharmacyOrder>(`/pharmacy-orders/${id(orderId, 'order')}`),
+    /**
+     * P8: pay an unpaid online order (again). The server checks earlier attempts first (then it may already be paid:
+     * `paymentRequired` false) and hands back the order's own open Razorpay order.
+     */
+    retryPayment: (orderId: string) => c.post<CheckoutResult>(`/pharmacy-orders/${id(orderId, 'order')}/retry-payment`),
     /** Unpaid: cancelled at once. Paid: waits for the pharmacy or Jansetu (pending_cancel); then refunded to the wallet. */
     requestCancel: (orderId: string, reason?: string) =>
       c.post<PharmacyOrder>(`/pharmacy-orders/${id(orderId, 'order')}/cancel-request`, { body: reason ? { reason } : {} }),

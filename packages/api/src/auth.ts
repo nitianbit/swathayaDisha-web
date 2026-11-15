@@ -43,7 +43,7 @@ export const PHONE_PATTERN = /^[0-9]{10}$/;
 export const OTP_PATTERN = /^[0-9]{6}$/;
 
 /** D4: once-only operations whose outcome a reloaded page never saw. */
-export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_create';
+export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_create' | 'pharmacy_checkout';
 
 /**
  * Abandons an unresolved request key on the server: afterwards the old request can never be performed, so a new one

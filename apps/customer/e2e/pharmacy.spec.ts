@@ -37,6 +37,12 @@ interface Backend {
   /** Stock page requests that fail (500), counted. */
   failStockPage: number;
   stockPageCalls: Record<number, number>;
+  /** Orders by checkout request key (P8). */
+  byKey: Map<string, string>;
+  /** The next checkout is recorded but its answer is lost (connection drops). */
+  dropNextCheckoutAnswer: boolean;
+  /** Pay-again answers 503 (an earlier attempt cannot be checked). */
+  retryUnknown: boolean;
 }
 
 const FAKE_CHECKOUT = `
@@ -64,7 +70,7 @@ function cartView(b: Backend) {
 }
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const b: Backend = { calls: [], cart: { pharmacyId: null, items: [] }, orders: new Map(), records: new Map(), priceChangeOnce: false, slowStore: 0, slowCart: 0, failStockPage: 0, stockPageCalls: {} };
+  const b: Backend = { calls: [], cart: { pharmacyId: null, items: [] }, orders: new Map(), records: new Map(), priceChangeOnce: false, slowStore: 0, slowCart: 0, failStockPage: 0, stockPageCalls: {}, byKey: new Map(), dropNextCheckoutAnswer: false, retryUnknown: false };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
   let n = 0;
@@ -115,6 +121,11 @@ async function mockBackend(page: Page): Promise<Backend> {
       return json(route, 200, { success: true, data: all.slice((pg - 1) * limit, pg * limit),
         pagination: { page: pg, limit, total: all.length, totalPages: Math.max(1, Math.ceil(all.length / limit)) } });
     }
+    if (path === '/request-keys/abandon') {
+      const { key } = body as { key: string };
+      if (b.byKey.has(key)) return json(route, 200, { success: true, data: { state: 'used', record: { _id: b.byKey.get(key) } } });
+      return json(route, 200, { success: true, data: { state: 'abandoned' } });
+    }
     if (path === '/pharmacy-cart' && req.method() === 'GET') return json(route, 200, { success: true, data: cartView(b) });
     if (path === '/pharmacy-cart' && req.method() === 'DELETE') { b.cart = { pharmacyId: null, items: [] }; return json(route, 200, { success: true }); }
     if (path === '/pharmacy-cart/items' && req.method() === 'POST') {
@@ -134,7 +145,17 @@ async function mockBackend(page: Page): Promise<Backend> {
       b.cart.items = b.cart.items.filter((i) => i.medicineId !== rm[1]);
       return json(route, 200, { success: true, data: cartView(b) });
     }
+    const paymentOf = (o: Record<string, unknown>) => {
+      const rec = [...b.records.entries()].find(([, r]) => r.orderId === o._id);
+      return rec ? { paymentTransactionId: rec[0], razorpayOrderId: rec[1].rzp, razorpayKeyId: 'rzp_test', amount: o.grandTotal, currency: 'INR' } : undefined;
+    };
     if (path === '/pharmacy-cart/checkout') {
+      const key = (body as { requestKey?: string }).requestKey;
+      if (key && b.byKey.has(key)) {
+        const o = b.orders.get(b.byKey.get(key)!)!;
+        const unpaid = o.status === 'placed' && o.paymentStatus === 'pending' && o.paymentMode === 'online_payment';
+        return json(route, 201, { success: true, data: { order: o, paymentRequired: unpaid, ...(unpaid ? { payment: paymentOf(o) } : {}), replayed: true } });
+      }
       if (b.priceChangeOnce) {
         b.priceChangeOnce = false; MEDS[MED_A]!.price = 22;
         return json(route, 409, { error: 409, code: 'CART_PRICE_CHANGED', message: 'Prices changed' });
@@ -150,7 +171,9 @@ async function mockBackend(page: Page): Promise<Backend> {
         grandTotal: view.subtotal, paymentMode: c.paymentMode, paymentStatus: 'pending', deliveryMode: c.deliveryMode, deliveryAddress: c.deliveryAddress,
         createdAt: new Date().toISOString(), ...(online ? { paymentTransactionId: record } : {}) };
       b.orders.set(id, order);
+      if (key) b.byKey.set(key, id);
       b.cart = { pharmacyId: null, items: [] };
+      if (b.dropNextCheckoutAnswer) { b.dropNextCheckoutAnswer = false; if (online) b.records.set(record, { orderId: id, rzp: `order_rzp_${n}`, captured: false }); return route.abort('connectionreset'); }
       if (!online) return json(route, 201, { success: true, data: { order, paymentRequired: false } });
       b.records.set(record, { orderId: id, rzp: `order_rzp_${n}`, captured: false });
       return json(route, 201, { success: true, data: { order, paymentRequired: true,
@@ -169,6 +192,13 @@ async function mockBackend(page: Page): Promise<Backend> {
       const o = b.orders.get(om[1]!);
       if (!o) return json(route, 404, { error: 404, message: 'Order not found' });
       if (!om[2] && req.method() === 'GET') return json(route, 200, { success: true, data: o });
+      if (om[2] === '/retry-payment') {
+        if (b.retryUnknown) return json(route, 503, { error: 503, code: 'PAYMENT_STATE_UNKNOWN', message: 'We could not check your earlier payment just now. Please try again in a few minutes.' });
+        for (const r of b.records.values()) if (r.orderId === o._id && r.captured) o.paymentStatus = 'paid';
+        if (o.paymentStatus === 'paid') return json(route, 200, { success: true, data: { order: o, paymentRequired: false } });
+        if (o.status !== 'placed') return json(route, 409, { error: 409, code: 'ORDER_NOT_PAYABLE', message: 'This order can no longer be paid' });
+        return json(route, 200, { success: true, data: { order: o, paymentRequired: true, payment: paymentOf(o) } });
+      }
       if (om[2] === '/cancel-request') {
         const paid = o.paymentStatus === 'paid';
         Object.assign(o, paid
@@ -215,7 +245,7 @@ test('browse a pharmacy, build a cart and pay online; the order is confirmed as 
   await page.getByRole('button', { name: /Place order and pay/ }).click();
   await expect(page.getByText('Payment received. The pharmacy will prepare your order.')).toBeVisible();
   const checkout = b.calls.find((c) => c.path === '/pharmacy-cart/checkout');
-  expect(checkout?.body).toEqual({ paymentMode: 'online_payment', deliveryMode: 'pickup' });
+  expect(checkout?.body).toEqual({ paymentMode: 'online_payment', deliveryMode: 'pickup', requestKey: expect.stringMatching(/^[A-Za-z0-9]{32}$/) });
   await page.getByRole('link', { name: 'My medicine orders' }).click();
   await expect(page.getByRole('link', { name: /Order PH-1/ })).toBeVisible();
   // The order list is scoped by the server: the app never names a customer.
@@ -286,7 +316,7 @@ test('delivery with cash on delivery; an unpaid order is cancelled at once', asy
   await page.getByRole('button', { name: /Place order ·/ }).click();
   await expect(page.getByRole('heading', { name: 'Order PH-1' })).toBeVisible();
   expect(b.calls.find((c) => c.path === '/pharmacy-cart/checkout')?.body).toEqual({
-    paymentMode: 'cash_on_delivery', deliveryMode: 'delivery', deliveryAddress: '12 MG Road, Camp, Pune 411001' });
+    paymentMode: 'cash_on_delivery', deliveryMode: 'delivery', deliveryAddress: '12 MG Road, Camp, Pune 411001', requestKey: expect.any(String) });
   await expect(page.getByRole('heading', { name: 'Payment' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancel this order' }).click();
   await expect(page.getByText('The order is cancelled now.', { exact: false })).toBeVisible();
@@ -428,4 +458,70 @@ test('a next page that fails stops the reading with Retry; it is not requested a
   b.failStockPage = 0;
   await page.getByRole('button', { name: /Try again|Retry/ }).click();
   await expect(page.getByRole('button', { name: 'Add Zinc 50 to cart' })).toBeEnabled();
+});
+
+test('a checkout whose answer was lost: "Check my last order" finds the one order (never two)', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'close'; });
+  await fillCart(page);
+  b.dropNextCheckoutAnswer = true;
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByText('Your last attempt to place an order may have gone through.')).toBeVisible();
+  await page.getByRole('button', { name: 'Check my last order' }).click();
+  await expect(page.getByText('already been placed by your earlier attempt', { exact: false })).toBeVisible();
+  expect(b.orders.size).toBe(1);
+  const key = (b.calls.find((c) => c.path === '/pharmacy-cart/checkout')!.body as { requestKey: string }).requestKey;
+  expect((b.calls.find((c) => c.path === '/request-keys/abandon')!.body)).toEqual({ kind: 'pharmacy_checkout', key });
+});
+
+test('an attempt that never reached the server: "Check my last order" cancels it and the order can be placed', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await fillCart(page);
+  await page.route('**/api/v1/pharmacy-cart/checkout', (route) => route.abort('connectionreset'));
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await page.unroute('**/api/v1/pharmacy-cart/checkout');
+  await page.reload(); // the app is reopened before the answer is known
+  await signIn(page);
+  await page.goto('/#/pharmacy/cart');
+  await page.getByRole('button', { name: 'Check my last order' }).click();
+  await expect(page.getByText('Your earlier attempt did not place an order.', { exact: false })).toBeVisible();
+  expect(b.orders.size).toBe(0);
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByText('Payment received.', { exact: false })).toBeVisible();
+  const keys = b.calls.filter((c) => c.path === '/pharmacy-cart/checkout').map((c) => (c.body as { requestKey: string }).requestKey);
+  const abandoned = (b.calls.find((c) => c.path === '/request-keys/abandon')!.body as { key: string }).key;
+  expect(keys.at(-1)).not.toBe(abandoned); // a fresh key after the old one was cancelled
+});
+
+test('after leaving the app an unpaid order can still be paid: the server hands back its payment', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'close'; });
+  await fillCart(page);
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByRole('button', { name: 'Pay ₹40' })).toBeEnabled();
+  const id = String([...b.orders.values()][0]!._id);
+  await page.reload();
+  await signIn(page);
+  await page.goto(`/#/pharmacy/orders/${id}`);
+  await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'pay'; });
+  await page.getByRole('button', { name: /Pay ₹40/ }).click();
+  await expect(page.getByText('Payment received.', { exact: false })).toBeVisible();
+  expect(b.calls.some((c) => c.path === `/pharmacy-orders/${id}/retry-payment`)).toBe(true);
+});
+
+test('pay again while an earlier payment cannot be checked: the app says so and offers no payment page', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'close'; });
+  await fillCart(page);
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByRole('button', { name: 'Pay ₹40' })).toBeEnabled();
+  b.retryUnknown = true;
+  const verifies = b.calls.filter((c) => c.path === '/payments/verify').length;
+  await page.getByRole('button', { name: 'Pay ₹40' }).click();
+  await expect(page.getByText('We could not check your earlier payment just now', { exact: false }).first()).toBeVisible();
+  expect(b.calls.filter((c) => c.path === '/payments/verify').length).toBe(verifies);
 });

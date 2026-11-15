@@ -49,6 +49,7 @@ function OrderView({ order: o }: { order: PharmacyOrder }) {
     await queryClient.invalidateQueries({ queryKey: ['wallet'] });
   };
   const request = o.cancelRequest;
+  const replayed = (useLocation().state as { replayed?: boolean } | null)?.replayed === true;
 
   return (
     <>
@@ -67,10 +68,11 @@ function OrderView({ order: o }: { order: PharmacyOrder }) {
         </ul>
       </section>
 
+      {replayed && <Alert tone="ok">This order had already been placed by your earlier attempt; nothing was placed twice.</Alert>}
       {o.status === 'abandoned' && (
         <Alert tone="warn">
-          This order was cancelled because it was not paid within {PHARMACY_PAYMENT_WINDOW_MIN} minutes. If money was taken from
-          you, it goes back to your Jansetu wallet. You can order again.
+          This order was cancelled because it was not paid in time. If money was taken from you, it goes back to your
+          Jansetu wallet. You can order again.
         </Alert>
       )}
 
@@ -124,23 +126,34 @@ function PaymentPanel({ order: o, onSettled }: { order: PharmacyOrder; onSettled
   const started = useRef(false);
   const deadline = o.createdAt ? new Date(new Date(o.createdAt).getTime() + PHARMACY_PAYMENT_WINDOW_MIN * 60_000) : null;
 
-  async function payNow() {
-    if (!payment) return;
+  /**
+   * Pays the order. Right after placing it, the Checkout details from that answer are used once; any other time the
+   * server is asked (P8 retry-payment): it checks earlier attempts first and hands back the order's own open payment.
+   */
+  async function payNow(fromPlacing = false) {
     setError(null); setState('paying');
     try {
-      // The server's current order decides, not this page's copy or a browser timer.
-      const fresh = await customerPharmacyApi(api).order(o._id);
-      if (fresh.status !== 'placed' || !isUnpaid(fresh)) {
-        memory.delete(paymentKey(o._id));
-        setState('idle');
-        return;
+      let details: PaymentOrder | undefined;
+      if (fromPlacing && payment) {
+        // The server's current order decides, not this page's copy or a browser timer.
+        const fresh = await customerPharmacyApi(api).order(o._id);
+        if (fresh.status !== 'placed' || !isUnpaid(fresh)) { memory.delete(paymentKey(o._id)); setState('idle'); return; }
+        details = payment;
+      } else {
+        const r = await customerPharmacyApi(api).retryPayment(o._id);
+        if (!r.paymentRequired || !r.payment) {
+          memory.delete(paymentKey(o._id));
+          setState(r.order.paymentStatus === 'paid' ? 'paid' : 'idle');
+          return;
+        }
+        details = r.payment;
       }
-      const outcome = await payOrder(api, payment, {}, o.orderNumber ? `Medicines, order ${o.orderNumber}` : 'Medicines');
+      const outcome = await payOrder(api, details, {}, o.orderNumber ? `Medicines, order ${o.orderNumber}` : 'Medicines');
       setState(outcome);
       if (outcome === 'paid') memory.delete(paymentKey(o._id));
     } catch (err) {
       setError(messageOf(err));
-      setState('idle');
+      setState(err instanceof ApiError && err.code === 'PAYMENT_STATE_UNKNOWN' ? 'unknown' : 'idle');
     } finally {
       await onSettled();
     }
@@ -156,7 +169,7 @@ function PaymentPanel({ order: o, onSettled }: { order: PharmacyOrder; onSettled
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    if (startPayment && payment) void payNow();
+    if (startPayment && payment) void payNow(true);
     else if (o.paymentTransactionId) void check();
   }, []);
 
@@ -170,11 +183,10 @@ function PaymentPanel({ order: o, onSettled }: { order: PharmacyOrder; onSettled
             <Alert tone="warn">
               {state === 'unknown' ? 'We could not check your payment just now. If you have paid, it will show here once we can.'
                 : `This order is not paid yet. Pay ${deadline ? `by ${formatDateTime(deadline.toISOString())}` : `within ${PHARMACY_PAYMENT_WINDOW_MIN} minutes`}, or it is cancelled.`}
-              {!payment && ' Paying again is not possible after leaving the app; if you did not pay, cancel this order and place a new one.'}
             </Alert>
             {error && <Alert>{error}</Alert>}
             <div className="row">
-              {payment && <Button busy={state === 'paying'} onClick={() => void payNow()}>Pay {formatRupees(payment.amount)}</Button>}
+              <Button busy={state === 'paying'} onClick={() => void payNow()}>Pay {formatRupees(payment?.amount ?? o.grandTotal)}</Button>
               {o.paymentTransactionId && (
                 <Button variant="secondary" disabled={state === 'paying'} onClick={() => void check()}>I have paid, check again</Button>
               )}
