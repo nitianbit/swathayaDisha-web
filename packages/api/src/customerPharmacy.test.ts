@@ -1,4 +1,4 @@
-import { shelfOf, type StockRow } from './customerPharmacy.ts';
+import { normalizeCart, shelfOf, type StockRow } from './customerPharmacy.ts';
 
 const A = 'a1'.repeat(12);
 const B = 'b1'.repeat(12);
@@ -22,5 +22,16 @@ describe('shelfOf', () => {
     const shelf = shelfOf([row(A, 0, 20), row('nope', 4, 10), row(B, 2)]);
     expect(shelf).toHaveLength(1);
     expect(shelf[0]).toMatchObject({ medicineId: B, availableQty: 2, minPrice: undefined });
+  });
+});
+
+describe('normalizeCart', () => {
+  it('turns a missing, empty or odd cart into an empty cart', () => {
+    for (const raw of [undefined, null, [], {}, { items: null }]) expect(normalizeCart(raw)).toMatchObject({ items: [], subtotal: 0 });
+  });
+  it('keeps valid lines and the server subtotal', () => {
+    const c = normalizeCart({ pharmacyId: 'p', items: [{ medicineId: 'm', quantity: 2, unitPrice: 5, lineTotal: 10 }, { quantity: 1 }], subtotal: 10 });
+    expect(c.items).toHaveLength(1);
+    expect(c.subtotal).toBe(10);
   });
 });

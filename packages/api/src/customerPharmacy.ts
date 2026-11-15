@@ -79,6 +79,13 @@ const hex = /^[0-9a-fA-F]{24}$/;
 const id = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; };
 const refOf = (v: string | { _id: string }) => (typeof v === 'string' ? v : v._id);
 
+/** A cart in one shape whatever the server sent (an empty or missing cart is an empty cart, never a crash). */
+export function normalizeCart(raw: unknown): Cart {
+  const c = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Partial<Cart>;
+  const items = Array.isArray(c.items) ? c.items.filter((i): i is CartItem => !!i && typeof i.medicineId === 'string' && Number(i.quantity) > 0) : [];
+  return { ...c, items, subtotal: typeof c.subtotal === 'number' ? c.subtotal : items.reduce((n, i) => n + (Number(i.lineTotal) || 0), 0) };
+}
+
 /** Groups a pharmacy's stock rows by medicine (sellable quantity summed, price range kept). */
 export function shelfOf(rows: readonly StockRow[]): ShelfItem[] {
   const byMedicine = new Map<string, ShelfItem>();
@@ -122,11 +129,11 @@ export function customerPharmacyApi(c: ApiClient) {
     stock: (pharmacyId: string, q: { search?: string; page?: number; limit?: number } = {}): Promise<Page<StockRow>> =>
       c.page<StockRow>('/pharmacy-inventory', { query: { pharmacyId: id(pharmacyId, 'pharmacy'), isActive: true, search: q.search || undefined, page: q.page ?? 1, limit: q.limit ?? 50 } }),
 
-    cart: () => c.get<Cart>('/pharmacy-cart'),
+    cart: () => c.get<unknown>('/pharmacy-cart').then(normalizeCart),
     /** `quantity` is a change: +1 adds a unit, -1 takes one off (the server drops the line at 0). A cart holds one pharmacy: another pharmacy answers 409 CART_PHARMACY_MISMATCH. */
     addToCart: (pharmacyId: string, medicineId: string, quantity: number) =>
-      c.post<Cart>('/pharmacy-cart/items', { body: { pharmacyId: id(pharmacyId, 'pharmacy'), medicineId: id(medicineId, 'medicine'), quantity } }),
-    removeFromCart: (medicineId: string) => c.delete<Cart>(`/pharmacy-cart/items/${id(medicineId, 'medicine')}`),
+      c.post<unknown>('/pharmacy-cart/items', { body: { pharmacyId: id(pharmacyId, 'pharmacy'), medicineId: id(medicineId, 'medicine'), quantity } }).then(normalizeCart),
+    removeFromCart: (medicineId: string) => c.delete<unknown>(`/pharmacy-cart/items/${id(medicineId, 'medicine')}`).then(normalizeCart),
     clearCart: () => c.delete<unknown>('/pharmacy-cart'),
     /** Places the order (the server prices it again; 409 CART_PRICE_CHANGED if a price moved). Never retried automatically. */
     checkout: (body: Checkout) => c.post<CheckoutResult>('/pharmacy-cart/checkout', { body: {
