@@ -48,33 +48,37 @@ export async function rotateNative<T extends { refreshToken: string }>(store: Se
 }
 
 /*
- * Sign-out on the phone must hold even when the secure store fails for a moment. A durable "signed out" flag (a plain
- * '1', no token or personal data) is set FIRST; while it is set the app never resumes a session, and every start
- * finishes the clean-up. The server is told independently of the store (with the access token in use even if the
- * stored refresh token cannot be read).
+ * Sign-out on the phone must hold even when the secure store (or web storage) fails for a moment, or the app closes
+ * before the clean-up ran. The intent is recorded synchronously when the person signs out (a plain '1' in web storage:
+ * no token, no personal data), BEFORE anything is queued. While the intent is recorded - or cannot be read - the app
+ * never resumes a session; every start finishes the clean-up. The server is told independently of the store (with the
+ * access token in use even if the stored refresh token cannot be read).
  */
 const signedOutKey = (app: NativeApp) => `jansetu.native.signedOut.${app}`;
 
-/** A sign-out on this phone has not finished clearing the stored token yet. */
-export function signOutPending(app: NativeApp): boolean {
-  try { return localStorage.getItem(signedOutKey(app)) === '1'; } catch { return false; }
+/** 'pending': a sign-out has not finished clearing the stored token. 'unknown': the record cannot be read (treated as pending). */
+export type SignOutState = 'none' | 'pending' | 'unknown';
+export function signOutState(app: NativeApp): SignOutState {
+  try { return localStorage.getItem(signedOutKey(app)) === '1' ? 'pending' : 'none'; } catch { return 'unknown'; }
 }
-/** A new sign-in stored its token: no sign-out is pending any more. */
+/** Records the sign-out intent (synchronously). False when it could not be recorded and read back. */
+export function markSignOutPending(app: NativeApp): boolean {
+  try { localStorage.setItem(signedOutKey(app), '1'); return localStorage.getItem(signedOutKey(app)) === '1'; } catch { return false; }
+}
+/** A new sign-in stored its token, or the clean-up finished: no sign-out is pending any more. */
 export function clearSignOutPending(app: NativeApp): void {
-  try { localStorage.removeItem(signedOutKey(app)); } catch { /* nothing to clear */ }
+  try { localStorage.removeItem(signedOutKey(app)); } catch { /* an unreadable record keeps blocking resumption: safe */ }
 }
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Ends the phone's session: marks sign-out pending, tells the server (with the stored refresh token if it can be read,
- * and whatever access token the caller passes to `logout`), and removes the stored token (retried). Resolves true when
- * the store is clean (the pending mark is then cleared); false when the token could not be removed yet (the mark stays,
- * so the next start retries and never resumes the session).
+ * The clean-up of a sign-out (the intent must already be recorded, see markSignOutPending): tells the server (with the
+ * stored refresh token if it can be read, and whatever access token the caller passes to `logout`) and removes the
+ * stored token (retried). Returns true when the store is clean (the recorded intent is then cleared).
  */
 export async function nativeSignOut(store: SecureStore, app: NativeApp,
   logout: (refreshToken: string | null) => Promise<unknown>): Promise<boolean> {
-  try { localStorage.setItem(signedOutKey(app), '1'); } catch { /* the store clean-up below still runs */ }
   const key = refreshTokenKey(app);
   let stored: string | null = null;
   try { stored = await store.get(key); } catch { stored = null; }

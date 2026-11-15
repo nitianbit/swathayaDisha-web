@@ -1,8 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  ApiError, authApi, clearSignOutPending, createApiClient, markerStore, nativeSecureStore, nativeSignOut, refreshTokenKey, rotateNative,
-  samePrincipal, sessionChannel, signOutPending,
+  ApiError, authApi, clearSignOutPending, createApiClient, markSignOutPending, markerStore, nativeSecureStore, nativeSignOut, refreshTokenKey,
+  rotateNative, samePrincipal, sessionChannel, signOutState,
   withSessionLock,
   type ApiClient, type PendingMarker, type Principal,
 } from '@jansetu/api';
@@ -93,21 +93,37 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     ? rotateNative(secure, NATIVE_APP, (rt) => authRef.current!.refreshNative(NATIVE_APP, rt))
     : authRef.current!.refreshSession());
 
+  /** N1: a sign-out clean-up still retrying in this app (null when none, or once a new sign-in replaced it). */
+  const cleanup = useRef<object | null>(null);
+
   const signOut = useCallback((notice?: string) => {
     const tabToken = token.current; // the family this tab was using ends too, not only the cookie's
+    // N1: the intent is recorded first, synchronously, before anything else (a refresh may hold the lock right now and
+    // the app may close before the clean-up runs): until it is cleaned up, no start resumes the session.
+    const marked = secure ? markSignOutPending(NATIVE_APP) : true;
     endLocally(notice);
     channel?.post({ type: 'signed-out' });
     if (secure) {
-      // Holds even if the secure store fails for a moment: marked pending first, the server told with whatever token
-      // is at hand, the stored token removed (retried); an unfinished clean-up is finished at the next start.
-      void withSessionLock(APP, async () => {
-        const clean = await nativeSignOut(secure, NATIVE_APP, (rt) => authRef.current!.logoutNative(NATIVE_APP, rt, tabToken));
-        if (!clean && !principal.current) {
-          setState((s) => (s.status === 'signed_out'
-            ? { status: 'signed_out', notice: `${s.notice ? `${s.notice} ` : ''}This phone could not clear its saved sign-in yet; it will be cleared when the app next opens.` }
-            : s));
+      const mine = {};
+      cleanup.current = mine;
+      const attempt = async (): Promise<boolean> => withSessionLock(APP, async () => {
+        if (cleanup.current !== mine) return true; // a new sign-in replaced the stored token: nothing to clean
+        return nativeSignOut(secure, NATIVE_APP, (rt) => authRef.current!.logoutNative(NATIVE_APP, rt, tabToken));
+      }).catch(() => false);
+      void (async () => {
+        let clean = await attempt();
+        if (clean || cleanup.current !== mine) { if (cleanup.current === mine) cleanup.current = null; return; }
+        setState((s) => (s.status === 'signed_out' ? { status: 'signed_out', notice: `${s.notice ? `${s.notice} ` : ''}${marked
+          ? 'This phone could not clear its saved sign-in yet; it will be cleared when the app next opens.'
+          : 'This phone could not finish signing out yet. Keep the app open for a moment while it tries again.'}` } : s));
+        // Not recorded durably either: keep trying while the app is open (stops when a new sign-in replaces it).
+        while (!clean && !marked && cleanup.current === mine) {
+          await new Promise((r) => setTimeout(r, 5000));
+          clean = await attempt();
         }
-      }).catch(() => undefined);
+        if (cleanup.current === mine) cleanup.current = null;
+        if (clean && !marked) setState((s) => (s.status === 'signed_out' ? { status: 'signed_out' } : s));
+      })();
     } else if (cookieMode) {
       void withSessionLock(APP, async () => { await authRef.current?.logoutSession(tabToken); }).catch(() => undefined);
     }
@@ -181,7 +197,8 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
         // Another restore (or a sign-in) finished while this one waited for the lock: nothing to resume.
         if (principal.current || gen !== generation.current) return;
         // N1: a sign-out on this phone did not finish clearing the stored token: finish it, never resume.
-        if (secure && signOutPending(NATIVE_APP)) {
+        // An unreadable record counts as pending: resuming is only allowed when it is known that nobody signed out.
+        if (secure && signOutState(NATIVE_APP) !== 'none') {
           await nativeSignOut(secure, NATIVE_APP, (rt) => auth.logoutNative(NATIVE_APP, rt, null));
           throw new ApiError(401, 'Signed out', 'SESSION_ENDED');
         }
@@ -225,6 +242,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
           await auth.logoutNative(NATIVE_APP, n.refreshToken, n.token).catch(() => undefined);
           throw new ApiError(0, 'This phone could not save your sign-in. Please try again.', 'SECURE_STORE');
         }
+        cleanup.current = null; // a retrying clean-up must not remove the new token
         clearSignOutPending(NATIVE_APP); // the new token replaced whatever an unfinished sign-out left behind
         signedIn = n;
       } else {

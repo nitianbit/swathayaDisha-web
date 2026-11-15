@@ -3,8 +3,8 @@ export type { ApiClient, ApiClientOptions, Page, QueryValue, RequestOptions } fr
 export { authApi, OTP_PATTERN, PHONE_PATTERN, requestKeysApi } from './auth.ts';
 export type { OnceOnlyKind } from './auth.ts';
 export type { NativeApp, NativeRefreshed, NativeSignedIn, NativeTokens, OtpTarget, Profile, SessionRefreshed, SessionSignedIn, SignedIn, UserType } from './auth.ts';
-export { clearSignOutPending, nativeSecureStore, nativeSignOut, refreshTokenKey, rotateNative, signOutPending } from './nativeSession.ts';
-export type { SecureStore } from './nativeSession.ts';
+export { clearSignOutPending, markSignOutPending, nativeSecureStore, nativeSignOut, refreshTokenKey, rotateNative, signOutState } from './nativeSession.ts';
+export type { SecureStore, SignOutState } from './nativeSession.ts';
 export {
   CANCELLABLE_STATUSES, DELIVERY_EXCEPTION_FROM, fetchableFileUrl, ORDER_TRANSITIONS, pharmacyOrdersApi, PRESCRIPTION_REVIEWABLE_STATUSES,
   refId, REGISTRATION_NUMBER_PATTERN,

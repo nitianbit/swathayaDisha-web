@@ -1,6 +1,6 @@
 import { ApiError, createApiClient } from './client.ts';
 import { authApi } from './auth.ts';
-import { clearSignOutPending, nativeSignOut, refreshTokenKey, rotateNative, signOutPending, type SecureStore } from './nativeSession.ts';
+import { clearSignOutPending, markSignOutPending, nativeSignOut, refreshTokenKey, rotateNative, signOutState, type SecureStore } from './nativeSession.ts';
 
 function memoryStore(initial: Record<string, string> = {}): SecureStore & { data: Record<string, string> } {
   const data = { ...initial };
@@ -50,7 +50,7 @@ describe('native session requests', () => {
   });
 });
 
-describe('nativeSignOut', () => {
+describe('nativeSignOut and the recorded sign-out intent', () => {
   beforeEach(() => { localStorage.clear(); });
   const failing = (initial: Record<string, string>, fail: { get?: boolean; remove?: number }) => {
     const base = memoryStore(initial);
@@ -60,28 +60,38 @@ describe('nativeSignOut', () => {
       remove: async (k: string) => { if (removeFailures > 0) { removeFailures--; throw new Error('busy'); } return base.remove(k); } };
   };
 
-  it('tells the server even when the stored token cannot be read, and still clears the store', async () => {
+  it('tells the server even when the stored token cannot be read, clears the store and then the intent', async () => {
+    expect(markSignOutPending('customer')).toBe(true);
     const store = failing({ [KEY]: 'rt-1' }, { get: true });
     const logout = vi.fn(async () => undefined);
     await expect(nativeSignOut(store, 'customer', logout)).resolves.toBe(true);
     expect(logout).toHaveBeenCalledExactlyOnceWith(null);
     expect(store.data[KEY]).toBeUndefined();
-    expect(signOutPending('customer')).toBe(false);
+    expect(signOutState('customer')).toBe('none');
   });
-  it('retries a failing removal; if it keeps failing the sign-out stays pending (the next start finishes it)', async () => {
-    const flaky = failing({ [KEY]: 'rt-1' }, { remove: 1 });
-    await expect(nativeSignOut(flaky, 'customer', async () => undefined)).resolves.toBe(true);
-    expect(flaky.data[KEY]).toBeUndefined();
+  it('retries a failing removal; if it keeps failing the intent stays recorded (per app)', async () => {
+    markSignOutPending('workspace');
+    const flaky = failing({ [refreshTokenKey('workspace')]: 'rt-1' }, { remove: 1 });
+    await expect(nativeSignOut(flaky, 'workspace', async () => undefined)).resolves.toBe(true);
+    markSignOutPending('workspace');
     const stuck = failing({ [refreshTokenKey('workspace')]: 'rt-1' }, { remove: 5 });
     const logout = vi.fn(async () => { throw new Error('offline'); });
     await expect(nativeSignOut(stuck, 'workspace', logout)).resolves.toBe(false);
     expect(logout).toHaveBeenCalledExactlyOnceWith('rt-1');
-    expect(signOutPending('workspace')).toBe(true);
-    expect(signOutPending('customer')).toBe(false);
+    expect(signOutState('workspace')).toBe('pending');
+    expect(signOutState('customer')).toBe('none');
     clearSignOutPending('workspace');
-    expect(signOutPending('workspace')).toBe(false);
+    expect(signOutState('workspace')).toBe('none');
   });
-  it('the pending mark holds no token', async () => {
+  it('an unreadable record is "unknown" (never "none"); an unwritable one is reported', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('storage unavailable'); });
+    expect(signOutState('customer')).toBe('unknown');
+    vi.restoreAllMocks();
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+    expect(markSignOutPending('customer')).toBe(false);
+  });
+  it('the record holds no token', async () => {
+    markSignOutPending('customer');
     await nativeSignOut(failing({ [KEY]: 'rt-secret' }, { remove: 5 }), 'customer', async () => undefined);
     expect(JSON.stringify({ ...localStorage })).not.toContain('rt-secret');
   });
