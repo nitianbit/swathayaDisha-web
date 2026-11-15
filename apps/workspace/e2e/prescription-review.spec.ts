@@ -24,11 +24,13 @@ interface Backend {
   order: Record<string, unknown>;
   files: Record<string, { type: string; body: Buffer | string; delayMs?: number; status?: number }>;
   signIns: number;
+  /** P9: the pharmacy's registered pharmacist (Settings); null = none yet. */
+  pharmacist: { name: string; registrationNumber: string } | null;
 }
 
 async function mockBackend(page: Page, role: 'pharmacy' | 'admin' = 'pharmacy'): Promise<Backend> {
   const state: Backend = {
-    reviews: [], order: order(), signIns: 0,
+    reviews: [], order: order(), signIns: 0, pharmacist: { name: 'Ravi Kumar', registrationNumber: 'KA/PH/12345' },
     files: {
       [served(DOCS[0]!)]: { type: 'image/png', body: PNG },
       [served(DOCS[1]!)]: { type: 'application/octet-stream', body: '%PDF-1.4\n%%EOF' },
@@ -57,6 +59,11 @@ async function mockBackend(page: Page, role: 'pharmacy' | 'admin' = 'pharmacy'):
     if (path === '/auth/profile') {
       return json(route, 200, { success: true, data: { user: { _id: ME, name: 'Asha Medicals' }, userRole: role } });
     }
+    if (path === '/pharmacies/me/profile') return json(route, 200, { success: true, data: { _id: ME, name: 'Asha Medicals', pharmacist: state.pharmacist } });
+    if (path === '/pharmacies/me/pharmacist' && req.method() === 'PUT') {
+      state.pharmacist = req.postDataJSON() as { name: string; registrationNumber: string };
+      return json(route, 200, { success: true, data: { pharmacist: state.pharmacist } });
+    }
     if (path === '/pharmacy-orders/prescription-reviews' && req.method() === 'GET') {
       const o = state.order;
       const listed = o.pharmacyId === ME && o.prescriptionStatus === 'pending' && ['placed', 'accepted'].includes(String(o.status));
@@ -71,9 +78,10 @@ async function mockBackend(page: Page, role: 'pharmacy' | 'admin' = 'pharmacy'):
       state.order = order({
         prescriptionStatus: approved ? 'approved' : 'rejected', status: approved ? 'placed' : 'rejected',
         prescriptionReview: {
-          decision: approved ? 'approved' : 'rejected', pharmacistName: body.pharmacistName,
-          pharmacistRegistrationNumber: body.pharmacistRegistrationNumber, reason: body.reason,
-          reviewedDocumentCount: DOCS.length, reviewedAt: '2026-11-14T06:00:00.000Z',
+          decision: approved ? 'approved' : 'rejected', pharmacistName: state.pharmacist?.name,
+          pharmacistRegistrationNumber: state.pharmacist?.registrationNumber, reason: body.reason,
+          reviewedDocumentCount: (state.order.prescriptionUrls as string[]).length,
+          prescriptionAttached: (state.order.prescriptionUrls as string[]).length > 0, reviewedAt: '2026-11-14T06:00:00.000Z',
         },
       });
       return json(route, 200, { success: true, data: state.order });
@@ -116,9 +124,9 @@ async function readDocument(page: Page, n: number) {
   await ack.check();
 }
 
+/** P9: the pharmacist is on file (Settings); the decision shows who it records. */
 async function fillReviewer(page: Page) {
-  await page.getByLabel('Pharmacist name').fill('Ravi Kumar');
-  await page.getByLabel('Registration number').fill('KA/PH/12345');
+  await expect(page.getByText('Deciding as Ravi Kumar (KA/PH/12345).')).toBeVisible();
 }
 
 test('a wrong code is refused and the user can retry', async ({ page }) => {
@@ -139,7 +147,7 @@ test('approval needs every document displayed and confirmed; stored URLs are sen
   await signIn(page);
   await openOrder(page);
 
-  const approve = page.getByRole('button', { name: 'Approve prescription' });
+  const approve = page.getByRole('button', { name: 'Approve', exact: true });
   await expect(approve).toBeDisabled();
   await page.getByRole('button', { name: 'Document 1' }).click();
   await expect(page.getByRole('img', { name: 'Prescription document 1' })).toBeVisible();
@@ -153,16 +161,12 @@ test('approval needs every document displayed and confirmed; stored URLs are sen
   await expect(page.getByText('Read', { exact: true })).toHaveCount(2);
   await expect(approve).toBeEnabled();
 
-  await approve.click();
-  await expect(page.getByText('Enter your full name.')).toBeVisible();
   await fillReviewer(page);
   await approve.click();
 
   await expect(page.getByText('Prescription approved. The order can be packed.')).toBeVisible();
-  expect(backend.reviews).toEqual([{
-    decision: 'approve', pharmacistName: 'Ravi Kumar', pharmacistRegistrationNumber: 'KA/PH/12345',
-    reviewedPrescriptionUrls: DOCS,
-  }]);
+  // One button: the server records the pharmacy's registered pharmacist.
+  expect(backend.reviews).toEqual([{ decision: 'approve', expectedRevision: 0, reviewedPrescriptionUrls: DOCS }]);
   await page.getByRole('link', { name: 'Back to the queue' }).click();
   await expect(page.getByText('No prescriptions waiting')).toBeVisible();
 });
@@ -176,7 +180,7 @@ test('a corrupt image cannot be confirmed, so approval stays locked; rejection i
   await expect(page.getByText('Document 1: This file could not be displayed.')).toBeVisible();
   await expect(page.getByText('Could not open')).toBeVisible();
   await readDocument(page, 2);
-  await expect(page.getByRole('button', { name: 'Approve prescription' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeDisabled();
 
   await fillReviewer(page);
   await page.getByRole('button', { name: 'Reject…' }).click();
@@ -223,7 +227,7 @@ test('an order this pharmacy buys, or one already cancelled, is read-only', asyn
   await signIn(page);
   await page.goto(`/#/pharmacy/prescriptions/${ORDER_ID}`);
   await expect(page.getByText("Your pharmacy is the buyer on this order.")).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Approve prescription' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
 
   backend.order = order({ status: 'cancelled' });
   await page.reload(); // memory-only session: sign in again; the page that was open is kept
@@ -283,4 +287,48 @@ test('the server-side role decides: a pharmacy account choosing Admin is refused
   await page.getByRole('button', { name: 'Verify and sign in' }).click();
   await expect(page.getByRole('alert')).toHaveText('This account cannot use the staff workspace.');
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+});
+
+test('P9: without a pharmacist on file nothing can be decided; Settings saves one and approval becomes one button', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.pharmacist = null;
+  await signIn(page);
+  await openOrder(page);
+  await expect(page.getByText("Add your pharmacist's name and registration number first", { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reject…' })).toBeDisabled();
+  await page.getByRole('link', { name: 'Go to Settings' }).click();
+  await page.getByLabel('Pharmacist name').fill('Ravi Kumar');
+  await page.getByLabel('Registration number').fill('#');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Enter the pharmacist registration number.')).toBeVisible();
+  await page.getByLabel('Registration number').fill('KA/PH/12345');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Saved.')).toBeVisible();
+  expect(backend.pharmacist).toEqual({ name: 'Ravi Kumar', registrationNumber: 'KA/PH/12345' });
+  await page.goto(`/#/pharmacy/prescriptions/${ORDER_ID}`);
+  await expect(page.getByText('Deciding as Ravi Kumar (KA/PH/12345).')).toBeVisible();
+});
+
+test('P9: an order with no prescription attached can be approved; the record says none was attached', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.order = order({ prescriptionUrls: [] });
+  await signIn(page);
+  await openOrder(page);
+  await expect(page.getByText('The customer has not attached a prescription.', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Approve', exact: true }).click();
+  await expect(page.getByText('Prescription approved. The order can be packed.')).toBeVisible();
+  await expect(page.getByText('0 (no prescription attached)')).toBeVisible();
+  expect(backend.reviews).toEqual([{ decision: 'approve', expectedRevision: 0, reviewedPrescriptionUrls: [] }]);
+});
+
+test('P9: the decision names the version on screen', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.order = order({ revision: 3 });
+  await signIn(page);
+  await openOrder(page);
+  await page.getByRole('button', { name: 'Reject…' }).click();
+  await page.getByLabel('Reason for rejection').fill('Prescription is older than six months.');
+  await page.getByRole('button', { name: 'Confirm rejection' }).click();
+  await expect(page.getByText('Prescription rejected.')).toBeVisible();
+  expect(backend.reviews[0]).toMatchObject({ decision: 'reject', expectedRevision: 3 });
 });

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { Ban, Boxes, ClipboardCheck, House, Package, PackageX, ShieldAlert, TrendingDown, Undo2 } from 'lucide-react';
+import { Ban, Boxes, ClipboardCheck, House, Package, PackageX, Settings, ShieldAlert, TrendingDown, Undo2 } from 'lucide-react';
 import type { StaffRole } from './session.tsx';
 import { ExternalCancellationsScreen } from './screens/admin/ExternalCancellationsScreen.tsx';
 import { OrderCancellationsScreen } from './screens/admin/OrderCancellationsScreen.tsx';
@@ -13,6 +13,7 @@ import { RxQueueScreen } from './screens/pharmacy/RxQueueScreen.tsx';
 import { QualityScreen } from './screens/pharmacy/QualityScreen.tsx';
 import { RxReviewScreen } from './screens/pharmacy/RxReviewScreen.tsx';
 import { StockScreen } from './screens/pharmacy/StockScreen.tsx';
+import { SettingsScreen } from './screens/pharmacy/SettingsScreen.tsx';
 
 /**
  * Every workspace page is declared here with the roles that may open it. A path not listed here does not exist, and
@@ -46,6 +47,10 @@ export const PAGES: readonly WorkspacePage[] = [
   {
     path: '/pharmacy/quality', roles: ['pharmacy'], element: <QualityScreen />,
     nav: { label: 'Quality', icon: ShieldAlert, section: 'Pharmacy' },
+  },
+  {
+    path: '/pharmacy/settings', roles: ['pharmacy'], element: <SettingsScreen />,
+    nav: { label: 'Settings', icon: Settings, section: 'Pharmacy' },
   },
   {
     path: '/admin/order-cancellations', roles: ['admin'], element: <OrderCancellationsScreen />,

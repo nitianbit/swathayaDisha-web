@@ -3,20 +3,19 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft, FileText } from 'lucide-react';
 import {
-  ApiError, pharmacyOrdersApi, PRESCRIPTION_REVIEWABLE_STATUSES, refId, REGISTRATION_NUMBER_PATTERN,
+  ApiError, pharmacyOrdersApi, pharmacyProfileApi, PRESCRIPTION_REVIEWABLE_STATUSES, refId,
   type PharmacyOrder, type PrescriptionReviewRequest,
 } from '@jansetu/api';
 import {
-  Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField,
+  Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea,
 } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 import { sniffDocument, type DocumentKind } from './documents.ts';
 
-/** Kept in the query cache, which sign-out clears: the pharmacist types their details once per session. */
-const REVIEWER_KEY = ['workspace', 'reviewer'] as const;
-interface Reviewer { name: string; registration: string }
+/** P9: the pharmacy's registered pharmacist (Settings), recorded on every decision. */
+export const PHARMACY_PROFILE_KEY = ['pharmacy', 'me'] as const;
 
 const statusLabel = (s: string) => s.replace(/_/g, ' ');
 
@@ -109,7 +108,7 @@ function ReviewOutcome({ order }: { order: PharmacyOrder }) {
         <dl className="ws-dl">
           <dt>Pharmacist</dt><dd>{r.pharmacistName} ({r.pharmacistRegistrationNumber})</dd>
           <dt>When</dt><dd>{formatDateTime(r.reviewedAt)}</dd>
-          <dt>Documents reviewed</dt><dd>{r.reviewedDocumentCount}</dd>
+          <dt>Documents reviewed</dt><dd>{r.reviewedDocumentCount}{r.prescriptionAttached === false ? ' (no prescription attached)' : ''}</dd>
           {r.reason && (<><dt>Reason</dt><dd>{r.reason}</dd></>)}
         </dl>
       )}
@@ -132,13 +131,12 @@ function ReviewForm({ order, onChanged, onStale }:
   const orders = pharmacyOrdersApi(api);
   const queryClient = useQueryClient();
   const docs = order.prescriptionUrls ?? [];
-  const saved = queryClient.getQueryData<Reviewer>(REVIEWER_KEY);
+  const profile = useQuery({ queryKey: PHARMACY_PROFILE_KEY, queryFn: () => pharmacyProfileApi(api).me() });
+  const pharmacist = profile.data?.pharmacist ?? null;
 
   const [docState, setDocState] = useState<Record<number, DocState>>({});
   const [read, setRead] = useState<ReadonlySet<number>>(new Set());
   const [preview, setPreview] = useState<Preview | null>(null);
-  const [name, setName] = useState(saved?.name ?? '');
-  const [registration, setRegistration] = useState(saved?.registration ?? '');
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -186,20 +184,20 @@ function ReviewForm({ order, onChanged, onStale }:
     onError: (err) => { if (err instanceof ApiError && err.status === 409) onStale(); },
   });
 
-  const allRead = docs.length > 0 && docs.every((_, i) => read.has(i));
+  // P9: with no prescription attached the pharmacist may still approve (owner decision); every attached document must
+  // be opened and confirmed first.
+  const allRead = docs.every((_, i) => read.has(i));
 
   function submit(decision: 'approve' | 'reject') {
     const e: Record<string, string> = {};
-    if (name.trim().length < 2) e.name = 'Enter your full name.';
-    if (!REGISTRATION_NUMBER_PATTERN.test(registration.trim())) e.registration = 'Enter your pharmacist registration number.';
     if (decision === 'reject' && reason.trim().length < 3) e.reason = 'Tell the customer why (at least 3 characters).';
     setErrors(e);
-    if (Object.keys(e).length) return;
-    queryClient.setQueryData<Reviewer>(REVIEWER_KEY, { name: name.trim(), registration: registration.trim() });
+    if (Object.keys(e).length || !pharmacist) return;
+    // One button: the server records the pharmacy's registered pharmacist.
     review.mutate({
       decision,
-      pharmacistName: name.trim(),
-      pharmacistRegistrationNumber: registration.trim(),
+      // The version on screen: if anyone changed the order since it was opened, the server refuses the decision.
+      expectedRevision: order.revision ?? 0,
       ...(decision === 'reject' ? { reason: reason.trim() } : {}),
       // Exactly the stored list, verbatim and in order; the server refuses if the order's documents changed.
       reviewedPrescriptionUrls: docs,
@@ -214,7 +212,10 @@ function ReviewForm({ order, onChanged, onStale }:
       <section className="ws-section" aria-labelledby="docs-h">
         <h2 id="docs-h">Prescription documents</h2>
         {docs.length === 0 ? (
-          <Alert tone="warn">The customer has not attached a prescription. You can only reject this order.</Alert>
+          <Alert tone="warn">
+            The customer has not attached a prescription. Check it another way (for example when delivering, or by calling the
+            customer) before approving; the approval records that none was attached.
+          </Alert>
         ) : (
           <>
             <p className="ws-muted">Open and read every document, then confirm each one, before you decide.</p>
@@ -274,12 +275,15 @@ function ReviewForm({ order, onChanged, onStale }:
       <section className="ws-section" aria-labelledby="decision-h">
         <h2 id="decision-h">Decision</h2>
         <form className="rx-form" noValidate onSubmit={(e: FormEvent) => { e.preventDefault(); submit(rejecting ? 'reject' : 'approve'); }}>
-          <div className="rx-form-row">
-            <TextField label="Pharmacist name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)}
-              error={errors.name} maxLength={120} />
-            <TextField label="Registration number" value={registration} onChange={(e) => setRegistration(e.target.value)}
-              error={errors.registration} maxLength={60} />
-          </div>
+          {profile.isPending ? <Loading label="Loading your pharmacist…" />
+            : !pharmacist ? (
+              <Alert tone="warn">
+                Add your pharmacist's name and registration number first; every decision records them.{' '}
+                <Link to="/pharmacy/settings">Go to Settings</Link>
+              </Alert>
+            ) : (
+              <p className="ws-muted">Deciding as {pharmacist.name} ({pharmacist.registrationNumber}). <Link to="/pharmacy/settings">Change</Link></p>
+            )}
           {rejecting && (
             <TextArea label="Reason for rejection" hint="The customer sees this. Paid orders are refunded and the stock is released."
               value={reason} onChange={(e) => setReason(e.target.value)} error={errors.reason} maxLength={1000} />
@@ -289,16 +293,16 @@ function ReviewForm({ order, onChanged, onStale }:
           <div className="rx-actions">
             {!rejecting ? (
               <>
-                <Button type="submit" busy={review.isPending} disabled={!allRead}>Approve prescription</Button>
+                <Button type="submit" busy={review.isPending} disabled={!allRead || !pharmacist}>Approve</Button>
                 {/* Rejecting is allowed without reading: an unreadable or missing prescription is a reason to reject. */}
-                <Button variant="secondary" disabled={review.isPending} onClick={() => setRejecting(true)}>Reject…</Button>
+                <Button variant="secondary" disabled={review.isPending || !pharmacist} onClick={() => setRejecting(true)}>Reject…</Button>
                 {docs.length > 0 && !allRead && (
                   <span className="ws-muted">Read and confirm all {docs.length} documents to approve.</span>
                 )}
               </>
             ) : (
               <>
-                <Button type="submit" variant="danger" busy={review.isPending}>Confirm rejection</Button>
+                <Button type="submit" variant="danger" busy={review.isPending} disabled={!pharmacist}>Confirm rejection</Button>
                 <Button variant="ghost" disabled={review.isPending} onClick={() => { setRejecting(false); setErrors({}); }}>
                   Cancel
                 </Button>

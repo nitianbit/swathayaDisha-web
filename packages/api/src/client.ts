@@ -41,6 +41,8 @@ export interface RequestOptions {
   token?: string;
   /** N1: phone-app session commands send `X-Jansetu-Native: 1` (never a cookie; the refresh token is in the body). */
   native?: boolean;
+  /** P9: a multipart upload (the browser sets the boundary); not combined with `body`. */
+  form?: FormData;
 }
 
 export interface Page<T> {
@@ -105,7 +107,7 @@ export function createApiClient(options: ApiClientOptions) {
     const headers: Record<string, string> = { Accept: 'application/json' };
     const token = o.token ?? (o.auth === false ? null : options.getToken());
     if (token) headers.Authorization = `Bearer ${token}`;
-    if (o.body !== undefined) headers['Content-Type'] = 'application/json';
+    if (o.body !== undefined && !o.form) headers['Content-Type'] = 'application/json';
     if (o.idempotencyKey) headers['Idempotency-Key'] = o.idempotencyKey;
     if (o.session) headers['X-Jansetu-Session'] = '1';
     if (o.native) headers['X-Jansetu-Native'] = '1';
@@ -130,7 +132,7 @@ export function createApiClient(options: ApiClientOptions) {
         res = await doFetch(target, {
           method,
           headers,
-          body: o.body === undefined ? undefined : JSON.stringify(o.body),
+          body: o.form ?? (o.body === undefined ? undefined : JSON.stringify(o.body)),
           credentials: o.session ? 'same-origin' : 'omit',
           cache: 'no-store',
           redirect: 'error',

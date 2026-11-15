@@ -85,7 +85,7 @@ function Store({ pharmacyId }: { pharmacyId: string }) {
         <TextField label="Search this pharmacy" value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. paracetamol" />
         <Button type="submit">Search</Button>
       </form>
-      <p className="muted">Medicines that need a prescription can’t be ordered online yet; buy them at the pharmacy.</p>
+      <p className="muted">Medicines that need a prescription are checked by the pharmacist before your order is packed.</p>
       {stock.isPending ? <Loading label="Loading medicines…" />
         : stock.isError ? <ErrorState message={messageOf(stock.error)} onRetry={() => void stock.refetch()} />
         : shelf.length === 0 && stock.hasNextPage ? <Loading label="Loading medicines…" />

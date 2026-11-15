@@ -64,6 +64,8 @@ export interface Checkout {
   deliveryMode: 'pickup' | 'delivery';
   deliveryAddress?: string;
   notes?: string;
+  /** P9: optional prescription files (links from uploadPrescription). */
+  prescriptionUrls?: string[];
 }
 
 export interface CheckoutResult {
@@ -147,10 +149,23 @@ export function customerPharmacyApi(c: ApiClient) {
       paymentMode: body.paymentMode, deliveryMode: body.deliveryMode,
       ...(body.deliveryMode === 'delivery' ? { deliveryAddress: body.deliveryAddress } : {}),
       ...(body.notes ? { notes: body.notes } : {}),
+      ...(body.prescriptionUrls?.length ? { prescriptionUrls: body.prescriptionUrls } : {}),
     } }),
 
     orders: (page = 1, limit = 20) => c.page<PharmacyOrder>('/pharmacy-orders', { query: { page, limit } }),
     order: (orderId: string) => c.get<PharmacyOrder>(`/pharmacy-orders/${id(orderId, 'order')}`),
+    /**
+     * P9: uploads a prescription (image or PDF). Returns its stored link, which only this customer (and, once the order
+     * is placed with it, that order's pharmacy) can open.
+     */
+    uploadPrescription: async (file: File): Promise<string> => {
+      const form = new FormData();
+      form.append('files', file);
+      const r = await c.post<{ files?: { url?: string }[] }>('/file/upload/prescriptions', { form });
+      const url = r?.files?.[0]?.url;
+      if (typeof url !== 'string' || !url) throw new Error('The upload did not return a file');
+      return url;
+    },
     /**
      * P8: pay an unpaid online order (again). The server checks earlier attempts first (then it may already be paid:
      * `paymentRequired` false) and hands back the order's own open Razorpay order.

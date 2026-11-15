@@ -52,6 +52,8 @@ export interface PrescriptionReview {
   pharmacistRegistrationNumber: string;
   reason?: string;
   reviewedDocumentCount: number;
+  /** P9: whether any prescription was attached when the pharmacist decided. */
+  prescriptionAttached?: boolean;
   reviewedAt: string;
 }
 
@@ -59,6 +61,8 @@ export interface PrescriptionReview {
 export type Ref<T> = string | ({ _id: string } & T);
 
 export interface PharmacyOrder {
+  /** P9: moved by every edit; a prescription decision names the revision it was made on. */
+  revision?: number;
   /** D3: the current (or last) cancellation request. */
   cancelRequest?: CancelRequest;
   _id: string;
@@ -99,8 +103,11 @@ export interface OrderQuery {
 
 export interface PrescriptionReviewRequest {
   decision: 'approve' | 'reject';
-  pharmacistName: string;
-  pharmacistRegistrationNumber: string;
+  /** P9: optional (both or neither); without them the pharmacy's registered pharmacist is recorded. */
+  pharmacistName?: string;
+  pharmacistRegistrationNumber?: string;
+  /** P9: the order revision this decision was made on (the one displayed); refused if the order changed since. */
+  expectedRevision: number;
   reason?: string;
   /** Exactly the order's `prescriptionUrls`, in order: the backend refuses the review if the set changed. */
   reviewedPrescriptionUrls: string[];
@@ -201,6 +208,18 @@ const idPath = (id: string) => {
   if (!/^[0-9a-fA-F]{24}$/.test(id)) throw new Error('Invalid order id');
   return `/pharmacy-orders/${id}`;
 };
+
+/** P9: the pharmacy's registered pharmacist, recorded on one-button prescription approvals. */
+export interface Pharmacist { name: string; registrationNumber: string; updatedAt?: string }
+
+/** P9: the signed-in pharmacy's own profile (only what the workspace needs). */
+export function pharmacyProfileApi(c: ApiClient) {
+  return {
+    me: () => c.get<{ _id: string; name?: string; pharmacist?: Pharmacist | null }>('/pharmacies/me/profile'),
+    setPharmacist: (p: { name: string; registrationNumber: string }) =>
+      c.put<{ pharmacist: Pharmacist | null }>('/pharmacies/me/pharmacist', { body: p }),
+  };
+}
 
 export function pharmacyOrdersApi(c: ApiClient) {
   return {

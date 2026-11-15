@@ -69,6 +69,19 @@ function OrderView({ order: o }: { order: PharmacyOrder }) {
       </section>
 
       {replayed && <Alert tone="ok">This order had already been placed by your earlier attempt; nothing was placed twice.</Alert>}
+      {o.prescriptionStatus === 'pending' && (
+        <Alert tone="warn">
+          This order has medicines that need a prescription. The pharmacist checks {o.prescriptionUrls?.length ? 'your prescription' : 'it'} before
+          packing{o.prescriptionUrls?.length ? '' : ' and may contact you'}; if it is not approved, you are refunded.
+        </Alert>
+      )}
+      {o.prescriptionStatus === 'approved' && <Alert tone="ok">The pharmacist approved the prescription medicines.</Alert>}
+      {o.prescriptionStatus === 'rejected' && (
+        <Alert tone="warn">
+          The pharmacist could not approve the prescription medicines{o.prescriptionReview?.reason ? `: “${o.prescriptionReview.reason}”` : '.'}
+          {' '}Any payment is refunded below.
+        </Alert>
+      )}
       {o.status === 'abandoned' && (
         <Alert tone="warn">
           This order was cancelled because it was not paid in time. If money was taken from you, it goes back to your

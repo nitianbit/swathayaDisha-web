@@ -66,6 +66,8 @@ function CartView({ cart, pickup, delivery, onAttemptChange }: { cart: Cart; pic
   const modeAllowed = mode === 'pickup' ? pickup : delivery;
 
   const rx = cart.items.filter((i) => i.prescriptionRequired !== false);
+  // P9: optional prescription files (links of this customer's own uploads), sent with the order.
+  const [prescriptions, setPrescriptions] = useState<string[]>([]);
   const offline: PaymentMode = mode === 'pickup' ? 'in_store_payment' : 'cash_on_delivery';
   const payMode: PaymentMode = pay === 'online_payment' ? pay : offline;
 
@@ -102,7 +104,8 @@ function CartView({ cart, pickup, delivery, onAttemptChange }: { cart: Cart; pic
     try {
       memory.set(CHECKOUT_SLOT, attempt);
       onAttemptChange();
-      const r = await pharmacy.checkout({ paymentMode: payMode, deliveryMode: mode, deliveryAddress: address.trim(), notes: notes.trim() || undefined },
+      const r = await pharmacy.checkout({ paymentMode: payMode, deliveryMode: mode, deliveryAddress: address.trim(), notes: notes.trim() || undefined,
+        prescriptionUrls: rx.length ? prescriptions : undefined },
         attempt.requestKey);
       await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] });
       // A late answer for a key that is no longer the stored one (another attempt started meanwhile, e.g. in another
@@ -145,18 +148,15 @@ function CartView({ cart, pickup, delivery, onAttemptChange }: { cart: Cart; pic
                 <Button variant="secondary" disabled={busy || placing} onClick={() => void change(i, 1)} aria-label={`One more ${i.medicineName ?? ''}`}>+</Button>
               </div>
             </div>
-            {i.prescriptionRequired !== false && <span className="muted">Needs a prescription: can’t be ordered online yet.</span>}
+            {i.prescriptionRequired !== false && <span className="muted">Needs a prescription: the pharmacist checks it before packing.</span>}
           </li>
         ))}
       </ul>
       <p><strong>Total {formatRupees(cart.subtotal)}</strong></p>
-      {rx.length > 0 ? (
-        <Alert tone="warn">
-          {rx.map((i) => i.medicineName ?? 'A medicine').join(', ')} {rx.length === 1 ? 'needs' : 'need'} a prescription. Medicines
-          that need a prescription can’t be ordered online yet: remove {rx.length === 1 ? 'it' : 'them'} to continue, and buy
-          {rx.length === 1 ? ' it' : ' them'} at the pharmacy.
-        </Alert>
-      ) : (
+      {rx.length > 0 && (
+        <PrescriptionUpload names={rx.map((i) => i.medicineName ?? 'A medicine')} urls={prescriptions} onChange={setPrescriptions} disabled={placing} />
+      )}
+      {(
         <section className="card stack" aria-labelledby="checkout-h">
           <h2 id="checkout-h">How you get it</h2>
           <fieldset className="choice">
@@ -184,7 +184,7 @@ function CartView({ cart, pickup, delivery, onAttemptChange }: { cart: Cart; pic
           </Button>
         </section>
       )}
-      {rx.length > 0 && error && <Alert>{error}</Alert>}
+
     </>
   );
 }
@@ -233,5 +233,60 @@ function EarlierAttempt({ onChange }: { onChange: () => void }) {
       <Button variant="secondary" busy={busy} onClick={() => void check()}>Check my last order</Button>
       {error && error.key === key && <span> {error.message}</span>}
     </Alert>
+  );
+}
+
+/**
+ * P9: medicines that need a prescription are checked by the pharmacist before the order is packed. Attaching a
+ * prescription is optional (images or PDF); without one the pharmacist may contact you.
+ */
+function PrescriptionUpload({ names, urls, onChange, disabled }: {
+  names: string[]; urls: string[]; onChange: (urls: string[]) => void; disabled: boolean;
+}) {
+  const { api } = useSession();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function add(files: FileList | null) {
+    if (!files?.length) return;
+    setBusy(true); setError(null);
+    try {
+      const added: string[] = [];
+      for (const f of Array.from(files)) {
+        if (!/^(image\/(jpeg|png|webp)|application\/pdf)$/.test(f.type)) throw new Error('Attach a photo (JPG, PNG) or a PDF.');
+        if (f.size > 10 * 1024 * 1024) throw new Error('Each file must be under 10 MB.');
+        added.push(await customerPharmacyApi(api).uploadPrescription(f));
+      }
+      onChange([...urls, ...added]);
+    } catch (err) {
+      setError(err instanceof ApiError ? messageOf(err) : (err as Error).message || 'The file could not be attached.');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="card stack" aria-labelledby="rx-h">
+      <h2 id="rx-h">Prescription</h2>
+      <p>
+        {names.join(', ')} {names.length === 1 ? 'needs' : 'need'} a prescription. The pharmacist checks your order before packing
+        it; if it is not approved, you are refunded.
+      </p>
+      <label className="file-pick">
+        <span>Attach your prescription (optional)</span>
+        <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" multiple disabled={busy || disabled}
+          onChange={(e) => { void add(e.target.files); e.target.value = ''; }} />
+      </label>
+      {busy && <Loading label="Attaching…" />}
+      {error && <Alert>{error}</Alert>}
+      {urls.length > 0 && (
+        <ul className="plain">
+          {urls.map((u, i) => (
+            <li key={u} className="row-between">
+              <span>Prescription {i + 1} attached</span>
+              <Button variant="ghost" disabled={disabled} onClick={() => onChange(urls.filter((x) => x !== u))}>Remove</Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

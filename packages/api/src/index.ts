@@ -6,12 +6,12 @@ export type { NativeApp, NativeRefreshed, NativeSignedIn, NativeTokens, OtpTarge
 export { clearSignOutPending, markSignOutPending, nativeSecureStore, nativeSignOut, refreshTokenKey, rotateNative, signOutState } from './nativeSession.ts';
 export type { SecureStore, SignOutState } from './nativeSession.ts';
 export {
-  CANCELLABLE_STATUSES, DELIVERY_EXCEPTION_FROM, fetchableFileUrl, ORDER_TRANSITIONS, pharmacyOrdersApi, PRESCRIPTION_REVIEWABLE_STATUSES,
+  CANCELLABLE_STATUSES, DELIVERY_EXCEPTION_FROM, fetchableFileUrl, ORDER_TRANSITIONS, pharmacyOrdersApi, pharmacyProfileApi, PRESCRIPTION_REVIEWABLE_STATUSES,
   refId, REGISTRATION_NUMBER_PATTERN,
 } from './pharmacyOrders.ts';
 export type {
   BatchAllocation, CancelRequest, CustomerReturn, CustomerReturnLine, CustomerReturnRequest, DeliveryException,
-  DeliveryExceptionType, OrderItem, OrderQuery, OrderStatus, PaymentMode, PaymentStatus, PharmacyOrder,
+  DeliveryExceptionType, OrderItem, OrderQuery, OrderStatus, PaymentMode, PaymentStatus, Pharmacist, PharmacyOrder,
   PrescriptionRefund, PrescriptionRefundStatus, PrescriptionReview, PrescriptionReviewRequest, PrescriptionStatus, Ref,
 } from './pharmacyOrders.ts';
 export {

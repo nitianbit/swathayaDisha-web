@@ -48,6 +48,7 @@ interface Backend {
   abandoned: Set<string>;
   /** Hold cart reads this long. */
   slowCartRead: number;
+  uploads: number;
 }
 
 const FAKE_CHECKOUT = `
@@ -75,7 +76,7 @@ function cartView(b: Backend) {
 }
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const b: Backend = { calls: [], cart: { pharmacyId: null, items: [] }, orders: new Map(), records: new Map(), priceChangeOnce: false, slowStore: 0, slowCart: 0, failStockPage: 0, stockPageCalls: {}, byKey: new Map(), dropNextCheckoutAnswer: false, retryUnknown: false, slowNextCheckout: 0, abandoned: new Set(), slowCartRead: 0 };
+  const b: Backend = { calls: [], cart: { pharmacyId: null, items: [] }, orders: new Map(), records: new Map(), priceChangeOnce: false, slowStore: 0, slowCart: 0, failStockPage: 0, stockPageCalls: {}, byKey: new Map(), dropNextCheckoutAnswer: false, retryUnknown: false, slowNextCheckout: 0, abandoned: new Set(), slowCartRead: 0, uploads: 0 };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
   let n = 0;
@@ -89,7 +90,7 @@ async function mockBackend(page: Page): Promise<Backend> {
     const req = route.request();
     const url = new URL(req.url());
     const path = url.pathname.replace('/api/v1', '');
-    const body = ['POST', 'PUT'].includes(req.method()) ? req.postDataJSON() : null;
+    const body = ['POST', 'PUT'].includes(req.method()) && (req.headers()['content-type'] ?? '').includes('json') ? req.postDataJSON() : null;
     b.calls.push({ method: req.method(), path, query: url.search, body });
     if (path === '/auth/user/send') return json(route, 200, { success: true });
     if (path === '/auth/user/verify') return json(route, 200, { success: true, data: { token: 't', expiresIn: 900, user: {} } });
@@ -125,6 +126,10 @@ async function mockBackend(page: Page): Promise<Backend> {
       if (pg === b.failStockPage) return json(route, 500, { error: 500, message: 'Stock could not be read' });
       return json(route, 200, { success: true, data: all.slice((pg - 1) * limit, pg * limit),
         pagination: { page: pg, limit, total: all.length, totalPages: Math.max(1, Math.ceil(all.length / limit)) } });
+    }
+    if (path === '/file/upload/prescriptions') {
+      b.uploads += 1;
+      return json(route, 200, { success: true, data: { files: [{ url: `/api/static/prescriptions/upload-${b.uploads}.pdf` }] } });
     }
     if (path === '/request-keys/abandon') {
       const { key } = body as { key: string };
@@ -181,6 +186,8 @@ async function mockBackend(page: Page): Promise<Backend> {
       const order = { _id: id, orderNumber: `PH-${n}`, pharmacyId: b.cart.pharmacyId, orderType: 'online', status: 'placed',
         items: view.items.map((i) => ({ medicineId: i.medicineId, medicineName: i.medicineName, orderedQty: i.quantity, lineTotal: i.lineTotal })),
         grandTotal: view.subtotal, paymentMode: c.paymentMode, paymentStatus: 'pending', deliveryMode: c.deliveryMode, deliveryAddress: c.deliveryAddress,
+        prescriptionStatus: view.items.some((i) => i.prescriptionRequired) ? 'pending' : 'not_required',
+        prescriptionUrls: (c as { prescriptionUrls?: string[] }).prescriptionUrls ?? [],
         createdAt: new Date().toISOString(), ...(online ? { paymentTransactionId: record } : {}) };
       b.orders.set(id, order);
       if (key) b.byKey.set(key, id);
@@ -279,17 +286,34 @@ test('the shelf shows one line per medicine; a second pharmacy asks before repla
   await expect(page.getByRole('group', { name: 'Cetirizine 10 quantity' })).toContainText('1');
 });
 
-test('a medicine that needs a prescription blocks checkout with an explanation', async ({ page }) => {
-  await mockBackend(page);
+test('P9: a prescription medicine can be ordered; attaching a prescription is optional and sent with the order', async ({ page }) => {
+  const b = await mockBackend(page);
   await signIn(page);
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Medicines', exact: true }).click();
   await page.getByRole('link', { name: /Asha Medicals/ }).click();
   await page.getByRole('button', { name: 'Add Amoxicillin 500 to cart' }).click();
   await page.getByRole('link', { name: /View cart/ }).click();
   await expect(page.getByText('Amoxicillin 500 needs a prescription.', { exact: false })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Place order/ })).toHaveCount(0);
-  await page.getByRole('button', { name: 'One less Amoxicillin 500' }).click();
-  await expect(page.getByText('Your cart is empty')).toBeVisible();
+  await page.getByLabel('Attach your prescription (optional)').setInputFiles({ name: 'rx.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4\n%%EOF') });
+  await expect(page.getByText('Prescription 1 attached')).toBeVisible();
+  await page.getByLabel('Attach your prescription (optional)').setInputFiles({ name: 'x.exe', mimeType: 'application/x-msdownload', buffer: Buffer.from('MZ') });
+  await expect(page.getByText('Attach a photo (JPG, PNG) or a PDF.')).toBeVisible();
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByText('The pharmacist checks your prescription before packing', { exact: false })).toBeVisible();
+  const body = b.calls.find((c) => c.path === '/pharmacy-cart/checkout')!.body as { prescriptionUrls?: string[] };
+  expect(body.prescriptionUrls).toEqual(['/api/static/prescriptions/upload-1.pdf']);
+});
+
+test('P9: without a prescription the order is still placed; the pharmacist checks it', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Medicines', exact: true }).click();
+  await page.getByRole('link', { name: /Asha Medicals/ }).click();
+  await page.getByRole('button', { name: 'Add Amoxicillin 500 to cart' }).click();
+  await page.getByRole('link', { name: /View cart/ }).click();
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByText('The pharmacist checks it before packing and may contact you', { exact: false })).toBeVisible();
+  expect((b.calls.find((c) => c.path === '/pharmacy-cart/checkout')!.body as { prescriptionUrls?: string[] }).prescriptionUrls).toBeUndefined();
 });
 
 test('a changed price stops the order: the new total is shown and nothing is placed', async ({ page }) => {
