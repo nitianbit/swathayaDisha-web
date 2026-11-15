@@ -120,3 +120,7 @@
   .ws-side { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .ws-main { padding: var(--space-4); }
 }
+
+/* WQ2: bill lines */
+.ws-line { margin: 0; min-width: 0; }
+.ws-line legend { font-weight: 600; padding: 0 var(--space-1); }

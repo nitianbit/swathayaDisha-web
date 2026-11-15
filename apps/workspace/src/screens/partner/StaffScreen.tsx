@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  canAddOwner, canEditPermissions, grantablePermissions, hasGlobalScope, holdsAny, MAX_NAME, PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN,
+  canAddOwner, canEditPermissions, grantablePermissions, hasGlobalScope, MAX_NAME, PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN,
   PERMISSION_LABEL, removalBlock, scopeProblem, type Branch, type MemberRole, type PartnerMember, type PartnerPermission,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
@@ -20,12 +20,12 @@ export function StaffScreen() {
   return <Staff ctx={ctx} />;
 }
 
-/** Members who may read branches (`GET /branches` needs `branches.manage`; owners and admins hold it). */
-export const canReadBranches = (ctx: ScopeContext) => holdsAny(ctx.actor, ['branches.manage']);
-
-/** Active branches this actor can see; not asked for without `branches.manage` (staff.manage alone cannot read them). */
+/**
+ * Active branches this actor can see. Since Q8 every member may read them (`GET /branches` with no permission; the
+ * server returns only the branches in the member's scope).
+ */
 export function useBranches(ctx: ScopeContext) {
-  return useQuery({ queryKey: [...ctx.key, 'branches'], queryFn: () => ctx.api.branches(), enabled: canReadBranches(ctx) });
+  return useQuery({ queryKey: [...ctx.key, 'branches'], queryFn: () => ctx.api.branches() });
 }
 
 export const branchLabel = (names: Map<string, string>, ids: readonly string[]) =>
@@ -53,7 +53,7 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
       {!adding && <div><Button onClick={() => { setAdding(true); setNotice(null); }}>Add a staff member</Button></div>}
       {adding && (
         <AddMember ctx={ctx} branches={branches.data}
-          branchesError={!canReadBranches(ctx) ? 'seeing branch names needs the Manage branches permission.' : branches.isError ? messageOf(branches.error) : null}
+          branchesError={branches.isError ? messageOf(branches.error) : null}
           onCancel={() => setAdding(false)}
           onAdded={async (m) => { setAdding(false); setNotice(`${m.name} was added.`); await refresh(); }} />
       )}

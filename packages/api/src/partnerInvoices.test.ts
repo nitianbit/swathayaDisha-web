@@ -1,0 +1,167 @@
+import { createApiClient } from './client.ts';
+import {
+  allowedGstRates, catalogueAdminApi, classifyDocument, invoicePdfName, MAX_BILL_MINOR, paiseToInput, paiseToRupees,
+  partnerBillingApi, previewInvoice, registrationProblem, rupeesToPaise, type NewInvoiceLine,
+} from './partnerInvoices.ts';
+
+const P = 'a1'.repeat(12);
+const I = 'd4'.repeat(12);
+const C = 'e5'.repeat(12);
+
+function recorder(answer: () => Response = () => new Response(JSON.stringify({ success: true, data: [] }), { status: 200 })) {
+  const calls: { method: string; url: string; body: unknown; headers: Record<string, string> }[] = [];
+  const client = createApiClient({ baseUrl: 'https://api.example.test', getToken: () => 'tok',
+    fetchImpl: async (u, init) => {
+      calls.push({ method: String(init?.method), url: String(u).replace('https://api.example.test/api/v1', ''),
+        body: init?.body ? JSON.parse(String(init.body)) : undefined, headers: (init?.headers ?? {}) as Record<string, string> });
+      return answer();
+    } });
+  return { client, calls };
+}
+
+describe('rupees and paise', () => {
+  it('reads rupees typed by a person as integer paise, without floating-point error', () => {
+    expect(rupeesToPaise('12.05')).toBe(1205);
+    expect(rupeesToPaise('0.1')).toBe(10);
+    expect(rupeesToPaise('0.29')).toBe(29); // 0.29 * 100 = 28.999999999999996 in floating point
+    expect(rupeesToPaise('1,23,456.7')).toBe(12345670);
+    expect(rupeesToPaise(' 450 ')).toBe(45000);
+    expect(rupeesToPaise('0')).toBe(0);
+    expect(rupeesToPaise('100000000')).toBe(100_000_000_00);
+    for (const bad of ['', '.5', '1.005', '-1', '1e3', '12.', 'abc', '₹10', '1 000']) expect(rupeesToPaise(bad)).toBeNull();
+  });
+
+  it('puts paise back into a rupee field and shows them as rupees', () => {
+    expect(paiseToInput(1205)).toBe('12.05');
+    expect(paiseToInput(1200)).toBe('12');
+    expect(paiseToInput(7)).toBe('0.07');
+    expect(paiseToInput(undefined)).toBe('');
+    expect(paiseToRupees(123456)).toBe(1234.56);
+    for (const p of [0, 1, 29, 1205, 99_999, 100_000_000_00]) expect(rupeesToPaise(paiseToInput(p))).toBe(p);
+  });
+});
+
+describe('tax rules mirrored from services/invoice.ts', () => {
+  const regular = { taxRegime: 'regular' as const, gstin: '29ABCDE1234F1Z5' };
+  const line = (o: Partial<NewInvoiceLine>): NewInvoiceLine => ({ description: 'CBC', qty: 1, unitPriceMinor: 10000, gstRate: 0, ...o });
+
+  it('classifies the document from the regime, the GSTIN and the line rates', () => {
+    expect(classifyDocument(regular, [{ gstRate: 18 }, { gstRate: 0 }])).toBe('tax_invoice');
+    expect(classifyDocument(regular, [{ gstRate: 0 }])).toBe('bill_of_supply');
+    expect(classifyDocument({ taxRegime: 'composition', gstin: regular.gstin }, [{ gstRate: 5 }])).toBe('bill_of_supply');
+    expect(classifyDocument({ taxRegime: 'regular' }, [{ gstRate: 18 }])).toBe('commercial_invoice'); // no GSTIN
+    expect(classifyDocument({ taxRegime: 'unregistered' }, [{ gstRate: 0 }])).toBe('commercial_invoice');
+    expect(allowedGstRates(regular)).toEqual([0, 5, 12, 18, 28]);
+    expect(allowedGstRates({ taxRegime: 'composition', gstin: regular.gstin })).toEqual([0]);
+    expect(allowedGstRates({ taxRegime: 'unregistered' })).toEqual([0]);
+  });
+
+  it('rounds tax per line to the paisa and sums rounded lines; the odd paisa of CGST/SGST goes to SGST', () => {
+    // 333 paise at 5% = 16.65 → 17 (cgst 8, sgst 9); 3 × ₹99.99 − ₹0.97 = 29900 at 18% = 5382; 101 at 12% = 12.12 → 12
+    const p = previewInvoice(regular, '29', undefined, [
+      line({ unitPriceMinor: 333, gstRate: 5 }),
+      line({ qty: 3, unitPriceMinor: 9999, discountMinor: 97, gstRate: 18 }),
+      line({ unitPriceMinor: 101, gstRate: 12 }),
+    ]);
+    expect(p.documentKind).toBe('tax_invoice');
+    expect(p.sameState).toBe(true);
+    expect(p.lines.map((l) => [l.amountMinor, l.taxMinor])).toEqual([[333, 17], [29900, 5382], [101, 12]]);
+    expect(p.totals).toEqual({
+      subtotalMinor: 333 + 29997 + 101, discountMinor: 97, taxableMinor: 30334,
+      cgstMinor: 8 + 2691 + 6, sgstMinor: 9 + 2691 + 6, igstMinor: 0, totalMinor: 30334 + 17 + 5382 + 12, currency: 'INR',
+    });
+    expect(p.problems).toEqual([]);
+  });
+
+  it('half-paisa tax rounds up as the server rounds (Math.round)', () => {
+    // 50 paise at 5% = 2.5 → 3; 10 paise at 5% = 0.5 → 1
+    expect(previewInvoice(regular, '29', '29', [line({ unitPriceMinor: 50, gstRate: 5 }), line({ unitPriceMinor: 10, gstRate: 5 })]).lines
+      .map((l) => l.taxMinor)).toEqual([3, 1]);
+  });
+
+  it('another customer state is inter-state: IGST only', () => {
+    const p = previewInvoice(regular, '29', '27', [line({ unitPriceMinor: 333, gstRate: 5 })]);
+    expect(p.sameState).toBe(false);
+    expect(p.totals).toMatchObject({ cgstMinor: 0, sgstMinor: 0, igstMinor: 17, totalMinor: 350 });
+  });
+
+  it('flags what the server refuses: GST for a supplier without GST, discounts above the line, oversized bills, another state', () => {
+    const unregistered = previewInvoice({ taxRegime: 'unregistered' }, '29', undefined, [line({ gstRate: 18 })]);
+    expect(unregistered.documentKind).toBe('commercial_invoice');
+    expect(unregistered.lines[0]!.problem).toBe('This partner is not GST-registered: every line must have GST rate 0');
+    expect(previewInvoice({ taxRegime: 'composition', gstin: regular.gstin }, '29', undefined, [line({ gstRate: 5 })]).problems)
+      .toEqual(['A bill of supply cannot charge GST: every line must have GST rate 0']);
+    const discount = previewInvoice(regular, '29', undefined, [line({ qty: 2, unitPriceMinor: 100, discountMinor: 201 })]);
+    expect(discount.lines[0]).toMatchObject({ amountMinor: 0, problem: 'A line discount cannot exceed the line amount' });
+    expect(discount.totals.totalMinor).toBe(0);
+    expect(previewInvoice(regular, '29', undefined, [line({ qty: 10_000, unitPriceMinor: MAX_BILL_MINOR })]).problems)
+      .toContain('This line is larger than a single bill can be');
+    expect(previewInvoice(regular, '27', undefined, [line({ gstRate: 18 })]).problems[0]).toMatch(/registration \(state 29\) does not cover this branch \(state 27\)/);
+    expect(registrationProblem('commercial_invoice', undefined, '27')).toBeNull();
+  });
+});
+
+describe('billing paths', () => {
+  it('members use /partner-workspace; admins the same routes under the admin workspace; admin item switches by id', async () => {
+    const { client, calls } = recorder();
+    const member = partnerBillingApi(client, { kind: 'member' });
+    const admin = partnerBillingApi(client, { kind: 'admin', partnerId: P });
+    await member.catalogue('test');
+    await admin.catalogue();
+    await member.updateCatalogueItem(C, { priceMinor: 45000 });
+    await admin.deactivateCatalogueItem(C);
+    await member.invoices({ state: 'paid', branchId: P, limit: 50, before: '2026-11-15T18:30:00.000Z' });
+    await admin.invoice(I);
+    await admin.recordPayment(I, { mode: 'upi', reference: 'UTR1' });
+    await member.cancelInvoice(I, 'Wrong patient');
+    await admin.clinicDoctors();
+    await catalogueAdminApi(client).disable(C);
+    await catalogueAdminApi(client).enable(C);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      'GET /partner-workspace/catalogue?kind=test',
+      `GET /partner-workspace/admin/${P}/workspace/catalogue`,
+      `PUT /partner-workspace/catalogue/${C}`,
+      `DELETE /partner-workspace/admin/${P}/workspace/catalogue/${C}`,
+      `GET /partner-workspace/invoices?state=paid&branchId=${P}&limit=50&before=2026-11-15T18%3A30%3A00.000Z`,
+      `GET /partner-workspace/admin/${P}/workspace/invoices/${I}`,
+      `POST /partner-workspace/admin/${P}/workspace/invoices/${I}/pay`,
+      `POST /partner-workspace/invoices/${I}/cancel`,
+      `GET /partner-workspace/admin/${P}/workspace/clinic/doctors`,
+      `POST /partner-workspace/admin/catalogue/${C}/disable`,
+      `POST /partner-workspace/admin/catalogue/${C}/enable`,
+    ]);
+    expect(calls[6]!.body).toEqual({ mode: 'upi', reference: 'UTR1' });
+    expect(calls[7]!.body).toEqual({ reason: 'Wrong patient' });
+  });
+
+  it('the invoice request key travels in the body exactly as sent (no header), so a resend is identical', async () => {
+    const { client, calls } = recorder(() => new Response(JSON.stringify({ success: true, data: { _id: I } }), { status: 201 }));
+    const body = { branchId: P, customer: { name: 'Asha' }, items: [{ description: 'CBC', qty: 1, unitPriceMinor: 45000, gstRate: 0 as const }], idempotencyKey: 'k'.repeat(32) };
+    await partnerBillingApi(client, { kind: 'member' }).createInvoice(body);
+    await partnerBillingApi(client, { kind: 'member' }).createInvoice(body);
+    expect(calls.map((c) => c.url)).toEqual(['/partner-workspace/invoices', '/partner-workspace/invoices']);
+    expect(calls[0]!.body).toEqual(body);
+    expect(calls[1]!.body).toEqual(calls[0]!.body);
+    expect(calls[0]!.headers['Idempotency-Key']).toBeUndefined();
+  });
+
+  it('reads the PDF as a blob with the token in the header, never in the URL', async () => {
+    const { client, calls } = recorder(() => new Response('%PDF-1.4', { status: 200, headers: { 'Content-Type': 'application/pdf' } }));
+    const blob = await partnerBillingApi(client, { kind: 'admin', partnerId: P }).invoicePdf(I, 0);
+    expect(await blob.text()).toBe('%PDF-1.4');
+    expect(calls[0]!.url).toBe(`/partner-workspace/admin/${P}/workspace/invoices/${I}/pdf?version=0`);
+    expect(calls[0]!.headers.Authorization).toBe('Bearer tok');
+    expect(invoicePdfName('CL/2627/0001', 1)).toBe('CL-2627-0001-v1.pdf');
+  });
+
+  it('refuses an id that is not an object id before any request', () => {
+    const { client, calls } = recorder();
+    const member = partnerBillingApi(client, { kind: 'member' });
+    expect(() => member.invoice('../me')).toThrow('Invalid invoice id');
+    expect(() => member.invoicePdf(`${I}/x`)).toThrow('Invalid invoice id');
+    expect(() => member.catalogueItem('abc')).toThrow('Invalid catalogue item id');
+    expect(() => partnerBillingApi(client, { kind: 'admin', partnerId: 'x' }).invoices()).toThrow('Invalid partner id');
+    expect(() => catalogueAdminApi(client).disable('1'.repeat(25))).toThrow('Invalid catalogue item id');
+    expect(calls).toHaveLength(0);
+  });
+});

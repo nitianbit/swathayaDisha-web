@@ -188,6 +188,58 @@ Backend gaps found (not changed here):
 - Admin partner create is not idempotent (a lost answer, resent, makes a second partner); the list is unpaginated.
 - A pending partner's members can sign in but every workspace route is refused until verification.
 
+## WQ2 partner catalogue and in-house bills (2026-11-15, taken autonomously at the owner's request)
+
+Backend: Q2 catalogue + invoices on Q8 (`SwasthaDisha-worktrees/q8-partner-admin`, `src1/modules/partners`
+`{validation,services,controller}/{catalogue,invoice}.ts`). API module `packages/api/src/partnerInvoices.ts`.
+
+- **Pages** (deny by default, `modules.tsx`): `/partner/catalogue` "Price list" (`catalogue.manage` or `invoices.create`;
+  only `catalogue.manage` adds, edits, deactivates), `/partner/invoices` "Bills", `/partner/invoices/:id` (any of
+  `invoices.create`, `invoices.cancel`, `payments.record`, `finance.view`; pay needs `payments.record`, cancel
+  `invoices.cancel`), `/partner/invoices/new` (`invoices.create`). The same screens under `/admin/partners/:id/...` use the
+  admin workspace routes; the admin's price list adds Disable/Enable (`/partner-workspace/admin/catalogue/:id/...`).
+- **Money is integer paise end to end.** Rupees typed by staff become paise by string arithmetic (`rupeesToPaise`: "0.29"
+  is 29, never 28.999…); shown with `formatRupees(paise / 100)`.
+- **Live preview = the server's rules** (`previewInvoice` mirrors `computeLines`, `computeTotals`, `classifyDocument`,
+  `assertTaxConsistent`, `assertRegistrationCovers`): line amount = price × qty − discount; tax rounded per line;
+  totals are sums of rounded lines; the odd paisa of CGST/SGST goes to SGST; IGST only when a customer state is given and
+  differs from the branch's. Bill type shown before issuing (tax invoice / bill of supply / invoice without GST). The
+  server's numbers are final.
+- **GST only where the supplier can charge it**: regular regime with a GSTIN offers 0/5/12/18/28; anyone else only 0%.
+  A catalogue item with another rate stays as it is (flagged "Cannot be billed") and is refused on a bill before sending.
+- **Catalogue lines** keep the catalogue's name, price and GST (only quantity and discount change); hand-written lines are
+  free. Only offered items (active, not disabled by Jansetu) can be picked. Clinics name a doctor from their active
+  doctors at the chosen branch (`GET /clinic/doctors`).
+- **Once-only issue**: the request key goes in the BODY (`idempotencyKey`; the route reads no header). A submitted bill
+  is kept in session memory (body in memory only; the reload marker holds just the key and attempt times). An unknown
+  outcome locks it: resend unchanged (the server answers the same key + same request with the bill already issued) or
+  look for it in the list by key. Only a refusal of a sole first attempt unlocks the form (also the 503
+  `CUSTOMER_LINKING_UNAVAILABLE`, raised before anything is written); a changed bill gets a new key. After a reload the
+  marker can only be checked; with no server way to abandon a bill's key, starting again is a decision with a warning
+  (a duplicate must then be cancelled).
+- **Linked customer**: a phone number links the bill to that number's customer account (created if none; an SMS may be
+  sent; existing details never changed); said before issuing and shown on the bill.
+- **Confirm first**: issuing a bill, recording a payment (it cannot be removed), cancelling (reason; "cancelled for good,
+  number not reused, the recorded payment stays"), deactivating an item, admin disable.
+- **PDF** read with the session token into a blob (content checked to be a PDF), shown in a frame and saved under the
+  server's file name; current version, and "as issued" (version 0) once the bill has events. No token or file link in a URL.
+- Q8 lets every member read branches: WQ1's `branches.manage` gate on `GET /branches` is removed (staff screen too).
+
+Backend gaps found (not changed here):
+- The bills list `before` loses its milliseconds (Joi turns it into a Date and the controller re-parses `String(date)`)
+  and the cursor is `issuedAt` alone. The workspace pages from the next whole second and drops repeats by id; more than
+  50 bills in one second cannot be paged past. No "from" date, search, or count either. A `(issuedAt, _id)` cursor would fix it.
+- No request-key kind for partner bills in `POST /request-keys/abandon`, and no lookup by key: after a reload an
+  unconfirmed bill can only be searched for in the list.
+- `POST /invoices/:id/pay` takes no request key and no amount (always the full total; no part payments); a repeat is
+  refused 409 "This bill is paid" (the page then shows the bill as it is).
+- The catalogue accepts GST rates the partner cannot bill (create/update do not look at the tax regime).
+- The catalogue lists only active items: a deactivated item cannot be listed or reactivated. No server-side search.
+- The catalogue is lab-shaped for clinics too (`test`/`package`, visit modes `home`/`lab` required).
+- A bill line with a `catalogItemId` may carry any price (the catalogue price is not enforced); the doctor named on a
+  clinic bill must only be an active member with a doctor id (branch and doctor status are not checked).
+- Cancelling a paid bill records nothing about returning the money.
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -234,4 +286,5 @@ Backend gaps found (not changed here):
 | 2026-11-15 | D4 + D3 UI approved | Codex approved D4 web (bad18bf, after 3 review rounds: cookie sessions, cross-tab lock and identity fences, noRenew admission, server-resolved restored requests, explicit same-origin topology), D3 workspace UI (3dd1742: requestId-keyed decisions, amount-free refund text), and the backend D4 (4b23d20) + business-date fix. |
 | 2026-11-15 | O1, admin queue, medicine ordering, N1, S1 approved | Codex approved backend O1 (232e619 + docs), N1 (5f93e7f), S1 (release 997da42, hotfix 5cac856); web admin queue + O1 sign-in (da8b7a4), customer medicine ordering (7930a61, after 3 review rounds) and the N1 client (405a959, after 2 rounds). Backend: all 21 integration suites pass on `m0/n1-native-sessions`. Web: typecheck clean; Vitest 55/55; Playwright customer 110/110, workspace 128/128. |
 | 2026-11-15 | WQ1 (partner workspace foundation) | typecheck clean; Vitest 69/69 (+9: workspace/admin path building, id validation before any request, select per session mode, selection shape, delegation/scope/removal rules); Playwright workspace 154/154 (+20 = 10 journeys x 2 devices: single and multi-membership sign-in incl. native and expired ticket, nav by permission and scope, staff add/edit/remove with server refusal, branches add/deactivate with confirm, admin list/filter/create/verify/suspend, admin-as-owner staff via `/partner-workspace/admin/<id>/workspace/members`); release build with VITE_API_BASE_URL=https://api.example.test. Not yet run against a real backend or reviewed. |
+| 2026-11-15 | WQ2 (catalogue and bills) | typecheck clean; Vitest 87/87 (+18: paise parsing/formatting, preview rounding incl. half-paisa and odd-paisa SGST, IGST, classification, refusals, member/admin paths, admin item switches, body request key with no header, PDF blob, id checks; app: list cursor and repeats, IST date bound, item and bill builders); Playwright workspace 170/170 (+16 = 8 journeys x 2 devices: catalogue add/edit/deactivate in paise; no-GST supplier offered 0% only, GST item refused on a bill, 503 linking refusal unlocks and a changed bill gets a new key; live totals, lost answer resent with the same key and body, one bill, linked notice, nothing in browser storage; reload with an unconfirmed bill: check by key, forget after warning; pay with confirm, refused pay shows the server and the current bill, cancel with reason, PDF via blob for v2 and v0; finance read-only and biller read-only price list, pages absent without permission; clinic doctor picker and IGST; admin-as-owner bills, catalogue and disable/enable); release build with VITE_API_BASE_URL=https://api.example.test. Playwright ran on a spare port (another worktree's dev server held 5174). Not yet run against a real backend or reviewed. |
 | 2026-11-15 | P8 web, N2 phone apps, P9 web approved | Codex approved P8 web (e0add83, after 3 rounds: attempt ownership, keyed recovery result, decision after waits), N2 (f4c3ff8: secure-store start gate, latest-attempt start-up) and P9 web (aab4e01, after 3 rounds: attachments keyed to their pharmacy, functional updates, no order while attaching, expectedPharmacyId recipient fence). vitest 60; Playwright customer 134, workspace 134; Android debug + unsigned iOS builds for both apps. |

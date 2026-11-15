@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Ban, Boxes, Building2, ClipboardCheck, Handshake, History, House, MapPin, Package, PackageX, Settings, ShieldAlert, TrendingDown, Undo2, Users,
+  Ban, Boxes, Building2, ClipboardCheck, ClipboardList, Handshake, History, House, MapPin, Package, PackageX, Receipt, Settings, ShieldAlert,
+  TrendingDown, Undo2, Users,
 } from 'lucide-react';
 import { hasGlobalScope, holdsAny, type PartnerKind, type PartnerPermission } from '@jansetu/api';
 import type { StaffRole, StaffUser } from './session.tsx';
@@ -9,6 +10,10 @@ import { NewPartnerScreen } from './screens/admin/NewPartnerScreen.tsx';
 import { PartnerScreen } from './screens/admin/PartnerScreen.tsx';
 import { PartnersScreen } from './screens/admin/PartnersScreen.tsx';
 import { AuditScreen } from './screens/partner/AuditScreen.tsx';
+import { CatalogueScreen } from './screens/partner/CatalogueScreen.tsx';
+import { InvoiceScreen } from './screens/partner/InvoiceScreen.tsx';
+import { InvoicesScreen } from './screens/partner/InvoicesScreen.tsx';
+import { NewInvoiceScreen } from './screens/partner/NewInvoiceScreen.tsx';
 import { BranchesScreen } from './screens/partner/BranchesScreen.tsx';
 import { ProfileScreen } from './screens/partner/ProfileScreen.tsx';
 import { StaffScreen } from './screens/partner/StaffScreen.tsx';
@@ -45,6 +50,8 @@ export interface WorkspacePage {
   /** Partners only: needs partner-wide scope (an owner, or staff not limited to some branches). */
   partnerWide?: boolean;
 }
+
+const INVOICE_READERS: readonly PartnerPermission[] = ['invoices.create', 'invoices.cancel', 'payments.record', 'finance.view'];
 
 export const PAGES: readonly WorkspacePage[] = [
   { path: '/', roles: ['admin', 'pharmacy', 'partner'], element: <HomeScreen />, nav: { label: 'Home', icon: House, section: '' } },
@@ -84,6 +91,17 @@ export const PAGES: readonly WorkspacePage[] = [
     path: '/partner/audit', roles: ['partner'], element: <AuditScreen />, partnerPermissions: ['staff.manage'], partnerWide: true,
     nav: { label: 'Activity log', icon: History, section: 'Organisation' },
   },
+  // WQ2: catalogue (readers: catalogue.manage or invoices.create) and in-house bills (`INVOICE_READERS` in partners/routes).
+  {
+    path: '/partner/catalogue', roles: ['partner'], element: <CatalogueScreen />, partnerPermissions: ['catalogue.manage', 'invoices.create'],
+    nav: { label: 'Price list', icon: ClipboardList, section: 'Billing' },
+  },
+  {
+    path: '/partner/invoices', roles: ['partner'], element: <InvoicesScreen />, partnerPermissions: INVOICE_READERS,
+    nav: { label: 'Bills', icon: Receipt, section: 'Billing' },
+  },
+  { path: '/partner/invoices/new', roles: ['partner'], element: <NewInvoiceScreen />, partnerPermissions: ['invoices.create'] },
+  { path: '/partner/invoices/:invoiceId', roles: ['partner'], element: <InvoiceScreen />, partnerPermissions: INVOICE_READERS },
   {
     path: '/admin/partners', roles: ['admin'], element: <PartnersScreen />,
     nav: { label: 'Labs and clinics', icon: Handshake, section: 'Admin' },
@@ -95,6 +113,10 @@ export const PAGES: readonly WorkspacePage[] = [
   { path: '/admin/partners/:partnerId/staff', roles: ['admin'], element: <StaffScreen /> },
   { path: '/admin/partners/:partnerId/branches', roles: ['admin'], element: <BranchesScreen /> },
   { path: '/admin/partners/:partnerId/audit', roles: ['admin'], element: <AuditScreen /> },
+  { path: '/admin/partners/:partnerId/catalogue', roles: ['admin'], element: <CatalogueScreen /> },
+  { path: '/admin/partners/:partnerId/invoices', roles: ['admin'], element: <InvoicesScreen /> },
+  { path: '/admin/partners/:partnerId/invoices/new', roles: ['admin'], element: <NewInvoiceScreen /> },
+  { path: '/admin/partners/:partnerId/invoices/:invoiceId', roles: ['admin'], element: <InvoiceScreen /> },
   {
     path: '/admin/order-cancellations', roles: ['admin'], element: <OrderCancellationsScreen />,
     nav: { label: 'Order cancellations', icon: PackageX, section: 'Admin' },

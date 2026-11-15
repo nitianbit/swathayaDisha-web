@@ -3,13 +3,13 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  ADMIN_ACTOR, OBJECT_ID_PATTERN, partnerWorkspaceApi, type PartnerActorView, type PartnerScope,
+  ADMIN_ACTOR, OBJECT_ID_PATTERN, partnerBillingApi, partnerWorkspaceApi, type PartnerActorView, type PartnerScope,
 } from '@jansetu/api';
 import { Empty } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 
-export type PartnerSection = 'profile' | 'staff' | 'branches' | 'audit';
+export type PartnerSection = 'profile' | 'staff' | 'branches' | 'audit' | 'catalogue' | 'invoices';
 
 export interface ScopeContext {
   scope: PartnerScope;
@@ -20,6 +20,8 @@ export interface ScopeContext {
   /** Where a section of this workspace lives in the app. */
   link: (section: PartnerSection) => string;
   api: ReturnType<typeof partnerWorkspaceApi>;
+  /** WQ2: catalogue and invoices of the same workspace. */
+  billing: ReturnType<typeof partnerBillingApi>;
   /** The admin partner page this workspace belongs to (admins only). */
   adminHome?: string;
 }
@@ -37,7 +39,8 @@ export function usePartnerScope(): ScopeContext | null {
     const scope: PartnerScope = { kind: 'admin', partnerId };
     const root = `/admin/partners/${partnerId}`;
     return {
-      scope, actor: ADMIN_ACTOR, key: ['partner-ws', partnerId], api: partnerWorkspaceApi(api, scope), adminHome: root,
+      scope, actor: ADMIN_ACTOR, key: ['partner-ws', partnerId], api: partnerWorkspaceApi(api, scope),
+      billing: partnerBillingApi(api, scope), adminHome: root,
       link: (s) => `${root}/${s}`,
     };
   }
@@ -49,6 +52,7 @@ export function usePartnerScope(): ScopeContext | null {
     actor: { role: m.role, permissions: m.permissions, branchIds: m.branchIds, memberId: m.id },
     key: ['partner-ws', 'member'],
     api: partnerWorkspaceApi(api, scope),
+    billing: partnerBillingApi(api, scope),
     link: (s) => (s === 'profile' ? '/partner' : `/partner/${s}`),
   };
 }
