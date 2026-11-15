@@ -12,7 +12,7 @@ export {
 export type {
   Branch, BranchAddress, BranchInput, BranchServices, MemberRole, MyPartnerUpdate, NewMember, NewPartner, Partner,
   PartnerActorView, PartnerAuditEvent, PartnerKind, PartnerMember, PartnerPermission, PartnerQuery, PartnerScope,
-  PartnerUpdate, TaxRegime, VerificationState, Weekday, WeeklyHours,
+  PartnerUpdate, TaxRegime, VerificationState, Version, Weekday, WeeklyHours,
 } from './partners.ts';
 export { clearSignOutPending, markSignOutPending, nativeSecureStore, nativeSignOut, refreshTokenKey, rotateNative, signOutState } from './nativeSession.ts';
 export type { SecureStore, SignOutState } from './nativeSession.ts';

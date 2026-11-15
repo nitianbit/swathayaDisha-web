@@ -5,7 +5,7 @@ import {
   type MyPartnerUpdate, type Partner,
 } from '@jansetu/api';
 import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
-import { dirtyKeys, staleMessage, useDraft, type DraftState } from '../../draft.ts';
+import { dirtyKeys, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft, type DraftState } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
 import { NoSuchPartner, PartnerPageHeading, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
@@ -112,9 +112,18 @@ function ContactForm({ ctx, partner }: { ctx: ScopeContext; partner: Partner }) 
       if (conflicts.length) { setStale(staleMessage(conflicts.map((k) => FIELD_LABEL[k]))); return; }
       const { changes } = profileChanges(d.current());
       if (Object.keys(changes).length === 0) { setNotice('Nothing has changed.'); return; }
-      const updated = await ctx.api.updateMe(changes);
-      queryClient.setQueryData([...ctx.key, 'me'], updated);
-      setNotice('Saved.');
+      try {
+        // Q10: refused (409 RECORD_CHANGED) if the profile moved after the read above.
+        const updated = await ctx.api.updateMe(changes, fresh.updatedAt);
+        queryClient.setQueryData([...ctx.key, 'me'], updated);
+        setNotice('Saved.');
+      } catch (err) {
+        if (!isRecordChanged(err)) throw err;
+        const latest = await ctx.api.me();
+        queryClient.setQueryData([...ctx.key, 'me'], latest);
+        const c = rebaseTo(fieldsOf(latest));
+        setStale(c.length ? staleMessage(c.map((k) => FIELD_LABEL[k])) : RECORD_CHANGED_MESSAGE);
+      }
     } catch (err) {
       setError(messageOf(err));
     } finally {
@@ -128,6 +137,7 @@ function ContactForm({ ctx, partner }: { ctx: ScopeContext; partner: Partner }) 
     <section className="ws-section" aria-labelledby="edit-h">
       <h2 id="edit-h">Contact details</h2>
       <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
+        <fieldset className="ws-frozen" disabled={busy}>
         <div className="rx-form-row">
           <TextField label="Display name" value={f.name} onChange={set('name')} error={errors.name} maxLength={MAX_NAME} autoComplete="organization" />
           <TextField label="Legal name" value={f.legalName} onChange={set('legalName')} error={errors.legalName} maxLength={MAX_NAME} />
@@ -137,6 +147,7 @@ function ContactForm({ ctx, partner }: { ctx: ScopeContext; partner: Partner }) 
             onChange={(e) => d.set('contactPhone', e.target.value.replace(/\D/g, ''))} error={errors.contactPhone} />
           <TextField label="Contact email" type="email" value={f.contactEmail} onChange={set('contactEmail')} error={errors.contactEmail} autoComplete="email" />
         </div>
+        </fieldset>
         {stale && <Alert tone="warn">{stale}</Alert>}
         {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}
