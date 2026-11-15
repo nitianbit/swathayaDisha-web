@@ -1,4 +1,4 @@
-import type { ApiClient } from './client.ts';
+import type { ApiClient, Page } from './client.ts';
 import type { PaymentOrder } from './customer.ts';
 
 /**
@@ -76,6 +76,18 @@ export interface NewInstantRequest {
   patient: { kind: 'self' } | { kind: 'dependent'; dependentId: string };
   couponCode?: string;
   useWalletBalance?: boolean;
+  /** Q9 price fence (paise): the quote shown and the quote minus the coupon shown; 409 QUOTE_CHANGED on any difference. */
+  acceptedQuoteMinor: number;
+  acceptedPayableMinor: number;
+}
+
+/** Q9 `GET /instant/specialities`: what customers can ask for, with how many doctors are online now. */
+export interface InstantSpeciality { specialization: string; onlineNow: number }
+
+/** The payable the server computes (`create`): quote minus the coupon discount (capped), in paise. */
+export function instantPayableMinor(quotedAmountMinor: number, couponDiscountRupees?: number): number {
+  const discount = couponDiscountRupees ? Math.min(quotedAmountMinor, Math.round(Number(couponDiscountRupees) * 100)) : 0;
+  return Math.max(0, quotedAmountMinor - discount);
 }
 
 export interface InstantPayment { request: InstantRequest; paymentRequired: boolean; payment?: PaymentOrder }
@@ -97,9 +109,10 @@ export function waitingState(r: Pick<InstantRequest, 'status' | 'fundingState' |
   return Number.isFinite(ends) && ends > now ? 'offer_open' : 'offer_expired';
 }
 
-/** What went back to the wallet when held money was refunded (before acceptance): everything but the coupon part. */
+/** What went back to the wallet: the server's record (Q9 records held refunds too); older records: wallet + gateway held. */
 export function heldRefundMinor(r: Pick<InstantRequest, 'funding' | 'refunded' | 'refundReason'>): number {
-  if (r.refundReason === 'doctor_cancelled') return r.refunded?.totalMinor ?? 0;
+  if (r.refunded && Number.isFinite(r.refunded.totalMinor)) return r.refunded.totalMinor;
+  if (r.refundReason === 'doctor_cancelled') return 0;
   return (r.funding?.walletMinor ?? 0) + (r.funding?.gatewayMinor ?? 0);
 }
 
@@ -121,6 +134,9 @@ const targetBody = (t: InstantTarget) => (t.kind === 'specific' ? { kind: 'speci
 
 export function instantConsultApi(c: ApiClient) {
   return {
+    /** Q9: specialities of active doctors, most online first (`mode` counts only doctors online for it). */
+    specialities: (mode?: InstantMode) =>
+      c.get<InstantSpeciality[]>('/instant/specialities', { query: { mode } }).then((d) => (Array.isArray(d) ? d : [])),
     doctors: (specialization: string, mode: InstantMode) =>
       c.get<OnlineDoctor[]>('/instant/doctors', { query: { specialization: speciality(specialization), mode } }).then((d) => (Array.isArray(d) ? d : [])),
     /** 409 NO_DOCTOR_ONLINE / DOCTOR_NOT_ONLINE when nobody (or not that doctor) is online now. */
@@ -129,8 +145,8 @@ export function instantConsultApi(c: ApiClient) {
     /** Keyed create: the same key and details again return the first request (and its open payment), never a second. */
     create: (body: NewInstantRequest, requestKey: string) =>
       c.post<InstantPayment>('/instant/requests', { body: { ...body, target: targetBody(body.target), specialization: speciality(body.specialization), requestKey } }),
-    /** The newest 50 requests (the backend does not page this list). */
-    requests: () => c.get<InstantRequest[]>('/instant/requests').then((d) => (Array.isArray(d) ? d : [])),
+    /** Q9: newest first, paged. */
+    requests: (page = 1, limit = 20): Promise<Page<InstantRequest>> => c.page<InstantRequest>('/instant/requests', { query: { page, limit } }),
     request: (requestId: string) => c.get<InstantRequest>(`/instant/requests/${id(requestId, 'request')}`),
     /** Pay again within the payment window: earlier attempts are checked first; the open order is reused. */
     pay: (requestId: string, useWalletBalance = false) =>

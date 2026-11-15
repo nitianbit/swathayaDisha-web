@@ -37,9 +37,9 @@ function LabBookingView({ booking: b }: { booking: LabBooking }) {
   const { api } = useSession();
   const queryClient = useQueryClient();
   const paymentError = (useLocation().state as { paymentError?: string } | null)?.paymentError;
-  const labs = useQuery({ queryKey: ['partner-labs', {}], queryFn: () => customerLabsApi(api).labs({}) });
-  const lab = labs.data?.find((l) => l.partnerId === b.partnerId);
-  const branch = lab?.branches.find((x) => x.branchId === b.branchId);
+  // Q9: the booking carries its lab's and branch's names.
+  const lab = b.lab?.name ? { name: b.lab.name } : undefined;
+  const branch = b.branch;
   const s = labStatusOf(b);
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ['lab-bookings'] });
@@ -54,7 +54,8 @@ function LabBookingView({ booking: b }: { booking: LabBooking }) {
         <dl className="details">
           <dt>Status</dt><dd><Badge tone={s.tone}>{s.label}</Badge></dd>
           <dt>For</dt><dd>{b.patient.name}</dd>
-          {lab && <><dt>Lab</dt><dd>{lab.name}{branch ? `, ${branch.name}` : ''}</dd></>}
+          {lab && <><dt>Lab</dt><dd>{lab.name}{branch?.name ? `, ${branch.name}` : ''}</dd></>}
+          {branch?.phone && <><dt>Lab phone</dt><dd><a href={`tel:${branch.phone}`}>{branch.phone}</a></dd></>}
           {b.visitMode === 'home' && b.address
             ? <><dt>Address</dt><dd>{[b.address.line1, b.address.line2, b.address.landmark, b.address.city, b.address.pincode].filter(Boolean).join(', ')}</dd></>
             : branch?.address ? <><dt>Where</dt><dd>{[branch.address.line1, branch.address.city, branch.address.pincode].filter(Boolean).join(', ')}</dd></> : null}
@@ -74,7 +75,7 @@ function LabBookingView({ booking: b }: { booking: LabBooking }) {
       {b.status === 'no_show' && <Alert tone="warn">The lab marked you as not present for this time. A missed booking is not refunded.</Alert>}
       {paymentError && b.paymentStatus === 'pending' && <Alert>The payment page could not open: {paymentError} You can pay below.</Alert>}
       {b.status === 'pending_payment' && b.paymentStatus === 'pending' && (
-        <PayAgainPanel what="booking" deadline={b.paymentDeadline} paymentTransactionId={b.paymentTransactionId}
+        <PayAgainPanel key={`${b._id}:${b.paymentTransactionId ?? ''}`} what="booking" deadline={b.paymentDeadline} paymentTransactionId={b.paymentTransactionId}
           expiredCode="LAB_BOOKING_PAYMENT_EXPIRED" description={`Lab tests${lab ? ` at ${lab.name}` : ''}`}
           pay={() => customerLabsApi(api).payAgain(b._id)} onSettled={refresh} />
       )}
@@ -84,12 +85,13 @@ function LabBookingView({ booking: b }: { booking: LabBooking }) {
         <section className="card stack" aria-labelledby="reports-h">
           <h2 id="reports-h">Reports</h2>
           {b.report.files.map((f, i) => {
-            const r = b.report.files.length === b.report.releases.length ? b.report.releases[i] : undefined;
+            // Q9: each release names its file, so the signer shown is exactly this report's.
+            const r = b.report.releases.find((x) => x.file === f);
             const label = b.report.files.length === 1 ? 'report' : `report ${i + 1}`;
             return (
               <div key={f} className="stack">
                 {r && <p className="muted">Released {formatDateTime(r.releasedAt)} by {r.signer.name}{r.signer.registrationNumber ? ` (Reg. ${r.signer.registrationNumber})` : ''}</p>}
-                <PrivateFile label={label} baseName={`lab-report-${i + 1}`} load={(signal) => customerLabsApi(api).reportFile(f, signal)} />
+                <PrivateFile id={f} label={label} baseName={`lab-report-${i + 1}`} load={(signal) => customerLabsApi(api).reportFile(f, signal)} />
               </div>
             );
           })}

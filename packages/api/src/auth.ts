@@ -51,6 +51,12 @@ export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_crea
  */
 export function requestKeysApi(c: ApiClient) {
   return {
+    /**
+     * Q9 read-only: 'used' (with the record it made), 'abandoned', or 'unknown' (not made and not abandoned: it may still
+     * be on its way). Never changes anything.
+     */
+    lookup: (kind: OnceOnlyKind, key: string) =>
+      c.get<{ state: 'used' | 'abandoned' | 'unknown'; record?: Record<string, unknown> & { _id: string } }>('/request-keys/lookup', { query: { kind, key } }),
     /** 'used' comes with the exact record the key produced (return receipt, or the booking's id). */
     abandon: (kind: OnceOnlyKind, key: string) =>
       c.post<{ state: 'abandoned' | 'used'; record?: Record<string, unknown> & { _id: string } }>('/request-keys/abandon', { body: { kind, key } }),

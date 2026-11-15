@@ -1,4 +1,4 @@
-import type { ApiClient } from './client.ts';
+import type { ApiClient, Page } from './client.ts';
 
 /**
  * Q2 customer "Bills": in-house invoices issued by partner labs and clinics to this customer (linked by phone when the
@@ -45,8 +45,10 @@ export interface Bill {
   issuedAt: string;
   supplier: { name: string; legalName?: string; gstin?: string; pan?: string; address: string; placeOfSupply: string };
   customer: { name: string; phone?: string; gstin?: string; age?: number; gender?: string; placeOfSupply?: string };
-  /** The partner's doctor named on the bill (a specialist id; the bill carries no name). */
+  /** The partner's doctor named on the bill. */
   doctorId?: string;
+  /** Q9: that doctor's name (read time). */
+  doctorName?: string;
   items: BillLine[];
   totals: BillTotals;
   lifecycleState: BillState;
@@ -89,11 +91,17 @@ export const billFileName = (b: Pick<Bill, 'serial' | 'lifecycleVersion'>) =>
 
 export function customerBillsApi(c: ApiClient) {
   return {
-    /** Newest first; the backend returns at most 200 and does not page. */
-    bills: () => c.get<Bill[]>('/bills').then((d) => (Array.isArray(d) ? d : [])),
+    /** Q9: newest first, paged. */
+    bills: (page = 1, limit = 20): Promise<Page<Bill>> => c.page<Bill>('/bills', { query: { page, limit } }),
     bill: (invoiceId: string) => c.get<{ invoice: Bill; events: BillEvent[] }>(`/bills/${id(invoiceId)}`)
       .then((d) => ({ invoice: d.invoice, events: [...(d.events ?? [])].sort((a, b) => a.version - b.version) })),
-    /** The PDF bytes (`application/pdf`), read with the customer's token; never a link carrying a token. */
-    pdf: (invoiceId: string, signal?: AbortSignal) => c.blob(`/bills/${id(invoiceId)}/pdf`, { signal }),
+    /**
+     * The PDF bytes of exactly `version` of the bill (0 = as issued; invoicePdfQuerySchema), read with the customer's
+     * token; never a link carrying a token.
+     */
+    pdf: (invoiceId: string, version: number, signal?: AbortSignal) => {
+      if (!Number.isInteger(version) || version < 0) throw new Error('Invalid bill version');
+      return c.blob(`/bills/${id(invoiceId)}/pdf`, { query: { version }, signal });
+    },
   };
 }

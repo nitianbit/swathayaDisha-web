@@ -1,15 +1,17 @@
-import { Fragment, useMemo, useState, type FormEvent } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  addressErrors, COUPON_PATTERN, customerApi, customerLabsApi, fromPaise, LAB_CANCEL_CUTOFF_HOURS, LAB_MAX_ITEMS, LAB_PAYMENT_WINDOW_MIN,
+  ApiError, addressErrors, COUPON_PATTERN, customerApi, customerLabsApi, fromPaise, LAB_CANCEL_CUTOFF_HOURS, LAB_MAX_ITEMS, LAB_PAYMENT_WINDOW_MIN,
+  labPayableMinor,
   type LabBookingPayment, type LabCatalogueItem, type LabSlot, type NewLabBooking, type PartnerLab, type VisitMode,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
 import { messageOf, PageHeading } from '../../common.tsx';
 import { PendingCreatePanel, useOnceOnly } from '../../onceOnly.tsx';
 import { payOrder } from '../../payments.ts';
+import { usePriceAgreement } from '../../priceAgreement.ts';
 import { useCustomer, useSession } from '../../session.tsx';
 import { nextDays } from '../DoctorScreen.tsx';
 import { clock, VISIT_MODE_LABEL } from './labels.ts';
@@ -21,16 +23,17 @@ export function LabScreen() {
   const { partnerId = '' } = useParams();
   const { api } = useSession();
   const valid = /^[0-9a-fA-F]{24}$/.test(partnerId);
-  // There is no single-lab read: the lab and its branches come from the (cached) list of labs.
-  const labs = useQuery({ queryKey: ['partner-labs', {}], queryFn: () => customerLabsApi(api).labs({}), enabled: valid });
-  const lab = labs.data?.find((l) => l.partnerId === partnerId);
+  // Q9: one lab with its active branches.
+  const q = useQuery({ queryKey: ['partner-lab', partnerId], queryFn: () => customerLabsApi(api).lab(partnerId), enabled: valid });
+  const gone = q.error instanceof ApiError && q.error.status === 404;
   return (
     <>
       <Link to="/labs" className="back"><ArrowLeft size={16} aria-hidden="true" /> Lab tests</Link>
       {!valid ? <Empty title="Lab not found" />
-        : labs.isPending ? <Loading /> : labs.isError ? <ErrorState message={messageOf(labs.error)} onRetry={() => void labs.refetch()} />
-        : !lab ? <Empty title="This lab is not available">It may have stopped taking bookings. <Link to="/labs">See other labs</Link></Empty>
-        : <LabView key={lab.partnerId} lab={lab} />}
+        : q.isPending ? <Loading />
+        : gone ? <Empty title="This lab is not available">It may have stopped taking bookings. <Link to="/labs">See other labs</Link></Empty>
+        : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
+        : <LabView key={q.data.partnerId} lab={q.data} />}
     </>
   );
 }
@@ -41,21 +44,31 @@ function LabView({ lab }: { lab: PartnerLab }) {
   const queryClient = useQueryClient();
   const profile = useQuery({ queryKey: ['me'], queryFn: () => customerApi(api).profile() });
   const payer = { name: profile.data?.name, contact: profile.data?.phone, email: profile.data?.email };
+  // Q9: a refused price (409 PRICE_CHANGED) re-reads the prices and re-checks the coupon; the form then asks the
+  // customer to accept the new price before anything can be sent again.
+  const [priceRefusals, setPriceRefusals] = useState(0);
   const once = useOnceOnly<NewLabBooking, LabBookingPayment>(`lab-create:${lab.partnerId}`,
     (body, key) => customerLabsApi(api).book(body, key),
-    async (r) => {
+    async (r, alive) => {
       await queryClient.invalidateQueries({ queryKey: ['lab-bookings'] });
       await queryClient.invalidateQueries({ queryKey: ['wallet'] });
+      if (!alive()) return; // the customer left: the booking is in My bookings, nothing opens on its own
       const path = `/partner-lab-bookings/${r.booking._id}`;
       if (r.paymentRequired && r.payment) {
         try {
           await payOrder(api, r.payment, payer, `Lab tests at ${lab.name}`);
         } catch (err) {
-          navigate(path, { state: { paymentError: messageOf(err) } });
+          if (alive()) navigate(path, { state: { paymentError: messageOf(err) } });
           return;
         }
       }
-      navigate(path);
+      if (alive()) navigate(path);
+    },
+    (err) => {
+      if (err instanceof ApiError && err.code === 'PRICE_CHANGED') {
+        void queryClient.invalidateQueries({ queryKey: ['partner-lab-catalogue', lab.partnerId] });
+        setPriceRefusals((n) => n + 1);
+      }
     });
 
   const modes = (['home', 'lab'] as VisitMode[]).filter((m) => lab.branches.some((b) => (m === 'home' ? b.homeCollection : b.inLab)));
@@ -175,7 +188,7 @@ function LabView({ lab }: { lab: PartnerLab }) {
 
           {chosen.length > 0 && slot ? (
             <BookForm key={`${branch.branchId}:${slot.slotId}`} lab={lab} branchId={branch.branchId} mode={mode} items={chosen} slot={slot}
-              dayLabel={days.find((x) => isoDay(x.date) === day)?.label ?? day} once={once} />
+              dayLabel={days.find((x) => isoDay(x.date) === day)?.label ?? day} once={once} priceRefusals={priceRefusals} />
           ) : (
             <p className="muted">Choose at least one test and a time to continue.</p>
           )}
@@ -187,8 +200,8 @@ function LabView({ lab }: { lab: PartnerLab }) {
 
 type Once = ReturnType<typeof useOnceOnly<NewLabBooking, LabBookingPayment>>;
 
-function BookForm({ lab, branchId, mode, items, slot, dayLabel, once }: {
-  lab: PartnerLab; branchId: string; mode: VisitMode; items: LabCatalogueItem[]; slot: LabSlot; dayLabel: string; once: Once;
+function BookForm({ lab, branchId, mode, items, slot, dayLabel, once, priceRefusals }: {
+  lab: PartnerLab; branchId: string; mode: VisitMode; items: LabCatalogueItem[]; slot: LabSlot; dayLabel: string; once: Once; priceRefusals: number;
 }) {
   const { api } = useSession();
   const me = useCustomer();
@@ -200,31 +213,65 @@ function BookForm({ lab, branchId, mode, items, slot, dayLabel, once }: {
   const p = profile.data;
   const [address, setAddress] = useState(() => ({ line1: p?.address ?? '', line2: '', city: p?.city ?? '', state: p?.state ?? '', pincode: p?.pincode ?? '', landmark: '' }));
   const [code, setCode] = useState('');
-  const [coupon, setCoupon] = useState<{ code: string; discount: number } | null>(null);
+  /** The code the customer applied; it is checked again for every change of lab, visit type, tests or prices. */
+  const [applied, setApplied] = useState<string | null>(null);
+  /** A coupon result is valid only for the exact context it was checked for. */
+  const [coupon, setCoupon] = useState<{ code: string; discount: number; ctx: string } | null>(null);
+  const [couponBusy, setCouponBusy] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
   const [useWallet, setUseWallet] = useState(true);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const subtotal = useMemo(() => items.reduce((a, i) => a + i.priceMinor, 0) / 100, [items]);
-  const afterCoupon = Math.max(0, subtotal - (coupon?.discount ?? 0));
+  const subtotalMinor = useMemo(() => items.reduce((a, i) => a + i.priceMinor, 0), [items]);
+  const subtotal = subtotalMinor / 100;
+  const ctx = `${lab.partnerId}|${mode}|${items.map((i) => `${i.itemId}:${i.kind}:${i.priceMinor}`).sort().join(',')}`;
+  const ctxRef = useRef(ctx);
+  ctxRef.current = ctx;
+  const current = coupon && coupon.ctx === ctx ? coupon : null;
+  const payableMinor = labPayableMinor(subtotalMinor, current?.discount);
+  const afterCoupon = payableMinor / 100;
   const walletUse = useWallet ? Math.min(afterCoupon, Number(wallet.data?.balance ?? 0)) : 0;
   const toPay = Math.max(0, afterCoupon - walletUse);
   const set = (k: keyof typeof address) => (e: { target: { value: string } }) => setAddress((a) => ({ ...a, [k]: e.target.value }));
+  const couponSettled = !couponBusy && (!applied || !!current || !!couponError);
+  // What is being bought (prices excluded): a price change for the same tests and coupon must be accepted again.
+  const agreement = usePriceAgreement(`${lab.partnerId}|${mode}|${items.map((i) => i.itemId).sort().join(',')}|${current?.code ?? ''}`,
+    `${subtotalMinor}:${payableMinor}`, couponSettled);
 
+  const seq = useRef(0);
+  async function checkCoupon(value: string, forCtx: string, forItems: LabCatalogueItem[]) {
+    const mine = ++seq.current;
+    const stale = () => mine !== seq.current || ctxRef.current !== forCtx;
+    setCouponBusy(true); setCouponError(null);
+    try {
+      const sub = forItems.reduce((a, i) => a + i.priceMinor, 0) / 100;
+      const r = await customerLabsApi(api).checkCoupon({ code: value, partnerId: lab.partnerId, purchaseAmount: sub,
+        testIds: forItems.filter((i) => i.kind === 'test').map((i) => i.itemId), packageIds: forItems.filter((i) => i.kind === 'package').map((i) => i.itemId) });
+      if (stale()) return; // asked for other tests or prices: a newer check (or none) decides
+      if (r?.isValid) setCoupon({ code: r.coupon?.code ?? value, discount: Math.min(sub, Number(r.discountAmount ?? 0)), ctx: forCtx });
+      else { setCoupon(null); setApplied(null); setCouponError(r?.message || `Coupon ${value} cannot be used for these tests.`); }
+    } catch (err) {
+      if (stale()) return;
+      setCoupon(null); setApplied(null); setCouponError(messageOf(err));
+    } finally {
+      if (mine === seq.current) setCouponBusy(false);
+    }
+  }
   async function applyCoupon() {
     setCouponError(null);
     const value = code.trim().toUpperCase();
     if (!COUPON_PATTERN.test(value)) { setCouponError('Enter a valid coupon code.'); return; }
-    try {
-      const r = await customerLabsApi(api).checkCoupon({ code: value, partnerId: lab.partnerId, purchaseAmount: subtotal,
-        testIds: items.filter((i) => i.kind === 'test').map((i) => i.itemId), packageIds: items.filter((i) => i.kind === 'package').map((i) => i.itemId) });
-      if (r?.isValid) setCoupon({ code: r.coupon?.code ?? value, discount: Math.min(subtotal, Number(r.discountAmount ?? 0)) });
-      else { setCoupon(null); setCouponError(r?.message || 'This coupon cannot be used for these tests.'); }
-    } catch (err) { setCoupon(null); setCouponError(messageOf(err)); }
+    setApplied(value);
+    await checkCoupon(value, ctx, items);
   }
+  // Tests, visit type or prices changed: the applied coupon is checked again for exactly what is now chosen.
+  useEffect(() => { if (applied && coupon?.ctx !== ctx) void checkCoupon(applied, ctx, items); }, [ctx]);
+  // The server refused the price: re-check the coupon too (its discount may have changed).
+  useEffect(() => { if (priceRefusals > 0 && applied) { setCoupon(null); void checkCoupon(applied, ctx, items); } }, [priceRefusals]);
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    if (!agreement.agreed) return;
     const errs = mode === 'home' ? addressErrors(address) : {};
     setErrors(errs);
     if (Object.keys(errs).length) return;
@@ -236,8 +283,10 @@ function BookForm({ lab, branchId, mode, items, slot, dayLabel, once }: {
         line1: trimmed.line1!, city: trimmed.city!, pincode: trimmed.pincode!,
         ...(trimmed.line2 ? { line2: trimmed.line2 } : {}), ...(trimmed.state ? { state: trimmed.state } : {}), ...(trimmed.landmark ? { landmark: trimmed.landmark } : {}),
       } } : {}),
-      ...(coupon ? { couponCode: coupon.code } : {}),
+      ...(current ? { couponCode: current.code } : {}),
       useWalletBalance: useWallet,
+      // Q9: exactly the price on screen, which the customer agreed to; the server refuses any other.
+      acceptedPayableMinor: payableMinor, acceptedSubtotalMinor: subtotalMinor,
     };
     void once.send(once.start(body, `${clock(slot.startTime)}, ${dayLabel}`));
   }
@@ -268,11 +317,12 @@ function BookForm({ lab, branchId, mode, items, slot, dayLabel, once }: {
       {subtotal > 0 && (
         <div className="stack">
           <div className="row">
-            <TextField label="Coupon (optional)" value={code} onChange={(e) => { setCode(e.target.value.toUpperCase()); setCoupon(null); }}
+            <TextField label="Coupon (optional)" value={code} onChange={(e) => { setCode(e.target.value.toUpperCase()); setApplied(null); setCoupon(null); setCouponError(null); }}
               error={couponError} autoCapitalize="characters" />
-            <Button variant="secondary" onClick={() => void applyCoupon()} disabled={!code.trim()}>Apply</Button>
+            <Button variant="secondary" busy={couponBusy} onClick={() => void applyCoupon()} disabled={!code.trim()}>Apply</Button>
           </div>
-          {coupon && <Alert tone="ok">Coupon {coupon.code}: {formatRupees(coupon.discount)} off.</Alert>}
+          {couponBusy && applied && <p className="muted" role="status">Checking coupon {applied} for these tests…</p>}
+          {current && !couponBusy && <Alert tone="ok">Coupon {current.code}: {formatRupees(current.discount)} off.</Alert>}
           {Number(wallet.data?.balance ?? 0) > 0 && (
             <label className="check"><input type="checkbox" checked={useWallet} onChange={(e) => setUseWallet(e.target.checked)} />
               Use my wallet ({formatRupees(wallet.data?.balance)})</label>
@@ -281,7 +331,7 @@ function BookForm({ lab, branchId, mode, items, slot, dayLabel, once }: {
       )}
       <dl className="details" aria-label="Price">
         {items.map((i) => <Fragment key={i.itemId}><dt>{i.name}</dt><dd>{formatRupees(fromPaise(i.priceMinor))}</dd></Fragment>)}
-        {coupon ? <><dt>Coupon</dt><dd>−{formatRupees(coupon.discount)}</dd></> : null}
+        {current ? <><dt>Coupon</dt><dd>−{formatRupees(current.discount)}</dd></> : null}
         {walletUse > 0 ? <><dt>From wallet</dt><dd>−{formatRupees(walletUse)}</dd></> : null}
         <dt>To pay now</dt><dd><strong>{formatRupees(toPay)}</strong></dd>
       </dl>
@@ -291,7 +341,16 @@ function BookForm({ lab, branchId, mode, items, slot, dayLabel, once }: {
         {' '}{LAB_CANCEL_CUTOFF_HOURS} hours before the time.
       </p>
       {once.error && <Alert>{once.error}</Alert>}
-      <Button type="submit" busy={once.busy}>{toPay > 0 ? 'Book and pay' : 'Book'}</Button>
+      {agreement.changed && (
+        <div className="confirm" role="group" aria-label="Price changed">
+          <Alert tone="warn">
+            The price changed: you now pay {formatRupees(afterCoupon)} for these tests
+            {agreement.previous ? ` (it was ${formatRupees(Number(agreement.previous.split(':')[1]) / 100)})` : ''}. Check it before you book.
+          </Alert>
+          <div className="row"><Button variant="secondary" onClick={agreement.accept}>Accept the new price</Button></div>
+        </div>
+      )}
+      <Button type="submit" busy={once.busy || couponBusy} disabled={!agreement.agreed}>{toPay > 0 ? 'Book and pay' : 'Book'}</Button>
     </form>
   );
 }

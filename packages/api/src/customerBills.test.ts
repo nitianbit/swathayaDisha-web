@@ -18,15 +18,20 @@ describe('customer bills api', () => {
     expect(r.events.map((e) => e.kind)).toEqual(['payment', 'cancellation']);
     expect(calls[0]).toBe(`https://api.example.test/api/v1/bills/${I}`);
   });
-  it('reads the PDF as bytes with the token, and refuses a malformed id before calling', async () => {
+  it('reads exactly the requested version of the PDF as bytes, and refuses a malformed id or version before calling', async () => {
     const { api, calls } = setup(() => new Response('%PDF-1.4', { status: 200, headers: { 'Content-Type': 'application/pdf' } }));
-    expect(await (await api.pdf(I)).text()).toBe('%PDF-1.4');
-    expect(calls[0]).toBe(`https://api.example.test/api/v1/bills/${I}/pdf`);
-    expect(() => api.pdf('x/../../admins')).toThrow('Invalid bill id');
+    expect(await (await api.pdf(I, 0)).text()).toBe('%PDF-1.4');
+    expect(calls[0]).toBe(`https://api.example.test/api/v1/bills/${I}/pdf?version=0`);
+    expect(() => api.pdf('x/../../admins', 1)).toThrow('Invalid bill id');
+    expect(() => api.pdf(I, -1)).toThrow('Invalid bill version');
+    expect(calls).toHaveLength(1);
   });
-  it('treats an odd list answer as no bills', async () => {
-    const { api } = setup(() => new Response(JSON.stringify({ success: true, data: null })));
-    await expect(api.bills()).resolves.toEqual([]);
+  it('pages the list (Q9) and treats an odd answer as no bills', async () => {
+    const { api, calls } = setup(() => new Response(JSON.stringify({ success: true, data: [{ _id: I, doctorName: 'Dr. A' }], pagination: { page: 2, limit: 20, total: 21, totalPages: 2 } })));
+    await expect(api.bills(2)).resolves.toMatchObject({ items: [{ _id: I, doctorName: 'Dr. A' }], page: 2, total: 21, totalPages: 2 });
+    expect(calls[0]).toBe('https://api.example.test/api/v1/bills?page=2&limit=20');
+    const odd = setup(() => new Response(JSON.stringify({ success: true, data: null })));
+    await expect(odd.api.bills()).resolves.toMatchObject({ items: [] });
   });
 });
 

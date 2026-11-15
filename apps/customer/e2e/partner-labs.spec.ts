@@ -33,10 +33,24 @@ interface Backend {
   bookings: Map<string, Rec>;
   records: Map<string, { bookingId: string; orderId: string; captured: boolean }>;
   byKey: Map<string, string>;
-  createDrops: boolean;
+  createDrops: false | 'before' | 'after';
   refuseCreate: boolean;
   windowPassed: boolean;
+  /** Current server prices (paise) by item. */
+  prices: Record<string, number>;
+  /** A gate the next create / pay answer waits for (the customer may leave meanwhile). */
+  holdCreate: Promise<void> | null;
+  holdPay: Promise<void> | null;
+  /** D4 cookie sessions (a reload keeps the customer signed in). */
+  sessions: boolean;
+  live: boolean;
+  abandoned: Set<string>;
+  checkoutLoads: number;
 }
+
+const gate = () => { let release!: () => void; const p = new Promise<void>((r) => { release = r; }); return { p, release }; };
+/** The demo coupon LAB50 takes ₹50 off, for bookings that include the blood count only. */
+const couponDiscountMinor = (code: unknown, itemIds: string[]) => (code === 'LAB50' && itemIds.includes(T1) ? 5000 : 0);
 
 function labBooking(id: string, over: Rec = {}): Rec {
   const startsAt = new Date(Date.now() + 72 * HOUR).toISOString();
@@ -46,6 +60,7 @@ function labBooking(id: string, over: Rec = {}): Rec {
     slot: { slotId: S1, date: istDay(72 * HOUR), startTime: '09:00', endTime: '09:30', startsAt },
     items: [{ catalogItemId: T1, kind: 'test', name: 'Complete blood count', priceMinor: 40000 }],
     pricing: { subtotalMinor: 40000, discountMinor: 0, payableMinor: 40000, currency: 'INR' },
+    lab: { name: 'Sunrise Diagnostics' }, branch: { name: 'Kothrud', phone: '9000000000', address: { line1: '4 Paud Road', city: 'Pune', pincode: '411038' } },
     status: 'confirmed', paymentStatus: 'paid', paymentTransactionId: 'e'.repeat(24), paymentDeadline: new Date(Date.now() + 20 * 60_000).toISOString(),
     reschedule: { version: 0, pending: false }, report: { files: [], releases: [] },
     lifecycle: { paidAt: new Date().toISOString(), confirmedAt: new Date().toISOString() }, createdAt: new Date().toISOString(), ...over,
@@ -53,7 +68,8 @@ function labBooking(id: string, over: Rec = {}): Rec {
 }
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const state: Backend = { calls: [], bookings: new Map(), records: new Map(), byKey: new Map(), createDrops: false, refuseCreate: false, windowPassed: false };
+  const state: Backend = { calls: [], bookings: new Map(), records: new Map(), byKey: new Map(), createDrops: false, refuseCreate: false, windowPassed: false,
+    prices: { [T1]: 40000, [T2]: 150000 }, holdCreate: null, holdPay: null, sessions: false, live: false, abandoned: new Set(), checkoutLoads: 0 };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const ok = (route: Route, data: unknown, status = 200) => json(route, status, { success: true, data });
   const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
@@ -66,7 +82,7 @@ async function mockBackend(page: Page): Promise<Backend> {
   };
   const confirm = (bookingId: string) => { const b = state.bookings.get(bookingId)!; b.status = 'confirmed'; b.paymentStatus = 'paid'; };
 
-  await page.route('https://checkout.razorpay.com/v1/checkout.js', (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: FAKE_CHECKOUT }));
+  await page.route('https://checkout.razorpay.com/v1/checkout.js', (route) => { state.checkoutLoads += 1; return route.fulfill({ status: 200, contentType: 'text/javascript', body: FAKE_CHECKOUT }); });
   await page.route('**/__fake_gateway/**', (route) => {
     const o = new URL(route.request().url()).searchParams.get('order');
     for (const r of state.records.values()) if (r.orderId === o) r.captured = true;
@@ -79,8 +95,26 @@ async function mockBackend(page: Page): Promise<Backend> {
     const body = req.method() === 'POST' ? req.postDataJSON() : null;
     state.calls.push({ method: req.method(), path: `${path}${url.search}`, body, auth: req.headers().authorization });
     if (path === '/auth/user/send') return json(route, 200, { success: true });
-    if (path === '/auth/user/verify') return ok(route, { token: 't', user: {} });
-    if (path === '/auth/session/refresh') return json(route, 401, { error: 401, code: 'SESSION_ENDED', message: 'Please sign in again' });
+    if (path === '/auth/user/verify') {
+      if (state.sessions && (body as { session?: string }).session === 'cookie') state.live = true;
+      return ok(route, { token: 't', expiresIn: 900, user: {} });
+    }
+    if (path === '/auth/session/refresh') {
+      if (!state.sessions || !state.live) return json(route, 401, { error: 401, code: 'SESSION_ENDED', message: 'Please sign in again' });
+      return ok(route, { token: 't', expiresIn: 900, principal: { userId: ME, userType: 'user', sid: 's' } });
+    }
+    if (path === '/auth/session/logout') { state.live = false; return json(route, 200, { success: true }); }
+    if (path === '/request-keys/lookup') {
+      const key = url.searchParams.get('key')!;
+      if (state.byKey.has(key)) return ok(route, { state: 'used', record: { _id: state.byKey.get(key) } });
+      return ok(route, { state: state.abandoned.has(key) ? 'abandoned' : 'unknown' });
+    }
+    if (path === '/request-keys/abandon') {
+      const { key } = body as { key: string };
+      if (state.byKey.has(key)) return ok(route, { state: 'used', record: { _id: state.byKey.get(key) } });
+      state.abandoned.add(key);
+      return ok(route, { state: 'abandoned' });
+    }
     if (path === '/auth/profile') return ok(route, { user: { _id: ME, name: 'Asha Rao', phone: '9876543210', email: 'a@x.in', gender: 'Female', dateOfBirth: '19900101' }, userRole: 'user' });
     if (path === `/wallet/user/${ME}`) return ok(route, { _id: 'w', userId: ME, balance: 50, isActive: true });
     if (path === '/dependents') return page1(route, [{ _id: MOTHER, userId: ME, name: 'Kamala Rao', relationship: 'Mother', isActive: true }]);
@@ -88,22 +122,36 @@ async function mockBackend(page: Page): Promise<Backend> {
       return ok(route, [{ partnerId: LAB, name: 'Sunrise Diagnostics', provider: 'partner', branches: [{ branchId: BR, name: 'Kothrud',
         address: { line1: '4 Paud Road', city: 'Pune', state: 'Maharashtra', pincode: '411038' }, phone: '9000000000', homeCollection: true, inLab: true }] }]);
     }
+    if (path === `/partner-labs/${LAB}`) {
+      // Q9 single lab: raw branch records.
+      return ok(route, { partnerId: LAB, name: 'Sunrise Diagnostics', provider: 'partner', branches: [{ _id: BR, name: 'Kothrud',
+        address: { line1: '4 Paud Road', city: 'Pune', state: 'Maharashtra', pincode: '411038' }, phone: '9000000000', services: { homeCollection: true, inLab: true } }] });
+    }
     if (path === `/partner-labs/${LAB}/catalogue`) {
       return ok(route, [
-        { itemId: T1, kind: 'test', name: 'Complete blood count', price: 400, priceMinor: 40000, mrpMinor: 50000, visitModes: ['home', 'lab'], preparation: 'No fasting needed' },
-        { itemId: T2, kind: 'package', name: 'Full body check', price: 1500, priceMinor: 150000, visitModes: ['home', 'lab'], includes: ['CBC', 'Lipid profile'] },
+        { itemId: T1, kind: 'test', name: 'Complete blood count', price: state.prices[T1]! / 100, priceMinor: state.prices[T1], mrpMinor: 50000, visitModes: ['home', 'lab'], preparation: 'No fasting needed' },
+        { itemId: T2, kind: 'package', name: 'Full body check', price: state.prices[T2]! / 100, priceMinor: state.prices[T2], visitModes: ['home', 'lab'], includes: ['CBC', 'Lipid profile'] },
       ]);
     }
     if (path === `/partner-labs/branches/${BR}/slots`) {
       return ok(route, [{ slotId: S1, date: istDay(), startTime: '23:30', endTime: '23:59', seatsLeft: 3 }]);
     }
-    if (path === '/coupons/validate') return ok(route, { isValid: true, discountAmount: 50, finalAmount: 350, coupon: { code: 'LAB50' } });
+    if (path === '/coupons/validate') {
+      const v = body as { code: string; testIds?: string[]; packageIds?: string[]; purchaseAmount: number };
+      const d = couponDiscountMinor(v.code, [...(v.testIds ?? []), ...(v.packageIds ?? [])]);
+      if (!d) return ok(route, { isValid: false, message: `Coupon ${v.code} does not apply to these tests` });
+      return ok(route, { isValid: true, discountAmount: d / 100, finalAmount: v.purchaseAmount - d / 100, coupon: { code: v.code } });
+    }
     if (path === '/bookings' || path.startsWith('/external-bookings') ) return page1(route, []);
     if (path === '/instant/requests') return ok(route, []);
     if (path === '/file/fetch') return route.fulfill({ status: 200, contentType: 'application/pdf', body: '%PDF-1.7\nreport' });
-    if (path === '/lab-bookings' && req.method() === 'GET') return ok(route, [...state.bookings.values()]);
+    if (path === '/lab-bookings' && req.method() === 'GET') {
+      const all = [...state.bookings.values()];
+      return json(route, 200, { success: true, data: all, pagination: { page: 1, limit: 20, total: all.length, totalPages: 1 } });
+    }
     if (path === '/lab-bookings' && req.method() === 'POST') {
       const b = body as Rec;
+      if (state.holdCreate) { const h = state.holdCreate; state.holdCreate = null; await h; }
       const known = state.byKey.get(String(b.requestKey));
       if (known) {
         const booking = state.bookings.get(known)!;
@@ -111,7 +159,15 @@ async function mockBackend(page: Page): Promise<Backend> {
         return ok(route, { booking, paymentRequired: booking.paymentStatus !== 'paid', walletDeductedAmount: 50,
           ...(open && booking.paymentStatus !== 'paid' ? { payment: { paymentTransactionId: booking.paymentTransactionId, razorpayOrderId: open.orderId, razorpayKeyId: 'rzp_test_x', amount: 300, currency: 'INR' } } : {}) }, 201);
       }
+      if (state.createDrops === 'before') { state.createDrops = false; return route.abort('connectionreset'); }
       if (state.refuseCreate) { state.refuseCreate = false; return json(route, 409, { error: 409, code: 'SLOT_FULL', message: 'This time is no longer available' }); }
+      // Q9 price fence: nothing is made at a price the customer did not accept.
+      const itemIds = b.itemIds as string[];
+      const subtotal = itemIds.reduce((a, i) => a + state.prices[i]!, 0);
+      const discount = couponDiscountMinor(b.couponCode, itemIds);
+      if (b.acceptedPayableMinor !== subtotal - discount || (b.acceptedSubtotalMinor !== undefined && b.acceptedSubtotalMinor !== subtotal)) {
+        return json(route, 409, { error: 409, code: 'PRICE_CHANGED', message: `The price is now ₹${((subtotal - discount) / 100).toFixed(2)}; review and confirm again` });
+      }
       const id = String(state.bookings.size + 1).padStart(24, 'b');
       state.byKey.set(String(b.requestKey), id);
       const booking = labBooking(id, { status: 'pending_payment', paymentStatus: 'pending', patient: { kind: 'dependent', name: 'Kamala Rao' }, lifecycle: {},
@@ -119,7 +175,7 @@ async function mockBackend(page: Page): Promise<Backend> {
       state.bookings.set(id, booking);
       const payment = order(id, 300);
       booking.paymentTransactionId = payment.paymentTransactionId;
-      if (state.createDrops) { state.createDrops = false; return route.abort('connectionreset'); }
+      if (state.createDrops === 'after') { state.createDrops = false; return route.abort('connectionreset'); }
       return ok(route, { booking, paymentRequired: true, walletDeductedAmount: 50, payment }, 201);
     }
     const m = /^\/lab-bookings\/(\w{24})(\/pay|\/cancel|\/accept-reschedule)?$/.exec(path);
@@ -127,6 +183,7 @@ async function mockBackend(page: Page): Promise<Backend> {
       const b = state.bookings.get(m[1]!);
       if (!b) return json(route, 404, { error: 404, code: 'LAB_BOOKING_NOT_FOUND', message: 'Booking not found' });
       if (m[2] === '/pay') {
+        if (state.holdPay) { const h = state.holdPay; state.holdPay = null; await h; }
         for (const r of state.records.values()) if (r.bookingId === m[1] && r.captured) confirm(m[1]!);
         if (b.paymentStatus === 'paid') return ok(route, { booking: b, paymentRequired: false, walletDeductedAmount: 0 });
         if (state.windowPassed) return json(route, 409, { error: 409, code: 'LAB_BOOKING_PAYMENT_EXPIRED', message: 'The payment window has closed; book again' });
@@ -164,7 +221,7 @@ async function mockBackend(page: Page): Promise<Backend> {
   return state;
 }
 
-async function signIn(page: Page, path = '/') {
+async function signIn(page: Page, path = '/'): Promise<void> {
   await page.goto(`/#${path}`);
   await page.getByLabel('Mobile number').fill('9876543210');
   await page.getByRole('button', { name: 'Send code' }).click();
@@ -203,8 +260,9 @@ test('book a home collection for a family member with a coupon and the wallet, a
   expect(posts(backend, '/lab-bookings')[0]!.body).toEqual({
     partnerId: LAB, branchId: BR, visitMode: 'home', slotId: S1, itemIds: [T1], patient: { kind: 'dependent', dependentId: MOTHER },
     address: { line1: '12 MG Road', city: 'Pune', pincode: '411001' }, couponCode: 'LAB50', useWalletBalance: true,
-    requestKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/),
+    acceptedPayableMinor: 35000, acceptedSubtotalMinor: 40000, requestKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/),
   });
+  await expect(page.getByText('Sunrise Diagnostics, Kothrud')).toBeVisible();
   expect(posts(backend, '/payments/verify')).toHaveLength(1);
   await expect(page.getByRole('region', { name: 'Progress' })).toContainText('Paid and confirmed');
   // Listed with the other bookings.
@@ -257,7 +315,7 @@ test('a lost create answer locks the form; sending it again uses the same key an
   await signIn(page);
   await chooseTestAndTime(page);
   await fillHomeForm(page);
-  backend.createDrops = true;
+  backend.createDrops = 'after';
   await page.getByRole('button', { name: 'Book and pay' }).click();
   const locked = page.getByRole('group', { name: 'Unconfirmed lab booking request' });
   await expect(locked).toContainText('It may already have been made');
@@ -326,16 +384,143 @@ test('accept a new time proposed by the lab (exactly the version shown); a newer
 test('a released report is read through the file route with the token and opened from memory', async ({ page }) => {
   const backend = await mockBackend(page);
   const id = 'c5'.repeat(12);
-  backend.bookings.set(id, labBooking(id, { status: 'report_ready', report: { files: [`/api/static/partner-lab-reports/${id}/cbc.pdf`],
-    releases: [{ releasedAt: new Date().toISOString(), signer: { name: 'Dr. Lata Shah', registrationNumber: 'MMC-123' } }] } }));
+  const cbc = `/api/static/partner-lab-reports/${id}/cbc.pdf`;
+  const lipid = `/api/static/partner-lab-reports/${id}/lipid.pdf`;
+  // Two reports, their release records listed in the other order: each signer is matched by file (Q9), not position.
+  backend.bookings.set(id, labBooking(id, { status: 'report_ready', report: { files: [cbc, lipid], releases: [
+    { file: lipid, releasedAt: new Date().toISOString(), signer: { name: 'Dr. Ravi Menon', registrationNumber: 'MMC-999' } },
+    { file: cbc, releasedAt: new Date().toISOString(), signer: { name: 'Dr. Lata Shah', registrationNumber: 'MMC-123' } }] } }));
   await signIn(page, `/partner-lab-bookings/${id}`);
-  await expect(page.getByText(/Released .* by Dr\. Lata Shah \(Reg\. MMC-123\)/)).toBeVisible();
-  await page.getByRole('button', { name: 'Get report' }).click();
-  await expect(page.getByRole('link', { name: 'Open report' })).toHaveAttribute('href', /^blob:/);
-  await expect(page.getByRole('link', { name: 'Save report' })).toHaveAttribute('download', 'lab-report-1.pdf');
+  const reports = page.getByRole('region', { name: 'Reports' });
+  await expect(reports.getByText(/^Released/).nth(0)).toContainText('Dr. Lata Shah (Reg. MMC-123)');
+  await expect(reports.getByText(/^Released/).nth(1)).toContainText('Dr. Ravi Menon (Reg. MMC-999)');
+  await page.getByRole('button', { name: 'Get report 1' }).click();
+  await expect(page.getByRole('link', { name: 'Open report 1' })).toHaveAttribute('href', /^blob:/);
+  await expect(page.getByRole('link', { name: 'Save report 1' })).toHaveAttribute('download', 'lab-report-1.pdf');
   const fetches = backend.calls.filter((c) => c.path.startsWith('/file/fetch'));
   expect(fetches).toHaveLength(1);
   expect(new URLSearchParams(fetches[0]!.path.split('?')[1]).get('url')).toBe(`/api/v1/file/static/partner-lab-reports/${id}/cbc.pdf`);
   expect(fetches[0]!.auth).toBe('Bearer t');
   expect(fetches[0]!.path).not.toContain('t=');
+});
+
+test('the coupon is checked again when the tests change: a coupon for other tests gives no discount', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await chooseTestAndTime(page);
+  await page.getByLabel('Coupon (optional)').fill('LAB50');
+  await page.getByRole('button', { name: 'Apply' }).click();
+  await expect(page.getByText('Coupon LAB50: ₹50.00 off.')).toBeVisible();
+  // Swap the blood count for the package: the old discount must not stay on screen.
+  await page.getByRole('checkbox', { name: /Full body check/ }).check();
+  await page.getByRole('checkbox', { name: /Complete blood count/ }).uncheck();
+  await expect(page.getByText('Coupon LAB50 does not apply to these tests')).toBeVisible();
+  await expect(page.getByText('Coupon LAB50: ₹50.00 off.')).toHaveCount(0);
+  await expect(page.getByLabel('Price')).toContainText('₹1,450.00'); // 1500 − 50 wallet, no coupon
+  const checks = backend.calls.filter((c) => c.path === '/coupons/validate').map((c) => c.body as Record<string, unknown>);
+  expect(checks.at(-1)).toMatchObject({ code: 'LAB50', packageIds: [T2], purchaseAmount: 1500 });
+  expect(checks.at(-1)!.testIds).toBeUndefined();
+  await fillHomeForm(page);
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect(page.getByText('Confirmed', { exact: true })).toBeVisible();
+  const create = posts(backend, '/lab-bookings')[0]!.body as Record<string, unknown>;
+  expect(create.couponCode).toBeUndefined();
+  expect(create).toMatchObject({ itemIds: [T2], acceptedPayableMinor: 150000, acceptedSubtotalMinor: 150000 });
+});
+
+test('a price changed on the server is refused, shown, and booked only after the customer accepts it', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await chooseTestAndTime(page);
+  await fillHomeForm(page);
+  await expect(page.getByLabel('Price')).toContainText('₹350.00');
+  backend.prices[T1] = 45000; // the lab raised its price while the customer was filling in the form
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect(page.getByText(/The price is now ₹450\.00; review and confirm again/)).toBeVisible();
+  const changed = page.getByRole('group', { name: 'Price changed' });
+  await expect(changed).toContainText('you now pay ₹450.00 for these tests (it was ₹400.00)');
+  await expect(page.getByRole('button', { name: 'Book and pay' })).toBeDisabled();
+  await changed.getByRole('button', { name: 'Accept the new price' }).click();
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect(page.getByText('Confirmed', { exact: true })).toBeVisible();
+  const creates = posts(backend, '/lab-bookings').map((c) => c.body as Record<string, unknown>);
+  expect(creates.map((c) => [c.acceptedSubtotalMinor, c.acceptedPayableMinor])).toEqual([[40000, 40000], [45000, 45000]]);
+  expect(creates[1]!.requestKey).not.toBe(creates[0]!.requestKey); // the refused request made nothing: a new intent
+  expect(backend.bookings.size).toBe(1);
+});
+
+test('a create answered after the customer left the page opens nothing (no Checkout, no navigation)', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await chooseTestAndTime(page);
+  await fillHomeForm(page);
+  const held = gate();
+  backend.holdCreate = held.p;
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect.poll(() => posts(backend, '/lab-bookings').length).toBe(1);
+  await page.getByRole('link', { name: 'Lab tests' }).click(); // leaves while the answer is on its way
+  await expect(page.getByRole('heading', { name: 'Lab tests', level: 1 })).toBeVisible();
+  held.release();
+  await expect.poll(() => backend.bookings.size).toBe(1);
+  await page.waitForTimeout(500);
+  await expect(page.getByRole('heading', { name: 'Lab tests', level: 1 })).toBeVisible();
+  expect(backend.checkoutLoads).toBe(0);
+  expect(posts(backend, '/payments/verify')).toHaveLength(0);
+});
+
+test('a pay-again answer that arrives after leaving the booking does not open Checkout', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const id = 'c6'.repeat(12);
+  backend.bookings.set(id, labBooking(id, { status: 'pending_payment', paymentStatus: 'pending', paymentTransactionId: '1'.padStart(24, '9') }));
+  backend.records.set('1'.padStart(24, '9'), { bookingId: id, orderId: 'order_x', captured: false });
+  await signIn(page, `/partner-lab-bookings/${id}`);
+  const held = gate();
+  backend.holdPay = held.p;
+  await page.getByRole('button', { name: 'Pay now' }).click();
+  await expect.poll(() => posts(backend, `/lab-bookings/${id}/pay`).length).toBe(1);
+  await page.getByRole('link', { name: 'My bookings' }).click();
+  await expect(page.getByRole('heading', { name: 'My bookings' })).toBeVisible();
+  held.release();
+  await page.waitForTimeout(500);
+  expect(backend.checkoutLoads).toBe(0);
+  await expect(page.getByRole('heading', { name: 'My bookings' })).toBeVisible();
+});
+
+async function lostThenReload(page: Page, backend: Backend, drop: 'before' | 'after') {
+  backend.sessions = true;
+  await signIn(page);
+  await chooseTestAndTime(page);
+  await fillHomeForm(page);
+  backend.createDrops = drop;
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed lab booking request' })).toBeVisible();
+  await page.reload();
+  const restored = page.getByRole('group', { name: 'Unconfirmed lab booking request' });
+  await expect(restored).toContainText('made earlier on this device');
+  await expect(page.getByRole('button', { name: 'Book and pay' })).toHaveCount(0);
+  return restored;
+}
+
+test('after a reload, a lost lab booking request is looked up read-only and opened when it was made', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const restored = await lostThenReload(page, backend, 'after');
+  await restored.getByRole('button', { name: 'Check what happened' }).click();
+  await expect(page.getByText('Awaiting payment', { exact: true })).toBeVisible();
+  expect(backend.calls.some((c) => c.path.startsWith('/request-keys/lookup'))).toBe(true);
+  expect(backend.calls.some((c) => c.path === '/request-keys/abandon')).toBe(false);
+});
+
+test('after a reload, a request not made yet is given up only when the customer confirms it', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const restored = await lostThenReload(page, backend, 'before');
+  await restored.getByRole('button', { name: 'Check what happened' }).click();
+  await expect(restored).toContainText('it may still be on its way');
+  expect(backend.abandoned.size).toBe(0);
+  await restored.getByRole('button', { name: 'Give it up and start again' }).click();
+  await expect(restored).toContainText('cancelled for good');
+  await restored.getByRole('button', { name: 'Yes, give it up' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed lab booking request' })).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: /Complete blood count/ })).toBeVisible();
+  expect(backend.abandoned.size).toBe(1);
+  expect(backend.bookings.size).toBe(0);
 });

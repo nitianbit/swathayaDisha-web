@@ -14,6 +14,8 @@ import { instantStatusOf } from './labels.ts';
 
 /** How often the customer's presence is reported while the waiting screen is visible (the refund comes after 30 idle minutes). */
 export const ACTIVITY_EVERY_MS = 2 * 60_000;
+/** After acceptance: the call link is made after the accept, and the doctor may still cancel (refund): keep looking. */
+export const ACCEPTED_REFRESH_MS = 15_000;
 
 export function InstantRequestScreen() {
   const { requestId = '' } = useParams();
@@ -22,7 +24,12 @@ export function InstantRequestScreen() {
   const q = useQuery({
     queryKey: ['instant-requests', 'one', requestId], queryFn: () => instantConsultApi(api).request(requestId), enabled: valid,
     // Waiting: look often for an acceptance; unpaid: the server may confirm a late payment or close the request.
-    refetchInterval: (query) => (query.state.data?.status === 'offered' ? 5_000 : query.state.data?.status === 'pending_payment' ? 30_000 : false),
+    // Waiting: often; unpaid: the server may confirm a late payment or close it; accepted: until the consultation ends
+    // (a doctor cancellation turns it into a refund). Refunded and expired requests are final.
+    refetchInterval: (query) => {
+      const st = query.state.data?.status;
+      return st === 'offered' ? 5_000 : st === 'pending_payment' ? 30_000 : st === 'accepted' ? ACCEPTED_REFRESH_MS : false;
+    },
   });
   return (
     <>
@@ -62,7 +69,7 @@ function RequestView({ request: r }: { request: InstantRequest }) {
 
       {paymentError && r.paymentStatus === 'pending' && <Alert>The payment page could not open: {paymentError} You can pay below.</Alert>}
       {r.status === 'pending_payment' && r.paymentStatus === 'pending' && (
-        <PayAgainPanel what="request" deadline={r.paymentDeadline} paymentTransactionId={r.paymentTransactionId} expiredCode="INSTANT_PAYMENT_EXPIRED"
+        <PayAgainPanel key={`${r._id}:${r.paymentTransactionId ?? ''}`} what="request" deadline={r.paymentDeadline} paymentTransactionId={r.paymentTransactionId} expiredCode="INSTANT_PAYMENT_EXPIRED"
           description={`Consultation now · ${r.specialization}`} pay={() => instantConsultApi(api).pay(r._id)} onSettled={refresh} />
       )}
       {r.status === 'expired_unpaid' && (
@@ -188,10 +195,27 @@ function Reoffer({ request: r, onChanged }: { request: InstantRequest; onChanged
 function Accepted({ request: r }: { request: InstantRequest }) {
   const { api } = useSession();
   const bookingId = r.bookingId ?? '';
-  const booking = useQuery({ queryKey: ['booking', bookingId], queryFn: () => customerApi(api).booking(bookingId), enabled: /^[0-9a-fA-F]{24}$/.test(bookingId) });
+  const queryClient = useQueryClient();
+  const booking = useQuery({
+    queryKey: ['booking', bookingId], queryFn: () => customerApi(api).booking(bookingId), enabled: /^[0-9a-fA-F]{24}$/.test(bookingId),
+    // The Meet link is created after the accept (best effort): keep reading the consultation until it has a link or ends.
+    refetchInterval: (query) => {
+      const b = query.state.data;
+      if (b && (b.status === 'completed' || b.status === 'cancelled')) return false;
+      return ACCEPTED_REFRESH_MS;
+    },
+  });
   const back = (r.returned?.walletMinor ?? 0) + (r.returned?.gatewayMinor ?? 0);
   const meet = booking.data?.virtualMeeting;
   const join = meet?.status === 'active' && meet.joinUrl && /^https:\/\//.test(meet.joinUrl) ? meet.joinUrl : null;
+  const [refreshing, setRefreshing] = useState(false);
+  async function refreshNow() {
+    setRefreshing(true);
+    try {
+      await queryClient.invalidateQueries({ queryKey: ['instant-requests', 'one', r._id] });
+      await booking.refetch();
+    } finally { setRefreshing(false); }
+  }
   return (
     <section className="card stack" aria-labelledby="acc-h">
       <h2 id="acc-h">A doctor accepted</h2>
@@ -203,7 +227,14 @@ function Accepted({ request: r }: { request: InstantRequest }) {
         {join && <a className="j-btn j-btn--primary" href={join} target="_blank" rel="noopener noreferrer">Join the call</a>}
         {bookingId && <Link className="j-btn j-btn--secondary" to={`/bookings/${bookingId}`}>Open your consultation</Link>}
       </div>
-      {!join && r.mode !== 'chat' && !booking.isPending && <p className="muted">The call link appears here and on your consultation once it is ready.</p>}
+      {booking.isError && (
+        <ErrorState message={`Your consultation could not be loaded: ${messageOf(booking.error)}`} onRetry={() => void booking.refetch()} />
+      )}
+      {!join && r.mode !== 'chat' && booking.isSuccess && booking.data.status === 'confirmed' && (
+        <p className="muted" role="status">The call link is being prepared. It appears here and on your consultation once it is ready; this page checks by itself.</p>
+      )}
+      {booking.data?.status === 'cancelled' && <Alert tone="warn">This consultation was cancelled.</Alert>}
+      <div className="row"><Button variant="ghost" busy={refreshing} onClick={() => void refreshNow()}>Refresh</Button></div>
       <p className="muted">A consultation cannot be cancelled once a doctor has accepted it. If the doctor cancels, you get a full refund to your wallet.</p>
     </section>
   );

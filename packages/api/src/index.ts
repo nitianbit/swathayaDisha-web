@@ -35,7 +35,7 @@ export type { PendingMarker, Principal, SessionAnnouncement } from './webSession
 export { customerPharmacyApi, normalizeCart, PHARMACY_PAYMENT_WINDOW_MIN, shelfOf } from './customerPharmacy.ts';
 export type { Cart, CartItem, Checkout, CheckoutResult, PharmacyStore, ShelfItem, StockRow } from './customerPharmacy.ts';
 export {
-  addressErrors, customerLabsApi, fromPaise, istDay, LAB_ADDRESS_LIMITS, LAB_CANCEL_CUTOFF_HOURS, LAB_MAX_ITEMS, LAB_PAYMENT_WINDOW_MIN,
+  addressErrors, customerLabsApi, fromPaise, istDay, labPayableMinor, normalizeLab, LAB_ADDRESS_LIMITS, LAB_CANCEL_CUTOFF_HOURS, LAB_MAX_ITEMS, LAB_PAYMENT_WINDOW_MIN,
   LAB_PINCODE_PATTERN, labCancelCheck, labTimeline,
 } from './customerLabs.ts';
 export type {
@@ -46,8 +46,8 @@ export { BILL_KIND_LABEL, BILL_PAYMENT_MODE, billFileName, customerBillsApi, gst
 export type { Bill, BillDocumentKind, BillEvent, BillLine, BillPaymentMode, BillState, BillTotals } from './customerBills.ts';
 export {
   countdown, heldRefundMinor, INSTANT_INACTIVITY_MIN, INSTANT_MODE_LABEL, INSTANT_MODES, INSTANT_OFFER_MIN, INSTANT_PAYMENT_WINDOW_MIN,
-  instantConsultApi, SPECIALITY_LIMITS, waitingState,
+  instantConsultApi, instantPayableMinor, SPECIALITY_LIMITS, waitingState,
 } from './instantConsult.ts';
 export type {
-  InstantMode, InstantPayment, InstantQuote, InstantRequest, InstantStatus, InstantTarget, MoneySplit, NewInstantRequest, OnlineDoctor,
+  InstantMode, InstantPayment, InstantQuote, InstantSpeciality, InstantRequest, InstantStatus, InstantTarget, MoneySplit, NewInstantRequest, OnlineDoctor,
 } from './instantConsult.ts';

@@ -174,19 +174,30 @@ Backend: Q2 bills, Q3 partner labs, Q4b instant consultations (`m0/q7-partner-si
   GSTIN, doctor name from the public doctor profile), PDF.
 - **My bookings** lists Consult now requests and partner lab bookings as their own sections.
 
-Backend gaps found (not changed):
-- Bills name the doctor only by `doctorId` (the PDF has no doctor); the app reads the public doctor profile, so a
-  doctor no longer listed is left out.
-- `GET /bills` (200), `GET /lab-bookings` (100) and `GET /instant/requests` (50) are capped and not paged.
-- No single-lab read (`GET /partner-labs/:partnerId`): lab and branch names come from the full list; a booking does
-  not carry its lab's name.
-- Customer views hide the create request key, so a create whose answer was lost before a reload can only be settled by
-  abandoning its key (found → opened; not found → cancelled for good); there is no check-only lookup.
-- Released report URLs and their release records are separate arrays (the path is removed from releases): the app
-  pairs them by position only when the counts match.
-- No list of specialities for Consult now: the text must match a doctor's speciality exactly (case-insensitive).
-- A refund of held money is not recorded on the request (`refunded` is set only for doctor cancellations): the app
-  shows funding wallet + gateway as the amount returned.
+**Codex review round 1 (5 MEDIUM) and backend Q9** (`m0/q9-customer-reads`, 78b9efe):
+- **Price fences.** Lab bookings send `acceptedPayableMinor` + `acceptedSubtotalMinor`, Consult now sends `acceptedQuoteMinor` +
+  `acceptedPayableMinor`: exactly the price on screen. A price is "agreed" per choice (tests / doctor, patient, coupon;
+  prices excluded): the first price shown for a choice counts as seen; if it changes for the same choice (server re-read,
+  coupon re-check) nothing can be sent until the customer taps "Accept the new price". 409 `PRICE_CHANGED` /
+  `QUOTE_CHANGED` re-reads the prices or quote and re-checks the coupon.
+- **Coupons belong to their context.** A coupon result counts only for the lab, visit type, tests and prices (or doctor,
+  patient and quote) it was checked for; any change re-checks it; late answers for another context are dropped; nothing
+  is sent while a check is running.
+- **Completions belong to their request and page.** A create's success counts only while its key still owns the slot (an
+  ended or replaced intent, or a second answer for the same key, does nothing); Checkout and navigation happen only while
+  the page is on screen. Pay-again runs are numbered: an older answer, or one arriving after the page was left, opens
+  nothing; the panel is keyed by record + payment attempt.
+- **After a reload** a lost create is looked up read-only (`GET /request-keys/lookup`): made → opened; abandoned →
+  start again; unknown → check again, or give it up for good only when the customer confirms (abandon).
+- **Accepted Consult now** keeps reading the request (15 s) and its consultation until it ends: the Meet link appears when
+  it is created, a doctor cancellation shows the refund; Refresh button and error-with-retry.
+- **Private files** are keyed by document identity (report file; bill id + lifecycle version) and the bill PDF is
+  requested for the version on screen (`?version=`); the bill page always re-reads the bill.
+- **Q9 reads adopted:** paged bills / lab bookings / Consult now requests (Show more); `doctorName` on bills; lab and
+  branch names on lab bookings; report signers paired by `file`; `GET /partner-labs/:partnerId`; a speciality picker from
+  `GET /instant/specialities?mode` (with online counts, always fresh); held refunds read from `refunded`.
+
+Backend gaps still open (not changed):
 - Opening an unpaid lab booking/request checks only its latest payment attempt (`/payments/reconcile`); "Pay now"
   reconciles them all on the server.
 - Native: Open/Save of `blob:` files needs the planned filesystem/file-viewer plugin inside the Capacitor shell.
@@ -238,3 +249,4 @@ Backend gaps found (not changed):
 | 2026-11-15 | O1, admin queue, medicine ordering, N1, S1 approved | Codex approved backend O1 (232e619 + docs), N1 (5f93e7f), S1 (release 997da42, hotfix 5cac856); web admin queue + O1 sign-in (da8b7a4), customer medicine ordering (7930a61, after 3 review rounds) and the N1 client (405a959, after 2 rounds). Backend: all 21 integration suites pass on `m0/n1-native-sessions`. Web: typecheck clean; Vitest 55/55; Playwright customer 110/110, workspace 128/128. |
 | 2026-11-15 | P8 web, N2 phone apps, P9 web approved | Codex approved P8 web (e0add83, after 3 rounds: attempt ownership, keyed recovery result, decision after waits), N2 (f4c3ff8: secure-store start gate, latest-attempt start-up) and P9 web (aab4e01, after 3 rounds: attachments keyed to their pharmacy, functional updates, no order while attaching, expectedPharmacyId recipient fence). vitest 60; Playwright customer 134, workspace 134; Android debug + unsigned iOS builds for both apps. |
 | 2026-11-15 | WC1 (customer: partner labs, bills, Consult now) | typecheck clean; Vitest 82/82 (+ lab/bill/instant api modules, cancel rule, timeline, GST split, waiting rules, file sniffing); Playwright customer 176/176 (new: partner-labs 20, instant-consult 16, bills 6; desktop + Pixel 7, mocked API); release build with VITE_API_BASE_URL=https://api.example.test. The existing "inside 24 hours" test now accepts the Monday 48-hour rule (it failed when 5 hours ahead fell on a Monday). Not yet run against a real backend; not Codex-reviewed. |
+| 2026-11-15 | WC1 review round 1 + Q9 | Codex WC1: 5 MEDIUM (quote not bound to funding; stale lab coupon; unowned create/pay completions; no refresh after acceptance; file state across bill versions). Fixed with backend Q9 (78b9efe). typecheck clean; Vitest 89/89 (+ price agreement, paging, single lab, payable mirrors, versioned PDF, recorded refunds); Playwright customer 194/194 (new: coupon re-checked on test change, price refused then accepted (labs and Consult now), late create and pay answers after leaving open nothing, reload lookup used / unknown → confirmed give-up, Meet link after acceptance + doctor cancellation, bill PDF follows the version, report signers by file); release build with VITE_API_BASE_URL=https://api.example.test. |

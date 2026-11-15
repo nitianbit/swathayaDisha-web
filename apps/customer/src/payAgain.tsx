@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiError, type PaymentOrder } from '@jansetu/api';
 import { Alert, Button, formatDateTime, Loading } from '@jansetu/ui';
 import { messageOf } from './common.tsx';
+import { useAlive } from './onceOnly.tsx';
 import { checkPayment, payOrder, type PaymentOutcome } from './payments.ts';
 import { useSession } from './session.tsx';
 
@@ -11,6 +12,8 @@ import { useSession } from './session.tsx';
  * server (POST .../pay): it settles every earlier attempt first and hands back the open order, so a second order is
  * never started beside a capture it could not check. After the window the server refuses (409): that is not the final
  * answer (an earlier payment may still be captured), so the parent keeps reading the record until it settles.
+ * Parents key the panel by the record and its payment attempt, so a changed record starts a fresh panel; answers that
+ * arrive after the page was left, or after a newer run started, are ignored (no Checkout is opened for them).
  */
 export function PayAgainPanel({ what, deadline, paymentTransactionId, expiredCode, description, pay, onSettled }: {
   /** "booking", "request" */
@@ -27,23 +30,34 @@ export function PayAgainPanel({ what, deadline, paymentTransactionId, expiredCod
   const [state, setState] = useState<'checking' | PaymentOutcome | 'paying' | 'closed'>(paymentTransactionId ? 'checking' : 'unpaid');
   const [error, setError] = useState<string | null>(null);
   const started = useRef(false);
+  const alive = useAlive();
+  // Each check or payment run owns the panel until a newer one starts; an older answer changes nothing.
+  const run = useRef(0);
 
   async function check() {
     if (!paymentTransactionId) return;
+    const mine = ++run.current;
     setState((s) => (s === 'closed' ? s : 'checking'));
     const outcome = await checkPayment(api, paymentTransactionId);
+    if (!alive.current || run.current !== mine) return;
     setState((s) => (s === 'closed' && outcome !== 'paid' ? s : outcome));
     await onSettled();
   }
   useEffect(() => { if (!started.current) { started.current = true; void check(); } }, []);
 
   async function payNow() {
+    const mine = ++run.current;
+    const current = () => alive.current && run.current === mine;
     setError(null);
     setState('paying');
     try {
       const r = await pay();
-      setState(r.paymentRequired && r.payment ? await payOrder(api, r.payment, {}, description) : 'paid');
+      // The customer left, or another run took over: never open Checkout for an answer nobody is waiting for.
+      if (!current()) return;
+      const outcome = r.paymentRequired && r.payment ? await payOrder(api, r.payment, {}, description) : 'paid';
+      if (current()) setState(outcome);
     } catch (err) {
+      if (!current()) return;
       if (err instanceof ApiError && err.code === expiredCode) { setState('closed'); return; }
       setError(messageOf(err));
       // The server refuses a new order while an earlier payment cannot be checked: it might already be paid.

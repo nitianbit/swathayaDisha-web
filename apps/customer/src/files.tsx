@@ -26,10 +26,17 @@ const EXT: Record<string, string> = { 'image/png': '.png', 'image/jpeg': '.jpg',
 
 /**
  * A private file (lab report, bill PDF) read with the customer's token through the API client, then offered from a
- * `blob:` URL that lives only in this page's memory (revoked when it goes away). Nothing is put in a link that carries
+ * `blob:` URL that lives only in this page's memory (revoked when it goes away). `id` names exactly which document
+ * (and version) it is. Nothing is put in a link that carries
  * a token, and nothing is stored on the device until the customer chooses Save.
  */
-export function PrivateFile({ label, baseName, load }: { label: string; baseName: string; load: (signal: AbortSignal) => Promise<Blob> }) {
+export function PrivateFile(props: { id: string; label: string; baseName: string; load: (signal: AbortSignal) => Promise<Blob> }) {
+  // A different document (another bill, another version, another report) starts from nothing: the previous one's
+  // fetch is aborted and its blob URL revoked by the unmount, so a link never shows one document under another's name.
+  return <FileForDocument key={props.id} {...props} />;
+}
+
+function FileForDocument({ label, baseName, load }: { id: string; label: string; baseName: string; load: (signal: AbortSignal) => Promise<Blob> }) {
   const [state, setState] = useState<{ status: 'idle' | 'loading' } | { status: 'ready'; url: string; kind: FileKind; type: string } | { status: 'failed'; message: string }>({ status: 'idle' });
   const ctrl = useRef<AbortController | null>(null);
   const url = state.status === 'ready' ? state.url : null;

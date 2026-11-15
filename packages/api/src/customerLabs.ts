@@ -1,4 +1,4 @@
-import type { ApiClient } from './client.ts';
+import type { ApiClient, Page } from './client.ts';
 import type { PaymentOrder } from './customer.ts';
 import { fetchableFileUrl } from './pharmacyOrders.ts';
 
@@ -79,7 +79,10 @@ export interface LabBooking {
   reschedule?: { version: number; pending: boolean; previousSlot?: LabBookingSlot; reason?: string; at?: string };
   collector?: { name: string; phone?: string };
   /** Released report files (stored `/api/static/...` URLs, D1 private: read through the authenticated file route). */
-  report: { files: string[]; releases: { releasedAt: string; signer: { name: string; kind?: string; registrationNumber: string } }[] };
+  report: { files: string[]; releases: { /** Q9: the released file this record is for. */ file?: string; releasedAt: string; signer: { name: string; kind?: string; registrationNumber: string } }[] };
+  /** Q9: the lab's and branch's names (read time). */
+  lab?: { name?: string };
+  branch?: { name?: string; address?: LabAddress; phone?: string };
   lifecycle?: Partial<Record<'paidAt' | 'confirmedAt' | 'collectedAt' | 'visitedAt' | 'processingAt' | 'reportReadyAt' | 'completedAt' | 'cancelledAt' | 'noShowAt', string>>;
   createdAt?: string;
   updatedAt?: string;
@@ -96,6 +99,9 @@ export interface NewLabBooking {
   address?: { line1: string; line2?: string; city: string; state?: string; pincode: string; landmark?: string };
   couponCode?: string;
   useWalletBalance?: boolean;
+  /** Q9 price fence (paise): what the customer saw and accepted; the server refuses (409 PRICE_CHANGED) on any difference. */
+  acceptedPayableMinor: number;
+  acceptedSubtotalMinor?: number;
 }
 
 /** POST /lab-bookings and POST /lab-bookings/:id/pay (`LabBookingPaymentInit`). */
@@ -173,6 +179,25 @@ export function labTimeline(b: Pick<LabBooking, 'status' | 'visitMode' | 'lifecy
   return steps;
 }
 
+/** The amount the server will charge (`couponFor` + create): subtotal minus the coupon discount, in paise. */
+export function labPayableMinor(subtotalMinor: number, couponDiscountRupees?: number): number {
+  const discount = couponDiscountRupees ? Math.min(subtotalMinor, Math.round(Number(couponDiscountRupees) * 100)) : 0;
+  return Math.max(0, subtotalMinor - discount);
+}
+
+/** Q9 `GET /partner-labs/:partnerId` answers raw branch records; this gives them the list's shape. */
+export function normalizeLab(raw: unknown): PartnerLab {
+  const r = (raw ?? {}) as { partnerId?: string; name?: string; logo?: string; branches?: Record<string, unknown>[] };
+  const branches = (Array.isArray(r.branches) ? r.branches : []).map((b) => {
+    const services = (b.services ?? {}) as { homeCollection?: boolean; inLab?: boolean };
+    return {
+      branchId: String(b.branchId ?? b._id ?? ''), name: String(b.name ?? ''), address: b.address as LabAddress | undefined, phone: b.phone as string | undefined,
+      homeCollection: Boolean(b.homeCollection ?? services.homeCollection), inLab: Boolean(b.inLab ?? services.inLab), hours: b.hours as LabBranch['hours'],
+    };
+  }).filter((b) => /^[0-9a-fA-F]{24}$/.test(b.branchId));
+  return { partnerId: String(r.partnerId ?? ''), name: String(r.name ?? ''), logo: r.logo, provider: 'partner', branches };
+}
+
 const hex = /^[0-9a-fA-F]{24}$/;
 const id = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; };
 
@@ -189,6 +214,8 @@ export function customerLabsApi(c: ApiClient) {
       return c.get<PartnerLab[]>('/partner-labs', { query: { city: f.city?.trim() || undefined, pincode: f.pincode, visitMode: f.visitMode } })
         .then((d) => (Array.isArray(d) ? d : []));
     },
+    /** Q9: one lab (verified, active) with its active branches; 404 LAB_NOT_FOUND otherwise. */
+    lab: (partnerId: string) => c.get<unknown>(`/partner-labs/${id(partnerId, 'lab')}`).then(normalizeLab),
     catalogue: (partnerId: string, visitMode?: VisitMode) =>
       c.get<LabCatalogueItem[]>(`/partner-labs/${id(partnerId, 'lab')}/catalogue`, { query: { visitMode } }).then((d) => (Array.isArray(d) ? d : [])),
     /** branchSlotsQuerySchema: from YYYY-MM-DD (default today, IST), days 1–30 (default 7). */
@@ -200,8 +227,8 @@ export function customerLabsApi(c: ApiClient) {
 
     /** Keyed create: the same key and details again return the first booking (and its open payment), never a second. */
     book: (body: NewLabBooking, requestKey: string) => c.post<LabBookingPayment>('/lab-bookings', { body: { ...body, requestKey } }),
-    /** The customer's newest 100 bookings (the backend does not page this list). */
-    bookings: () => c.get<LabBooking[]>('/lab-bookings').then((d) => (Array.isArray(d) ? d : [])),
+    /** Q9: newest first, paged. */
+    bookings: (page = 1, limit = 20): Promise<Page<LabBooking>> => c.page<LabBooking>('/lab-bookings', { query: { page, limit } }),
     booking: (bookingId: string) => c.get<LabBooking>(`/lab-bookings/${id(bookingId, 'booking')}`),
     /** Pay again within the window: earlier attempts are checked first; the open order is reused. */
     payAgain: (bookingId: string, useWalletBalance = false) =>

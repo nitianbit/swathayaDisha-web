@@ -1,5 +1,5 @@
 import { createApiClient } from './client.ts';
-import { addressErrors, customerLabsApi, labCancelCheck, labTimeline, type LabBooking } from './customerLabs.ts';
+import { addressErrors, customerLabsApi, labCancelCheck, labPayableMinor, labTimeline, normalizeLab, type LabBooking } from './customerLabs.ts';
 
 function setup(body: unknown = { success: true, data: [] }) {
   const calls: { url: string; init: RequestInit }[] = [];
@@ -18,13 +18,31 @@ const B = 'b1'.repeat(12);
 const slot = (startsAt: string) => ({ slotId: 's', date: '2026-11-20', startTime: '09:00', endTime: '09:30', startsAt });
 
 describe('partner lab api', () => {
-  it('sends a keyed create with exactly the backend fields', async () => {
+  it('sends a keyed create with exactly the backend fields, including the accepted price (Q9)', async () => {
     const { api, calls } = setup({ success: true, data: { booking: { _id: B }, paymentRequired: false, walletDeductedAmount: 0 } });
-    await api.book({ partnerId: P, branchId: B, visitMode: 'lab', slotId: B, itemIds: [P], patient: { kind: 'self' }, useWalletBalance: true }, 'key12345');
+    await api.book({ partnerId: P, branchId: B, visitMode: 'lab', slotId: B, itemIds: [P], patient: { kind: 'self' }, useWalletBalance: true,
+      acceptedPayableMinor: 35000, acceptedSubtotalMinor: 40000 }, 'key12345');
     expect(calls[0]!.url).toBe('https://api.example.test/api/v1/lab-bookings');
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
-      partnerId: P, branchId: B, visitMode: 'lab', slotId: B, itemIds: [P], patient: { kind: 'self' }, useWalletBalance: true, requestKey: 'key12345',
+      partnerId: P, branchId: B, visitMode: 'lab', slotId: B, itemIds: [P], patient: { kind: 'self' }, useWalletBalance: true,
+      acceptedPayableMinor: 35000, acceptedSubtotalMinor: 40000, requestKey: 'key12345',
     });
+  });
+
+  it('pages bookings and reads one lab, giving its branches the list shape (Q9)', async () => {
+    const { api, calls } = setup({ success: true, data: { partnerId: P, name: 'Lab', branches: [
+      { _id: B, name: 'Main', services: { homeCollection: true, inLab: false }, address: { line1: 'x', city: 'Pune', pincode: '411001' } }, { _id: 'bad', name: 'x' }] } });
+    await expect(api.lab(P)).resolves.toEqual({ partnerId: P, name: 'Lab', logo: undefined, provider: 'partner', branches: [
+      { branchId: B, name: 'Main', address: { line1: 'x', city: 'Pune', pincode: '411001' }, phone: undefined, homeCollection: true, inLab: false, hours: undefined }] });
+    await api.bookings(3, 20);
+    expect(calls.map((c) => c.url.replace('https://api.example.test/api/v1', ''))).toEqual([`/partner-labs/${P}`, '/lab-bookings?page=3&limit=20']);
+    expect(normalizeLab(null)).toMatchObject({ branches: [] });
+  });
+
+  it('works out the payable like the server: subtotal minus the coupon, never below zero', () => {
+    expect(labPayableMinor(40000, 50)).toBe(35000);
+    expect(labPayableMinor(40000)).toBe(40000);
+    expect(labPayableMinor(4000, 99.999)).toBe(0);
   });
 
   it('reads slots with the branch, mode and window; refuses malformed ids before calling', async () => {

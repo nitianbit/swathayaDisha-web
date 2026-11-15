@@ -29,6 +29,8 @@ interface Backend {
   nobodyOnline: boolean;
   windowPassed: boolean;
   booking: Rec;
+  /** The highest online fee now (quote for "any available"), paise. */
+  quoteAny: number;
 }
 
 const inMin = (m: number) => new Date(Date.now() + m * 60_000).toISOString();
@@ -43,7 +45,7 @@ function request(id: string, over: Rec = {}): Rec {
 }
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const state: Backend = { calls: [], requests: new Map(), records: new Map(), byKey: new Map(), nobodyOnline: false, windowPassed: false,
+  const state: Backend = { calls: [], requests: new Map(), records: new Map(), byKey: new Map(), nobodyOnline: false, windowPassed: false, quoteAny: 50000,
     booking: { _id: BK, bookingType: 'consultation', bookingKind: 'instant', doctorName: 'Dr. Ravi Kumar', consultationMode: 'video', bookingDate: '20261115',
       bookingTime: '21:00', price: 300, status: 'confirmed', paymentStatus: 'paid',
       virtualMeeting: { provider: 'google_meet', status: 'active', joinUrl: 'https://meet.google.com/abc-defg-hij' } } };
@@ -78,6 +80,9 @@ async function mockBackend(page: Page): Promise<Backend> {
     if (path === '/auth/profile') return ok(route, { user: { _id: ME, name: 'Asha Rao', phone: '9876543210', email: 'a@x.in', gender: 'Female', dateOfBirth: '19900101' }, userRole: 'user' });
     if (path === `/wallet/user/${ME}`) return ok(route, { _id: 'w', userId: ME, balance: 50, isActive: true });
     if (path === '/dependents') return page1(route, []);
+    if (path === '/instant/specialities') {
+      return ok(route, [{ specialization: 'Dermatology', onlineNow: state.nobodyOnline ? 0 : 2 }, { specialization: 'Cardiology', onlineNow: 0 }]);
+    }
     if (path === '/instant/doctors') {
       if (state.nobodyOnline) return ok(route, []);
       return ok(route, [
@@ -87,14 +92,22 @@ async function mockBackend(page: Page): Promise<Backend> {
     }
     if (path === '/instant/quote') {
       if (state.nobodyOnline) return json(route, 409, { error: 409, code: 'NO_DOCTOR_ONLINE', message: 'No doctor of this speciality is online right now' });
-      return ok(route, url.searchParams.get('doctorId') === D1 ? { quotedAmountMinor: 30000, doctors: 1 } : { quotedAmountMinor: 50000, doctors: 2 });
+      return ok(route, url.searchParams.get('doctorId') === D1 ? { quotedAmountMinor: 30000, doctors: 1 } : { quotedAmountMinor: state.quoteAny, doctors: 2 });
     }
     if (path === '/coupons/validate') return json(route, 400, { error: 400, code: 'INVALID_COUPON', message: 'This coupon has expired' });
-    if (path === '/instant/requests' && req.method() === 'GET') return ok(route, [...state.requests.values()]);
+    if (path === '/instant/requests' && req.method() === 'GET') {
+      const all = [...state.requests.values()];
+      return json(route, 200, { success: true, data: all, pagination: { page: 1, limit: 20, total: all.length, totalPages: 1 } });
+    }
     if (path === '/instant/requests' && req.method() === 'POST') {
       const b = body as Rec;
       const known = state.byKey.get(String(b.requestKey));
       if (known) return ok(route, { request: state.requests.get(known), paymentRequired: false }, 201);
+      // Q9 price fence: nothing is funded at a price the customer did not accept.
+      const quoteNow = (b.target as { kind: string; doctorId?: string }).doctorId === D1 ? 30000 : state.quoteAny;
+      if (b.acceptedQuoteMinor !== quoteNow || b.acceptedPayableMinor !== quoteNow) {
+        return json(route, 409, { error: 409, code: 'QUOTE_CHANGED', message: `The price is now ₹${(quoteNow / 100).toFixed(2)} (fee ₹${(quoteNow / 100).toFixed(2)}); review and confirm again` });
+      }
       const id = String(state.requests.size + 1).padStart(24, 'e');
       state.byKey.set(String(b.requestKey), id);
       const r = request(id, { status: 'pending_payment', fundingState: 'awaiting', paymentStatus: 'pending', offerGeneration: 0, offerExpiresAt: undefined, funding: undefined,
@@ -125,7 +138,8 @@ async function mockBackend(page: Page): Promise<Backend> {
       }
       if (m[2] === '/refund') {
         if (r.status !== 'offered') return json(route, 409, { error: 409, code: 'REQUEST_NOT_REFUNDABLE', message: 'A doctor already accepted, or it was refunded' });
-        Object.assign(r, { status: 'refunded', fundingState: 'refunded', paymentStatus: 'refunded', refundReason: 'customer' });
+        Object.assign(r, { status: 'refunded', fundingState: 'refunded', paymentStatus: 'refunded', refundReason: 'customer',
+          refunded: { walletMinor: 5000, gatewayMinor: 45000, totalMinor: 50000 } });
         return ok(route, { refunded: 450, skipped: false });
       }
       return ok(route, r);
@@ -159,8 +173,8 @@ async function signIn(page: Page, path = '/') {
 
 async function chooseAny(page: Page) {
   await page.getByRole('link', { name: 'Consult now' }).click();
-  await page.getByLabel('Speciality').fill('Dermatology');
   await page.getByLabel('Video call').check();
+  await page.getByLabel('Speciality').selectOption('Dermatology');
   await page.getByRole('button', { name: 'See who is online' }).click();
   await page.getByLabel(/Any available doctor/).check();
   await expect(page.getByText(/You pay ₹500\.00 now \(the highest fee among the 2 doctors online\)/)).toBeVisible();
@@ -178,7 +192,7 @@ test('consult now: any available doctor, pay upfront, wait (presence reported, o
   await expect(page.getByRole('timer', { name: 'Time left for this offer' })).toContainText(/[45]:\d\d/);
   expect(posts(backend, '/instant/requests')[0]!.body).toEqual({
     target: { kind: 'any' }, specialization: 'Dermatology', mode: 'video', patient: { kind: 'self' }, useWalletBalance: true,
-    requestKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/),
+    acceptedQuoteMinor: 50000, acceptedPayableMinor: 50000, requestKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/),
   });
   const id = [...backend.requests.keys()][0]!;
   await expect.poll(() => posts(backend, `/instant/requests/${id}/activity`).length).toBeGreaterThanOrEqual(1);
@@ -256,25 +270,64 @@ test('after the payment window, pay again is refused with what happens next', as
   await expect(page.getByText(/The time to pay for this request has passed/)).toBeVisible();
 });
 
-test('errors: nobody online, a refused coupon, and a too-short speciality are shown where they happen', async ({ page }) => {
+test('errors: no speciality chosen, a refused coupon, and nobody online are shown where they happen', async ({ page }) => {
   const backend = await mockBackend(page);
   await signIn(page);
   await page.getByRole('link', { name: 'Consult now' }).click();
-  await page.getByLabel('Speciality').fill('D');
+  await expect(page.getByLabel('Speciality')).toContainText('Dermatology · 2 online now');
   await page.getByRole('button', { name: 'See who is online' }).click();
-  await expect(page.getByText('Enter a speciality, for example General Physician.')).toBeVisible();
-  await page.getByLabel('Speciality').fill('Dermatology');
+  await expect(page.getByText('Choose a speciality.')).toBeVisible();
+  await page.getByLabel('Speciality').selectOption('Dermatology');
   await page.getByRole('button', { name: 'See who is online' }).click();
   await page.getByLabel(/Any available doctor/).check();
   await page.getByLabel('Coupon (optional)').fill('OLD10');
   await page.getByRole('button', { name: 'Apply' }).click();
   await expect(page.getByText('This coupon has expired')).toBeVisible();
   backend.nobodyOnline = true;
-  await page.getByLabel('Speciality').fill('Dermatology ');
+  await page.getByLabel('Speciality').selectOption('Cardiology');
+  await page.getByLabel('Speciality').selectOption('Dermatology');
   await page.getByRole('button', { name: 'See who is online' }).click();
   await expect(page.getByText(/No Dermatology doctor is online for a video call right now/)).toBeVisible();
   await expect(page.getByRole('link', { name: 'Book a doctor for later' })).toBeVisible();
   expect(posts(backend, '/instant/requests')).toHaveLength(0);
+});
+
+test('a quote that rose before the request is refused, shown, and sent only after the customer accepts it', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await chooseAny(page);
+  backend.quoteAny = 60000; // a ₹600 doctor came online meanwhile
+  await page.getByRole('button', { name: 'Pay and request a doctor' }).click();
+  await expect(page.getByText(/The price is now ₹600\.00/)).toBeVisible();
+  const changed = page.getByRole('group', { name: 'Price changed' });
+  await expect(changed).toContainText('the quote is now ₹600.00 and you pay ₹600.00 (it was ₹500.00)');
+  await expect(page.getByRole('button', { name: 'Pay and request a doctor' })).toBeDisabled();
+  expect(backend.requests.size).toBe(0); // nothing was funded at the old price
+  await changed.getByRole('button', { name: 'Accept the new price' }).click();
+  await page.getByRole('button', { name: 'Pay and request a doctor' }).click();
+  await expect(page.getByRole('heading', { name: 'Waiting for a doctor to accept' })).toBeVisible();
+  const creates = posts(backend, '/instant/requests').map((c) => c.body as Record<string, unknown>);
+  expect(creates.map((c) => [c.acceptedQuoteMinor, c.acceptedPayableMinor])).toEqual([[50000, 50000], [60000, 60000]]);
+});
+
+test('after acceptance the page keeps reading the consultation: the call link appears when it is ready; a doctor cancellation shows the refund', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const id = 'eb'.repeat(12);
+  backend.requests.set(id, request(id, { status: 'accepted', fundingState: 'allocated', bookingId: BK, acceptedBy: D1,
+    returned: { couponVoidedMinor: 0, walletMinor: 0, gatewayMinor: 20000, totalMinor: 20000 } }));
+  delete backend.booking.virtualMeeting; // the Meet link is made after the accept
+  await signIn(page, `/consult/requests/${id}`);
+  await expect(page.getByText(/The call link is being prepared/)).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Join the call' })).toHaveCount(0);
+  backend.booking.virtualMeeting = { provider: 'google_meet', status: 'active', joinUrl: 'https://meet.google.com/abc-defg-hij' };
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await expect(page.getByRole('link', { name: 'Join the call' })).toHaveAttribute('href', 'https://meet.google.com/abc-defg-hij');
+  // The doctor cancels: the request becomes a refund of the allocation.
+  Object.assign(backend.requests.get(id)!, { status: 'refunded', fundingState: 'refunded', refundReason: 'doctor_cancelled',
+    refunded: { walletMinor: 0, gatewayMinor: 30000, totalMinor: 30000 } });
+  backend.booking.status = 'cancelled';
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await expect(page.getByText(/The doctor cancelled the consultation\. ₹300\.00 went back to your Jansetu wallet\./)).toBeVisible();
 });
 
 test('consult now requests are listed with the bookings', async ({ page }) => {

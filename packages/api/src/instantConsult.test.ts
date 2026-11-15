@@ -1,5 +1,5 @@
 import { createApiClient } from './client.ts';
-import { countdown, heldRefundMinor, instantConsultApi, waitingState } from './instantConsult.ts';
+import { countdown, heldRefundMinor, instantConsultApi, instantPayableMinor, waitingState } from './instantConsult.ts';
 
 const D = 'd1'.repeat(12);
 const R = 'e1'.repeat(12);
@@ -17,10 +17,18 @@ function setup() {
 describe('instant consult api', () => {
   it('creates with the validated shape: target, trimmed speciality, patient, request key', async () => {
     const { api, calls } = setup();
-    await api.create({ target: { kind: 'any' }, specialization: '  Dermatology ', mode: 'video', patient: { kind: 'dependent', dependentId: D }, useWalletBalance: false }, 'k_123456');
+    await api.create({ target: { kind: 'any' }, specialization: '  Dermatology ', mode: 'video', patient: { kind: 'dependent', dependentId: D }, useWalletBalance: false,
+      acceptedQuoteMinor: 50000, acceptedPayableMinor: 45000 }, 'k_123456');
     expect(calls[0]).toEqual({ url: '/instant/requests', body: {
-      target: { kind: 'any' }, specialization: 'Dermatology', mode: 'video', patient: { kind: 'dependent', dependentId: D }, useWalletBalance: false, requestKey: 'k_123456',
+      target: { kind: 'any' }, specialization: 'Dermatology', mode: 'video', patient: { kind: 'dependent', dependentId: D }, useWalletBalance: false,
+      acceptedQuoteMinor: 50000, acceptedPayableMinor: 45000, requestKey: 'k_123456',
     } });
+  });
+  it('reads specialities for a mode and pages the requests (Q9)', async () => {
+    const { api, calls } = setup();
+    await api.specialities('chat');
+    await api.requests(2, 20);
+    expect(calls.map((c) => c.url)).toEqual(['/instant/specialities?mode=chat', '/instant/requests?page=2&limit=20']);
   });
   it('quotes for a doctor or any available, and re-offers within the request', async () => {
     const { api, calls } = setup();
@@ -54,7 +62,13 @@ describe('waiting rules', () => {
     expect(countdown('2026-11-20T10:04:05Z', now)).toBe('4:05');
     expect(countdown('2026-11-20T09:00:00Z', now)).toBe('0:00');
   });
-  it('a refund before acceptance returns wallet + gateway (the coupon part is not money)', () => {
+  it('the payable is the quote minus the coupon, like the server', () => {
+    expect(instantPayableMinor(50000, 50)).toBe(45000);
+    expect(instantPayableMinor(50000, 900)).toBe(0);
+  });
+  it('a refund amount comes from the server record (Q9), else wallet + gateway held (the coupon part is not money)', () => {
+    expect(heldRefundMinor({ refundReason: 'inactivity', refunded: { walletMinor: 5000, gatewayMinor: 40000, totalMinor: 45000 },
+      funding: { couponMinor: 0, walletMinor: 1, gatewayMinor: 1, totalMinor: 2 } })).toBe(45000);
     expect(heldRefundMinor({ refundReason: 'customer', funding: { couponMinor: 5000, walletMinor: 10000, gatewayMinor: 35000, totalMinor: 50000 } })).toBe(45000);
     expect(heldRefundMinor({ refundReason: 'doctor_cancelled', refunded: { walletMinor: 0, gatewayMinor: 30000, totalMinor: 30000 } })).toBe(30000);
   });

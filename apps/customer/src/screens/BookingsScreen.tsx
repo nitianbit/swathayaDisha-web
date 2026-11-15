@@ -1,4 +1,3 @@
-import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { customerApi, customerLabsApi, fromPaise, INSTANT_MODE_LABEL, instantConsultApi, type ExternalBooking } from '@jansetu/api';
 import { Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
@@ -103,16 +102,16 @@ function ProviderBookings() {
 /** Q4b "Consult now" requests (the consultation itself, once a doctor accepts, is also listed with the doctors). */
 function InstantRequests() {
   const { api } = useSession();
-  // The backend returns the newest 50 requests and does not page this list.
-  const q = useQuery({ queryKey: ['instant-requests', 'list'], queryFn: () => instantConsultApi(api).requests() });
+  const { q, items, total } = usePagedList(['instant-requests', 'list'], (page) => instantConsultApi(api).requests(page, PAGE));
   return (
     <section aria-labelledby="instant-h" className="stack">
       <h2 id="instant-h">Consult now requests</h2>
       {q.isPending ? <Loading /> : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : q.data.length === 0 ? <Empty title="No consult now requests"><Link to="/consult">Consult a doctor now</Link></Empty>
+        : items.length === 0 ? <Empty title="No consult now requests"><Link to="/consult">Consult a doctor now</Link></Empty>
         : (
+          <>
           <ul className="list">
-            {q.data.map((r) => {
+            {items.map((r) => {
               const s = instantStatusOf(r);
               return (
                 <li key={r._id}>
@@ -125,6 +124,9 @@ function InstantRequests() {
               );
             })}
           </ul>
+          <p className="muted">Showing {items.length} of {total}.</p>
+          {q.hasNextPage && <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>Show more</Button>}
+          </>
         )}
     </section>
   );
@@ -133,28 +135,31 @@ function InstantRequests() {
 /** Q3 bookings at partner labs (home collection or lab visit). */
 function PartnerLabBookings() {
   const { api } = useSession();
-  // The backend returns the newest 100 bookings and does not page this list.
-  const q = useQuery({ queryKey: ['lab-bookings', 'list'], queryFn: () => customerLabsApi(api).bookings() });
+  const { q, items, total } = usePagedList(['lab-bookings', 'list'], (page) => customerLabsApi(api).bookings(page, PAGE));
   return (
     <section aria-labelledby="plab-h" className="stack">
       <h2 id="plab-h">Partner lab bookings</h2>
       {q.isPending ? <Loading /> : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : q.data.length === 0 ? <Empty title="No partner lab bookings"><Link to="/labs">Book a lab test</Link></Empty>
+        : items.length === 0 ? <Empty title="No partner lab bookings"><Link to="/labs">Book a lab test</Link></Empty>
         : (
+          <>
           <ul className="list">
-            {q.data.map((b) => {
+            {items.map((b) => {
               const s = labStatusOf(b);
               return (
                 <li key={b._id}>
                   <Link to={`/partner-lab-bookings/${b._id}`} className="list-row link-row">
                     <strong>{labTitle(b)}</strong>
-                    <span className="muted">{formatDateTime(b.slot?.startsAt)} · {VISIT_MODE_LABEL[b.visitMode]}{b.patient?.name ? ` · ${b.patient.name}` : ''}</span>
+                    <span className="muted">{formatDateTime(b.slot?.startsAt)} · {VISIT_MODE_LABEL[b.visitMode]}{b.lab?.name ? ` · ${b.lab.name}` : ''}{b.patient?.name ? ` · ${b.patient.name}` : ''}</span>
                     <span><Badge tone={s.tone}>{s.label}</Badge>{b.report?.files?.length ? <> <Badge tone="ok">Report</Badge></> : null} <span className="muted">{formatRupees(fromPaise(b.pricing?.payableMinor))}</span></span>
                   </Link>
                 </li>
               );
             })}
           </ul>
+          <p className="muted">Showing {items.length} of {total}.</p>
+          {q.hasNextPage && <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>Show more</Button>}
+          </>
         )}
     </section>
   );
