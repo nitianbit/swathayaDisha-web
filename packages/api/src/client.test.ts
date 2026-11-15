@@ -46,6 +46,16 @@ describe('api client', () => {
     expect(onUnauthorized).toHaveBeenCalledExactlyOnceWith('tok');
   });
 
+  it('O1: a 429 carries the Retry-After wait; other errors carry none', async () => {
+    const limited = new Response(JSON.stringify({ error: 429, code: 'OTP_SEND_LIMIT', message: 'Too many codes requested.', retryAfter: 25 }),
+      { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '25' } });
+    const err = await setup(limited).client.post('/auth/user/send', { auth: false }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: 429, code: 'OTP_SEND_LIMIT', retryAfter: 25 });
+    const other = await setup(json(404, { message: 'Incorrect code. 4 attempts left.', code: 'OTP_NOT_FOUND' })).client
+      .post('/auth/user/verify', { auth: false }).catch((e: unknown) => e);
+    expect((other as ApiError).retryAfter).toBeUndefined();
+  });
+
   it('D4: session commands send the session header and the first-party cookie; nothing else does', async () => {
     const { client, calls } = setup(async () => json(200, { success: true, data: {} }));
     await client.post('/auth/session/refresh', { body: {}, auth: false, session: true });

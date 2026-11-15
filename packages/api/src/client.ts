@@ -9,11 +9,14 @@
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string | undefined;
-  constructor(status: number, message: string, code?: string) {
+  /** Seconds to wait before trying again (429 `Retry-After`), when the server says. */
+  readonly retryAfter: number | undefined;
+  constructor(status: number, message: string, code?: string, retryAfter?: number) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -144,7 +147,9 @@ export function createApiClient(options: ApiClientOptions) {
         const text = await res.text().catch((err: unknown) => { throw translate(err); });
         const body = parseJson(text) as { message?: unknown; code?: unknown } | null;
         const message = typeof body?.message === 'string' && body.message ? body.message : `Request failed (${res.status})`;
-        throw new ApiError(res.status, message, typeof body?.code === 'string' ? body.code : undefined);
+        const wait = Number(res.headers.get('retry-after'));
+        throw new ApiError(res.status, message, typeof body?.code === 'string' ? body.code : undefined,
+          res.status === 429 && Number.isFinite(wait) && wait > 0 ? Math.ceil(wait) : undefined);
       }
       try {
         return await read(res);

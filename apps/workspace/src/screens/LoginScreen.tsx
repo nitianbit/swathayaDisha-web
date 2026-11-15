@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { OTP_PATTERN, PHONE_PATTERN } from '@jansetu/api';
+import { ApiError, OTP_PATTERN, PHONE_PATTERN } from '@jansetu/api';
 import { Alert, Button, TextField } from '@jansetu/ui';
 import { messageOf } from '../errors.ts';
 import { useSession, type StaffRole } from '../session.tsx';
@@ -43,6 +43,8 @@ export function LoginScreen({ notice }: { notice?: string }) {
       setCooldown(RESEND_SECONDS);
     } catch (err) {
       setError(messageOf(err));
+      // O1: a refused resend waits as long as the server says (the button counts down).
+      if (err instanceof ApiError && err.status === 429 && err.retryAfter) setCooldown(Math.min(err.retryAfter, 24 * 3600));
     } finally {
       setBusy(false);
     }
@@ -58,6 +60,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
       await verifyCode(role, { phone }, otp);
     } catch (err) {
       setError(messageOf(err));
+      if (err instanceof ApiError && err.code === 'OTP_ATTEMPTS_EXCEEDED') setOtp(''); // this code is spent: send a new one
       setBusy(false);
     }
   }
