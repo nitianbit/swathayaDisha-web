@@ -22,6 +22,18 @@ export interface SessionRefreshed {
   principal: { userId: string; userType: UserType; sid: string };
 }
 
+/** N1: which phone app a native session belongs to. */
+export type NativeApp = 'customer' | 'workspace';
+/** N1: a phone-app sign-in or refresh. The refresh token goes to the OS secure store and nowhere else. */
+export interface NativeTokens {
+  token: string;
+  expiresIn: number;
+  refreshToken: string;
+  refreshExpiresIn: number;
+}
+export interface NativeSignedIn extends NativeTokens { user: Record<string, unknown> }
+export interface NativeRefreshed extends NativeTokens { principal: SessionRefreshed['principal'] }
+
 export interface Profile {
   user: Record<string, unknown>;
   userRole: UserType;
@@ -58,6 +70,16 @@ export function authApi(c: ApiClient) {
     /** Ends the cookie's family and the family of `token` (the access token this tab was using). */
     logoutSession: (token?: string | null) =>
       c.post<unknown>('/auth/session/logout', { body: {}, auth: !!token, ...(token ? { token } : {}), session: true }),
+    /** N1: phone-app sign-in; `previousRefreshToken` (the one still in the secure store) is ended by the server. */
+    verifyOtpNative: (userType: UserType, target: OtpTarget, otp: string, app: NativeApp, previousRefreshToken?: string | null) =>
+      c.post<NativeSignedIn>(`/auth/${userType}/verify`, { body: { ...target, otp, session: 'native', app,
+        ...(previousRefreshToken ? { previousRefreshToken } : {}) }, auth: false, native: true }),
+    refreshNative: (app: NativeApp, refreshToken: string) =>
+      c.post<NativeRefreshed>('/auth/session/native/refresh', { body: { app, refreshToken }, auth: false, native: true }),
+    /** Ends the stored family and the family of `token` (the access token in use). */
+    logoutNative: (app: NativeApp, refreshToken: string | null, token?: string | null) =>
+      c.post<unknown>('/auth/session/native/logout', { body: { app, ...(refreshToken ? { refreshToken } : {}) },
+        auth: !!token, ...(token ? { token } : {}), native: true }),
     /** Checked while the session lock is held: a 401 fails it (no renewal, which would wait for the same lock). */
     profile: () => c.get<Profile>('/auth/profile', { noRenew: true }),
     /** Customers only: every token issued so far stops working. */

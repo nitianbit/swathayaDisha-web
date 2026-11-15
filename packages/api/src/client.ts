@@ -39,6 +39,8 @@ export interface RequestOptions {
   noRenew?: boolean;
   /** D4: send this bearer token instead of the current one (sign-out names the token the tab was using). */
   token?: string;
+  /** N1: phone-app session commands send `X-Jansetu-Native: 1` (never a cookie; the refresh token is in the body). */
+  native?: boolean;
 }
 
 export interface Page<T> {
@@ -106,6 +108,7 @@ export function createApiClient(options: ApiClientOptions) {
     if (o.body !== undefined) headers['Content-Type'] = 'application/json';
     if (o.idempotencyKey) headers['Idempotency-Key'] = o.idempotencyKey;
     if (o.session) headers['X-Jansetu-Session'] = '1';
+    if (o.native) headers['X-Jansetu-Native'] = '1';
 
     const sessionSignal = token ? options.getSessionSignal?.() : undefined;
     const timeout = new AbortController();

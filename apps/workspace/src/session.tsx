@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  ApiError, authApi, createApiClient, markerStore, samePrincipal, sessionChannel, withSessionLock,
+  ApiError, authApi, createApiClient, markerStore, nativeSecureStore, refreshTokenKey, rotateNative, samePrincipal, sessionChannel,
+  withSessionLock,
   type ApiClient, type OtpTarget, type PendingMarker, type Principal, type UserType,
 } from '@jansetu/api';
 
@@ -9,6 +10,8 @@ import {
 export type StaffRole = Extract<UserType, 'admin' | 'pharmacy'>;
 export const STAFF_ROLES: readonly StaffRole[] = ['admin', 'pharmacy'];
 const APP = 'workspace';
+/** N1: inside the phone app the refresh token lives in the OS secure store (see nativeSession.ts). */
+const NATIVE_APP = 'workspace' as const;
 
 export interface StaffUser {
   role: StaffRole;
@@ -104,13 +107,29 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
   // D4: cookie sessions only when the API is on this app's own host (it forwards /api). A build that talks to a
   // separate API origin keeps the memory-only bearer session: a reload signs out (documented in README).
   const cookieMode = baseUrl === '';
+  // N1: inside the phone app (the shell provides a secure store) sessions are native, whatever the base URL.
+  const secure = useMemo(() => nativeSecureStore(), []);
+  const mode: 'native' | 'cookie' | 'memory' = secure ? 'native' : cookieMode ? 'cookie' : 'memory';
+  /** Renews the session: rotates the stored refresh token (native) or the cookie (web). */
+  const rotate = () => (secure
+    ? rotateNative(secure, NATIVE_APP, (rt) => authRef.current!.refreshNative(NATIVE_APP, rt))
+    : authRef.current!.refreshSession());
 
   const signOut = useCallback((notice?: string) => {
     const tabToken = token.current; // the family this tab was using ends too, not only the cookie's
     endLocally(notice);
     channel?.post({ type: 'signed-out' });
-    if (cookieMode) void withSessionLock(APP, async () => { await authRef.current?.logoutSession(tabToken); }).catch(() => undefined);
-  }, [endLocally, channel, cookieMode]);
+    if (secure) {
+      // The stored token is removed first: the phone is signed out even if the server cannot be told right now.
+      void withSessionLock(APP, async () => {
+        const stored = await secure.get(refreshTokenKey(NATIVE_APP));
+        await secure.remove(refreshTokenKey(NATIVE_APP));
+        await authRef.current?.logoutNative(NATIVE_APP, stored, tabToken);
+      }).catch(() => undefined);
+    } else if (cookieMode) {
+      void withSessionLock(APP, async () => { await authRef.current?.logoutSession(tabToken); }).catch(() => undefined);
+    }
+  }, [endLocally, channel, cookieMode, secure]);
 
   const schedule = useCallback((expiresIn: number | undefined, renewFn: () => void) => {
     clearTimeout(renewTimer.current);
@@ -125,7 +144,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     if (!principal.current) return null;
     if (token.current && sent !== null && token.current !== sent) return token.current; // already renewed here
     try {
-      const r = await authRef.current!.refreshSession();
+      const r = await rotate();
       if (gen !== generation.current) return null;
       if (!samePrincipal(r.principal, principal.current)) {
         endLocally('Someone else signed in to the workspace in this browser. Please sign in again.');
@@ -144,7 +163,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     baseUrl,
     getToken: () => token.current,
     getSessionSignal: () => sessionAbort.current.signal,
-    ...(cookieMode ? { renew: (sent: string) => renewRef.current(sent) } : {}),
+    ...(mode !== 'memory' ? { renew: (sent: string) => renewRef.current(sent) } : {}),
     // Only a 401 for the token in use now ends the session; a late answer for an older token changes nothing.
     onUnauthorized: (sent) => {
       if (sent === token.current) signOut('Your session has ended. Please sign in again.');
@@ -190,17 +209,19 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
   /** After a reload (or another tab's sign-in): resume from the cookie session, if there is one. */
   const restore = useCallback(async () => {
     const gen = generation.current;
-    if (!cookieMode) { setState((s) => (s.status === 'restoring' ? { status: 'signed_out' } : s)); return; }
+    if (mode === 'memory') { setState((s) => (s.status === 'restoring' ? { status: 'signed_out' } : s)); return; }
     try {
       await withSessionLock(APP, async () => {
-        const r = await auth.refreshSession();
+        // Another restore (or a sign-in) finished while this one waited for the lock: nothing to resume.
+        if (principal.current || gen !== generation.current) return;
+        const r = await rotate();
         if (gen !== generation.current) return;
         await establish(gen, r.token, r.expiresIn);
       });
     } catch {
       if (gen === generation.current) { token.current = null; setState((s) => (s.status === 'restoring' ? { status: 'signed_out' } : s)); }
     }
-  }, [auth, establish, cookieMode]);
+  }, [auth, establish, mode]);
 
   useEffect(() => { void restore(); }, [restore]);
 
@@ -223,14 +244,23 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
   const verifyCode = useCallback(async (role: StaffRole, target: OtpTarget, otp: string) => {
     await withSessionLock(APP, async () => {
       const gen = generation.current;
-      const signedIn = cookieMode ? await auth.verifyOtpSession(role, target, otp) : await auth.verifyOtp(role, target, otp);
+      let signedIn;
+      if (secure) {
+        // The token the phone still holds is ended by this sign-in; the new one is stored before it is used.
+        const previous = await secure.get(refreshTokenKey(NATIVE_APP));
+        const n = await auth.verifyOtpNative(role, target, otp, NATIVE_APP, previous);
+        await secure.set(refreshTokenKey(NATIVE_APP), n.refreshToken);
+        signedIn = n;
+      } else {
+        signedIn = cookieMode ? await auth.verifyOtpSession(role, target, otp) : await auth.verifyOtp(role, target, otp);
+      }
       if (gen !== generation.current) return;
       if (!signedIn?.token) throw new ApiError(502, 'Sign-in did not return a session. Please try again.');
       if (await establish(gen, signedIn.token, signedIn.expiresIn, role) && principal.current) {
         channel?.post({ type: 'signed-in', ...principal.current });
       }
     });
-  }, [auth, establish, channel, cookieMode]);
+  }, [auth, establish, channel, cookieMode, secure]);
 
   const value = useMemo(() => ({ state, api, memory, requestCode, verifyCode, signOut }),
     [state, api, memory, requestCode, verifyCode, signOut]);

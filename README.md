@@ -22,4 +22,16 @@ host to the backend, then build with `VITE_API_SAME_ORIGIN=true` (no `VITE_API_B
 `SESSION_ORIGINS_WORKSPACE` / `SESSION_ORIGINS_CUSTOMER` to the apps' exact origins. A build with `VITE_API_BASE_URL` (separate API origin)
 keeps the older memory-only bearer session: it works, but a reload signs the user out.
 
+**Phone apps (N1):** when packaged with Capacitor, the shell must expose the OS secure store (iOS Keychain / Android
+Keystore, e.g. through a secure-storage plugin) to the web app before it starts:
+
+```js
+window.JansetuNative = { secureStore: { get: async (key) => …, set: async (key, value) => …, remove: async (key) => … } };
+```
+
+With it, both apps use native sessions automatically (`session: 'native'` sign-in, refresh token kept only in that store,
+`/auth/session/native/refresh|logout`), whatever `VITE_API_BASE_URL` says; build with `VITE_API_BASE_URL` set to the HTTPS
+backend and add the WebView origins (`capacitor://localhost`, `https://localhost`) to the backend's `CORS_ORIGIN`. Without
+it (a browser) nothing changes.
+
 See [AGENTS.md](AGENTS.md) for the rules and checks, and [docs/PLAN.md](docs/PLAN.md) for the plan.
