@@ -65,3 +65,17 @@ describe('startApp (N2)', () => {
     expect(renderApp).toHaveBeenCalledOnce();
   });
 });
+
+describe('startApp retries (N2)', () => {
+  it('an older retry that fails after a newer one succeeded does not cover the app with the error screen', async () => {
+    const renders: string[] = [];
+    let release!: (fail: boolean) => void;
+    const slow = () => new Promise<void>((resolve, reject) => { release = (fail) => (fail ? reject(new Error('x')) : resolve()); });
+    const first = startApp(() => renders.push('app'), () => renders.push('error'), slow); // attempt 1 pending
+    const second = startApp(() => renders.push('app'), () => renders.push('error'), async () => undefined); // attempt 2 ok
+    await second;
+    release(true); // attempt 1 fails late
+    await first;
+    expect(renders).toEqual(['app']);
+  });
+});

@@ -29,13 +29,18 @@ export async function installNativeShell(): Promise<void> {
  * without it the session would fall back to a mode that cannot end the phone's saved sign-in, so a failure shows a
  * retry screen instead (never the app without its secure store).
  */
+let startAttempt = 0;
 export async function startApp(renderApp: () => void, renderError: (retry: () => void) => void,
   install: () => Promise<void> = installNativeShell): Promise<void> {
+  // Only the latest attempt may render: an older retry finishing late (success or failure) changes nothing.
+  const mine = ++startAttempt;
+  let ok = true;
   try {
     await install();
   } catch {
-    renderError(() => { void startApp(renderApp, renderError, install); });
-    return;
+    ok = false;
   }
-  renderApp();
+  if (mine !== startAttempt) return;
+  if (ok) renderApp();
+  else renderError(() => { void startApp(renderApp, renderError, install); });
 }
