@@ -16,7 +16,7 @@ vi.mock('@aparajita/capacitor-secure-storage', () => ({
 }));
 
 import { nativeSecureStore } from '@jansetu/api';
-import { installNativeShell } from './nativeShell.ts';
+import { installNativeShell, startApp } from './nativeShell.ts';
 
 describe('installNativeShell (N2)', () => {
   beforeEach(() => { delete window.JansetuNative; calls.length = 0; store.clear(); });
@@ -40,5 +40,28 @@ describe('installNativeShell (N2)', () => {
     await expect(s!.get('jansetu.refresh.customer')).resolves.toBeNull();
     store.set('odd', { not: 'a string' });
     await expect(s!.get('odd')).resolves.toBeNull(); // only strings are tokens
+  });
+});
+
+describe('startApp (N2)', () => {
+  it('a failed secure-store start never renders the app (no fallback session); retry renders it once ready', async () => {
+    let fail = true;
+    const install = vi.fn(async () => { if (fail) throw new Error('keystore unavailable'); });
+    const renderApp = vi.fn();
+    let retry: (() => void) | undefined;
+    const renderError = vi.fn((r: () => void) => { retry = r; });
+    await startApp(renderApp, renderError, install);
+    expect(renderApp).not.toHaveBeenCalled();
+    expect(renderError).toHaveBeenCalledOnce();
+    fail = false;
+    retry!();
+    await vi.waitFor(() => expect(renderApp).toHaveBeenCalledOnce());
+    expect(install).toHaveBeenCalledTimes(2);
+  });
+  it('in a browser the app renders at once', async () => {
+    native.value = false;
+    const renderApp = vi.fn();
+    await startApp(renderApp, vi.fn());
+    expect(renderApp).toHaveBeenCalledOnce();
   });
 });

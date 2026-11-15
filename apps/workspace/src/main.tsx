@@ -6,7 +6,7 @@ import '@jansetu/ui/tokens.css';
 import './styles.css';
 import { App } from './App.tsx';
 import { SessionProvider } from './session.tsx';
-import { installNativeShell } from './nativeShell.ts';
+import { startApp } from './nativeShell.ts';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,9 +22,10 @@ const queryClient = new QueryClient({
 // '' = same origin: the dev server proxies /api to the backend. Release builds require an HTTPS origin (vite.config).
 const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ?? '';
 
-// N2: in the phone app the secure store must be in place before the session restores; in a browser this is a no-op.
-void installNativeShell().catch(() => undefined).finally(() => {
-  createRoot(document.getElementById('root')!).render(
+// N2: in the phone app the app starts only once the secure store is ready (a retry screen otherwise).
+const root = createRoot(document.getElementById('root')!);
+void startApp(
+  () => root.render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
         <SessionProvider baseUrl={baseUrl}>
@@ -32,5 +33,11 @@ void installNativeShell().catch(() => undefined).finally(() => {
         </SessionProvider>
       </QueryClientProvider>
     </StrictMode>,
-  );
-});
+  ),
+  (retry) => root.render(
+    <main className="login" role="alert">
+      <p>The app could not open this phone's secure storage, which keeps you signed in safely.</p>
+      <button type="button" onClick={retry}>Try again</button>
+    </main>,
+  ),
+);

@@ -23,3 +23,19 @@ export async function installNativeShell(): Promise<void> {
     },
   };
 }
+
+/**
+ * Starts the app. In a browser it renders at once. In the phone app it renders only once the secure store is ready:
+ * without it the session would fall back to a mode that cannot end the phone's saved sign-in, so a failure shows a
+ * retry screen instead (never the app without its secure store).
+ */
+export async function startApp(renderApp: () => void, renderError: (retry: () => void) => void,
+  install: () => Promise<void> = installNativeShell): Promise<void> {
+  try {
+    await install();
+  } catch {
+    renderError(() => { void startApp(renderApp, renderError, install); });
+    return;
+  }
+  renderApp();
+}
