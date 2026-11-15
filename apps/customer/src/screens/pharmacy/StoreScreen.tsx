@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft, ShoppingCart } from 'lucide-react';
@@ -25,6 +25,11 @@ function Store({ pharmacyId }: { pharmacyId: string }) {
   const { q: stock, items: rows } = usePagedList(['pharmacy-stock', pharmacyId, search], (page) => pharmacy.stock(pharmacyId, { search, page }));
   const cart = useQuery({ queryKey: ['pharmacy-cart'], queryFn: () => pharmacy.cart() });
   const shelf = useMemo(() => shelfOf(rows), [rows]);
+  // Pages whose rows are all unorderable (sold out, inactive, unpriced) show nothing: read on until something can be
+  // shown or the stock ends, so "nothing in stock" is only said when it is true.
+  useEffect(() => {
+    if (shelf.length === 0 && stock.hasNextPage && !stock.isFetching) void stock.fetchNextPage();
+  }, [shelf.length, stock.hasNextPage, stock.isFetching, stock.fetchNextPage]);
   const [error, setError] = useState<string | null>(null);
   const [otherStore, setOtherStore] = useState<{ medicineId: string } | null>(null);
   // One cart change at a time (the cart is shared by every line): all steppers wait while one is on its way.
@@ -82,6 +87,7 @@ function Store({ pharmacyId }: { pharmacyId: string }) {
       <p className="muted">Medicines that need a prescription can’t be ordered online yet; buy them at the pharmacy.</p>
       {stock.isPending ? <Loading label="Loading medicines…" />
         : stock.isError ? <ErrorState message={messageOf(stock.error)} onRetry={() => void stock.refetch()} />
+        : shelf.length === 0 && stock.hasNextPage ? <Loading label="Loading medicines…" />
         : shelf.length === 0 ? <Empty title={search ? `Nothing in stock matches “${search}”` : 'No medicines in stock right now'} />
         : (
           <>

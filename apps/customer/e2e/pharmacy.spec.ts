@@ -8,6 +8,7 @@ const MED_A = 'a1'.repeat(12);
 const MED_B = 'b1'.repeat(12);
 const MED_RX = 'e1'.repeat(12);
 const S3 = '5c'.repeat(12);
+const S4 = '5d'.repeat(12);
 const MED_LATE = 'f9'.repeat(12);
 const MED_OFF = 'f8'.repeat(12);
 const MED_FREE = 'f7'.repeat(12);
@@ -85,7 +86,9 @@ async function mockBackend(page: Page): Promise<Backend> {
       { _id: S1, name: 'Asha Medicals', address: 'MG Road', city: 'Pune', pincode: '411001', pickupAvailable: true, deliveryAvailable: true },
       { _id: S2, name: 'City Pharmacy', city: 'Pune', pickupAvailable: true },
       { _id: S3, name: 'Door Meds', city: 'Pune', pickupAvailable: false, deliveryAvailable: true },
+      { _id: S4, name: 'Sold Out First', city: 'Pune', pickupAvailable: true },
     ]);
+    if (path === `/pharmacies/${S4}`) return json(route, 200, { success: true, data: { _id: S4, name: 'Sold Out First', city: 'Pune', pickupAvailable: true } });
     if (path === `/pharmacies/${S3}`) {
       if (b.slowStore) await new Promise((r) => setTimeout(r, b.slowStore));
       return json(route, 200, { success: true, data: { _id: S3, name: 'Door Meds', city: 'Pune', pickupAvailable: false, deliveryAvailable: true } });
@@ -99,6 +102,7 @@ async function mockBackend(page: Page): Promise<Backend> {
       const rows = store === S1 ? [row('i1', MED_A, 5, 20), row('i2', MED_A, 3, 20), row('i3', MED_B, 4, 35), row('i4', MED_RX, 2, 90),
         { ...row('i5', MED_OFF, 6, 40), isActive: false }, row('i6', MED_FREE, 6, 0)]
         : store === S3 ? [row('k1', MED_A, 9, 20)]
+        : store === S4 ? [...FILLERS.map((id, i) => row(`z${i}`, id, 0, 10)), row('z50', MED_LATE, 4, 15)]
         : [row('j1', MED_B, 9, 36), ...FILLERS.map((id, i) => row(`f${i}`, id, 5, 10)), row('j2', MED_LATE, 4, 15)];
       const q = (url.searchParams.get('search') ?? '').toLowerCase();
       const all = rows.filter((r) => !q || r.medicine.name.toLowerCase().includes(q));
@@ -395,4 +399,13 @@ test('paying re-reads the order first: an order closed meanwhile does not open t
   await expect(page.getByRole('button', { name: 'Pay ₹40' })).toHaveCount(0);
   expect(b.calls.slice(opened).some((c) => c.path === '/payments/verify')).toBe(false);
   expect([...b.records.values()].every((r) => !r.captured)).toBe(true);
+});
+
+test('a first page with nothing orderable does not hide the medicines on the next page', async ({ page }) => {
+  await mockBackend(page);
+  await signIn(page);
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Medicines', exact: true }).click();
+  await page.getByRole('link', { name: /Sold Out First/ }).click();
+  await expect(page.getByRole('button', { name: 'Add Zinc 50 to cart' })).toBeEnabled();
+  await expect(page.getByText('No medicines in stock right now')).toHaveCount(0);
 });
