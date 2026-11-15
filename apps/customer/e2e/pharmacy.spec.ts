@@ -49,6 +49,8 @@ interface Backend {
   /** Hold cart reads this long. */
   slowCartRead: number;
   uploads: number;
+  /** Hold the next upload's answer this long. */
+  slowUpload: number;
 }
 
 const FAKE_CHECKOUT = `
@@ -76,7 +78,7 @@ function cartView(b: Backend) {
 }
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const b: Backend = { calls: [], cart: { pharmacyId: null, items: [] }, orders: new Map(), records: new Map(), priceChangeOnce: false, slowStore: 0, slowCart: 0, failStockPage: 0, stockPageCalls: {}, byKey: new Map(), dropNextCheckoutAnswer: false, retryUnknown: false, slowNextCheckout: 0, abandoned: new Set(), slowCartRead: 0, uploads: 0 };
+  const b: Backend = { calls: [], cart: { pharmacyId: null, items: [] }, orders: new Map(), records: new Map(), priceChangeOnce: false, slowStore: 0, slowCart: 0, failStockPage: 0, stockPageCalls: {}, byKey: new Map(), dropNextCheckoutAnswer: false, retryUnknown: false, slowNextCheckout: 0, abandoned: new Set(), slowCartRead: 0, uploads: 0, slowUpload: 0 };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
   let n = 0;
@@ -128,6 +130,7 @@ async function mockBackend(page: Page): Promise<Backend> {
         pagination: { page: pg, limit, total: all.length, totalPages: Math.max(1, Math.ceil(all.length / limit)) } });
     }
     if (path === '/file/upload/prescriptions') {
+      if (b.slowUpload) { const wait = b.slowUpload; b.slowUpload = 0; await new Promise((r) => setTimeout(r, wait)); }
       b.uploads += 1;
       return json(route, 200, { success: true, data: { files: [{ url: `/api/static/prescriptions/upload-${b.uploads}.pdf` }] } });
     }
@@ -630,4 +633,67 @@ test('placing while a check is still finishing reuses the unresolved key: the on
   expect(b.orders.size).toBe(1);
   const keys = b.calls.filter((c) => c.path === '/pharmacy-cart/checkout').map((c) => (c.body as { requestKey: string }).requestKey);
   expect(new Set(keys).size).toBe(1);
+});
+
+const pdf = (name: string) => ({ name, mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4\n%%EOF') });
+async function rxCart(page: Page) {
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Medicines', exact: true }).click();
+  await page.getByRole('link', { name: /Asha Medicals/ }).click();
+  await page.getByRole('button', { name: 'Add Amoxicillin 500 to cart' }).click();
+  await page.getByRole('link', { name: /View cart/ }).click();
+}
+
+test('P9: removing a prescription while another uploads keeps it removed', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await rxCart(page);
+  await page.getByLabel('Attach your prescription (optional)').setInputFiles(pdf('old.pdf'));
+  await expect(page.getByText('Prescription 1 attached')).toBeVisible();
+  b.slowUpload = 2000;
+  await page.getByLabel('Attach your prescription (optional)').setInputFiles(pdf('new.pdf'));
+  await page.getByRole('button', { name: 'Remove' }).click(); // the old one, while the new one uploads
+  await expect(page.getByText('Prescription 1 attached')).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText('Prescription 2 attached')).toHaveCount(0);
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByText('The pharmacist checks your prescription before packing', { exact: false })).toBeVisible();
+  expect((b.calls.find((c) => c.path === '/pharmacy-cart/checkout')!.body as { prescriptionUrls?: string[] }).prescriptionUrls)
+    .toEqual(['/api/static/prescriptions/upload-2.pdf']);
+});
+
+test('P9: the order is not placed while a prescription is still attaching; then it goes with the order', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await rxCart(page);
+  b.slowUpload = 2000;
+  await page.getByLabel('Attach your prescription (optional)').setInputFiles(pdf('rx.pdf'));
+  await expect(page.getByRole('button', { name: /Place order and pay/ })).toBeDisabled();
+  await expect(page.getByText('Attaching your prescription…', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Place order and pay/ })).toBeEnabled({ timeout: 5000 });
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByText('The pharmacist checks your prescription before packing', { exact: false })).toBeVisible();
+  expect((b.calls.find((c) => c.path === '/pharmacy-cart/checkout')!.body as { prescriptionUrls?: string[] }).prescriptionUrls)
+    .toEqual(['/api/static/prescriptions/upload-1.pdf']);
+});
+
+test('P9: a prescription attached for one pharmacy is never sent with a cart that now belongs to another', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  // The other pharmacy's details are already known (cached), so the cart screen stays mounted when the cart changes.
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Medicines', exact: true }).click();
+  await page.getByRole('link', { name: /City Pharmacy/ }).click();
+  await expect(page.getByRole('heading', { name: 'City Pharmacy' })).toBeVisible();
+  await rxCart(page);
+  await page.getByLabel('Attach your prescription (optional)').setInputFiles(pdf('for-asha.pdf'));
+  await expect(page.getByText('Prescription 1 attached')).toBeVisible();
+  // Elsewhere the cart was replaced by one from City Pharmacy; placing refreshes it (price changed).
+  b.cart = { pharmacyId: S2, items: [{ medicineId: MED_RX, quantity: 1 }] };
+  b.priceChangeOnce = true;
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByRole('heading', { name: 'Cart' })).toBeVisible();
+  await expect(page.getByText('City Pharmacy')).toBeVisible();
+  await expect(page.getByText('Prescription 1 attached')).toHaveCount(0);
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByText('The pharmacist checks it before packing', { exact: false })).toBeVisible();
+  const bodies = b.calls.filter((c) => c.path === '/pharmacy-cart/checkout').map((c) => c.body as { prescriptionUrls?: string[] });
+  expect(bodies.at(-1)!.prescriptionUrls).toBeUndefined();
 });

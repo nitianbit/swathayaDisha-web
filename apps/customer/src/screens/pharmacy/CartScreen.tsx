@@ -33,7 +33,9 @@ export function CartScreen() {
         // The pharmacy's pickup/delivery options decide what can be ordered: nothing is offered until they are known.
         : store.isPending ? <Loading label="Loading the pharmacy…" />
         : store.isError ? <ErrorState message={messageOf(store.error)} onRetry={() => void store.refetch()} />
-        : <CartView cart={cart.data} {...modesOf(store.data)} onAttemptChange={attemptChanged} />}
+        // Keyed by the pharmacy: a cart that now belongs to another pharmacy starts with nothing attached (a document
+        // meant for one pharmacy is never sent to another; late uploads of the old view land nowhere).
+        : <CartView key={cart.data.pharmacyId ?? 'none'} cart={cart.data} {...modesOf(store.data)} onAttemptChange={attemptChanged} />}
     </>
   );
 }
@@ -68,6 +70,10 @@ function CartView({ cart, pickup, delivery, onAttemptChange }: { cart: Cart; pic
   const rx = cart.items.filter((i) => i.prescriptionRequired !== false);
   // P9: optional prescription files (links of this customer's own uploads), sent with the order.
   const [prescriptions, setPrescriptions] = useState<string[]>([]);
+  // Uploads still on their way: the order is not placed until they finish (a selected prescription is never dropped).
+  const [uploading, setUploading] = useState(0);
+  const uploadingRef = useRef(0);
+  const trackUpload = (delta: number) => { uploadingRef.current += delta; setUploading(uploadingRef.current); };
   const offline: PaymentMode = mode === 'pickup' ? 'in_store_payment' : 'cash_on_delivery';
   const payMode: PaymentMode = pay === 'online_payment' ? pay : offline;
 
@@ -85,6 +91,7 @@ function CartView({ cart, pickup, delivery, onAttemptChange }: { cart: Cart; pic
 
   async function place() {
     setError(null);
+    if (uploadingRef.current > 0) { setError('Wait until your prescription has finished attaching.'); return; }
     if (!modeAllowed) { setError('Choose how you get the order.'); return; }
     if (mode === 'delivery' && address.trim().length < 10) { setFieldError('Enter the full delivery address.'); return; }
     setFieldError(null);
@@ -154,7 +161,8 @@ function CartView({ cart, pickup, delivery, onAttemptChange }: { cart: Cart; pic
       </ul>
       <p><strong>Total {formatRupees(cart.subtotal)}</strong></p>
       {rx.length > 0 && (
-        <PrescriptionUpload names={rx.map((i) => i.medicineName ?? 'A medicine')} urls={prescriptions} onChange={setPrescriptions} disabled={placing} />
+        <PrescriptionUpload names={rx.map((i) => i.medicineName ?? 'A medicine')} urls={prescriptions} setUrls={setPrescriptions}
+          onUpload={trackUpload} disabled={placing} />
       )}
       {(
         <section className="card stack" aria-labelledby="checkout-h">
@@ -179,7 +187,8 @@ function CartView({ cart, pickup, delivery, onAttemptChange }: { cart: Cart; pic
             <p className="muted">Pay within {PHARMACY_PAYMENT_WINDOW_MIN} minutes, or the order is cancelled and the medicines are released.</p>
           )}
           {error && <Alert>{error}</Alert>}
-          <Button busy={placing} disabled={busy || !modeAllowed} onClick={() => void place()}>
+          {uploading > 0 && <p className="muted">Attaching your prescription… the order can be placed when it is done.</p>}
+          <Button busy={placing} disabled={busy || !modeAllowed || uploading > 0} onClick={() => void place()}>
             {payMode === 'online_payment' ? `Place order and pay ${formatRupees(cart.subtotal)}` : `Place order · ${formatRupees(cart.subtotal)}`}
           </Button>
         </section>
@@ -240,8 +249,9 @@ function EarlierAttempt({ onChange }: { onChange: () => void }) {
  * P9: medicines that need a prescription are checked by the pharmacist before the order is packed. Attaching a
  * prescription is optional (images or PDF); without one the pharmacist may contact you.
  */
-function PrescriptionUpload({ names, urls, onChange, disabled }: {
-  names: string[]; urls: string[]; onChange: (urls: string[]) => void; disabled: boolean;
+function PrescriptionUpload({ names, urls, setUrls, onUpload, disabled }: {
+  names: string[]; urls: string[]; setUrls: (update: (current: string[]) => string[]) => void;
+  onUpload: (delta: number) => void; disabled: boolean;
 }) {
   const { api } = useSession();
   const [busy, setBusy] = useState(false);
@@ -249,18 +259,20 @@ function PrescriptionUpload({ names, urls, onChange, disabled }: {
   async function add(files: FileList | null) {
     if (!files?.length) return;
     setBusy(true); setError(null);
+    onUpload(1);
     try {
-      const added: string[] = [];
       for (const f of Array.from(files)) {
         if (!/^(image\/(jpeg|png|webp)|application\/pdf)$/.test(f.type)) throw new Error('Attach a photo (JPG, PNG) or a PDF.');
         if (f.size > 10 * 1024 * 1024) throw new Error('Each file must be under 10 MB.');
-        added.push(await customerPharmacyApi(api).uploadPrescription(f));
+        const url = await customerPharmacyApi(api).uploadPrescription(f);
+        // Appended to the list as it is NOW (a removal made meanwhile stays removed).
+        setUrls((current) => (current.includes(url) ? current : [...current, url]));
       }
-      onChange([...urls, ...added]);
     } catch (err) {
       setError(err instanceof ApiError ? messageOf(err) : (err as Error).message || 'The file could not be attached.');
     } finally {
       setBusy(false);
+      onUpload(-1);
     }
   }
   return (
@@ -282,7 +294,7 @@ function PrescriptionUpload({ names, urls, onChange, disabled }: {
           {urls.map((u, i) => (
             <li key={u} className="row-between">
               <span>Prescription {i + 1} attached</span>
-              <Button variant="ghost" disabled={disabled} onClick={() => onChange(urls.filter((x) => x !== u))}>Remove</Button>
+              <Button variant="ghost" disabled={disabled} onClick={() => setUrls((current) => current.filter((x) => x !== u))}>Remove</Button>
             </li>
           ))}
         </ul>
