@@ -34,4 +34,7 @@ With it, both apps use native sessions automatically (`session: 'native'` sign-i
 backend and add the WebView origins (`capacitor://localhost`, `https://localhost`) to the backend's `CORS_ORIGIN`. Without
 it (a browser) nothing changes.
 
+The phone apps (SwasthayaDisha, SwasthayaDisha Workspace) are in `apps/*/android` and `apps/*/ios`: see
+[docs/PHONE_APPS.md](docs/PHONE_APPS.md).
+
 See [AGENTS.md](AGENTS.md) for the rules and checks, and [docs/PLAN.md](docs/PLAN.md) for the plan.
