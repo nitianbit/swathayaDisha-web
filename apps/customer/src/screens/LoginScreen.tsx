@@ -15,6 +15,9 @@ export function LoginScreen({ notice }: { notice?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(0);
+  // The number the countdown belongs to: another number can still be used (O1 limits are per destination).
+  const [waitFor, setWaitFor] = useState('');
+  const waiting = cooldown > 0 && waitFor === phone;
   const codeRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -32,11 +35,11 @@ export function LoginScreen({ notice }: { notice?: string }) {
     setBusy(true);
     try {
       await requestCode(phone);
-      setStep('code'); setOtp(''); setCooldown(RESEND_SECONDS);
+      setStep('code'); setOtp(''); setCooldown(RESEND_SECONDS); setWaitFor(phone);
     } catch (err) {
       setError(messageOf(err));
       // O1: a refused resend waits as long as the server says (the button counts down).
-      if (err instanceof ApiError && err.status === 429 && err.retryAfter) setCooldown(Math.min(err.retryAfter, 24 * 3600));
+      if (err instanceof ApiError && err.status === 429 && err.retryAfter) { setCooldown(Math.min(err.retryAfter, 24 * 3600)); setWaitFor(phone); }
     } finally { setBusy(false); }
   }
 
@@ -65,7 +68,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
             <TextField label="Mobile number" inputMode="numeric" autoComplete="tel-national" maxLength={10}
               value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))} error={fieldError}
               hint="We will send a 6-digit code by SMS. New here? Your account is created when you sign in." />
-            <Button type="submit" busy={busy}>Send code</Button>
+            <Button type="submit" busy={busy} disabled={waiting}>{waiting ? `Send code in ${cooldown}s` : 'Send code'}</Button>
           </form>
         ) : (
           <form onSubmit={verify} className="stack" noValidate>
@@ -74,8 +77,8 @@ export function LoginScreen({ notice }: { notice?: string }) {
               value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} error={fieldError} />
             <Button type="submit" busy={busy}>Verify and sign in</Button>
             <div className="row-between">
-              <Button variant="ghost" disabled={busy || cooldown > 0} onClick={() => void send()}>
-                {cooldown > 0 ? `Resend code in ${cooldown}s` : 'Resend code'}
+              <Button variant="ghost" disabled={busy || waiting} onClick={() => void send()}>
+                {waiting ? `Resend code in ${cooldown}s` : 'Resend code'}
               </Button>
               <Button variant="ghost" disabled={busy} onClick={() => { setStep('phone'); setError(null); setFieldError(null); }}>
                 Change number

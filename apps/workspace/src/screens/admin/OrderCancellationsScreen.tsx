@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
 import { adminQueuesApi, pharmacyOrdersApi, refId, type PharmacyOrder } from '@jansetu/api';
@@ -23,6 +24,11 @@ export function OrderCancellationsScreen() {
     queryFn: () => adminQueuesApi(api).orderCancellations({ page, limit: PAGE_SIZE }),
     refetchInterval: 60_000,
   });
+  // Deciding the last request of the last page shrinks the queue: go back to the new last page instead of an empty one.
+  const lastPage = Math.max(1, q.data?.totalPages ?? 1);
+  useEffect(() => {
+    if (q.data && page > lastPage) setParams(lastPage > 1 ? { page: String(lastPage) } : {}, { replace: true });
+  }, [q.data, page, lastPage, setParams]);
   const pending = q.data?.items.filter((o) => o.status === 'pending_cancel' && o.cancelRequest?.state === 'pending') ?? [];
 
   return (
@@ -39,12 +45,12 @@ export function OrderCancellationsScreen() {
             <ul className="stock-list">
               {pending.map((o) => <OrderCancellationCard key={`${o._id}:${o.cancelRequest!.requestId}`} order={o} />)}
             </ul>
-            {q.data.totalPages > 1 && (
+            {(q.data.totalPages > 1 || page > 1) && (
               <nav className="ws-pager" aria-label="Pages">
                 <Button variant="secondary" disabled={page <= 1}
                   onClick={() => setParams(page - 1 > 1 ? { page: String(page - 1) } : {})}>Previous</Button>
-                <span>Page {page} of {q.data.totalPages}</span>
-                <Button variant="secondary" disabled={page >= q.data.totalPages}
+                <span>Page {page} of {lastPage}</span>
+                <Button variant="secondary" disabled={page >= lastPage}
                   onClick={() => setParams({ page: String(page + 1) })}>Next</Button>
               </nav>
             )}

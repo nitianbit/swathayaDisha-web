@@ -40,8 +40,10 @@ async function mockBackend(page: Page): Promise<Backend> {
     if (path === `/pharmacies/${PHARMACY}`) return json(route, 200, { success: true, data: { _id: PHARMACY, name: 'Asha Medicals' } });
     if (path === '/pharmacy-orders' && req.method() === 'GET') {
       b.listQueries.push(url.search);
-      const items = b.orders.filter((o) => o.status === 'pending_cancel');
-      return json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
+      const all = b.orders.filter((o) => o.status === 'pending_cancel');
+      const pg = Number(url.searchParams.get('page') ?? '1'); const limit = Number(url.searchParams.get('limit') ?? '20');
+      const items = all.slice((pg - 1) * limit, pg * limit);
+      return json(route, 200, { success: true, data: items, pagination: { page: pg, limit, total: all.length, totalPages: Math.ceil(all.length / limit) } });
     }
     const m = /^\/pharmacy-orders\/(\w+)\/cancel-request\/(approve|reject)$/.exec(path);
     if (m) {
@@ -122,4 +124,20 @@ test('an empty queue says so', async ({ page }) => {
   b.orders = [];
   await signIn(page);
   await expect(page.getByText('No cancellation requests waiting')).toBeVisible();
+});
+
+test('deciding the only request on the last page goes back to the previous page, not an empty one', async ({ page }) => {
+  const b = await mockBackend(page);
+  b.orders = Array.from({ length: 21 }, (_, i) => pendingOrder((80 + i).toString(16).padStart(2, '0').repeat(12), 'd'.repeat(23) + (i % 10),
+    { orderNumber: `PO-${1000 + i}` }));
+  await signIn(page);
+  await expect(page.getByText('21 waiting for a decision')).toBeVisible();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await expect(page.getByText('Page 2 of 2')).toBeVisible();
+  const last = card(page, 'PO-1020');
+  await last.getByRole('button', { name: 'Approve cancellation' }).click();
+  await last.getByRole('button', { name: 'Yes, cancel the order' }).click();
+  await expect(page.getByText('20 waiting for a decision')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Order PO-1000' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Pages' })).toHaveCount(0);
 });

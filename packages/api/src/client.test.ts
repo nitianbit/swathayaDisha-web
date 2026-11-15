@@ -54,6 +54,10 @@ describe('api client', () => {
     const other = await setup(json(404, { message: 'Incorrect code. 4 attempts left.', code: 'OTP_NOT_FOUND' })).client
       .post('/auth/user/verify', { auth: false }).catch((e: unknown) => e);
     expect((other as ApiError).retryAfter).toBeUndefined();
+    // Cross-origin: the header is not exposed to the page, the body still carries the wait.
+    const hidden = await setup(json(429, { code: 'OTP_SEND_LIMIT', message: 'Wait', retryAfter: 3000 })).client
+      .post('/auth/user/send', { auth: false }).catch((e: unknown) => e);
+    expect((hidden as ApiError).retryAfter).toBe(3000);
   });
 
   it('D4: session commands send the session header and the first-party cookie; nothing else does', async () => {

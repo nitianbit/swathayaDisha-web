@@ -34,3 +34,26 @@ test('a refused resend counts down the server’s wait; a burnt code clears the 
   await expect(page.getByRole('alert')).toHaveText('Too many codes requested. Please try again in 50 minutes.');
   await expect(page.getByRole('button', { name: /Resend code in (2999|3000)s/ })).toBeDisabled();
 });
+
+test('a refused first send waits on that number only; another number can still be used', async ({ page }) => {
+  const json = (route: Route, status: number, body: unknown) =>
+    route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+  await page.route('**/api/v1/**', async (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname.replace('/api/v1', '');
+    if (path === '/auth/user/send') {
+      const phone = (req.postDataJSON() as { phone: string }).phone;
+      if (phone === '9876543210') return json(route, 429, { error: 429, code: 'OTP_SEND_LIMIT', message: 'Too many codes requested. Please try again in 50 minutes.', retryAfter: 3000 });
+      return json(route, 200, { success: true });
+    }
+    return json(route, 401, { error: 401, message: 'Please sign in again' });
+  });
+  await page.goto('/');
+  await page.getByLabel('Mobile number').fill('9876543210');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Too many codes requested. Please try again in 50 minutes.');
+  await expect(page.getByRole('button', { name: /Send code in \d+s/ })).toBeDisabled();
+  await page.getByLabel('Mobile number').fill('9876543211');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByLabel('6-digit code')).toBeVisible();
+});

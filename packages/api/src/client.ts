@@ -145,9 +145,12 @@ export function createApiClient(options: ApiClientOptions) {
         }
         if (res.status === 401 && token) options.onUnauthorized?.(token);
         const text = await res.text().catch((err: unknown) => { throw translate(err); });
-        const body = parseJson(text) as { message?: unknown; code?: unknown } | null;
+        const body = parseJson(text) as { message?: unknown; code?: unknown; retryAfter?: unknown } | null;
         const message = typeof body?.message === 'string' && body.message ? body.message : `Request failed (${res.status})`;
-        const wait = Number(res.headers.get('retry-after'));
+        // A cross-origin build cannot read Retry-After (not CORS-exposed): the JSON body carries the same wait.
+        const header = Number(res.headers.get('retry-after'));
+        const fromBody = typeof body?.retryAfter === 'number' ? body.retryAfter : NaN;
+        const wait = Number.isFinite(header) && header > 0 ? header : fromBody;
         throw new ApiError(res.status, message, typeof body?.code === 'string' ? body.code : undefined,
           res.status === 429 && Number.isFinite(wait) && wait > 0 ? Math.ceil(wait) : undefined);
       }
