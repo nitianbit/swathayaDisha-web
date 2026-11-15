@@ -46,3 +46,44 @@ export async function rotateNative<T extends { refreshToken: string }>(store: Se
     throw err;
   }
 }
+
+/*
+ * Sign-out on the phone must hold even when the secure store fails for a moment. A durable "signed out" flag (a plain
+ * '1', no token or personal data) is set FIRST; while it is set the app never resumes a session, and every start
+ * finishes the clean-up. The server is told independently of the store (with the access token in use even if the
+ * stored refresh token cannot be read).
+ */
+const signedOutKey = (app: NativeApp) => `jansetu.native.signedOut.${app}`;
+
+/** A sign-out on this phone has not finished clearing the stored token yet. */
+export function signOutPending(app: NativeApp): boolean {
+  try { return localStorage.getItem(signedOutKey(app)) === '1'; } catch { return false; }
+}
+/** A new sign-in stored its token: no sign-out is pending any more. */
+export function clearSignOutPending(app: NativeApp): void {
+  try { localStorage.removeItem(signedOutKey(app)); } catch { /* nothing to clear */ }
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Ends the phone's session: marks sign-out pending, tells the server (with the stored refresh token if it can be read,
+ * and whatever access token the caller passes to `logout`), and removes the stored token (retried). Resolves true when
+ * the store is clean (the pending mark is then cleared); false when the token could not be removed yet (the mark stays,
+ * so the next start retries and never resumes the session).
+ */
+export async function nativeSignOut(store: SecureStore, app: NativeApp,
+  logout: (refreshToken: string | null) => Promise<unknown>): Promise<boolean> {
+  try { localStorage.setItem(signedOutKey(app), '1'); } catch { /* the store clean-up below still runs */ }
+  const key = refreshTokenKey(app);
+  let stored: string | null = null;
+  try { stored = await store.get(key); } catch { stored = null; }
+  const told = logout(stored).then(() => true, () => false);
+  let removed = false;
+  for (let attempt = 0; attempt < 3 && !removed; attempt++) {
+    try { await store.remove(key); removed = true; } catch { await pause(150 * (attempt + 1)); }
+  }
+  await told;
+  if (removed) clearSignOutPending(app);
+  return removed;
+}

@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  ApiError, authApi, createApiClient, markerStore, nativeSecureStore, refreshTokenKey, rotateNative, samePrincipal, sessionChannel,
+  ApiError, authApi, clearSignOutPending, createApiClient, markerStore, nativeSecureStore, nativeSignOut, refreshTokenKey, rotateNative,
+  samePrincipal, sessionChannel, signOutPending,
   withSessionLock,
   type ApiClient, type OtpTarget, type PendingMarker, type Principal, type UserType,
 } from '@jansetu/api';
@@ -120,11 +121,15 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     endLocally(notice);
     channel?.post({ type: 'signed-out' });
     if (secure) {
-      // The stored token is removed first: the phone is signed out even if the server cannot be told right now.
+      // Holds even if the secure store fails for a moment: marked pending first, the server told with whatever token
+      // is at hand, the stored token removed (retried); an unfinished clean-up is finished at the next start.
       void withSessionLock(APP, async () => {
-        const stored = await secure.get(refreshTokenKey(NATIVE_APP));
-        await secure.remove(refreshTokenKey(NATIVE_APP));
-        await authRef.current?.logoutNative(NATIVE_APP, stored, tabToken);
+        const clean = await nativeSignOut(secure, NATIVE_APP, (rt) => authRef.current!.logoutNative(NATIVE_APP, rt, tabToken));
+        if (!clean && !principal.current) {
+          setState((s) => (s.status === 'signed_out'
+            ? { status: 'signed_out', notice: `${s.notice ? `${s.notice} ` : ''}This phone could not clear its saved sign-in yet; it will be cleared when the app next opens.` }
+            : s));
+        }
       }).catch(() => undefined);
     } else if (cookieMode) {
       void withSessionLock(APP, async () => { await authRef.current?.logoutSession(tabToken); }).catch(() => undefined);
@@ -214,6 +219,11 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       await withSessionLock(APP, async () => {
         // Another restore (or a sign-in) finished while this one waited for the lock: nothing to resume.
         if (principal.current || gen !== generation.current) return;
+        // N1: a sign-out on this phone did not finish clearing the stored token: finish it, never resume.
+        if (secure && signOutPending(NATIVE_APP)) {
+          await nativeSignOut(secure, NATIVE_APP, (rt) => auth.logoutNative(NATIVE_APP, rt, null));
+          throw new ApiError(401, 'Signed out', 'SESSION_ENDED');
+        }
         const r = await rotate();
         if (gen !== generation.current) return;
         await establish(gen, r.token, r.expiresIn);
@@ -247,9 +257,16 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       let signedIn;
       if (secure) {
         // The token the phone still holds is ended by this sign-in; the new one is stored before it is used.
-        const previous = await secure.get(refreshTokenKey(NATIVE_APP));
+        const previous = await secure.get(refreshTokenKey(NATIVE_APP)).catch(() => null);
         const n = await auth.verifyOtpNative(role, target, otp, NATIVE_APP, previous);
-        await secure.set(refreshTokenKey(NATIVE_APP), n.refreshToken);
+        try {
+          await secure.set(refreshTokenKey(NATIVE_APP), n.refreshToken);
+        } catch {
+          // Not stored, so not usable: end the new session on the server rather than leave it behind.
+          await auth.logoutNative(NATIVE_APP, n.refreshToken, n.token).catch(() => undefined);
+          throw new ApiError(0, 'This phone could not save your sign-in. Please try again.', 'SECURE_STORE');
+        }
+        clearSignOutPending(NATIVE_APP); // the new token replaced whatever an unfinished sign-out left behind
         signedIn = n;
       } else {
         signedIn = cookieMode ? await auth.verifyOtpSession(role, target, otp) : await auth.verifyOtp(role, target, otp);

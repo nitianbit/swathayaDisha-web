@@ -8,11 +8,16 @@ import { expect, test, type Page, type Route } from '@playwright/test';
 const ME = 'c1'.repeat(12);
 
 const FAKE_SECURE_STORE = `
-window.JansetuNative = { secureStore: {
-  get: async (k) => sessionStorage.getItem('__fake_keychain__' + k),
-  set: async (k, v) => { sessionStorage.setItem('__fake_keychain__' + k, v); },
-  remove: async (k) => { sessionStorage.removeItem('__fake_keychain__' + k); },
-} };`;
+(() => {
+  const fail = () => JSON.parse(sessionStorage.getItem('__fake_fail__') || '{}');
+  window.JansetuNative = { secureStore: {
+    get: async (k) => { if (fail().get) throw new Error('keychain locked'); return sessionStorage.getItem('__fake_keychain__' + k); },
+    set: async (k, v) => { sessionStorage.setItem('__fake_keychain__' + k, v); },
+    remove: async (k) => { if (fail().remove) throw new Error('keychain busy'); sessionStorage.removeItem('__fake_keychain__' + k); },
+  } };
+})();`;
+const failStore = (page: Page, f: { get?: boolean; remove?: boolean }) =>
+  page.evaluate((x) => sessionStorage.setItem('__fake_fail__', JSON.stringify(x)), f);
 
 interface Backend {
   calls: { path: string; body: Record<string, unknown>; native: string | null; auth: string | null; cookie: string | null }[];
@@ -135,4 +140,46 @@ test('signing in again while a token is stored names it, so the server ends that
   const last = b.calls.filter((c) => c.path === '/auth/user/verify').at(-1)!;
   expect(last.body.previousRefreshToken).toBe('rt-stale');
   expect(await stored(page)).toBe('rt-1');
+});
+
+test('sign-out holds when the secure store cannot be read: the server is told with the access token, reopening stays signed out', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await failStore(page, { get: true });
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Profile', exact: true }).click();
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByLabel('Mobile number')).toBeVisible();
+  await expect.poll(() => b.calls.filter((c) => c.path === '/auth/session/native/logout').length).toBe(1);
+  const logout = b.calls.find((c) => c.path === '/auth/session/native/logout')!;
+  expect(logout.body).toEqual({ app: 'customer' });
+  expect(logout.auth).toBe('Bearer access-1');
+  expect(await stored(page)).toBeNull();
+  await failStore(page, {});
+  const before = b.calls.length;
+  await page.reload();
+  await expect(page.getByLabel('Mobile number')).toBeVisible();
+  expect(b.calls.slice(before).some((c) => c.path === '/auth/session/native/refresh')).toBe(false);
+});
+
+test('if the stored token cannot be removed, the phone says so and never resumes; the next start finishes the clean-up', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await failStore(page, { remove: true });
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Profile', exact: true }).click();
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByText('could not clear its saved sign-in yet', { exact: false })).toBeVisible();
+  expect(await stored(page)).toBe('rt-1');
+  b.revoked = false; // even if the server had not been reached, the phone must not resume
+  const before = b.calls.length;
+  await page.reload();
+  await expect(page.getByLabel('Mobile number')).toBeVisible();
+  expect(b.calls.slice(before).some((c) => c.path === '/auth/session/native/refresh')).toBe(false);
+  await failStore(page, {});
+  await page.reload();
+  await expect(page.getByLabel('Mobile number')).toBeVisible();
+  await expect.poll(() => stored(page)).toBeNull();
+  expect(b.calls.some((c) => c.path === '/auth/session/native/refresh')).toBe(false);
+  await signIn(page); // a fresh sign-in works and is kept
+  await page.reload();
+  await expect(page.getByRole('heading', { level: 1, name: /^Hello/ })).toBeVisible();
 });
