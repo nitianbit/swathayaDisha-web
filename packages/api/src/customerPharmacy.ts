@@ -66,6 +66,8 @@ export interface Checkout {
   notes?: string;
   /** P9: optional prescription files (links from uploadPrescription). */
   prescriptionUrls?: string[];
+  /** P9: the pharmacy whose cart was shown; the server refuses (409 CART_CHANGED) if the cart is now another's. */
+  expectedPharmacyId?: string;
 }
 
 export interface CheckoutResult {
@@ -150,6 +152,7 @@ export function customerPharmacyApi(c: ApiClient) {
       ...(body.deliveryMode === 'delivery' ? { deliveryAddress: body.deliveryAddress } : {}),
       ...(body.notes ? { notes: body.notes } : {}),
       ...(body.prescriptionUrls?.length ? { prescriptionUrls: body.prescriptionUrls } : {}),
+      ...(body.expectedPharmacyId ? { expectedPharmacyId: body.expectedPharmacyId } : {}),
     } }),
 
     orders: (page = 1, limit = 20) => c.page<PharmacyOrder>('/pharmacy-orders', { query: { page, limit } }),

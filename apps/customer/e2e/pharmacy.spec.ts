@@ -166,6 +166,10 @@ async function mockBackend(page: Page): Promise<Backend> {
     };
     if (path === '/pharmacy-cart/checkout') {
       const key = (body as { requestKey?: string }).requestKey;
+      const expected = (body as { expectedPharmacyId?: string }).expectedPharmacyId;
+      if (!(key && b.byKey.has(key)) && expected && b.cart.pharmacyId && expected !== b.cart.pharmacyId) {
+        return json(route, 409, { error: 409, code: 'CART_CHANGED', message: 'Your cart changed in another window. Check it and place the order again.' });
+      }
       if (b.slowNextCheckout) {
         const wait = b.slowNextCheckout; b.slowNextCheckout = 0;
         await new Promise((r) => setTimeout(r, wait));
@@ -267,7 +271,7 @@ test('browse a pharmacy, build a cart and pay online; the order is confirmed as 
   await page.getByRole('button', { name: /Place order and pay/ }).click();
   await expect(page.getByText('Payment received. The pharmacy will prepare your order.')).toBeVisible();
   const checkout = b.calls.find((c) => c.path === '/pharmacy-cart/checkout');
-  expect(checkout?.body).toEqual({ paymentMode: 'online_payment', deliveryMode: 'pickup', requestKey: expect.stringMatching(/^[A-Za-z0-9]{32}$/) });
+  expect(checkout?.body).toEqual({ paymentMode: 'online_payment', deliveryMode: 'pickup', requestKey: expect.stringMatching(/^[A-Za-z0-9]{32}$/), expectedPharmacyId: S1 });
   await page.getByRole('link', { name: 'My medicine orders' }).click();
   await expect(page.getByRole('link', { name: /Order PH-1/ })).toBeVisible();
   // The order list is scoped by the server: the app never names a customer.
@@ -355,7 +359,7 @@ test('delivery with cash on delivery; an unpaid order is cancelled at once', asy
   await page.getByRole('button', { name: /Place order ·/ }).click();
   await expect(page.getByRole('heading', { name: 'Order PH-1' })).toBeVisible();
   expect(b.calls.find((c) => c.path === '/pharmacy-cart/checkout')?.body).toEqual({
-    paymentMode: 'cash_on_delivery', deliveryMode: 'delivery', deliveryAddress: '12 MG Road, Camp, Pune 411001', requestKey: expect.any(String) });
+    paymentMode: 'cash_on_delivery', deliveryMode: 'delivery', deliveryAddress: '12 MG Road, Camp, Pune 411001', requestKey: expect.any(String), expectedPharmacyId: S1 });
   await expect(page.getByRole('heading', { name: 'Payment' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancel this order' }).click();
   await expect(page.getByText('The order is cancelled now.', { exact: false })).toBeVisible();
@@ -696,4 +700,22 @@ test('P9: a prescription attached for one pharmacy is never sent with a cart tha
   await expect(page.getByText('The pharmacist checks it before packing', { exact: false })).toBeVisible();
   const bodies = b.calls.filter((c) => c.path === '/pharmacy-cart/checkout').map((c) => c.body as { prescriptionUrls?: string[] });
   expect(bodies.at(-1)!.prescriptionUrls).toBeUndefined();
+});
+
+test('P9: a cart replaced by another pharmacy elsewhere, unseen here: the order is refused and nothing is sent to it', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Medicines', exact: true }).click();
+  await page.getByRole('link', { name: /City Pharmacy/ }).click(); // its details get cached
+  await expect(page.getByRole('heading', { name: 'City Pharmacy' })).toBeVisible();
+  await rxCart(page);
+  await page.getByLabel('Attach your prescription (optional)').setInputFiles(pdf('for-asha.pdf'));
+  await expect(page.getByText('Prescription 1 attached')).toBeVisible();
+  b.cart = { pharmacyId: S2, items: [{ medicineId: MED_RX, quantity: 1 }] }; // another device, no refresh here
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByText('Your cart changed in another window.', { exact: false })).toBeVisible();
+  expect(b.orders.size).toBe(0);
+  await expect(page.getByText('Prescription 1 attached')).toHaveCount(0); // the refreshed cart (City Pharmacy) starts fresh
+  const sent = b.calls.filter((c) => c.path === '/pharmacy-cart/checkout').map((c) => c.body as { expectedPharmacyId?: string });
+  expect(sent[0]!.expectedPharmacyId).toBe(S1);
 });

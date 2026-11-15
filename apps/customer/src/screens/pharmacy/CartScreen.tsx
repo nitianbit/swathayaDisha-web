@@ -23,11 +23,14 @@ export function CartScreen() {
   // Re-reads the stored checkout attempt whenever an attempt starts or ends (session memory is not reactive).
   const [, setAttemptVersion] = useState(0);
   const attemptChanged = () => setAttemptVersion((v) => v + 1);
+  // Survives the view being replaced when the refreshed cart belongs to another pharmacy.
+  const [cartNotice, setCartNotice] = useState<string | null>(null);
   return (
     <>
       <Link to={storeId ? `/pharmacy/stores/${storeId}` : '/pharmacy'} className="back"><ArrowLeft size={16} aria-hidden="true" /> Continue shopping</Link>
       <PageHeading title="Cart">{cart.data?.pharmacyName ?? undefined}</PageHeading>
       <EarlierAttempt onChange={attemptChanged} />
+      {cartNotice && <Alert tone="warn">{cartNotice}</Alert>}
       {cart.isPending ? <Loading /> : cart.isError ? <ErrorState message={messageOf(cart.error)} onRetry={() => void cart.refetch()} />
         : cart.data.items.length === 0 ? <Empty title="Your cart is empty"><Link to="/pharmacy">Find a pharmacy</Link></Empty>
         // The pharmacy's pickup/delivery options decide what can be ordered: nothing is offered until they are known.
@@ -35,7 +38,8 @@ export function CartScreen() {
         : store.isError ? <ErrorState message={messageOf(store.error)} onRetry={() => void store.refetch()} />
         // Keyed by the pharmacy: a cart that now belongs to another pharmacy starts with nothing attached (a document
         // meant for one pharmacy is never sent to another; late uploads of the old view land nowhere).
-        : <CartView key={cart.data.pharmacyId ?? 'none'} cart={cart.data} {...modesOf(store.data)} onAttemptChange={attemptChanged} />}
+        : <CartView key={cart.data.pharmacyId ?? 'none'} cart={cart.data} {...modesOf(store.data)} onAttemptChange={attemptChanged}
+            onCartChanged={setCartNotice} />}
     </>
   );
 }
@@ -46,7 +50,9 @@ export function modesOf(store: { pickupAvailable?: boolean; deliveryAvailable?: 
   return { pickup: store.pickupAvailable === true || !delivery, delivery };
 }
 
-function CartView({ cart, pickup, delivery, onAttemptChange }: { cart: Cart; pickup: boolean; delivery: boolean; onAttemptChange: () => void }) {
+function CartView({ cart, pickup, delivery, onAttemptChange, onCartChanged }: {
+  cart: Cart; pickup: boolean; delivery: boolean; onAttemptChange: () => void; onCartChanged: (notice: string | null) => void;
+}) {
   const { api, memory } = useSession();
   const pharmacy = customerPharmacyApi(api);
   const queryClient = useQueryClient();
@@ -91,6 +97,7 @@ function CartView({ cart, pickup, delivery, onAttemptChange }: { cart: Cart; pic
 
   async function place() {
     setError(null);
+    onCartChanged(null);
     if (uploadingRef.current > 0) { setError('Wait until your prescription has finished attaching.'); return; }
     if (!modeAllowed) { setError('Choose how you get the order.'); return; }
     if (mode === 'delivery' && address.trim().length < 10) { setFieldError('Enter the full delivery address.'); return; }
@@ -112,7 +119,7 @@ function CartView({ cart, pickup, delivery, onAttemptChange }: { cart: Cart; pic
       memory.set(CHECKOUT_SLOT, attempt);
       onAttemptChange();
       const r = await pharmacy.checkout({ paymentMode: payMode, deliveryMode: mode, deliveryAddress: address.trim(), notes: notes.trim() || undefined,
-        prescriptionUrls: rx.length ? prescriptions : undefined },
+        prescriptionUrls: rx.length ? prescriptions : undefined, expectedPharmacyId: cart.pharmacyId ?? undefined },
         attempt.requestKey);
       await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] });
       // A late answer for a key that is no longer the stored one (another attempt started meanwhile, e.g. in another
@@ -126,6 +133,10 @@ function CartView({ cart, pickup, delivery, onAttemptChange }: { cart: Cart; pic
       if (err instanceof ApiError && err.code === 'REQUEST_ABANDONED') {
         // That attempt can never be placed: the next one gets a new key (only if it is still the stored one).
         if (endIfCurrent(attempt.requestKey)) setError('That attempt was cancelled. Please place the order again.');
+      } else if (err instanceof ApiError && err.code === 'CART_CHANGED') {
+        // The cart now belongs to another pharmacy (changed elsewhere): reload it; the view starts fresh for it.
+        onCartChanged('Your cart changed in another window. Check it and place the order again.');
+        await refresh();
       } else if (err instanceof ApiError && err.code === 'CART_PRICE_CHANGED') {
         setError('Some prices changed since you added the medicines. Check the new total and place the order again.');
         await refresh();
