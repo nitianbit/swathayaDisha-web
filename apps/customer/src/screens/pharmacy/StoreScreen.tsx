@@ -27,9 +27,10 @@ function Store({ pharmacyId }: { pharmacyId: string }) {
   const shelf = useMemo(() => shelfOf(rows), [rows]);
   // Pages whose rows are all unorderable (sold out, inactive, unpriced) show nothing: read on until something can be
   // shown or the stock ends, so "nothing in stock" is only said when it is true.
+  // A failed page stops the reading (the error offers Retry); it is never re-requested on its own.
   useEffect(() => {
-    if (shelf.length === 0 && stock.hasNextPage && !stock.isFetching) void stock.fetchNextPage();
-  }, [shelf.length, stock.hasNextPage, stock.isFetching, stock.fetchNextPage]);
+    if (shelf.length === 0 && stock.hasNextPage && !stock.isFetching && !stock.isError) void stock.fetchNextPage();
+  }, [shelf.length, stock.hasNextPage, stock.isFetching, stock.isError, stock.fetchNextPage]);
   const [error, setError] = useState<string | null>(null);
   const [otherStore, setOtherStore] = useState<{ medicineId: string } | null>(null);
   // One cart change at a time (the cart is shared by every line): all steppers wait while one is on its way.

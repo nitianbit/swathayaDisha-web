@@ -34,6 +34,9 @@ interface Backend {
   /** Milliseconds to hold the store details / the next cart change (to model a slow network). */
   slowStore: number;
   slowCart: number;
+  /** Stock page requests that fail (500), counted. */
+  failStockPage: number;
+  stockPageCalls: Record<number, number>;
 }
 
 const FAKE_CHECKOUT = `
@@ -61,7 +64,7 @@ function cartView(b: Backend) {
 }
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const b: Backend = { calls: [], cart: { pharmacyId: null, items: [] }, orders: new Map(), records: new Map(), priceChangeOnce: false, slowStore: 0, slowCart: 0 };
+  const b: Backend = { calls: [], cart: { pharmacyId: null, items: [] }, orders: new Map(), records: new Map(), priceChangeOnce: false, slowStore: 0, slowCart: 0, failStockPage: 0, stockPageCalls: {} };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
   let n = 0;
@@ -107,6 +110,8 @@ async function mockBackend(page: Page): Promise<Backend> {
       const q = (url.searchParams.get('search') ?? '').toLowerCase();
       const all = rows.filter((r) => !q || r.medicine.name.toLowerCase().includes(q));
       const pg = Number(url.searchParams.get('page') ?? '1'); const limit = Number(url.searchParams.get('limit') ?? '50');
+      b.stockPageCalls[pg] = (b.stockPageCalls[pg] ?? 0) + 1;
+      if (pg === b.failStockPage) return json(route, 500, { error: 500, message: 'Stock could not be read' });
       return json(route, 200, { success: true, data: all.slice((pg - 1) * limit, pg * limit),
         pagination: { page: pg, limit, total: all.length, totalPages: Math.max(1, Math.ceil(all.length / limit)) } });
     }
@@ -408,4 +413,19 @@ test('a first page with nothing orderable does not hide the medicines on the nex
   await page.getByRole('link', { name: /Sold Out First/ }).click();
   await expect(page.getByRole('button', { name: 'Add Zinc 50 to cart' })).toBeEnabled();
   await expect(page.getByText('No medicines in stock right now')).toHaveCount(0);
+});
+
+test('a next page that fails stops the reading with Retry; it is not requested again on its own', async ({ page }) => {
+  const b = await mockBackend(page);
+  b.failStockPage = 2;
+  await signIn(page);
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Medicines', exact: true }).click();
+  await page.getByRole('link', { name: /Sold Out First/ }).click();
+  await expect(page.getByText('Stock could not be read')).toBeVisible({ timeout: 15_000 });
+  const calls = b.stockPageCalls[2] ?? 0;
+  await page.waitForTimeout(3000);
+  expect(b.stockPageCalls[2]).toBe(calls);
+  b.failStockPage = 0;
+  await page.getByRole('button', { name: /Try again|Retry/ }).click();
+  await expect(page.getByRole('button', { name: 'Add Zinc 50 to cart' })).toBeEnabled();
 });
