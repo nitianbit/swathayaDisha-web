@@ -37,7 +37,7 @@ export type PrescriptionRefundStatus = 'wallet_pending' | 'wallet_credited' | 's
 
 /** Refund owed after a rejection, a failed delivery or a stock-hold cancellation (P2); amounts as the backend stores them. */
 export interface PrescriptionRefund {
-  cause?: 'prescription_rejected' | 'delivery_not_collected' | 'delivery_refused' | 'stock_hold_cancelled';
+  cause?: 'prescription_rejected' | 'delivery_not_collected' | 'delivery_refused' | 'stock_hold_cancelled' | 'order_cancelled';
   status: PrescriptionRefundStatus;
   walletAmount: number;
   gatewayAmountPaise: number;
@@ -74,6 +74,8 @@ export interface PharmacyOrder {
   grandTotal?: number;
   paymentStatus?: PaymentStatus;
   paymentMode?: PaymentMode;
+  /** The online payment's record (customers check it with /payments/reconcile). */
+  paymentTransactionId?: string;
   deliveryMode?: 'pickup' | 'delivery';
   deliveryAddress?: string;
   deliveryExceptions?: DeliveryException[];

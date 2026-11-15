@@ -15,7 +15,7 @@ body { background: var(--canvas); }
 }
 .app-tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   background: var(--surface); border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom);
 }
@@ -78,3 +78,9 @@ body { background: var(--canvas); }
 .chip { min-height: var(--tap); padding: 0 var(--space-3); border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font: inherit; color: var(--ink); cursor: pointer; }
 .chip[aria-pressed='true'] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); font-weight: 600; }
 .check { display: flex; align-items: center; gap: var(--space-2); min-height: var(--tap); }
+
+/* Pharmacy ordering */
+.tile-inline { display: inline-flex; flex-direction: row; align-items: center; gap: var(--space-2); min-height: var(--tap); padding: var(--space-3) var(--space-4); }
+.stepper { display: inline-flex; align-items: center; gap: var(--space-2); }
+.stepper > span { min-width: 2ch; text-align: center; font-weight: 600; }
+.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1); }

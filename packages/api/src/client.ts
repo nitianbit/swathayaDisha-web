@@ -172,6 +172,7 @@ export function createApiClient(options: ApiClientOptions) {
     post: <T>(path: string, o?: RequestOptions) => json<T>('POST', path, o),
     put: <T>(path: string, o?: RequestOptions) => json<T>('PUT', path, o),
     patch: <T>(path: string, o?: RequestOptions) => json<T>('PATCH', path, o),
+    delete: <T>(path: string, o?: RequestOptions) => json<T>('DELETE', path, o),
     /** Lists that answer `{ data: T[], pagination: { page, limit, total, totalPages } }`. */
     page: <T>(path: string, o: RequestOptions = {}) => request('GET', path, o, async (res): Promise<Page<T>> => {
       const body = parseJson(await res.text()) as {

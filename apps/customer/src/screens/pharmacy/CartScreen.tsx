@@ -1,0 +1,142 @@
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useNavigate } from 'react-router';
+import { ArrowLeft } from 'lucide-react';
+import { ApiError, customerPharmacyApi, PHARMACY_PAYMENT_WINDOW_MIN, type Cart, type CartItem, type PaymentMode } from '@jansetu/api';
+import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextArea } from '@jansetu/ui';
+import { messageOf, PageHeading } from '../../common.tsx';
+import { useSession } from '../../session.tsx';
+
+export const paymentKey = (orderId: string) => `pharmacy-payment:${orderId}`;
+
+/** The cart (one pharmacy) and checkout: pickup or delivery, how to pay, then the order is placed once. */
+export function CartScreen() {
+  const { api } = useSession();
+  const pharmacy = customerPharmacyApi(api);
+  const cart = useQuery({ queryKey: ['pharmacy-cart'], queryFn: () => pharmacy.cart() });
+  const storeId = cart.data?.pharmacyId ?? '';
+  const store = useQuery({ queryKey: ['pharmacy-store', storeId], queryFn: () => pharmacy.store(storeId), enabled: /^[0-9a-fA-F]{24}$/.test(storeId) });
+  return (
+    <>
+      <Link to={storeId ? `/pharmacy/stores/${storeId}` : '/pharmacy'} className="back"><ArrowLeft size={16} aria-hidden="true" /> Continue shopping</Link>
+      <PageHeading title="Cart">{cart.data?.pharmacyName ?? undefined}</PageHeading>
+      {cart.isPending ? <Loading /> : cart.isError ? <ErrorState message={messageOf(cart.error)} onRetry={() => void cart.refetch()} />
+        : cart.data.items.length === 0 ? <Empty title="Your cart is empty"><Link to="/pharmacy">Find a pharmacy</Link></Empty>
+        : <CartView cart={cart.data} pickup={store.data ? store.data.pickupAvailable !== false || !store.data.deliveryAvailable : true}
+            delivery={store.data?.deliveryAvailable === true} />}
+    </>
+  );
+}
+
+function CartView({ cart, pickup, delivery }: { cart: Cart; pickup: boolean; delivery: boolean }) {
+  const { api, memory } = useSession();
+  const pharmacy = customerPharmacyApi(api);
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [mode, setMode] = useState<'pickup' | 'delivery'>(pickup ? 'pickup' : 'delivery');
+  const [pay, setPay] = useState<PaymentMode>('online_payment');
+  const [address, setAddress] = useState('');
+  const [notes, setNotes] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [placing, setPlacing] = useState(false);
+  const rx = cart.items.filter((i) => i.prescriptionRequired !== false);
+  const offline: PaymentMode = mode === 'pickup' ? 'in_store_payment' : 'cash_on_delivery';
+  const payMode: PaymentMode = pay === 'online_payment' ? pay : offline;
+
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['pharmacy-cart'] });
+  async function change(item: CartItem, delta: number) {
+    setError(null); setBusy(true);
+    try {
+      const next = delta < 0 && item.quantity <= -delta ? await pharmacy.removeFromCart(item.medicineId)
+        : await pharmacy.addToCart(cart.pharmacyId!, item.medicineId, delta);
+      queryClient.setQueryData(['pharmacy-cart'], next);
+    } catch (err) { setError(messageOf(err)); } finally { setBusy(false); await refresh(); }
+  }
+
+  async function place() {
+    setError(null);
+    if (mode === 'delivery' && address.trim().length < 10) { setFieldError('Enter the full delivery address.'); return; }
+    setFieldError(null);
+    setPlacing(true);
+    try {
+      // Never retried automatically: a lost answer is resolved by looking at "My orders", not by placing it again.
+      const r = await pharmacy.checkout({ paymentMode: payMode, deliveryMode: mode, deliveryAddress: address.trim(), notes: notes.trim() || undefined });
+      queryClient.removeQueries({ queryKey: ['pharmacy-cart'] });
+      await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] });
+      // The payment details live in this session's memory only (never stored): the order page opens Checkout with them.
+      if (r.paymentRequired && r.payment) memory.set(paymentKey(r.order._id), r.payment);
+      navigate(`/pharmacy/orders/${r.order._id}`, { state: { startPayment: r.paymentRequired && !!r.payment } });
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'CART_PRICE_CHANGED') {
+        setError('Some prices changed since you added the medicines. Check the new total and place the order again.');
+        await refresh();
+      } else if (err instanceof ApiError && err.status === 0) {
+        setError('We could not tell whether your order was placed. Check “My orders” before trying again.');
+        await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] });
+        await refresh();
+      } else {
+        setError(messageOf(err));
+      }
+      setPlacing(false);
+    }
+  }
+
+  return (
+    <>
+      <ul className="list">
+        {cart.items.map((i) => (
+          <li key={i.medicineId} className="list-row">
+            <strong>{i.medicineName ?? i.brandName ?? 'Medicine'}</strong>
+            <div className="row-between">
+              <span>{formatRupees(i.unitPrice)} × {i.quantity} = {formatRupees(i.lineTotal)}</span>
+              <div className="stepper" role="group" aria-label={`${i.medicineName ?? 'Medicine'} quantity`}>
+                <Button variant="secondary" disabled={busy || placing} onClick={() => void change(i, -1)} aria-label={`One less ${i.medicineName ?? ''}`}>−</Button>
+                <span>{i.quantity}</span>
+                <Button variant="secondary" disabled={busy || placing} onClick={() => void change(i, 1)} aria-label={`One more ${i.medicineName ?? ''}`}>+</Button>
+              </div>
+            </div>
+            {i.prescriptionRequired !== false && <span className="muted">Needs a prescription: can’t be ordered online yet.</span>}
+          </li>
+        ))}
+      </ul>
+      <p><strong>Total {formatRupees(cart.subtotal)}</strong></p>
+      {rx.length > 0 ? (
+        <Alert tone="warn">
+          {rx.map((i) => i.medicineName ?? 'A medicine').join(', ')} {rx.length === 1 ? 'needs' : 'need'} a prescription. Medicines
+          that need a prescription can’t be ordered online yet: remove {rx.length === 1 ? 'it' : 'them'} to continue, and buy
+          {rx.length === 1 ? ' it' : ' them'} at the pharmacy.
+        </Alert>
+      ) : (
+        <section className="card stack" aria-labelledby="checkout-h">
+          <h2 id="checkout-h">How you get it</h2>
+          <fieldset className="choice">
+            <legend>Pickup or delivery</legend>
+            {pickup && <label><input type="radio" name="mode" checked={mode === 'pickup'} onChange={() => setMode('pickup')} /> Collect at the pharmacy</label>}
+            {delivery && <label><input type="radio" name="mode" checked={mode === 'delivery'} onChange={() => setMode('delivery')} /> Deliver to me</label>}
+          </fieldset>
+          {mode === 'delivery' && (
+            <TextArea label="Delivery address" value={address} maxLength={500} onChange={(e) => setAddress(e.target.value)} error={fieldError}
+              hint="House, street, area, city and pincode." />
+          )}
+          <fieldset className="choice">
+            <legend>How you pay</legend>
+            <label><input type="radio" name="pay" checked={pay === 'online_payment'} onChange={() => setPay('online_payment')} /> Pay online now</label>
+            <label><input type="radio" name="pay" checked={pay !== 'online_payment'} onChange={() => setPay(offline)} />
+              {mode === 'pickup' ? ' Pay at the pharmacy' : ' Cash on delivery'}</label>
+          </fieldset>
+          <TextArea label="Note for the pharmacy (optional)" value={notes} maxLength={1000} onChange={(e) => setNotes(e.target.value)} />
+          {payMode === 'online_payment' && (
+            <p className="muted">Pay within {PHARMACY_PAYMENT_WINDOW_MIN} minutes, or the order is cancelled and the medicines are released.</p>
+          )}
+          {error && <Alert>{error}</Alert>}
+          <Button busy={placing} disabled={busy} onClick={() => void place()}>
+            {payMode === 'online_payment' ? `Place order and pay ${formatRupees(cart.subtotal)}` : `Place order · ${formatRupees(cart.subtotal)}`}
+          </Button>
+        </section>
+      )}
+      {rx.length > 0 && error && <Alert>{error}</Alert>}
+    </>
+  );
+}

@@ -30,3 +30,5 @@ export type {
 } from './customer.ts';
 export { markerStore, samePrincipal, sessionChannel, withSessionLock } from './webSession.ts';
 export type { PendingMarker, Principal, SessionAnnouncement } from './webSession.ts';
+export { customerPharmacyApi, PHARMACY_PAYMENT_WINDOW_MIN, shelfOf } from './customerPharmacy.ts';
+export type { Cart, CartItem, Checkout, CheckoutResult, PharmacyStore, ShelfItem, StockRow } from './customerPharmacy.ts';

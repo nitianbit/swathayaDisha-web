@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { createHashRouter, NavLink, Outlet, RouterProvider, useLocation } from 'react-router';
-import { CalendarDays, House, UserRound, Wallet } from 'lucide-react';
+import { CalendarDays, House, Pill, UserRound, Wallet } from 'lucide-react';
 import { Empty, Loading } from '@jansetu/ui';
 import { useSession, type Customer } from './session.tsx';
 import { LoginScreen } from './screens/LoginScreen.tsx';
@@ -13,10 +13,16 @@ import { ProfileScreen } from './screens/ProfileScreen.tsx';
 import { FamilyScreen } from './screens/FamilyScreen.tsx';
 import { DoctorsScreen } from './screens/DoctorsScreen.tsx';
 import { DoctorScreen } from './screens/DoctorScreen.tsx';
+import { StoresScreen } from './screens/pharmacy/StoresScreen.tsx';
+import { StoreScreen } from './screens/pharmacy/StoreScreen.tsx';
+import { CartScreen } from './screens/pharmacy/CartScreen.tsx';
+import { PharmacyOrdersScreen } from './screens/pharmacy/OrdersScreen.tsx';
+import { PharmacyOrderScreen } from './screens/pharmacy/OrderScreen.tsx';
 
 const TABS = [
   { to: '/', label: 'Home', icon: House },
   { to: '/bookings', label: 'Bookings', icon: CalendarDays },
+  { to: '/pharmacy', label: 'Medicines', icon: Pill },
   { to: '/wallet', label: 'Wallet', icon: Wallet },
   { to: '/profile', label: 'Profile', icon: UserRound },
 ] as const;
@@ -59,6 +65,11 @@ function router() {
       { path: '/lab-bookings/:bookingId', element: <ExternalBookingScreen /> },
       { path: '/doctors', element: <DoctorsScreen /> },
       { path: '/doctors/:doctorId', element: <DoctorScreen /> },
+      { path: '/pharmacy', element: <StoresScreen /> },
+      { path: '/pharmacy/stores/:pharmacyId', element: <StoreScreen /> },
+      { path: '/pharmacy/cart', element: <CartScreen /> },
+      { path: '/pharmacy/orders', element: <PharmacyOrdersScreen /> },
+      { path: '/pharmacy/orders/:orderId', element: <PharmacyOrderScreen /> },
       { path: '/wallet', element: <WalletScreen /> },
       { path: '/profile', element: <ProfileScreen /> },
       { path: '/profile/family', element: <FamilyScreen /> },
