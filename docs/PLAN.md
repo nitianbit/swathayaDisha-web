@@ -130,6 +130,25 @@ Build in this order (money/security first):
   person sees a check-only panel; a new request is allowed only once the old key is found, or cancelled on the server
   (`POST /request-keys/abandon`: from then on that request can never be recorded). No time-based guess.
 
+## Remaining items (2026-11-15, taken autonomously at the owner's request)
+
+- **O1 OTP limits** (backend `m0/o1-otp-limits`): 5 checks per code; per phone/email 1 code / 30 s, 5 / hour, 10 / day and
+  10 checks / hour, 20 / day, shared by every account, role and purpose; codes stored as HMACs. Sign-in screens show the
+  server's wait (`Retry-After`, or the body when cross-origin) per number, and clear a burnt code.
+- **Admin order-cancellation queue** (`/admin/order-cancellations`): paid pharmacy orders waiting for a decision;
+  approve or keep, naming the request on screen.
+- **Customer medicine ordering** (Medicines tab): pharmacies, stock (every page; only active, priced, sellable stock),
+  a one-pharmacy cart (one change at a time), pickup/delivery from the pharmacy's options, pay online or at the
+  pharmacy/on delivery, orders, D3 cancellation, wallet refund → card/UPI. Known backend limits: prescription medicines
+  can't be ordered online yet (blocked with an explanation); no "pay again" endpoint for a pharmacy order (after leaving
+  the app: check payment, or cancel and re-order); no idempotency on checkout (the app never retries it on its own).
+- **N1 phone sessions** (backend `m0/n1-native-sessions`): inside the Capacitor shell (`window.JansetuNative.secureStore`)
+  the apps keep the refresh token only in the OS secure store; customers stay signed in up to 90 days (30 idle); a lost
+  refresh answer can be retried within 30 s. Sign-out records its intent first and never resumes until the stored
+  token is gone (a plain flag in web storage, no token).
+- **S1 SECURITY (live on main)**: customers could list other customers' pharmacy orders with `?userId=`. Fixed on the
+  release stack and on `hotfix/s1-pharmacy-orders-customer-scope` (from backend `main`) — ship it first.
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -141,9 +160,10 @@ Build in this order (money/security first):
 - Workspace: D3 cancellation built (order screen: Cancel order → immediate for unpaid / request for paid; Cancellation
   requested panel → approve (wallet-first refund; cash/counter → admin arranges) or keep (reason; refused once the payment
   was returned); the orders filter lists "Cancellation requested"). Still to do: an admin view of cancellation requests
-  (admins can decide through the API today) and the customer app's pharmacy orders (the customer app has none yet).
-- Backend: OTP attempt limits / rate limiting (none today) before release.
-- Backend SECURITY: authenticate `/api/static/*` uploads.
+  (done: `/admin/order-cancellations`) and the customer app's pharmacy orders (done: Medicines tab).
+- Backend: a customer "pay again" endpoint and checkout idempotency for pharmacy orders; prescription upload/binding for
+  online Rx orders.
+- The Capacitor shell itself (iOS/Android projects and the secure-storage bridge) is not built yet.
 
 ## Verification record
 
@@ -173,3 +193,4 @@ Build in this order (money/security first):
 | 2026-11-15 | D4 (web, rev 2) | Abandon-based resolution (server admission fence) replaces the 5-minute rule; markers kept per person through sign-out. Vitest 40/40; Playwright workspace 94/94, customer 56/56; release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-15 | D4 (web) | typecheck clean; Vitest 40/40 (session header/credentials, renew-and-retry once); Playwright workspace 92/92 (new session.spec: reload keeps sign-in, sign-out ends the server session, cross-tab sign-out, 401 renew + same request resent, other person's renewal refused; reload with an unconfirmed return restores a check-only panel), customer 54/54 (reload keeps sign-in; lost booking answer found by key after reload); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-15 | D4 + D3 UI approved | Codex approved D4 web (bad18bf, after 3 review rounds: cookie sessions, cross-tab lock and identity fences, noRenew admission, server-resolved restored requests, explicit same-origin topology), D3 workspace UI (3dd1742: requestId-keyed decisions, amount-free refund text), and the backend D4 (4b23d20) + business-date fix. |
+| 2026-11-15 | O1, admin queue, medicine ordering, N1, S1 approved | Codex approved backend O1 (232e619 + docs), N1 (5f93e7f), S1 (release 997da42, hotfix 5cac856); web admin queue + O1 sign-in (da8b7a4), customer medicine ordering (7930a61, after 3 review rounds) and the N1 client (405a959, after 2 rounds). Backend: all 21 integration suites pass on `m0/n1-native-sessions`. Web: typecheck clean; Vitest 55/55; Playwright customer 110/110, workspace 128/128. |
