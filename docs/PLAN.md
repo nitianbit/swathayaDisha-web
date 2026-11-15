@@ -149,6 +149,45 @@ Build in this order (money/security first):
 - **S1 SECURITY (live on main)**: customers could list other customers' pharmacy orders with `?userId=`. Fixed on the
   release stack and on `hotfix/s1-pharmacy-orders-customer-scope` (from backend `main`) — ship it first.
 
+## WQ1 partner workspace foundation (2026-11-15, taken autonomously at the owner's request)
+
+Backend: Q1 partners + Q7 partner sign-in (`SwasthaDisha-worktrees/q7-partner-signin`, `src1/modules/partners`, `auth`).
+
+- **Sign-in**: "Lab or clinic staff" on the workspace login (`/auth/partner/*`). A phone with several active memberships
+  gets a choice (name, Lab/Clinic, single-doctor practice, Owner/Staff); `POST /auth/partner/select` completes it in the
+  same session mode as the verify (cookie, native with `previousRefreshToken`, or bearer). The one-use ticket lives only
+  in the login screen's memory; a `SELECTION_EXPIRED` answer sends the person back to request a new code. Nothing is
+  stored before the chosen session exists (native: only the select's refresh token reaches the secure store).
+- **Who is signed in**: `/auth/profile` gives the member (role, permissions, branchIds, name) and the partner (name,
+  kind, solo, verification). Shown as the member's name and "Lab"/"Clinic" · partner name. Home warns when the partner is
+  not verified (every workspace route then answers 403 `PARTNER_NOT_VERIFIED`, shown as the server says).
+- **Pages**: `WorkspacePage` gained `partnerPermissions` (any-of, owners hold all), `partnerKinds` and `partnerWide`;
+  nav and routes are filtered by them (deny by default). Partner: `/partner` (profile), `/partner/staff`
+  (`staff.manage`), `/partner/branches` (`branches.manage`), `/partner/audit` (`staff.manage` + partner-wide scope).
+  Admin: `/admin/partners` (filters from `partnerQuerySchema`, verify, suspend), `/admin/partners/new`,
+  `/admin/partners/:id` (details, tax and invoicing via `PUT /admin/:id`, "Manage as owner" links), and the same four
+  partner screens under `/admin/partners/:id/{profile,staff,branches,audit}` using
+  `/partner-workspace/admin/:id/workspace/*`. One set of screens; the route picks the scope (`screens/partner/scope.tsx`).
+- **Rules mirrored in the UI** (`packages/api/src/partners.ts`, from `partners/services`): only owners add owners and
+  edit permissions (owners' permissions are fixed); staff grant only permissions they hold and only a non-empty subset
+  of their own branches; nobody removes themselves; the last owner cannot be removed; branch-limited staff cannot add
+  branches or read the activity log. Admins act as an owner with every permission and branch. Server messages are shown.
+- **Edits send only changed fields** (profile, tax, branches): the schemas cannot clear a field, so emptying a set field
+  is refused inline; a branch's holidays/services are sent only when changed (they reshape its slots on the server).
+- **Irreversible steps confirm first**: remove member, deactivate branch, verify, suspend.
+- Not built: logo upload (`logo` is a stored path; no upload flow yet), branch `geo`, editing a member's branch scope
+  (no endpoint).
+
+Backend gaps found (not changed here):
+- `PUT /partner-workspace/me` needs no permission: any member, even one with none, can change the partner's name and
+  contact details. Probably should be owner-only (or a `profile.manage` permission).
+- No endpoint changes a member's branch scope, reactivates a deactivated branch, or reinstates a suspended partner
+  (`verifyPartner` accepts only `pending`).
+- `GET /branches` needs `branches.manage`, so a member with only `staff.manage` cannot see branch names when giving
+  branch access (the screen offers "all branches", or the actor's own branch ids).
+- Admin partner create is not idempotent (a lost answer, resent, makes a second partner); the list is unpaginated.
+- A pending partner's members can sign in but every workspace route is refused until verification.
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -194,4 +233,5 @@ Build in this order (money/security first):
 | 2026-11-15 | D4 (web) | typecheck clean; Vitest 40/40 (session header/credentials, renew-and-retry once); Playwright workspace 92/92 (new session.spec: reload keeps sign-in, sign-out ends the server session, cross-tab sign-out, 401 renew + same request resent, other person's renewal refused; reload with an unconfirmed return restores a check-only panel), customer 54/54 (reload keeps sign-in; lost booking answer found by key after reload); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-15 | D4 + D3 UI approved | Codex approved D4 web (bad18bf, after 3 review rounds: cookie sessions, cross-tab lock and identity fences, noRenew admission, server-resolved restored requests, explicit same-origin topology), D3 workspace UI (3dd1742: requestId-keyed decisions, amount-free refund text), and the backend D4 (4b23d20) + business-date fix. |
 | 2026-11-15 | O1, admin queue, medicine ordering, N1, S1 approved | Codex approved backend O1 (232e619 + docs), N1 (5f93e7f), S1 (release 997da42, hotfix 5cac856); web admin queue + O1 sign-in (da8b7a4), customer medicine ordering (7930a61, after 3 review rounds) and the N1 client (405a959, after 2 rounds). Backend: all 21 integration suites pass on `m0/n1-native-sessions`. Web: typecheck clean; Vitest 55/55; Playwright customer 110/110, workspace 128/128. |
+| 2026-11-15 | WQ1 (partner workspace foundation) | typecheck clean; Vitest 69/69 (+9: workspace/admin path building, id validation before any request, select per session mode, selection shape, delegation/scope/removal rules); Playwright workspace 154/154 (+20 = 10 journeys x 2 devices: single and multi-membership sign-in incl. native and expired ticket, nav by permission and scope, staff add/edit/remove with server refusal, branches add/deactivate with confirm, admin list/filter/create/verify/suspend, admin-as-owner staff via `/partner-workspace/admin/<id>/workspace/members`); release build with VITE_API_BASE_URL=https://api.example.test. Not yet run against a real backend or reviewed. |
 | 2026-11-15 | P8 web, N2 phone apps, P9 web approved | Codex approved P8 web (e0add83, after 3 rounds: attempt ownership, keyed recovery result, decision after waits), N2 (f4c3ff8: secure-store start gate, latest-attempt start-up) and P9 web (aab4e01, after 3 rounds: attachments keyed to their pharmacy, functional updates, no order while attaching, expectedPharmacyId recipient fence). vitest 60; Playwright customer 134, workspace 134; Android debug + unsigned iOS builds for both apps. |

@@ -1,15 +1,24 @@
 import { Link } from 'react-router';
-import { Empty } from '@jansetu/ui';
+import { Alert, Empty } from '@jansetu/ui';
 import { pagesFor } from '../modules.tsx';
 import { PageHeading } from '../PageHeading.tsx';
 import { useStaff } from '../session.tsx';
 
 export function HomeScreen() {
   const user = useStaff();
-  const pages = pagesFor(user.role).filter((p) => p.nav && p.path !== '/');
+  const pages = pagesFor(user).filter((p) => p.nav && p.path !== '/');
   return (
     <>
-      <PageHeading title={`Welcome, ${user.name}`}>What would you like to do?</PageHeading>
+      <PageHeading title={`Welcome, ${user.name}`}>
+        {user.partner ? `${user.partner.partner.name} · What would you like to do?` : 'What would you like to do?'}
+      </PageHeading>
+      {user.partner && user.partner.partner.verification !== 'verified' && (
+        <Alert tone="warn">
+          {user.partner.partner.verification === 'suspended'
+            ? 'This account is suspended. Contact Jansetu support.'
+            : `${user.partner.partner.name} is waiting for verification by Jansetu. The workspace opens once it is verified.`}
+        </Alert>
+      )}
       {pages.length === 0 ? (
         <Empty title="Nothing here yet">Tools for your role are being added.</Empty>
       ) : (

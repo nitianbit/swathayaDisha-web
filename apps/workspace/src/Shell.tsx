@@ -5,12 +5,10 @@ import { Button } from '@jansetu/ui';
 import { pagesFor } from './modules.tsx';
 import { useSession, useStaff } from './session.tsx';
 
-const ROLE_LABEL = { admin: 'Admin', pharmacy: 'Pharmacy' } as const;
-
 export function Shell({ children }: { children: ReactNode }) {
   const user = useStaff();
   const { signOut } = useSession();
-  const nav = pagesFor(user.role).filter((p) => p.nav);
+  const nav = pagesFor(user).filter((p) => p.nav);
   const sections = [...new Set(nav.map((p) => p.nav!.section))];
 
   return (
@@ -37,7 +35,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className="ws-user">
           <div>
             <div className="ws-user-name">{user.name}</div>
-            <div className="ws-user-role">{ROLE_LABEL[user.role]}</div>
+            <div className="ws-user-role">{user.partner ? `${user.roleLabel} · ${user.partner.partner.name}` : user.roleLabel}</div>
           </div>
           {/* A deliberate sign-out starts the next person at Home; an expired session keeps its page to resume. */}
           <Button variant="ghost" onClick={() => { window.history.replaceState(null, '', '#/'); signOut(); }}>

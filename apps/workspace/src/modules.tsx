@@ -1,7 +1,17 @@
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { Ban, Boxes, ClipboardCheck, House, Package, PackageX, Settings, ShieldAlert, TrendingDown, Undo2 } from 'lucide-react';
-import type { StaffRole } from './session.tsx';
+import {
+  Ban, Boxes, Building2, ClipboardCheck, Handshake, History, House, MapPin, Package, PackageX, Settings, ShieldAlert, TrendingDown, Undo2, Users,
+} from 'lucide-react';
+import { hasGlobalScope, holdsAny, type PartnerKind, type PartnerPermission } from '@jansetu/api';
+import type { StaffRole, StaffUser } from './session.tsx';
+import { NewPartnerScreen } from './screens/admin/NewPartnerScreen.tsx';
+import { PartnerScreen } from './screens/admin/PartnerScreen.tsx';
+import { PartnersScreen } from './screens/admin/PartnersScreen.tsx';
+import { AuditScreen } from './screens/partner/AuditScreen.tsx';
+import { BranchesScreen } from './screens/partner/BranchesScreen.tsx';
+import { ProfileScreen } from './screens/partner/ProfileScreen.tsx';
+import { StaffScreen } from './screens/partner/StaffScreen.tsx';
 import { ExternalCancellationsScreen } from './screens/admin/ExternalCancellationsScreen.tsx';
 import { OrderCancellationsScreen } from './screens/admin/OrderCancellationsScreen.tsx';
 import { RefundsScreen } from './screens/admin/RefundsScreen.tsx';
@@ -25,10 +35,19 @@ export interface WorkspacePage {
   element: ReactNode;
   /** Present for pages shown in the side navigation. */
   nav?: { label: string; icon: LucideIcon; section: string };
+  /**
+   * Partners only (mirrors the backend route guard): the member needs at least one of these permissions; owners hold
+   * all. Pages for other roles ignore it.
+   */
+  partnerPermissions?: readonly PartnerPermission[];
+  /** Partners only: the page exists for these partner kinds (all kinds when absent). */
+  partnerKinds?: readonly PartnerKind[];
+  /** Partners only: needs partner-wide scope (an owner, or staff not limited to some branches). */
+  partnerWide?: boolean;
 }
 
 export const PAGES: readonly WorkspacePage[] = [
-  { path: '/', roles: ['admin', 'pharmacy'], element: <HomeScreen />, nav: { label: 'Home', icon: House, section: '' } },
+  { path: '/', roles: ['admin', 'pharmacy', 'partner'], element: <HomeScreen />, nav: { label: 'Home', icon: House, section: '' } },
   {
     path: '/pharmacy/orders', roles: ['pharmacy'], element: <OrdersScreen />,
     nav: { label: 'Orders', icon: Package, section: 'Pharmacy' },
@@ -52,6 +71,30 @@ export const PAGES: readonly WorkspacePage[] = [
     path: '/pharmacy/settings', roles: ['pharmacy'], element: <SettingsScreen />,
     nav: { label: 'Settings', icon: Settings, section: 'Pharmacy' },
   },
+  { path: '/partner', roles: ['partner'], element: <ProfileScreen />, nav: { label: 'Profile', icon: Building2, section: 'Organisation' } },
+  {
+    path: '/partner/staff', roles: ['partner'], element: <StaffScreen />, partnerPermissions: ['staff.manage'],
+    nav: { label: 'Staff', icon: Users, section: 'Organisation' },
+  },
+  {
+    path: '/partner/branches', roles: ['partner'], element: <BranchesScreen />, partnerPermissions: ['branches.manage'],
+    nav: { label: 'Branches', icon: MapPin, section: 'Organisation' },
+  },
+  {
+    path: '/partner/audit', roles: ['partner'], element: <AuditScreen />, partnerPermissions: ['staff.manage'], partnerWide: true,
+    nav: { label: 'Activity log', icon: History, section: 'Organisation' },
+  },
+  {
+    path: '/admin/partners', roles: ['admin'], element: <PartnersScreen />,
+    nav: { label: 'Labs and clinics', icon: Handshake, section: 'Admin' },
+  },
+  { path: '/admin/partners/new', roles: ['admin'], element: <NewPartnerScreen /> },
+  { path: '/admin/partners/:partnerId', roles: ['admin'], element: <PartnerScreen /> },
+  // An admin manages any partner with owner authority through the same screens (scope taken from the route).
+  { path: '/admin/partners/:partnerId/profile', roles: ['admin'], element: <ProfileScreen /> },
+  { path: '/admin/partners/:partnerId/staff', roles: ['admin'], element: <StaffScreen /> },
+  { path: '/admin/partners/:partnerId/branches', roles: ['admin'], element: <BranchesScreen /> },
+  { path: '/admin/partners/:partnerId/audit', roles: ['admin'], element: <AuditScreen /> },
   {
     path: '/admin/order-cancellations', roles: ['admin'], element: <OrderCancellationsScreen />,
     nav: { label: 'Order cancellations', icon: PackageX, section: 'Admin' },
@@ -66,6 +109,16 @@ export const PAGES: readonly WorkspacePage[] = [
   },
 ];
 
-export function pagesFor(role: StaffRole): WorkspacePage[] {
-  return PAGES.filter((p) => p.roles.includes(role));
+/** The pages this person may open: by role, and for partners by the member's permissions, partner kind and scope. */
+export function pagesFor(user: Pick<StaffUser, 'role' | 'partner'>): WorkspacePage[] {
+  return PAGES.filter((p) => {
+    if (!p.roles.includes(user.role)) return false;
+    if (user.role !== 'partner') return true;
+    const m = user.partner?.member;
+    if (!m) return false;
+    if (p.partnerKinds && !p.partnerKinds.includes(user.partner!.partner.kind)) return false;
+    if (p.partnerPermissions && !holdsAny(m, p.partnerPermissions)) return false;
+    if (p.partnerWide && !hasGlobalScope(m)) return false;
+    return true;
+  });
 }

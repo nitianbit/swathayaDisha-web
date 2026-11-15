@@ -82,6 +82,8 @@
 .login-role:has(input:checked) { border-color: var(--brand); background: var(--brand-soft); }
 .login-role input { width: 18px; height: 18px; accent-color: var(--brand); }
 .login-actions { display: flex; justify-content: space-between; flex-wrap: wrap; }
+.login-role > span { display: grid; padding: var(--space-2) 0; }
+.login-choice-meta { font-size: var(--text-sm); color: var(--muted); }
 
 .ws-section h3 { font-size: var(--text-md); margin-top: var(--space-2); }
 .ws-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3); }
@@ -103,6 +105,15 @@
 .held-orders li { display: grid; gap: var(--space-2); padding-bottom: var(--space-3); border-bottom: 1px solid var(--line); }
 
 .ws-tabs { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
+/* Checklists and radio groups in forms (permissions, branches, services, hours). */
+.ws-checks { border: 0; padding: 0; margin: 0; display: grid; gap: var(--space-1); }
+.ws-checks legend { font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--space-2); }
+.ws-check { display: flex; align-items: center; gap: var(--space-2); min-height: var(--tap); }
+.ws-check input { width: 20px; height: 20px; accent-color: var(--brand); }
+.ws-hours { display: grid; grid-template-columns: 160px repeat(2, minmax(120px, 200px)); gap: var(--space-3); align-items: end; }
+.ws-hours > .ws-muted { align-self: center; }
+@media (max-width: 760px) { .ws-hours { grid-template-columns: 1fr; } }
 
 @media (max-width: 760px) {
   .ws { grid-template-columns: 1fr; }

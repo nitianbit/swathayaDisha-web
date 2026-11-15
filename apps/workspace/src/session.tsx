@@ -1,25 +1,39 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  ApiError, authApi, clearSignOutPending, createApiClient, markSignOutPending, markerStore, nativeSecureStore, nativeSignOut, refreshTokenKey,
-  rotateNative, samePrincipal, sessionChannel, signOutState,
+  ALL_PARTNER_PERMISSIONS, ApiError, authApi, clearSignOutPending, createApiClient, markSignOutPending, markerStore, nativeSecureStore, nativeSignOut,
+  OBJECT_ID_PATTERN, PARTNER_KIND_LABEL, partnerSelectionOf, refreshTokenKey, rotateNative, samePrincipal, sessionChannel, signOutState,
   withSessionLock,
-  type ApiClient, type OtpTarget, type PendingMarker, type Principal, type UserType,
+  type ApiClient, type NativeSignedIn, type OtpTarget, type PartnerKind, type PartnerPermission, type PartnerSelection, type PendingMarker,
+  type Principal, type SignedIn, type UserType, type VerificationState,
 } from '@jansetu/api';
 
 /** Who may sign in to the workspace today. HR and doctors join when their modules exist. */
-export type StaffRole = Extract<UserType, 'admin' | 'pharmacy'>;
-export const STAFF_ROLES: readonly StaffRole[] = ['admin', 'pharmacy'];
+export type StaffRole = Extract<UserType, 'admin' | 'pharmacy' | 'partner'>;
+export const STAFF_ROLES: readonly StaffRole[] = ['admin', 'pharmacy', 'partner'];
 const APP = 'workspace';
 /** N1: inside the phone app the refresh token lives in the OS secure store (see nativeSession.ts). */
 const NATIVE_APP = 'workspace' as const;
 
+/**
+ * A signed-in lab or clinic member (Q1/Q7): the membership and its partner as `/auth/profile` returned them at sign-in.
+ * Shapes the UI only; the backend re-reads role, permissions and branch scope on every request.
+ */
+export interface PartnerSession {
+  member: { id: string; name: string; role: 'owner' | 'staff'; permissions: PartnerPermission[]; branchIds: string[] };
+  partner: { id: string; name: string; kind: PartnerKind; solo: boolean; verification: VerificationState | 'unknown' };
+}
+
 export interface StaffUser {
   role: StaffRole;
-  /** The account id; for pharmacy staff this is the pharmacy's id (`/auth/profile` returns the pharmacy). */
+  /** The account id; for pharmacy staff this is the pharmacy's id; for partners the member's id. */
   id: string;
   name: string;
+  /** "Admin", "Pharmacy", or the partner's kind ("Lab" / "Clinic"). */
+  roleLabel: string;
   raw: Record<string, unknown>;
+  /** Partners only. */
+  partner?: PartnerSession;
 }
 
 type SessionState =
@@ -43,7 +57,10 @@ interface SessionValue {
   api: ApiClient;
   memory: SessionMemory;
   requestCode: (role: StaffRole, target: OtpTarget) => Promise<void>;
-  verifyCode: (role: StaffRole, target: OtpTarget, otp: string) => Promise<void>;
+  /** Signs in, or (Q7, partners with several workspaces) answers the workspaces to choose from: nothing is signed in yet. */
+  verifyCode: (role: StaffRole, target: OtpTarget, otp: string) => Promise<PartnerSelection | null>;
+  /** Q7: opens the chosen workspace with the one-use ticket from `verifyCode` (in the same session mode). */
+  choosePartner: (ticket: string, partnerId: string) => Promise<void>;
   signOut: (notice?: string) => void;
 }
 
@@ -54,8 +71,40 @@ function displayName(user: Record<string, unknown>, role: StaffRole): string {
     const v = user[key];
     if (typeof v === 'string' && v.trim()) return v.trim();
   }
-  return role === 'admin' ? 'Admin' : 'Pharmacy';
+  return role === 'admin' ? 'Admin' : role === 'partner' ? 'Member' : 'Pharmacy';
 }
+
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+
+/** The member and partner from a partner's `/auth/profile`, or null when either is missing or malformed. */
+function partnerSessionOf(member: Record<string, unknown>, partner: Record<string, unknown> | null | undefined): PartnerSession | null {
+  if (!partner) return null;
+  const memberId = typeof member._id === 'string' ? member._id : '';
+  const partnerId = typeof partner._id === 'string' ? partner._id : '';
+  const role = member.role;
+  const kind = partner.kind;
+  if (!OBJECT_ID_PATTERN.test(memberId) || !OBJECT_ID_PATTERN.test(partnerId) || String(member.partnerId) !== partnerId) return null;
+  if ((role !== 'owner' && role !== 'staff') || (kind !== 'lab' && kind !== 'clinic')) return null;
+  const v = (partner.verification as { state?: unknown } | undefined)?.state;
+  return {
+    member: {
+      id: memberId,
+      name: typeof member.name === 'string' && member.name.trim() ? member.name.trim() : 'Member',
+      role,
+      permissions: strings(member.permissions).filter((p): p is PartnerPermission => (ALL_PARTNER_PERMISSIONS as readonly string[]).includes(p)),
+      branchIds: strings(member.branchIds),
+    },
+    partner: {
+      id: partnerId,
+      name: typeof partner.name === 'string' ? partner.name : '',
+      kind,
+      solo: partner.solo === true,
+      verification: v === 'pending' || v === 'verified' || v === 'suspended' ? v : 'unknown',
+    },
+  };
+}
+
+const ROLE_LABEL: Record<Exclude<StaffRole, 'partner'>, string> = { admin: 'Admin', pharmacy: 'Pharmacy' };
 
 const isPending = (v: unknown): v is PendingMarker =>
   !!v && typeof v === 'object' && typeof (v as PendingMarker).requestKey === 'string' && typeof (v as PendingMarker).attempts === 'number';
@@ -213,7 +262,8 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     }
     const raw = profile.user ?? {};
     const id = typeof raw._id === 'string' ? raw._id : '';
-    if (!/^[0-9a-fA-F]{24}$/.test(id)) {
+    const partner = role === 'partner' ? partnerSessionOf(raw, profile.partner) : undefined;
+    if (!/^[0-9a-fA-F]{24}$/.test(id) || partner === null) {
       token.current = null;
       throw new ApiError(502, 'Sign-in returned an incomplete profile. Please try again.');
     }
@@ -223,7 +273,13 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     for (const [slot, m] of Object.entries(markers.current.all())) restored.set(slot, { ...m, uncertain: true, restored: true });
     setStore(restored);
     schedule(expiresIn, () => void renewRef.current(token.current));
-    setState({ status: 'signed_in', user: { role: role as StaffRole, id, name: displayName(raw, role as StaffRole), raw } });
+    const staffRole = role as StaffRole;
+    setState({ status: 'signed_in', user: {
+      role: staffRole, id, raw,
+      name: partner ? partner.member.name : displayName(raw, staffRole),
+      roleLabel: partner ? PARTNER_KIND_LABEL[partner.partner.kind] : ROLE_LABEL[staffRole as Exclude<StaffRole, 'partner'>],
+      ...(partner ? { partner } : {}),
+    } });
     return true;
   }, [auth, schedule]);
 
@@ -268,37 +324,68 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     await auth.sendOtp(role, target);
   }, [auth]);
 
-  const verifyCode = useCallback(async (role: StaffRole, target: OtpTarget, otp: string) => {
-    await withSessionLock(APP, async () => {
-      const gen = generation.current;
-      let signedIn;
-      if (secure) {
-        // The token the phone still holds is ended by this sign-in; the new one is stored before it is used.
-        const previous = await secure.get(refreshTokenKey(NATIVE_APP)).catch(() => null);
-        const n = await auth.verifyOtpNative(role, target, otp, NATIVE_APP, previous);
-        try {
-          await secure.set(refreshTokenKey(NATIVE_APP), n.refreshToken);
-        } catch {
-          // Not stored, so not usable: end the new session on the server rather than leave it behind.
-          await auth.logoutNative(NATIVE_APP, n.refreshToken, n.token).catch(() => undefined);
-          throw new ApiError(0, 'This phone could not save your sign-in. Please try again.', 'SECURE_STORE');
-        }
-        cleanup.current = null; // a retrying clean-up must not remove the new token
-        clearSignOutPending(NATIVE_APP); // the new token replaced whatever an unfinished sign-out left behind
-        signedIn = n;
-      } else {
-        signedIn = cookieMode ? await auth.verifyOtpSession(role, target, otp) : await auth.verifyOtp(role, target, otp);
-      }
-      if (gen !== generation.current) return;
-      if (!signedIn?.token) throw new ApiError(502, 'Sign-in did not return a session. Please try again.');
-      if (await establish(gen, signedIn.token, signedIn.expiresIn, role) && principal.current) {
-        channel?.post({ type: 'signed-in', ...principal.current });
-      }
-    });
-  }, [auth, establish, channel, cookieMode, secure]);
+  /** N1: the new refresh token is stored before its session is used; not stored = not usable (ended on the server). */
+  const keepNative = useCallback(async (n: NativeSignedIn) => {
+    try {
+      await secure!.set(refreshTokenKey(NATIVE_APP), n.refreshToken);
+    } catch {
+      await auth.logoutNative(NATIVE_APP, n.refreshToken, n.token).catch(() => undefined);
+      throw new ApiError(0, 'This phone could not save your sign-in. Please try again.', 'SECURE_STORE');
+    }
+    cleanup.current = null; // a retrying clean-up must not remove the new token
+    clearSignOutPending(NATIVE_APP); // the new token replaced whatever an unfinished sign-out left behind
+  }, [auth, secure]);
 
-  const value = useMemo(() => ({ state, api, memory, requestCode, verifyCode, signOut }),
-    [state, api, memory, requestCode, verifyCode, signOut]);
+  /** Admits a fresh sign-in (verify or partner select) and tells the other tabs. */
+  const admit = useCallback(async (gen: number, signedIn: SignedIn | undefined, role: StaffRole) => {
+    if (gen !== generation.current) return;
+    if (!signedIn?.token) throw new ApiError(502, 'Sign-in did not return a session. Please try again.');
+    if (await establish(gen, signedIn.token, signedIn.expiresIn, role) && principal.current) {
+      channel?.post({ type: 'signed-in', ...principal.current });
+    }
+  }, [establish, channel]);
+
+  const verifyCode = useCallback(async (role: StaffRole, target: OtpTarget, otp: string) => withSessionLock(APP, async () => {
+    const gen = generation.current;
+    let answer: SignedIn | PartnerSelection;
+    if (secure) {
+      // The token the phone still holds is ended by this sign-in; the new one is stored before it is used.
+      const previous = await secure.get(refreshTokenKey(NATIVE_APP)).catch(() => null);
+      const n = await auth.verifyOtpNative(role, target, otp, NATIVE_APP, previous);
+      // Q7: a choice comes with no session (and no refresh token): nothing to store yet.
+      if (!partnerSelectionOf(n)) await keepNative(n as NativeSignedIn);
+      answer = n;
+    } else {
+      answer = cookieMode ? await auth.verifyOtpSession(role, target, otp) : await auth.verifyOtp(role, target, otp);
+    }
+    const selection = role === 'partner' ? partnerSelectionOf(answer) : null;
+    if (selection) {
+      if (gen !== generation.current) return null;
+      if (selection.choices.length === 0) throw new ApiError(403, 'None of your lab or clinic workspaces is available.');
+      return selection;
+    }
+    await admit(gen, answer as SignedIn, role);
+    return null;
+  }), [auth, admit, keepNative, cookieMode, secure]);
+
+  const choosePartner = useCallback(async (ticket: string, partnerId: string) => withSessionLock(APP, async () => {
+    const gen = generation.current;
+    let signedIn: SignedIn;
+    if (secure) {
+      const previous = await secure.get(refreshTokenKey(NATIVE_APP)).catch(() => null);
+      const n = await auth.selectPartner(ticket, partnerId, { kind: 'native', app: NATIVE_APP, previousRefreshToken: previous });
+      await keepNative(n);
+      signedIn = n;
+    } else {
+      signedIn = cookieMode
+        ? await auth.selectPartner(ticket, partnerId, { kind: 'cookie' })
+        : await auth.selectPartner(ticket, partnerId, { kind: 'bearer' });
+    }
+    await admit(gen, signedIn, 'partner');
+  }), [auth, admit, keepNative, cookieMode, secure]);
+
+  const value = useMemo(() => ({ state, api, memory, requestCode, verifyCode, choosePartner, signOut }),
+    [state, api, memory, requestCode, verifyCode, choosePartner, signOut]);
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 
