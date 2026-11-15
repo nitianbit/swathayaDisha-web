@@ -172,20 +172,34 @@ Backend: Q1 partners + Q7 partner sign-in (`SwasthaDisha-worktrees/q7-partner-si
   edit permissions (owners' permissions are fixed); staff grant only permissions they hold and only a non-empty subset
   of their own branches; nobody removes themselves; the last owner cannot be removed; branch-limited staff cannot add
   branches or read the activity log. Admins act as an owner with every permission and branch. Server messages are shown.
-- **Edits send only changed fields** (profile, tax, branches): the schemas cannot clear a field, so emptying a set field
-  is refused inline; a branch's holidays/services are sent only when changed (they reshape its slots on the server).
-- **Irreversible steps confirm first**: remove member, deactivate branch, verify, suspend.
-- Not built: logo upload (`logo` is a stored path; no upload flow yet), branch `geo`, editing a member's branch scope
-  (no endpoint).
+- **Irreversible steps confirm first**: remove member, deactivate branch, verify, suspend (and reopen/reinstate).
+- Not built: logo upload (`logo` is a stored path; no upload flow yet), branch `geo`.
 
-Backend gaps found (not changed here):
-- `PUT /partner-workspace/me` needs no permission: any member, even one with none, can change the partner's name and
-  contact details. Probably should be owner-only (or a `profile.manage` permission).
-- No endpoint changes a member's branch scope, reactivates a deactivated branch, or reinstates a suspended partner
-  (`verifyPartner` accepts only `pending`).
-- `GET /branches` needs `branches.manage`, so a member with only `staff.manage` cannot see branch names when giving
-  branch access (the screen offers "all branches", or the actor's own branch ids).
-- Admin partner create is not idempotent (a lost answer, resent, makes a second partner); the list is unpaginated.
+Codex review of 6ce851b (REQUEST_CHANGES, 3 MEDIUM), fixed:
+1. **One subtree per partner.** Every partner screen (and the admin partner page) is keyed by its scope identity
+   (`partner-ws:<partnerId>`), so moving from `/admin/partners/A/...` to `/B/...` discards open forms and confirmations;
+   a submission still running belongs to the partner it was made for (its `ctx` never changes) and reports nothing on B.
+2. **Edits keep their baseline** (`src/draft.ts`). Only fields changed from the value the edit started from are sent.
+   A refetch moves untouched fields along; a field changed here and on the server is reset to the saved value with
+   "Someone else changed ... make your change again". Right before sending, the record is read again (`GET /me`,
+   `/branches/:id`, `/members/:id`, admin `GET /admin/:id`) and the same check runs, so a full replacement (permissions,
+   branch access) never restores a grant someone revoked meanwhile. The schemas cannot clear a field: emptying one is
+   refused inline.
+3. **Exactly-once partner creation** (backend Q8 `requestKey`). A key per submitted form, kept with the exact request in
+   session memory (a body-less marker survives a reload) until the answer is known. After a lost answer the form is
+   locked and only "Send again" (same key, same content; the server replays the partner) resolves it. After a reload
+   the content is gone: the admin is sent to the list to look for it before starting again.
+
+Adopted from backend Q8 (`m0/q8-partner-admin`, 0fcf0b3): branches readable by every member (names for scoping; the
+`branches.manage` workaround is gone); "Change branch access" (`PUT /members/:id/branches`; not owners, not yourself,
+delegation ceiling); closed branches with Reopen (`?includeInactive=true`, `POST /branches/:id/reactivate`, partner-wide
+branch managers); Reinstate for suspended partners; profile edits for owners only (staff see it read-only); partner
+list search (`q`) and paging (20 a page).
+
+Backend items still open:
+- Edits are last-write-wins on the server (no version/precondition): the client re-reads just before sending, which
+  narrows but does not close the window.
+- No abandon endpoint for an unconfirmed partner creation: after a reload the admin must check the list by hand.
 - A pending partner's members can sign in but every workspace route is refused until verification.
 
 ## Follow-ups
@@ -233,5 +247,6 @@ Backend gaps found (not changed here):
 | 2026-11-15 | D4 (web) | typecheck clean; Vitest 40/40 (session header/credentials, renew-and-retry once); Playwright workspace 92/92 (new session.spec: reload keeps sign-in, sign-out ends the server session, cross-tab sign-out, 401 renew + same request resent, other person's renewal refused; reload with an unconfirmed return restores a check-only panel), customer 54/54 (reload keeps sign-in; lost booking answer found by key after reload); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-15 | D4 + D3 UI approved | Codex approved D4 web (bad18bf, after 3 review rounds: cookie sessions, cross-tab lock and identity fences, noRenew admission, server-resolved restored requests, explicit same-origin topology), D3 workspace UI (3dd1742: requestId-keyed decisions, amount-free refund text), and the backend D4 (4b23d20) + business-date fix. |
 | 2026-11-15 | O1, admin queue, medicine ordering, N1, S1 approved | Codex approved backend O1 (232e619 + docs), N1 (5f93e7f), S1 (release 997da42, hotfix 5cac856); web admin queue + O1 sign-in (da8b7a4), customer medicine ordering (7930a61, after 3 review rounds) and the N1 client (405a959, after 2 rounds). Backend: all 21 integration suites pass on `m0/n1-native-sessions`. Web: typecheck clean; Vitest 55/55; Playwright customer 110/110, workspace 128/128. |
+| 2026-11-15 | WQ1 review fixes + Q8 | typecheck clean; Vitest 77/77 (+ draft baseline/rebase, Q8 paths, request key, Q8 rules); Playwright workspace 168/168 (+14 = 7 journeys x 2 devices: switching partners discards drafts and a running submission stays with its partner; permission revoked while editing detected, nothing sent; a branch name edit does not resend changed services/holidays; lost create answer locks the form and the resend reuses key and content (one partner); branch access change and branch reopen; staff see the profile read-only; partner search, paging and reinstate); release build with VITE_API_BASE_URL=https://api.example.test. |
 | 2026-11-15 | WQ1 (partner workspace foundation) | typecheck clean; Vitest 69/69 (+9: workspace/admin path building, id validation before any request, select per session mode, selection shape, delegation/scope/removal rules); Playwright workspace 154/154 (+20 = 10 journeys x 2 devices: single and multi-membership sign-in incl. native and expired ticket, nav by permission and scope, staff add/edit/remove with server refusal, branches add/deactivate with confirm, admin list/filter/create/verify/suspend, admin-as-owner staff via `/partner-workspace/admin/<id>/workspace/members`); release build with VITE_API_BASE_URL=https://api.example.test. Not yet run against a real backend or reviewed. |
 | 2026-11-15 | P8 web, N2 phone apps, P9 web approved | Codex approved P8 web (e0add83, after 3 rounds: attempt ownership, keyed recovery result, decision after waits), N2 (f4c3ff8: secure-store start gate, latest-attempt start-up) and P9 web (aab4e01, after 3 rounds: attachments keyed to their pharmacy, functional updates, no order while attaching, expectedPharmacyId recipient fence). vitest 60; Playwright customer 134, workspace 134; Android debug + unsigned iOS builds for both apps. |

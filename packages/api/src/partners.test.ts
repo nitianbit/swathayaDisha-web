@@ -1,7 +1,7 @@
 import { createApiClient } from './client.ts';
 import { authApi, partnerSelectionOf } from './auth.ts';
 import {
-  ADMIN_ACTOR, ALL_PARTNER_PERMISSIONS, canAddOwner, canEditPermissions, grantablePermissions, holdsAny, partnerAdminApi,
+  ADMIN_ACTOR, ALL_PARTNER_PERMISSIONS, canAddOwner, canChangeBranches, canEditPermissions, canEditProfile, canReopenBranches, grantablePermissions, holdsAny, partnerAdminApi,
   partnerWorkspaceApi, partnerWorkspaceBase, removalBlock, scopeProblem, type PartnerActorView,
 } from './partners.ts';
 
@@ -55,19 +55,49 @@ describe('partner workspace paths', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('admin partner accounts: list filters as query, verify and suspend by id', async () => {
+  it('admin partner accounts: search, filters and paging as query; verify, suspend and reinstate by id', async () => {
     const { client, calls } = recorder();
     const admin = partnerAdminApi(client);
-    await admin.list({ kind: 'lab', verificationState: 'pending', isActive: undefined });
+    const page = await admin.list({ kind: 'lab', verificationState: 'pending', isActive: undefined, q: 'city', page: 2, limit: 20 });
+    expect(page.items).toEqual([]);
     await admin.verify(P);
     await admin.suspend(P);
+    await admin.reinstate(P);
     await admin.update(P, { taxRegime: 'regular' });
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-      'GET /partner-workspace/admin?kind=lab&verificationState=pending',
+      'GET /partner-workspace/admin?kind=lab&verificationState=pending&q=city&page=2&limit=20',
       `POST /partner-workspace/admin/${P}/verify`,
       `POST /partner-workspace/admin/${P}/suspend`,
+      `POST /partner-workspace/admin/${P}/reinstate`,
       `PUT /partner-workspace/admin/${P}`,
     ]);
+  });
+
+  it('Q8: create carries its request key; a malformed key is refused before sending', async () => {
+    const { client, calls } = recorder();
+    const admin = partnerAdminApi(client);
+    const body = { kind: 'lab' as const, name: 'X', contactPhone: '9000000000', invoiceSeriesPrefix: 'X', firstOwner: { name: 'O', phone: '9000000001' } };
+    await admin.create(body, 'abcdef0123456789');
+    expect(calls[0]!.body).toEqual({ requestKey: 'abcdef0123456789', ...body });
+    expect(() => admin.create(body, 'short')).toThrow('Invalid request key');
+    expect(() => admin.create(body, 'has space here!!')).toThrow('Invalid request key');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('Q8: branch access, closed branches and reopening', async () => {
+    const { client, calls } = recorder();
+    const ws = partnerWorkspaceApi(client, { kind: 'admin', partnerId: P });
+    await ws.setBranches(M, [B]);
+    await ws.branches({ includeInactive: true });
+    await ws.branches();
+    await ws.reactivateBranch(B);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `PUT /partner-workspace/admin/${P}/workspace/members/${M}/branches`,
+      `GET /partner-workspace/admin/${P}/workspace/branches?includeInactive=true`,
+      `GET /partner-workspace/admin/${P}/workspace/branches`,
+      `POST /partner-workspace/admin/${P}/workspace/branches/${B}/reactivate`,
+    ]);
+    expect(calls[0]!.body).toEqual({ branchIds: [B] });
   });
 });
 
@@ -133,6 +163,19 @@ describe('partner rules mirrored from the backend service', () => {
     expect(removalBlock(owner, { _id: 'e5'.repeat(12), role: 'owner' }, 1)).toBe('The last owner cannot be removed.');
     expect(removalBlock(owner, { _id: 'e5'.repeat(12), role: 'owner' }, 2)).toBeNull();
     expect(removalBlock(ADMIN_ACTOR, { _id: M, role: 'staff' }, 1)).toBeNull();
+  });
+
+  it('Q8: profile edits are for owners; branch access not for owners or yourself; reopening needs partner-wide branch managers', () => {
+    expect(canEditProfile(owner)).toBe(true);
+    expect(canEditProfile(staff)).toBe(false);
+    expect(canEditProfile(ADMIN_ACTOR)).toBe(true);
+    expect(canChangeBranches(owner, { _id: 'e5'.repeat(12), role: 'staff', isActive: true })).toBe(true);
+    expect(canChangeBranches(owner, { _id: 'e5'.repeat(12), role: 'owner', isActive: true })).toBe(false);
+    expect(canChangeBranches(staff, { _id: staff.memberId!, role: 'staff', isActive: true })).toBe(false);
+    expect(canReopenBranches(owner)).toBe(true);
+    expect(canReopenBranches({ ...wideStaff, permissions: ['branches.manage'] })).toBe(true);
+    expect(canReopenBranches({ ...staff, permissions: ['branches.manage'] })).toBe(false);
+    expect(canReopenBranches(wideStaff)).toBe(false);
   });
 
   it('branch scope: a restricted actor hands out only a non-empty subset of its own branches', () => {

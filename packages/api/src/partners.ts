@@ -1,4 +1,4 @@
-import type { ApiClient } from './client.ts';
+import type { ApiClient, Page } from './client.ts';
 
 /**
  * Q1 partner workspace (labs and clinics): the partner account, its members (staff) and branches, and the activity
@@ -170,8 +170,12 @@ export interface NewPartner {
   solo?: boolean;
   firstOwner: { phone: string; name: string };
 }
-/** `partnerQuerySchema`. */
-export interface PartnerQuery { kind?: PartnerKind; verificationState?: VerificationState; isActive?: 'true' | 'false' }
+/** `partnerQuerySchema` (Q8: name search `q`, `page`, `limit` up to 200). */
+export interface PartnerQuery {
+  kind?: PartnerKind; verificationState?: VerificationState; isActive?: 'true' | 'false'; q?: string; page?: number; limit?: number;
+}
+/** Q8 `createPartnerSchema.requestKey`: exactly-once creation per admin. */
+export const REQUEST_KEY_PATTERN = /^[A-Za-z0-9_-]{8,100}$/;
 
 /** Whose workspace: the signed-in member's own partner, or (admins) any partner by id. */
 export type PartnerScope = { kind: 'member' } | { kind: 'admin'; partnerId: string };
@@ -194,16 +198,23 @@ export function partnerWorkspaceApi(c: ApiClient, scope: PartnerScope) {
     me: () => c.get<Partner>(`${base()}/me`),
     updateMe: (body: MyPartnerUpdate) => c.put<Partner>(`${base()}/me`, { body }),
     members: () => c.get<PartnerMember[]>(`${base()}/members`),
+    /** Q8: a staff member's branch access, replaced whole (empty = all branches). Not for owners or yourself. */
+    setBranches: (id: string, branchIds: string[]) =>
+      c.put<PartnerMember>(`${base()}/members/${checkId(id, 'member')}/branches`, { body: { branchIds } }),
     member: (id: string) => c.get<PartnerMember>(`${base()}/members/${checkId(id, 'member')}`),
     addMember: (body: NewMember) => c.post<PartnerMember>(`${base()}/members`, { body }),
     removeMember: (id: string) => c.delete<unknown>(`${base()}/members/${checkId(id, 'member')}`),
     setPermissions: (id: string, permissions: PartnerPermission[]) =>
       c.put<PartnerMember>(`${base()}/members/${checkId(id, 'member')}/permissions`, { body: { permissions } }),
-    branches: () => c.get<Branch[]>(`${base()}/branches`),
+    /** Q8: every member may read its branches; closed ones too (`includeInactive`) only for branch managers. */
+    branches: (o: { includeInactive?: boolean } = {}) =>
+      c.get<Branch[]>(`${base()}/branches`, { query: { includeInactive: o.includeInactive ? 'true' : undefined } }),
     branch: (id: string) => c.get<Branch>(`${base()}/branches/${checkId(id, 'branch')}`),
     createBranch: (body: BranchInput) => c.post<Branch>(`${base()}/branches`, { body }),
     updateBranch: (id: string, body: Partial<BranchInput>) => c.put<Branch>(`${base()}/branches/${checkId(id, 'branch')}`, { body }),
     deactivateBranch: (id: string) => c.delete<unknown>(`${base()}/branches/${checkId(id, 'branch')}`),
+    /** Q8: reopens a closed branch (all-branch actors with `branches.manage`); 409 BRANCH_ALREADY_ACTIVE. */
+    reactivateBranch: (id: string) => c.post<Branch>(`${base()}/branches/${checkId(id, 'branch')}/reactivate`, { body: {} }),
     /** The latest 100 events, newest first (partner-wide actors only). */
     audit: () => c.get<PartnerAuditEvent[]>(`${base()}/audit`),
   };
@@ -213,15 +224,24 @@ export function partnerWorkspaceApi(c: ApiClient, scope: PartnerScope) {
 export function partnerAdminApi(c: ApiClient) {
   const one = (id: string) => `/partner-workspace/admin/${checkId(id, 'partner')}`;
   return {
-    /** Sorted by name; the backend returns every match (no paging). */
-    list: (q: PartnerQuery = {}) => c.get<Partner[]>('/partner-workspace/admin', { query: { ...q } }),
-    create: (body: NewPartner) => c.post<{ partner: Partner; owner: PartnerMember }>('/partner-workspace/admin', { body }),
+    /** Sorted by name, paged (Q8). */
+    list: (q: PartnerQuery = {}): Promise<Page<Partner>> => c.page<Partner>('/partner-workspace/admin', { query: { ...q } }),
+    /**
+     * Q8: exactly once per (admin, requestKey): a resend with the same key and content answers the same partner; other
+     * content under the key is refused (409 REQUEST_KEY_REUSED).
+     */
+    create: (body: NewPartner, requestKey: string) => {
+      if (!REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
+      return c.post<{ partner: Partner; owner: PartnerMember }>('/partner-workspace/admin', { body: { requestKey, ...body } });
+    },
     get: (id: string) => c.get<Partner>(one(id)),
     update: (id: string, body: PartnerUpdate) => c.put<Partner>(one(id), { body }),
     /** pending → verified only (409 VERIFICATION_STATE_CONFLICT otherwise). */
     verify: (id: string) => c.post<Partner>(`${one(id)}/verify`, { body: {} }),
     /** Any state but suspended → suspended and inactive (409 ALREADY_SUSPENDED). No endpoint reinstates a partner. */
     suspend: (id: string) => c.post<Partner>(`${one(id)}/suspend`, { body: {} }),
+    /** Q8: suspended → verified and active again (409 NOT_SUSPENDED). */
+    reinstate: (id: string) => c.post<Partner>(`${one(id)}/reinstate`, { body: {} }),
   };
 }
 
@@ -251,6 +271,17 @@ export function holdsAny(a: Pick<PartnerActorView, 'role' | 'permissions'>, anyO
 export function grantablePermissions(a: Pick<PartnerActorView, 'role' | 'permissions'>): PartnerPermission[] {
   return a.role === 'owner' ? [...ALL_PARTNER_PERMISSIONS] : ALL_PARTNER_PERMISSIONS.filter((p) => a.permissions.includes(p));
 }
+
+/** Q8: only owners (and admins) change the partner profile (`updateOwnProfile`). */
+export const canEditProfile = (a: Pick<PartnerActorView, 'role'>) => a.role === 'owner';
+
+/** Q8 `updateMemberBranches`: a staff member other than yourself (owners always cover every branch). */
+export const canChangeBranches = (a: Pick<PartnerActorView, 'memberId'>, target: Pick<PartnerMember, '_id' | 'role' | 'isActive'>) =>
+  target.role === 'staff' && target.isActive !== false && a.memberId !== target._id;
+
+/** Q8 `reactivateBranch` / `includeInactive`: branch managers with partner-wide scope. */
+export const canReopenBranches = (a: Pick<PartnerActorView, 'role' | 'permissions' | 'branchIds'>) =>
+  hasGlobalScope(a) && holdsAny(a, ['branches.manage']);
 
 /** Only owners add owners and change a staff member's permissions (owners' permissions are fixed). */
 export const canAddOwner = (a: Pick<PartnerActorView, 'role'>) => a.role === 'owner';

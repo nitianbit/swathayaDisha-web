@@ -42,12 +42,12 @@ export function usePartnerScope(): ScopeContext | null {
     };
   }
   const m = user.partner?.member;
-  if (user.role !== 'partner' || !m) return null;
+  if (user.role !== 'partner' || !m || !user.partner) return null;
   const scope: PartnerScope = { kind: 'member' };
   return {
     scope,
     actor: { role: m.role, permissions: m.permissions, branchIds: m.branchIds, memberId: m.id },
-    key: ['partner-ws', 'member'],
+    key: ['partner-ws', 'member', user.partner.partner.id],
     api: partnerWorkspaceApi(api, scope),
     link: (s) => (s === 'profile' ? '/partner' : `/partner/${s}`),
   };
@@ -61,6 +61,18 @@ export function useWorkspacePartner(ctx: ScopeContext | null) {
     enabled: !!ctx,
   });
 }
+
+/** Q8: every member may read its branches (names for staff scoping, bookings, invoices). */
+export function useBranches(ctx: ScopeContext) {
+  return useQuery({ queryKey: [...ctx.key, 'branches'], queryFn: () => ctx.api.branches() });
+}
+
+/** `memberIds`/`branchIds` → names, for tables. */
+export const branchLabel = (names: Map<string, string>, ids: readonly string[]) =>
+  ids.length === 0 ? 'All branches' : ids.map((id) => names.get(id) ?? `Branch …${id.slice(-6)}`).join(', ');
+
+/** A one-line identity for the scope: a subtree keyed by it never sends one partner's draft to another. */
+export const scopeIdentity = (ctx: ScopeContext) => ctx.key.join(':');
 
 export function NoSuchPartner() {
   return <Empty title="Page not found">This page does not exist or is not available to your account.</Empty>;

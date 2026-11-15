@@ -2,14 +2,18 @@ import { useQuery } from '@tanstack/react-query';
 import { PERMISSION_LABEL, type PartnerAuditEvent, type PartnerPermission } from '@jansetu/api';
 import { Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
-import { NoSuchPartner, PartnerPageHeading, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
-import { useBranches } from './StaffScreen.tsx';
+import {
+  NoSuchPartner, PartnerPageHeading, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext,
+} from './scope.tsx';
 
 const ACTION_LABEL: Record<string, string> = {
   'partner.profile.update': 'Changed the profile',
   'member.add': 'Added a member',
   'member.remove': 'Removed a member',
   'member.permissions': 'Changed permissions',
+  'member.branches': 'Changed branch access',
+  'branch.reactivate': 'Reopened a branch',
+  'partner.reinstate': 'Reinstated the account',
   'branch.create': 'Added a branch',
   'branch.update': 'Changed a branch',
   'branch.deactivate': 'Deactivated a branch',
@@ -29,6 +33,7 @@ export function auditDetail(e: Pick<PartnerAuditEvent, 'action' | 'detail'>): st
   if (d.role === 'owner') parts.push('as owner');
   if (perms) parts.push(perms.length ? perms.join(', ') : 'no permissions');
   if (fields?.length) parts.push(fields.join(', '));
+  if (Array.isArray(d.branchIds)) parts.push(d.branchIds.length ? `${d.branchIds.length} ${d.branchIds.length === 1 ? 'branch' : 'branches'}` : 'all branches');
   return parts.join(' · ');
 }
 
@@ -36,7 +41,7 @@ export function auditDetail(e: Pick<PartnerAuditEvent, 'action' | 'detail'>): st
 export function AuditScreen() {
   const ctx = usePartnerScope();
   if (!ctx) return <NoSuchPartner />;
-  return <Audit ctx={ctx} />;
+  return <Audit key={scopeIdentity(ctx)} ctx={ctx} />;
 }
 
 function Audit({ ctx }: { ctx: ScopeContext }) {
