@@ -20,17 +20,20 @@ export function CartScreen() {
   const cart = useQuery({ queryKey: ['pharmacy-cart'], queryFn: () => pharmacy.cart() });
   const storeId = cart.data?.pharmacyId ?? '';
   const store = useQuery({ queryKey: ['pharmacy-store', storeId], queryFn: () => pharmacy.store(storeId), enabled: /^[0-9a-fA-F]{24}$/.test(storeId) });
+  // Re-reads the stored checkout attempt whenever an attempt starts or ends (session memory is not reactive).
+  const [, setAttemptVersion] = useState(0);
+  const attemptChanged = () => setAttemptVersion((v) => v + 1);
   return (
     <>
       <Link to={storeId ? `/pharmacy/stores/${storeId}` : '/pharmacy'} className="back"><ArrowLeft size={16} aria-hidden="true" /> Continue shopping</Link>
       <PageHeading title="Cart">{cart.data?.pharmacyName ?? undefined}</PageHeading>
-      <EarlierAttempt />
+      <EarlierAttempt onChange={attemptChanged} />
       {cart.isPending ? <Loading /> : cart.isError ? <ErrorState message={messageOf(cart.error)} onRetry={() => void cart.refetch()} />
         : cart.data.items.length === 0 ? <Empty title="Your cart is empty"><Link to="/pharmacy">Find a pharmacy</Link></Empty>
         // The pharmacy's pickup/delivery options decide what can be ordered: nothing is offered until they are known.
         : store.isPending ? <Loading label="Loading the pharmacy…" />
         : store.isError ? <ErrorState message={messageOf(store.error)} onRetry={() => void store.refetch()} />
-        : <CartView cart={cart.data} {...modesOf(store.data)} />}
+        : <CartView cart={cart.data} {...modesOf(store.data)} onAttemptChange={attemptChanged} />}
     </>
   );
 }
@@ -41,7 +44,7 @@ export function modesOf(store: { pickupAvailable?: boolean; deliveryAvailable?: 
   return { pickup: store.pickupAvailable === true || !delivery, delivery };
 }
 
-function CartView({ cart, pickup, delivery }: { cart: Cart; pickup: boolean; delivery: boolean }) {
+function CartView({ cart, pickup, delivery, onAttemptChange }: { cart: Cart; pickup: boolean; delivery: boolean; onAttemptChange: () => void }) {
   const { api, memory } = useSession();
   const pharmacy = customerPharmacyApi(api);
   const queryClient = useQueryClient();
@@ -84,30 +87,41 @@ function CartView({ cart, pickup, delivery }: { cart: Cart; pickup: boolean; del
     if (mode === 'delivery' && address.trim().length < 10) { setFieldError('Enter the full delivery address.'); return; }
     setFieldError(null);
     setPlacing(true);
+    // Never retried automatically. The key is stored before sending and reused until an order is confirmed.
+    const now = Date.now();
+    const stored = memory.get<CheckoutAttempt>(CHECKOUT_SLOT);
+    const attempt: CheckoutAttempt = { requestKey: stored?.requestKey ?? newRequestKey(), attempts: (stored?.attempts ?? 0) + 1,
+      firstAttemptAt: stored?.firstAttemptAt ?? now, lastAttemptAt: now };
+    /** Ends the stored attempt only if it is still `requestKey` (true), else leaves the newer one alone (false). */
+    const endIfCurrent = (requestKey: string) => {
+      if (memory.get<CheckoutAttempt>(CHECKOUT_SLOT)?.requestKey !== requestKey) return false;
+      memory.delete(CHECKOUT_SLOT);
+      onAttemptChange();
+      return true;
+    };
     try {
-      // Never retried automatically. The key is stored before sending and reused until an order is confirmed.
-      const now = Date.now();
-      const stored = memory.get<CheckoutAttempt>(CHECKOUT_SLOT);
-      const attempt: CheckoutAttempt = { requestKey: stored?.requestKey ?? newRequestKey(), attempts: (stored?.attempts ?? 0) + 1,
-        firstAttemptAt: stored?.firstAttemptAt ?? now, lastAttemptAt: now };
       memory.set(CHECKOUT_SLOT, attempt);
+      onAttemptChange();
       const r = await pharmacy.checkout({ paymentMode: payMode, deliveryMode: mode, deliveryAddress: address.trim(), notes: notes.trim() || undefined },
         attempt.requestKey);
-      memory.delete(CHECKOUT_SLOT);
-      queryClient.removeQueries({ queryKey: ['pharmacy-cart'] });
       await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] });
+      // A late answer for a key that is no longer the stored one (another attempt started meanwhile, e.g. in another
+      // view) changes nothing here: it must not end that newer attempt's protection or take the customer away.
+      if (!endIfCurrent(attempt.requestKey)) { setPlacing(false); return; }
+      queryClient.removeQueries({ queryKey: ['pharmacy-cart'] });
       // The payment details live in this session's memory only (never stored): the order page opens Checkout with them.
       if (r.paymentRequired && r.payment) memory.set(paymentKey(r.order._id), r.payment);
       navigate(`/pharmacy/orders/${r.order._id}`, { state: { startPayment: r.paymentRequired && !!r.payment, replayed: r.replayed === true } });
     } catch (err) {
       if (err instanceof ApiError && err.code === 'REQUEST_ABANDONED') {
-        memory.delete(CHECKOUT_SLOT); // that attempt can never be placed: the next one gets a new key
-        setError('That attempt was cancelled. Please place the order again.');
+        // That attempt can never be placed: the next one gets a new key (only if it is still the stored one).
+        if (endIfCurrent(attempt.requestKey)) setError('That attempt was cancelled. Please place the order again.');
       } else if (err instanceof ApiError && err.code === 'CART_PRICE_CHANGED') {
         setError('Some prices changed since you added the medicines. Check the new total and place the order again.');
         await refresh();
       } else if (err instanceof ApiError && err.status === 0) {
         setError('We could not tell whether your order was placed. Use “Check my last order” above.');
+        onAttemptChange();
         await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] });
         await refresh();
       } else {
@@ -180,27 +194,32 @@ function CartView({ cart, pickup, delivery }: { cart: Cart; pickup: boolean; del
  * about that request key: if it placed an order, that order opens; if not, the attempt is cancelled for good on the
  * server (it can never be placed later) and the customer simply places the order again. Never two orders.
  */
-function EarlierAttempt() {
+function EarlierAttempt({ onChange }: { onChange: () => void }) {
   const { api, memory } = useSession();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const attempt = memory.get<CheckoutAttempt>(CHECKOUT_SLOT);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [cleared, setCleared] = useState(false);
-  if (cleared) return <Alert tone="ok">Your earlier attempt did not place an order. You can place the order now.</Alert>;
-  if (!attempt) return null;
+  const [error, setError] = useState<{ key: string; message: string } | null>(null);
+  // The result belongs to the key it was about: a newer unresolved attempt always shows its own recovery.
+  const [clearedKey, setClearedKey] = useState<string | null>(null);
+  if (!attempt) {
+    return clearedKey ? <Alert tone="ok">Your earlier attempt did not place an order. You can place the order now.</Alert> : null;
+  }
+  const key = attempt.requestKey;
   async function check() {
     setBusy(true); setError(null);
     try {
-      const r = await requestKeysApi(api).abandon('pharmacy_checkout', attempt!.requestKey);
-      if (memory.get<CheckoutAttempt>(CHECKOUT_SLOT)?.requestKey === attempt!.requestKey) memory.delete(CHECKOUT_SLOT);
+      const r = await requestKeysApi(api).abandon('pharmacy_checkout', key);
+      const current = memory.get<CheckoutAttempt>(CHECKOUT_SLOT)?.requestKey === key;
+      if (current) memory.delete(CHECKOUT_SLOT);
       await queryClient.invalidateQueries({ queryKey: ['pharmacy-cart'] });
       await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] });
-      if (r.state === 'used' && r.record?._id) navigate(`/pharmacy/orders/${r.record._id}`, { state: { replayed: true } });
-      else setCleared(true);
+      if (r.state === 'used' && r.record?._id) { if (current) navigate(`/pharmacy/orders/${r.record._id}`, { state: { replayed: true } }); }
+      else setClearedKey(key);
+      onChange();
     } catch (err) {
-      setError(messageOf(err));
+      setError({ key, message: messageOf(err) });
     } finally {
       setBusy(false);
     }
@@ -209,7 +228,7 @@ function EarlierAttempt() {
     <Alert tone="warn">
       Your last attempt to place an order may have gone through.{' '}
       <Button variant="secondary" busy={busy} onClick={() => void check()}>Check my last order</Button>
-      {error && <span> {error}</span>}
+      {error && error.key === key && <span> {error.message}</span>}
     </Alert>
   );
 }

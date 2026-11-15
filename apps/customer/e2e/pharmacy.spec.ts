@@ -43,6 +43,9 @@ interface Backend {
   dropNextCheckoutAnswer: boolean;
   /** Pay-again answers 503 (an earlier attempt cannot be checked). */
   retryUnknown: boolean;
+  /** Hold the next checkout's answer this long (its order is recorded at once, or refused if abandoned meanwhile). */
+  slowNextCheckout: number;
+  abandoned: Set<string>;
 }
 
 const FAKE_CHECKOUT = `
@@ -70,7 +73,7 @@ function cartView(b: Backend) {
 }
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const b: Backend = { calls: [], cart: { pharmacyId: null, items: [] }, orders: new Map(), records: new Map(), priceChangeOnce: false, slowStore: 0, slowCart: 0, failStockPage: 0, stockPageCalls: {}, byKey: new Map(), dropNextCheckoutAnswer: false, retryUnknown: false };
+  const b: Backend = { calls: [], cart: { pharmacyId: null, items: [] }, orders: new Map(), records: new Map(), priceChangeOnce: false, slowStore: 0, slowCart: 0, failStockPage: 0, stockPageCalls: {}, byKey: new Map(), dropNextCheckoutAnswer: false, retryUnknown: false, slowNextCheckout: 0, abandoned: new Set() };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
   let n = 0;
@@ -124,6 +127,7 @@ async function mockBackend(page: Page): Promise<Backend> {
     if (path === '/request-keys/abandon') {
       const { key } = body as { key: string };
       if (b.byKey.has(key)) return json(route, 200, { success: true, data: { state: 'used', record: { _id: b.byKey.get(key) } } });
+      b.abandoned.add(key);
       return json(route, 200, { success: true, data: { state: 'abandoned' } });
     }
     if (path === '/pharmacy-cart' && req.method() === 'GET') return json(route, 200, { success: true, data: cartView(b) });
@@ -151,6 +155,11 @@ async function mockBackend(page: Page): Promise<Backend> {
     };
     if (path === '/pharmacy-cart/checkout') {
       const key = (body as { requestKey?: string }).requestKey;
+      if (b.slowNextCheckout) {
+        const wait = b.slowNextCheckout; b.slowNextCheckout = 0;
+        await new Promise((r) => setTimeout(r, wait));
+        if (key && b.abandoned.has(key)) return json(route, 409, { error: 409, code: 'REQUEST_ABANDONED', message: 'This request was cancelled before it was recorded; make a new one' });
+      }
       if (key && b.byKey.has(key)) {
         const o = b.orders.get(b.byKey.get(key)!)!;
         const unpaid = o.status === 'placed' && o.paymentStatus === 'pending' && o.paymentMode === 'online_payment';
@@ -524,4 +533,46 @@ test('pay again while an earlier payment cannot be checked: the app says so and 
   await page.getByRole('button', { name: 'Pay ₹40' }).click();
   await expect(page.getByText('We could not check your earlier payment just now', { exact: false }).first()).toBeVisible();
   expect(b.calls.filter((c) => c.path === '/payments/verify').length).toBe(verifies);
+});
+
+test('a late refusal of an old attempt does not end the newer attempt\'s protection', async ({ page }) => {
+  test.setTimeout(60_000);
+  const b = await mockBackend(page);
+  await signIn(page);
+  await fillCart(page);
+  b.slowNextCheckout = 5000; // K1's answer is slow
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  // The customer leaves and comes back while K1 is still on its way; K1 is checked: never recorded, so cancelled.
+  await page.getByRole('link', { name: 'Continue shopping' }).click();
+  await page.getByRole('link', { name: /View cart/ }).click();
+  await page.getByRole('button', { name: 'Check my last order' }).click();
+  await expect(page.getByText('Your earlier attempt did not place an order.', { exact: false })).toBeVisible();
+  // K2 is placed; its answer is lost.
+  b.dropNextCheckoutAnswer = true;
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByRole('button', { name: 'Check my last order' })).toBeVisible();
+  // K1's late refusal arrives now (the first view is still waiting for it): K2's protection must survive it.
+  await page.waitForTimeout(5500);
+  await page.reload();
+  await signIn(page);
+  await page.goto('/#/pharmacy/cart');
+  await page.getByRole('button', { name: 'Check my last order' }).click();
+  await expect(page.getByText('already been placed by your earlier attempt', { exact: false })).toBeVisible();
+  expect(b.orders.size).toBe(1);
+});
+
+test('after one attempt was cancelled, a newer uncertain attempt shows its own "Check my last order"', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await fillCart(page);
+  await page.route('**/api/v1/pharmacy-cart/checkout', (route) => route.abort('connectionreset'), { times: 1 });
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await page.getByRole('button', { name: 'Check my last order' }).click();
+  await expect(page.getByText('Your earlier attempt did not place an order.', { exact: false })).toBeVisible();
+  b.dropNextCheckoutAnswer = true;
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByRole('button', { name: 'Check my last order' })).toBeVisible();
+  await expect(page.getByText('Your earlier attempt did not place an order.', { exact: false })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Check my last order' }).click();
+  await expect(page.getByText('already been placed by your earlier attempt', { exact: false })).toBeVisible();
 });
