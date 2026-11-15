@@ -17,8 +17,7 @@ import { useSession } from '../../session.tsx';
 import { money, useCatalogue, useClinicDoctors } from './billing.tsx';
 import { nextCursor } from './InvoicesScreen.tsx';
 import { Totals } from './InvoiceScreen.tsx';
-import { NoSuchPartner, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
-import { useBranches } from './scope.tsx';
+import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
 type Pending = PendingOp<NewInvoice>;
 
@@ -129,7 +128,8 @@ function keyFinder(ctx: ScopeContext) {
 export function NewInvoiceScreen() {
   const ctx = usePartnerScope();
   if (!ctx) return <NoSuchPartner />;
-  return <NewInvoice ctx={ctx} />;
+  // One subtree per partner: a draft, a review step or a running issue never moves to another partner.
+  return <NewInvoice key={scopeIdentity(ctx)} ctx={ctx} />;
 }
 
 function NewInvoice({ ctx }: { ctx: ScopeContext }) {
@@ -140,7 +140,8 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
   const branches = useBranches(ctx);
   const catalogue = useCatalogue(ctx);
   const doctors = useClinicDoctors(ctx, partner.data?.kind);
-  const slot = `partner-invoice:new:${ctx.scope.kind === 'admin' ? ctx.scope.partnerId : 'member'}`;
+  // The unconfirmed bill (memory and reload marker) belongs to this partner only.
+  const slot = `partner-invoice:new:${scopeIdentity(ctx)}`;
   const [pending, setPendingState] = useState<Pending | undefined>(() => memory.get<Pending>(slot));
   const [busy, setBusy] = useState(false);
   const mounted = useRef(true);

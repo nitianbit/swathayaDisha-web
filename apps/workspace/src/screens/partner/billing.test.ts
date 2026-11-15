@@ -1,6 +1,7 @@
 import type { CatalogueItem, Invoice } from '@jansetu/api';
 import { endOfIstDay, money } from './billing.tsx';
-import { itemBody } from './CatalogueScreen.tsx';
+import { rebase } from '../../draft.ts';
+import { draftOf, itemBody } from './CatalogueScreen.tsx';
 import { mergePages, nextCursor } from './InvoicesScreen.tsx';
 import { buildInvoice, type InvoiceDraft } from './NewInvoiceScreen.tsx';
 
@@ -32,24 +33,32 @@ describe('bills list paging', () => {
 
 describe('catalogue form', () => {
   const item: CatalogueItem = {
-    _id: 'd1'.repeat(12), partnerId: 'a1'.repeat(12), kind: 'test', name: 'CBC', code: 'CBC01', priceMinor: 45000, gstRate: 18,
+    _id: 'd1'.repeat(12), partnerId: 'a1'.repeat(12), kind: 'test', name: 'CBC', code: 'CBC01', priceMinor: 45000, mrpMinor: 50000, gstRate: 18,
     visitModes: ['lab'], isActive: true, adminDisabled: false,
   };
-  const draft = (o: Record<string, unknown> = {}) => ({
-    kind: 'test' as const, name: 'CBC', code: 'CBC01', description: '', preparation: '', sampleType: '', includes: '', price: '450',
-    mrp: '', gstRate: '18', sac: '', visitModes: ['lab' as const], tat: '', ...o,
+  const ALL_RATES = [0, 5, 12, 18, 28] as const;
+  const edit = (o: Partial<ReturnType<typeof draftOf>>, base = draftOf(item)) => ({ base, draft: { ...base, ...o } });
+
+  it('sends only the fields the person changed, in paise; a field that is set cannot be emptied', () => {
+    expect(itemBody(edit({ price: '450.5' }), ALL_RATES, 'lab', true)).toEqual({ body: { priceMinor: 45050 }, errors: {} });
+    expect(itemBody(edit({ code: '' }), ALL_RATES, 'lab', true).errors.code).toBe('This cannot be removed here. Enter a new value.');
+    expect(itemBody(edit({ mrp: '400' }), ALL_RATES, 'lab', true).errors.mrp).toBe('MRP cannot be below the price.');
+    expect(itemBody(edit({ price: '600' }), ALL_RATES, 'lab', true).errors.price).toBe('The price cannot be above the MRP. Change the MRP too.');
   });
 
-  it('sends only what changed, in paise; a field that is set cannot be emptied', () => {
-    expect(itemBody(draft({ price: '450.5' }), [0, 5, 12, 18, 28], 'lab', item)).toEqual({ body: { priceMinor: 45050 }, errors: {} });
-    expect(itemBody(draft({ code: '' }), [0, 5, 12, 18, 28], 'lab', item).errors.code).toBe('This cannot be removed here. Enter a new value.');
-    expect(itemBody(draft({ mrp: '400' }), [0, 5, 12, 18, 28], 'lab', item).errors.mrp).toBe('MRP cannot be below the price.');
+  it('after a rebase, a field changed by someone else is not sent back', () => {
+    const started = edit({ name: 'CBC count' });
+    const { next, conflicts } = rebase(started, draftOf({ ...item, priceMinor: 47000 }));
+    expect(conflicts).toEqual([]);
+    expect(itemBody(next, ALL_RATES, 'lab', true).body).toEqual({ name: 'CBC count' });
   });
 
   it('a supplier without GST keeps an old rate as it is but cannot choose a new one', () => {
-    expect(itemBody(draft({ name: 'CBC count' }), [0], 'lab', item)).toEqual({ body: { name: 'CBC count' }, errors: {} });
-    expect(itemBody(draft({ gstRate: '5' }), [0], 'lab', item).errors.gstRate).toBe('Choose one of the GST rates offered.');
-    expect(itemBody(draft({ gstRate: '5' }), [0], 'lab').errors.gstRate).toBe('Choose one of the GST rates offered.');
+    expect(itemBody(edit({ name: 'CBC count' }), [0], 'lab', true)).toEqual({ body: { name: 'CBC count' }, errors: {} });
+    expect(itemBody(edit({ gstRate: '5' }), [0], 'lab', true).errors.gstRate).toBe('Choose one of the GST rates offered.');
+    const fresh = draftOf();
+    expect(itemBody({ base: fresh, draft: { ...fresh, name: 'X', price: '1', gstRate: '5' } }, [0], 'lab', false).errors.gstRate)
+      .toBe('Choose one of the GST rates offered.');
   });
 });
 

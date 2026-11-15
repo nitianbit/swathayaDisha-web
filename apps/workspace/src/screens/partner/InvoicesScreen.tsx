@@ -7,8 +7,7 @@ import {
 import { Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { endOfIstDay, money } from './billing.tsx';
-import { NoSuchPartner, PartnerPageHeading, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
-import { useBranches } from './scope.tsx';
+import { NoSuchPartner, PartnerPageHeading, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
 const PAGE = 50;
 const STATES: InvoiceState[] = ['issued', 'paid', 'cancelled'];
@@ -31,7 +30,8 @@ export function nextCursor(page: readonly Pick<Invoice, 'issuedAt'>[]): string |
 export function InvoicesScreen() {
   const ctx = usePartnerScope();
   if (!ctx) return <NoSuchPartner />;
-  return <Invoices ctx={ctx} />;
+  // One subtree per partner: filters and pages never carry over to another partner.
+  return <Invoices key={scopeIdentity(ctx)} ctx={ctx} />;
 }
 
 /** All bills of a newest-first, cursor-paged list, without the repeats of a shared second; and whether paging is stuck. */

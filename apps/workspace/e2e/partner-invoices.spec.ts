@@ -35,6 +35,10 @@ interface Backend {
   loseNextCreateAnswer: boolean;
   /** The next create never reaches the server. */
   dropNextCreate: boolean;
+  /** The next catalogue item is added but its answer never arrives. */
+  loseNextItemAnswer: boolean;
+  /** Applied to the item on the server just before the next edit re-reads it (someone else's change). */
+  changeBeforeEdit?: Rec;
   /** The next create is refused because customer linking is off (503). */
   linkingOffOnce: boolean;
   /** Paying this invoice is refused: someone else recorded a payment first. */
@@ -86,7 +90,7 @@ function invoice(id: string, number: number, extra: Rec = {}): Rec {
 
 async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular' | 'unregistered'; seed?: boolean } = {}): Promise<Backend> {
   const b: Backend = {
-    calls: [], me, live: false, loseNextCreateAnswer: false, dropNextCreate: false, linkingOffOnce: false,
+    calls: [], me, live: false, loseNextCreateAnswer: false, dropNextCreate: false, linkingOffOnce: false, loseNextItemAnswer: false,
     partners: [partner(LAB, 'City Lab', 'lab', opts.tax ?? 'regular'), partner(CLINIC, 'Sunrise Clinic', 'clinic', 'regular')],
     catalogue: [
       { _id: CBC, partnerId: LAB, kind: 'test', name: 'CBC', code: 'CBC01', priceMinor: 45000, gstRate: 0, visitModes: ['lab', 'home'], reportTatHours: 12, isActive: true, adminDisabled: false },
@@ -160,12 +164,17 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
       if (!can('catalogue.manage')) return deny();
       const it = { _id: 'd9'.repeat(12), partnerId: pid, isActive: true, adminDisabled: false, ...(body as Rec) };
       b.catalogue.push(it);
+      if (b.loseNextItemAnswer) { b.loseNextItemAnswer = false; return route.abort('failed'); }
       return ok(route, it, 201);
     }
     const item = /^\/catalogue\/([0-9a-f]{24})$/.exec(sub);
     if (item) {
       if (!can('catalogue.manage')) return deny();
       const it = b.catalogue.find((x) => x._id === item[1])!;
+      if (method === 'GET') {
+        if (b.changeBeforeEdit) { Object.assign(it, b.changeBeforeEdit); b.changeBeforeEdit = undefined; }
+        return ok(route, it);
+      }
       if (method === 'PUT') { Object.assign(it, body); return ok(route, it); }
       if (method === 'DELETE') { it.isActive = false; return json(route, 200, { success: true, message: 'Catalogue item deactivated' }); }
     }
@@ -606,4 +615,82 @@ test('admin as owner: bills and catalogue through the admin workspace routes; di
   expect(backend.calls.some((c) => /^\/partner-workspace\/(invoices|catalogue)/.test(c.path))).toBe(false);
   await page.goto('/#/partner/invoices');
   await expect(page.getByText('Page not found')).toBeVisible();
+});
+
+test('catalogue edits send only what this person changed; a field also changed by someone else is shown again, not overwritten', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  // Someone else changes the price while this person renames the item: only the name is sent.
+  await page.getByRole('button', { name: 'Edit CBC' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Complete blood count');
+  backend.changeBeforeEdit = { priceMinor: 47000 };
+  await page.getByRole('button', { name: 'Save item' }).click();
+  await expect(page.getByText('Complete blood count was saved.')).toBeVisible();
+  const puts = () => backend.calls.filter((c) => c.method === 'PUT');
+  expect(puts().map((c) => c.body)).toEqual([{ name: 'Complete blood count' }]);
+  expect(backend.calls.some((c) => c.method === 'GET' && c.path === `/partner-workspace/catalogue/${CBC}`)).toBe(true);
+  await expect(page.getByRole('row').filter({ hasText: 'Complete blood count' })).toContainText('₹470.00');
+
+  // Both changed the price: nothing is sent; the form shows the saved price for review.
+  await page.getByRole('button', { name: 'Edit Complete blood count' }).click();
+  await page.getByLabel('Price (₹)').fill('480');
+  backend.changeBeforeEdit = { priceMinor: 49000 };
+  await page.getByRole('button', { name: 'Save item' }).click();
+  await expect(page.getByText(/Someone else changed the price while you were editing/)).toBeVisible();
+  await expect(page.getByLabel('Price (₹)')).toHaveValue('490');
+  expect(puts()).toHaveLength(1);
+});
+
+test('a new item whose answer is lost is not offered again: the person is sent to the list to check', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.loseNextItemAnswer = true;
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await page.getByRole('button', { name: 'Add an item' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Lipid profile');
+  await page.getByLabel('Price (₹)').fill('450');
+  await page.getByRole('button', { name: 'Add item' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed item' });
+  await expect(panel).toContainText('We could not confirm whether Lipid profile was added');
+  await expect(page.getByRole('button', { name: 'Add item' })).toHaveCount(0);
+  await expect(page.getByLabel('Name', { exact: true })).toBeDisabled();
+  await panel.getByRole('button', { name: 'Look in the list' }).click();
+  await expect(page.getByText(/The answer to adding Lipid profile was lost/)).toBeVisible();
+  await expect(page.getByLabel('Search by name or code')).toHaveValue('Lipid profile');
+  await expect(page.getByRole('row').filter({ hasText: 'Lipid profile' })).toHaveCount(1);
+  expect(backend.calls.filter((c) => c.method === 'POST' && c.path === '/partner-workspace/catalogue')).toHaveLength(1);
+});
+
+test('admin switching partners: drafts, open forms and an unconfirmed bill stay with their own partner', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.dropNextCreate = true;
+  await signInAdmin(page);
+  // An unconfirmed bill for City Lab.
+  await page.goto(`/#/admin/partners/${LAB}/invoices/new`);
+  await page.getByLabel('Customer name').fill('Asha Rao');
+  await page.getByLabel('From the catalogue').selectOption(CBC);
+  await page.getByRole('button', { name: 'Add item' }).click();
+  await page.getByRole('button', { name: 'Review the bill' }).click();
+  await page.getByRole('button', { name: 'Issue bill' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed bill' })).toBeVisible();
+  // Sunrise Clinic's new bill starts empty and knows nothing of it.
+  await page.goto(`/#/admin/partners/${CLINIC}/invoices/new`);
+  await expect(page.getByText('Managing Sunrise Clinic with owner authority.')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Unconfirmed bill' })).toHaveCount(0);
+  await page.getByLabel('Customer name').fill('Kiran');
+  await page.goto(`/#/admin/partners/${LAB}/invoices/new`);
+  await expect(page.getByRole('group', { name: 'Unconfirmed bill' })).toContainText('Bill for Asha Rao');
+  await page.goto(`/#/admin/partners/${CLINIC}/invoices/new`);
+  await expect(page.getByLabel('Customer name')).toHaveValue('');
+
+  // An item edit open for City Lab is gone on Sunrise Clinic's price list.
+  await page.goto(`/#/admin/partners/${LAB}/catalogue`);
+  await page.getByRole('button', { name: 'Edit CBC' }).click();
+  await expect(page.getByRole('heading', { name: 'Edit CBC' })).toBeVisible();
+  await page.goto(`/#/admin/partners/${CLINIC}/catalogue`);
+  await expect(page.getByRole('heading', { name: 'Services and prices' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Edit CBC' })).toHaveCount(0);
+  const creates = backend.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/invoices'));
+  expect(creates.map((c) => c.path)).toEqual([`/partner-workspace/admin/${LAB}/workspace/invoices`]);
 });

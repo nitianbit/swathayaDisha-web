@@ -13,8 +13,7 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { sniffDocument } from '../pharmacy/documents.ts';
 import { money, useClinicDoctors } from './billing.tsx';
 import { stateTone } from './InvoicesScreen.tsx';
-import { NoSuchPartner, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
-import { useBranches } from './scope.tsx';
+import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
 const MODE_LABEL = Object.fromEntries(PAYMENT_MODES.map((m) => [m.value, m.label])) as Record<InvoicePaymentMode, string>;
 const GENDER_LABEL: Record<string, string> = { male: 'Male', female: 'Female', other: 'Other' };
@@ -24,7 +23,8 @@ export function InvoiceScreen() {
   const ctx = usePartnerScope();
   const { invoiceId = '' } = useParams();
   if (!ctx || !OBJECT_ID_PATTERN.test(invoiceId)) return <NoSuchPartner />;
-  return <InvoiceDetail ctx={ctx} invoiceId={invoiceId} />;
+  // One subtree per partner and bill: an open payment or cancellation never carries over to another bill or partner.
+  return <InvoiceDetail key={`${scopeIdentity(ctx)}:${invoiceId}`} ctx={ctx} invoiceId={invoiceId} />;
 }
 
 function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: string }) {
