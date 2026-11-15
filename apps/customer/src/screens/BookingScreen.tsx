@@ -63,7 +63,8 @@ function BookingView({ booking: b }: { booking: Booking }) {
       {b.status === 'pending' && b.paymentStatus === 'pending' && b.paymentTransactionId && Number(b.price ?? 0) > 0 && (
         <PaymentPanel booking={b} />
       )}
-      {cancellable && (
+      {b.bookingKind === 'instant' && <InstantNote booking={b} />}
+      {cancellable && b.bookingKind !== 'instant' && (
         <section className="card stack" aria-labelledby="cancel-h">
           <h2 id="cancel-h">Cancel</h2>
           {check.ok ? (
@@ -84,6 +85,23 @@ function BookingView({ booking: b }: { booking: Booking }) {
         </section>
       )}
     </>
+  );
+}
+
+/** Q4b: a "Consult now" consultation (made when a doctor accepted): the call link; no customer cancel after acceptance. */
+function InstantNote({ booking: b }: { booking: Booking }) {
+  const meet = b.virtualMeeting;
+  const join = meet?.status === 'active' && meet.joinUrl && /^https:\/\//.test(meet.joinUrl) ? meet.joinUrl : null;
+  return (
+    <section className="card stack" aria-labelledby="instant-h">
+      <h2 id="instant-h">Consult now</h2>
+      {join && b.status === 'confirmed' && <div className="row"><a className="j-btn j-btn--primary" href={join} target="_blank" rel="noopener noreferrer">Join the call</a></div>}
+      <p className="muted">
+        This consultation started when the doctor accepted, so it cannot be cancelled. If the doctor cancels, everything you
+        paid goes back to your Jansetu wallet.
+      </p>
+      {b.instantRequestId && /^[0-9a-fA-F]{24}$/.test(b.instantRequestId) && <Link to={`/consult/requests/${b.instantRequestId}`}>See the request</Link>}
+    </section>
   );
 }
 

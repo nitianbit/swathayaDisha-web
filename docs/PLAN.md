@@ -149,6 +149,48 @@ Build in this order (money/security first):
 - **S1 SECURITY (live on main)**: customers could list other customers' pharmacy orders with `?userId=`. Fixed on the
   release stack and on `hotfix/s1-pharmacy-orders-customer-scope` (from backend `main`) — ship it first.
 
+## WC1 customer app: partner labs, bills and Consult now (2026-11-15, taken autonomously)
+
+Backend: Q2 bills, Q3 partner labs, Q4b instant consultations (`m0/q7-partner-signin`). API modules `customerLabs.ts`,
+`customerBills.ts`, `instantConsult.ts` (amounts in paise, `fromPaise` for display).
+
+- **Home** gains Consult now, Lab tests (partner labs; the LabStack/Healthians bookings stay as they were) and Bills.
+- **Lab tests**: labs by pincode or city → one screen per lab (visit type, branch, tests from the catalogue for that
+  visit type, 7-day slots, for self/family, home address checked with the backend's own limits, coupon via
+  `/coupons/validate` with the create's context, wallet) → keyed once-only create (same rules as doctor bookings; a
+  reloaded unknown request is settled with `/request-keys/abandon` `lab_booking_create`) → Razorpay → booking page:
+  status, progress timeline from the lifecycle times, pay again inside the 30-minute window (server reuses the open
+  order; a 409 after the window keeps reading the booking), cancel with the 2-hour rule shown first (lifted while a lab
+  reschedule is unanswered), accept the lab's new time by its version (a newer proposal is reported, not accepted),
+  released reports.
+- **Private files** (lab reports, bill PDFs): read with the token through the API client (`/file/fetch`, `/bills/:id/pdf`),
+  typed by their first bytes, offered from a `blob:` URL (Open / Save); never a token in a URL, nothing stored.
+- **Consult now**: speciality (free text) + mode → doctors online now (always read fresh) or any available → quote
+  → pay upfront (keyed create, `instant_request_create`) → waiting screen: presence reported every 2 minutes while
+  visible, 5-minute offer countdown, then offer again (any / a doctor within the paid amount and the coupon's doctors)
+  or refund to the wallet (two steps). Accepted: the returned difference, Join the call (Meet link when ready), and the
+  consultation booking, which shows no Cancel (instant bookings cannot be cancelled by the customer).
+- **Bills**: list and detail (lines, discounts, CGST/SGST or IGST, totals, paid by / unpaid / cancelled, supplier and
+  GSTIN, doctor name from the public doctor profile), PDF.
+- **My bookings** lists Consult now requests and partner lab bookings as their own sections.
+
+Backend gaps found (not changed):
+- Bills name the doctor only by `doctorId` (the PDF has no doctor); the app reads the public doctor profile, so a
+  doctor no longer listed is left out.
+- `GET /bills` (200), `GET /lab-bookings` (100) and `GET /instant/requests` (50) are capped and not paged.
+- No single-lab read (`GET /partner-labs/:partnerId`): lab and branch names come from the full list; a booking does
+  not carry its lab's name.
+- Customer views hide the create request key, so a create whose answer was lost before a reload can only be settled by
+  abandoning its key (found → opened; not found → cancelled for good); there is no check-only lookup.
+- Released report URLs and their release records are separate arrays (the path is removed from releases): the app
+  pairs them by position only when the counts match.
+- No list of specialities for Consult now: the text must match a doctor's speciality exactly (case-insensitive).
+- A refund of held money is not recorded on the request (`refunded` is set only for doctor cancellations): the app
+  shows funding wallet + gateway as the amount returned.
+- Opening an unpaid lab booking/request checks only its latest payment attempt (`/payments/reconcile`); "Pay now"
+  reconciles them all on the server.
+- Native: Open/Save of `blob:` files needs the planned filesystem/file-viewer plugin inside the Capacitor shell.
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -195,3 +237,4 @@ Build in this order (money/security first):
 | 2026-11-15 | D4 + D3 UI approved | Codex approved D4 web (bad18bf, after 3 review rounds: cookie sessions, cross-tab lock and identity fences, noRenew admission, server-resolved restored requests, explicit same-origin topology), D3 workspace UI (3dd1742: requestId-keyed decisions, amount-free refund text), and the backend D4 (4b23d20) + business-date fix. |
 | 2026-11-15 | O1, admin queue, medicine ordering, N1, S1 approved | Codex approved backend O1 (232e619 + docs), N1 (5f93e7f), S1 (release 997da42, hotfix 5cac856); web admin queue + O1 sign-in (da8b7a4), customer medicine ordering (7930a61, after 3 review rounds) and the N1 client (405a959, after 2 rounds). Backend: all 21 integration suites pass on `m0/n1-native-sessions`. Web: typecheck clean; Vitest 55/55; Playwright customer 110/110, workspace 128/128. |
 | 2026-11-15 | P8 web, N2 phone apps, P9 web approved | Codex approved P8 web (e0add83, after 3 rounds: attempt ownership, keyed recovery result, decision after waits), N2 (f4c3ff8: secure-store start gate, latest-attempt start-up) and P9 web (aab4e01, after 3 rounds: attachments keyed to their pharmacy, functional updates, no order while attaching, expectedPharmacyId recipient fence). vitest 60; Playwright customer 134, workspace 134; Android debug + unsigned iOS builds for both apps. |
+| 2026-11-15 | WC1 (customer: partner labs, bills, Consult now) | typecheck clean; Vitest 82/82 (+ lab/bill/instant api modules, cancel rule, timeline, GST split, waiting rules, file sniffing); Playwright customer 176/176 (new: partner-labs 20, instant-consult 16, bills 6; desktop + Pixel 7, mocked API); release build with VITE_API_BASE_URL=https://api.example.test. The existing "inside 24 hours" test now accepts the Monday 48-hour rule (it failed when 5 hours ahead fell on a Monday). Not yet run against a real backend; not Codex-reviewed. |

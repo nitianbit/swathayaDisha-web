@@ -34,3 +34,20 @@ export { markerStore, samePrincipal, sessionChannel, withSessionLock } from './w
 export type { PendingMarker, Principal, SessionAnnouncement } from './webSession.ts';
 export { customerPharmacyApi, normalizeCart, PHARMACY_PAYMENT_WINDOW_MIN, shelfOf } from './customerPharmacy.ts';
 export type { Cart, CartItem, Checkout, CheckoutResult, PharmacyStore, ShelfItem, StockRow } from './customerPharmacy.ts';
+export {
+  addressErrors, customerLabsApi, fromPaise, istDay, LAB_ADDRESS_LIMITS, LAB_CANCEL_CUTOFF_HOURS, LAB_MAX_ITEMS, LAB_PAYMENT_WINDOW_MIN,
+  LAB_PINCODE_PATTERN, labCancelCheck, labTimeline,
+} from './customerLabs.ts';
+export type {
+  LabAddress, LabBooking, LabBookingItem, LabBookingPayment, LabBookingSlot, LabBookingStatus, LabBranch, LabCancelCheck, LabCatalogueItem,
+  LabSlot, NewLabBooking, PartnerLab, TimelineStep, VisitMode,
+} from './customerLabs.ts';
+export { BILL_KIND_LABEL, BILL_PAYMENT_MODE, billFileName, customerBillsApi, gstSplit } from './customerBills.ts';
+export type { Bill, BillDocumentKind, BillEvent, BillLine, BillPaymentMode, BillState, BillTotals } from './customerBills.ts';
+export {
+  countdown, heldRefundMinor, INSTANT_INACTIVITY_MIN, INSTANT_MODE_LABEL, INSTANT_MODES, INSTANT_OFFER_MIN, INSTANT_PAYMENT_WINDOW_MIN,
+  instantConsultApi, SPECIALITY_LIMITS, waitingState,
+} from './instantConsult.ts';
+export type {
+  InstantMode, InstantPayment, InstantQuote, InstantRequest, InstantStatus, InstantTarget, MoneySplit, NewInstantRequest, OnlineDoctor,
+} from './instantConsult.ts';

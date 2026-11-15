@@ -97,6 +97,11 @@ export interface Booking {
   cancellationReason?: string;
   /** Why the server cancelled it: 'payment_timeout' = not paid within the payment window (backend D2). */
   cancellationCause?: string;
+  /** Q4b: 'instant' = made when a doctor accepted a "Consult now" request (no customer cancel; the doctor may cancel). */
+  bookingKind?: 'scheduled' | 'instant';
+  instantRequestId?: string;
+  /** Google Meet for call/video consultations (best effort; may be missing or failed). */
+  virtualMeeting?: { provider?: string; status?: 'active' | 'cancelled' | 'failed'; joinUrl?: string };
   /** Request key of the create that made it (keyed creates only): finds a booking whose answer was lost. */
   createRequestKey?: string;
   cancelledAt?: string;
