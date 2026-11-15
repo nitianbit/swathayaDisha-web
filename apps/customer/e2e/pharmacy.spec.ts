@@ -46,6 +46,8 @@ interface Backend {
   /** Hold the next checkout's answer this long (its order is recorded at once, or refused if abandoned meanwhile). */
   slowNextCheckout: number;
   abandoned: Set<string>;
+  /** Hold cart reads this long. */
+  slowCartRead: number;
 }
 
 const FAKE_CHECKOUT = `
@@ -73,7 +75,7 @@ function cartView(b: Backend) {
 }
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const b: Backend = { calls: [], cart: { pharmacyId: null, items: [] }, orders: new Map(), records: new Map(), priceChangeOnce: false, slowStore: 0, slowCart: 0, failStockPage: 0, stockPageCalls: {}, byKey: new Map(), dropNextCheckoutAnswer: false, retryUnknown: false, slowNextCheckout: 0, abandoned: new Set() };
+  const b: Backend = { calls: [], cart: { pharmacyId: null, items: [] }, orders: new Map(), records: new Map(), priceChangeOnce: false, slowStore: 0, slowCart: 0, failStockPage: 0, stockPageCalls: {}, byKey: new Map(), dropNextCheckoutAnswer: false, retryUnknown: false, slowNextCheckout: 0, abandoned: new Set(), slowCartRead: 0 };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
   let n = 0;
@@ -130,6 +132,7 @@ async function mockBackend(page: Page): Promise<Backend> {
       b.abandoned.add(key);
       return json(route, 200, { success: true, data: { state: 'abandoned' } });
     }
+    if (path === '/pharmacy-cart' && req.method() === 'GET' && b.slowCartRead) await new Promise((r) => setTimeout(r, b.slowCartRead));
     if (path === '/pharmacy-cart' && req.method() === 'GET') return json(route, 200, { success: true, data: cartView(b) });
     if (path === '/pharmacy-cart' && req.method() === 'DELETE') { b.cart = { pharmacyId: null, items: [] }; return json(route, 200, { success: true }); }
     if (path === '/pharmacy-cart/items' && req.method() === 'POST') {
@@ -575,4 +578,32 @@ test('after one attempt was cancelled, a newer uncertain attempt shows its own "
   await expect(page.getByText('Your earlier attempt did not place an order.', { exact: false })).toHaveCount(0);
   await page.getByRole('button', { name: 'Check my last order' }).click();
   await expect(page.getByText('already been placed by your earlier attempt', { exact: false })).toBeVisible();
+});
+
+test('placing while a check is still finishing reuses the unresolved key: the one order, never a second', async ({ page }) => {
+  test.setTimeout(60_000);
+  const b = await mockBackend(page);
+  await signIn(page);
+  await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'close'; });
+  await fillCart(page);
+  b.dropNextCheckoutAnswer = true;
+  await page.getByRole('button', { name: /Place order and pay/ }).click(); // K1 placed, answer lost
+  await expect(page.getByRole('button', { name: 'Check my last order' })).toBeVisible();
+  b.cart = { pharmacyId: S1, items: [{ medicineId: MED_B, quantity: 1 }] }; // the customer has a new cart
+  await page.reload();
+  await signIn(page);
+  await page.goto('/#/pharmacy/cart');
+  await expect(page.getByRole('button', { name: /Place order and pay/ })).toBeVisible();
+  b.slowCartRead = 3000; // the check's refresh is slow
+  await page.getByRole('button', { name: 'Check my last order' }).click();
+  b.dropNextCheckoutAnswer = true;
+  // "Place order" while the check is finishing: the attempt is still stored (cleared only after the check's waits), so
+  // the same key is sent and the server answers with the order already placed.
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await page.waitForTimeout(4000);
+  b.slowCartRead = 0;
+  await expect(page.getByText('already been placed by your earlier attempt', { exact: false })).toBeVisible();
+  expect(b.orders.size).toBe(1);
+  const keys = b.calls.filter((c) => c.path === '/pharmacy-cart/checkout').map((c) => (c.body as { requestKey: string }).requestKey);
+  expect(new Set(keys).size).toBe(1);
 });

@@ -211,12 +211,15 @@ function EarlierAttempt({ onChange }: { onChange: () => void }) {
     setBusy(true); setError(null);
     try {
       const r = await requestKeysApi(api).abandon('pharmacy_checkout', key);
-      const current = memory.get<CheckoutAttempt>(CHECKOUT_SLOT)?.requestKey === key;
-      if (current) memory.delete(CHECKOUT_SLOT);
       await queryClient.invalidateQueries({ queryKey: ['pharmacy-cart'] });
       await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] });
-      if (r.state === 'used' && r.record?._id) { if (current) navigate(`/pharmacy/orders/${r.record._id}`, { state: { replayed: true } }); }
-      else setClearedKey(key);
+      // Decided only now, after every wait: if a newer attempt started meanwhile, this result changes nothing.
+      const current = memory.get<CheckoutAttempt>(CHECKOUT_SLOT)?.requestKey === key;
+      if (current) {
+        memory.delete(CHECKOUT_SLOT);
+        if (r.state === 'used' && r.record?._id) navigate(`/pharmacy/orders/${r.record._id}`, { state: { replayed: true } });
+        else setClearedKey(key);
+      }
       onChange();
     } catch (err) {
       setError({ key, message: messageOf(err) });
