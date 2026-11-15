@@ -7,11 +7,21 @@ const S2 = '5b'.repeat(12);
 const MED_A = 'a1'.repeat(12);
 const MED_B = 'b1'.repeat(12);
 const MED_RX = 'e1'.repeat(12);
+const S3 = '5c'.repeat(12);
+const MED_LATE = 'f9'.repeat(12);
+const MED_OFF = 'f8'.repeat(12);
+const MED_FREE = 'f7'.repeat(12);
+/** Fillers that push MED_LATE onto the second page of S2's stock. */
+const FILLERS = Array.from({ length: 50 }, (_, i) => (0x10 + i).toString(16).padStart(2, '0').repeat(12));
 
 const MEDS: Record<string, { name: string; price: number; rx: boolean }> = {
   [MED_A]: { name: 'Paracetamol 500', price: 20, rx: false },
   [MED_B]: { name: 'Cetirizine 10', price: 35, rx: false },
   [MED_RX]: { name: 'Amoxicillin 500', price: 90, rx: true },
+  [MED_LATE]: { name: 'Zinc 50', price: 15, rx: false },
+  [MED_OFF]: { name: 'Withdrawn Syrup', price: 40, rx: false },
+  [MED_FREE]: { name: 'Free Sample', price: 0, rx: false },
+  ...Object.fromEntries(FILLERS.map((id, i) => [id, { name: `Filler ${String(i).padStart(2, '0')}`, price: 10, rx: false }])),
 };
 
 interface Backend {
@@ -20,6 +30,9 @@ interface Backend {
   orders: Map<string, Record<string, unknown>>;
   records: Map<string, { orderId: string; rzp: string; captured: boolean }>;
   priceChangeOnce: boolean;
+  /** Milliseconds to hold the store details / the next cart change (to model a slow network). */
+  slowStore: number;
+  slowCart: number;
 }
 
 const FAKE_CHECKOUT = `
@@ -47,7 +60,7 @@ function cartView(b: Backend) {
 }
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const b: Backend = { calls: [], cart: { pharmacyId: null, items: [] }, orders: new Map(), records: new Map(), priceChangeOnce: false };
+  const b: Backend = { calls: [], cart: { pharmacyId: null, items: [] }, orders: new Map(), records: new Map(), priceChangeOnce: false, slowStore: 0, slowCart: 0 };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
   let n = 0;
@@ -71,20 +84,32 @@ async function mockBackend(page: Page): Promise<Backend> {
     if (path === '/pharmacies') return page1(route, [
       { _id: S1, name: 'Asha Medicals', address: 'MG Road', city: 'Pune', pincode: '411001', pickupAvailable: true, deliveryAvailable: true },
       { _id: S2, name: 'City Pharmacy', city: 'Pune', pickupAvailable: true },
+      { _id: S3, name: 'Door Meds', city: 'Pune', pickupAvailable: false, deliveryAvailable: true },
     ]);
+    if (path === `/pharmacies/${S3}`) {
+      if (b.slowStore) await new Promise((r) => setTimeout(r, b.slowStore));
+      return json(route, 200, { success: true, data: { _id: S3, name: 'Door Meds', city: 'Pune', pickupAvailable: false, deliveryAvailable: true } });
+    }
     if (path === `/pharmacies/${S1}`) return json(route, 200, { success: true, data: { _id: S1, name: 'Asha Medicals', city: 'Pune', pickupAvailable: true, deliveryAvailable: true } });
     if (path === `/pharmacies/${S2}`) return json(route, 200, { success: true, data: { _id: S2, name: 'City Pharmacy', city: 'Pune', pickupAvailable: true } });
     if (path === '/pharmacy-inventory') {
       const store = url.searchParams.get('pharmacyId');
       const row = (id: string, medicineId: string, qty: number, price: number) =>
         ({ _id: id, pharmacyId: store, medicineId, availableQty: qty, retailPrice: price, medicine: { _id: medicineId, name: MEDS[medicineId]!.name, strength: '500 mg', dosageForm: 'Tablet' } });
-      const rows = store === S1 ? [row('i1', MED_A, 5, 20), row('i2', MED_A, 3, 20), row('i3', MED_B, 4, 35), row('i4', MED_RX, 2, 90)] : [row('j1', MED_B, 9, 36)];
+      const rows = store === S1 ? [row('i1', MED_A, 5, 20), row('i2', MED_A, 3, 20), row('i3', MED_B, 4, 35), row('i4', MED_RX, 2, 90),
+        { ...row('i5', MED_OFF, 6, 40), isActive: false }, row('i6', MED_FREE, 6, 0)]
+        : store === S3 ? [row('k1', MED_A, 9, 20)]
+        : [row('j1', MED_B, 9, 36), ...FILLERS.map((id, i) => row(`f${i}`, id, 5, 10)), row('j2', MED_LATE, 4, 15)];
       const q = (url.searchParams.get('search') ?? '').toLowerCase();
-      return page1(route, rows.filter((r) => !q || r.medicine.name.toLowerCase().includes(q)));
+      const all = rows.filter((r) => !q || r.medicine.name.toLowerCase().includes(q));
+      const pg = Number(url.searchParams.get('page') ?? '1'); const limit = Number(url.searchParams.get('limit') ?? '50');
+      return json(route, 200, { success: true, data: all.slice((pg - 1) * limit, pg * limit),
+        pagination: { page: pg, limit, total: all.length, totalPages: Math.max(1, Math.ceil(all.length / limit)) } });
     }
     if (path === '/pharmacy-cart' && req.method() === 'GET') return json(route, 200, { success: true, data: cartView(b) });
     if (path === '/pharmacy-cart' && req.method() === 'DELETE') { b.cart = { pharmacyId: null, items: [] }; return json(route, 200, { success: true }); }
     if (path === '/pharmacy-cart/items' && req.method() === 'POST') {
+      if (b.slowCart) { const wait = b.slowCart; b.slowCart = 0; await new Promise((r) => setTimeout(r, wait)); }
       const { pharmacyId, medicineId, quantity } = body as { pharmacyId: string; medicineId: string; quantity: number };
       if (b.cart.pharmacyId && b.cart.pharmacyId !== pharmacyId && b.cart.items.length) {
         return json(route, 409, { error: 409, code: 'CART_PHARMACY_MISMATCH', message: 'Your cart has items from another pharmacy' });
@@ -234,6 +259,7 @@ test('closing the payment page leaves the order unpaid with a deadline; paying f
   await fillCart(page);
   await page.getByRole('button', { name: /Place order and pay/ }).click();
   await expect(page.getByText('This order is not paid yet. Pay by', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pay ₹40' })).toBeEnabled();
   await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'pay'; });
   await page.getByRole('button', { name: 'Pay ₹40' }).click();
   await expect(page.getByText('Payment received.', { exact: false })).toBeVisible();
@@ -284,4 +310,89 @@ test('a paid order waits for the pharmacy to confirm cancelling; a wallet refund
   await page.getByRole('button', { name: 'Send it to my card/UPI instead' }).click();
   await page.getByRole('button', { name: 'Yes, send it to my card/UPI' }).click();
   await expect(page.getByText('on its way to your card/UPI', { exact: false })).toBeVisible();
+});
+
+test('a delivery-only pharmacy: nothing is offered until its options are known, then only delivery', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Medicines', exact: true }).click();
+  await page.getByRole('link', { name: /Door Meds/ }).click();
+  await page.getByRole('button', { name: 'Add Paracetamol 500 to cart' }).click();
+  b.slowStore = 1500;
+  await page.reload();
+  await signIn(page);
+  await page.goto('/#/pharmacy/cart');
+  await expect(page.getByText('Loading the pharmacy…')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Place order/ })).toHaveCount(0);
+  await expect(page.getByLabel('Deliver to me')).toBeChecked();
+  await expect(page.getByLabel('Collect at the pharmacy')).toHaveCount(0);
+  await page.getByLabel('Cash on delivery').check();
+  await page.getByLabel('Delivery address').fill('5 Lane, Kothrud, Pune 411038');
+  await page.getByRole('button', { name: /Place order ·/ }).click();
+  await expect(page.getByRole('heading', { name: /Order PH-/ })).toBeVisible();
+  expect(b.calls.find((c) => c.path === '/pharmacy-cart/checkout')?.body).toMatchObject({ deliveryMode: 'delivery', paymentMode: 'cash_on_delivery' });
+});
+
+test('one cart change at a time: while one is on its way the others wait, and taking one off never removes all', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Medicines', exact: true }).click();
+  await page.getByRole('link', { name: /Asha Medicals/ }).click();
+  await page.getByRole('button', { name: 'Add Paracetamol 500 to cart' }).click();
+  await expect(page.getByRole('group', { name: 'Paracetamol 500 quantity' })).toContainText('1');
+  b.slowCart = 1500;
+  await page.getByRole('button', { name: 'One more Paracetamol 500' }).click();
+  await expect(page.getByRole('button', { name: 'One less Paracetamol 500' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Add Cetirizine 10 to cart' })).toBeDisabled();
+  await expect(page.getByRole('group', { name: 'Paracetamol 500 quantity' })).toContainText('2');
+  await page.getByRole('button', { name: 'One less Paracetamol 500' }).click();
+  await expect(page.getByRole('group', { name: 'Paracetamol 500 quantity' })).toContainText('1');
+  expect(b.calls.filter((c) => c.method === 'DELETE')).toHaveLength(0);
+  expect(b.calls.filter((c) => c.path === '/pharmacy-cart/items').map((c) => (c.body as { quantity: number }).quantity)).toEqual([1, 1, -1]);
+});
+
+test('every page of a pharmacy\'s stock can be reached; inactive or unpriced stock cannot be added', async ({ page }) => {
+  await mockBackend(page);
+  await signIn(page);
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Medicines', exact: true }).click();
+  await page.getByRole('link', { name: /City Pharmacy/ }).click();
+  await expect(page.getByRole('button', { name: 'Add Filler 00 to cart' })).toBeVisible();
+  await expect(page.getByText('Zinc 50')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Show more medicines' }).click();
+  await expect(page.getByRole('button', { name: 'Add Zinc 50 to cart' })).toBeEnabled();
+  await page.getByRole('link', { name: 'Pharmacies' }).click();
+  await page.getByRole('link', { name: /Asha Medicals/ }).click();
+  await expect(page.getByText('Withdrawn Syrup')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Add Free Sample to cart' })).toBeDisabled();
+});
+
+test('checking the payment re-reads the order: a closed order no longer offers payment', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'close'; });
+  await fillCart(page);
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByRole('button', { name: 'Pay ₹40' })).toBeEnabled();
+  const o = [...b.orders.values()][0]!;
+  o.status = 'abandoned'; // not paid in time: the server closed it
+  await page.getByRole('button', { name: 'I have paid, check again' }).click();
+  await expect(page.getByText('This order was cancelled because it was not paid', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pay ₹40' })).toHaveCount(0);
+});
+
+test('paying re-reads the order first: an order closed meanwhile does not open the payment page', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'close'; });
+  await fillCart(page);
+  await page.getByRole('button', { name: /Place order and pay/ }).click();
+  await expect(page.getByRole('button', { name: 'Pay ₹40' })).toBeEnabled();
+  [...b.orders.values()][0]!.status = 'rejected';
+  const opened = b.calls.length;
+  await page.evaluate(() => { (window as unknown as { __rz: string }).__rz = 'pay'; });
+  await page.getByRole('button', { name: 'Pay ₹40' }).click();
+  await expect(page.getByText('Not accepted', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pay ₹40' })).toHaveCount(0);
+  expect(b.calls.slice(opened).some((c) => c.path === '/payments/verify')).toBe(false);
+  expect([...b.records.values()].every((r) => !r.captured)).toBe(true);
 });

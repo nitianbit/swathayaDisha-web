@@ -24,6 +24,7 @@ export interface StockRow {
   medicineId: string | { _id: string };
   availableQty: number;
   retailPrice?: number;
+  isActive?: boolean;
   medicine?: { _id: string; name?: string; genericName?: string; brandName?: string; dosageForm?: string; strength?: string; manufacturer?: string };
 }
 
@@ -83,10 +84,11 @@ export function shelfOf(rows: readonly StockRow[]): ShelfItem[] {
   const byMedicine = new Map<string, ShelfItem>();
   for (const r of rows) {
     const medicineId = refOf(r.medicineId);
-    if (!hex.test(medicineId) || !(r.availableQty > 0)) continue;
+    // Inactive stock and stock without a positive price cannot be ordered (the cart refuses them).
+    if (!hex.test(medicineId) || !(r.availableQty > 0) || r.isActive === false) continue;
     const m = r.medicine ?? { _id: medicineId };
     const prev = byMedicine.get(medicineId);
-    const price = typeof r.retailPrice === 'number' && r.retailPrice >= 0 ? r.retailPrice : undefined;
+    const price = typeof r.retailPrice === 'number' && r.retailPrice > 0 ? r.retailPrice : undefined;
     if (prev) {
       prev.availableQty += r.availableQty;
       if (price !== undefined) {
@@ -118,10 +120,10 @@ export function customerPharmacyApi(c: ApiClient) {
       c.page<PharmacyStore>('/pharmacies', { query: { page: q.page ?? 1, limit: q.limit ?? 20, search: q.search || undefined } }),
     store: (pharmacyId: string) => c.get<PharmacyStore>(`/pharmacies/${id(pharmacyId, 'pharmacy')}`),
     stock: (pharmacyId: string, q: { search?: string; page?: number; limit?: number } = {}): Promise<Page<StockRow>> =>
-      c.page<StockRow>('/pharmacy-inventory', { query: { pharmacyId: id(pharmacyId, 'pharmacy'), search: q.search || undefined, page: q.page ?? 1, limit: q.limit ?? 50 } }),
+      c.page<StockRow>('/pharmacy-inventory', { query: { pharmacyId: id(pharmacyId, 'pharmacy'), isActive: true, search: q.search || undefined, page: q.page ?? 1, limit: q.limit ?? 50 } }),
 
     cart: () => c.get<Cart>('/pharmacy-cart'),
-    /** `quantity` may be negative (takes units off). A cart holds one pharmacy: another pharmacy answers 409 CART_PHARMACY_MISMATCH. */
+    /** `quantity` is a change: +1 adds a unit, -1 takes one off (the server drops the line at 0). A cart holds one pharmacy: another pharmacy answers 409 CART_PHARMACY_MISMATCH. */
     addToCart: (pharmacyId: string, medicineId: string, quantity: number) =>
       c.post<Cart>('/pharmacy-cart/items', { body: { pharmacyId: id(pharmacyId, 'pharmacy'), medicineId: id(medicineId, 'medicine'), quantity } }),
     removeFromCart: (medicineId: string) => c.delete<Cart>(`/pharmacy-cart/items/${id(medicineId, 'medicine')}`),

@@ -1,10 +1,11 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft, ShoppingCart } from 'lucide-react';
 import { ApiError, customerPharmacyApi, shelfOf, type Cart, type ShelfItem } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
 import { messageOf, PageHeading } from '../../common.tsx';
+import { usePagedList } from '../../paging.ts';
 import { useSession } from '../../session.tsx';
 
 export function StoreScreen() {
@@ -20,31 +21,36 @@ function Store({ pharmacyId }: { pharmacyId: string }) {
   const [text, setText] = useState('');
   const [search, setSearch] = useState('');
   const store = useQuery({ queryKey: ['pharmacy-store', pharmacyId], queryFn: () => pharmacy.store(pharmacyId) });
-  const stock = useQuery({ queryKey: ['pharmacy-stock', pharmacyId, search], queryFn: () => pharmacy.stock(pharmacyId, { search }) });
+  // Every page of the pharmacy's stock can be reached; rows of one medicine on different pages merge into one line.
+  const { q: stock, items: rows } = usePagedList(['pharmacy-stock', pharmacyId, search], (page) => pharmacy.stock(pharmacyId, { search, page }));
   const cart = useQuery({ queryKey: ['pharmacy-cart'], queryFn: () => pharmacy.cart() });
-  const shelf = useMemo(() => shelfOf(stock.data?.items ?? []), [stock.data]);
+  const shelf = useMemo(() => shelfOf(rows), [rows]);
   const [error, setError] = useState<string | null>(null);
   const [otherStore, setOtherStore] = useState<{ medicineId: string } | null>(null);
+  // One cart change at a time (the cart is shared by every line): all steppers wait while one is on its way.
   const [busy, setBusy] = useState<string | null>(null);
+  const inFlight = useRef(false);
 
   const cartHere = cart.data?.pharmacyId === pharmacyId ? cart.data : null;
   const inCart = (medicineId: string) => cartHere?.items.find((i) => i.medicineId === medicineId)?.quantity ?? 0;
   const count = cart.data?.items.reduce((n, i) => n + i.quantity, 0) ?? 0;
 
   async function change(medicineId: string, delta: number, replaceCart = false) {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setError(null); setOtherStore(null); setBusy(medicineId);
     try {
       if (replaceCart) await pharmacy.clearCart();
-      const next = delta < 0 && inCart(medicineId) <= -delta
-        ? await pharmacy.removeFromCart(medicineId)
-        : await pharmacy.addToCart(pharmacyId, medicineId, delta);
+      // Always a change (+1 / -1), never "remove all" chosen from a possibly stale quantity; the server drops the line at 0.
+      const next = await pharmacy.addToCart(pharmacyId, medicineId, delta);
       queryClient.setQueryData<Cart>(['pharmacy-cart'], next);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'CART_PHARMACY_MISMATCH') setOtherStore({ medicineId });
       else setError(messageOf(err));
     } finally {
-      setBusy(null);
       await queryClient.invalidateQueries({ queryKey: ['pharmacy-cart'] });
+      inFlight.current = false;
+      setBusy(null);
     }
   }
 
@@ -78,18 +84,24 @@ function Store({ pharmacyId }: { pharmacyId: string }) {
         : stock.isError ? <ErrorState message={messageOf(stock.error)} onRetry={() => void stock.refetch()} />
         : shelf.length === 0 ? <Empty title={search ? `Nothing in stock matches “${search}”` : 'No medicines in stock right now'} />
         : (
-          <ul className="list">
-            {shelf.map((m) => (
-              <ShelfRow key={m.medicineId} item={m} quantity={inCart(m.medicineId)} busy={busy === m.medicineId}
-                onChange={(delta) => void change(m.medicineId, delta)} />
-            ))}
-          </ul>
+          <>
+            <ul className="list">
+              {shelf.map((m) => (
+                <ShelfRow key={m.medicineId} item={m} quantity={inCart(m.medicineId)} busy={busy === m.medicineId} locked={busy !== null}
+                  onChange={(delta) => void change(m.medicineId, delta)} />
+              ))}
+            </ul>
+            {stock.hasNextPage && (
+              <Button variant="secondary" busy={stock.isFetchingNextPage} onClick={() => void stock.fetchNextPage()}>Show more medicines</Button>
+            )}
+          </>
         )}
     </>
   );
 }
 
-function ShelfRow({ item, quantity, busy, onChange }: { item: ShelfItem; quantity: number; busy: boolean; onChange: (delta: number) => void }) {
+function ShelfRow({ item, quantity, busy, locked, onChange }:
+  { item: ShelfItem; quantity: number; busy: boolean; locked: boolean; onChange: (delta: number) => void }) {
   const price = item.minPrice === undefined ? 'Price at the pharmacy'
     : item.minPrice === item.maxPrice ? formatRupees(item.minPrice) : `${formatRupees(item.minPrice)} – ${formatRupees(item.maxPrice)}`;
   return (
@@ -99,13 +111,13 @@ function ShelfRow({ item, quantity, busy, onChange }: { item: ShelfItem; quantit
       <div className="row-between">
         <span>{price}</span>
         {quantity === 0 ? (
-          <Button variant="secondary" busy={busy} disabled={item.minPrice === undefined} onClick={() => onChange(1)}
+          <Button variant="secondary" busy={busy} disabled={locked || item.minPrice === undefined} onClick={() => onChange(1)}
             aria-label={`Add ${item.name} to cart`}>Add</Button>
         ) : (
           <div className="stepper" role="group" aria-label={`${item.name} quantity`}>
-            <Button variant="secondary" disabled={busy} onClick={() => onChange(-1)} aria-label={`One less ${item.name}`}>−</Button>
+            <Button variant="secondary" disabled={locked} onClick={() => onChange(-1)} aria-label={`One less ${item.name}`}>−</Button>
             <span aria-live="polite">{quantity}</span>
-            <Button variant="secondary" disabled={busy || quantity >= item.availableQty} onClick={() => onChange(1)}
+            <Button variant="secondary" disabled={locked || quantity >= item.availableQty} onClick={() => onChange(1)}
               aria-label={`One more ${item.name}`}>+</Button>
           </div>
         )}

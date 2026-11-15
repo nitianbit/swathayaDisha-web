@@ -16,7 +16,15 @@ export function PharmacyOrderScreen() {
   const { orderId = '' } = useParams();
   const { api } = useSession();
   const valid = /^[0-9a-fA-F]{24}$/.test(orderId);
-  const q = useQuery({ queryKey: ['pharmacy-orders', 'one', orderId], queryFn: () => customerPharmacyApi(api).order(orderId), enabled: valid });
+  const q = useQuery({
+    queryKey: ['pharmacy-orders', 'one', orderId], queryFn: () => customerPharmacyApi(api).order(orderId), enabled: valid,
+    // While an online order waits for payment, the server may close it (not paid in time, or the pharmacy declines):
+    // keep it current so payment is never offered for a closed order.
+    refetchInterval: (query) => {
+      const o = query.state.data;
+      return o && o.paymentMode === 'online_payment' && o.status === 'placed' && isUnpaid(o) ? 30_000 : false;
+    },
+  });
   return (
     <>
       <Link to="/pharmacy/orders" className="back"><ArrowLeft size={16} aria-hidden="true" /> My medicine orders</Link>
@@ -109,7 +117,9 @@ function PaymentPanel({ order: o, onSettled }: { order: PharmacyOrder; onSettled
   const { api, memory } = useSession();
   const startPayment = (useLocation().state as { startPayment?: boolean } | null)?.startPayment === true;
   const payment = memory.get<PaymentOrder>(paymentKey(o._id));
-  const [state, setState] = useState<PaymentOutcome | 'idle' | 'paying' | 'checking'>('idle');
+  // Starts in the state the first effect is about to enter, so no stale "Pay" button flashes before it.
+  const [state, setState] = useState<PaymentOutcome | 'idle' | 'paying' | 'checking'>(
+    startPayment && payment ? 'paying' : o.paymentTransactionId ? 'checking' : 'idle');
   const [error, setError] = useState<string | null>(null);
   const started = useRef(false);
   const deadline = o.createdAt ? new Date(new Date(o.createdAt).getTime() + PHARMACY_PAYMENT_WINDOW_MIN * 60_000) : null;
@@ -118,6 +128,13 @@ function PaymentPanel({ order: o, onSettled }: { order: PharmacyOrder; onSettled
     if (!payment) return;
     setError(null); setState('paying');
     try {
+      // The server's current order decides, not this page's copy or a browser timer.
+      const fresh = await customerPharmacyApi(api).order(o._id);
+      if (fresh.status !== 'placed' || !isUnpaid(fresh)) {
+        memory.delete(paymentKey(o._id));
+        setState('idle');
+        return;
+      }
       const outcome = await payOrder(api, payment, {}, o.orderNumber ? `Medicines, order ${o.orderNumber}` : 'Medicines');
       setState(outcome);
       if (outcome === 'paid') memory.delete(paymentKey(o._id));
@@ -133,7 +150,8 @@ function PaymentPanel({ order: o, onSettled }: { order: PharmacyOrder; onSettled
     setState('checking');
     const outcome = await checkPayment(api, o.paymentTransactionId);
     setState(outcome);
-    if (outcome === 'paid') { memory.delete(paymentKey(o._id)); await onSettled(); }
+    if (outcome === 'paid') memory.delete(paymentKey(o._id));
+    await onSettled(); // whatever the payment says, the order is read again (it may have been closed meanwhile)
   }
   useEffect(() => {
     if (started.current) return;

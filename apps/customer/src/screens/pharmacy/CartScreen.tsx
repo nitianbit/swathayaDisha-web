@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
@@ -22,10 +22,18 @@ export function CartScreen() {
       <PageHeading title="Cart">{cart.data?.pharmacyName ?? undefined}</PageHeading>
       {cart.isPending ? <Loading /> : cart.isError ? <ErrorState message={messageOf(cart.error)} onRetry={() => void cart.refetch()} />
         : cart.data.items.length === 0 ? <Empty title="Your cart is empty"><Link to="/pharmacy">Find a pharmacy</Link></Empty>
-        : <CartView cart={cart.data} pickup={store.data ? store.data.pickupAvailable !== false || !store.data.deliveryAvailable : true}
-            delivery={store.data?.deliveryAvailable === true} />}
+        // The pharmacy's pickup/delivery options decide what can be ordered: nothing is offered until they are known.
+        : store.isPending ? <Loading label="Loading the pharmacy…" />
+        : store.isError ? <ErrorState message={messageOf(store.error)} onRetry={() => void store.refetch()} />
+        : <CartView cart={cart.data} {...modesOf(store.data)} />}
     </>
   );
+}
+
+/** How this pharmacy hands over orders: delivery only when it offers delivery; pickup when it offers pickup or nothing else. */
+export function modesOf(store: { pickupAvailable?: boolean; deliveryAvailable?: boolean }): { pickup: boolean; delivery: boolean } {
+  const delivery = store.deliveryAvailable === true;
+  return { pickup: store.pickupAvailable === true || !delivery, delivery };
 }
 
 function CartView({ cart, pickup, delivery }: { cart: Cart; pickup: boolean; delivery: boolean }) {
@@ -41,22 +49,32 @@ function CartView({ cart, pickup, delivery }: { cart: Cart; pickup: boolean; del
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const inFlight = useRef(false);
+  // If the options change (e.g. fresher pharmacy details), the choice follows: never an option the pharmacy lacks.
+  useEffect(() => {
+    if (mode === 'pickup' && !pickup && delivery) setMode('delivery');
+    if (mode === 'delivery' && !delivery && pickup) setMode('pickup');
+  }, [mode, pickup, delivery]);
+  const modeAllowed = mode === 'pickup' ? pickup : delivery;
   const rx = cart.items.filter((i) => i.prescriptionRequired !== false);
   const offline: PaymentMode = mode === 'pickup' ? 'in_store_payment' : 'cash_on_delivery';
   const payMode: PaymentMode = pay === 'online_payment' ? pay : offline;
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['pharmacy-cart'] });
   async function change(item: CartItem, delta: number) {
+    if (inFlight.current) return; // one cart change at a time
+    inFlight.current = true;
     setError(null); setBusy(true);
     try {
-      const next = delta < 0 && item.quantity <= -delta ? await pharmacy.removeFromCart(item.medicineId)
-        : await pharmacy.addToCart(cart.pharmacyId!, item.medicineId, delta);
+      // A change, never "remove all" from a possibly stale quantity: the server drops the line at 0.
+      const next = await pharmacy.addToCart(cart.pharmacyId!, item.medicineId, delta);
       queryClient.setQueryData(['pharmacy-cart'], next);
-    } catch (err) { setError(messageOf(err)); } finally { setBusy(false); await refresh(); }
+    } catch (err) { setError(messageOf(err)); } finally { await refresh(); inFlight.current = false; setBusy(false); }
   }
 
   async function place() {
     setError(null);
+    if (!modeAllowed) { setError('Choose how you get the order.'); return; }
     if (mode === 'delivery' && address.trim().length < 10) { setFieldError('Enter the full delivery address.'); return; }
     setFieldError(null);
     setPlacing(true);
@@ -131,7 +149,7 @@ function CartView({ cart, pickup, delivery }: { cart: Cart; pickup: boolean; del
             <p className="muted">Pay within {PHARMACY_PAYMENT_WINDOW_MIN} minutes, or the order is cancelled and the medicines are released.</p>
           )}
           {error && <Alert>{error}</Alert>}
-          <Button busy={placing} disabled={busy} onClick={() => void place()}>
+          <Button busy={placing} disabled={busy || !modeAllowed} onClick={() => void place()}>
             {payMode === 'online_payment' ? `Place order and pay ${formatRupees(cart.subtotal)}` : `Place order · ${formatRupees(cart.subtotal)}`}
           </Button>
         </section>
