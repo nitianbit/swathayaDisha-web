@@ -481,6 +481,77 @@ Review fixes (Codex WQ5 at 1c21528: 2 MEDIUM):
    3da8f10). A left page's late answer no longer deletes the attempt another page resent (and lost); the record and its
    reload marker stay until the owning page settles it (a resend replays it, a check finds it).
 
+## WQ6 clinic doctors and front desk (2026-11-16, taken autonomously at the owner's request)
+
+Backend: Q6 clinic routes (`SwasthaDisha-worktrees/q12-catalogue-lookup`, `src1/modules/partners/{routes/index.ts,controller,validation,services}/clinic.ts`,
+`model/clinicDoctor.ts`, `bookings/holds.ts` for cancel/reschedule). API module `packages/api/src/clinic.ts` (member and admin-as-owner
+scope like WQ1–WQ3; ids, mobiles, dates, states and the request key checked before any path).
+
+- **Pages** (deny by default, clinics only via `partnerKinds: ['clinic']`; a lab member gets "Page not found", an admin opening a lab's
+  URL is told "Only for clinics", as WQ3 does for labs): `/partner/clinic-doctors` "Doctors" (readers of `GET /clinic/doctors`:
+  `staff.manage`, `bookings.view`, `bookings.manage`, `invoices.create`; invitations only with `staff.manage`) and `/partner/desk` "Front desk"
+  (`bookings.view` reads, `bookings.manage` acts). Same screens under `/admin/partners/:id/{clinic-doctors,desk}`, linked from the admin
+  partner page for clinics. Only `modules.tsx` and the admin partner page's link list were touched among shared/older files.
+- **Doctors**: active doctor members with speciality, branches (empty = all), fee and "not bookable" when the doctor's own account is
+  inactive or unverified. Invitations (`staff.manage`): by registered mobile (sent in its ten-digit form) or Jansetu doctor id; branches
+  offered = active, in-clinic branches in the actor's scope; "every branch" only for partner-wide actors (a restricted manager must name
+  branches inside their own, `assertScopeWithin`). A repeat for a doctor with a pending invitation answers that invitation (`created:
+  false`), so a lost answer can simply be sent again; the page says which branches the existing invitation has. Revoke after a
+  confirmation; one revoke per invitation at a time. The doctor accepts in their own app (WQ4); the page says so.
+- **Front desk day view**: branch (active, in-clinic, in scope) + India-time day (previous/today/next) + doctor (all, or one consulting at
+  that branch). Appointments of the day (desk and online, with patient, mobile, family relation, source, payment, status, arrival) and the
+  chosen doctor's free in-clinic slots (seats left; already-started slots are marked "(started)", the server still books them). Times in
+  both stored formats (`HH:mm`, `h:mm AM`) are read as the backend's `parseAppointment` and shown as IST.
+- **Booking (once only)**: a slot, the patient's mobile (required; an account is created for a new number), name (optional; saved only
+  when the account has none) and notes; mode is fixed in person (the server sets it). Reviewed, then sent with a fresh `requestKey` in the
+  body (`deskBookingSchema`; the server keys it per desk member and hashes slot, mobile and notes). The pending booking is stored BEFORE
+  sending (session memory per partner `clinic-desk:book:<scope identity>`, with a body-less reload marker), as WQ2 does. A lost answer locks
+  the booking: "Send the same booking again" (the server answers the same key with the appointment it made, `replayed`) and "Check the day
+  list" (a look-alike — desk appointment, same slot, same mobile — is shown as a hint only; the list carries no key). Only when that check,
+  made after the last attempt, finds nothing can the person set the booking aside, after a confirmation that a duplicate would then have
+  to be cancelled. After a reload the details are gone and the server cannot look the key up or abandon it, so the person is sent to the
+  day list and may set it aside after the same confirmation. Every answer acts only while its page is on screen and its attempt still owns
+  the stored state (`stillCurrent`); an obsolete answer leaves a newer resend and its marker intact. A definite refusal of a sole first
+  attempt (also 503 `CUSTOMER_LINKING_UNAVAILABLE`, raised before anything is written) unlocks the form; 409 `SLOT_NOT_AVAILABLE` keeps the
+  patient's details and reloads the free slots. The receipt names the fee (rupees, paid at the clinic) and whether an account was created.
+- **Steps** (`deskActions`, mirror of `services/clinic.ts`, desk appointments only; online bookings are view-only): mark arrived (booked,
+  not yet arrived), mark as seen (any time; confirmation), did not come (only after the appointment time; confirmation: "Nothing is
+  charged or refunded through Jansetu"), cancel (confirmation with an optional reason, ≤ 500; "No money moves: desk appointments are paid at
+  the clinic, so nothing was taken online"; empty = "Cancelled by the clinic", as the server records), move to another time (same doctor,
+  a branch the doctor consults at in the actor's scope, any day; confirmation says seats move at once and the check-in is cleared; staff
+  are told to inform the patient). One step at a time per appointment through one page-level guard (a set of appointment ids, so it
+  survives switching between appointments); open confirmations are disabled while another step on the same appointment runs. A step's
+  answer is never written into the cached day (see the review fix below); the day is read again after every step, and a late answer shows
+  its notice only if that appointment is still the one open.
+- **Bill for the visit**: WQ2's new-bill form starts empty (no prefill without changing it), so desk appointments link to "Make a bill for
+  this visit" (`invoices.create`) or to Bills (other bill readers).
+- **Review rules applied**: every screen keyed by `scopeIdentity(ctx)`; one action at a time per record; once-only create stored before
+  sending with owned recovery state; confirmations for irreversible steps; four states per data view; no patient data in storage, logs or
+  URLs (only the request key and attempt times in the reload marker). `draft.ts` baselines do not apply: WQ6 edits no existing record (only
+  creates and commands).
+
+Backend gaps found (not changed here):
+- No lookup or abandon for a desk booking key (not a `request-keys` kind; no `GET /clinic/appointments/by-key/:key`; list rows carry no key).
+  After a reload a lost desk booking can only be checked by eye in the day list.
+- The invitation list returns stored rows without the doctor's name or speciality; names show once the doctor accepts (or for invitations
+  sent in this session, from the invite answer).
+- Clinics cannot search Jansetu doctors; inviting "by doctor id" needs an id the clinic has no way to look up (mobile works).
+- Desk appointment fees are the legacy booking `price` in rupees (the specialist's `consultationFee`), not paise like Q2/Q3.
+- Desk steps take no expected version; `deskSlots` lists slots that have already started and the booking path does not refuse them.
+- No notification to the patient on a desk booking, move or cancellation (deferred in Q6); no invoice ↔ appointment link (deferred in Q6);
+  family members cannot be booked at the desk (deferred in Q6).
+- The appointment list is capped at 1000 rows with no paging.
+- Desk command answers (`deskView`) carry no version, so the client cannot order an answer against a newer read; the page relies on
+  re-reading the day instead.
+
+Codex review of 80adab5 (REQUEST_CHANGES, 1 MEDIUM), fixed:
+- **A late step answer never overwrites a newer change.** An answer used to be merged into every cached day list before checking the page
+  was still live; one from a page the person had left (e.g. "arrived" for 12:00) could put back an old time and check-in over a reschedule
+  made since, and if the next read failed the open appointment was shown from that copy with its steps. Now no answer is written into the
+  cache at all (it has no version): only the re-read of the day (after every step, from any page) shows state. The open appointment is
+  shown only from a successful read: when the re-read fails the list shows the error with "Try again" and no appointment or step is offered;
+  while the day is being read again the steps wait.
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -539,4 +610,5 @@ Review fixes (Codex WQ5 at 1c21528: 2 MEDIUM):
 | 2026-11-16 | WQ2 Codex fixes + Q10 | typecheck clean; Vitest 99/99 (mergeDetail both answer orders, bill filters, clinic item kinds, Q10 paths: includeInactive, reactivate, by-key lookup/abandon with key checks, cancel refund, cursor page with total/nextCursor); Playwright workspace 204/204 (24 partner-invoices journeys x 2: catalogue reactivate and expectedUpdatedAt, stale edit 409, clinic kinds, lost item create resent with the same key, lost item create after reload with duplicate confirmation, bill lost before reload abandoned by key, bill issued before reload found by key, catalogue price changed refused then reissued, paid cancel with refund, pay/cancel one at a time with a lost payment replayed, cursor paging across a shared instant, search and date range); release build. Spare port (temporary config, not committed). |
 | 2026-11-16 | WQ2 re-review fixes | typecheck clean; Vitest 100/100 (+ payment settled only by the bill); Playwright workspace 208/208 (+2 journeys x 2, both failing on d046414: a lost UPI payment with failing bill reads keeps the exact payment, offers no Cash form, keeps cancel locked, survives leaving the page and is settled by its receipt; a held give-up answer from a left page does not delete the returned page's resend or its reload marker, and the bill is then found by key, one bill); release build. Spare port (temporary config, not committed). |
 | 2026-11-16 | WQ2 re-review 2 fix | typecheck clean; Vitest 100/100; Playwright workspace 212/212 (+2 journeys x 2, both failing on e3c6440: page A's held UPI payment is shown on page B instead of a new form with cancel locked, B's resend loses its answer with failing reads, A's late 409 leaves B's record, a remount still shows it, the receipt then settles it; a payment sent just before a reload is shown as unconfirmed and a new one is offered only after a fresh unpaid read and a confirm step); release build. Spare port (temporary config, not committed). |
-| 2026-11-15 | P8 web, N2 phone apps, P9 web approved | Codex approved P8 web (e0add83, after 3 rounds: attempt ownership, keyed recovery result, decision after waits), N2 (f4c3ff8: secure-store start gate, latest-attempt start-up) and P9 web (aab4e01, after 3 rounds: attachments keyed to their pharmacy, functional updates, no order while attaching, expectedPharmacyId recipient fence). vitest 60; Playwright customer 134, workspace 134; Android debug + unsigned iOS builds for both apps. |
+| 2026-11-16 | WQ6 (clinic doctors and front desk) | typecheck clean; Vitest 129/129 (+14: mobile canonical form, invitation scope and branch rules, in-clinic branches and doctors per branch, desk booking field rules, 31-day range, IST appointment times in both stored formats, desk steps per status/source/permission/time, member and admin paths and bodies (key in the body, no header), id/mobile/date/state/key checks before any request; app: look-alike rows for a lost booking, answers folded into rows); Playwright workspace 264/264 (+20 = 10 journeys x 2 devices: doctors list, invite by mobile and by id with branch choice, a repeat answering the pending invitation, server refusals, revoke after a confirmation; day view by branch/doctor/day with online bookings view-only; booking reviewed and sent once with a key, then arrived and seen, nothing about the patient in storage or the URL; a lost answer locks the booking, the day list shows a look-alike, the same request resent books once, then a loss before a reload is set aside only after a confirmation; a slot taken (409) keeps the details and the next time gets a new key; no-show only after the time and no-show/cancel confirmations saying no money moves; reschedule to another day with a taken slot refused and reloaded; one step at a time with an open confirmation disabled and a late answer silent on another appointment; view-only staff, a biller and a lab; admin as owner with partner switching, admin paths and a lab told the pages are for clinics), clinic spec also 60/60 with --repeat-each=3; release build with VITE_API_BASE_URL=https://api.example.test. Spare port 5198 (temporary config, not committed). Not yet run against a real backend or reviewed. |
+| 2026-11-16 | WQ6 review fix | typecheck clean; Vitest 128/128 (the answer-merge helper and its test removed); Playwright workspace 266/266 (+2 = 1 journey x 2 devices, failing on 80adab5: an "arrived" answer is held, the person leaves and comes back, moves the appointment to 10:30, then the old answer lands and the day cannot be read: no stale 12:00 appointment and no steps are shown, only the error with a retry; after the retry 10:30, not checked in), clinic spec 66/66 with --repeat-each=3; release build. Spare port 5236 with a temporary config that never reuses another worktree's server (5198 was taken by a sibling worktree's dev server), not committed. |\n| 2026-11-15 | P8 web, N2 phone apps, P9 web approved | Codex approved P8 web (e0add83, after 3 rounds: attempt ownership, keyed recovery result, decision after waits), N2 (f4c3ff8: secure-store start gate, latest-attempt start-up) and P9 web (aab4e01, after 3 rounds: attachments keyed to their pharmacy, functional updates, no order while attaching, expectedPharmacyId recipient fence). vitest 60; Playwright customer 134, workspace 134; Android debug + unsigned iOS builds for both apps. |
