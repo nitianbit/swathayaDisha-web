@@ -40,6 +40,10 @@ interface Backend {
   prices: Record<string, number>;
   /** A gate the next create / pay answer waits for (the customer may leave meanwhile). */
   holdCreate: Promise<void> | null;
+  /** Gates for successive create answers, in order (one per request). */
+  createGates: Promise<void>[];
+  /** The lab withdrew the LAB50 coupon. */
+  couponOff: boolean;
   holdPay: Promise<void> | null;
   /** D4 cookie sessions (a reload keeps the customer signed in). */
   sessions: boolean;
@@ -50,7 +54,7 @@ interface Backend {
 
 const gate = () => { let release!: () => void; const p = new Promise<void>((r) => { release = r; }); return { p, release }; };
 /** The demo coupon LAB50 takes ₹50 off, for bookings that include the blood count only. */
-const couponDiscountMinor = (code: unknown, itemIds: string[]) => (code === 'LAB50' && itemIds.includes(T1) ? 5000 : 0);
+const couponDiscountMinor = (code: unknown, itemIds: string[], off = false) => (!off && code === 'LAB50' && itemIds.includes(T1) ? 5000 : 0);
 
 function labBooking(id: string, over: Rec = {}): Rec {
   const startsAt = new Date(Date.now() + 72 * HOUR).toISOString();
@@ -69,7 +73,7 @@ function labBooking(id: string, over: Rec = {}): Rec {
 
 async function mockBackend(page: Page): Promise<Backend> {
   const state: Backend = { calls: [], bookings: new Map(), records: new Map(), byKey: new Map(), createDrops: false, refuseCreate: false, windowPassed: false,
-    prices: { [T1]: 40000, [T2]: 150000 }, holdCreate: null, holdPay: null, sessions: false, live: false, abandoned: new Set(), checkoutLoads: 0 };
+    prices: { [T1]: 40000, [T2]: 150000 }, holdCreate: null, createGates: [], couponOff: false, holdPay: null, sessions: false, live: false, abandoned: new Set(), checkoutLoads: 0 };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const ok = (route: Route, data: unknown, status = 200) => json(route, status, { success: true, data });
   const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
@@ -138,7 +142,7 @@ async function mockBackend(page: Page): Promise<Backend> {
     }
     if (path === '/coupons/validate') {
       const v = body as { code: string; testIds?: string[]; packageIds?: string[]; purchaseAmount: number };
-      const d = couponDiscountMinor(v.code, [...(v.testIds ?? []), ...(v.packageIds ?? [])]);
+      const d = couponDiscountMinor(v.code, [...(v.testIds ?? []), ...(v.packageIds ?? [])], state.couponOff);
       if (!d) return ok(route, { isValid: false, message: `Coupon ${v.code} does not apply to these tests` });
       return ok(route, { isValid: true, discountAmount: d / 100, finalAmount: v.purchaseAmount - d / 100, coupon: { code: v.code } });
     }
@@ -152,6 +156,8 @@ async function mockBackend(page: Page): Promise<Backend> {
     if (path === '/lab-bookings' && req.method() === 'POST') {
       const b = body as Rec;
       if (state.holdCreate) { const h = state.holdCreate; state.holdCreate = null; await h; }
+      const g = state.createGates.shift();
+      if (g) await g;
       const known = state.byKey.get(String(b.requestKey));
       if (known) {
         const booking = state.bookings.get(known)!;
@@ -164,7 +170,10 @@ async function mockBackend(page: Page): Promise<Backend> {
       // Q9 price fence: nothing is made at a price the customer did not accept.
       const itemIds = b.itemIds as string[];
       const subtotal = itemIds.reduce((a, i) => a + state.prices[i]!, 0);
-      const discount = couponDiscountMinor(b.couponCode, itemIds);
+      if (b.couponCode && !couponDiscountMinor(b.couponCode, itemIds, state.couponOff)) {
+        return json(route, 400, { error: 400, code: 'INVALID_COUPON', message: 'Invalid coupon code' });
+      }
+      const discount = couponDiscountMinor(b.couponCode, itemIds, state.couponOff);
       if (b.acceptedPayableMinor !== subtotal - discount || (b.acceptedSubtotalMinor !== undefined && b.acceptedSubtotalMinor !== subtotal)) {
         return json(route, 409, { error: 409, code: 'PRICE_CHANGED', message: `The price is now ₹${((subtotal - discount) / 100).toFixed(2)}; review and confirm again` });
       }
@@ -523,4 +532,56 @@ test('after a reload, a request not made yet is given up only when the customer 
   await expect(page.getByRole('checkbox', { name: /Complete blood count/ })).toBeVisible();
   expect(backend.abandoned.size).toBe(1);
   expect(backend.bookings.size).toBe(0);
+});
+
+test('out-of-order answers across remounts: the older page’s late success leaves the newer attempt’s request intact; the newer one completes', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await chooseTestAndTime(page);
+  await fillHomeForm(page);
+  const first = gate();
+  const second = gate();
+  backend.createGates.push(first.p, second.p);
+  await page.getByRole('button', { name: 'Book and pay' }).click(); // page A, attempt 1
+  await expect.poll(() => posts(backend, '/lab-bookings').length).toBe(1);
+  await page.getByRole('link', { name: 'Lab tests' }).click(); // A is left with attempt 1 on its way
+  await page.getByRole('link', { name: /Sunrise Diagnostics/ }).click(); // page B: the request is still locked
+  const locked = page.getByRole('group', { name: 'Unconfirmed lab booking request' });
+  await locked.getByRole('button', { name: 'Send it again' }).click(); // attempt 2, same key
+  await expect.poll(() => posts(backend, '/lab-bookings').length).toBe(2);
+  first.release(); // A's (older) answer arrives first: it must not consume B's request
+  await expect.poll(() => backend.bookings.size).toBe(1);
+  await page.waitForTimeout(300);
+  await expect(locked).toBeVisible();
+  expect(backend.checkoutLoads).toBe(0);
+  second.release(); // B's answer: the same booking (replayed), its payment opened and paid
+  await expect(page.getByText('Confirmed', { exact: true })).toBeVisible();
+  const creates = posts(backend, '/lab-bookings').map((c) => c.body as Record<string, unknown>);
+  expect(creates[1]).toEqual(creates[0]);
+  expect(backend.bookings.size).toBe(1);
+  expect(backend.checkoutLoads).toBe(1);
+});
+
+test('a coupon dropped by an automatic re-check does not slip a higher price through: the customer must accept it', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await chooseTestAndTime(page);
+  await fillHomeForm(page);
+  await page.getByLabel('Coupon (optional)').fill('LAB50');
+  await page.getByRole('button', { name: 'Apply' }).click();
+  await expect(page.getByLabel('Price')).toContainText('₹300.00'); // 400 − 50 coupon − 50 wallet: agreed at 350 payable
+  backend.prices[T1] = 60000; // the price rose and the coupon was withdrawn meanwhile
+  backend.couponOff = true;
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect(page.getByText('Invalid coupon code')).toBeVisible(); // refused (the server checks the coupon first)
+  await expect(page.getByText('Coupon LAB50 does not apply to these tests')).toBeVisible(); // the re-check dropped it
+  const changed = page.getByRole('group', { name: 'Price changed' });
+  await expect(changed).toContainText('you now pay ₹600.00 for these tests (it was ₹350.00)');
+  await expect(page.getByRole('button', { name: 'Book and pay' })).toBeDisabled();
+  await changed.getByRole('button', { name: 'Accept the new price' }).click();
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect(page.getByText('Confirmed', { exact: true })).toBeVisible();
+  const last = posts(backend, '/lab-bookings').at(-1)!.body as Record<string, unknown>;
+  expect(last).toMatchObject({ acceptedSubtotalMinor: 60000, acceptedPayableMinor: 60000 });
+  expect(last.couponCode).toBeUndefined();
 });

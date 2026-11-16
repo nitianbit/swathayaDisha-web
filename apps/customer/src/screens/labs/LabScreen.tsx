@@ -65,7 +65,8 @@ function LabView({ lab }: { lab: PartnerLab }) {
       if (alive()) navigate(path);
     },
     (err) => {
-      if (err instanceof ApiError && err.code === 'PRICE_CHANGED') {
+      // The server checks the coupon before the price (INVALID_COUPON comes first): both mean the shown price is stale.
+      if (err instanceof ApiError && (err.code === 'PRICE_CHANGED' || err.code === 'INVALID_COUPON')) {
         void queryClient.invalidateQueries({ queryKey: ['partner-lab-catalogue', lab.partnerId] });
         setPriceRefusals((n) => n + 1);
       }
@@ -217,6 +218,11 @@ function BookForm({ lab, branchId, mode, items, slot, dayLabel, once, priceRefus
   const [applied, setApplied] = useState<string | null>(null);
   /** A coupon result is valid only for the exact context it was checked for. */
   const [coupon, setCoupon] = useState<{ code: string; discount: number; ctx: string } | null>(null);
+  /**
+   * The coupon the customer chose (applied or removed by hand). The price agreement follows this choice, not whether the
+   * coupon still checks out: a coupon dropped by an automatic re-check raises the price, which must be accepted again.
+   */
+  const [chosen, setChosen] = useState<string | null>(null);
   const [couponBusy, setCouponBusy] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
   const [useWallet, setUseWallet] = useState(true);
@@ -234,8 +240,8 @@ function BookForm({ lab, branchId, mode, items, slot, dayLabel, once, priceRefus
   const toPay = Math.max(0, afterCoupon - walletUse);
   const set = (k: keyof typeof address) => (e: { target: { value: string } }) => setAddress((a) => ({ ...a, [k]: e.target.value }));
   const couponSettled = !couponBusy && (!applied || !!current || !!couponError);
-  // What is being bought (prices excluded): a price change for the same tests and coupon must be accepted again.
-  const agreement = usePriceAgreement(`${lab.partnerId}|${mode}|${items.map((i) => i.itemId).sort().join(',')}|${current?.code ?? ''}`,
+  // What the customer chose (prices excluded): a price change for the same tests and chosen coupon must be accepted again.
+  const agreement = usePriceAgreement(`${lab.partnerId}|${mode}|${items.map((i) => i.itemId).sort().join(',')}|${chosen ?? ''}`,
     `${subtotalMinor}:${payableMinor}`, couponSettled);
 
   const seq = useRef(0);
@@ -261,6 +267,7 @@ function BookForm({ lab, branchId, mode, items, slot, dayLabel, once, priceRefus
     setCouponError(null);
     const value = code.trim().toUpperCase();
     if (!COUPON_PATTERN.test(value)) { setCouponError('Enter a valid coupon code.'); return; }
+    setChosen(value);
     setApplied(value);
     await checkCoupon(value, ctx, items);
   }
@@ -317,7 +324,7 @@ function BookForm({ lab, branchId, mode, items, slot, dayLabel, once, priceRefus
       {subtotal > 0 && (
         <div className="stack">
           <div className="row">
-            <TextField label="Coupon (optional)" value={code} onChange={(e) => { setCode(e.target.value.toUpperCase()); setApplied(null); setCoupon(null); setCouponError(null); }}
+            <TextField label="Coupon (optional)" value={code} onChange={(e) => { setCode(e.target.value.toUpperCase()); setChosen(null); setApplied(null); setCoupon(null); setCouponError(null); }}
               error={couponError} autoCapitalize="characters" />
             <Button variant="secondary" busy={couponBusy} onClick={() => void applyCoupon()} disabled={!code.trim()}>Apply</Button>
           </div>

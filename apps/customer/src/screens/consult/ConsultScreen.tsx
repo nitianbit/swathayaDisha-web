@@ -39,7 +39,8 @@ export function ConsultScreen() {
     }
     if (alive()) navigate(path);
   }, (err) => {
-    if (err instanceof ApiError && err.code === 'QUOTE_CHANGED') {
+    // The server checks the coupon before the quote (INVALID_COUPON comes first): both mean the shown price is stale.
+    if (err instanceof ApiError && (err.code === 'QUOTE_CHANGED' || err.code === 'INVALID_COUPON')) {
       void queryClient.invalidateQueries({ queryKey: ['instant-quote'] });
       void queryClient.invalidateQueries({ queryKey: ['instant-doctors'] });
       setQuoteRefusals((n) => n + 1);
@@ -165,6 +166,11 @@ function QuoteForm({ search, target, doctorName, once, quoteRefusals }: {
   /** The code the customer applied; checked again whenever the quote or the patient changes. */
   const [applied, setApplied] = useState<string | null>(null);
   const [coupon, setCoupon] = useState<{ code: string; discount: number; ctx: string } | null>(null);
+  /**
+   * The coupon the customer chose (applied or removed by hand). The price agreement follows this choice, not whether the
+   * coupon still checks out: a coupon dropped by an automatic re-check raises the price, which must be accepted again.
+   */
+  const [chosen, setChosen] = useState<string | null>(null);
   const [couponBusy, setCouponBusy] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
   const [useWallet, setUseWallet] = useState(true);
@@ -176,8 +182,8 @@ function QuoteForm({ search, target, doctorName, once, quoteRefusals }: {
   const current = coupon && coupon.ctx === ctx ? coupon : null;
   const payableMinor = quoteMinor === undefined ? 0 : instantPayableMinor(quoteMinor, current?.discount);
   const couponSettled = !couponBusy && (!applied || !!current || !!couponError);
-  // What is being asked for (price excluded): a changed quote or discount for the same choice must be accepted again.
-  const agreement = usePriceAgreement(`${doctorId ?? 'any'}|${forWhom}|${current?.code ?? ''}`, `${quoteMinor}:${payableMinor}`,
+  // What the customer chose (price excluded): a changed quote or discount for the same choice must be accepted again.
+  const agreement = usePriceAgreement(`${doctorId ?? 'any'}|${forWhom}|${chosen ?? ''}`, `${quoteMinor}:${payableMinor}`,
     quoteMinor !== undefined && !quote.isFetching && couponSettled);
 
   const seq = useRef(0);
@@ -215,6 +221,7 @@ function QuoteForm({ search, target, doctorName, once, quoteRefusals }: {
     setCouponError(null);
     const value = code.trim().toUpperCase();
     if (!COUPON_PATTERN.test(value)) { setCouponError('Enter a valid coupon code.'); return; }
+    setChosen(value);
     setApplied(value);
     await checkCoupon(value, ctx, price, forWhom);
   }
@@ -252,7 +259,7 @@ function QuoteForm({ search, target, doctorName, once, quoteRefusals }: {
       {price > 0 && (
         <div className="stack">
           <div className="row">
-            <TextField label="Coupon (optional)" value={code} onChange={(e) => { setCode(e.target.value.toUpperCase()); setApplied(null); setCoupon(null); setCouponError(null); }}
+            <TextField label="Coupon (optional)" value={code} onChange={(e) => { setCode(e.target.value.toUpperCase()); setChosen(null); setApplied(null); setCoupon(null); setCouponError(null); }}
               error={couponError} autoCapitalize="characters" />
             <Button variant="secondary" busy={couponBusy} onClick={() => void applyCoupon()} disabled={!code.trim()}>Apply</Button>
           </div>

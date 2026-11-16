@@ -31,6 +31,8 @@ interface Backend {
   booking: Rec;
   /** The highest online fee now (quote for "any available"), paise. */
   quoteAny: number;
+  /** SAVE100 takes ₹100 off while it is valid. */
+  couponValid: boolean;
 }
 
 const inMin = (m: number) => new Date(Date.now() + m * 60_000).toISOString();
@@ -45,7 +47,7 @@ function request(id: string, over: Rec = {}): Rec {
 }
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const state: Backend = { calls: [], requests: new Map(), records: new Map(), byKey: new Map(), nobodyOnline: false, windowPassed: false, quoteAny: 50000,
+  const state: Backend = { calls: [], requests: new Map(), records: new Map(), byKey: new Map(), nobodyOnline: false, windowPassed: false, quoteAny: 50000, couponValid: true,
     booking: { _id: BK, bookingType: 'consultation', bookingKind: 'instant', doctorName: 'Dr. Ravi Kumar', consultationMode: 'video', bookingDate: '20261115',
       bookingTime: '21:00', price: 300, status: 'confirmed', paymentStatus: 'paid',
       virtualMeeting: { provider: 'google_meet', status: 'active', joinUrl: 'https://meet.google.com/abc-defg-hij' } } };
@@ -94,7 +96,11 @@ async function mockBackend(page: Page): Promise<Backend> {
       if (state.nobodyOnline) return json(route, 409, { error: 409, code: 'NO_DOCTOR_ONLINE', message: 'No doctor of this speciality is online right now' });
       return ok(route, url.searchParams.get('doctorId') === D1 ? { quotedAmountMinor: 30000, doctors: 1 } : { quotedAmountMinor: state.quoteAny, doctors: 2 });
     }
-    if (path === '/coupons/validate') return json(route, 400, { error: 400, code: 'INVALID_COUPON', message: 'This coupon has expired' });
+    if (path === '/coupons/validate') {
+      const v = body as { code: string; purchaseAmount: number };
+      if (v.code === 'SAVE100' && state.couponValid) return ok(route, { isValid: true, discountAmount: 100, finalAmount: v.purchaseAmount - 100, coupon: { code: 'SAVE100' } });
+      return json(route, 400, { error: 400, code: 'INVALID_COUPON', message: 'This coupon has expired' });
+    }
     if (path === '/instant/requests' && req.method() === 'GET') {
       const all = [...state.requests.values()];
       return json(route, 200, { success: true, data: all, pagination: { page: 1, limit: 20, total: all.length, totalPages: 1 } });
@@ -105,8 +111,12 @@ async function mockBackend(page: Page): Promise<Backend> {
       if (known) return ok(route, { request: state.requests.get(known), paymentRequired: false }, 201);
       // Q9 price fence: nothing is funded at a price the customer did not accept.
       const quoteNow = (b.target as { kind: string; doctorId?: string }).doctorId === D1 ? 30000 : state.quoteAny;
-      if (b.acceptedQuoteMinor !== quoteNow || b.acceptedPayableMinor !== quoteNow) {
-        return json(route, 409, { error: 409, code: 'QUOTE_CHANGED', message: `The price is now ₹${(quoteNow / 100).toFixed(2)} (fee ₹${(quoteNow / 100).toFixed(2)}); review and confirm again` });
+      if (b.couponCode && !(b.couponCode === 'SAVE100' && state.couponValid)) {
+        return json(route, 400, { error: 400, code: 'INVALID_COUPON', message: 'This coupon has expired' });
+      }
+      const payNow = quoteNow - (b.couponCode ? 10000 : 0);
+      if (b.acceptedQuoteMinor !== quoteNow || b.acceptedPayableMinor !== payNow) {
+        return json(route, 409, { error: 409, code: 'QUOTE_CHANGED', message: `The price is now ₹${(payNow / 100).toFixed(2)} (fee ₹${(quoteNow / 100).toFixed(2)}); review and confirm again` });
       }
       const id = String(state.requests.size + 1).padStart(24, 'e');
       state.byKey.set(String(b.requestKey), id);
@@ -338,4 +348,27 @@ test('consult now requests are listed with the bookings', async ({ page }) => {
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Bookings', exact: true }).click();
   const list = page.getByRole('region', { name: 'Consult now requests' });
   await expect(list.getByRole('link', { name: /Video call · Dermatology/ })).toContainText('Nobody accepted yet');
+});
+
+test('a coupon dropped by an automatic re-check does not slip a higher quote through: the customer must accept it', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await chooseAny(page);
+  await page.getByLabel('Coupon (optional)').fill('SAVE100');
+  await page.getByRole('button', { name: 'Apply' }).click();
+  await expect(page.getByText('Coupon SAVE100: ₹100.00 off.')).toBeVisible(); // agreed: quote 500, pay 400
+  backend.quoteAny = 60000; // a dearer doctor came online and the coupon expired meanwhile
+  backend.couponValid = false;
+  await page.getByRole('button', { name: 'Pay and request a doctor' }).click();
+  await expect(page.getByText('This coupon has expired').first()).toBeVisible(); // refused, then the re-check drops the coupon
+  const changed = page.getByRole('group', { name: 'Price changed' });
+  await expect(changed).toContainText('the quote is now ₹600.00 and you pay ₹600.00 (it was ₹400.00)');
+  await expect(page.getByRole('button', { name: 'Pay and request a doctor' })).toBeDisabled();
+  expect(backend.requests.size).toBe(0);
+  await changed.getByRole('button', { name: 'Accept the new price' }).click();
+  await page.getByRole('button', { name: 'Pay and request a doctor' }).click();
+  await expect(page.getByRole('heading', { name: 'Waiting for a doctor to accept' })).toBeVisible();
+  const last = posts(backend, '/instant/requests').at(-1)!.body as Record<string, unknown>;
+  expect(last).toMatchObject({ acceptedQuoteMinor: 60000, acceptedPayableMinor: 60000 });
+  expect(last.couponCode).toBeUndefined();
 });

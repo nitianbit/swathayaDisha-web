@@ -197,6 +197,15 @@ Backend: Q2 bills, Q3 partner labs, Q4b instant consultations (`m0/q7-partner-si
   branch names on lab bookings; report signers paired by `file`; `GET /partner-labs/:partnerId`; a speciality picker from
   `GET /instant/specialities?mode` (with online counts, always fresh); held refunds read from `refunded`.
 
+**Codex review round 2 (2 MEDIUM):**
+- A create's success finishes the operation only for the newest attempt of that request on a page still on screen
+  (`stillCurrent` + live page). An older attempt, or a page that was left, never clears a newer attempt's state; the
+  newer attempt gets the same record from the server and completes it.
+- The price agreement follows the coupon the customer chose (applied or removed by hand), not whether it still checks
+  out: a coupon dropped by an automatic re-check raises the price, which must be accepted again (labs and Consult now).
+  `INVALID_COUPON` on create (the server checks the coupon before the price) re-reads the price and re-checks the coupon,
+  like `PRICE_CHANGED` / `QUOTE_CHANGED`.
+
 Backend gaps still open (not changed):
 - Opening an unpaid lab booking/request checks only its latest payment attempt (`/payments/reconcile`); "Pay now"
   reconciles them all on the server.
@@ -250,3 +259,4 @@ Backend gaps still open (not changed):
 | 2026-11-15 | P8 web, N2 phone apps, P9 web approved | Codex approved P8 web (e0add83, after 3 rounds: attempt ownership, keyed recovery result, decision after waits), N2 (f4c3ff8: secure-store start gate, latest-attempt start-up) and P9 web (aab4e01, after 3 rounds: attachments keyed to their pharmacy, functional updates, no order while attaching, expectedPharmacyId recipient fence). vitest 60; Playwright customer 134, workspace 134; Android debug + unsigned iOS builds for both apps. |
 | 2026-11-15 | WC1 (customer: partner labs, bills, Consult now) | typecheck clean; Vitest 82/82 (+ lab/bill/instant api modules, cancel rule, timeline, GST split, waiting rules, file sniffing); Playwright customer 176/176 (new: partner-labs 20, instant-consult 16, bills 6; desktop + Pixel 7, mocked API); release build with VITE_API_BASE_URL=https://api.example.test. The existing "inside 24 hours" test now accepts the Monday 48-hour rule (it failed when 5 hours ahead fell on a Monday). Not yet run against a real backend; not Codex-reviewed. |
 | 2026-11-15 | WC1 review round 1 + Q9 | Codex WC1: 5 MEDIUM (quote not bound to funding; stale lab coupon; unowned create/pay completions; no refresh after acceptance; file state across bill versions). Fixed with backend Q9 (78b9efe). typecheck clean; Vitest 89/89 (+ price agreement, paging, single lab, payable mirrors, versioned PDF, recorded refunds); Playwright customer 194/194 (new: coupon re-checked on test change, price refused then accepted (labs and Consult now), late create and pay answers after leaving open nothing, reload lookup used / unknown → confirmed give-up, Meet link after acceptance + doctor cancellation, bill PDF follows the version, report signers by file); release build with VITE_API_BASE_URL=https://api.example.test. |
+| 2026-11-16 | WC1 review round 2 | Codex WC1 re-review: 2 MEDIUM (older/left-page create success consumed a newer attempt's request; a coupon dropped by an automatic re-check auto-accepted the higher price). Fixed. typecheck clean; Vitest 89/89; Playwright customer 200/200 (new: out-of-order answers across remounts keep the newer attempt and complete it once; coupon dropped by re-check requires accepting the higher price, labs and Consult now); release build with VITE_API_BASE_URL=https://api.example.test. |

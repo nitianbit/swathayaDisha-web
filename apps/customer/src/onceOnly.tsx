@@ -20,9 +20,10 @@ export function useAlive() {
  * form and offers only "send it again" (same key, same details: the server answers a known key with the first record);
  * only a definite refusal of the sole first attempt unlocks it. After a reload only a body-less marker survives (D4).
  *
- * A success counts only for the request that still owns the slot (same key): an answer for an intent that was ended or
- * replaced meanwhile, or a second answer for the same key, changes nothing. Follow-ups (Checkout, navigation) run only
- * while the page is on screen; `alive()` lets them check again after their own waits.
+ * A success counts only for the newest attempt of the request that still owns the slot, on a page still on screen: an
+ * answer for an ended or replaced intent, an older attempt's answer, or one arriving after the page was left changes
+ * nothing (it never clears a newer attempt's state). Follow-ups (Checkout, navigation) re-check `alive()` after their
+ * own waits.
  */
 export function useOnceOnly<B, R>(slotKey: string, perform: (body: B, requestKey: string) => Promise<R>,
   onRecorded: (result: R, alive: () => boolean) => Promise<void>, onRefused?: (err: unknown) => void) {
@@ -54,10 +55,12 @@ export function useOnceOnly<B, R>(slotKey: string, perform: (body: B, requestKey
       onRefused?.(err);
       return;
     }
-    // Only the request that still owns the slot may finish: never an ended/replaced intent, never twice for one key.
-    if (memory.get<PendingCreate<B>>(slotKey)?.requestKey !== attempt.requestKey) { done(); return; }
+    // Only the newest attempt, on a page still on screen, may finish the operation. An older attempt (or one from a
+    // page that was left and came back) leaves the stored state alone: the newer attempt for the same key gets the same
+    // record from the server and finishes it; if no page is waiting, the request stays locked until it is sent again
+    // (the server answers with the first record) or looked up after a reload.
+    if (!alive.current || !stillCurrent(memory.get<PendingCreate<B>>(slotKey), attempt)) { done(); return; }
     memory.delete(slotKey);
-    if (!alive.current) return;
     setPendingState(undefined);
     // Busy until the follow-up (payment, navigation) is done: the form cannot start a second request meanwhile.
     try { await onRecorded(result, () => alive.current); } finally { done(); }
