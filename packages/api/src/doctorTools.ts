@@ -17,7 +17,7 @@ import {
  * The server decides every rule; the mirrors here only say what to offer and why something is not offered. Every id,
  * date and cursor is checked before it can reach a path or a query.
  *
- * Backend reference: Q13 (`m0/q13-doctor-finance`, 7032f9d + 4ac16b6): presence read and ordered writes
+ * Backend reference: Q13 as approved (`m0/q13-doctor-finance` 4d877b6): presence read and ordered writes
  * (`presenceVersion` / `expectedPresenceVersion` → 409 PRESENCE_CHANGED), offers with the patient's quote, idempotent
  * accept (`replayed`), keyed extensions and the instant booking read, `expectedUpdatedAt` on the schedule,
  * `expectedDetailsVersion` on payout details, and cursor-paged payouts and events.
@@ -58,12 +58,12 @@ export interface DoctorProfile {
 }
 
 /**
- * Where the doctor stands with Jansetu (`activeDoctor` in `services/instant.ts`: instant consultations, invitations and a
- * practice all need an active, verified account).
+ * Where the doctor stands with Jansetu: `isEligibleDoctor` in `services/instant.ts` (Q13 final) — both stored flags must be
+ * true; a legacy record missing one is not eligible for instant consultations.
  */
 export function doctorStanding(p: Pick<DoctorProfile, 'isActive' | 'isVerified'>): 'active' | 'unverified' | 'inactive' {
-  if (p.isActive === false) return 'inactive';
-  return p.isVerified === false ? 'unverified' : 'active';
+  if (p.isActive !== true) return 'inactive';
+  return p.isVerified !== true ? 'unverified' : 'active';
 }
 
 // ── Weekly schedule and leave (Q4a) ──

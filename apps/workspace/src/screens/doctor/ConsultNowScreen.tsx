@@ -8,7 +8,8 @@ import {
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField, formatDateTime } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
-import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
+import { afterFailure, beginAttempt, definitelyNotRecorded, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
+import { useSession } from '../../session.tsx';
 import { PageHeading } from '../../PageHeading.tsx';
 import {
   appointmentsKey, MeetLink, NotADoctor, offersKey, rupeesOf, sortAppointments, useDoctor, useDoctorProfile, useMeetPoll, useTicker, type DoctorContext,
@@ -52,10 +53,12 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
   const p = useDoctorPresence();
   const now = useTicker(15_000);
   const pr = p.presence;
-  const defaultFee = pr ? paiseToInput(pr.instantFeeMinor)
+  /** While uncertain, the terms last read (shown, not acknowledged): the form starts from them. */
+  const view = pr ?? (p.unconfirmed ? p.shown : null);
+  const defaultFee = view ? paiseToInput(view.instantFeeMinor)
     : typeof profile?.consultationFee === 'number' ? paiseToInput(Math.round(profile.consultationFee * 100)) : '';
   const [chosen, setModes] = useState<InstantMode[] | null>(null);
-  const modes = chosen ?? (pr?.modes.length ? [...pr.modes] : ['video' as InstantMode]);
+  const modes = chosen ?? (view?.modes.length ? [...view.modes] : ['video' as InstantMode]);
   const [fee, setFee] = useState<string | null>(null);
   const [errors, setErrors] = useState<{ modes?: string; fee?: string }>({});
   const [failure, setFailure] = useState<string | null>(null);
@@ -74,7 +77,7 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
     if (available && Object.keys(problems).length) return;
     try {
       // Going off sends the types and fee again (the server would otherwise reset the fee to the consultation fee).
-      const keepFee = minor !== undefined && minor !== null && !problems.fee ? minor : pr?.instantFeeMinor;
+      const keepFee = minor !== undefined && minor !== null && !problems.fee ? minor : view?.instantFeeMinor;
       const r = await p.set(available ? input : { available: false, modes, ...(keepFee !== undefined ? { instantFeeMinor: keepFee } : {}) });
       setFee(null);
       setModes(null);
@@ -83,7 +86,9 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
       if (err instanceof ApiError && err.code === 'PRESENCE_CHANGED') {
         setFee(null);
         setModes(null);
-        setFailure('Not changed: your availability was changed meanwhile (on another device, or by an earlier request of this page that arrived late). What the server has now is shown above; make your change again if it is still needed.');
+        setFailure(p.unconfirmed
+          ? 'Not confirmed: the server’s terms changed meanwhile (your earlier change, or another device, got there first). What it has now is shown above: confirm those terms, or change them.'
+          : 'Not changed: your availability was changed meanwhile (on another device, or by an earlier request of this page that arrived late). What the server has now is shown above; make your change again if it is still needed.');
       } else if (definitelyNotRecorded(err)) {
         // A refusal changed nothing; a lost answer is shown by the "not confirmed" notice (the terms are unknown).
         setFailure(available
@@ -100,13 +105,16 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
       const r = await p.refresh();
       setFee(null);
       setModes(null);
-      setNotice(`The server has: ${r.available ? `available for ${termsText(r)}` : 'not available'} (version ${r.presenceVersion}). Send your change again if it is still needed.`);
+      setNotice(`The server has: ${r.available ? `available for ${termsText(r)}` : 'not available'} (version ${r.presenceVersion}).${p.unconfirmed
+        ? ' Confirm these terms (or change them) to go on: your earlier change may still arrive, so nothing can be accepted until the server confirms.'
+        : ''}`);
     } catch (err) {
       setFailure(`Could not read your availability: ${messageOf(err)}`);
     }
   }
 
   const sent = p.unconfirmed?.input;
+  const doubt = p.unconfirmed;
   if (p.loading) return <section className="ws-section" aria-labelledby="avail-h"><h2 id="avail-h">Available now</h2><Loading label="Reading your availability…" /></section>;
   return (
     <section className="ws-section" aria-labelledby="avail-h">
@@ -116,17 +124,21 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
           {on && p.live ? <Badge tone="ok">On</Badge> : on ? <Badge tone="warn">On, not checked in</Badge> : <Badge>Off</Badge>}{' '}
           {on ? termsText(pr) : 'You are not taking instant consultations.'}
         </p>
-      ) : sent ? (
-        <p><Badge tone="warn">Not confirmed</Badge> Your availability and fee are not known here.</p>
+      ) : doubt ? (
+        <p>
+          <Badge tone="warn">Not confirmed</Badge>{' '}
+          {p.shown ? `The server last showed: ${p.shown.available ? `available for ${termsText(p.shown)}` : 'not available'} (version ${p.shown.presenceVersion}), not yet confirmed.`
+            : 'Your availability and fee are not known here.'}
+        </p>
       ) : null}
-      {!pr && !sent && p.loadError && <ErrorState message={`Could not read your availability: ${p.loadError}`} onRetry={() => void check()} />}
-      {sent && (
+      {!pr && !doubt && p.loadError && <ErrorState message={`Could not read your availability: ${p.loadError}`} onRetry={() => void check()} />}
+      {doubt && (
         <Alert tone="warn">
-          Your last change ({sent.available
+          {sent ? <>Your last change ({sent.available
             ? `available for ${sent.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')}${sent.instantFeeMinor !== undefined ? ` at ${rupeesOf(sent.instantFeeMinor)}` : ''}`
-            : 'not available'}) was sent, but no answer came ({p.unconfirmed!.message}). It may or may not have been applied, so this page does not
-          know your fee and has stopped checking in: if it was applied, offers stop coming within two minutes. Check what the server has, then
-          send your change again if it is still needed. Offers cannot be accepted until then.
+            : 'not available'}) was sent, but no answer came ({doubt.message}).</> : <>Your availability is not confirmed: {doubt.message}.</>}
+          {' '}It may still be applied later, so this page does not know your fee and has stopped checking in. Check what the server has, then
+          confirm those terms (or change them): only an answer to that confirms them. Offers cannot be accepted until then.
         </Alert>
       )}
       {on && !p.live && (
@@ -147,7 +159,7 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
       {p.problem && <Alert tone="warn">{p.problem}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
       {failure && <Alert>{failure}</Alert>}
-      {!pr ? (
+      {!pr && !(doubt && p.shown) ? (
         <div className="confirm-actions">
           <Button busy={p.busy} onClick={() => void check()}>Check what the server has</Button>
         </div>
@@ -168,10 +180,19 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
             <TextField label="Your fee for an instant consultation (₹)" inputMode="decimal" value={feeText} error={errors.fee} disabled={p.busy}
               hint="Offers come only from patients who paid at least this much." onChange={(e) => setFee(e.target.value)} />
           </div>
-          <div className="confirm-actions">
-            <Button type="submit" busy={p.busy}>{on && p.live ? 'Update' : 'Go available now'}</Button>
-            {on && <Button variant="secondary" disabled={p.busy} onClick={() => void send(false)}>Stop being available</Button>}
-          </div>
+          {doubt && p.shown ? (
+            <div className="confirm-actions">
+              {/* An ordered write against the version just read: acknowledged, no earlier change of this page can commit any more. */}
+              <Button busy={p.busy} onClick={() => void send(p.shown!.available)}>Confirm these terms</Button>
+              {p.shown.available && <Button variant="secondary" disabled={p.busy} onClick={() => void send(false)}>Stop being available</Button>}
+              <Button variant="ghost" disabled={p.busy} onClick={() => void check()}>Check again</Button>
+            </div>
+          ) : (
+            <div className="confirm-actions">
+              <Button type="submit" busy={p.busy}>{on && p.live ? 'Update' : 'Go available now'}</Button>
+              {on && <Button variant="secondary" disabled={p.busy} onClick={() => void send(false)}>Stop being available</Button>}
+            </div>
+          )}
         </form>
       )}
     </section>
@@ -355,62 +376,122 @@ function Running({ d }: { d: DoctorContext }) {
   );
 }
 
+type ExtendBody = { minutes: number };
+/** Session memory slot of an extension whose outcome is not known (one per booking; the session is the doctor's). */
+const extendSlot = (bookingId: string) => `doctor-extend:${bookingId}`;
+
+/**
+ * One running instant consultation and its extensions. An extension is a once-only operation (Q13 request key): it is
+ * stored in session memory BEFORE it is sent (a body-less marker survives a reload), so leaving the page or the row
+ * unmounting never loses it. While it is unresolved only reconciliation is offered — the booking read, which lists the
+ * recorded extensions with their keys, or the unchanged same-key resend — never a new extension. It is settled only by
+ * the attempt that still owns it.
+ */
 function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAppointment; link: ReactNode }) {
+  const { memory } = useSession();
+  const slot = extendSlot(booking._id);
   const [minutes, setMinutes] = useState('10');
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'error'; text: string } | null>(null);
-  /** Q13: an extension whose answer was lost, kept with its request key: only the same one may be sent again (added once). */
-  const [pending, setPending] = useState<{ key: string; minutes: number } | null>(null);
+  const [op, setOp] = useState<PendingOp<ExtendBody> | undefined>(() => memory.get<PendingOp<ExtendBody>>(slot));
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const sync = () => { if (alive.current) setOp(memory.get<PendingOp<ExtendBody>>(slot)); };
+  const say = (tone: 'ok' | 'warn' | 'error', text: string) => { if (alive.current) setNotice({ tone, text }); };
   const label = `${booking.consultationMode ? CONSULT_MODE_LABEL[booking.consultationMode] : 'Instant'} consultation accepted at ${booking.bookingTime}`;
+
+  /** Looks for the unresolved extension on the booking (its recorded extensions carry their request keys). */
+  async function reconcile(cause?: string) {
+    const current = memory.get<PendingOp<ExtendBody>>(slot);
+    if (!current) return;
+    setChecking(true);
+    try {
+      const b = await d.api.instantBooking(booking._id);
+      const done = b.extensions.find((x) => x.requestKey === current.requestKey);
+      if (done) {
+        resolveStored(memory, slot, current.requestKey);
+        sync();
+        say('ok', `Extended by ${done.minutes} minutes: your time is held until ${formatDateTime(done.endTime)}.`);
+        return;
+      }
+      if (b.status !== 'confirmed' || !b.held?.isActive) {
+        // The consultation is over: this extension can never be added any more.
+        resolveStored(memory, slot, current.requestKey);
+        sync();
+        say('warn', 'Not extended: the consultation is no longer held, so this extension can never be added.');
+        return;
+      }
+      say('warn', `${cause ? `${cause} ` : ''}The extension is not recorded yet. ${current.restored
+        ? 'Its details were not kept after the reload, so it can only be checked again.'
+        : 'Send the same extension again: it is added once, never twice.'}`);
+    } catch (err) {
+      say('warn', `${cause ? `${cause} ` : ''}Could not check whether it was recorded (${messageOf(err)}). ${current.restored
+        ? 'Check again in a moment.' : 'Sending the same extension again is safe: it is added once.'}`);
+    } finally {
+      if (alive.current) setChecking(false);
+    }
+  }
+
+  // Coming back to an unresolved extension: look for it first.
+  const checked = useRef(false);
+  useEffect(() => {
+    if (checked.current || !memory.get(slot)) return;
+    checked.current = true;
+    void reconcile();
+  });
 
   async function extend(e: FormEvent) {
     e.preventDefault();
-    let op = pending;
-    if (!op) {
+    let base = memory.get<PendingOp<ExtendBody>>(slot);
+    if (base?.restored || (base && !base.body)) return; // only reconciliation
+    if (!base) {
       const n = /^\d{1,2}$/.test(minutes.trim()) ? Number(minutes.trim()) : NaN;
       if (!Number.isInteger(n) || n < 1 || n > EXTEND_MINUTES_MAX) { setFieldError(`Enter 1 to ${EXTEND_MINUTES_MAX} minutes.`); return; }
-      op = { key: newRequestKey(), minutes: n };
+      base = startOp(newRequestKey(), { minutes: n });
     }
+    const attempt = beginAttempt(base);
+    memory.set(slot, attempt); // stored before it is sent
+    sync();
     setFieldError(null);
     setBusy(true);
     setNotice(null);
     try {
-      const r = await d.api.extend(booking._id, op.minutes, op.key);
-      if (!alive.current) return;
-      setPending(null);
-      setNotice({ tone: 'ok', text: `Extended by ${op.minutes} minutes: your time is held until ${formatDateTime(r.extension?.endTime ?? r.endTime)}.` });
+      const r = await d.api.extend(booking._id, attempt.body.minutes, attempt.requestKey);
+      resolveStored(memory, slot, attempt.requestKey); // this key is recorded: whichever attempt answered
+      sync();
+      say('ok', `Extended by ${attempt.body.minutes} minutes: your time is held until ${formatDateTime(r.extension?.endTime ?? r.endTime)}.`);
     } catch (err) {
-      if (!alive.current) return;
+      if (err instanceof DOMException && err.name === 'AbortError') return; // the session ended
       const refusal = instantRefusal(err);
-      if (refusal) { setPending(null); setNotice({ tone: 'error', text: `Not extended: ${refusal}` }); return; }
-      // The answer was lost: look for this extension on the booking before anything else.
-      setPending(op);
-      try {
-        const b = await d.api.instantBooking(booking._id);
-        if (!alive.current) return;
-        const done = b.extensions.find((x) => x.requestKey === op.key);
-        if (done) { setPending(null); setNotice({ tone: 'ok', text: `Extended by ${op.minutes} minutes: your time is held until ${formatDateTime(done.endTime)}.` }); return; }
-        setNotice({ tone: 'warn', text: `${messageOf(err)} The extension is not recorded yet. Send the same extension again: it is added once, never twice.` });
-      } catch (lookErr) {
-        if (alive.current) setNotice({ tone: 'warn', text: `${messageOf(err)} Could not check whether it was recorded (${messageOf(lookErr)}). Sending the same extension again is safe: it is added once.` });
+      const after = afterFailure(attempt, err, messageOf(err));
+      if (stillCurrent(memory.get<PendingOp<ExtendBody>>(slot), attempt)) {
+        if (after) memory.set(slot, after); else memory.delete(slot);
       }
+      sync();
+      if (!after) { say('error', `Not extended: ${refusal ?? messageOf(err)}`); return; }
+      await reconcile(refusal ? `Not extended this time: ${refusal}` : messageOf(err));
     } finally {
       if (alive.current) setBusy(false);
     }
   }
 
+  const locked = !!op;
   return (
     <li className="doc-offer" aria-label={label}>
       <strong>{label}</strong>
       {link}
       {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
       <form className="ws-search" noValidate onSubmit={(e) => void extend(e)} aria-label={`Extend the ${label.toLowerCase()}`}>
-        <TextField label="Extend by (minutes)" inputMode="numeric" value={pending ? String(pending.minutes) : minutes} error={fieldError} disabled={!!pending}
+        <TextField label="Extend by (minutes)" inputMode="numeric" value={op?.body ? String(op.body.minutes) : locked ? '' : minutes} error={fieldError} disabled={locked}
           hint={`1 to ${EXTEND_MINUTES_MAX}; refused if it would run into your next booking`} onChange={(e) => setMinutes(e.target.value)} />
-        <Button type="submit" variant="secondary" busy={busy}>{pending ? 'Send the same extension again' : 'Extend'}</Button>
+        {!op ? <Button type="submit" variant="secondary" busy={busy}>Extend</Button> : (
+          <>
+            {!op.restored && op.body && <Button type="submit" variant="secondary" busy={busy} disabled={checking}>Send the same extension again</Button>}
+            <Button variant="ghost" busy={checking} disabled={busy} onClick={() => void reconcile()}>Check whether it was recorded</Button>
+          </>
+        )}
       </form>
     </li>
   );

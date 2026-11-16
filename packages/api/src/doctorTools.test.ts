@@ -166,7 +166,9 @@ describe('clinics, practice and payout details', () => {
 
   it('reads standing from the profile', () => {
     expect(doctorStanding({ isActive: true, isVerified: true })).toBe('active');
-    expect(doctorStanding({ isVerified: false })).toBe('unverified');
+    expect(doctorStanding({ isActive: true, isVerified: false })).toBe('unverified');
+    expect(doctorStanding({ isActive: true })).toBe('unverified'); // a missing flag is not eligible (isEligibleDoctor)
+    expect(doctorStanding({ isVerified: true })).toBe('inactive');
     expect(doctorStanding({ isActive: false, isVerified: true })).toBe('inactive');
   });
 });

@@ -283,7 +283,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       ...(partner ? { partner } : {}),
       ...(staffRole === 'specialist' ? { doctor: {
         ...(typeof raw.specialization === 'string' && raw.specialization.trim() ? { specialization: raw.specialization.trim() } : {}),
-        isVerified: raw.isVerified !== false, isActive: raw.isActive !== false,
+        isVerified: raw.isVerified === true, isActive: raw.isActive === true,
       } } : {}),
     } });
     return true;

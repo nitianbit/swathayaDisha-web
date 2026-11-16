@@ -43,6 +43,10 @@ interface Backend {
   runLate?: () => { status: number; code?: string };
   /** No check-in for two minutes (the read view says heartbeatExpired); a switch on or a heartbeat clears it. */
   lapsed?: boolean;
+  /** The next heartbeat's answer (the presence as it was when it arrived) waits for this gate. */
+  beatHold?: Promise<void>;
+  /** The instant consultations' held intervals have ended (the booking read says so). */
+  heldEnded?: boolean;
   /** In a consultation right now (online false, busy). */
   busyNow?: boolean;
   /** The next extension is applied but its answer lost ('applied'), or lost before reaching the server ('dropped'). */
@@ -242,7 +246,9 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
     }
     if (p === '/presence/heartbeat') {
       if (b.presence?.available) b.lapsed = false;
-      return ok(route, presenceView(b));
+      const view = presenceView(b);
+      if (b.beatHold) { const g = b.beatHold; b.beatHold = undefined; await g; }
+      return ok(route, view);
     }
     if (p === '/instant/offers') {
       const fee = (b.presence?.instantFeeMinor as number | undefined) ?? null;
@@ -293,7 +299,7 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
       if (!a) return fail(route, 404, 'BOOKING_NOT_FOUND', 'Booking not found');
       const list = b.extensions[ib[1]!] ?? [];
       return ok(route, { bookingId: ib[1], status: a.status, bookingDate: a.bookingDate, bookingTime: a.bookingTime, feeMinor: 45_000, patient: null,
-        held: { startTime: NOW.toISOString(), endTime: list.at(-1)?.endTime ?? plusMin(30), isActive: true, current: true }, extensions: list });
+        held: { startTime: NOW.toISOString(), endTime: list.at(-1)?.endTime ?? plusMin(30), isActive: !b.heldEnded, current: !b.heldEnded }, extensions: list });
     }
     // Appointments
     if (p === '/appointments') {
@@ -924,11 +930,11 @@ test('a fee change whose answer is lost: terms unknown, no heartbeat, no accept 
   backend.lapsed = true;
   await page.getByRole('button', { name: 'Check what the server has' }).click();
   await expect(avail).toContainText('The server has: available for Video at ₹100.00 (version 2).');
-  await expect(avail).toContainText('On, not checked in');
+  await expect(avail.getByText('Not confirmed', { exact: true })).toBeVisible(); // a read alone confirms nothing
   await expect(page.getByRole('button', { name: 'Accept the offer for Asha Rao' })).toBeDisabled();
   expect(heartbeats(backend)).toBe(1);
-  // Sent again against that version and acknowledged: the fee is definite, accepting opens again, heartbeats resume.
-  await page.getByRole('button', { name: 'Go available now' }).click();
+  // Confirmed by an ordered write against that version: the fee is definite, accepting opens again, heartbeats resume.
+  await page.getByRole('button', { name: 'Confirm these terms' }).click();
   await expect(page.getByText('You are available now for Video at ₹100.00.')).toBeVisible();
   expect(presencePuts(backend)).toEqual([
     { available: true, modes: ['video'], instantFeeMinor: 50_000, expectedPresenceVersion: 0 },
@@ -999,7 +1005,7 @@ test('a lost presence change that reaches the server late never overwrites newer
   await page.getByRole('button', { name: 'Check what the server has' }).click();
   await expect(avail).toContainText('The server has: available for Video at ₹500.00 (version 1).');
   await page.getByLabel('Your fee for an instant consultation (₹)').fill('200');
-  await page.getByRole('button', { name: /Update|Go available now/ }).click();
+  await page.getByRole('button', { name: 'Confirm these terms' }).click();
   await expect(page.getByText('You are available now for Video at ₹200.00.')).toBeVisible();
   // A finally reaches the server: it names version 1, so the server refuses it. The server and the page both keep B.
   expect(backend.runLate!()).toEqual({ status: 409, code: 'PRESENCE_CHANGED' });
@@ -1018,4 +1024,112 @@ test('a lost presence change that reaches the server late never overwrites newer
   await expect(avail).toContainText('Video at ₹300.00');
   await expect(page.getByLabel('Your fee for an instant consultation (₹)')).toHaveValue('300');
   expect(backend.presence).toMatchObject({ instantFeeMinor: 30_000, presenceVersion: 3 });
+});
+
+test('a read after a lost change only shows the terms: the lost change committing later is retired by a confirming write (Codex WQ4 #4)', async ({ page }) => {
+  const backend = await mockBackend(page, { install: true });
+  backend.offers = [offer(1, 'Asha Rao', { offerExpiresAt: plusMin(30) })];
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  const avail = page.getByRole('region', { name: 'Available now' });
+  await page.getByLabel('Your fee for an instant consultation (₹)').fill('500');
+  await goAvailable(page); // ₹500, version 1
+  // A: ₹100, its answer lost before the server's compare-and-set ran.
+  backend.presenceLate = true;
+  await page.getByLabel('Your fee for an instant consultation (₹)').fill('100');
+  await page.getByRole('button', { name: 'Update' }).click();
+  await expect(avail.getByText('Not confirmed', { exact: true })).toBeVisible();
+  // A reload keeps the doubt (a body-less marker), so the page does not start from a read as if nothing was pending.
+  await page.reload();
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  await expect(avail).toContainText('a change sent before this page was reloaded was never confirmed');
+  await expect(avail).toContainText('The server last showed: available for Video at ₹500.00 (version 1), not yet confirmed.');
+  // The read shows ₹500 but does not retire A: accepting and heartbeats stay blocked.
+  await expect(avail.getByText('Not confirmed', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Accept the offer for Asha Rao' })).toBeDisabled();
+  await page.clock.runFor(61_000);
+  expect(heartbeats(backend)).toBe(0);
+  // A now commits on version 1 (₹100, version 2).
+  expect(backend.runLate!()).toEqual({ status: 200 });
+  // Confirming ₹500 against version 1 is refused (A got there first): A's terms are read and shown, still unconfirmed.
+  await expect(page.getByLabel('Your fee for an instant consultation (₹)')).toHaveValue('500');
+  await page.getByRole('button', { name: 'Confirm these terms' }).click();
+  await expect(avail).toContainText('Not confirmed: the server’s terms changed meanwhile');
+  await expect(avail).toContainText('The server last showed: available for Video at ₹100.00 (version 2), not yet confirmed.');
+  await expect(page.getByRole('button', { name: 'Accept the offer for Asha Rao' })).toBeDisabled();
+  // Confirming ₹100 against version 2 is acknowledged (version 3): only now is the fee definite.
+  await page.getByRole('button', { name: 'Confirm these terms' }).click();
+  await expect(page.getByText('You are available now for Video at ₹100.00.')).toBeVisible();
+  expect(presencePuts(backend).map((x) => [(x as { instantFeeMinor: number }).instantFeeMinor, (x as { expectedPresenceVersion: number }).expectedPresenceVersion]))
+    .toEqual([[50_000, 0], [10_000, 1], [50_000, 1], [10_000, 2]]);
+  expect(backend.presence).toMatchObject({ instantFeeMinor: 10_000, presenceVersion: 3 });
+  await page.getByRole('button', { name: 'Accept the offer for Asha Rao' }).click();
+  await expect(page.getByRole('group', { name: 'Accept the offer for Asha Rao' })).toContainText('Your fee: ₹100.00.');
+  await page.clock.runFor(60_000);
+  await expect.poll(() => heartbeats(backend)).toBe(1);
+});
+
+test('an unresolved extension survives leaving the page and a reload: only the same extension or a check, added once', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  const row = () => page.getByRole('list', { name: 'Running instant consultations' }).getByRole('listitem', { name: 'Video consultation accepted at 09:50' });
+  const posts = () => backend.calls.filter((c) => c.path === `/specialists/me/instant/bookings/${bid(5)}/extend`).map((c) => (c.body as { requestKey: string; minutes: number }));
+  // Lost before it reached the server.
+  backend.extendLost = 'dropped';
+  await row().getByLabel('Extend by (minutes)').fill('5');
+  await row().getByRole('button', { name: 'Extend' }).click();
+  await expect(row()).toContainText('The extension is not recorded yet. Send the same extension again');
+  // Leave and come back: the same extension is still there (same minutes, locked), looked for again on the booking.
+  await nav(page).getByRole('link', { name: 'Schedule' }).click();
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  await expect(row().getByLabel('Extend by (minutes)')).toHaveValue('5');
+  await expect(row().getByLabel('Extend by (minutes)')).toBeDisabled();
+  await expect(row().getByRole('button', { name: 'Extend', exact: true })).toHaveCount(0);
+  await expect(row()).toContainText('The extension is not recorded yet.');
+  await row().getByRole('button', { name: 'Send the same extension again' }).click();
+  await expect(row()).toContainText('Extended by 5 minutes');
+  expect(posts()).toHaveLength(2);
+  expect(posts()[1]).toEqual(posts()[0]); // the same key and minutes: never a new extension
+  expect(backend.extensions[bid(5)]!.map((e) => e.minutes)).toEqual([5]);
+  // After a reload its details are gone (marker only): it can only be checked, never sent again or replaced.
+  backend.extendLost = 'dropped';
+  await row().getByLabel('Extend by (minutes)').fill('7');
+  await row().getByRole('button', { name: 'Extend' }).click();
+  await expect(row()).toContainText('The extension is not recorded yet.');
+  await page.reload();
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  await expect(row()).toContainText('Its details were not kept after the reload, so it can only be checked again.');
+  await expect(row().getByRole('button', { name: /Extend|Send the same/ })).toHaveCount(0);
+  await row().getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(row()).toContainText('it can only be checked again');
+  expect(posts()).toHaveLength(3);
+  // Once the consultation is no longer held, the check settles it for good and a new extension can be made.
+  backend.heldEnded = true;
+  await row().getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Not extended: the consultation is no longer held')).toBeVisible();
+  expect(await storage(page)).not.toMatch(/minutes|"7"/);
+});
+
+test('heartbeats never overlap: one in flight at a time, and the page ends on the newest presence (Codex WQ4 #5)', async ({ page }) => {
+  const backend = await mockBackend(page, { install: true });
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  const avail = page.getByRole('region', { name: 'Available now' });
+  await page.getByLabel('Your fee for an instant consultation (₹)').fill('450');
+  await goAvailable(page); // version 1
+  let release!: () => void;
+  backend.beatHold = new Promise<void>((r) => { release = r; });
+  await page.clock.runFor(61_000);
+  await expect.poll(() => heartbeats(backend)).toBe(1); // answered with version 1 (₹450), held on the way back
+  backend.presence = { ...backend.presence!, instantFeeMinor: 30_000, presenceVersion: 2 }; // changed on another device
+  // The page is shown again more than a minute after the last check-in, while that heartbeat still waits: none starts.
+  await setVisibility(page, 'hidden');
+  await setVisibility(page, 'visible');
+  await page.waitForTimeout(200);
+  expect(heartbeats(backend)).toBe(1);
+  release();
+  await page.clock.runFor(60_000);
+  await expect.poll(() => heartbeats(backend)).toBe(2);
+  await expect(avail).toContainText('Video at ₹300.00');
 });
