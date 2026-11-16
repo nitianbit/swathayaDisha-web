@@ -448,6 +448,8 @@ test('finance needs finance.view and every branch: staff read without changing; 
   // A member without finance.view (or limited to some branches) has no Finance page at all, and nothing is asked.
   backend.me = staff(['invoices.create']);
   await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByLabel('Lab or clinic staff')).toBeVisible();
+  await expect.poll(() => backend.live).toBe(false); // the server session has ended
   await signInPartner(page);
   await expect(nav(page).getByRole('link', { name: 'Bills' })).toBeVisible();
   await expect(nav(page).getByRole('link', { name: 'Finance' })).toHaveCount(0);
@@ -457,6 +459,8 @@ test('finance needs finance.view and every branch: staff read without changing; 
 
   backend.me = staff(['finance.view'], ['c9'.repeat(12)]);
   await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByLabel('Lab or clinic staff')).toBeVisible();
+  await expect.poll(() => backend.live).toBe(false); // the server session has ended
   await signInPartner(page);
   await expect(nav(page).getByRole('link', { name: 'Finance' })).toHaveCount(0);
   await page.evaluate(() => { window.location.hash = '#/partner/finance'; });
