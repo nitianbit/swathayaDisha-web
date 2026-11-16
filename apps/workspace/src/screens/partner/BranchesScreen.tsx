@@ -6,7 +6,7 @@ import {
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
-import { dirtyKeys, staleMessage, useDraft, type DraftState } from '../../draft.ts';
+import { dirtyKeys, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft, type DraftState } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
@@ -228,7 +228,17 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
       if (fresh.isActive === false) { setStale(`${fresh.name} was closed meanwhile.`); return; }
       const { body } = branchBody(draft.current(), false);
       if (Object.keys(body).length === 0) { setNotice('Nothing has changed.'); return; }
-      await onSaved(await ctx.api.updateBranch(branch._id, body));
+      let saved: Branch;
+      try {
+        // Q10: refused (409 RECORD_CHANGED) if the branch moved after the read above.
+        saved = await ctx.api.updateBranch(branch._id, body, fresh.updatedAt);
+      } catch (err) {
+        if (!isRecordChanged(err)) throw err;
+        const c = rebaseTo(draftOf(await ctx.api.branch(branch._id)));
+        setStale(c.length ? staleMessage(conflictLabels(c)) : RECORD_CHANGED_MESSAGE);
+        return;
+      }
+      await onSaved(saved);
     } catch (err) {
       setError(messageOf(err));
     } finally {
@@ -248,6 +258,7 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
     <section className="ws-section" aria-labelledby="branch-form-h">
       <h2 id="branch-form-h">{branch ? `Edit ${branch.name}` : 'Add a branch'}</h2>
       <form className="rx-form" noValidate onSubmit={(e) => void submit(e)}>
+        <fieldset className="ws-frozen" disabled={busy}>
         <div className="rx-form-row">
           <TextField label="Branch name" maxLength={MAX_NAME} {...field('name')} />
           <TextField label="Phone" inputMode="numeric" maxLength={10} value={d.phone} error={errors.phone}
@@ -308,6 +319,7 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
               ))}
             </ul>
           )}
+        </fieldset>
         </fieldset>
         {stale && <Alert tone="warn">{stale}</Alert>}
         {notice && <Alert tone="ok">{notice}</Alert>}

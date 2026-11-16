@@ -124,3 +124,5 @@
 /* WQ2: bill lines */
 .ws-line { margin: 0; min-width: 0; }
 .ws-line legend { font-weight: 600; padding: 0 var(--space-1); }
+/* A form body frozen while it is being saved (nothing typed during the save can change what is sent). */
+.ws-frozen { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: var(--space-4); }

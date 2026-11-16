@@ -7,7 +7,7 @@ import {
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
-import { changedFields, staleMessage, useDraft } from '../../draft.ts';
+import { changedFields, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
 import {
   branchLabel, NoSuchPartner, PartnerPageHeading, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext,
@@ -248,23 +248,43 @@ function useMemberDraft<T extends object>(ctx: ScopeContext, member: PartnerMemb
   useEffect(() => {
     if (rebaseTo(JSON.parse(serverValue) as T).length) setStale(staleMessage([label]));
   }, [serverValue, rebaseTo, label]);
-  /** Rebases onto the member as saved now; false (with a message) when the person must review again. */
-  const recheck = async (): Promise<boolean> => {
-    setStale(null);
+  const read = async () => {
     const fresh = await ctx.api.member(member._id);
     queryClient.setQueryData<PartnerMember[]>([...ctx.key, 'members'], (list) => list?.map((m) => (m._id === fresh._id ? fresh : m)));
-    if (fresh.isActive === false) { setStale(`${member.name} is no longer a member.`); return false; }
-    if (rebaseTo(toDraft(fresh)).length) { setStale(staleMessage([label])); return false; }
-    return true;
+    return fresh;
   };
-  return { d, stale, recheck };
+  /**
+   * Rebases onto the member as saved now. Returns that record (its `updatedAt` fences the save, Q10), or null (with a
+   * message) when the person must review again.
+   */
+  const recheck = async (): Promise<PartnerMember | null> => {
+    setStale(null);
+    const fresh = await read();
+    if (fresh.isActive === false) { setStale(`${member.name} is no longer a member.`); return null; }
+    if (rebaseTo(toDraft(fresh)).length) { setStale(staleMessage([label])); return null; }
+    return fresh;
+  };
+  /** Q10: the save was refused because the member moved after `recheck`: show what is saved now. */
+  const changedUnderSave = async () => {
+    const fresh = await read();
+    setStale(rebaseTo(toDraft(fresh)).length ? staleMessage([label]) : RECORD_CHANGED_MESSAGE);
+  };
+  /** Runs a save; a 409 RECORD_CHANGED shows the saved value instead of an error. True when saved. */
+  const fenced = async (save: () => Promise<unknown>): Promise<boolean> => {
+    try { await save(); return true; } catch (err) {
+      if (!isRecordChanged(err)) throw err;
+      await changedUnderSave();
+      return false;
+    }
+  };
+  return { d, stale, recheck, fenced };
 }
 
 const permsDraft = (m: PartnerMember) => ({ permissions: ordered(m.permissions) });
 
 function EditPermissions({ ctx, member, onClose, onSaved }:
   { ctx: ScopeContext; member: PartnerMember; onClose: () => void; onSaved: () => Promise<void> }) {
-  const { d, stale, recheck } = useMemberDraft(ctx, member, permsDraft, 'permissions');
+  const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, permsDraft, 'permissions');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -276,11 +296,11 @@ function EditPermissions({ ctx, member, onClose, onSaved }:
     if (!changedFields(d.current()).permissions) { setNotice('Nothing has changed.'); return; }
     setBusy(true);
     try {
-      if (!(await recheck())) return;
+      const fresh = await recheck();
+      if (!fresh) return;
       const next = changedFields(d.current()).permissions;
       if (!next) { setNotice('Nothing has changed.'); return; }
-      await ctx.api.setPermissions(member._id, next.filter((p) => grantable.includes(p)));
-      await onSaved();
+      if (await fenced(() => ctx.api.setPermissions(member._id, next.filter((p) => grantable.includes(p)), fresh.updatedAt))) await onSaved();
     } catch (err) {
       setError(messageOf(err));
     } finally {
@@ -292,7 +312,9 @@ function EditPermissions({ ctx, member, onClose, onSaved }:
     <section className="ws-section" aria-labelledby="perm-h">
       <h2 id="perm-h">Permissions for {member.name}</h2>
       <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
-        <PermissionChecklist legend="Permissions" allowed={grantable} value={d.draft.permissions} onChange={(v) => d.set('permissions', v)} />
+        <fieldset className="ws-frozen" disabled={busy}>
+          <PermissionChecklist legend="Permissions" allowed={grantable} value={d.draft.permissions} onChange={(v) => d.set('permissions', v)} />
+        </fieldset>
         {stale && <Alert tone="warn">{stale}</Alert>}
         {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}
@@ -313,7 +335,7 @@ function EditBranches({ ctx, member, branches, branchesError, onClose, onSaved }
   ctx: ScopeContext; member: PartnerMember; branches: Branch[] | undefined; branchesError: string | null;
   onClose: () => void; onSaved: () => Promise<void>;
 }) {
-  const { d, stale, recheck } = useMemberDraft(ctx, member, scopeDraft, 'branch access');
+  const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, scopeDraft, 'branch access');
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | null>(null);
@@ -323,17 +345,22 @@ function EditBranches({ ctx, member, branches, branchesError, onClose, onSaved }
   async function save(e: FormEvent) {
     e.preventDefault();
     setError(null); setNotice(null);
+    // The validated scope is what is sent: an immutable copy, and the picker is frozen while saving.
     const now = d.current().draft.scope;
     const problem = branchProblem(ctx, now.all, now.ids);
     setFieldError(problem ?? undefined);
     if (problem) return;
     if (unchanged()) { setNotice('Nothing has changed.'); return; }
+    const validated = [...scopeOf(now)];
     setBusy(true);
     try {
-      if (!(await recheck())) return;
+      const fresh = await recheck();
+      if (!fresh) return;
+      // Re-read the draft after the wait: anything but exactly the validated scope is not sent.
+      const after = d.current().draft.scope;
+      if (JSON.stringify(scopeOf(after)) !== JSON.stringify(validated)) { setNotice('The branch choice changed while saving. Check it and save again.'); return; }
       if (unchanged()) { setNotice('Nothing has changed.'); return; }
-      await ctx.api.setBranches(member._id, scopeOf(d.current().draft.scope));
-      await onSaved();
+      if (await fenced(() => ctx.api.setBranches(member._id, validated, fresh.updatedAt))) await onSaved();
     } catch (err) {
       setError(messageOf(err));
     } finally {
@@ -345,8 +372,10 @@ function EditBranches({ ctx, member, branches, branchesError, onClose, onSaved }
     <section className="ws-section" aria-labelledby="scope-h">
       <h2 id="scope-h">Branch access for {member.name}</h2>
       <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
-        <BranchPicker wide={hasGlobalScope(ctx.actor)} all={d.draft.scope.all} ids={d.draft.scope.ids} options={branches} loadError={branchesError}
-          error={fieldError} onChange={(v) => d.set('scope', v)} />
+        <fieldset className="ws-frozen" disabled={busy}>
+          <BranchPicker wide={hasGlobalScope(ctx.actor)} all={d.draft.scope.all} ids={d.draft.scope.ids} options={branches} loadError={branchesError}
+            error={fieldError} onChange={(v) => d.set('scope', v)} />
+        </fieldset>
         {stale && <Alert tone="warn">{stale}</Alert>}
         {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}

@@ -188,7 +188,24 @@ Codex review of 6ce851b (REQUEST_CHANGES, 3 MEDIUM), fixed:
 3. **Exactly-once partner creation** (backend Q8 `requestKey`). A key per submitted form, kept with the exact request in
    session memory (a body-less marker survives a reload) until the answer is known. After a lost answer the form is
    locked and only "Send again" (same key, same content; the server replays the partner) resolves it. After a reload
-   the content is gone: the admin is sent to the list to look for it before starting again.
+   the content is gone: the admin is sent to the list to look for it before starting again. (Replaced after the
+   re-review, below: the list is never used to clear it.)
+
+Codex re-review of 5236388 (REQUEST_CHANGES, 2 MEDIUM + 1 LOW), fixed with backend Q10 (`m0/q10-billing-hardening`,
+3d6b45d + a6356bf):
+1. **An unconfirmed create is settled only by the server.** The create claims its key inside its transaction. After a
+   reload the stored key is looked up (`GET /partner-workspace/admin/by-key/:key`): found → "… was created", open it.
+   Not found proves nothing (the request may still arrive), so the only way on is "Give up this create"
+   (`POST …/by-key/:key/abandon`): `abandoned` (that key can never create) clears it and allows a new create with a
+   new key; `used` opens the partner it made. "Give up" is also offered next to "Send again" before a reload.
+2. **Inputs freeze while saving.** Every edit form's fields sit in a fieldset disabled while saving; branch access
+   sends the scope validated before the wait (an immutable copy, re-compared after the member re-read).
+3. **A late answer never moves the admin.** A create success is handled only while its attempt still owns the stored
+   state, and navigates only while the page is still on screen (checked again after the list refresh).
+4. **Server-side concurrency (Q10 `expectedUpdatedAt`).** Profile, branch, member permissions, member branch access and
+   admin partner edits send the `updatedAt` of the record the draft was rebased on (the re-read just before saving). A
+   409 `RECORD_CHANGED` re-reads the record and rebases: fields both sides changed are shown for review; otherwise
+   "Someone else changed this while you were saving, so nothing was saved".
 
 Adopted from backend Q8 (`m0/q8-partner-admin`, 0fcf0b3): branches readable by every member (names for scoping; the
 `branches.manage` workaround is gone); "Change branch access" (`PUT /members/:id/branches`; not owners, not yourself,
@@ -196,10 +213,13 @@ delegation ceiling); closed branches with Reopen (`?includeInactive=true`, `POST
 branch managers); Reinstate for suspended partners; profile edits for owners only (staff see it read-only); partner
 list search (`q`) and paging (20 a page).
 
+Codex review of 4646987 (1 MEDIUM), fixed: a give-up (abandon) answer, and the by-key lookup after a reload, act only
+while their page is on screen AND the stored creation is still exactly the one they started from (same key and
+attempt count). An answer from a page that was left, or one overtaken by a newer retry of the same key, settles and
+opens nothing, so the retry's own answer ends it (test with held answers: A's late `used` arrives while B's resend is
+in flight; B still owns its state and its success opens the partner).
+
 Backend items still open:
-- Edits are last-write-wins on the server (no version/precondition): the client re-reads just before sending, which
-  narrows but does not close the window.
-- No abandon endpoint for an unconfirmed partner creation: after a reload the admin must check the list by hand.
 - A pending partner's members can sign in but every workspace route is refused until verification.
 
 ## WQ2 partner catalogue and in-house bills (2026-11-15, taken autonomously at the owner's request)
@@ -348,6 +368,8 @@ refund on cancelling a paid bill, item create key. Still open:
 | 2026-11-15 | D4 (web) | typecheck clean; Vitest 40/40 (session header/credentials, renew-and-retry once); Playwright workspace 92/92 (new session.spec: reload keeps sign-in, sign-out ends the server session, cross-tab sign-out, 401 renew + same request resent, other person's renewal refused; reload with an unconfirmed return restores a check-only panel), customer 54/54 (reload keeps sign-in; lost booking answer found by key after reload); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-15 | D4 + D3 UI approved | Codex approved D4 web (bad18bf, after 3 review rounds: cookie sessions, cross-tab lock and identity fences, noRenew admission, server-resolved restored requests, explicit same-origin topology), D3 workspace UI (3dd1742: requestId-keyed decisions, amount-free refund text), and the backend D4 (4b23d20) + business-date fix. |
 | 2026-11-15 | O1, admin queue, medicine ordering, N1, S1 approved | Codex approved backend O1 (232e619 + docs), N1 (5f93e7f), S1 (release 997da42, hotfix 5cac856); web admin queue + O1 sign-in (da8b7a4), customer medicine ordering (7930a61, after 3 review rounds) and the N1 client (405a959, after 2 rounds). Backend: all 21 integration suites pass on `m0/n1-native-sessions`. Web: typecheck clean; Vitest 55/55; Playwright customer 110/110, workspace 128/128. |
+| 2026-11-16 | WQ1 give-up ownership fix | typecheck clean; Vitest 79/79; Playwright workspace 182/182 (+2 = 1 journey x 2 devices: an obsolete give-up answer from a left page does not settle a newer retry; confirmed failing on 4646987); release build with VITE_API_BASE_URL=https://api.example.test. |
+| 2026-11-15 | WQ1 re-review fixes + Q10 | typecheck clean; Vitest 79/79 (+ versions on edits, by-key lookup/abandon, RECORD_CHANGED); Playwright workspace 180/180 (+12 = 6 journeys x 2 devices: after a reload a committed create is found by key and opened; a create not found is cleared only by abandon, then a new create (new key) is allowed; a create landing after the lookup makes the give-up answer `used` and opens it (one partner); a late create answer after leaving the page does not navigate; the branch picker is disabled while saving and the validated scope is sent; RECORD_CHANGED on a branch save shows the saved phone and the next save carries the new version, on permissions the revoked grant is shown for review); release build with VITE_API_BASE_URL=https://api.example.test. |
 | 2026-11-15 | WQ1 review fixes + Q8 | typecheck clean; Vitest 77/77 (+ draft baseline/rebase, Q8 paths, request key, Q8 rules); Playwright workspace 168/168 (+14 = 7 journeys x 2 devices: switching partners discards drafts and a running submission stays with its partner; permission revoked while editing detected, nothing sent; a branch name edit does not resend changed services/holidays; lost create answer locks the form and the resend reuses key and content (one partner); branch access change and branch reopen; staff see the profile read-only; partner search, paging and reinstate); release build with VITE_API_BASE_URL=https://api.example.test. |
 | 2026-11-15 | WQ1 (partner workspace foundation) | typecheck clean; Vitest 69/69 (+9: workspace/admin path building, id validation before any request, select per session mode, selection shape, delegation/scope/removal rules); Playwright workspace 154/154 (+20 = 10 journeys x 2 devices: single and multi-membership sign-in incl. native and expired ticket, nav by permission and scope, staff add/edit/remove with server refusal, branches add/deactivate with confirm, admin list/filter/create/verify/suspend, admin-as-owner staff via `/partner-workspace/admin/<id>/workspace/members`); release build with VITE_API_BASE_URL=https://api.example.test. Not yet run against a real backend or reviewed. |
 | 2026-11-15 | WQ2 (catalogue and bills) | typecheck clean; Vitest 87/87 (+18: paise parsing/formatting, preview rounding incl. half-paisa and odd-paisa SGST, IGST, classification, refusals, member/admin paths, admin item switches, body request key with no header, PDF blob, id checks; app: list cursor and repeats, IST date bound, item and bill builders); Playwright workspace 170/170 (+16 = 8 journeys x 2 devices: catalogue add/edit/deactivate in paise; no-GST supplier offered 0% only, GST item refused on a bill, 503 linking refusal unlocks and a changed bill gets a new key; live totals, lost answer resent with the same key and body, one bill, linked notice, nothing in browser storage; reload with an unconfirmed bill: check by key, forget after warning; pay with confirm, refused pay shows the server and the current bill, cancel with reason, PDF via blob for v2 and v0; finance read-only and biller read-only price list, pages absent without permission; clinic doctor picker and IGST; admin-as-owner bills, catalogue and disable/enable); release build with VITE_API_BASE_URL=https://api.example.test. Playwright ran on a spare port (another worktree's dev server held 5174). Not yet run against a real backend or reviewed. |
