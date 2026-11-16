@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  addDays, canReadDrafts, COLLECTOR_PHONE_PATTERN, eligibleSigners, hasGlobalScope, holdsAny, isBookable, istDateOf, LAB_BOOKING_STATUS_LABEL,
+  addDays, ApiError, canReadDrafts, COLLECTOR_PHONE_PATTERN, eligibleSigners, hasGlobalScope, holdsAny, isBookable, istDateOf, LAB_BOOKING_STATUS_LABEL,
   LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, labActions, MAX_COLLECTOR_NAME, MAX_LAB_REASON, MIN_LAB_REASON, OBJECT_ID_PATTERN,
   releaseOf, REPORT_ACCEPT, reportFileName, reportFileProblem, type LabAction, type LabActionOffer, type LabBooking, type LabLifecycleKey,
   type LabSlot, type PartnerMember,
@@ -56,6 +56,7 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState<LabAction | null>(null);
+  const inFlight = useRef(false);
   const b = q.data;
 
   /** A newer answer replaces the page's booking; an older one (lower status version) never does. */
@@ -69,18 +70,24 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
    * only this booking's own record and shows nothing anywhere else). One step at a time.
    */
   async function perform(action: LabAction, run: () => Promise<LabBooking>, done: string) {
+    // The single gate for every step, including confirmations that were already open when another step started: two
+    // steps never run together (an upload keeps the status version, so out-of-order snapshots could not be told apart).
+    if (inFlight.current) {
+      throw new ApiError(409, 'Another step on this booking is still running. Wait for it to finish, then try again.', 'STEP_IN_FLIGHT');
+    }
+    inFlight.current = true;
     setBusy(action);
     setNotice(null);
     setFailure(null);
     try {
       await apply(await run());
       setNotice(done);
-    } catch (err) {
-      // The booking may have moved meanwhile (LAB_BOOKING_CHANGED, a state conflict): show it as it is now.
-      void queryClient.invalidateQueries({ queryKey: key });
-      throw err;
     } finally {
+      inFlight.current = false;
       setBusy(null);
+      // Success or not (the booking may have moved meanwhile: LAB_BOOKING_CHANGED, a state conflict), re-read this
+      // exact booking so the page settles on the server's current record.
+      void queryClient.invalidateQueries({ queryKey: key, exact: true });
     }
   }
   const click = (action: LabAction, what: string, run: () => Promise<LabBooking>, done: string) =>
@@ -523,7 +530,7 @@ function ReleaseDraft({ ctx, booking, file, disabled, perform }: { ctx: ScopeCon
         </div>
       )}
       <ConfirmLess
-        label={`Release ${name}`} ready={!!who}
+        label={`Release ${name}`} ready={!!who} blocked={disabled}
         onConfirm={() => perform('release', () => ctx.labs.releaseReport(booking._id, file, admin ? signer?._id : undefined),
           `${name} was released to the customer.`)}
         onBack={() => setOpen(false)} />
@@ -532,7 +539,9 @@ function ReleaseDraft({ ctx, booking, file, disabled, perform }: { ctx: ScopeCon
 }
 
 /** The final buttons of an already explained step; shows the server's refusal in place. */
-function ConfirmLess({ label, ready, onConfirm, onBack }: { label: string; ready: boolean; onConfirm: () => Promise<void>; onBack: () => void }) {
+function ConfirmLess({ label, ready, blocked, onConfirm, onBack }: {
+  label: string; ready: boolean; blocked: boolean; onConfirm: () => Promise<void>; onBack: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function go() {
@@ -547,7 +556,7 @@ function ConfirmLess({ label, ready, onConfirm, onBack }: { label: string; ready
     <>
       {error && <Alert>{error}</Alert>}
       <div className="confirm-actions">
-        <Button busy={busy} disabled={!ready} onClick={() => void go()}>{label}</Button>
+        <Button busy={busy} disabled={!ready || (blocked && !busy)} onClick={() => void go()}>{label}</Button>
         <Button variant="ghost" disabled={busy} onClick={onBack}>Back</Button>
       </div>
     </>

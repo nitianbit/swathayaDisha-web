@@ -84,6 +84,37 @@ describe('partner workspace paths', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('Q10: edits carry the version they started from; lost creates are looked up and abandoned by key', async () => {
+    const calls: { method: string; url: string; body: unknown }[] = [];
+    const client = createApiClient({ baseUrl: 'https://api.example.test', getToken: () => 'tok',
+      fetchImpl: async (u, init) => {
+        const url = String(u).replace('https://api.example.test/api/v1', '');
+        calls.push({ method: String(init?.method), url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        if (url.endsWith('/by-key/missing0001')) return new Response(JSON.stringify({ error: 404, code: 'PARTNER_NOT_FOUND', message: 'No partner' }), { status: 404 });
+        return new Response(JSON.stringify({ success: true, data: { state: 'abandoned' } }), { status: 200 });
+      } });
+    const ws = partnerWorkspaceApi(client, { kind: 'member' });
+    const v = '2026-11-15T10:00:00.000Z';
+    await ws.updateMe({ name: 'X' }, v);
+    await ws.setPermissions(M, ['bookings.view'], v);
+    await ws.setBranches(M, [], v);
+    await ws.updateBranch(B, { name: 'Y' }, v);
+    await ws.updateBranch(B, { name: 'Z' }); // a record without updatedAt: no fence
+    await partnerAdminApi(client).update(P, { pan: 'ABCDE1234F' }, v);
+    expect(calls.map((c) => c.body)).toEqual([
+      { name: 'X', expectedUpdatedAt: v }, { permissions: ['bookings.view'], expectedUpdatedAt: v }, { branchIds: [], expectedUpdatedAt: v },
+      { name: 'Y', expectedUpdatedAt: v }, { name: 'Z' }, { pan: 'ABCDE1234F', expectedUpdatedAt: v },
+    ]);
+    const admin = partnerAdminApi(client);
+    expect(await admin.createdByKey('missing0001')).toBeNull();
+    expect(await admin.abandonCreate('abcdef0123456789')).toEqual({ state: 'abandoned' });
+    expect(calls.slice(-2).map((c) => `${c.method} ${c.url}`)).toEqual([
+      'GET /partner-workspace/admin/by-key/missing0001', 'POST /partner-workspace/admin/by-key/abcdef0123456789/abandon',
+    ]);
+    await expect(admin.createdByKey('../x')).rejects.toThrow('Invalid request key');
+    expect(() => admin.abandonCreate('bad key')).toThrow('Invalid request key');
+  });
+
   it('Q8: branch access, closed branches and reopening', async () => {
     const { client, calls } = recorder();
     const ws = partnerWorkspaceApi(client, { kind: 'admin', partnerId: P });

@@ -10,6 +10,7 @@ const BR2 = 'c2'.repeat(12);
 const CBC = 'd1'.repeat(12);
 const THY = 'd2'.repeat(12);
 const VITD = 'd3'.repeat(12);
+const OLD = 'd4'.repeat(12);
 const INV1 = 'e1'.repeat(12);
 const INV2 = 'e2'.repeat(12);
 const DOC1 = 'f1'.repeat(12);
@@ -43,6 +44,28 @@ interface Backend {
   linkingOffOnce: boolean;
   /** Paying this invoice is refused: someone else recorded a payment first. */
   paidElsewhere?: string;
+  /** The next catalogue item never reaches the server. */
+  dropNextItem: boolean;
+  /** Applied to the item right after the next edit re-read (someone else saves in between: the PUT is stale). */
+  changeAfterRead?: Rec;
+  /** The next payment is recorded but its answer never arrives. */
+  loseNextPayAnswer: boolean;
+  /** The next payment request (only that one) waits for this promise. */
+  holdPay?: Promise<void>;
+  /** The held payment then loses the compare-and-set: 409 "This bill is paid". */
+  heldPayConflict?: boolean;
+  /** Applied to a catalogue item just before the next bill is created (its price changed meanwhile). */
+  priceChangeBeforeBill?: { id: string; priceMinor: number };
+  /** Bill request keys given up (Q10 abandon): they can never issue a bill. */
+  abandoned: Set<string>;
+  /** Reads of a bill's detail that fail (503) before one succeeds again. */
+  failDetailReads: number;
+  /** The next give-up answer waits for this promise (and is decided only then). */
+  holdAbandon?: Promise<void>;
+  /** Set once a held give-up has been answered. */
+  abandonAnswered: boolean;
+  /** Set once a held, conflicting payment has been answered. */
+  heldPayAnswered?: boolean;
   live: boolean;
 }
 
@@ -88,16 +111,22 @@ function invoice(id: string, number: number, extra: Rec = {}): Rec {
   };
 }
 
-async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular' | 'unregistered'; seed?: boolean } = {}): Promise<Backend> {
+async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular' | 'unregistered'; seed?: boolean; many?: number } = {}): Promise<Backend> {
   const b: Backend = {
     calls: [], me, live: false, loseNextCreateAnswer: false, dropNextCreate: false, linkingOffOnce: false, loseNextItemAnswer: false,
+    dropNextItem: false, loseNextPayAnswer: false, abandoned: new Set(), failDetailReads: 0, abandonAnswered: false,
     partners: [partner(LAB, 'City Lab', 'lab', opts.tax ?? 'regular'), partner(CLINIC, 'Sunrise Clinic', 'clinic', 'regular')],
     catalogue: [
-      { _id: CBC, partnerId: LAB, kind: 'test', name: 'CBC', code: 'CBC01', priceMinor: 45000, gstRate: 0, visitModes: ['lab', 'home'], reportTatHours: 12, isActive: true, adminDisabled: false },
-      { _id: THY, partnerId: LAB, kind: 'package', name: 'Thyroid profile', priceMinor: 120000, mrpMinor: 150000, gstRate: 18, visitModes: ['lab'], includes: ['T3', 'T4', 'TSH'], isActive: true, adminDisabled: false },
-      { _id: VITD, partnerId: LAB, kind: 'test', name: 'Vitamin D', priceMinor: 150000, gstRate: 0, visitModes: ['lab'], isActive: true, adminDisabled: true },
+      { _id: CBC, partnerId: LAB, kind: 'test', name: 'CBC', code: 'CBC01', priceMinor: 45000, gstRate: 0, visitModes: ['lab', 'home'], reportTatHours: 12, isActive: true, adminDisabled: false, updatedAt: '2026-11-01T00:00:00.000Z' },
+      { _id: THY, partnerId: LAB, kind: 'package', name: 'Thyroid profile', priceMinor: 120000, mrpMinor: 150000, gstRate: 18, visitModes: ['lab'], includes: ['T3', 'T4', 'TSH'], isActive: true, adminDisabled: false, updatedAt: '2026-11-01T00:00:00.000Z' },
+      { _id: OLD, partnerId: LAB, kind: 'test', name: 'Old panel', priceMinor: 30000, gstRate: 0, visitModes: ['lab'], isActive: false, adminDisabled: false, updatedAt: '2026-11-01T00:00:00.000Z' },
+      { _id: VITD, partnerId: LAB, kind: 'test', name: 'Vitamin D', priceMinor: 150000, gstRate: 0, visitModes: ['lab'], isActive: true, adminDisabled: true, updatedAt: '2026-11-01T00:00:00.000Z' },
     ],
-    invoices: opts.seed ? [invoice(INV1, 1), invoice(INV2, 2, { customer: { name: 'Bala' }, totals: { ...(invoice(INV2, 2).totals as Rec), totalMinor: 50000 } })] : [],
+    invoices: opts.many ? Array.from({ length: opts.many }, (_, i) => invoice(`ab${String(i).padStart(22, '0')}`, i + 1, {
+      issuedAt: new Date(Date.UTC(2026, 10, 1, 5) + Math.floor((i + 1) / 2) * 60_000).toISOString(), // pairs share an instant: ties by id
+      customer: { name: i === 7 ? 'Meena Iyer' : `Customer ${i + 1}` },
+    }))
+      : opts.seed ? [invoice(INV1, 1), invoice(INV2, 2, { customer: { name: 'Bala' }, totals: { ...(invoice(INV2, 2).totals as Rec), totalMinor: 50000 } })] : [],
     events: [],
   };
   const branches = [
@@ -155,38 +184,93 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
     if (sub === '/branches') return ok(route, branches);
     if (sub === '/clinic/doctors') return p.kind === 'clinic' ? ok(route, doctors) : fail(route, 409, 'NOT_A_CLINIC', 'Only clinics have doctors');
 
+    let bump = 0;
+    const touch = (it: Rec) => { bump += 1; it.updatedAt = new Date(Date.parse('2026-11-02T00:00:00.000Z') + b.calls.length * 1000 + bump).toISOString(); };
     if (sub === '/catalogue' && method === 'GET') {
       if (!can('catalogue.manage', 'invoices.create')) return deny();
       const kind = url.searchParams.get('kind');
-      return ok(route, b.catalogue.filter((i) => i.isActive && (!kind || i.kind === kind)));
+      const all = url.searchParams.get('includeInactive') === 'true' && can('catalogue.manage');
+      return ok(route, b.catalogue.filter((i) => i.partnerId === pid && (all || i.isActive) && (!kind || i.kind === kind)));
     }
     if (sub === '/catalogue' && method === 'POST') {
       if (!can('catalogue.manage')) return deny();
-      const it = { _id: 'd9'.repeat(12), partnerId: pid, isActive: true, adminDisabled: false, ...(body as Rec) };
+      const { requestKey, ...data } = body as Rec;
+      const prior = b.catalogue.find((i) => i.partnerId === pid && requestKey && i.createRequestKey === requestKey);
+      if (prior) {
+        return prior.createRequestHash === JSON.stringify(data) ? ok(route, prior, 200)
+          : fail(route, 409, 'REQUEST_KEY_REUSED', 'This request key was already used for a different item');
+      }
+      if (b.dropNextItem) { b.dropNextItem = false; return route.abort('failed'); }
+      const kinds = p.kind === 'clinic' ? ['consultation', 'procedure', 'package', 'other'] : ['test', 'package'];
+      if (!kinds.includes(data.kind as string)) return fail(route, 400, 'ITEM_KIND_NOT_ALLOWED', `A ${p.kind} catalogue takes: ${kinds.join(', ')}`);
+      if (p.kind === 'clinic' && (data.visitModes as unknown[] | undefined)?.length) return fail(route, 400, 'VISIT_MODES_NOT_ALLOWED', 'Clinic items have no visit modes');
+      const it: Rec = { _id: `d${b.catalogue.length + 5}`.repeat(12).slice(0, 24), partnerId: pid, isActive: true, adminDisabled: false, visitModes: [], ...data,
+        ...(requestKey ? { createRequestKey: requestKey, createRequestHash: JSON.stringify(data) } : {}) };
+      touch(it);
       b.catalogue.push(it);
       if (b.loseNextItemAnswer) { b.loseNextItemAnswer = false; return route.abort('failed'); }
       return ok(route, it, 201);
     }
-    const item = /^\/catalogue\/([0-9a-f]{24})$/.exec(sub);
+    const item = /^\/catalogue\/([0-9a-f]{24})(\/reactivate)?$/.exec(sub);
     if (item) {
-      if (!can('catalogue.manage')) return deny();
+      if (!can('catalogue.manage') && method !== 'GET') return deny();
       const it = b.catalogue.find((x) => x._id === item[1])!;
-      if (method === 'GET') {
-        if (b.changeBeforeEdit) { Object.assign(it, b.changeBeforeEdit); b.changeBeforeEdit = undefined; }
+      if (item[2]) {
+        if (it.isActive) return fail(route, 409, 'ITEM_ALREADY_ACTIVE', 'This item is already active');
+        it.isActive = true; touch(it);
         return ok(route, it);
       }
-      if (method === 'PUT') { Object.assign(it, body); return ok(route, it); }
-      if (method === 'DELETE') { it.isActive = false; return json(route, 200, { success: true, message: 'Catalogue item deactivated' }); }
+      if (method === 'GET') {
+        if (b.changeBeforeEdit) { Object.assign(it, b.changeBeforeEdit); touch(it); b.changeBeforeEdit = undefined; }
+        const answer = { ...it };
+        if (b.changeAfterRead) { Object.assign(it, b.changeAfterRead); touch(it); b.changeAfterRead = undefined; }
+        return ok(route, answer);
+      }
+      if (method === 'PUT') {
+        const { expectedUpdatedAt, ...changes } = body as Rec;
+        if (expectedUpdatedAt && expectedUpdatedAt !== it.updatedAt) {
+          return fail(route, 409, 'CATALOGUE_ITEM_CHANGED', 'The item changed since you opened it; reload and review');
+        }
+        Object.assign(it, changes); touch(it);
+        return ok(route, it);
+      }
+      if (method === 'DELETE') { it.isActive = false; touch(it); return json(route, 200, { success: true, message: 'Catalogue item deactivated' }); }
     }
 
     const readers = ['invoices.create', 'invoices.cancel', 'payments.record', 'finance.view'];
     if (sub === '/invoices' && method === 'GET') {
       if (!can(...readers)) return deny();
-      const state = url.searchParams.get('state');
-      const before = url.searchParams.get('before');
-      const rows = b.invoices.filter((i) => (!state || i.lifecycleState === state) && (!before || Date.parse(i.issuedAt as string) < Date.parse(before)))
-        .sort((x, y) => Date.parse(y.issuedAt as string) - Date.parse(x.issuedAt as string));
-      return ok(route, rows.slice(0, Number(url.searchParams.get('limit') ?? 50)));
+      const qp = (k: string) => url.searchParams.get(k);
+      const istDay = (iso: string) => new Date(Date.parse(iso) + 330 * 60_000).toISOString().slice(0, 10);
+      const q = (qp('q') ?? '').toLowerCase();
+      const rows = b.invoices.filter((i) => (!qp('state') || i.lifecycleState === qp('state'))
+        && (!qp('from') || istDay(i.issuedAt as string) >= qp('from')!) && (!qp('to') || istDay(i.issuedAt as string) <= qp('to')!)
+        && (!q || [i.serial, (i.customer as Rec).name, (i.customer as Rec).phone].some((v) => String(v ?? '').toLowerCase().includes(q))))
+        .sort((x, y) => Date.parse(y.issuedAt as string) - Date.parse(x.issuedAt as string) || String(y._id).localeCompare(String(x._id)));
+      const limit = Number(qp('limit') ?? 50);
+      let from = 0;
+      const cursor = qp('cursor');
+      if (cursor) {
+        const [ms, id] = cursor.split('_');
+        from = rows.findIndex((i) => Date.parse(i.issuedAt as string) < Number(ms) || (Date.parse(i.issuedAt as string) === Number(ms) && String(i._id) < id!));
+        if (from < 0) from = rows.length;
+      }
+      const items = rows.slice(from, from + limit);
+      const last = items.at(-1);
+      const nextCursor = from + limit < rows.length && last ? `${Date.parse(last.issuedAt as string)}_${last._id}` : null;
+      return json(route, 200, { success: true, data: items, pagination: { total: rows.length, nextCursor } });
+    }
+    const byKey = /^\/invoices\/by-key\/([A-Za-z0-9_-]+)(\/abandon)?$/.exec(sub);
+    if (byKey) {
+      if (!can('invoices.create')) return deny();
+      if (byKey[2] && b.holdAbandon) { await b.holdAbandon; b.holdAbandon = undefined; }
+      const found = b.invoices.find((i) => i.idempotencyKey === byKey[1]);
+      if (byKey[2]) {
+        if (found) { await ok(route, { state: 'used', invoice: found }); b.abandonAnswered = true; return; }
+        b.abandoned.add(byKey[1]!);
+        await ok(route, { state: 'abandoned' }); b.abandonAnswered = true; return;
+      }
+      return found ? ok(route, found) : fail(route, 404, 'INVOICE_NOT_FOUND', 'No bill was issued with this key');
     }
     if (sub === '/invoices' && method === 'POST') {
       if (!can('invoices.create')) return deny();
@@ -199,6 +283,18 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
         return ok(route, existing, 201);
       }
       if (b.dropNextCreate) { b.dropNextCreate = false; return route.abort('failed'); }
+      if (b.abandoned.has(idempotencyKey as string)) return fail(route, 409, 'REQUEST_ABANDONED', 'This request was cancelled before it was recorded; make a new one');
+      if (b.priceChangeBeforeBill) {
+        const it = b.catalogue.find((i) => i._id === b.priceChangeBeforeBill!.id)!;
+        it.priceMinor = b.priceChangeBeforeBill.priceMinor; touch(it);
+        b.priceChangeBeforeBill = undefined;
+      }
+      for (const l of x.items as Rec[]) {
+        const it = l.catalogItemId ? b.catalogue.find((i) => i._id === l.catalogItemId) : undefined;
+        if (it && (it.priceMinor !== l.unitPriceMinor || it.gstRate !== l.gstRate)) {
+          return fail(route, 409, 'CATALOGUE_PRICE_CHANGED', `${it.name} is now ₹${((it.priceMinor as number) / 100).toFixed(2)} at ${it.gstRate}% GST; review the bill`);
+        }
+      }
       const customer = x.customer as Rec;
       if (b.linkingOffOnce && customer.phone) {
         b.linkingOffOnce = false;
@@ -227,7 +323,10 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
       const inv = b.invoices.find((i) => i._id === one[1]);
       if (!inv) return fail(route, 404, 'INVOICE_NOT_FOUND', 'Invoice not found');
       const events = () => b.events.filter((e) => e.invoiceId === inv._id);
-      if (!one[2]) return can(...readers) ? ok(route, { invoice: inv, events: events() }) : deny();
+      if (!one[2]) {
+        if (b.failDetailReads > 0) { b.failDetailReads -= 1; return fail(route, 503, 'UNAVAILABLE', 'The service is busy; try again'); }
+        return can(...readers) ? ok(route, { invoice: inv, events: events() }) : deny();
+      }
       if (one[2] === '/pdf') {
         if (!can(...readers)) return deny();
         return route.fulfill({ status: 200, contentType: 'application/pdf', body: '%PDF-1.4\n%mock bill\n' });
@@ -241,15 +340,33 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
       };
       if (one[2] === '/pay') {
         if (!can('payments.record')) return deny();
-        if (b.paidElsewhere === inv._id && inv.lifecycleState === 'issued') transition('paid', { kind: 'payment', mode: 'cash' });
+        const hold = b.holdPay;
+        if (hold) {
+          b.holdPay = undefined;
+          await hold;
+          if (b.heldPayConflict) { b.heldPayConflict = false; await fail(route, 409, 'INVOICE_STATE_CONFLICT', 'This bill is paid'); b.heldPayAnswered = true; return; }
+        }
+        const x = body as Rec;
+        if (b.paidElsewhere === inv._id && inv.lifecycleState === 'issued') transition('paid', { kind: 'payment', mode: 'cash', reference: 'OTHER' });
+        if (inv.lifecycleState === 'paid') {
+          // Q10: the same mode and reference again answers the payment already recorded.
+          const prior = events().find((e) => e.kind === 'payment');
+          if (prior && prior.mode === x.mode && (prior.reference ?? '') === (x.reference ?? '')) {
+            return json(route, 200, { success: true, data: { invoice: { ...inv }, event: prior }, replayed: true });
+          }
+        }
         if (inv.lifecycleState !== 'issued') return fail(route, 409, 'INVOICE_STATE_CONFLICT', `This bill is ${inv.lifecycleState}`);
-        const e = transition('paid', { kind: 'payment', ...(body as Rec) });
-        return ok(route, { invoice: inv, event: e });
+        const e = transition('paid', { kind: 'payment', ...x });
+        if (b.loseNextPayAnswer) { b.loseNextPayAnswer = false; return route.abort('failed'); }
+        return ok(route, { invoice: { ...inv }, event: e });
       }
       if (!can('invoices.cancel')) return deny();
+      const x = body as Rec;
       if (inv.lifecycleState === 'cancelled') return fail(route, 409, 'ALREADY_CANCELLED', 'This bill is cancelled');
-      const e = transition('cancelled', { kind: 'cancellation', reason: (body as Rec).reason });
-      return ok(route, { invoice: inv, event: e });
+      if (inv.lifecycleState === 'paid' && !x.refund) return fail(route, 400, 'REFUND_REQUIRED', 'This bill was paid: record how the money was returned');
+      if (inv.lifecycleState !== 'paid' && x.refund) return fail(route, 400, 'NOTHING_TO_REFUND', 'This bill was not paid');
+      const e = transition('cancelled', { kind: 'cancellation', reason: x.reason, ...(x.refund ? { refund: x.refund } : {}) });
+      return ok(route, { invoice: { ...inv }, event: e });
     }
     return fail(route, 404, 'NOT_FOUND', 'Not found');
   });
@@ -288,7 +405,8 @@ test('catalogue: add with prices in rupees sent as paise, edit only what changed
   await expect(page.getByRole('row').filter({ hasText: 'Thyroid profile' })).toContainText('MRP ₹1,500.00');
   await page.getByLabel('Status').selectOption('disabled');
   await expect(page.getByRole('row').filter({ hasText: 'CBC' })).toHaveCount(0);
-  await page.getByLabel('Status').selectOption('all');
+  await page.getByLabel('Status').selectOption('active');
+  await expect(page.getByRole('row').filter({ hasText: 'Old panel' })).toHaveCount(0); // deactivated: listed only under "Deactivated"
   await page.getByLabel('Search by name or code').fill('cbc01');
   await expect(page.getByRole('row')).toHaveCount(2);
   await page.getByLabel('Search by name or code').fill('');
@@ -312,7 +430,7 @@ test('catalogue: add with prices in rupees sent as paise, edit only what changed
   await expect(page.getByText('Lipid profile was added.')).toBeVisible();
   expect(backend.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/catalogue')?.body).toEqual({
     kind: 'test', name: 'Lipid profile', code: 'LP1', sac: '999316', priceMinor: 45050, mrpMinor: 50000, gstRate: 18,
-    visitModes: ['home', 'lab'], reportTatHours: 24,
+    visitModes: ['home', 'lab'], reportTatHours: 24, requestKey: expect.stringMatching(/^[0-9a-f]{32}$/),
   });
 
   await page.getByRole('button', { name: 'Edit CBC' }).click();
@@ -320,7 +438,8 @@ test('catalogue: add with prices in rupees sent as paise, edit only what changed
   await page.getByLabel('Price (₹)').fill('475.25');
   await page.getByRole('button', { name: 'Save item' }).click();
   await expect(page.getByText('CBC was saved.')).toBeVisible();
-  expect(backend.calls.find((c) => c.method === 'PUT')).toMatchObject({ path: `/partner-workspace/catalogue/${CBC}`, body: { priceMinor: 47525 } });
+  expect(backend.calls.find((c) => c.method === 'PUT')).toMatchObject({ path: `/partner-workspace/catalogue/${CBC}`,
+    body: { priceMinor: 47525, expectedUpdatedAt: '2026-11-01T00:00:00.000Z' } });
   await expect(page.getByRole('row').filter({ hasText: 'CBC' })).toContainText('₹475.25');
 
   const row = page.getByRole('row').filter({ hasText: 'Thyroid profile' });
@@ -333,6 +452,15 @@ test('catalogue: add with prices in rupees sent as paise, edit only what changed
   await expect(page.getByText('Thyroid profile was deactivated.')).toBeVisible();
   await expect(page.getByRole('row').filter({ hasText: 'Thyroid profile' })).toHaveCount(0);
   expect(backend.calls.filter((c) => c.method === 'DELETE').map((c) => c.path)).toEqual([`/partner-workspace/catalogue/${THY}`]);
+
+  // Q10: deactivated items are listed for managers and can come back.
+  await page.getByLabel('Status').selectOption('inactive');
+  await expect(page.getByRole('row').filter({ hasText: 'Thyroid profile' })).toContainText('Deactivated');
+  await page.getByRole('button', { name: 'Reactivate Old panel' }).click();
+  await expect(page.getByText('Old panel is active again.')).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'Old panel' })).toHaveCount(0);
+  expect(backend.calls.some((c) => c.method === 'POST' && c.path === `/partner-workspace/catalogue/${OLD}/reactivate`)).toBe(true);
+  expect(backend.calls.some((c) => c.path === '/partner-workspace/catalogue?includeInactive=true')).toBe(true);
 });
 
 test('a supplier without GST: only 0% offered; a GST item is refused on a bill; a server refusal leaves the bill to fix', async ({ page }) => {
@@ -438,29 +566,66 @@ test('new bill: live totals as the server computes them; a lost answer is resent
   expect(await page.evaluate(() => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }))).not.toMatch(/Asha|98765/);
 });
 
-test('a bill sent just before a reload: check by key, then start again only after a warning', async ({ page }) => {
-  const backend = await mockBackend(page);
-  backend.dropNextCreate = true;
-  await signInPartner(page);
+async function issueCbcBill(page: Page) {
   await page.goto('/#/partner/invoices/new');
   await page.getByLabel('Customer name').fill('Asha Rao');
   await page.getByLabel('From the catalogue').selectOption(CBC);
   await page.getByRole('button', { name: 'Add item' }).click();
   await page.getByRole('button', { name: 'Review the bill' }).click();
   await page.getByRole('button', { name: 'Issue bill' }).click();
+}
+
+test('a bill sent just before a reload and never issued: looked up by key, then given up on the server before a new one', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.dropNextCreate = true;
+  await signInPartner(page);
+  await issueCbcBill(page);
   await expect(page.getByRole('group', { name: 'Unconfirmed bill' })).toBeVisible();
   expect(await page.evaluate(() => JSON.stringify({ ...sessionStorage }))).not.toMatch(/Asha|CBC/);
+  const key = (creates(backend)[0]!.body as Rec).idempotencyKey as string;
 
   await page.reload();
   const panel = page.getByRole('group', { name: 'Unconfirmed bill' });
   await expect(panel).toContainText('A request made earlier on this device');
   await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
-  await expect(panel).toContainText('Not found in the records. It may still be on its way, or it was never recorded');
-  await panel.getByRole('button', { name: 'Start a new bill instead' }).click();
-  await expect(panel).toContainText('there will be two bills for the same sale');
-  await panel.getByRole('button', { name: 'Forget it and start a new bill' }).click();
+  await expect(panel).toContainText('Not found in the records');
+  await panel.getByRole('button', { name: 'Give up this bill' }).click();
+  await expect(page.getByText('The earlier bill was given up: it can never be issued.')).toBeVisible();
   await expect(page.getByLabel('Customer name')).toHaveValue('');
-  expect(backend.calls.some((c) => c.method === 'GET' && c.path.startsWith('/partner-workspace/invoices?limit=50'))).toBe(true);
+  const paths = backend.calls.map((c) => `${c.method} ${c.path}`);
+  expect(paths).toContain(`GET /partner-workspace/invoices/by-key/${key}`);
+  expect(paths).toContain(`POST /partner-workspace/invoices/by-key/${key}/abandon`);
+  expect(backend.abandoned.has(key)).toBe(true);
+});
+
+test('a bill issued just before a reload is found by its key and opened', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.loseNextCreateAnswer = true;
+  await signInPartner(page);
+  await issueCbcBill(page);
+  await expect(page.getByRole('group', { name: 'Unconfirmed bill' })).toBeVisible();
+  await page.reload();
+  const panel = page.getByRole('group', { name: 'Unconfirmed bill' });
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Bill LB/2627/0001 had already been issued.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Bill LB/2627/0001' })).toBeVisible();
+  expect(backend.invoices).toHaveLength(1);
+  expect(backend.calls.some((c) => c.path.endsWith('/abandon'))).toBe(false);
+});
+
+test('a catalogue price changed after the line was added: the bill is refused, the form shows the new price, then issues', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.priceChangeBeforeBill = { id: CBC, priceMinor: 47000 };
+  await signInPartner(page);
+  await issueCbcBill(page);
+  await expect(page.getByText('Not issued: CBC is now ₹470.00 at 0% GST; review the bill')).toBeVisible();
+  await expect(page.getByText('CBC is now ₹470.00 at 0% GST. Review the bill before issuing it.')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Line 1: CBC' })).toContainText('₹470.00 each');
+  await page.getByRole('button', { name: 'Review the bill' }).click();
+  await page.getByRole('button', { name: 'Issue bill' }).click();
+  await expect(page.getByText('Bill LB/2627/0001 issued.')).toBeVisible();
+  const sent = creates(backend);
+  expect(sent.map((c) => ((c.body as Rec).items as Rec[])[0]!.unitPriceMinor)).toEqual([45000, 47000]);
 });
 
 test('a bill: pay after confirming, a refused payment shows the server and the current bill, cancel with a reason, PDF from memory', async ({ page }) => {
@@ -474,10 +639,6 @@ test('a bill: pay after confirming, a refused payment shows the server and the c
   await expect(page.getByText('No bill matches these filters.')).toBeVisible();
   expect(backend.calls.some((c) => c.path === '/partner-workspace/invoices?state=paid&limit=50')).toBe(true);
   await page.getByLabel('Status').selectOption('');
-  await page.getByLabel('Issued on or before').fill('2026-11-11');
-  await expect(page.getByRole('row').filter({ hasText: 'LB/2627/0002' })).toHaveCount(0);
-  expect(backend.calls.some((c) => c.path === '/partner-workspace/invoices?before=2026-11-11T18%3A30%3A00.000Z&limit=50')).toBe(true);
-  await page.getByLabel('Issued on or before').fill('');
 
   // Someone else recorded the payment of bill 2 first: the server's message, and the bill as it is now.
   await page.getByRole('link', { name: 'LB/2627/0002' }).click();
@@ -505,17 +666,22 @@ test('a bill: pay after confirming, a refused payment shows the server and the c
   await expect(page.getByText('Paid by UPI · reference UTR123')).toBeVisible();
   expect(backend.calls.filter((c) => c.path.endsWith('/pay')).map((c) => c.body)).toEqual([{ mode: 'cash' }, { mode: 'upi', reference: 'UTR123' }]);
 
+  // Q10: a paid bill is cancelled only with how the money went back.
   await page.getByRole('button', { name: 'Cancel bill' }).click();
-  await expect(page.getByText(/payment recorded on it stays on record/)).toBeVisible();
+  await expect(page.getByText(/It was paid \(₹1,008.00\): give the money back to the customer/)).toBeVisible();
   await page.getByRole('button', { name: 'Back' }).click();
   expect(backend.calls.some((c) => c.path.endsWith('/cancel'))).toBe(false);
   await page.getByRole('button', { name: 'Cancel bill' }).click();
   await page.getByLabel('Why is this bill cancelled?').fill('Billed to the wrong patient');
+  await page.getByLabel('Money returned by').selectOption('upi');
+  await page.getByLabel('Refund reference (optional)').fill('RF9');
   await page.getByRole('button', { name: 'Cancel bill LB/2627/0001' }).click();
   await expect(page.getByText('Bill LB/2627/0001 was cancelled.')).toBeVisible();
-  await expect(page.getByText('Cancelled: “Billed to the wrong patient”')).toBeVisible();
+  await expect(page.getByText('Cancelled: “Billed to the wrong patient” · money returned by UPI · reference RF9')).toBeVisible();
+  await expect(page.getByText('Paid by UPI · reference UTR123')).toBeVisible(); // the payment event is kept
   await expect(page.getByRole('button', { name: 'Cancel bill' })).toHaveCount(0);
-  expect(backend.calls.find((c) => c.path.endsWith('/cancel'))).toMatchObject({ path: `/partner-workspace/invoices/${INV1}/cancel`, body: { reason: 'Billed to the wrong patient' } });
+  expect(backend.calls.find((c) => c.path.endsWith('/cancel'))).toMatchObject({ path: `/partner-workspace/invoices/${INV1}/cancel`,
+    body: { reason: 'Billed to the wrong patient', refund: { mode: 'upi', reference: 'RF9' } } });
 
   await page.getByRole('button', { name: 'Open PDF (current)' }).click();
   await expect(page.locator('iframe[title="Bill LB/2627/0001 PDF"]')).toHaveAttribute('src', /^blob:/);
@@ -609,7 +775,7 @@ test('admin as owner: bills and catalogue through the admin workspace routes; di
   const paths = backend.calls.map((c) => `${c.method} ${c.path}`);
   expect(paths).toContain(`GET /partner-workspace/admin/${LAB}/workspace/invoices?limit=50`);
   expect(paths).toContain(`GET /partner-workspace/admin/${LAB}/workspace/invoices/${INV1}`);
-  expect(paths).toContain(`GET /partner-workspace/admin/${LAB}/workspace/catalogue`);
+  expect(paths).toContain(`GET /partner-workspace/admin/${LAB}/workspace/catalogue?includeInactive=true`);
   expect(paths).toContain(`POST /partner-workspace/admin/catalogue/${CBC}/disable`);
   expect(paths).toContain(`POST /partner-workspace/admin/catalogue/${VITD}/enable`);
   expect(backend.calls.some((c) => /^\/partner-workspace\/(invoices|catalogue)/.test(c.path))).toBe(false);
@@ -628,7 +794,7 @@ test('catalogue edits send only what this person changed; a field also changed b
   await page.getByRole('button', { name: 'Save item' }).click();
   await expect(page.getByText('Complete blood count was saved.')).toBeVisible();
   const puts = () => backend.calls.filter((c) => c.method === 'PUT');
-  expect(puts().map((c) => c.body)).toEqual([{ name: 'Complete blood count' }]);
+  expect(puts().map((c) => c.body)).toEqual([{ name: 'Complete blood count', expectedUpdatedAt: expect.any(String) }]);
   expect(backend.calls.some((c) => c.method === 'GET' && c.path === `/partner-workspace/catalogue/${CBC}`)).toBe(true);
   await expect(page.getByRole('row').filter({ hasText: 'Complete blood count' })).toContainText('₹470.00');
 
@@ -642,7 +808,7 @@ test('catalogue edits send only what this person changed; a field also changed b
   expect(puts()).toHaveLength(1);
 });
 
-test('a new item whose answer is lost is not offered again: the person is sent to the list to check', async ({ page }) => {
+test('a new item whose answer is lost is locked to "send again" with the same key; the server answers the item already added', async ({ page }) => {
   const backend = await mockBackend(page);
   backend.loseNextItemAnswer = true;
   await signInPartner(page);
@@ -652,14 +818,260 @@ test('a new item whose answer is lost is not offered again: the person is sent t
   await page.getByLabel('Price (₹)').fill('450');
   await page.getByRole('button', { name: 'Add item' }).click();
   const panel = page.getByRole('group', { name: 'Unconfirmed item' });
-  await expect(panel).toContainText('We could not confirm whether Lipid profile was added');
+  await expect(panel).toContainText('The outcome of this request is not known yet');
+  await expect(panel).toContainText('New item: Lipid profile at ₹450.00.');
+  await expect(page.getByRole('button', { name: 'Add an item' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Add item' })).toHaveCount(0);
-  await expect(page.getByLabel('Name', { exact: true })).toBeDisabled();
-  await panel.getByRole('button', { name: 'Look in the list' }).click();
-  await expect(page.getByText(/The answer to adding Lipid profile was lost/)).toBeVisible();
-  await expect(page.getByLabel('Search by name or code')).toHaveValue('Lipid profile');
-  await expect(page.getByRole('row').filter({ hasText: 'Lipid profile' })).toHaveCount(1);
-  expect(backend.calls.filter((c) => c.method === 'POST' && c.path === '/partner-workspace/catalogue')).toHaveLength(1);
+  await panel.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(page.getByText('Lipid profile was added.')).toBeVisible();
+  const posts = backend.calls.filter((c) => c.method === 'POST' && c.path === '/partner-workspace/catalogue');
+  expect(posts).toHaveLength(2);
+  expect(posts[1]!.body).toEqual(posts[0]!.body);
+  expect(backend.catalogue.filter((i) => i.name === 'Lipid profile')).toHaveLength(1);
+});
+
+test('a new item lost before a reload: found by its key if it was added; otherwise a new one only after a duplicate warning', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.dropNextItem = true;
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await page.getByRole('button', { name: 'Add an item' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Lipid profile');
+  await page.getByLabel('Price (₹)').fill('450');
+  await page.getByRole('button', { name: 'Add item' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed item' })).toBeVisible();
+  await page.reload();
+  const panel = page.getByRole('group', { name: 'Unconfirmed item' });
+  await expect(panel).toContainText('A request made earlier on this device');
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panel).toContainText('Not found in the records');
+  await panel.getByRole('button', { name: 'Add a new item instead' }).click();
+  await expect(panel).toContainText('the price list will have it twice');
+  await panel.getByRole('button', { name: 'It may be a duplicate: add a new item' }).click();
+  await expect(page.getByRole('button', { name: 'Add an item' })).toBeVisible();
+  expect(backend.calls.some((c) => c.path === '/partner-workspace/catalogue?includeInactive=true')).toBe(true);
+});
+
+test('an item edit that someone else saved in between is refused (expectedUpdatedAt) and shown again', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await page.getByRole('button', { name: 'Edit CBC' }).click();
+  await page.getByLabel('Price (₹)').fill('480');
+  backend.changeAfterRead = { priceMinor: 49000 };
+  await page.getByRole('button', { name: 'Save item' }).click();
+  // Refused by the server (409 CATALOGUE_ITEM_CHANGED); the form then follows the saved item and flags the price.
+  await expect(page.getByText(/Someone else changed the price while you were editing/)).toBeVisible();
+  await expect(page.getByLabel('Price (₹)')).toHaveValue('490');
+  const put = backend.calls.find((c) => c.method === 'PUT');
+  expect(put?.body).toEqual({ priceMinor: 48000, expectedUpdatedAt: '2026-11-01T00:00:00.000Z' });
+  expect(backend.catalogue.find((i) => i._id === CBC)!.priceMinor).toBe(49000);
+});
+
+test('clinic price list: consultations, procedures, packages and other items, without visit modes', async ({ page }) => {
+  const backend = await mockBackend(page, owner(CLINIC));
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await expect(page.getByRole('heading', { name: 'Services and prices' })).toBeVisible();
+  await page.getByRole('button', { name: 'Add an item' }).click();
+  await expect(page.getByRole('group', { name: 'Type' }).getByRole('radio')).toHaveCount(4);
+  await expect(page.getByText('Where it is offered')).toHaveCount(0);
+  await page.getByLabel('Procedure').check();
+  await page.getByLabel('Name', { exact: true }).fill('Dressing');
+  await page.getByLabel('Price (₹)').fill('250');
+  await page.getByRole('button', { name: 'Add item' }).click();
+  await expect(page.getByText('Dressing was added.')).toBeVisible();
+  expect(backend.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/catalogue')?.body)
+    .toEqual({ kind: 'procedure', name: 'Dressing', priceMinor: 25000, gstRate: 0, requestKey: expect.any(String) });
+  await expect(page.getByRole('row').filter({ hasText: 'Dressing' })).toContainText('Procedure');
+});
+
+test('bills list: exact cursor paging, total, search and date range from the server', async ({ page }) => {
+  const backend = await mockBackend(page, owner(), { many: 52 });
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Bills' }).click();
+  await expect(page.getByText('52 bills · showing 50')).toBeVisible();
+  await page.getByRole('button', { name: 'Show older bills' }).click();
+  await expect(page.getByText('52 bills · showing 52')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Show older bills' })).toHaveCount(0);
+  const lists = backend.calls.filter((c) => c.path.startsWith('/partner-workspace/invoices?'));
+  // The 50th bill (#3) shares its instant with the 51st (#2): the cursor carries the id, so neither is skipped nor repeated.
+  expect(lists[1]!.path).toMatch(/^\/partner-workspace\/invoices\?limit=50&cursor=\d+_ab0+2$/);
+  const serials = await page.getByRole('row').locator('td:first-child').allTextContents();
+  expect(new Set(serials).size).toBe(52);
+
+  await page.getByLabel('Bill number, customer name or phone').fill('Meena');
+  await page.getByRole('button', { name: 'Search' }).click();
+  await expect(page.getByText('1 bill match · showing 1')).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'Meena Iyer' })).toHaveCount(1);
+  await page.getByLabel('Issued from').fill('2026-11-02');
+  await expect(page.getByText('No bill matches these filters.')).toBeVisible();
+  expect(backend.calls.some((c) => c.path === '/partner-workspace/invoices?from=2026-11-02&q=Meena&limit=50')).toBe(true);
+  await page.getByLabel('Issued to').fill('2026-11-01');
+  await expect(page.getByText('The “from” date is after the “to” date.')).toBeVisible();
+});
+
+test('pay and cancel are one at a time; a lost payment answer is resent unchanged and the server answers the same payment', async ({ page }) => {
+  const backend = await mockBackend(page, owner(), { seed: true });
+  await signInPartner(page);
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  // While a payment is on its way, a cancellation cannot start.
+  let release!: () => void;
+  backend.holdPay = new Promise<void>((r) => { release = r; });
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
+  // Its answer is lost, and reading the bill fails in the same outage: nothing can settle it but a resend.
+  backend.loseNextPayAnswer = true;
+  backend.failDetailReads = 50;
+  release();
+  backend.holdPay = undefined;
+  const unsure = page.getByRole('group', { name: 'Unconfirmed payment' });
+  await expect(unsure).toContainText('We could not confirm the payment of ₹1,008.00 by Cash');
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
+  await unsure.getByRole('button', { name: 'Send the same payment again' }).click();
+  await expect(page.getByText('Payment recorded.')).toBeVisible();
+  backend.failDetailReads = 0;
+  await expect(unsure).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeEnabled();
+  const pays = backend.calls.filter((c) => c.path.endsWith('/pay'));
+  expect(pays.map((c) => c.body)).toEqual([{ mode: 'cash' }, { mode: 'cash' }]);
+  expect(backend.events.filter((e) => e.kind === 'payment')).toHaveLength(1);
+  await expect(page.getByText(/^Paid by Cash/)).toHaveCount(1);
+});
+
+test('a lost UPI payment survives a failed refresh: the exact payment stays, no other can start, and the receipt settles it', async ({ page }) => {
+  const backend = await mockBackend(page, owner(), { seed: true });
+  await signInPartner(page);
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  backend.loseNextPayAnswer = true;
+  backend.failDetailReads = 50;
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByLabel('Paid by').selectOption('upi');
+  await page.getByLabel('Reference (optional)').fill('UTR9');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
+  const unsure = page.getByRole('group', { name: 'Unconfirmed payment' });
+  await expect(unsure).toContainText('by UPI (reference UTR9)');
+  await expect(page.getByText(/Could not refresh the bill: The service is busy/)).toBeVisible();
+  // The bill (as last read) stays on screen; no fresh Cash form is offered and cancelling stays locked.
+  await expect(page.getByRole('heading', { name: 'Bill LB/2627/0001' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record payment' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
+  // Leaving and coming back keeps it (session memory, not the form).
+  await page.getByRole('link', { name: 'Back to bills' }).click();
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  await expect(page.getByRole('group', { name: 'Unconfirmed payment' })).toContainText('by UPI (reference UTR9)');
+  // The service is back: the bill shows that very payment, which settles it without sending anything again.
+  backend.failDetailReads = 0;
+  const retry = page.getByRole('button', { name: 'Try again' });
+  if (await retry.count()) await retry.first().click();
+  await expect(page.getByText('Payment recorded.')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Unconfirmed payment' })).toHaveCount(0);
+  await expect(page.getByText('Paid by UPI · reference UTR9')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeEnabled();
+  expect(backend.calls.filter((c) => c.path.endsWith('/pay'))).toHaveLength(1);
+});
+
+test('a payment from a page that was left: another page shows it instead of a new form, and its late 409 does not erase the newer attempt', async ({ page }) => {
+  const backend = await mockBackend(page, owner(), { seed: true });
+  await signInPartner(page);
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  // Page A sends UPI/UTR-A; its request is held (it will lose the compare-and-set: 409).
+  let release!: () => void;
+  backend.holdPay = new Promise<void>((r) => { release = r; });
+  backend.heldPayConflict = true;
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByLabel('Paid by').selectOption('upi');
+  await page.getByLabel('Reference (optional)').fill('UTR-A');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed payment' })).toContainText('is being sent');
+  // A is left; page B opens: it shows A's payment (stored before it was sent), not a new form; cancel is locked.
+  await page.getByRole('link', { name: 'Back to bills' }).click();
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  const b = page.getByRole('group', { name: 'Unconfirmed payment' });
+  await expect(b).toContainText('by UPI (reference UTR-A)');
+  await expect(page.getByRole('button', { name: 'Record payment' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
+  // B resends it (attempt 2): recorded, but its answer is lost and reads fail.
+  backend.loseNextPayAnswer = true;
+  backend.failDetailReads = 50;
+  await b.getByRole('button', { name: 'Send the same payment again' }).click();
+  await expect(b).toContainText('We could not confirm the payment of ₹1,008.00 by UPI (reference UTR-A)');
+  // A's delayed 409 arrives now. It must not touch B's record.
+  release();
+  await expect.poll(() => backend.heldPayAnswered).toBe(true);
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 100)));
+  await page.getByRole('link', { name: 'Back to bills' }).click();
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  await expect(page.getByRole('group', { name: 'Unconfirmed payment' })).toContainText('We could not confirm the payment of ₹1,008.00 by UPI (reference UTR-A)');
+  await expect(page.getByRole('button', { name: 'Record payment' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
+  // Reads work again: the bill's receipt settles it.
+  backend.failDetailReads = 0;
+  await page.getByRole('group', { name: 'Unconfirmed payment' }).getByRole('button', { name: 'Check the bill' }).click();
+  await expect(page.getByText('Payment recorded.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeEnabled();
+  expect(backend.events.filter((e) => e.kind === 'payment')).toHaveLength(1);
+});
+
+test('a payment sent just before a reload: only the bill settles it; a new one is offered only once the bill is read unpaid', async ({ page }) => {
+  const backend = await mockBackend(page, owner(), { seed: true });
+  await signInPartner(page);
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  let release!: () => void;
+  backend.holdPay = new Promise<void>((r) => { release = r; });
+  backend.heldPayConflict = true; // never recorded
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed payment' })).toContainText('is being sent');
+  await page.reload();
+  const panel = page.getByRole('group', { name: 'Unconfirmed payment' });
+  await expect(panel).toContainText('was sent from this device before the page was reloaded');
+  await expect(page.getByRole('button', { name: 'Record payment' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
+  release();
+  await panel.getByRole('button', { name: 'Check the bill' }).click();
+  await panel.getByRole('button', { name: 'Record the payment again' }).click();
+  await panel.getByRole('button', { name: 'The bill is unpaid: record it again' }).click();
+  await expect(page.getByRole('button', { name: 'Record payment' })).toBeEnabled();
+});
+
+test('a give-up answer from a page that was left does not settle the bill a returned page is resending', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.dropNextCreate = true;
+  await signInPartner(page);
+  await issueCbcBill(page);
+  const panelA = page.getByRole('group', { name: 'Unconfirmed bill' });
+  await panelA.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panelA).toContainText('Not recorded so far');
+  // Page A asks to give up K1; the answer is held.
+  let release!: () => void;
+  backend.holdAbandon = new Promise<void>((r) => { release = r; });
+  await panelA.getByRole('button', { name: 'Give up this bill' }).click();
+  // The person leaves and opens the new bill again (page B): it resends K1 (attempt 2), whose answer is lost.
+  await page.goto('/#/partner/invoices');
+  await page.goto('/#/partner/invoices/new');
+  backend.loseNextCreateAnswer = true;
+  const panelB = page.getByRole('group', { name: 'Unconfirmed bill' });
+  await panelB.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(panelB).toContainText('Could not reach the server');
+  // Page A's late answer: "used" (B's resend issued the bill). It must not settle B's attempt.
+  release();
+  await expect.poll(() => backend.abandonAnswered).toBe(true);
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 100)));
+  const key = (creates(backend)[0]!.body as Rec).idempotencyKey as string;
+  expect(await page.evaluate((k) => Object.values({ ...sessionStorage }).some((v) => v.includes(k)), key)).toBe(true);
+  await page.goto('/#/partner/invoices');
+  await page.goto('/#/partner/invoices/new');
+  const panelC = page.getByRole('group', { name: 'Unconfirmed bill' });
+  await expect(panelC).toBeVisible(); // not a fresh form: no second bill under a new key
+  await panelC.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Bill LB/2627/0001 had already been issued.')).toBeVisible();
+  expect(backend.invoices).toHaveLength(1);
 });
 
 test('admin switching partners: drafts, open forms and an unconfirmed bill stay with their own partner', async ({ page }) => {

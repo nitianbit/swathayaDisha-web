@@ -9,22 +9,27 @@ import type { ScopeContext } from './scope.tsx';
 export const money = (minor: number | undefined | null) =>
   (minor === undefined || minor === null ? formatRupees(minor) : formatRupees(paiseToRupees(minor)));
 
-/** The catalogue is lab-shaped on the server (`test`/`package`, `home`/`lab`); clinics see the same values in their words. */
-export const ITEM_KIND_LABEL: Record<PartnerKind, Record<CatalogueItemKind, string>> = {
-  lab: { test: 'Test', package: 'Package' },
-  clinic: { test: 'Service', package: 'Package' },
+/** Q10 item kinds (labs: test/package; clinics: consultation/procedure/package/other). */
+export const ITEM_KIND_LABEL: Record<CatalogueItemKind, string> = {
+  test: 'Test', package: 'Package', consultation: 'Consultation', procedure: 'Procedure', other: 'Other',
 };
-export const VISIT_MODE_LABEL: Record<PartnerKind, Record<VisitMode, string>> = {
-  lab: { home: 'Home collection', lab: 'At the lab' },
-  clinic: { home: 'Home visit', lab: 'At the clinic' },
-};
+/** Labs only (clinic items have no visit modes). */
+export const VISIT_MODE_LABEL: Record<VisitMode, string> = { home: 'Home collection', lab: 'At the lab' };
 
 /** Catalogue readers (`GET /catalogue`): `catalogue.manage` or `invoices.create`. */
 export const canReadCatalogue = (ctx: ScopeContext) => holdsAny(ctx.actor, ['catalogue.manage', 'invoices.create']);
 
-/** Active catalogue items (admin-disabled ones included). */
-export function useCatalogue(ctx: ScopeContext, enabled = true) {
-  return useQuery({ queryKey: [...ctx.key, 'catalogue'], queryFn: () => ctx.billing.catalogue(), enabled: enabled && canReadCatalogue(ctx) });
+/**
+ * Active catalogue items (admin-disabled ones included); `includeInactive` adds deactivated ones (catalogue managers).
+ * Every variant shares the `[..., 'catalogue']` prefix, so one invalidation refreshes them all.
+ */
+export function useCatalogue(ctx: ScopeContext, opts: { includeInactive?: boolean } = {}) {
+  const all = !!opts.includeInactive;
+  return useQuery({
+    queryKey: [...ctx.key, 'catalogue', all ? 'all' : 'active'],
+    queryFn: () => ctx.billing.catalogue(undefined, all),
+    enabled: canReadCatalogue(ctx),
+  });
 }
 
 /** Q6 `GET /clinic/doctors` readers; only asked for clinics. */
@@ -35,12 +40,4 @@ export function useClinicDoctors(ctx: ScopeContext, kind: PartnerKind | undefine
     queryKey: [...ctx.key, 'clinic-doctors'], queryFn: () => ctx.billing.clinicDoctors(),
     enabled: kind === 'clinic' && canReadDoctors(ctx),
   });
-}
-
-/** IST calendar date (YYYY-MM-DD) → the instant its next day starts in India, as the `before` bound of "on or before". */
-export function endOfIstDay(date: string): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-  const start = Date.parse(`${date}T00:00:00+05:30`);
-  if (Number.isNaN(start)) return null;
-  return new Date(start + 24 * 60 * 60_000).toISOString();
 }

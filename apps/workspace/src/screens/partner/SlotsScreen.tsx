@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   addDays, capacityProblem, deriveTemplate, holdsAny, istDateOf, LAB_VISIT_MODE_LABEL, manualSlotProblems, MAX_WINDOWS_PER_DAY,
@@ -76,26 +76,41 @@ function Schedule({ ctx, canManage }: { ctx: ScopeContext; canManage: boolean })
 function BranchSchedule({ ctx, branch, mode, canManage }: { ctx: ScopeContext; branch: Branch; mode: VisitMode; canManage: boolean }) {
   const today = istDateOf(new Date());
   const [week, setWeek] = useState(() => mondayOf(today));
-  const [open, setOpen] = useState<'template' | 'slot' | null>(null);
+  // Each opened editor gets its own generation; an answer that arrives after another editor was opened (or this one was
+  // reopened) still reports what happened, but never closes the newer editor or moves the week.
+  const [open, setOpen] = useState<{ kind: 'template' | 'slot'; gen: number } | null>(null);
+  const generation = useRef(0);
   const [notice, setNotice] = useState<string | null>(null);
   const where = `${LAB_VISIT_MODE_LABEL[mode].toLowerCase()} at ${branch.name}`;
+  const openEditor = (kind: 'template' | 'slot') => { generation.current += 1; setOpen({ kind, gen: generation.current }); setNotice(null); };
+  const current = (gen: number) => generation.current === gen;
+  const closeIf = (gen: number) => { if (current(gen)) setOpen(null); };
   return (
     <>
       {notice && <Alert tone="ok">{notice}</Alert>}
       {canManage && (
         <div className="ws-actions">
-          {open !== 'template' && <Button variant="secondary" onClick={() => { setOpen('template'); setNotice(null); }}>Edit the weekly template</Button>}
-          {open !== 'slot' && <Button variant="secondary" onClick={() => { setOpen('slot'); setNotice(null); }}>Add a one-off slot</Button>}
+          {open?.kind !== 'template' && <Button variant="secondary" onClick={() => openEditor('template')}>Edit the weekly template</Button>}
+          {open?.kind !== 'slot' && <Button variant="secondary" onClick={() => openEditor('slot')}>Add a one-off slot</Button>}
         </div>
       )}
-      {canManage && open === 'template' && (
-        <TemplateEditor ctx={ctx} branch={branch} mode={mode} where={where} onClose={() => setOpen(null)}
-          onSaved={(m) => { setOpen(null); setNotice(m); }} />
-      )}
-      {canManage && open === 'slot' && (
-        <ManualSlotForm ctx={ctx} branch={branch} mode={mode} defaultDate={week < today ? today : week} onClose={() => setOpen(null)}
-          onAdded={(s) => { setOpen(null); setWeek(mondayOf(s.date)); setNotice(`Slot ${slotLabel(s)} added with ${s.capacity} ${s.capacity === 1 ? 'seat' : 'seats'}.`); }} />
-      )}
+      {canManage && open?.kind === 'template' && (() => {
+        const gen = open.gen;
+        return (
+          <TemplateEditor key={gen} ctx={ctx} branch={branch} mode={mode} where={where} onClose={() => closeIf(gen)}
+            onSaved={(m) => { closeIf(gen); setNotice(m); }} />
+        );
+      })()}
+      {canManage && open?.kind === 'slot' && (() => {
+        const gen = open.gen;
+        return (
+          <ManualSlotForm key={gen} ctx={ctx} branch={branch} mode={mode} defaultDate={week < today ? today : week} onClose={() => closeIf(gen)}
+            onAdded={(s) => {
+              if (current(gen)) { setOpen(null); setWeek(mondayOf(s.date)); }
+              setNotice(`Slot ${slotLabel(s)} added with ${s.capacity} ${s.capacity === 1 ? 'seat' : 'seats'}.`);
+            }} />
+        );
+      })()}
       <section className="ws-section" aria-labelledby="week-h">
         <h2 id="week-h">Week of {formatDay(week)}</h2>
         <div className="ws-actions">
