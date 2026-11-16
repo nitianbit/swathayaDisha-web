@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  LEDGER_KIND_LABEL, payoutDetailsProblems, periodProblem, statementCsvName,
-  type FinanceSummary, type PayoutDetailsInput, type PayoutDetailsView, type SettlementAccountView,
+  ApiError, LEDGER_KIND_LABEL, payoutDetailsProblems, periodProblem, statementCsvName,
+  type FinanceSummary, type Page, type PayoutDetailsInput, type PayoutDetailsView, type SettlementAccountView,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField, formatDateTime } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
@@ -134,11 +134,19 @@ function PayoutForm({ d, version, onClose, onSaved }: {
         setFailure({ tone: 'warn', text: `Your payout details were changed since you opened this form${fresh.account?.payoutDetails ? ` (now: ${detailsText(fresh.account.payoutDetails)})` : ''}. Check them; send yours again only if they are still needed.` });
         return;
       }
-      const a = await d.api.setPayoutDetails(f);
+      // Q13: also fenced on the server (409 PAYOUT_DETAILS_CHANGED) for a change landing after this read.
+      const a = await d.api.setPayoutDetails(f, baseVersion.current);
       queryClient.setQueryData<FinanceSummary>(financeKey(d), (old) => (old ? { ...old, account: a } : old));
       onSaved(a);
     } catch (err) {
       setConfirming(false);
+      if (err instanceof ApiError && err.code === 'PAYOUT_DETAILS_CHANGED') {
+        // Read what is there now and make it the base: the doctor reviews it before deciding to send again.
+        const fresh = await queryClient.fetchQuery({ queryKey: financeKey(d), queryFn: () => d.api.finance(), staleTime: 0 }).catch(() => null);
+        if (fresh) baseVersion.current = fresh.account?.payoutDetailsVersion ?? 0;
+        setFailure({ tone: 'warn', text: `Your payout details were changed since you opened this form${fresh?.account?.payoutDetails ? ` (now: ${detailsText(fresh.account.payoutDetails)})` : ''}. Check them; send yours again only if they are still needed.` });
+        return;
+      }
       setFailure({ tone: 'error', text: definitelyNotRecorded(err) ? `Not saved: ${messageOf(err)}`
         : `${messageOf(err)} They may have been saved: look at the details above before sending again.` });
     } finally {
@@ -297,20 +305,43 @@ function CsvDownload({ d, from, to }: { d: DoctorContext; from?: string; to?: st
 
 // ── Payouts, earlier history, activity ──
 
+/** Q13: payouts and events come newest first, a page at a time, by the exact cursor the server gives. */
+function usePaged<T>(key: readonly unknown[], read: (cursor?: string) => Promise<Page<T>>) {
+  const q = useInfiniteQuery({
+    queryKey: key, queryFn: ({ pageParam }) => read(pageParam),
+    initialPageParam: undefined as string | undefined, getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+  const items = q.data?.pages.flatMap((p) => p.items) ?? [];
+  const total = q.data?.pages[0]?.total ?? 0;
+  return { q, items, total };
+}
+
+function MoreButton({ q, label }: { q: ReturnType<typeof usePaged>['q']; label: string }) {
+  if (!q.hasNextPage) return null;
+  return (
+    <>
+      <div className="ws-actions"><Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{label}</Button></div>
+      {q.isFetchNextPageError && <Alert>Could not load more: {messageOf(q.error)}</Alert>}
+    </>
+  );
+}
+
 function Payouts({ d }: { d: DoctorContext }) {
-  const q = useQuery({ queryKey: [...d.key, 'payouts'], queryFn: () => d.api.payouts() });
+  const { q, items, total } = usePaged([...d.key, 'payouts'], (c) => d.api.payouts(c));
   return (
     <section className="ws-section" aria-labelledby="payouts-h">
       <h2 id="payouts-h">Payouts</h2>
       {q.isPending ? <Loading label="Loading payouts…" />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : (q.data ?? []).length === 0 ? <Empty title="No payouts yet" />
+        : items.length === 0 ? <Empty title="No payouts yet" />
         : (
+          <>
+          <p className="ws-count">Showing {items.length} of {total}</p>
           <div className="ws-table-wrap">
             <table className="j-table" aria-label="Payouts">
               <thead><tr><th scope="col">Paid on</th><th scope="col">Amount</th><th scope="col">How</th><th scope="col">Reference</th><th scope="col">To</th><th scope="col">State</th></tr></thead>
               <tbody>
-                {q.data!.map((p) => (
+                {items.map((p) => (
                   <tr key={p._id}>
                     <td>{formatDay(p.paidOn)}</td>
                     <td>{rupeesOf(p.amountMinor)}</td>
@@ -323,6 +354,8 @@ function Payouts({ d }: { d: DoctorContext }) {
               </tbody>
             </table>
           </div>
+          <MoreButton q={q} label="Show older payouts" />
+          </>
         )}
     </section>
   );
@@ -359,19 +392,22 @@ function History({ d }: { d: DoctorContext }) {
 }
 
 function Events({ d }: { d: DoctorContext }) {
-  const q = useQuery({ queryKey: [...d.key, 'finance-events'], queryFn: () => d.api.events() });
+  const { q, items } = usePaged([...d.key, 'finance-events'], (c) => d.api.events(c));
   return (
     <section className="ws-section" aria-labelledby="ev-h">
       <h2 id="ev-h">Account activity</h2>
       {q.isPending ? <Loading label="Loading activity…" />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : (q.data ?? []).length === 0 ? <Empty title="No activity yet" />
+        : items.length === 0 ? <Empty title="No activity yet" />
         : (
+          <>
           <ul className="ws-timeline" aria-label="Account activity">
-            {q.data!.map((e) => (
+            {items.map((e) => (
               <li key={e._id}><time dateTime={e.at}>{formatDateTime(e.at)}</time><span>{EVENT_LABEL[e.action] ?? e.action} · {BY_LABEL[e.byKind] ?? e.byKind}</span></li>
             ))}
           </ul>
+          <MoreButton q={q} label="Show older activity" />
+          </>
         )}
     </section>
   );

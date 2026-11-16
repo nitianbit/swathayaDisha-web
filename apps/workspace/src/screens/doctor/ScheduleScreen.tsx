@@ -157,12 +157,15 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
       const conflicts = rebaseTo(toDraft(fresh));
       if (conflicts.length) { setStale(staleMessage(conflicts.map((k) => DRAFT_LABEL[k]))); setConfirming(false); return; }
       if (!check()) { setConfirming(false); return; }
-      const r = await d.api.saveSchedule(fromDraft(draft.current().draft));
+      // Q13: the write names the version it is based on; a change landing after this read is refused (409 SCHEDULE_CHANGED).
+      const r = await d.api.saveSchedule(fromDraft(draft.current().draft), fresh ? fresh.updatedAt ?? null : null);
       queryClient.setQueryData(scheduleKey(d), r.template);
       onSaved(`Weekly hours saved. ${expansionText(r.expansion)}`);
     } catch (err) {
-      // Saving the same template again is safe: the server sets it, it never adds to it.
-      setFailure(definitelyNotRecorded(err) ? `Not saved: ${messageOf(err)}` : `${messageOf(err)} It may have been saved; saving the same hours again is safe.`);
+      // A refusal (also SCHEDULE_CHANGED: the hours are read again below and a day changed on both sides is reset) saved
+      // nothing. After a lost answer the hours are read again too: if they were saved, the form already shows them.
+      setFailure(definitelyNotRecorded(err) ? `Not saved: ${messageOf(err)}`
+        : `${messageOf(err)} It may have been saved: your hours are read again; check them before saving again.`);
       setConfirming(false);
     } finally {
       setBusy(false);

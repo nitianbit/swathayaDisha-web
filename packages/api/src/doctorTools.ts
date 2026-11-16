@@ -1,4 +1,4 @@
-import { ApiError, type ApiClient } from './client.ts';
+import { ApiError, type ApiClient, type Page } from './client.ts';
 import { appointmentInstant } from './cancellationWindow.ts';
 import { isRealDate } from './partnerLabs.ts';
 import {
@@ -16,6 +16,11 @@ import {
  * - earnings, statement, payouts and the payout destination (Q5): `partners/{validation,services}/finance.ts`.
  * The server decides every rule; the mirrors here only say what to offer and why something is not offered. Every id,
  * date and cursor is checked before it can reach a path or a query.
+ *
+ * Backend reference: Q13 (`m0/q13-doctor-finance`, 7032f9d + 4ac16b6): presence read and ordered writes
+ * (`presenceVersion` / `expectedPresenceVersion` → 409 PRESENCE_CHANGED), offers with the patient's quote, idempotent
+ * accept (`replayed`), keyed extensions and the instant booking read, `expectedUpdatedAt` on the schedule,
+ * `expectedDetailsVersion` on payout details, and cursor-paged payouts and events.
  */
 
 // ── Shared ──
@@ -172,16 +177,32 @@ export const CONSULT_MINUTES = 30;
 export const EXTEND_MINUTES_MAX = 60;
 
 /** `IDoctorPresence` as `PUT /me/presence` answers it. There is no route that reads it back (see PLAN, WQ4 gaps). */
+/**
+ * The doctor's presence. `GET /me/presence` and the heartbeat answer the full view (`presence()` in
+ * `services/instant.ts`); `PUT /me/presence` answers the stored record (terms and `presenceVersion`, no derived fields).
+ * `presenceVersion` changes with every change of terms and every forced offline, never with a heartbeat.
+ */
 export interface Presence {
   doctorId: string;
   available: boolean;
   modes: InstantMode[];
   instantFeeMinor: number;
+  presenceVersion: number;
   specialization?: string;
-  lastSeenAt?: string;
+  lastSeenAt?: string | null;
   updatedAt?: string;
+  /** Read view only. */
+  eligible?: boolean;
+  feeConfigured?: boolean;
+  heartbeatExpiresAt?: string | null;
+  heartbeatExpired?: boolean;
+  busy?: boolean;
+  busyUntil?: string | null;
+  online?: boolean;
 }
 export interface PresenceInput { available: boolean; modes: InstantMode[]; instantFeeMinor?: number }
+/** `presenceSchema` (Q13): the terms, and the version they were decided on (0 = never set). */
+export interface PresenceWrite extends PresenceInput { expectedPresenceVersion: number }
 
 /** `presenceSchema` + `setPresence`: at least one type when available; a whole-paise fee within bounds. */
 export function presenceProblems(p: PresenceInput): { modes?: string; fee?: string } {
@@ -202,6 +223,10 @@ export interface InstantOffer {
   patient: { name: string; age?: number; gender?: string };
   generation: number;
   offerExpiresAt: string;
+  /** Q13: what the patient paid (the ceiling of the fee), this doctor's current fee, and whether it fits. */
+  quotedAmountMinor?: number;
+  yourFeeMinor?: number | null;
+  feeWithinQuote?: boolean;
 }
 
 /** Seconds until an offer closes (0 once closed). */
@@ -237,8 +262,20 @@ export function instantRefusal(err: unknown): string | null {
   return (err.code && INSTANT_REFUSAL[err.code]) || err.message;
 }
 
-/** `DoctorReservation` moved by an extension (`moveInterval`). */
-export interface Reservation { doctorId: string; kind: 'instant' | 'scheduled'; refId: string; startTime: string; endTime: string; isActive: boolean }
+/** `DoctorReservation` moved by an extension (`moveInterval`); Q13 adds the extension and whether it was a replay. */
+export interface Reservation {
+  doctorId: string; kind: 'instant' | 'scheduled'; refId: string; startTime: string; endTime: string; isActive: boolean;
+  extension?: { requestKey?: string; minutes: number; endTime: string; at: string };
+  replayed?: boolean;
+}
+/** Q13 `doctorInstantBooking`: one instant consultation with the interval it holds now and every extension. */
+export interface InstantBookingView {
+  bookingId: string; instantRequestId?: string; status: AppointmentStatus; consultationMode?: ConsultMode; bookingDate: string; bookingTime: string;
+  feeMinor: number; patient: { name: string; age?: number; gender?: string } | null;
+  held: { startTime: string; endTime: string; isActive: boolean; current: boolean } | null;
+  extensions: { requestKey?: string; minutes: number; endTime: string; at: string }[];
+}
+const REQUEST_KEY = /^[A-Za-z0-9_-]{8,100}$/;
 
 // ── Appointments (specialist portal) ──
 
@@ -393,6 +430,8 @@ export interface SettlementAccountView {
   payoutDetails: PayoutDetailsView | null;
   payoutDetailsState: PayoutDetailsState;
   payoutDetailsVersion: number;
+  /** Q13: bumped by every payout, void, adjustment and destination change. */
+  financeVersion?: number;
   payoutDetailsChangedAt?: string;
   payoutDetailsVerifiedAt?: string;
 }
@@ -474,6 +513,13 @@ function payoutBody(i: PayoutDetailsInput): PayoutDetailsInput {
   return { method: 'upi', upiId: (i.upiId ?? '').trim().toLowerCase(), ...((i.accountName ?? '').trim() ? { accountName: i.accountName!.trim() } : {}) };
 }
 
+/** Payouts and events per page (`pageQuerySchema`: 1–500). */
+export const FINANCE_PAGE = 50;
+function pageCursor(cursor?: string): string | undefined {
+  if (cursor !== undefined && !CURSOR_PATTERN.test(cursor)) throw new Error('Invalid cursor');
+  return cursor;
+}
+
 function statementQuery(q: StatementQuery) {
   if (q.before !== undefined && !CURSOR_PATTERN.test(q.before)) throw new Error('Invalid statement cursor');
   if (q.limit !== undefined && (!Number.isInteger(q.limit) || q.limit < 1 || q.limit > STATEMENT_LIMIT_MAX)) throw new Error('Invalid limit');
@@ -491,28 +537,42 @@ export function doctorToolsApi(c: ApiClient) {
     // Schedule (Q4a)
     schedule: () => c.get<DoctorSchedule | null>(`${ME}/schedule`),
     /** Replaces the weekly template; the next 30 days are brought in line at once (the answer says how). */
-    saveSchedule: (t: ScheduleInput) => c.put<ScheduleSaved>(`${ME}/schedule`, { body: scheduleBody(t) }),
+    /**
+     * Replaces the weekly template. `expectedUpdatedAt` is the saved template's `updatedAt` the edit is based on (null =
+     * there was none): a template changed since is refused with 409 SCHEDULE_CHANGED (Q13).
+     */
+    saveSchedule: (t: ScheduleInput, expectedUpdatedAt: string | null) => {
+      if (expectedUpdatedAt !== null && Number.isNaN(Date.parse(expectedUpdatedAt))) throw new Error('Invalid expectedUpdatedAt');
+      return c.put<ScheduleSaved>(`${ME}/schedule`, { body: { ...scheduleBody(t), expectedUpdatedAt } });
+    },
     /** A leave day (`YYYY-MM-DD`): no new bookings that day; booked slots keep their bookings. Repeating it changes nothing. */
     addLeave: (date: string) => c.post<ScheduleSaved>(`${ME}/leave`, { body: { date: toYmd(date) } }),
     removeLeave: (date: string) => c.delete<ScheduleSaved>(`${ME}/leave/${toYmd(date)}`),
 
     // Instant consultations (Q4b)
-    setPresence: (p: PresenceInput) => {
+    /** The presence as the platform sees it now (Q13). */
+    presence: () => c.get<Presence>(`${ME}/presence`),
+    /** An ordered write: refused with 409 PRESENCE_CHANGED unless the stored version is still `expectedPresenceVersion`. */
+    setPresence: (p: PresenceWrite) => {
       if (Object.keys(presenceProblems(p)).length) throw new Error('Invalid presence');
+      if (!Number.isSafeInteger(p.expectedPresenceVersion) || p.expectedPresenceVersion < 0) throw new Error('Invalid presence version');
       return c.put<Presence>(`${ME}/presence`, { body: { available: p.available, modes: [...p.modes],
-        ...(p.instantFeeMinor !== undefined ? { instantFeeMinor: p.instantFeeMinor } : {}) } });
+        ...(p.instantFeeMinor !== undefined ? { instantFeeMinor: p.instantFeeMinor } : {}), expectedPresenceVersion: p.expectedPresenceVersion } });
     },
     /** Keeps "available now" alive (online = available, a heartbeat within 2 minutes, not in a consultation now). */
-    heartbeat: () => c.post<{ online: boolean }>(`${ME}/presence/heartbeat`),
+    heartbeat: () => c.post<Presence>(`${ME}/presence/heartbeat`),
     offers: () => c.get<InstantOffer[]>(`${ME}/instant/offers`),
-    /** First accept wins; no request key (a repeat after success is refused as taken: look in the appointments). */
+    /** First accept wins; accepting again as the same doctor answers the own booking with `replayed: true` (Q13). */
     accept: (requestId: string) =>
-      c.post<{ request: Record<string, unknown>; booking: DoctorAppointment }>(`${ME}/instant/${checkId(requestId, 'request')}/accept`),
-    /** Adds time to a running instant consultation. Not keyed: each successful call adds again. */
-    extend: (bookingId: string, minutes: number) => {
+      c.post<{ request: Record<string, unknown>; booking: DoctorAppointment; replayed?: boolean }>(`${ME}/instant/${checkId(requestId, 'request')}/accept`),
+    /** Adds time to a running instant consultation. The same `requestKey` with the same minutes extends once (Q13). */
+    extend: (bookingId: string, minutes: number, requestKey: string) => {
       if (!Number.isInteger(minutes) || minutes < 1 || minutes > EXTEND_MINUTES_MAX) throw new Error('Invalid minutes');
-      return c.post<Reservation>(`${ME}/instant/bookings/${checkId(bookingId, 'booking')}/extend`, { body: { minutes } });
+      if (!REQUEST_KEY.test(requestKey)) throw new Error('Invalid request key');
+      return c.post<Reservation>(`${ME}/instant/bookings/${checkId(bookingId, 'booking')}/extend`, { body: { minutes, requestKey } });
     },
+    /** One instant consultation with its held interval and extensions (Q13): where a lost extension is looked for. */
+    instantBooking: (bookingId: string) => c.get<InstantBookingView>(`${ME}/instant/bookings/${checkId(bookingId, 'booking')}`),
 
     // Appointments
     /** Every consultation on one India-time day (`view=day`). */
@@ -548,15 +608,21 @@ export function doctorToolsApi(c: ApiClient) {
       if (periodProblem(q.from, q.to)) throw new Error('Invalid period');
       return c.blob(`${ME}/finance/statement.csv`, { query: { from: q.from, to: q.to }, signal });
     },
-    payouts: () => c.get<Payout[]>(`${ME}/finance/payouts`),
+    /** Newest first, paged by the exact cursor from `nextCursor` (Q13). */
+    payouts: (cursor?: string) => c.page<Payout>(`${ME}/finance/payouts`, { query: { cursor: pageCursor(cursor), limit: FINANCE_PAGE } }),
     history: () => c.get<HistoryRef[]>(`${ME}/finance/history`),
-    events: () => c.get<FinanceEvent[]>(`${ME}/finance/events`),
-    /** Any change (even to the same values) needs Jansetu's verification again before the next payout. */
-    setPayoutDetails: (i: PayoutDetailsInput) => {
+    events: (cursor?: string) => c.page<FinanceEvent>(`${ME}/finance/events`, { query: { cursor: pageCursor(cursor), limit: FINANCE_PAGE } }),
+    /**
+     * Any change (even to the same values) needs Jansetu's verification again before the next payout.
+     * `expectedDetailsVersion` is the destination version the form was opened on: 409 PAYOUT_DETAILS_CHANGED otherwise (Q13).
+     */
+    setPayoutDetails: (i: PayoutDetailsInput, expectedDetailsVersion: number) => {
       if (Object.keys(payoutDetailsProblems(i)).length) throw new Error('Invalid payout details');
-      return c.put<SettlementAccountView>(`${ME}/finance/payout-details`, { body: payoutBody(i) });
+      if (!Number.isSafeInteger(expectedDetailsVersion) || expectedDetailsVersion < 0) throw new Error('Invalid details version');
+      return c.put<SettlementAccountView>(`${ME}/finance/payout-details`, { body: { ...payoutBody(i), expectedDetailsVersion } });
     },
   };
 }
 
 export type DoctorToolsApi = ReturnType<typeof doctorToolsApi>;
+

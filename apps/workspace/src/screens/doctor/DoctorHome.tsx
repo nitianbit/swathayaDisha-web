@@ -34,8 +34,9 @@ function Status({ d }: { d: DoctorContext }) {
         <dt>Available now</dt>
         <dd>
           {presence.presence?.available
-            ? <><Badge tone="ok">On</Badge> {presence.presence.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')} · {rupeesOf(presence.presence.instantFeeMinor)}</>
-            : presence.presence ? <Badge>Off</Badge> : presence.unconfirmed ? <Badge tone="warn">Not confirmed</Badge> : <Badge tone="warn">Not set on this device</Badge>}
+            ? <>{presence.live ? <Badge tone="ok">On</Badge> : <Badge tone="warn">On, not checked in</Badge>} {presence.presence.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')} · {rupeesOf(presence.presence.instantFeeMinor)}</>
+            : presence.presence ? <Badge>Off</Badge> : presence.unconfirmed ? <Badge tone="warn">Not confirmed</Badge>
+            : presence.loading ? '…' : <Badge tone="warn">Could not be read</Badge>}
           {' '}<Link to="/doctor/consult-now">Consult now</Link>
         </dd>
         <dt>Offers waiting</dt>

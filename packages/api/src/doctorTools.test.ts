@@ -175,14 +175,16 @@ describe('paths and bodies', () => {
   it('builds every route under /specialists/me with checked ids and dates', async () => {
     const { api, calls } = recorder();
     await api.schedule();
-    await api.saveSchedule({ slotMinutes: 15, days: { mon: [{ start: '09:00', end: '10:00', modes: ['in-person'], branchId: BR }] } });
+    await api.saveSchedule({ slotMinutes: 15, days: { mon: [{ start: '09:00', end: '10:00', modes: ['in-person'], branchId: BR }] } }, null);
     await api.addLeave('2026-11-20');
     await api.removeLeave('2026-11-20');
-    await api.setPresence({ available: true, modes: ['video', 'chat'], instantFeeMinor: 50_000 });
+    await api.presence();
+    await api.setPresence({ available: true, modes: ['video', 'chat'], instantFeeMinor: 50_000, expectedPresenceVersion: 4 });
     await api.heartbeat();
     await api.offers();
     await api.accept(ID);
-    await api.extend(ID, 15);
+    await api.extend(ID, 15, 'extend-key-1');
+    await api.instantBooking(ID);
     await api.appointmentsOn('2026-11-17');
     await api.appointmentsIn('2026-11');
     await api.setAppointmentStatus(ID, 'cancelled', '  Unwell  ');
@@ -196,18 +198,21 @@ describe('paths and bodies', () => {
     await api.statement({ before: `1763353800000_${ID}`, limit: 50, from: '2026-11-01' });
     await api.payouts();
     await api.history();
-    await api.events();
-    await api.setPayoutDetails({ method: 'upi', upiId: ' Dr.Rao@OKHDFC ', accountName: '' });
+    await api.events(`1763353800000_${ID}`);
+    await api.setPayoutDetails({ method: 'upi', upiId: ' Dr.Rao@OKHDFC ', accountName: '' }, 2);
+    await api.saveSchedule({ slotMinutes: 15, days: {} }, '2026-11-10T04:30:00.000Z');
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       'GET /specialists/me/schedule',
       'PUT /specialists/me/schedule',
       'POST /specialists/me/leave',
       'DELETE /specialists/me/leave/20261120',
+      'GET /specialists/me/presence',
       'PUT /specialists/me/presence',
       'POST /specialists/me/presence/heartbeat',
       'GET /specialists/me/instant/offers',
       `POST /specialists/me/instant/${ID}/accept`,
       `POST /specialists/me/instant/bookings/${ID}/extend`,
+      `GET /specialists/me/instant/bookings/${ID}`,
       'GET /specialists/me/appointments?view=day&date=20261117',
       'GET /specialists/me/appointments?view=month&yearMonth=202611',
       `PATCH /specialists/me/appointments/${ID}/status`,
@@ -219,18 +224,20 @@ describe('paths and bodies', () => {
       'GET /specialists/me/practice',
       'GET /specialists/me/finance',
       `GET /specialists/me/finance/statement?before=1763353800000_${ID}&limit=50&from=2026-11-01`,
-      'GET /specialists/me/finance/payouts',
+      'GET /specialists/me/finance/payouts?limit=50',
       'GET /specialists/me/finance/history',
-      'GET /specialists/me/finance/events',
+      `GET /specialists/me/finance/events?cursor=1763353800000_${ID}&limit=50`,
       'PUT /specialists/me/finance/payout-details',
+      'PUT /specialists/me/schedule',
     ]);
-    expect(calls[1]!.body).toEqual({ slotMinutes: 15, days: { mon: [{ start: '09:00', end: '10:00', modes: ['in-person'], branchId: BR }], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] } });
+    expect(calls[1]!.body).toEqual({ slotMinutes: 15, days: { mon: [{ start: '09:00', end: '10:00', modes: ['in-person'], branchId: BR }], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] }, expectedUpdatedAt: null });
     expect(calls[2]!.body).toEqual({ date: '20261120' });
-    expect(calls[4]!.body).toEqual({ available: true, modes: ['video', 'chat'], instantFeeMinor: 50_000 });
-    expect(calls[8]!.body).toEqual({ minutes: 15 });
-    expect(calls[11]!.body).toEqual({ status: 'cancelled', reason: 'Unwell' });
-    expect(calls[12]!.body).toEqual({ status: 'completed' });
-    expect(calls[23]!.body).toEqual({ method: 'upi', upiId: 'dr.rao@okhdfc' });
+    expect(calls[5]!.body).toEqual({ available: true, modes: ['video', 'chat'], instantFeeMinor: 50_000, expectedPresenceVersion: 4 });
+    expect(calls[9]!.body).toEqual({ minutes: 15, requestKey: 'extend-key-1' });
+    expect(calls[13]!.body).toEqual({ status: 'cancelled', reason: 'Unwell' });
+    expect(calls[14]!.body).toEqual({ status: 'completed' });
+    expect(calls[25]!.body).toEqual({ method: 'upi', upiId: 'dr.rao@okhdfc', expectedDetailsVersion: 2 });
+    expect((calls[26]!.body as { expectedUpdatedAt: string }).expectedUpdatedAt).toBe('2026-11-10T04:30:00.000Z');
     expect(calls.every((c) => c.headers.Authorization === 'Bearer tok')).toBe(true);
   });
 
@@ -238,18 +245,25 @@ describe('paths and bodies', () => {
     const { api, calls } = recorder();
     await api.createPractice({ name: ' Dr Rao Clinic ', invoiceSeriesPrefix: 'drk', gstin: '', pan: 'abcde1234f', legalName: '  ',
       branch: { name: 'Main', phone: '9000000001', address: { line1: '1 Main Rd', line2: '', city: 'Bengaluru', state: 'Karnataka', stateCode: '29', pincode: '560001' } } });
-    await api.setPayoutDetails({ method: 'bank', accountName: ' Dr Rao ', accountNumber: '1234 5678 9012', ifsc: 'hdfc0001234', bankName: ' ', upiId: 'x@y' });
+    await api.setPayoutDetails({ method: 'bank', accountName: ' Dr Rao ', accountNumber: '1234 5678 9012', ifsc: 'hdfc0001234', bankName: ' ', upiId: 'x@y' }, 0);
     expect(calls[0]!.body).toEqual({ name: 'Dr Rao Clinic', invoiceSeriesPrefix: 'DRK', pan: 'ABCDE1234F',
       branch: { name: 'Main', phone: '9000000001', address: { line1: '1 Main Rd', city: 'Bengaluru', state: 'Karnataka', stateCode: '29', pincode: '560001' } } });
-    expect(calls[1]!.body).toEqual({ method: 'bank', accountName: 'Dr Rao', accountNumber: '123456789012', ifsc: 'HDFC0001234' });
+    expect(calls[1]!.body).toEqual({ method: 'bank', accountName: 'Dr Rao', accountNumber: '123456789012', ifsc: 'HDFC0001234', expectedDetailsVersion: 0 });
   });
 
   it('refuses bad ids, dates, cursors and values before any request', async () => {
     const { api, calls } = recorder();
     expect(() => api.accept('../x')).toThrow();
-    expect(() => api.extend(ID, 0)).toThrow();
-    expect(() => api.extend(ID, 61)).toThrow();
-    expect(() => api.extend('nope', 10)).toThrow();
+    expect(() => api.extend(ID, 0, 'extend-key-1')).toThrow();
+    expect(() => api.extend(ID, 61, 'extend-key-1')).toThrow();
+    expect(() => api.extend('nope', 10, 'extend-key-1')).toThrow();
+    expect(() => api.extend(ID, 10, 'short')).toThrow();
+    expect(() => api.instantBooking('x')).toThrow();
+    expect(() => api.payouts('abc')).toThrow();
+    expect(() => api.events('1_2')).toThrow();
+    expect(() => api.saveSchedule({ slotMinutes: 30, days: {} }, 'yesterday')).toThrow();
+    expect(() => api.setPresence({ available: false, modes: [], expectedPresenceVersion: -1 })).toThrow();
+    expect(() => api.setPayoutDetails({ method: 'upi', upiId: 'a@okhdfc' }, 1.5)).toThrow();
     expect(() => api.addLeave('2026-02-30')).toThrow();
     expect(() => api.removeLeave('20261120')).toThrow();
     expect(() => api.appointmentsOn('2026-13-01')).toThrow();
@@ -260,9 +274,9 @@ describe('paths and bodies', () => {
     expect(() => api.statement({ before: 'abc' })).toThrow();
     expect(() => api.statement({ limit: 500 })).toThrow();
     expect(() => api.statementCsv({ from: '2026-11-30', to: '2026-11-01' })).toThrow();
-    expect(() => api.setPresence({ available: true, modes: [] })).toThrow();
-    expect(() => api.setPayoutDetails({ method: 'upi', upiId: 'bad' })).toThrow();
-    expect(() => api.saveSchedule({ slotMinutes: 30, days: { mon: [{ start: '09:00', end: '10:00', modes: ['in-person'], branchId: 'bad' }] } })).toThrow();
+    expect(() => api.setPresence({ available: true, modes: [], expectedPresenceVersion: 1 })).toThrow();
+    expect(() => api.setPayoutDetails({ method: 'upi', upiId: 'bad' }, 1)).toThrow();
+    expect(() => api.saveSchedule({ slotMinutes: 30, days: { mon: [{ start: '09:00', end: '10:00', modes: ['in-person'], branchId: 'bad' }] } }, null)).toThrow();
     expect(calls).toEqual([]);
   });
 

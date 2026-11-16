@@ -8,15 +8,16 @@ import {
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField, formatDateTime } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
-import { definitelyNotRecorded } from '../../requests.ts';
+import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import {
   appointmentsKey, MeetLink, NotADoctor, offersKey, rupeesOf, sortAppointments, useDoctor, useDoctorProfile, useMeetPoll, useTicker, type DoctorContext,
 } from './doctor.tsx';
 
+import { useDoctorPresence } from './presence.tsx';
+
 /** Today's consultations (one cache entry shared by the accept outcome and the running list). */
 const todayKey = (d: DoctorContext, today: string) => [...appointmentsKey(d), 'day', today];
-import { useDoctorPresence } from './presence.tsx';
 
 /** How often the open offers are read again while this page is visible. */
 const OFFERS_POLL_MS = 15_000;
@@ -38,7 +39,7 @@ function ConsultNow({ d }: { d: DoctorContext }) {
       </PageHeading>
       {standing === 'inactive' && <Alert>Your doctor account is not active, so you cannot take instant consultations. Contact Jansetu.</Alert>}
       {standing === 'unverified' && <Alert tone="warn">Your profile is waiting for verification by Jansetu. You can take instant consultations once it is verified.</Alert>}
-      <Availability d={d} profile={profile.data} />
+      <Availability profile={profile.data} />
       <Offers d={d} />
       <Running d={d} />
     </>
@@ -47,18 +48,20 @@ function ConsultNow({ d }: { d: DoctorContext }) {
 
 // ── Available now ──
 
-function Availability({ d, profile }: { d: DoctorContext; profile?: DoctorProfile }) {
+function Availability({ profile }: { profile?: DoctorProfile }) {
   const p = useDoctorPresence();
   const now = useTicker(15_000);
-  const defaultFee = p.presence ? paiseToInput(p.presence.instantFeeMinor)
+  const pr = p.presence;
+  const defaultFee = pr ? paiseToInput(pr.instantFeeMinor)
     : typeof profile?.consultationFee === 'number' ? paiseToInput(Math.round(profile.consultationFee * 100)) : '';
-  const [modes, setModes] = useState<InstantMode[]>(() => p.presence?.modes.length ? [...p.presence.modes] : ['video']);
+  const [chosen, setModes] = useState<InstantMode[] | null>(null);
+  const modes = chosen ?? (pr?.modes.length ? [...pr.modes] : ['video' as InstantMode]);
   const [fee, setFee] = useState<string | null>(null);
   const [errors, setErrors] = useState<{ modes?: string; fee?: string }>({});
   const [failure, setFailure] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const feeText = fee ?? defaultFee;
-  const on = p.presence?.available === true;
+  const on = pr?.available === true;
 
   async function send(available: boolean, e?: FormEvent) {
     e?.preventDefault();
@@ -71,82 +74,117 @@ function Availability({ d, profile }: { d: DoctorContext; profile?: DoctorProfil
     if (available && Object.keys(problems).length) return;
     try {
       // Going off sends the types and fee again (the server would otherwise reset the fee to the consultation fee).
-      const keepFee = minor !== undefined && minor !== null && !problems.fee ? minor : p.presence?.instantFeeMinor;
+      const keepFee = minor !== undefined && minor !== null && !problems.fee ? minor : pr?.instantFeeMinor;
       const r = await p.set(available ? input : { available: false, modes, ...(keepFee !== undefined ? { instantFeeMinor: keepFee } : {}) });
       setFee(null);
-      setNotice(r.available
-        ? `You are available now for ${r.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')} at ${rupeesOf(r.instantFeeMinor)}.`
-        : 'You are not available now. No new offers come to you.');
+      setModes(null);
+      setNotice(r.available ? `You are available now for ${termsText(r)}.` : 'You are not available now. No new offers come to you.');
     } catch (err) {
-      // A lost answer is shown by the "not confirmed" notice below (the terms are unknown); a refusal changed nothing.
-      if (definitelyNotRecorded(err)) {
+      if (err instanceof ApiError && err.code === 'PRESENCE_CHANGED') {
+        setFee(null);
+        setModes(null);
+        setFailure('Not changed: your availability was changed meanwhile (on another device, or by an earlier request of this page that arrived late). What the server has now is shown above; make your change again if it is still needed.');
+      } else if (definitelyNotRecorded(err)) {
+        // A refusal changed nothing; a lost answer is shown by the "not confirmed" notice (the terms are unknown).
         setFailure(available
           ? `Not changed: ${messageOf(err)}`
           : `Not switched off: ${messageOf(err)} This page has stopped its heartbeat, so you stop being offered consultations within two minutes.`);
       }
     }
   }
-  const sent = p.unconfirmed?.input;
 
+  async function check() {
+    setFailure(null);
+    setNotice(null);
+    try {
+      const r = await p.refresh();
+      setFee(null);
+      setModes(null);
+      setNotice(`The server has: ${r.available ? `available for ${termsText(r)}` : 'not available'} (version ${r.presenceVersion}). Send your change again if it is still needed.`);
+    } catch (err) {
+      setFailure(`Could not read your availability: ${messageOf(err)}`);
+    }
+  }
+
+  const sent = p.unconfirmed?.input;
+  if (p.loading) return <section className="ws-section" aria-labelledby="avail-h"><h2 id="avail-h">Available now</h2><Loading label="Reading your availability…" /></section>;
   return (
     <section className="ws-section" aria-labelledby="avail-h">
       <h2 id="avail-h">Available now</h2>
-      <p>
-        {on ? <Badge tone="ok">On</Badge> : p.presence ? <Badge>Off</Badge> : sent ? <Badge tone="warn">Not confirmed</Badge> : <Badge tone="warn">Not set on this device</Badge>}{' '}
-        {on ? `${p.presence!.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')} · fee ${rupeesOf(p.presence!.instantFeeMinor)}`
-          : p.presence ? 'You are not taking instant consultations.'
-          : sent ? 'Your availability and fee are not known here.'
-          : 'The server does not tell the workspace whether you switched this on earlier (for example before a reload). Switch it on to take consultations, or off to be sure.'}
-      </p>
+      {pr ? (
+        <p>
+          {on && p.live ? <Badge tone="ok">On</Badge> : on ? <Badge tone="warn">On, not checked in</Badge> : <Badge>Off</Badge>}{' '}
+          {on ? termsText(pr) : 'You are not taking instant consultations.'}
+        </p>
+      ) : sent ? (
+        <p><Badge tone="warn">Not confirmed</Badge> Your availability and fee are not known here.</p>
+      ) : null}
+      {!pr && !sent && p.loadError && <ErrorState message={`Could not read your availability: ${p.loadError}`} onRetry={() => void check()} />}
       {sent && (
         <Alert tone="warn">
           Your last change ({sent.available
             ? `available for ${sent.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')}${sent.instantFeeMinor !== undefined ? ` at ${rupeesOf(sent.instantFeeMinor)}` : ''}`
             : 'not available'}) was sent, but no answer came ({p.unconfirmed!.message}). It may or may not have been applied, so this page does not
-          know your fee and has stopped checking in: if it was applied, offers stop coming within two minutes. Send it again, or switch off, to be
-          sure. Offers cannot be accepted until the server confirms your terms.
+          know your fee and has stopped checking in: if it was applied, offers stop coming within two minutes. Check what the server has, then
+          send your change again if it is still needed. Offers cannot be accepted until then.
         </Alert>
       )}
-      {on && (
+      {on && !p.live && (
+        <p className="ws-muted">Switched on, but no workspace page has checked in for two minutes, so you are not being offered consultations. Go available now to start again.</p>
+      )}
+      {on && p.live && (
         <p className="ws-muted">
           Keep a workspace page open and visible: it tells the server you are here every minute. When the page is hidden or closed you stop
           being offered consultations two minutes later.
           {p.lastBeatAt ? ` Last check-in ${formatDateTime(new Date(p.lastBeatAt).toISOString())}${now.getTime() - p.lastBeatAt > 120_000 ? ' (more than two minutes ago)' : ''}.` : ''}
         </p>
       )}
-      {on && p.online === false && <Alert tone="warn">You are not being offered consultations right now: you are in a consultation, or “available now” was switched off elsewhere.</Alert>}
+      {on && p.live && p.online === false && (
+        <Alert tone="warn">
+          You are not being offered consultations right now: {pr?.busy ? `you are in a consultation${pr.busyUntil ? ` until ${formatDateTime(pr.busyUntil)}` : ''}` : 'you are in a consultation, or “available now” was switched off elsewhere'}.
+        </Alert>
+      )}
       {p.problem && <Alert tone="warn">{p.problem}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
       {failure && <Alert>{failure}</Alert>}
-      <form className="rx-form" noValidate onSubmit={(e) => void send(true, e)} aria-label="Available now">
-        <fieldset className="ws-checks" aria-describedby={errors.modes ? 'avail-modes-err' : undefined}>
-          <legend>Consultation types you take now</legend>
-          {INSTANT_MODES.map((m) => (
-            <label key={m} className="ws-check">
-              <input type="checkbox" checked={modes.includes(m)} disabled={p.busy}
-                onChange={(e) => setModes((x) => (e.target.checked ? INSTANT_MODES.filter((y) => y === m || x.includes(y)) : x.filter((y) => y !== m)))} />
-              {CONSULT_MODE_LABEL[m]}
-            </label>
-          ))}
-          {errors.modes && <span id="avail-modes-err" className="j-field__error">{errors.modes}</span>}
-        </fieldset>
-        <div className="rx-form-row">
-          <TextField label="Your fee for an instant consultation (₹)" inputMode="decimal" value={feeText} error={errors.fee} disabled={p.busy}
-            hint="Offers come only from patients who paid at least this much. Empty = your consultation fee." onChange={(e) => setFee(e.target.value)} />
-        </div>
+      {!pr ? (
         <div className="confirm-actions">
-          <Button type="submit" busy={p.busy}>{on ? 'Update' : sent?.available ? 'Send again' : 'Go available now'}</Button>
-          {(on || !p.presence) && <Button variant="secondary" disabled={p.busy} onClick={() => void send(false)}>{on ? 'Stop being available' : 'Make sure I am not available'}</Button>}
+          <Button busy={p.busy} onClick={() => void check()}>Check what the server has</Button>
         </div>
-      </form>
+      ) : (
+        <form className="rx-form" noValidate onSubmit={(e) => void send(true, e)} aria-label="Available now">
+          <fieldset className="ws-checks" aria-describedby={errors.modes ? 'avail-modes-err' : undefined}>
+            <legend>Consultation types you take now</legend>
+            {INSTANT_MODES.map((m) => (
+              <label key={m} className="ws-check">
+                <input type="checkbox" checked={modes.includes(m)} disabled={p.busy}
+                  onChange={(e) => setModes(e.target.checked ? INSTANT_MODES.filter((y) => y === m || modes.includes(y)) : modes.filter((y) => y !== m))} />
+                {CONSULT_MODE_LABEL[m]}
+              </label>
+            ))}
+            {errors.modes && <span id="avail-modes-err" className="j-field__error">{errors.modes}</span>}
+          </fieldset>
+          <div className="rx-form-row">
+            <TextField label="Your fee for an instant consultation (₹)" inputMode="decimal" value={feeText} error={errors.fee} disabled={p.busy}
+              hint="Offers come only from patients who paid at least this much." onChange={(e) => setFee(e.target.value)} />
+          </div>
+          <div className="confirm-actions">
+            <Button type="submit" busy={p.busy}>{on && p.live ? 'Update' : 'Go available now'}</Button>
+            {on && <Button variant="secondary" disabled={p.busy} onClick={() => void send(false)}>Stop being available</Button>}
+          </div>
+        </form>
+      )}
     </section>
   );
 }
 
+const termsText = (pr: { modes: InstantMode[]; instantFeeMinor: number }) =>
+  `${pr.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')} at ${rupeesOf(pr.instantFeeMinor)}`;
+
 // ── Offers ──
 
 type Outcome =
-  | { kind: 'accepted'; offer: InstantOffer; booking: DoctorAppointment }
+  | { kind: 'accepted'; offer: InstantOffer; booking: DoctorAppointment; replayed?: boolean }
   | { kind: 'refused'; offer: InstantOffer; message: string }
   | { kind: 'unknown'; offer: InstantOffer; message: string; checking: boolean; checked?: string };
 
@@ -184,7 +222,8 @@ function Offers({ d }: { d: DoctorContext }) {
       const r = await d.api.accept(offer.requestId);
       if (!current(n)) return;
       setConfirmFor(null);
-      setOutcome({ kind: 'accepted', offer, booking: r.booking });
+      // Q13: accepting again as the same doctor answers the own booking (`replayed`): the same success.
+      setOutcome({ kind: 'accepted', offer, booking: r.booking, replayed: r.replayed === true });
     } catch (err) {
       if (!current(n) || (err instanceof DOMException && err.name === 'AbortError')) return;
       const refusal = instantRefusal(err);
@@ -200,7 +239,7 @@ function Offers({ d }: { d: DoctorContext }) {
           if (found) setOutcome({ kind: 'accepted', offer, booking: found });
           else if (refusal) setOutcome({ kind: 'refused', offer, message: refusal });
           else setOutcome({ kind: 'unknown', offer, message: messageOf(err), checking: false,
-            checked: 'It is not among your appointments today. If the offer is still listed below you can try again: the first accept wins, so it is never taken twice.' });
+            checked: 'It is not among your appointments today. If the offer is still listed below you can accept again: if your earlier accept went through you get that consultation back, never a second one.' });
         } catch (lookErr) {
           if (current(n)) setOutcome({ kind: 'unknown', offer, message: messageOf(err), checking: false, checked: `Could not check your appointments: ${messageOf(lookErr)}` });
         }
@@ -226,7 +265,7 @@ function Offers({ d }: { d: DoctorContext }) {
       <p className="ws-muted">An offer stays open for 5 minutes. Accepting starts a {CONSULT_MINUTES}-minute consultation now.</p>
       {outcome?.kind === 'accepted' && (
         <Alert tone="ok">
-          You accepted the {offerLabel(outcome.offer).toLowerCase()} for {outcome.offer.patient.name}. It is on your <Link to="/doctor/appointments">appointments</Link>.
+          You accepted the {offerLabel(outcome.offer).toLowerCase()} for {outcome.offer.patient.name}{outcome.replayed ? ' (your earlier accept had gone through)' : ''}. It is on your <Link to="/doctor/appointments">appointments</Link>.
         </Alert>
       )}
       {acceptedBooking && <MeetLink b={acceptedBooking} onRefresh={() => day.refetch()} />}
@@ -251,13 +290,17 @@ function Offers({ d }: { d: DoctorContext }) {
           <ul className="stock-list" aria-label="Open offers">
             {list.map((o) => {
               const left = offerSecondsLeft(o, now);
+              // Q13: the patient's paid quote caps the fee. Judged on the acknowledged fee (the one the accept will use).
+              const myFee = canAccept && presence.presence ? presence.presence.instantFeeMinor : o.yourFeeMinor ?? null;
+              const tooHigh = o.quotedAmountMinor !== undefined && myFee !== null ? myFee > o.quotedAmountMinor : o.feeWithinQuote === false;
               return (
                 <li key={`${o.requestId}:${o.generation}`} className="doc-offer" aria-label={`Offer for ${o.patient.name}`}>
                   <div className="stock-head">
                     <strong>{offerLabel(o)}</strong>
                     {left > 0 ? <Badge tone={left < 60 ? 'warn' : undefined}>Closes in {mmss(left)}</Badge> : <Badge tone="danger">Closed</Badge>}
                   </div>
-                  <span>Patient: {patientLabel(o)}</span>
+                  <span>Patient: {patientLabel(o)}{o.quotedAmountMinor !== undefined ? ` · paid ${rupeesOf(o.quotedAmountMinor)}` : ''}</span>
+                  {tooHigh && <span className="ws-muted">Your fee{myFee !== null ? ` (${rupeesOf(myFee)})` : ''} is above what this patient paid, so you cannot take it. Lower your fee to take requests like this one.</span>}
                   {confirmFor === o.requestId ? (
                     <div className="confirm" role="group" aria-label={`Accept the offer for ${o.patient.name}`}>
                       <div className="confirm-text">
@@ -265,13 +308,13 @@ function Offers({ d }: { d: DoctorContext }) {
                         {' '}Your fee: {fee ?? 'not confirmed'}. It is refused if your fee is above what the patient paid.
                       </div>
                       <div className="confirm-actions">
-                        <Button busy={sending === o.requestId} disabled={left === 0 || !canAccept || (sending !== null && sending !== o.requestId)} onClick={() => void accept(o)}>Accept and start</Button>
+                        <Button busy={sending === o.requestId} disabled={left === 0 || !canAccept || tooHigh || (sending !== null && sending !== o.requestId)} onClick={() => void accept(o)}>Accept and start</Button>
                         <Button variant="ghost" disabled={sending === o.requestId} onClick={() => setConfirmFor(null)}>Back</Button>
                       </div>
                     </div>
                   ) : (
                     <div className="ws-actions">
-                      <Button disabled={left === 0 || !canAccept || sending !== null} aria-label={`Accept the offer for ${o.patient.name}`}
+                      <Button disabled={left === 0 || !canAccept || tooHigh || sending !== null} aria-label={`Accept the offer for ${o.patient.name}`}
                         onClick={() => { setConfirmFor(o.requestId); setOutcome(null); }}>Accept…</Button>
                     </div>
                   )}
@@ -317,26 +360,43 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'error'; text: string } | null>(null);
+  /** Q13: an extension whose answer was lost, kept with its request key: only the same one may be sent again (added once). */
+  const [pending, setPending] = useState<{ key: string; minutes: number } | null>(null);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const label = `${booking.consultationMode ? CONSULT_MODE_LABEL[booking.consultationMode] : 'Instant'} consultation accepted at ${booking.bookingTime}`;
 
   async function extend(e: FormEvent) {
     e.preventDefault();
-    const n = /^\d{1,2}$/.test(minutes.trim()) ? Number(minutes.trim()) : NaN;
-    if (!Number.isInteger(n) || n < 1 || n > EXTEND_MINUTES_MAX) { setFieldError(`Enter 1 to ${EXTEND_MINUTES_MAX} minutes.`); return; }
+    let op = pending;
+    if (!op) {
+      const n = /^\d{1,2}$/.test(minutes.trim()) ? Number(minutes.trim()) : NaN;
+      if (!Number.isInteger(n) || n < 1 || n > EXTEND_MINUTES_MAX) { setFieldError(`Enter 1 to ${EXTEND_MINUTES_MAX} minutes.`); return; }
+      op = { key: newRequestKey(), minutes: n };
+    }
     setFieldError(null);
     setBusy(true);
     setNotice(null);
     try {
-      const r = await d.api.extend(booking._id, n);
-      if (alive.current) setNotice({ tone: 'ok', text: `Extended by ${n} minutes: your time is held until ${formatDateTime(r.endTime)}.` });
+      const r = await d.api.extend(booking._id, op.minutes, op.key);
+      if (!alive.current) return;
+      setPending(null);
+      setNotice({ tone: 'ok', text: `Extended by ${op.minutes} minutes: your time is held until ${formatDateTime(r.extension?.endTime ?? r.endTime)}.` });
     } catch (err) {
       if (!alive.current) return;
       const refusal = instantRefusal(err);
-      // Not keyed on the server: each extension that arrives adds time, so a lost answer must not be resent blindly.
-      setNotice(refusal ? { tone: 'error', text: `Not extended: ${refusal}` }
-        : { tone: 'warn', text: `${messageOf(err)} It may have been extended. Extending again adds another ${n} minutes.` });
+      if (refusal) { setPending(null); setNotice({ tone: 'error', text: `Not extended: ${refusal}` }); return; }
+      // The answer was lost: look for this extension on the booking before anything else.
+      setPending(op);
+      try {
+        const b = await d.api.instantBooking(booking._id);
+        if (!alive.current) return;
+        const done = b.extensions.find((x) => x.requestKey === op.key);
+        if (done) { setPending(null); setNotice({ tone: 'ok', text: `Extended by ${op.minutes} minutes: your time is held until ${formatDateTime(done.endTime)}.` }); return; }
+        setNotice({ tone: 'warn', text: `${messageOf(err)} The extension is not recorded yet. Send the same extension again: it is added once, never twice.` });
+      } catch (lookErr) {
+        if (alive.current) setNotice({ tone: 'warn', text: `${messageOf(err)} Could not check whether it was recorded (${messageOf(lookErr)}). Sending the same extension again is safe: it is added once.` });
+      }
     } finally {
       if (alive.current) setBusy(false);
     }
@@ -348,9 +408,9 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
       {link}
       {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
       <form className="ws-search" noValidate onSubmit={(e) => void extend(e)} aria-label={`Extend the ${label.toLowerCase()}`}>
-        <TextField label="Extend by (minutes)" inputMode="numeric" value={minutes} error={fieldError} hint={`1 to ${EXTEND_MINUTES_MAX}; refused if it would run into your next booking`}
-          onChange={(e) => setMinutes(e.target.value)} />
-        <Button type="submit" variant="secondary" busy={busy}>Extend</Button>
+        <TextField label="Extend by (minutes)" inputMode="numeric" value={pending ? String(pending.minutes) : minutes} error={fieldError} disabled={!!pending}
+          hint={`1 to ${EXTEND_MINUTES_MAX}; refused if it would run into your next booking`} onChange={(e) => setMinutes(e.target.value)} />
+        <Button type="submit" variant="secondary" busy={busy}>{pending ? 'Send the same extension again' : 'Extend'}</Button>
       </form>
     </li>
   );

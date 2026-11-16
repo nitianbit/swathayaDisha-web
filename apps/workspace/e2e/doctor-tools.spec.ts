@@ -38,6 +38,19 @@ interface Backend {
   extendRefusal?: string;
   /** The next presence switch is applied, but its answer is lost. */
   presenceLost?: boolean;
+  /** The next presence switch reaches the server only when `runLate()` is called (its answer is lost at once). */
+  presenceLate?: boolean;
+  runLate?: () => { status: number; code?: string };
+  /** No check-in for two minutes (the read view says heartbeatExpired); a switch on or a heartbeat clears it. */
+  lapsed?: boolean;
+  /** In a consultation right now (online false, busy). */
+  busyNow?: boolean;
+  /** The next extension is applied but its answer lost ('applied'), or lost before reaching the server ('dropped'). */
+  extendLost?: 'applied' | 'dropped';
+  extensions: Record<string, { requestKey?: string; minutes: number; endTime: string; at: string }[]>;
+  /** Changes made elsewhere just before the next write is decided (the server-side fences answer 409). */
+  scheduleRaceOnce?: boolean;
+  payoutRaceOnce?: boolean;
   /** Whether call links have been made yet for instant consultations (they are made after the accept). */
   meetReady?: boolean;
   appointments: Rec[];
@@ -50,7 +63,16 @@ interface Backend {
 
 function offer(n: number, name: string, o: Rec = {}): Rec {
   return { requestId: rid(n), mode: 'video', specialization: 'Cardiology', patient: { name, age: 30 + n, gender: 'female' }, generation: 1,
-    offerExpiresAt: plusMin(4), ...o };
+    offerExpiresAt: plusMin(4), quotedAmountMinor: 80_000, ...o };
+}
+/** `GET /me/presence` / heartbeat view (Q13). */
+function presenceView(b: Backend): Rec {
+  const p = b.presence;
+  const available = !!p?.available;
+  const expired = !available || !!b.lapsed;
+  return { doctorId: DOC, eligible: true, available, modes: p?.modes ?? [], instantFeeMinor: p?.instantFeeMinor ?? 60_000, presenceVersion: p?.presenceVersion ?? 0,
+    feeConfigured: !!p, lastSeenAt: p ? NOW.toISOString() : null, heartbeatExpired: expired, busy: !!b.busyNow, busyUntil: b.busyNow ? plusMin(20) : null,
+    online: available && !expired && !b.busyNow };
 }
 function appt(n: number, o: Rec): Rec {
   return { _id: bid(n), bookingType: 'consultation', bookingKind: 'scheduled', bookingDate: '20261117', bookingTime: '11:30', consultationMode: 'video',
@@ -89,6 +111,7 @@ function seed(): Omit<Backend, 'calls' | 'live' | 'who'> {
     },
     practice: null,
     presence: null,
+    extensions: {},
     offers: [],
     acceptScript: {},
     appointments: [
@@ -111,11 +134,16 @@ function seed(): Omit<Backend, 'calls' | 'live' | 'who'> {
     statement,
     payouts: [
       { _id: '6e'.repeat(12), amountMinor: 500_000, method: 'bank_transfer', reference: 'UTR123456', paidOn: '2026-10-16',
-        destination: { method: 'bank', label: 'HDFC Bank HDFC0001234 XXXX9012', detailsVersion: 2 }, state: 'recorded' },
+        destination: { method: 'bank', label: 'HDFC Bank HDFC0001234 XXXX9012', detailsVersion: 2 }, state: 'recorded', createdAt: '2026-10-16T06:00:00.000Z' },
       { _id: '7e'.repeat(12), amountMinor: 100_000, method: 'upi', reference: 'UPI987654', paidOn: '2026-10-02',
-        destination: { method: 'bank', label: 'HDFC Bank HDFC0001234 XXXX9012', detailsVersion: 2 }, state: 'voided', voidReason: 'Bounced back' },
+        destination: { method: 'bank', label: 'HDFC Bank HDFC0001234 XXXX9012', detailsVersion: 2 }, state: 'voided', voidReason: 'Bounced back', createdAt: '2026-10-02T06:00:00.000Z' },
     ],
-    events: [{ _id: '8e'.repeat(12), action: 'finance.payout_details_verified', byKind: 'admin', by: ADMIN, at: '2026-10-01T05:00:00.000Z' }],
+    // 61 events, newest first: two pages of 50 (`pagination.nextCursor`).
+    events: [
+      ...Array.from({ length: 60 }, (_, i) => ({ _id: (0x100 + i).toString(16).padStart(24, '8'), action: 'finance.adjustment_posted', byKind: 'admin', by: ADMIN,
+        at: new Date(Date.parse('2026-11-10T05:00:00.000Z') - i * 3_600_000).toISOString() })),
+      { _id: '8e'.repeat(12), action: 'finance.payout_details_verified', byKind: 'admin', by: ADMIN, at: '2026-10-01T05:00:00.000Z' },
+    ],
   };
 }
 
@@ -168,6 +196,12 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
       const t = body as { slotMinutes: number; days: Record<string, Rec[]> };
       const allowed = new Set(b.clinics.clinics.filter((c) => c.verified).flatMap((c) => (c.branches as Rec[]).map((x) => x.branchId)));
       if (Object.values(t.days).flat().some((w) => w.branchId && !allowed.has(w.branchId))) return fail(route, 403, 'CLINIC_BRANCH_NOT_ALLOWED', 'You do not consult at that clinic branch');
+      if (b.scheduleRaceOnce && b.schedule) {
+        b.scheduleRaceOnce = false; // changed elsewhere after the editor's re-read (Saturday hours added)
+        b.schedule = { ...b.schedule, days: { ...(b.schedule.days as Rec), sat: [{ start: '10:00', end: '12:00', modes: ['chat'] }] }, updatedAt: '2026-11-17T04:29:30.000Z' };
+      }
+      const expectedAt = (body as { expectedUpdatedAt?: string | null }).expectedUpdatedAt;
+      if (expectedAt !== undefined && (b.schedule?.updatedAt ?? null) !== expectedAt) return fail(route, 409, 'SCHEDULE_CHANGED', 'Your weekly schedule changed since you opened it; review it again');
       b.schedule = { ...(b.schedule ?? { _id: 'aa'.repeat(12), doctorId: DOC, leaveDates: [], isActive: true }), slotMinutes: t.slotMinutes, days: t.days, updatedAt: new Date().toISOString() };
       return ok(route, { template: b.schedule, expansion: { inserted: 12, updated: 3, closed: 2, reopened: 0 } });
     }
@@ -184,19 +218,47 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
       return ok(route, { template: s, expansion: { inserted: 0, updated: 0, closed: 0, reopened: 6 } });
     }
     // Instant
+    if (p === '/presence' && method === 'GET') return ok(route, presenceView(b));
     if (p === '/presence' && method === 'PUT') {
-      const x = body as { available: boolean; modes: string[]; instantFeeMinor?: number };
+      const x = body as { available: boolean; modes: string[]; instantFeeMinor?: number; expectedPresenceVersion?: number };
       if (b.profile.isVerified === false) return fail(route, 403, 'SPECIALIST_NOT_ACTIVE', 'Only active, verified doctors can take instant consultations');
-      b.presence = { doctorId: DOC, available: x.available, modes: x.modes, instantFeeMinor: x.instantFeeMinor ?? 60_000, specialization: 'Cardiology', lastSeenAt: new Date().toISOString() };
+      // `setPresence` (Q13): an ordered write when a version is named; every write bumps the version.
+      const apply = () => {
+        const version = (b.presence?.presenceVersion as number | undefined) ?? 0;
+        if (x.expectedPresenceVersion !== undefined && x.expectedPresenceVersion !== version) return null;
+        b.presence = { doctorId: DOC, available: x.available, modes: x.modes, instantFeeMinor: x.instantFeeMinor ?? 60_000, presenceVersion: version + 1 };
+        if (x.available) b.lapsed = false;
+        return b.presence;
+      };
+      if (b.presenceLate) {
+        b.presenceLate = false;
+        b.runLate = () => (apply() ? { status: 200 } : { status: 409, code: 'PRESENCE_CHANGED' });
+        return route.abort('connectionreset');
+      }
+      const done = apply();
+      if (!done) return fail(route, 409, 'PRESENCE_CHANGED', 'Your availability was changed meanwhile; check it and try again');
       if (b.presenceLost) { b.presenceLost = false; return route.abort('connectionreset'); }
-      return ok(route, b.presence);
+      return ok(route, done);
     }
-    if (p === '/presence/heartbeat') return ok(route, { online: b.presence?.available === true });
-    if (p === '/instant/offers') return ok(route, b.offers);
+    if (p === '/presence/heartbeat') {
+      if (b.presence?.available) b.lapsed = false;
+      return ok(route, presenceView(b));
+    }
+    if (p === '/instant/offers') {
+      const fee = (b.presence?.instantFeeMinor as number | undefined) ?? null;
+      return ok(route, b.offers.map((o) => ({ ...o, yourFeeMinor: fee, feeWithinQuote: fee !== null && fee <= (o.quotedAmountMinor as number) })));
+    }
     const acc = /^\/instant\/([0-9a-f]{24})\/accept$/.exec(p);
     if (acc) {
       const script = b.acceptScript[acc[1]!];
       const o = b.offers.find((x) => x.requestId === acc[1]);
+      if (script === 'replay') {
+        // Q13: this doctor accepted it before (the answer was lost): the same booking, `replayed`.
+        const booking = appt(80, { bookingKind: 'instant', instantRequestId: acc[1], bookingTime: '09:58', consultationMode: 'chat', price: 450 });
+        if (!b.appointments.some((a) => a._id === booking._id)) b.appointments.push(booking);
+        b.offers = b.offers.filter((x) => x.requestId !== acc[1]);
+        return ok(route, { request: { _id: acc[1], status: 'accepted' }, booking, replayed: true }, 200);
+      }
       if (script && script !== 'lost') {
         const messages: Record<string, [number, string]> = {
           SPECIALIZATION_MISMATCH: [409, 'This request is for another speciality'], COUPON_NOT_FOR_DOCTOR: [409, "The patient's coupon is for other doctors"],
@@ -216,7 +278,22 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
     const ext = /^\/instant\/bookings\/([0-9a-f]{24})\/extend$/.exec(p);
     if (ext) {
       if (b.extendRefusal) return fail(route, 409, b.extendRefusal, 'The doctor is not free at that time');
-      return ok(route, { doctorId: DOC, kind: 'instant', refId: ext[1], startTime: NOW.toISOString(), endTime: plusMin(45), isActive: true });
+      const x = body as { minutes: number; requestKey?: string };
+      if (b.extendLost === 'dropped') { b.extendLost = undefined; return route.abort('connectionreset'); }
+      const list = (b.extensions[ext[1]!] ??= []);
+      const prior = list.find((e) => x.requestKey && e.requestKey === x.requestKey);
+      const extension = prior ?? { requestKey: x.requestKey, minutes: x.minutes, endTime: plusMin(30 + list.reduce((n, e) => n + e.minutes, 0) + x.minutes), at: NOW.toISOString() };
+      if (!prior) list.push(extension);
+      if (b.extendLost === 'applied') { b.extendLost = undefined; return route.abort('connectionreset'); }
+      return ok(route, { doctorId: DOC, kind: 'instant', refId: ext[1], startTime: NOW.toISOString(), endTime: extension.endTime, isActive: true, extension, replayed: !!prior });
+    }
+    const ib = /^\/instant\/bookings\/([0-9a-f]{24})$/.exec(p);
+    if (ib) {
+      const a = b.appointments.find((x) => x._id === ib[1]);
+      if (!a) return fail(route, 404, 'BOOKING_NOT_FOUND', 'Booking not found');
+      const list = b.extensions[ib[1]!] ?? [];
+      return ok(route, { bookingId: ib[1], status: a.status, bookingDate: a.bookingDate, bookingTime: a.bookingTime, feeMinor: 45_000, patient: null,
+        held: { startTime: NOW.toISOString(), endTime: list.at(-1)?.endTime ?? plusMin(30), isActive: true, current: true }, extensions: list });
     }
     // Appointments
     if (p === '/appointments') {
@@ -287,12 +364,25 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
       return route.fulfill({ status: 200, contentType: 'text/csv; charset=utf-8', headers: { 'Content-Disposition': 'attachment; filename="doctor-statement.csv"' },
         body: '"Date (IST)","Type","Description","Reference","Note","Amount (INR)","Balance (INR)"\n"","Opening balance","","","","","0.00"\n' });
     }
-    if (p === '/finance/payouts') return ok(route, b.payouts);
+    const paged = (rows: Rec[], field: string) => {
+      const cursor = url.searchParams.get('cursor');
+      const limit = Number(url.searchParams.get('limit') ?? 50);
+      const from = cursor ? rows.findIndex((r) => `${Date.parse(r[field] as string)}_${r._id}` === cursor) + 1 : 0;
+      const items = rows.slice(from, from + limit);
+      const last = items.at(-1);
+      return json(route, 200, { success: true, data: items, pagination: { total: rows.length,
+        nextCursor: from + limit < rows.length && last ? `${Date.parse(last[field] as string)}_${last._id}` : null } });
+    };
+    if (p === '/finance/payouts') return paged(b.payouts, 'createdAt');
     if (p === '/finance/history') return ok(route, [{ _id: '9e'.repeat(12), source: 'legacy_import', legacyKind: 'disbursal', legacyId: 'L1', periodLabel: 'Sep 2026', amountMinor: 250_000, at: '2026-09-30T05:00:00.000Z' }]);
-    if (p === '/finance/events') return ok(route, b.events);
+    if (p === '/finance/events') return paged(b.events, 'at');
     if (p === '/finance/payout-details' && method === 'PUT') {
       const x = body as Rec;
       const acc2 = b.finance.account as Rec;
+      if (b.payoutRaceOnce) { b.payoutRaceOnce = false; acc2.payoutDetailsVersion = (acc2.payoutDetailsVersion as number) + 1; } // changed elsewhere just now
+      if (x.expectedDetailsVersion !== undefined && x.expectedDetailsVersion !== acc2.payoutDetailsVersion) {
+        return fail(route, 409, 'PAYOUT_DETAILS_CHANGED', 'The payout details changed since they were loaded; review them again');
+      }
       acc2.payoutDetails = x.method === 'upi' ? { method: 'upi', upiId: x.upiId, accountName: x.accountName }
         : { method: 'bank', accountName: x.accountName, ifsc: x.ifsc, bankName: x.bankName, accountNumberLast4: String(x.accountNumber).slice(-4), accountNumberMasked: `XXXX${String(x.accountNumber).slice(-4)}` };
       acc2.payoutDetailsState = 'unverified';
@@ -323,6 +413,7 @@ async function goAvailable(page: Page) {
 
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main' });
 const writes = (b: Backend) => b.calls.filter((c) => c.method !== 'GET' && !c.path.startsWith('/auth/')).map((c) => `${c.method} ${c.path}`);
+const presencePuts = (b: Backend) => b.calls.filter((c) => c.method === 'PUT' && c.path === '/specialists/me/presence').map((c) => c.body);
 const heartbeats = (b: Backend) => b.calls.filter((c) => c.path === '/specialists/me/presence/heartbeat').length;
 async function setVisibility(page: Page, state: 'visible' | 'hidden') {
   await page.evaluate((s) => {
@@ -346,7 +437,7 @@ test('a doctor signs in: doctor pages only, a status card on Home, and no partne
   await expect(nav(page).getByRole('link')).toHaveCount(6);
   const status = page.getByRole('region', { name: 'Your status' });
   await expect(status).toContainText('Verified');
-  await expect(status).toContainText('Not set on this device');
+  await expect(status).toContainText('Off'); // read from the server (Q13 GET /me/presence)
   await expect(status.getByRole('link', { name: '1 open offer' })).toBeVisible();
   const next = page.getByRole('list', { name: 'Next appointments' });
   await expect(next.getByRole('listitem')).toHaveCount(3); // 09:50 instant (within 30 min), 11:30 today, 19 Nov waiting
@@ -418,15 +509,23 @@ test('schedule: a clinic window at a verified branch only, the server’s refusa
   await expect(page.getByText(/Someone else changed the Monday hours while you were editing/)).toBeVisible();
   await expect(page.getByLabel('Monday window 1 to')).toHaveValue('11:00');
   expect(writes(backend).filter((w) => w.startsWith('PUT'))).toHaveLength(1); // only the refused one
+  // Q13: a change landing after the editor's last read is refused by the server (expectedUpdatedAt) and read in.
+  backend.scheduleRaceOnce = true;
+  await page.getByRole('button', { name: 'Review the weekly hours' }).click();
+  await page.getByRole('group', { name: 'Save the weekly hours' }).getByRole('button', { name: 'Save the weekly hours' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'Not saved' })).toContainText('Not saved: Your weekly schedule changed since you opened it; review it again');
+  await expect(page.getByRole('group', { name: 'Saturday: 4 slots' })).toBeVisible(); // the hours added elsewhere, read in
   await page.getByRole('button', { name: 'Review the weekly hours' }).click();
   await page.getByRole('group', { name: 'Save the weekly hours' }).getByRole('button', { name: 'Save the weekly hours' }).click();
   await expect(page.getByText('Weekly hours saved. Next 30 days: 12 slots added, 3 changed, 2 closed, 0 reopened.')).toBeVisible();
-  const put = backend.calls.filter((c) => c.method === 'PUT' && c.path === '/specialists/me/schedule').at(-1)!;
-  expect(put.body).toEqual({ slotMinutes: 30, days: {
+  const puts = backend.calls.filter((c) => c.method === 'PUT' && c.path === '/specialists/me/schedule');
+  expect(puts).toHaveLength(3);
+  expect(puts[1]!.body).toMatchObject({ expectedUpdatedAt: '2026-11-17T04:29:00.000Z' });
+  expect(puts[2]!.body).toEqual({ slotMinutes: 30, days: {
     mon: [{ start: '09:00', end: '11:00', modes: ['video'] }],
     tue: [{ start: '14:00', end: '16:00', modes: ['in-person'], branchId: BR1 }, { start: '16:00', end: '17:00', modes: ['video', 'chat'] }],
-    wed: [{ start: '17:00', end: '19:00', modes: ['in-person'], branchId: BR1 }], thu: [], fri: [], sat: [], sun: [],
-  } });
+    wed: [{ start: '17:00', end: '19:00', modes: ['in-person'], branchId: BR1 }], thu: [], fri: [], sat: [{ start: '10:00', end: '12:00', modes: ['chat'] }], sun: [],
+  }, expectedUpdatedAt: '2026-11-17T04:29:30.000Z' });
 
   // Leave days: only upcoming ones are listed; adding and removing each confirm first.
   const leave = page.getByRole('list', { name: 'Upcoming leave days' });
@@ -452,7 +551,7 @@ test('available now: switched on with types and fee, heartbeats only while visib
   const backend = await mockBackend(page, { install: true });
   await signIn(page);
   await nav(page).getByRole('link', { name: 'Consult now' }).click();
-  await expect(page.getByText('The server does not tell the workspace whether you switched this on earlier')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Available now' })).toContainText('Off You are not taking instant consultations.');
   await expect(page.getByLabel('Your fee for an instant consultation (₹)')).toHaveValue('600');
   await page.getByRole('group', { name: 'Consultation types you take now' }).getByLabel('Video').uncheck();
   await page.getByRole('button', { name: 'Go available now' }).click();
@@ -465,18 +564,19 @@ test('available now: switched on with types and fee, heartbeats only while visib
   await page.getByLabel('Your fee for an instant consultation (₹)').fill('450');
   await page.getByRole('button', { name: 'Go available now' }).click();
   await expect(page.getByText('You are available now for Video, Chat at ₹450.00.')).toBeVisible();
-  expect(backend.calls.find((c) => c.path === '/specialists/me/presence')?.body).toEqual({ available: true, modes: ['video', 'chat'], instantFeeMinor: 45_000 });
+  expect(presencePuts(backend)[0]).toEqual({ available: true, modes: ['video', 'chat'], instantFeeMinor: 45_000, expectedPresenceVersion: 0 });
   expect(heartbeats(backend)).toBe(0);
   await page.clock.runFor(61_000);
   await expect.poll(() => heartbeats(backend)).toBe(1);
-  // "Update" while on; then it is switched off on another device: the next heartbeat's answer is shown (not ignored as stale).
+  // "Update" while on (against version 1); then a consultation starts: the next heartbeat's answer is shown (not ignored as stale).
   await page.getByRole('button', { name: 'Update' }).click();
   await expect(page.getByText('You are available now for Video, Chat at ₹450.00.')).toBeVisible();
-  backend.presence!.available = false;
+  expect(presencePuts(backend)[1]).toMatchObject({ expectedPresenceVersion: 1 });
+  backend.busyNow = true;
   await page.clock.runFor(60_000);
   await expect.poll(() => heartbeats(backend)).toBe(2);
-  await expect(page.getByText(/You are not being offered consultations right now/)).toBeVisible();
-  backend.presence!.available = true;
+  await expect(page.getByText(/You are not being offered consultations right now: you are in a consultation until/)).toBeVisible();
+  backend.busyNow = false;
   // Hidden: no heartbeats at all (the server drops the doctor two minutes after the last one).
   await setVisibility(page, 'hidden');
   await page.clock.runFor(180_000);
@@ -490,12 +590,25 @@ test('available now: switched on with types and fee, heartbeats only while visib
   await expect.poll(() => heartbeats(backend)).toBe(4);
   await nav(page).getByRole('link', { name: 'Home' }).click();
   await expect(page.getByRole('region', { name: 'Your status' })).toContainText('On Video, Chat · ₹450.00');
+  // A reload reads the presence again: still checked in, so this page goes on keeping it alive.
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'Your status' })).toContainText('On Video, Chat · ₹450.00');
+  await page.clock.runFor(60_000);
+  await expect.poll(() => heartbeats(backend)).toBe(5);
+  // Found switched on but no longer checked in (e.g. the browser was closed): not revived on its own.
+  backend.lapsed = true;
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'Your status' })).toContainText('On, not checked in');
+  await page.clock.runFor(120_000);
+  expect(heartbeats(backend)).toBe(5);
   await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  await expect(page.getByText('Switched on, but no workspace page has checked in for two minutes')).toBeVisible();
+  await expect(page.getByLabel('Your fee for an instant consultation (₹)')).toHaveValue('450');
   await page.getByRole('button', { name: 'Stop being available' }).click();
   await expect(page.getByText('You are not available now. No new offers come to you.')).toBeVisible();
-  expect(backend.calls.filter((c) => c.path === '/specialists/me/presence').at(-1)?.body).toEqual({ available: false, modes: ['video', 'chat'], instantFeeMinor: 45_000 });
+  expect(presencePuts(backend).at(-1)).toEqual({ available: false, modes: ['video', 'chat'], instantFeeMinor: 45_000, expectedPresenceVersion: 2 });
   await page.clock.runFor(180_000);
-  expect(heartbeats(backend)).toBe(4);
+  expect(heartbeats(backend)).toBe(5);
 });
 
 test('offers: countdown, accept after confirming, every refusal in words, a lost answer found among the appointments, and extending', async ({ page }) => {
@@ -511,16 +624,18 @@ test('offers: countdown, accept after confirming, every refusal in words, a lost
     ['Jaya', 'SPECIALIST_NOT_ACTIVE', 'Your doctor account is not active or not verified'],
   ];
   backend.offers = [offer(1, 'Asha Rao', { offerExpiresAt: plusMin(4) }), offer(8, 'Hari', { mode: 'chat' }),
-    ...names.map(([n], i) => offer(10 + i, n)), offer(30, 'Old', { offerExpiresAt: new Date(NOW.getTime() - 1000).toISOString() })];
+    ...names.map(([n], i) => offer(10 + i, n)), offer(30, 'Old', { offerExpiresAt: new Date(NOW.getTime() - 1000).toISOString() }),
+    offer(40, 'Kiran', { quotedAmountMinor: 40_000 }), offer(41, 'Lata', { mode: 'chat' })];
   names.forEach(([, code], i) => { backend.acceptScript[rid(10 + i)] = code; });
   backend.acceptScript[rid(8)] = 'lost';
+  backend.acceptScript[rid(41)] = 'replay';
   await signIn(page);
   await nav(page).getByRole('link', { name: 'Consult now' }).click();
   await goAvailable(page);
   const offers = page.getByRole('list', { name: 'Open offers' });
   const asha = offers.getByRole('listitem', { name: 'Offer for Asha Rao' });
   await expect(asha).toContainText('Video consultation · Cardiology');
-  await expect(asha).toContainText('Patient: Asha Rao, 31 years, female');
+  await expect(asha).toContainText('Patient: Asha Rao, 31 years, female · paid ₹800.00');
   await expect(asha).toContainText('Closes in 4:00');
   for (const [name, , words] of names) {
     await offers.getByRole('button', { name: `Accept the offer for ${name}` }).click();
@@ -532,6 +647,15 @@ test('offers: countdown, accept after confirming, every refusal in words, a lost
   await page.getByRole('group', { name: 'Accept the offer for Hari' }).getByRole('button', { name: 'Accept and start' }).click();
   await expect(page.getByText(/You accepted the chat consultation · cardiology for Hari/)).toBeVisible();
   expect(backend.calls.filter((c) => c.path === `/specialists/me/instant/${rid(8)}/accept`)).toHaveLength(1);
+  // Q13: the patient's paid amount is shown; a fee above it cannot be accepted (nothing is sent).
+  const kiran = offers.getByRole('listitem', { name: 'Offer for Kiran' });
+  await expect(kiran).toContainText('paid ₹400.00');
+  await expect(kiran).toContainText('Your fee (₹600.00) is above what this patient paid, so you cannot take it.');
+  await expect(kiran.getByRole('button', { name: 'Accept the offer for Kiran' })).toBeDisabled();
+  // Q13: accepting again after an earlier accept went through answers that consultation (200, replayed).
+  await offers.getByRole('button', { name: 'Accept the offer for Lata' }).click();
+  await page.getByRole('group', { name: 'Accept the offer for Lata' }).getByRole('button', { name: 'Accept and start' }).click();
+  await expect(page.getByText(/You accepted the chat consultation · cardiology for Lata \(your earlier accept had gone through\)/)).toBeVisible();
   // Success, after a confirmation naming the patient and the fee.
   await offers.getByRole('button', { name: 'Accept the offer for Asha Rao' }).click();
   const confirm = page.getByRole('group', { name: 'Accept the offer for Asha Rao' });
@@ -543,7 +667,7 @@ test('offers: countdown, accept after confirming, every refusal in words, a lost
   await expect(page.getByRole('listitem', { name: 'Offer for Old' }).getByText('Closed')).toBeVisible();
   // Running instant consultations: extend one; a refusal is shown, nothing resent.
   const running = page.getByRole('list', { name: 'Running instant consultations' });
-  await expect(running.getByRole('listitem')).toHaveCount(3);
+  await expect(running.getByRole('listitem')).toHaveCount(4);
   const first = running.getByRole('listitem', { name: 'Video consultation accepted at 09:50' });
   await expect(first.getByRole('link', { name: 'Join the call' })).toHaveAttribute('href', 'https://meet.google.com/abc-defg-hij');
   await first.getByLabel('Extend by (minutes)').fill('61');
@@ -552,7 +676,25 @@ test('offers: countdown, accept after confirming, every refusal in words, a lost
   await first.getByLabel('Extend by (minutes)').fill('15');
   await first.getByRole('button', { name: 'Extend' }).click();
   await expect(first).toContainText('Extended by 15 minutes: your time is held until');
-  expect(backend.calls.find((c) => c.path === `/specialists/me/instant/bookings/${bid(5)}/extend`)?.body).toEqual({ minutes: 15 });
+  const extends_ = () => backend.calls.filter((c) => c.path === `/specialists/me/instant/bookings/${bid(5)}/extend`).map((c) => c.body as { minutes: number; requestKey: string });
+  expect(extends_()[0]).toEqual({ minutes: 15, requestKey: expect.stringMatching(/^[0-9a-f]{32}$/) });
+  // A lost answer of an extension the server made: found on the booking (Q13 read), not sent again.
+  backend.extendLost = 'applied';
+  await first.getByLabel('Extend by (minutes)').fill('10');
+  await first.getByRole('button', { name: 'Extend' }).click();
+  await expect(first).toContainText('Extended by 10 minutes: your time is held until');
+  expect(extends_()).toHaveLength(2);
+  expect(backend.calls.some((c) => c.method === 'GET' && c.path === `/specialists/me/instant/bookings/${bid(5)}`)).toBe(true);
+  // A lost one that never arrived: only the same extension (same key, same minutes) can be sent again; it is added once.
+  backend.extendLost = 'dropped';
+  await first.getByLabel('Extend by (minutes)').fill('5');
+  await first.getByRole('button', { name: 'Extend' }).click();
+  await expect(first).toContainText('The extension is not recorded yet. Send the same extension again: it is added once, never twice.');
+  await expect(first.getByLabel('Extend by (minutes)')).toBeDisabled();
+  await first.getByRole('button', { name: 'Send the same extension again' }).click();
+  await expect(first).toContainText('Extended by 5 minutes');
+  expect(extends_()[3]).toEqual(extends_()[2]);
+  expect(backend.extensions[bid(5)]!.map((e) => e.minutes)).toEqual([15, 10, 5]);
   backend.extendRefusal = 'DOCTOR_BUSY';
   await first.getByRole('button', { name: 'Extend' }).click();
   await expect(first).toContainText('Not extended: You already have a consultation at this time.');
@@ -689,11 +831,11 @@ test('earnings: balance, statement with running balance and paging, CSV via blob
   expect(older[1]).toMatch(/before=\d+_[0-9a-f]{24}&limit=50$/);
   await page.getByLabel('From').fill('2026-11-30');
   await page.getByLabel('To').fill('2026-11-01');
-  await page.getByRole('button', { name: 'Show' }).click();
+  await page.getByRole('button', { name: 'Show', exact: true }).click();
   await expect(page.getByText('The “from” date must not be after the “to” date.')).toBeVisible();
   await page.getByLabel('From').fill('2026-10-20');
   await page.getByLabel('To').fill('2026-10-25');
-  await page.getByRole('button', { name: 'Show' }).click();
+  await page.getByRole('button', { name: 'Show', exact: true }).click();
   await expect(lines.getByRole('row')).toHaveCount(13); // 20–25 Oct: two entries a day
   const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /Download CSV \(Tue, 20 Oct, 2026 to Sun, 25 Oct, 2026\)/ }).click()]);
   expect(download.suggestedFilename()).toBe('doctor-statement-2026-10-20-to-2026-10-25.csv');
@@ -723,13 +865,28 @@ test('earnings: balance, statement with running balance and paging, CSV via blob
   await dest.getByRole('button', { name: 'Save payout details' }).click();
   await expect(dest.getByText(/Your payout details were changed since you opened this form/)).toBeVisible();
   expect(writes(backend)).toEqual([]);
+  // Q13: a change landing after that read is refused by the server (expectedDetailsVersion) and shown the same way.
+  backend.payoutRaceOnce = true;
+  await dest.getByRole('button', { name: 'Review' }).click();
+  await dest.getByRole('button', { name: 'Save payout details' }).click();
+  await expect(dest.getByText(/Your payout details were changed since you opened this form/)).toBeVisible();
   await dest.getByRole('button', { name: 'Review' }).click();
   await dest.getByRole('button', { name: 'Save payout details' }).click();
   await expect(dest).toContainText('Saved: UPI meera.rao@okhdfc. Jansetu verifies it before the next payout.');
   await expect(dest).toContainText('Waiting for Jansetu to verify');
   await expect(dest).toContainText('No payout is made until Jansetu has checked these details.');
-  expect(backend.calls.find((c) => c.method === 'PUT')?.body).toEqual({ method: 'upi', upiId: 'meera.rao@okhdfc' });
-  await expect(page.getByRole('list', { name: 'Account activity' })).toContainText('Payout details changed · You');
+  expect(backend.calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toEqual([
+    { method: 'upi', upiId: 'meera.rao@okhdfc', expectedDetailsVersion: 3 },
+    { method: 'upi', upiId: 'meera.rao@okhdfc', expectedDetailsVersion: 4 },
+  ]);
+  // Activity, newest first, a page at a time by the server's cursor (Q13).
+  const activity = page.getByRole('list', { name: 'Account activity' });
+  await expect(activity.getByRole('listitem').first()).toContainText('Payout details changed · You');
+  await expect(activity.getByRole('listitem')).toHaveCount(50);
+  await page.getByRole('button', { name: 'Show older activity' }).click();
+  await expect(activity.getByRole('listitem')).toHaveCount(62);
+  await expect(page.getByRole('button', { name: 'Show older activity' })).toHaveCount(0);
+  expect(backend.calls.filter((c) => c.path.startsWith('/specialists/me/finance/events')).at(-1)!.path).toMatch(/cursor=\d+_[0-9a-f]{24}&limit=50$/);
   // Bank details are never kept in browser storage.
   await dest.getByRole('button', { name: 'Change payout details' }).click();
   await dest.getByLabel('Account number').fill('123456789012');
@@ -754,7 +911,7 @@ test('a fee change whose answer is lost: terms unknown, no heartbeat, no accept 
   await expect(avail.getByText('Not confirmed', { exact: true })).toBeVisible();
   await expect(avail).toContainText('Your last change (available for Video at ₹100.00) was sent, but no answer came');
   await expect(avail).toContainText('Your availability and fee are not known here.');
-  await expect(avail).not.toContainText('fee ₹500.00');
+  await expect(avail).not.toContainText('₹500.00');
   await expect(page.getByRole('button', { name: 'Accept the offer for Asha Rao' })).toBeDisabled();
   await expect(page.getByText('To accept, switch “Available now” on above and wait until the server confirms your types and fee.')).toBeVisible();
   // The uncertain presence is not kept alive.
@@ -763,11 +920,21 @@ test('a fee change whose answer is lost: terms unknown, no heartbeat, no accept 
   await nav(page).getByRole('link', { name: 'Home' }).click();
   await expect(page.getByRole('region', { name: 'Your status' })).toContainText('Not confirmed');
   await nav(page).getByRole('link', { name: 'Consult now' }).click();
-  // Sent again and acknowledged: the fee is definite, accepting opens again, heartbeats resume.
-  await page.getByLabel('Your fee for an instant consultation (₹)').fill('100');
-  await page.getByRole('button', { name: 'Send again' }).click();
+  // The way on is a fresh read: it shows what the server has (₹100 applied, but no page checked in since), with its version.
+  backend.lapsed = true;
+  await page.getByRole('button', { name: 'Check what the server has' }).click();
+  await expect(avail).toContainText('The server has: available for Video at ₹100.00 (version 2).');
+  await expect(avail).toContainText('On, not checked in');
+  await expect(page.getByRole('button', { name: 'Accept the offer for Asha Rao' })).toBeDisabled();
+  expect(heartbeats(backend)).toBe(1);
+  // Sent again against that version and acknowledged: the fee is definite, accepting opens again, heartbeats resume.
+  await page.getByRole('button', { name: 'Go available now' }).click();
   await expect(page.getByText('You are available now for Video at ₹100.00.')).toBeVisible();
-  expect(backend.calls.filter((c) => c.path === '/specialists/me/presence').map((c) => (c.body as { instantFeeMinor: number }).instantFeeMinor)).toEqual([50_000, 10_000, 10_000]);
+  expect(presencePuts(backend)).toEqual([
+    { available: true, modes: ['video'], instantFeeMinor: 50_000, expectedPresenceVersion: 0 },
+    { available: true, modes: ['video'], instantFeeMinor: 10_000, expectedPresenceVersion: 1 },
+    { available: true, modes: ['video'], instantFeeMinor: 10_000, expectedPresenceVersion: 2 },
+  ]);
   await page.getByRole('button', { name: 'Accept the offer for Asha Rao' }).click();
   await expect(page.getByRole('group', { name: 'Accept the offer for Asha Rao' })).toContainText('Your fee: ₹100.00.');
   await page.clock.runFor(60_000);
@@ -812,4 +979,43 @@ test('a call link made after the accept: “being prepared”, picked up by read
   // A link the server could not make says so (no endless waiting).
   await page.getByLabel('Show').selectOption('upcoming');
   await expect(table.getByRole('row').filter({ hasText: '21 Nov' })).toContainText('The call link could not be made (Google Calendar / Meet is not configured).');
+});
+
+test('a lost presence change that reaches the server late never overwrites newer acknowledged terms (Codex WQ4 #3)', async ({ page }) => {
+  const backend = await mockBackend(page, { install: true });
+  backend.offers = [offer(1, 'Asha Rao', { offerExpiresAt: plusMin(30) })];
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  const avail = page.getByRole('region', { name: 'Available now' });
+  const fee = page.getByLabel('Your fee for an instant consultation (₹)');
+  await fee.fill('500');
+  await goAvailable(page); // version 1
+  // A: ₹500 → ₹100. Its answer is lost and the request itself is still on its way to the server.
+  backend.presenceLate = true;
+  await fee.fill('100');
+  await page.getByRole('button', { name: 'Update' }).click();
+  await expect(avail.getByText('Not confirmed', { exact: true })).toBeVisible();
+  // The doctor reads again (A has not arrived: still ₹500, version 1), then sends B: ₹200, acknowledged as version 2.
+  await page.getByRole('button', { name: 'Check what the server has' }).click();
+  await expect(avail).toContainText('The server has: available for Video at ₹500.00 (version 1).');
+  await page.getByLabel('Your fee for an instant consultation (₹)').fill('200');
+  await page.getByRole('button', { name: /Update|Go available now/ }).click();
+  await expect(page.getByText('You are available now for Video at ₹200.00.')).toBeVisible();
+  // A finally reaches the server: it names version 1, so the server refuses it. The server and the page both keep B.
+  expect(backend.runLate!()).toEqual({ status: 409, code: 'PRESENCE_CHANGED' });
+  expect(backend.presence).toMatchObject({ instantFeeMinor: 20_000, presenceVersion: 2 });
+  expect(presencePuts(backend).map((x) => (x as { expectedPresenceVersion: number }).expectedPresenceVersion)).toEqual([0, 1, 1]);
+  await page.clock.runFor(61_000); // the heartbeat reads what the server has: still B
+  await expect.poll(() => heartbeats(backend)).toBe(1);
+  await expect(avail).toContainText('Video at ₹200.00');
+  await page.getByRole('button', { name: 'Accept the offer for Asha Rao' }).click();
+  await expect(page.getByRole('group', { name: 'Accept the offer for Asha Rao' })).toContainText('Your fee: ₹200.00.');
+  // A change made elsewhere meanwhile (another device: version 3) refuses this page's next change and shows the server's terms.
+  backend.presence = { ...backend.presence!, instantFeeMinor: 30_000, presenceVersion: 3 };
+  await page.getByLabel('Your fee for an instant consultation (₹)').fill('250');
+  await page.getByRole('button', { name: 'Update' }).click();
+  await expect(avail).toContainText('Not changed: your availability was changed meanwhile');
+  await expect(avail).toContainText('Video at ₹300.00');
+  await expect(page.getByLabel('Your fee for an instant consultation (₹)')).toHaveValue('300');
+  expect(backend.presence).toMatchObject({ instantFeeMinor: 30_000, presenceVersion: 3 });
 });
