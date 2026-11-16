@@ -9,7 +9,8 @@ import {
 import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, TextArea, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
-import { definitelyNotRecorded } from '../../requests.ts';
+import { afterFailure, beginAttempt, newRequestKey, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
+import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { sniffDocument } from '../pharmacy/documents.ts';
 import { money, useClinicDoctors } from './billing.tsx';
 import { stateTone } from './InvoicesScreen.tsx';
@@ -59,52 +60,64 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
   /** One change at a time: while a payment or a cancellation is being sent, the other cannot start. */
   const [inFlight, setInFlight] = useState<'pay' | 'cancel' | null>(null);
   /**
-   * A payment whose answer was lost: the exact payment (mode, reference, note) is held here, outside any form, and in
-   * session memory (leaving and coming back keeps it). It is resolved only by the matching receipt on the bill, by a
-   * definite refusal, or by resending it unchanged (Q10 answers a repeat with the payment already recorded); until
-   * then no other payment and no cancellation can start.
+   * A payment being sent or whose answer was lost, as an owned once-only record (`requests.ts` PendingOp): stored in
+   * session memory per partner and bill BEFORE the request goes out (attempts counted), with a body-less reload marker.
+   * While it exists no page offers another payment or a cancellation: it shows this payment and its recovery instead.
+   * An answer may settle, replace or delete it only while its page is on screen AND the stored record is still the same
+   * attempt (`owns`); otherwise it is left for the page that owns it. The bill as read also settles it (its receipt, or
+   * another payment / a cancellation on the bill). The server records at most one payment per bill.
    */
   const paySlot = `invoice-payment:${scopeIdentity(ctx)}:${invoiceId}`;
-  const [unresolved, setUnresolvedState] = useState<UnresolvedPayment | undefined>(() => memory.get<UnresolvedPayment>(paySlot));
-  const setUnresolved = (u: UnresolvedPayment | undefined) => {
-    if (u) memory.set(paySlot, u); else memory.delete(paySlot);
-    setUnresolvedState(u);
+  const [payOp, setPayOpState] = useState<PayOp | undefined>(() => memory.get<PayOp>(paySlot));
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  const storePay = (op: PayOp | undefined) => {
+    if (op) memory.set(paySlot, op); else memory.delete(paySlot);
+    setPayOpState(op);
   };
+  const owns = (op: PayOp) => live.current && stillCurrent(memory.get<PayOp>(paySlot), op);
   const inv = q.data?.invoice;
   const events = [...(q.data?.events ?? [])].sort((a, b) => a.version - b.version);
+  /** The bill was read successfully after the payment was last sent (a cached read from before proves nothing). */
+  const freshRead = !!payOp && q.isSuccess && !q.isFetching && q.dataUpdatedAt > payOp.lastAttemptAt;
 
-  // The bill as read now settles an unresolved payment: its receipt (same mode and reference) → recorded; another
-  // payment, or a cancellation without one → not recorded. A bill still unpaid leaves it unresolved (resend is safe).
+  // The bill as read settles the stored payment: its receipt → recorded; another payment, or a cancellation → not
+  // recorded. A restored record (no details after a reload) is settled by any payment or cancellation on the bill.
   useEffect(() => {
-    if (!unresolved || !q.data || inFlight === 'pay') return;
-    const outcome = paymentOutcome(q.data, unresolved.body);
+    if (!payOp || !q.data || !freshRead || inFlight === 'pay') return;
+    const outcome = payOp.restored
+      ? (q.data.events.some((e) => e.kind === 'payment') ? 'recorded' as const : q.data.invoice.lifecycleState === 'cancelled' ? { refused: 'the bill was cancelled.' } : 'unknown' as const)
+      : paymentOutcome(q.data, payOp.body);
     if (outcome === 'unknown') return;
-    setUnresolved(undefined);
-    if (outcome === 'recorded') { setFailure(null); setNotice('Payment recorded.'); }
+    if (!owns(payOp)) return;
+    storePay(undefined);
+    if (outcome === 'recorded') { setFailure(null); setNotice(payOp.restored ? 'The bill shows a payment.' : 'Payment recorded.'); }
     else { setNotice(null); setFailure(`Payment not recorded: ${outcome.refused}`); }
-  }, [q.data, unresolved, inFlight]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [q.data, payOp, freshRead, inFlight]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function sendPayment(body: PaymentInput) {
+  /** Sends exactly `op` (a new payment, or the stored one unchanged), recorded as an attempt before the request. */
+  async function sendPayment(op: PayOp) {
+    const attempt = beginAttempt(op);
+    storePay(attempt);
     setInFlight('pay');
     setFailure(null);
+    setNotice(null);
     try {
-      const r = await ctx.billing.recordPayment(invoiceId, body);
-      setUnresolved(undefined);
-      changed(r);
+      const r = await ctx.billing.recordPayment(invoiceId, attempt.body);
+      queryClient.setQueryData<Detail>(key, (cur) => mergeDetail(cur, r)); // version-fenced: always safe to fold in
+      if (!owns(attempt)) return; // a newer attempt or another page owns the record: it settles it
+      storePay(undefined);
       setNotice('Payment recorded.');
+      void reload().catch(() => undefined);
     } catch (err) {
-      if (definitelyNotRecorded(err)) {
-        // E.g. "This bill is paid" (someone else recorded another payment): the server's message and the bill as it is.
-        setUnresolved(undefined);
-        setNotice(null);
-        setFailure(`Payment not recorded: ${messageOf(err)}`);
-      } else {
-        setNotice(null);
-        setUnresolved({ body, error: messageOf(err) });
-      }
+      if (!owns(attempt)) return;
+      const next = afterFailure(attempt, err, messageOf(err));
+      storePay(next ?? undefined);
+      // Refused outright (e.g. "This bill is paid": someone else recorded another payment): the server's message.
+      if (!next) setFailure(`Payment not recorded: ${messageOf(err)}`);
       void reload().catch(() => undefined);
     } finally {
-      setInFlight(null);
+      if (live.current) setInFlight(null);
     }
   }
 
@@ -134,9 +147,12 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
       </PageHeading>
       {issuedNotice && !notice && <Alert tone="ok">{issuedNotice}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
-      {unresolved && canPay && (
-        <UnconfirmedPayment payment={unresolved} totalMinor={inv?.totals.totalMinor} busy={inFlight === 'pay'}
-          onResend={() => void sendPayment(unresolved.body)} />
+      {payOp && canPay && (
+        <UnconfirmedPayment op={payOp} totalMinor={inv?.totals.totalMinor} sending={inFlight === 'pay'}
+          billUnpaid={freshRead && inv?.lifecycleState === 'issued'}
+          onResend={() => void sendPayment(payOp)}
+          onCheck={() => void q.refetch()}
+          onForget={() => { if (owns(payOp)) storePay(undefined); }} />
       )}
       {q.isError && q.data && (
         <ErrorState message={`Could not refresh the bill: ${messageOf(q.error)}`} onRetry={() => void q.refetch()} />
@@ -162,11 +178,12 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
                 </ul>
               )}
               <div className="ws-actions">
-                {canPay && inv.lifecycleState === 'issued' && !unresolved && (
-                  <PaymentForm invoice={inv} locked={inFlight === 'cancel'} busy={inFlight === 'pay'} onRecord={sendPayment} />
+                {canPay && inv.lifecycleState === 'issued' && !payOp && (
+                  <PaymentForm invoice={inv} locked={inFlight === 'cancel'} busy={inFlight === 'pay'}
+                    onRecord={async (body) => sendPayment(startOp(newRequestKey(), body))} />
                 )}
                 {inv.lifecycleState !== 'cancelled' && canCancel && (
-                  <CancelForm ctx={ctx} invoice={inv} locked={inFlight === 'pay' || !!unresolved} onBusy={(b) => setInFlight(b ? 'cancel' : null)}
+                  <CancelForm ctx={ctx} invoice={inv} locked={inFlight === 'pay' || !!payOp} onBusy={(b) => setInFlight(b ? 'cancel' : null)}
                     onDone={(r) => { changed(r); setFailure(null); setNotice(`Bill ${inv.serial} was cancelled.`); }}
                     onRefused={reload} />
                 )}
@@ -238,7 +255,8 @@ export function Totals({ totals, igst, label = 'Totals' }: { totals: Invoice['to
   );
 }
 
-type UnresolvedPayment = { body: PaymentInput; error: string };
+/** A payment as an owned once-only record (the key is local: it only tells attempts and pages apart). */
+type PayOp = PendingOp<PaymentInput>;
 
 /** What the bill as read says about a payment sent without an answer. */
 export function paymentOutcome(d: Detail, body: PaymentInput): 'recorded' | 'unknown' | { refused: string } {
@@ -248,23 +266,46 @@ export function paymentOutcome(d: Detail, body: PaymentInput): 'recorded' | 'unk
     return { refused: `another payment was recorded first (${MODE_LABEL[paid.mode as InvoicePaymentMode] ?? paid.mode}${paid.reference ? ` · reference ${paid.reference}` : ''}).` };
   }
   if (d.invoice.lifecycleState === 'cancelled') return { refused: 'the bill was cancelled.' };
-  if (d.invoice.lifecycleState === 'paid') return 'unknown'; // events not read yet
   return 'unknown';
 }
 
-function UnconfirmedPayment({ payment, totalMinor, busy, onResend }: {
-  payment: UnresolvedPayment; totalMinor: number | undefined; busy: boolean; onResend: () => void;
+function UnconfirmedPayment({ op, totalMinor, sending, billUnpaid, onResend, onCheck, onForget }: {
+  op: PayOp; totalMinor: number | undefined; sending: boolean; billUnpaid: boolean;
+  onResend: () => void; onCheck: () => void; onForget: () => void;
 }) {
-  const b = payment.body;
+  const amount = totalMinor !== undefined ? ` of ${money(totalMinor)}` : '';
+  if (op.restored) {
+    return (
+      <div className="confirm" role="group" aria-label="Unconfirmed payment">
+        <Alert tone="warn">
+          A payment{amount} was sent from this device before the page was reloaded, and its answer never arrived. Its details are
+          not kept here. Check the bill: a payment on it settles this. The bill can only ever be paid once.
+        </Alert>
+        <div className="confirm-actions">
+          <Button onClick={onCheck}>Check the bill</Button>
+          {billUnpaid && (
+            <ConfirmAction label="Record the payment again" confirmLabel="The bill is unpaid: record it again"
+              consequence="The bill shows no payment. Recording one now is safe: if the earlier one arrives later, it is refused (a bill is paid once)."
+              onConfirm={async () => onForget()} />
+          )}
+        </div>
+      </div>
+    );
+  }
+  const b = op.body;
+  const what = `${amount} by ${MODE_LABEL[b.mode]}${b.reference ? ` (reference ${b.reference})` : ''}`;
   return (
     <div className="confirm" role="group" aria-label="Unconfirmed payment">
       <Alert tone="warn">
-        We could not confirm the payment{totalMinor !== undefined ? ` of ${money(totalMinor)}` : ''} by {MODE_LABEL[b.mode]}
-        {b.reference ? ` (reference ${b.reference})` : ''} ({payment.error}). Send the same payment again: if it was recorded,
-        the server answers with it; it is never recorded twice. No other payment or cancellation can start until this is settled.
+        {sending || (!op.uncertain && !op.error)
+          ? `A payment${what} is being sent and has not been answered yet. `
+          : `We could not confirm the payment${what} (${op.error ?? 'no answer'}). `}
+        Send the same payment again if needed: if it was recorded, the server answers with it; it is never recorded twice.
+        No other payment or cancellation can start until this is settled.
       </Alert>
       <div className="confirm-actions">
-        <Button busy={busy} onClick={onResend}>Send the same payment again</Button>
+        <Button busy={sending} onClick={onResend}>Send the same payment again</Button>
+        <Button variant="secondary" disabled={sending} onClick={onCheck}>Check the bill</Button>
       </div>
     </div>
   );

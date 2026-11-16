@@ -50,8 +50,10 @@ interface Backend {
   changeAfterRead?: Rec;
   /** The next payment is recorded but its answer never arrives. */
   loseNextPayAnswer: boolean;
-  /** The next payment answer waits for this promise. */
+  /** The next payment request (only that one) waits for this promise. */
   holdPay?: Promise<void>;
+  /** The held payment then loses the compare-and-set: 409 "This bill is paid". */
+  heldPayConflict?: boolean;
   /** Applied to a catalogue item just before the next bill is created (its price changed meanwhile). */
   priceChangeBeforeBill?: { id: string; priceMinor: number };
   /** Bill request keys given up (Q10 abandon): they can never issue a bill. */
@@ -62,6 +64,8 @@ interface Backend {
   holdAbandon?: Promise<void>;
   /** Set once a held give-up has been answered. */
   abandonAnswered: boolean;
+  /** Set once a held, conflicting payment has been answered. */
+  heldPayAnswered?: boolean;
   live: boolean;
 }
 
@@ -336,7 +340,12 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
       };
       if (one[2] === '/pay') {
         if (!can('payments.record')) return deny();
-        if (b.holdPay) await b.holdPay;
+        const hold = b.holdPay;
+        if (hold) {
+          b.holdPay = undefined;
+          await hold;
+          if (b.heldPayConflict) { b.heldPayConflict = false; await fail(route, 409, 'INVOICE_STATE_CONFLICT', 'This bill is paid'); b.heldPayAnswered = true; return; }
+        }
         const x = body as Rec;
         if (b.paidElsewhere === inv._id && inv.lifecycleState === 'issued') transition('paid', { kind: 'payment', mode: 'cash', reference: 'OTHER' });
         if (inv.lifecycleState === 'paid') {
@@ -963,6 +972,72 @@ test('a lost UPI payment survives a failed refresh: the exact payment stays, no 
   await expect(page.getByText('Paid by UPI · reference UTR9')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeEnabled();
   expect(backend.calls.filter((c) => c.path.endsWith('/pay'))).toHaveLength(1);
+});
+
+test('a payment from a page that was left: another page shows it instead of a new form, and its late 409 does not erase the newer attempt', async ({ page }) => {
+  const backend = await mockBackend(page, owner(), { seed: true });
+  await signInPartner(page);
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  // Page A sends UPI/UTR-A; its request is held (it will lose the compare-and-set: 409).
+  let release!: () => void;
+  backend.holdPay = new Promise<void>((r) => { release = r; });
+  backend.heldPayConflict = true;
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByLabel('Paid by').selectOption('upi');
+  await page.getByLabel('Reference (optional)').fill('UTR-A');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed payment' })).toContainText('is being sent');
+  // A is left; page B opens: it shows A's payment (stored before it was sent), not a new form; cancel is locked.
+  await page.getByRole('link', { name: 'Back to bills' }).click();
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  const b = page.getByRole('group', { name: 'Unconfirmed payment' });
+  await expect(b).toContainText('by UPI (reference UTR-A)');
+  await expect(page.getByRole('button', { name: 'Record payment' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
+  // B resends it (attempt 2): recorded, but its answer is lost and reads fail.
+  backend.loseNextPayAnswer = true;
+  backend.failDetailReads = 50;
+  await b.getByRole('button', { name: 'Send the same payment again' }).click();
+  await expect(b).toContainText('We could not confirm the payment of ₹1,008.00 by UPI (reference UTR-A)');
+  // A's delayed 409 arrives now. It must not touch B's record.
+  release();
+  await expect.poll(() => backend.heldPayAnswered).toBe(true);
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 100)));
+  await page.getByRole('link', { name: 'Back to bills' }).click();
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  await expect(page.getByRole('group', { name: 'Unconfirmed payment' })).toContainText('We could not confirm the payment of ₹1,008.00 by UPI (reference UTR-A)');
+  await expect(page.getByRole('button', { name: 'Record payment' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
+  // Reads work again: the bill's receipt settles it.
+  backend.failDetailReads = 0;
+  await page.getByRole('group', { name: 'Unconfirmed payment' }).getByRole('button', { name: 'Check the bill' }).click();
+  await expect(page.getByText('Payment recorded.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeEnabled();
+  expect(backend.events.filter((e) => e.kind === 'payment')).toHaveLength(1);
+});
+
+test('a payment sent just before a reload: only the bill settles it; a new one is offered only once the bill is read unpaid', async ({ page }) => {
+  const backend = await mockBackend(page, owner(), { seed: true });
+  await signInPartner(page);
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  let release!: () => void;
+  backend.holdPay = new Promise<void>((r) => { release = r; });
+  backend.heldPayConflict = true; // never recorded
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed payment' })).toContainText('is being sent');
+  await page.reload();
+  const panel = page.getByRole('group', { name: 'Unconfirmed payment' });
+  await expect(panel).toContainText('was sent from this device before the page was reloaded');
+  await expect(page.getByRole('button', { name: 'Record payment' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
+  release();
+  await panel.getByRole('button', { name: 'Check the bill' }).click();
+  await panel.getByRole('button', { name: 'Record the payment again' }).click();
+  await panel.getByRole('button', { name: 'The bill is unpaid: record it again' }).click();
+  await expect(page.getByRole('button', { name: 'Record payment' })).toBeEnabled();
 });
 
 test('a give-up answer from a page that was left does not settle the bill a returned page is resending', async ({ page }) => {
