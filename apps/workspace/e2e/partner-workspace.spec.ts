@@ -44,6 +44,12 @@ interface Backend {
   raceOnce: ((rec: Rec) => void) | null;
   /** An admin cookie session exists (a reload restores it). */
   adminLive: boolean;
+  /** Test-controlled: the abandon answer waits for this (its outcome is decided when it is released). */
+  holdAbandon: Promise<void> | null;
+  /** Test-controlled: a create commits at once but its answer waits for this. */
+  holdCreate: Promise<void> | null;
+  /** Abandon answers sent so far. */
+  abandonAnswers: string[];
 }
 
 let clock = 0;
@@ -63,7 +69,8 @@ const BR_OLD = 'c9'.repeat(12);
 async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Backend, 'multi' | 'expired'>> & { many?: boolean } = {}): Promise<Backend> {
   const b: Backend = {
     calls: [], me, multi: false, expired: false, conflictOnce: false, slowAdd: 0, dropCreate: false, creates: new Map(),
-    abandoned: new Set(), loseCreate: false, slowCreate: 0, slowMemberRead: 0, raceOnce: null, adminLive: false, ...opts,
+    abandoned: new Set(), loseCreate: false, slowCreate: 0, slowMemberRead: 0, raceOnce: null, adminLive: false,
+    holdAbandon: null, holdCreate: null, abandonAnswers: [], ...opts,
     members: [
       { _id: OWNER, partnerId: LAB, name: 'Ravi Owner', phone: '9000000001', role: 'owner', permissions: ALL, branchIds: [], isActive: true, updatedAt: V0 },
       { _id: STAFF, partnerId: LAB, name: 'Sita Staff', phone: '9000000002', role: 'staff', permissions: ['bookings.view'], branchIds: [BR1], isActive: true, updatedAt: V0 },
@@ -131,7 +138,10 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
     if (byKey) {
       const made = b.creates.get(byKey[1]!);
       if (byKey[2]) {
-        if (made) return ok(route, { state: 'used', partner: made.partner });
+        if (b.holdAbandon) await b.holdAbandon;
+        const now = b.creates.get(byKey[1]!);
+        b.abandonAnswers.push(now ? 'used' : 'abandoned');
+        if (now) return ok(route, { state: 'used', partner: now.partner });
         b.abandoned.add(byKey[1]!);
         return ok(route, { state: 'abandoned' });
       }
@@ -152,6 +162,7 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
       b.partners.push(created);
       if (requestKey) b.creates.set(String(requestKey), { hash, partner: created });
       if (b.dropCreate) { b.dropCreate = false; return route.abort('failed'); }
+      if (b.holdCreate) await b.holdCreate;
       return ok(route, { partner: created, owner: { _id: NEWBIE, name: (x.firstOwner as Rec).name } }, 201);
     }
     const adm = /^\/partner-workspace\/admin\/([0-9a-f]{24})(\/verify|\/suspend|\/reinstate)?$/.exec(path);
@@ -808,4 +819,43 @@ test('Q10: a save refused as RECORD_CHANGED shows what is saved and sends nothin
   await expect(editor.getByLabel('View bookings')).not.toBeChecked();
   await expect(editor.getByLabel('Manage bookings')).not.toBeChecked();
   expect((backend.members.find((m) => m._id === STAFF)!).permissions).toEqual([]);
+});
+
+test('an obsolete give-up answer from a page that was left never settles a newer retry of the same key', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.loseCreate = true;
+  await signInAdmin(page);
+  await fillNewPartner(page);
+  await page.getByRole('button', { name: 'Create', exact: true }).click();
+  await expect(page.getByText(/We could not confirm whether Metro Diagnostics was created/)).toBeVisible();
+
+  // Page A starts giving up K1; its answer is held.
+  let releaseAbandon!: () => void;
+  backend.holdAbandon = new Promise<void>((r) => { releaseAbandon = r; });
+  await page.getByRole('button', { name: 'Give up this create' }).click();
+  await expect.poll(() => backend.calls.filter((c) => c.path.endsWith('/abandon')).length).toBe(1);
+
+  // A is left; returned page B resends K1 (attempt 2): it commits, its answer is held.
+  await page.goto('/#/admin/partners');
+  await page.goto('/#/admin/partners/new');
+  let releaseCreate!: () => void;
+  backend.holdCreate = new Promise<void>((r) => { releaseCreate = r; });
+  await page.getByRole('button', { name: 'Send again' }).click();
+  await expect.poll(() => backend.partners.filter((p) => p.name === 'Metro Diagnostics').length).toBe(1);
+
+  // A's delayed answer arrives first: 'used'. It must change nothing for B.
+  releaseAbandon();
+  await expect.poll(() => backend.abandonAnswers).toEqual(['used']);
+  await page.waitForTimeout(300);
+  await expect(page.getByRole('button', { name: 'Send again' })).toBeVisible(); // B still waiting on its own attempt
+  expect(await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.endsWith(':admin-partner-create')).length)).toBe(1);
+
+  // B's own success then settles it and opens the partner.
+  releaseCreate();
+  await expect(page.getByRole('heading', { name: 'Metro Diagnostics' })).toBeVisible();
+  expect(await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.endsWith(':admin-partner-create')).length)).toBe(0);
+  const creates = createCalls(backend);
+  expect(creates).toHaveLength(2);
+  expect(creates[1]!.body).toEqual(creates[0]!.body);
+  expect(backend.partners.filter((p) => p.name === 'Metro Diagnostics')).toHaveLength(1);
 });

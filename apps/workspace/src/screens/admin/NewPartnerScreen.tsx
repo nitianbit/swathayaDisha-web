@@ -88,6 +88,12 @@ export function NewPartnerScreen() {
     if (p) memory.set(PENDING_SLOT, p); else memory.delete(PENDING_SLOT);
     setPendingState(p);
   };
+  /**
+   * Whether an answer started for `p` may still act: this page is on screen AND the stored creation is still exactly
+   * `p` (same key, same attempt count). A newer retry (on this or a returned page) owns the state otherwise, and an
+   * obsolete answer must leave it intact.
+   */
+  const owns = (p: Pending) => live.current && stillCurrent(memory.get<Pending>(PENDING_SLOT), p);
   /** Ends the stored creation with this key, and only it. */
   const settle = (requestKey: string) => {
     resolveStored(memory, PENDING_SLOT, requestKey);
@@ -106,8 +112,12 @@ export function NewPartnerScreen() {
     enabled: !!restoredKey,
   });
   useEffect(() => {
-    if (restoredKey && lookup.data) { setFound(lookup.data.partner); settle(restoredKey); }
-  }, [restoredKey, lookup.data]);
+    // Only for the restored creation this page is showing (a cached answer for another key or a newer state is ignored).
+    if (restoredKey && lookup.data && pending?.requestKey === restoredKey && owns(pending)) {
+      setFound(lookup.data.partner);
+      settle(restoredKey);
+    }
+  }, [restoredKey, lookup.data, pending]);
 
   /** Sends exactly `p` (same key, same content). Only success, or a definite refusal of its first attempt, ends it. */
   async function send(p: Pending) {
@@ -137,18 +147,19 @@ export function NewPartnerScreen() {
     setError(null); setNotice(null);
     try {
       const r = await admin.abandonCreate(p.requestKey);
+      // Left page, or a newer retry of the same key started meanwhile: this answer settles and opens nothing.
+      if (!owns(p)) return;
       if (r.state === 'used') {
         settle(p.requestKey);
         if (r.partner) { await open(r.partner._id); return; }
-        if (live.current) setNotice('It had already been created. Find it in the list.');
+        setNotice('It had already been created. Find it in the list.');
         return;
       }
       settle(p.requestKey);
-      if (!live.current) return;
       if (p.restored) setD(EMPTY);
       setNotice('Given up: nothing was created and that request can never create a partner. You can create it again.');
     } catch (err) {
-      if (live.current) setError(messageOf(err));
+      if (owns(p)) setError(messageOf(err));
     } finally {
       if (live.current) setBusy(false);
     }
