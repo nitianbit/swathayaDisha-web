@@ -205,11 +205,19 @@ function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api:
     setPendingState(p);
   };
 
-  /** `requestKey` produced this payout (answer, replay or found): end it, and only it. */
-  const recorded = (p: SettlementPayout, requestKey: string, earlier: boolean) => {
-    resolveStored(memory, slot, requestKey);
+  /**
+   * Whether an answer or a check made for `op` may still act: this page is on screen AND the stored payout is still
+   * exactly `op` (same key, same attempt). Otherwise another attempt (here, or on a page opened since) owns it, and it
+   * stays as it is, reload marker included, for that page to settle (a resend replays the same payout).
+   */
+  const owns = (op: PendingPayout) => mounted.current && stillCurrent(memory.get<PendingPayout>(slot), op);
+
+  /** `op` produced this payout (answer, replay or found): end it, and only it, if this page still owns it. */
+  const recorded = (p: SettlementPayout, op: PendingPayout, earlier: boolean) => {
     onChanged();
-    if (!mounted.current) return;
+    if (!owns(op)) return;
+    resolveStored(memory, slot, op.requestKey);
+    const requestKey = op.requestKey;
     setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
     setDone(earlier
       ? `This payout had already been recorded: ${money(p.amountMinor)}, reference ${p.reference}, paid on ${formatDate(p.paidOn)}. Nothing was recorded twice.`
@@ -228,16 +236,14 @@ function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api:
         setPending(attempt);
         try {
           const r = await s.recordPayout(accountId, attempt.body);
-          recorded(r.payout, attempt.requestKey, r.replayed);
+          recorded(r.payout, attempt, r.replayed);
         } catch (err) {
-          if (!stillCurrent(memory.get<PendingPayout>(slot), attempt)) return;
+          onChanged();
+          if (!owns(attempt)) return;
           const next = afterFailure(attempt, err, messageOf(err));
-          if (mounted.current) {
-            setPending(next ?? undefined);
-            if (!next) setRefused(messageOf(err));
-          } else if (next) memory.set(slot, next); else memory.delete(slot);
-          // A refusal (stale details, balance, reference): show the account as it is now.
-          if (!next) onChanged();
+          setPending(next ?? undefined);
+          // A refusal (stale details, balance, reference): the account is read again and shown as it is now.
+          if (!next) setRefused(messageOf(err));
         } finally {
           if (mounted.current) setBusy(false);
         }
@@ -274,12 +280,13 @@ function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api:
           )}
           <PendingOpPanel key={pending.attempts} label="Unconfirmed payout" op={pending} busy={busy} onResend={() => void send(pending)}
             fetchPage={payoutFinder(s, accountId, pending)}
-            onFound={(p) => recorded(p, pending.requestKey, true)}
+            onFound={(p) => recorded(p, pending, true)}
             forget={{
               label: 'Record a payout from the start',
               confirmLabel: 'Forget the unconfirmed payout',
               consequence: 'Only after checking the payouts list. If the earlier payout was recorded after all, the same bank reference is refused; under another reference the balance would go down twice and one payout must then be voided.',
               onForget: () => {
+                if (!owns(pending)) return;
                 const k = pending.requestKey;
                 resolveStored(memory, slot, k);
                 setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
@@ -399,10 +406,14 @@ function PostAdjustment({ api: s, accountId, summary, perform, onChanged }: { ap
     setPendingState(p);
   };
 
-  const posted = (amountMinor: number, requestKey: string, earlier: boolean) => {
-    resolveStored(memory, slot, requestKey);
+  /** As for payouts: only a live page whose stored adjustment is still exactly `op` may settle or replace it. */
+  const owns = (op: PendingAdjustment) => mounted.current && stillCurrent(memory.get<PendingAdjustment>(slot), op);
+
+  const posted = (amountMinor: number, op: PendingAdjustment, earlier: boolean) => {
     onChanged();
-    if (!mounted.current) return;
+    if (!owns(op)) return;
+    resolveStored(memory, slot, op.requestKey);
+    const requestKey = op.requestKey;
     setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
     const what = amountMinor < 0 ? `${money(-amountMinor)} taken from the balance` : `${money(amountMinor)} added to the balance`;
     setDone(earlier ? `This adjustment had already been posted (${what}). Nothing was posted twice.` : `Adjustment posted: ${what}.`);
@@ -419,14 +430,12 @@ function PostAdjustment({ api: s, accountId, summary, perform, onChanged }: { ap
         setPending(attempt);
         try {
           const r = await s.postAdjustment(accountId, attempt.body);
-          posted(r.entry.amountMinor, attempt.requestKey, r.replayed);
+          posted(r.entry.amountMinor, attempt, r.replayed);
         } catch (err) {
-          if (!stillCurrent(memory.get<PendingAdjustment>(slot), attempt)) return;
+          if (!owns(attempt)) return;
           const next = afterFailure(attempt, err, messageOf(err));
-          if (mounted.current) {
-            setPending(next ?? undefined);
-            if (!next) setRefused(messageOf(err));
-          } else if (next) memory.set(slot, next); else memory.delete(slot);
+          setPending(next ?? undefined);
+          if (!next) setRefused(messageOf(err));
         } finally {
           if (mounted.current) setBusy(false);
         }
@@ -447,12 +456,13 @@ function PostAdjustment({ api: s, accountId, summary, perform, onChanged }: { ap
       {showPanel ? (
         <PendingOpPanel key={pending.attempts} label="Unconfirmed adjustment" op={pending} busy={busy} onResend={() => void send(pending)}
           fetchPage={adjustmentFinder(s, accountId, pending.requestKey)}
-          onFound={(l) => posted(l.amountMinor, pending.requestKey, true)}
+          onFound={(l) => posted(l.amountMinor, pending, true)}
           forget={{
             label: 'Post an adjustment from the start',
             confirmLabel: 'Forget the unconfirmed adjustment',
             consequence: 'If it was posted after all, the balance is adjusted twice and must be corrected with another adjustment.',
             onForget: () => {
+              if (!owns(pending)) return;
               const k = pending.requestKey;
               resolveStored(memory, slot, k);
               setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));

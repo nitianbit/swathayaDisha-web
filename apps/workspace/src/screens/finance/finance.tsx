@@ -397,6 +397,10 @@ export function PayoutDetailsForm({ account, audience, reread, save, perform, on
   const d = useDraft(() => draftOfDetails(account));
   const { rebaseTo, update } = d;
   const baseVersion = useRef(account?.payoutDetailsVersion ?? 0);
+  /** Bumped by every change of the draft (typing or a rebase): a save may send only the draft it reviewed. */
+  const generation = useRef(0);
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const [stale, setStale] = useState<string | null>(null);
   const [tried, setTried] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -406,6 +410,7 @@ export function PayoutDetailsForm({ account, audience, reread, save, perform, on
   /** Replaces the draft with what is saved now (version `v`); tells the person if they had changed anything. */
   const moveTo = useCallback((latest: DetailsDraft, v: number, touched: boolean) => {
     baseVersion.current = v;
+    generation.current += 1;
     rebaseTo(latest);
     update(() => latest);
     setReviewing(false);
@@ -427,7 +432,7 @@ export function PayoutDetailsForm({ account, audience, reread, save, perform, on
   const allErrors: Record<string, string | undefined> = { ...built.errors, ...(mismatch ? { confirmNumber: 'The two account numbers are not the same.' } : {}) };
   const errors = tried ? allErrors : {};
   const valid = built.body !== null && !mismatch;
-  const set = <K extends keyof DetailsDraft>(k: K, v: DetailsDraft[K]) => { d.set(k, v); setReviewing(false); setError(null); };
+  const set = <K extends keyof DetailsDraft>(k: K, v: DetailsDraft[K]) => { generation.current += 1; d.set(k, v); setReviewing(false); setError(null); };
 
   function review(e: FormEvent) {
     e.preventDefault();
@@ -437,27 +442,45 @@ export function PayoutDetailsForm({ account, audience, reread, save, perform, on
     if (valid) setReviewing(true);
   }
 
+  /**
+   * Sends exactly the reviewed draft, only if nothing moved since the review: the version and the draft generation are
+   * captured BEFORE the re-read, and after it the page must still be on screen, the draft unchanged (no typing, no
+   * rebase by a background refresh) and the server still on the reviewed version. Anything else sends nothing.
+   */
   async function send() {
     const body = built.body;
     if (!body) return;
+    const reviewedVersion = baseVersion.current;
+    const reviewedGeneration = generation.current;
+    const moved = () => !live.current || generation.current !== reviewedGeneration || baseVersion.current !== reviewedVersion;
     let sent = false;
     setBusy(true);
     setError(null);
     const run = async (): Promise<SettlementAccount | null> => {
+      if (moved()) return null;
       const now = await reread();
+      if (!live.current) return null;
       const v = now?.payoutDetailsVersion ?? 0;
-      if (v !== baseVersion.current) { moveTo(draftOfDetails(now), v, true); onStale?.(); return null; }
+      if (moved() || v !== reviewedVersion) {
+        // A newer destination exists (seen by the re-read or by a refresh meanwhile): show it, send nothing.
+        if (baseVersion.current !== v) moveTo(draftOfDetails(now), v, true);
+        else setStale(`The payout details were changed elsewhere while you were saving (now version ${v}). Nothing was saved; the form shows what is saved now. Make your change again if it is still needed.`);
+        setReviewing(false);
+        onStale?.();
+        return null;
+      }
       sent = true;
       return save(body);
     };
     try {
       const saved = await (perform ? perform(run) : run());
-      if (saved) onSaved(saved);
+      if (saved && live.current) onSaved(saved);
     } catch (err) {
+      if (!live.current) return;
       if (!sent || definitelyNotRecorded(err)) setError(sent ? `Not saved: ${messageOf(err)}` : messageOf(err));
       else onLost(`The answer did not come back (${messageOf(err)}), so the details may or may not have been saved. Check the payout details shown before changing them again.`);
     } finally {
-      setBusy(false);
+      if (live.current) setBusy(false);
     }
   }
 

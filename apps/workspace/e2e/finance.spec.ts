@@ -30,6 +30,12 @@ interface Payout extends Rec { _id: string; settlementAccountId: string; amountM
 interface Backend {
   calls: Call[]; me: Me; accounts: Account[]; entries: Entry[]; payouts: Payout[]; events: Rec[]; live: boolean;
   loseNextPayoutAnswer?: boolean; loseNextAdjustmentAnswer?: boolean; changeDetailsBeforeNextPayout?: boolean;
+  /** The next request whose path matches waits for `release()` before the server looks at it. */
+  holdBefore?: { match: RegExp; gate: Promise<void> };
+  /** The server has acted on the next matching request; its answer waits for `release()`. */
+  holdAfter?: { match: RegExp; gate: Promise<void> };
+  /** The server acts on the next matching request (a replay included) and its answer is lost. */
+  loseNext?: RegExp;
 }
 
 let seq = 0;
@@ -177,6 +183,12 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
     if (path === '/auth/session/logout') { b.live = false; return ok(route, {}); }
     if (path.startsWith('/auth/session')) return ok(route, {});
     b.calls.push({ method, path: `${path}${url.search}`, body, auth: req.headers().authorization });
+    if (b.holdBefore && b.holdBefore.match.test(path)) { const g = b.holdBefore.gate; b.holdBefore = undefined; await g; }
+    const finish = async (data: unknown, status = 200) => {
+      if (b.holdAfter && b.holdAfter.match.test(path)) { const g = b.holdAfter.gate; b.holdAfter = undefined; await g; }
+      if (b.loseNext && b.loseNext.test(path)) { b.loseNext = undefined; return route.abort('failed'); }
+      return ok(route, data, status);
+    };
     if (path === '/auth/partner/send' || path === '/auth/admin/send') return ok(route, undefined);
     if (path === '/auth/partner/verify') { b.live = true; return ok(route, { token: 't1', expiresIn: 900, user: {} }); }
     if (path === '/auth/admin/verify') return ok(route, { token: 'admin', expiresIn: 900, user: {} });
@@ -241,7 +253,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
         const prior = b.payouts.find((p) => p.by === ADMIN && p.requestKey === requestKey);
         if (prior) {
           if (prior.requestHash !== hash) return fail(route, 409, 'REQUEST_KEY_REUSED', 'This request key was already used for a different payout');
-          return ok(route, { payout: publicPayout(prior), replayed: true });
+          return finish({ payout: publicPayout(prior), replayed: true });
         }
         // The doctor changed the destination and another admin verified it, after this admin loaded the page.
         if (b.changeDetailsBeforeNextPayout) { b.changeDetailsBeforeNextPayout = false; setDetails(a, { method: 'upi', upiId: 'meera.new@okaxis' }, 'doctor', DOC); a.state = 'verified'; }
@@ -261,7 +273,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
           reference: p.reference, amountMinor: -p.amountMinor });
         event(a, 'finance.payout_recorded', 'admin', ADMIN, { payoutId: p._id, amountMinor: p.amountMinor, reference: p.reference, paidOn: p.paidOn });
         if (b.loseNextPayoutAnswer) { b.loseNextPayoutAnswer = false; return route.abort('failed'); }
-        return ok(route, { payout: publicPayout(p), replayed: false }, 201);
+        return finish({ payout: publicPayout(p), replayed: false }, 201);
       }
       if (sub === '/adjustments') {
         const x = body as { amountMinor: number; reason: string; requestKey: string };
@@ -269,14 +281,14 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
         const prior = b.entries.find((e) => e.accountId === a._id && e.source === 'admin_adjustment' && e.sourceId === sourceId);
         if (prior) {
           if (prior.amountMinor !== x.amountMinor || prior.note !== x.reason) return fail(route, 409, 'REQUEST_KEY_REUSED', 'This request key was already used for a different adjustment');
-          return ok(route, { entry: prior, replayed: true });
+          return finish({ entry: prior, replayed: true });
         }
         const entry: Entry = { _id: oid('eb'), accountId: a._id, at: NOW.toISOString(), kind: 'adjustment', source: 'admin_adjustment', sourceId, description: 'Adjustment',
           note: x.reason, amountMinor: x.amountMinor };
         b.entries.push(entry);
         event(a, 'finance.adjustment_posted', 'admin', ADMIN, { entryId: entry._id, amountMinor: x.amountMinor, reason: x.reason });
         if (b.loseNextAdjustmentAnswer) { b.loseNextAdjustmentAnswer = false; return route.abort('failed'); }
-        return ok(route, { entry, replayed: false }, 201);
+        return finish({ entry, replayed: false }, 201);
       }
       return fail(route, 404, 'NOT_FOUND', 'Not found');
     }
@@ -328,6 +340,13 @@ async function signInAdmin(page: Page) {
   await page.getByLabel('6-digit code').fill('123456');
   await page.getByRole('button', { name: 'Verify and sign in' }).click();
   await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+}
+
+/** Holds the next matching request (before the server acts, or after it acted) until the returned function is called. */
+function hold(b: Backend, when: 'holdBefore' | 'holdAfter', match: RegExp): () => void {
+  let release!: () => void;
+  b[when] = { match, gate: new Promise<void>((r) => { release = r; }) };
+  return () => release();
 }
 
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main' });
@@ -693,3 +712,85 @@ test('admin as owner: the partner finance page through the admin workspace route
   expect(backend.calls.filter((c) => c.path.includes('/finance')).every((c) => c.path.startsWith(`/partner-workspace/admin/${LAB}/workspace/finance`))).toBe(true);
   expect(await storage(page)).not.toMatch(/123456789012|HDFC/);
 });
+
+test('payout details: a refresh during the save’s re-read moves the baseline, and the reviewed old details are not sent', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Finance' }).click();
+  const dest = page.getByRole('region', { name: 'Where payouts are sent' });
+  await dest.getByRole('button', { name: 'Change payout details' }).click();
+  await dest.getByRole('radio', { name: 'UPI' }).check();
+  await dest.getByLabel('UPI ID').fill('citylab@okhdfc');
+  await dest.getByRole('button', { name: 'Review the change' }).click();
+  // The re-read made by Save waits; meanwhile someone else saves new details and the page refreshes in the background.
+  const releaseRead = hold(backend, 'holdBefore', /^\/partner-workspace\/finance$/);
+  await dest.getByRole('group', { name: 'Save the payout details' }).getByRole('button', { name: 'Save payout details' }).click();
+  await expect.poll(() => backend.holdBefore).toBeUndefined();
+  Object.assign(backend.accounts.find((a) => a._id === ACC1)!, { details: { method: 'upi', upiId: 'other@okicici' }, version: 2, state: 'unverified' });
+  await page.clock.setFixedTime(new Date(NOW.getTime() + 60_000));
+  await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')));
+  await expect(dest.getByRole('definition').filter({ hasText: 'other@okicici' })).toBeVisible();
+  // The re-read now answers version 2 too, matching the moved baseline: still nothing may be sent.
+  const read = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/v1/partner-workspace/finance');
+  releaseRead();
+  await read;
+  await expect(dest.getByText(/changed elsewhere while you were saving \(now version 2\)\. Nothing was saved/)).toBeVisible();
+  await expect(dest.getByLabel('UPI ID')).toHaveValue('other@okicici');
+  expect(backend.calls.filter((c) => c.method === 'PUT')).toHaveLength(0);
+  expect(backend.accounts.find((a) => a._id === ACC1)!.details).toEqual({ method: 'upi', upiId: 'other@okicici' });
+});
+
+for (const kind of ['payout', 'adjustment'] as const) {
+  test(`a left page’s late ${kind} answer does not settle the ${kind} another page resent and lost`, async ({ page }) => {
+    const backend = await mockBackend(page);
+    await signInAdmin(page);
+    const open = async () => {
+      await nav(page).getByRole('link', { name: 'Settlements' }).click();
+      await page.getByRole('link', { name: 'City Lab' }).click();
+      await expect(page.getByRole('heading', { name: 'City Lab', level: 1 })).toBeVisible();
+    };
+    await open();
+    const path = kind === 'payout' ? /\/payouts$/ : /\/adjustments$/;
+    const label = kind === 'payout' ? 'Unconfirmed payout' : 'Unconfirmed adjustment';
+    // Page A sends; the server records it, but the answer is held.
+    let releaseA: () => void;
+    if (kind === 'payout') {
+      const form = page.getByRole('form', { name: 'Record a payout' });
+      await form.getByLabel('Amount paid (₹)').fill('100');
+      await form.getByLabel('Bank reference (UTR)').fill('UTR-HELD-1');
+      await form.getByRole('button', { name: 'Review the payout' }).click();
+      releaseA = hold(backend, 'holdAfter', path);
+      await form.getByRole('button', { name: 'Record payout' }).click();
+    } else {
+      const form = page.getByRole('form', { name: 'Post an adjustment' });
+      await form.getByLabel('Adjustment amount (₹)').fill('75');
+      await form.getByLabel('Reason (kept with the entry)').fill('Correction held in transit');
+      await form.getByRole('button', { name: 'Review the adjustment' }).click();
+      releaseA = hold(backend, 'holdAfter', path);
+      await form.getByRole('button', { name: 'Post adjustment' }).click();
+    }
+    await expect.poll(() => backend.holdAfter).toBeUndefined();
+    // Page A leaves with its answer still on the way; page B shows the same request and resends it; B's answer is lost.
+    await open();
+    const panelB = page.getByRole('group', { name: label });
+    await expect(panelB).toContainText('The outcome of this request is not known yet');
+    backend.loseNext = path;
+    await panelB.getByRole('button', { name: 'Send the same request again' }).click();
+    await expect(panelB).toContainText('Could not reach the server');
+    // A's late success arrives now: it must not settle B's attempt.
+    const late = page.waitForResponse((r) => path.test(new URL(r.url()).pathname) && r.status() === 201);
+    releaseA();
+    await late;
+    await open();
+    const panelC = page.getByRole('group', { name: label });
+    await expect(panelC).toBeVisible();
+    await expect(page.getByRole('form', { name: kind === 'payout' ? 'Record a payout' : 'Post an adjustment' })).toHaveCount(0);
+    await panelC.getByRole('button', { name: 'Check whether it was recorded' }).click();
+    await expect(page.getByText(kind === 'payout' ? /This payout had already been recorded: ₹100\.00, reference UTR-HELD-1/ : /This adjustment had already been posted \(₹75\.00 added to the balance\)/)).toBeVisible();
+    const posts = backend.calls.filter((c) => c.method === 'POST' && path.test(c.path));
+    expect(posts).toHaveLength(2);
+    expect(posts[1]!.body).toEqual(posts[0]!.body);
+    expect(kind === 'payout' ? backend.payouts.filter((p) => p.reference === 'UTR-HELD-1').length : backend.entries.filter((e) => e.source === 'admin_adjustment').length).toBe(1);
+    expect(await storage(page)).not.toMatch(/sd:pend/);
+  });
+}

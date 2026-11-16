@@ -470,6 +470,17 @@ Backend gaps found (not changed here):
   have no paging.
 - Doctors' own finance (`/specialists/me/finance`) is not part of this packet (no doctor workspace yet).
 
+Review fixes (Codex WQ5 at 1c21528: 2 MEDIUM):
+1. **Payout details save sends only what was reviewed, against the version it was reviewed on.** The reviewed version and
+   the draft generation (bumped by every keystroke and every rebase) are captured before the re-read. After it, the page
+   must still be on screen, the generation unchanged and the server still on the reviewed version; otherwise nothing is
+   sent and the saved details are shown. Before, a background refresh during the re-read could move the baseline to the
+   newer version, so the re-read "matched" and the older reviewed destination overwrote the newer one.
+2. **Once-only payouts and adjustments are settled only by their owner.** Every answer, lookup result and "forget" acts
+   only when its page is on screen AND the stored record is still exactly that key and attempt (`stillCurrent`, as WQ2
+   3da8f10). A left page's late answer no longer deletes the attempt another page resent (and lost); the record and its
+   reload marker stay until the owning page settles it (a resend replays it, a check finds it).
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -490,6 +501,7 @@ Backend gaps found (not changed here):
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-16 | WQ5 review fixes | typecheck clean; Vitest 128/128; Playwright workspace 268/268 (+6 = 3 journeys x 2 devices: a background refresh during the details save's re-read moves the baseline and the reviewed older details are not sent; for a payout and for an adjustment, a left page's late success does not settle the attempt another page resent and lost (still shown after remounting, found by the check, recorded once)); all 3 journeys fail on 1c21528; release build. Spare port (temporary config, not committed). |
 | 2026-11-16 | WQ5 (partner finance, admin settlements/payouts) | typecheck clean; Vitest 122/122 (+13: member/admin-as-owner and `/settlements` paths and queries, request key in the body and identical on resend, CSV blob with the token in the header, id/date/cursor/limit/key checks before any request, destination normalisation as `normalizeDetails`, payout and reason rules, India "today", finding a lost adjustment by key and a lost payout by UTR/amount/date; app: destination labels, form baseline never holding a masked number, event texts, India dates); Playwright workspace 226/226 (+18 = 9 journeys x 2 devices: partner balance, statement paging with running balance, period filter and CSV blob; owner changes the destination after a review saying it must be verified again, then a change made elsewhere stops the save after the re-read; staff with finance.view read-only, without it or branch-limited no page and no request; admin accounts filters, totals and paging; verify, stale details version refused, lost payout answer resent once (one payout); adjustment lost answer found by key; adjustment sent before a reload found by key afterwards (only a body-less marker kept); void from the queue with reason; admin as owner with the full account number; nothing private in storage or URLs); release build with VITE_API_BASE_URL=https://api.example.test. Playwright ran on port 5197 (temporary config, not committed). Not yet run against a real backend or reviewed. |
 | 2026-11-14 | W1 (first cut) | typecheck clean; Vitest 10/10; Playwright 14/14; release build guards. Codex review: 6 findings (file URL shape, queue scope x2, late 401 across sign-ins, "opened" ≠ readable, body timeout). |
 | 2026-11-14 | W1 (fixes) | typecheck clean; Vitest 16/16; Playwright 22/22 (desktop + tablet, mocked API, incl. corrupt image, download-only file, buyer/cancelled read-only, late 401 after re-sign-in); backend P1 integration 16/16 on the local replica set (new queue check). Not yet run against a real backend. |
