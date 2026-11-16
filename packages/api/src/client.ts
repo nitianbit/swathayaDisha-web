@@ -51,6 +51,8 @@ export interface Page<T> {
   limit: number;
   total: number;
   totalPages: number;
+  /** Cursor-paged lists (Q10 bills): the cursor of the next page, or null on the last one. */
+  nextCursor?: string | null;
 }
 
 export interface ApiClientOptions {
@@ -182,7 +184,7 @@ export function createApiClient(options: ApiClientOptions) {
     page: <T>(path: string, o: RequestOptions = {}) => request('GET', path, o, async (res): Promise<Page<T>> => {
       const body = parseJson(await res.text()) as {
         data?: T[];
-        pagination?: { page?: number; limit?: number; total?: number; totalPages?: number };
+        pagination?: { page?: number; limit?: number; total?: number; totalPages?: number; nextCursor?: unknown };
       } | null;
       const items = Array.isArray(body?.data) ? body.data : [];
       const p = body?.pagination ?? {};
@@ -192,6 +194,7 @@ export function createApiClient(options: ApiClientOptions) {
         limit: p.limit ?? items.length,
         total: p.total ?? items.length,
         totalPages: p.totalPages ?? 1,
+        ...('nextCursor' in p ? { nextCursor: typeof p.nextCursor === 'string' && p.nextCursor ? p.nextCursor : null } : {}),
       };
     }),
     blob: (path: string, o: RequestOptions = {}) => request('GET', path, o, (res) => res.blob()),

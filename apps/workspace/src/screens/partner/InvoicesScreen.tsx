@@ -1,30 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  DOCUMENT_KIND_LABEL, holdsAny, INVOICE_STATE_LABEL, type Invoice, type InvoiceQuery, type InvoiceState,
+  DOCUMENT_KIND_LABEL, holdsAny, INVOICE_STATE_LABEL, ISO_DATE_PATTERN, type Invoice, type InvoiceQuery, type InvoiceState,
 } from '@jansetu/api';
-import { Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
-import { endOfIstDay, money } from './billing.tsx';
+import { money } from './billing.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
 const PAGE = 50;
 const STATES: InvoiceState[] = ['issued', 'paid', 'cancelled'];
+const MAX_SEARCH = 100;
 
 export const stateTone = (s: InvoiceState) => (s === 'paid' ? 'ok' : s === 'cancelled' ? 'danger' : 'warn');
-
-/**
- * The next `before` for "older bills". The server drops the milliseconds of `before` and compares strictly, so the
- * cursor is the start of the NEXT whole second after the last row: nothing is skipped, and rows already shown come back
- * and are dropped by id.
- */
-export function nextCursor(page: readonly Pick<Invoice, 'issuedAt'>[]): string | undefined {
-  if (page.length < PAGE) return undefined;
-  const last = Date.parse(page[page.length - 1]!.issuedAt);
-  if (Number.isNaN(last)) return undefined;
-  return new Date(Math.floor(last / 1000) * 1000 + 1000).toISOString();
-}
 
 /** In-house bills of this lab or clinic (`invoices.create`, `invoices.cancel`, `payments.record` or `finance.view`). */
 export function InvoicesScreen() {
@@ -34,37 +23,48 @@ export function InvoicesScreen() {
   return <Invoices key={scopeIdentity(ctx)} ctx={ctx} />;
 }
 
-/** All bills of a newest-first, cursor-paged list, without the repeats of a shared second; and whether paging is stuck. */
-export function mergePages(pages: readonly Invoice[][]): { rows: Invoice[]; stuck: boolean } {
-  const seen = new Set<string>();
-  const rows: Invoice[] = [];
-  let stuck = false;
-  pages.forEach((p, i) => {
-    let added = 0;
-    for (const r of p) if (!seen.has(r._id)) { seen.add(r._id); rows.push(r); added++; }
-    if (i > 0 && added === 0 && p.length >= PAGE) stuck = true;
-  });
-  return { rows, stuck };
+/** The filters as the server takes them (Q10 `invoiceQuerySchema`), or the problem with the dates. */
+export function billFilter(f: { state: string; branchId: string; from: string; to: string; q: string }):
+  { query: InvoiceQuery; error: string | null } {
+  const from = f.from.trim();
+  const to = f.to.trim();
+  if ((from && !ISO_DATE_PATTERN.test(from)) || (to && !ISO_DATE_PATTERN.test(to))) return { query: {}, error: 'Choose valid dates.' };
+  if (from && to && from > to) return { query: {}, error: 'The “from” date is after the “to” date.' };
+  const q = f.q.trim().slice(0, MAX_SEARCH);
+  return {
+    query: {
+      state: (f.state || undefined) as InvoiceState | undefined, branchId: f.branchId || undefined,
+      from: from || undefined, to: to || undefined, q: q || undefined, limit: PAGE,
+    },
+    error: null,
+  };
 }
 
 function Invoices({ ctx }: { ctx: ScopeContext }) {
   const partner = useWorkspacePartner(ctx);
   const branches = useBranches(ctx);
-  const [state, setState] = useState<'' | InvoiceState>('');
-  const [branchId, setBranchId] = useState('');
-  const [onOrBefore, setOnOrBefore] = useState('');
-  const before = onOrBefore ? endOfIstDay(onOrBefore) ?? undefined : undefined;
-  const filter: InvoiceQuery = { state: state || undefined, branchId: branchId || undefined, before, limit: PAGE };
+  const [f, setF] = useState({ state: '', branchId: '', from: '', to: '', q: '' });
+  const [search, setSearch] = useState('');
+  const { query, error } = billFilter(f);
   const list = useInfiniteQuery({
-    queryKey: [...ctx.key, 'invoices', filter],
-    queryFn: ({ pageParam }) => ctx.billing.invoices({ ...filter, before: pageParam ?? filter.before }),
+    queryKey: [...ctx.key, 'invoices', query],
+    queryFn: ({ pageParam }) => ctx.billing.invoices({ ...query, cursor: pageParam }),
     initialPageParam: undefined as string | undefined,
-    getNextPageParam: (last) => nextCursor(last),
+    // Q10: the server's exact cursor (`<ms>_<id>`): nothing is skipped or repeated.
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    enabled: !error,
   });
-  const names = useMemo(() => new Map((branches.data ?? []).map((b) => [b._id, b.name])), [branches.data]);
-  const merged = useMemo(() => mergePages(list.data?.pages ?? []), [list.data]);
+  const names = new Map((branches.data ?? []).map((b) => [b._id, b.name]));
+  const rows: Invoice[] = (list.data?.pages ?? []).flatMap((p) => p.items);
+  const total = list.data?.pages[0]?.total;
   const canCreate = holdsAny(ctx.actor, ['invoices.create']);
   const readOnly = !holdsAny(ctx.actor, ['invoices.create', 'invoices.cancel', 'payments.record']);
+  const filtered = !!(query.state || query.branchId || query.from || query.to || query.q);
+
+  function applySearch(e: FormEvent) {
+    e.preventDefault();
+    setF((x) => ({ ...x, q: search }));
+  }
 
   return (
     <>
@@ -72,28 +72,35 @@ function Invoices({ ctx }: { ctx: ScopeContext }) {
         Bills issued at the counter, newest first.{readOnly ? ' You can view bills and their PDFs.' : ''}
       </PartnerPageHeading>
       {canCreate && <div><Link className="j-btn j-btn--primary" to={`${ctx.link('invoices')}/new`}>New bill</Link></div>}
+      <form className="ws-search" role="search" aria-label="Find bills" onSubmit={applySearch}>
+        <TextField label="Bill number, customer name or phone" type="search" maxLength={MAX_SEARCH} value={search} onChange={(e) => setSearch(e.target.value)} />
+        <Button type="submit" variant="secondary">Search</Button>
+      </form>
       <div className="ws-search">
         <div className="j-field ws-filter">
           <label htmlFor="inv-state">Status</label>
-          <select id="inv-state" value={state} onChange={(e) => setState(e.target.value as '' | InvoiceState)}>
+          <select id="inv-state" value={f.state} onChange={(e) => setF((x) => ({ ...x, state: e.target.value }))}>
             <option value="">All</option>
             {STATES.map((s) => <option key={s} value={s}>{INVOICE_STATE_LABEL[s]}</option>)}
           </select>
         </div>
         <div className="j-field ws-filter">
           <label htmlFor="inv-branch">Branch</label>
-          <select id="inv-branch" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+          <select id="inv-branch" value={f.branchId} onChange={(e) => setF((x) => ({ ...x, branchId: e.target.value }))}>
             <option value="">All your branches</option>
             {(branches.data ?? []).map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
           </select>
         </div>
-        <TextField label="Issued on or before" type="date" value={onOrBefore} onChange={(e) => setOnOrBefore(e.target.value)} />
+        <TextField label="Issued from" type="date" value={f.from} onChange={(e) => setF((x) => ({ ...x, from: e.target.value }))} />
+        <TextField label="Issued to" type="date" value={f.to} onChange={(e) => setF((x) => ({ ...x, to: e.target.value }))} />
       </div>
-      {list.isPending ? <Loading label="Loading bills…" />
+      {error ? <Alert>{error}</Alert>
+        : list.isPending ? <Loading label="Loading bills…" />
         : list.isError && !list.data ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
-        : merged.rows.length === 0 ? <Empty title="No bills">{state || branchId || before ? 'No bill matches these filters.' : canCreate ? 'Bills you issue appear here.' : null}</Empty>
+        : rows.length === 0 ? <Empty title="No bills">{filtered ? 'No bill matches these filters.' : canCreate ? 'Bills you issue appear here.' : null}</Empty>
         : (
           <>
+            {total !== undefined && <p className="ws-count">{total === 1 ? '1 bill' : `${total} bills`}{filtered ? ' match' : ''} · showing {rows.length}</p>}
             <div className="ws-table-wrap">
               <table className="j-table">
                 <caption className="j-sr-only">Bills</caption>
@@ -101,7 +108,7 @@ function Invoices({ ctx }: { ctx: ScopeContext }) {
                   <tr><th scope="col">Bill</th><th scope="col">Issued</th><th scope="col">Customer</th><th scope="col">Branch</th><th scope="col">Type</th><th scope="col">Total</th><th scope="col">Status</th></tr>
                 </thead>
                 <tbody>
-                  {merged.rows.map((inv) => (
+                  {rows.map((inv) => (
                     <tr key={inv._id}>
                       <td><Link to={`${ctx.link('invoices')}/${inv._id}`}>{inv.serial}</Link></td>
                       <td>{formatDateTime(inv.issuedAt)}</td>
@@ -116,8 +123,7 @@ function Invoices({ ctx }: { ctx: ScopeContext }) {
               </table>
             </div>
             {list.isFetchNextPageError && <ErrorState message={`Could not load older bills: ${messageOf(list.error)}`} onRetry={() => void list.fetchNextPage()} />}
-            {merged.stuck ? <p className="ws-muted">More bills share one second than can be listed; use the date filter to see older ones.</p>
-              : list.hasNextPage && <div><Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>Show older bills</Button></div>}
+            {list.hasNextPage && <div><Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>Show older bills</Button></div>}
           </>
         )}
     </>

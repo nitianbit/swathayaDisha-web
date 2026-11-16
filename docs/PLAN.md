@@ -247,25 +247,41 @@ Backend: Q2 catalogue + invoices on Q8 (`SwasthaDisha-worktrees/q8-partner-admin
   - Item edits use `draft.ts`: baseline + changed fields only; a refetch moves untouched fields along; the item is re-read
     right before sending, and a field changed both here and on the server is reset with a notice instead of being sent;
     a deactivated item is not saved.
-  - Item create has no request key on the server: a lost answer (anything but a definite 4xx refusal) locks the form
-    with no "Add" button; "Look in the list" refetches the list filtered to that name. Adding again is a new, deliberate
-    start.
+  - Item create: see Q10 below (the WQ1-style "look in the list" lock was replaced by a keyed create).
+- **Codex WQ2 review (fa5ef06) and Q10 adoption** (backend `m0/q10-billing-hardening`, worktree `q10-billing-hardening`):
+  - **Pay and cancel never go back in time.** One action at a time on a bill (the other is disabled while one is being
+    sent, and while a payment's outcome is unknown). Answers are folded into the cached bill by `mergeDetail`: events
+    merged by version, the bill replaced only by an equal or newer `lifecycleVersion`; the exact bill is then read again.
+  - **Payment replay**: a lost payment answer keeps "Send the same payment again" (same mode and reference); Q10 answers
+    a repeat with the payment already recorded (200 `replayed`), treated as success. A different payment is refused 409.
+  - **Cancelling a paid bill** asks how the money went back (mode, reference, note → `refund`; 400 REFUND_REQUIRED
+    otherwise; none for an unpaid bill); the timeline shows "money returned by …".
+  - **Exactly-once item create**: a key per submitted item (`requestKey`), kept with the exact content in session memory
+    (reload marker body-less, per partner). A lost answer locks to "Send the same request again" (a replay answers the
+    same item; other content under the key is 409 REQUEST_KEY_REUSED). After a reload: looked up in the price list by
+    the item's stored `createRequestKey`; not found → a new item only after an explicit possible-duplicate confirmation.
+  - **Lost bill after a reload**: `GET /invoices/by-key/:key` (found → opened) and `POST /invoices/by-key/:key/abandon`
+    ("Give up this bill": `abandoned` = it can never be issued, the form opens; `used` = the bill is opened). Also
+    offered on the same page once a check found nothing. The possible-duplicate path for bills is gone.
+  - **Bills list**: the server's exact cursor (`pagination.nextCursor`, `<ms>_<id>`), the total, "from"/"to" IST dates
+    and search (bill number, customer name, phone). The whole-second workaround is gone.
+  - **Catalogue**: kinds by partner type (labs: test/package with visit modes and report time; clinics:
+    consultation/procedure/package/other, no visit modes); deactivated items listed for catalogue managers
+    (`includeInactive`) with Reactivate; edits send `expectedUpdatedAt` from the draft baseline (409
+    CATALOGUE_ITEM_CHANGED → the form follows the saved item and flags the conflict).
+  - **Bill lines**: a 409 CATALOGUE_PRICE_CHANGED re-reads the catalogue; catalogue lines take the current price/GST
+    with a notice ("X is now ₹… at …% GST") before the bill is reviewed again; items no longer offered are flagged on
+    their line. DOCTOR_NOT_AT_BRANCH is shown as the server says (the picker already offers only active doctors at the branch).
 
-Backend gaps found (not changed here):
-- The bills list `before` loses its milliseconds (Joi turns it into a Date and the controller re-parses `String(date)`)
-  and the cursor is `issuedAt` alone. The workspace pages from the next whole second and drops repeats by id; more than
-  50 bills in one second cannot be paged past. No "from" date, search, or count either. A `(issuedAt, _id)` cursor would fix it.
-- No request-key kind for partner bills in `POST /request-keys/abandon`, and no lookup by key: after a reload an
-  unconfirmed bill can only be searched for in the list.
-- `POST /invoices/:id/pay` takes no request key and no amount (always the full total; no part payments); a repeat is
-  refused 409 "This bill is paid" (the page then shows the bill as it is).
-- The catalogue accepts GST rates the partner cannot bill (create/update do not look at the tax regime).
-- The catalogue lists only active items: a deactivated item cannot be listed or reactivated. No server-side search.
-- The catalogue is lab-shaped for clinics too (`test`/`package`, visit modes `home`/`lab` required).
-- A bill line with a `catalogItemId` may carry any price (the catalogue price is not enforced); the doctor named on a
-  clinic bill must only be an active member with a doctor id (branch and doctor status are not checked).
-- Cancelling a paid bill records nothing about returning the money.
-- Catalogue item create takes no request key: a lost answer cannot be resent safely (the workspace sends the person to the list).
+Backend gaps found (not changed here). Closed by Q10: the `before` cursor, bill key lookup/abandon, payment replay,
+GST rates on the catalogue, inactive items/reactivate, clinic item kinds, catalogue price and doctor checks on bills,
+refund on cancelling a paid bill, item create key. Still open:
+- `POST /invoices/:id/pay` takes no amount (always the full total; no part payments).
+- No server-side search of the catalogue (the price list filters on the device).
+- The replay flag of a repeated payment is outside `data` (`replayed` at the top level); the client treats the answer as
+  success either way.
+- Looking up a lost item create relies on `createRequestKey` being in the list response (stored on the item; not a
+  documented field). A `GET /catalogue/by-key/:key` would make it explicit.
 
 ## Follow-ups
 
@@ -316,4 +332,5 @@ Backend gaps found (not changed here):
 | 2026-11-15 | WQ1 (partner workspace foundation) | typecheck clean; Vitest 69/69 (+9: workspace/admin path building, id validation before any request, select per session mode, selection shape, delegation/scope/removal rules); Playwright workspace 154/154 (+20 = 10 journeys x 2 devices: single and multi-membership sign-in incl. native and expired ticket, nav by permission and scope, staff add/edit/remove with server refusal, branches add/deactivate with confirm, admin list/filter/create/verify/suspend, admin-as-owner staff via `/partner-workspace/admin/<id>/workspace/members`); release build with VITE_API_BASE_URL=https://api.example.test. Not yet run against a real backend or reviewed. |
 | 2026-11-15 | WQ2 (catalogue and bills) | typecheck clean; Vitest 87/87 (+18: paise parsing/formatting, preview rounding incl. half-paisa and odd-paisa SGST, IGST, classification, refusals, member/admin paths, admin item switches, body request key with no header, PDF blob, id checks; app: list cursor and repeats, IST date bound, item and bill builders); Playwright workspace 170/170 (+16 = 8 journeys x 2 devices: catalogue add/edit/deactivate in paise; no-GST supplier offered 0% only, GST item refused on a bill, 503 linking refusal unlocks and a changed bill gets a new key; live totals, lost answer resent with the same key and body, one bill, linked notice, nothing in browser storage; reload with an unconfirmed bill: check by key, forget after warning; pay with confirm, refused pay shows the server and the current bill, cancel with reason, PDF via blob for v2 and v0; finance read-only and biller read-only price list, pages absent without permission; clinic doctor picker and IGST; admin-as-owner bills, catalogue and disable/enable); release build with VITE_API_BASE_URL=https://api.example.test. Playwright ran on a spare port (another worktree's dev server held 5174). Not yet run against a real backend or reviewed. |
 | 2026-11-15 | WQ2 fixes (WQ1 review rules) | After merging the WQ1 review fixes: typecheck clean; Vitest 96/96 (catalogue edits from a baseline: only changed fields, rebased field not sent back, price above the saved MRP refused); Playwright workspace 190/190 (+3 journeys x 2: item edit re-read sends only the name while someone else changed the price, a both-changed price is shown again and not sent; a lost item create is locked and sent to the list, one POST; admin switching partners keeps the unconfirmed bill, drafts and an open item edit with their own partner); release build. Spare port again (temporary config, not committed). |
+| 2026-11-16 | WQ2 Codex fixes + Q10 | typecheck clean; Vitest 99/99 (mergeDetail both answer orders, bill filters, clinic item kinds, Q10 paths: includeInactive, reactivate, by-key lookup/abandon with key checks, cancel refund, cursor page with total/nextCursor); Playwright workspace 204/204 (24 partner-invoices journeys x 2: catalogue reactivate and expectedUpdatedAt, stale edit 409, clinic kinds, lost item create resent with the same key, lost item create after reload with duplicate confirmation, bill lost before reload abandoned by key, bill issued before reload found by key, catalogue price changed refused then reissued, paid cancel with refund, pay/cancel one at a time with a lost payment replayed, cursor paging across a shared instant, search and date range); release build. Spare port (temporary config, not committed). |
 | 2026-11-15 | P8 web, N2 phone apps, P9 web approved | Codex approved P8 web (e0add83, after 3 rounds: attempt ownership, keyed recovery result, decision after waits), N2 (f4c3ff8: secure-store start gate, latest-attempt start-up) and P9 web (aab4e01, after 3 rounds: attachments keyed to their pharmacy, functional updates, no order while attaching, expectedPharmacyId recipient fence). vitest 60; Playwright customer 134, workspace 134; Android debug + unsigned iOS builds for both apps. |

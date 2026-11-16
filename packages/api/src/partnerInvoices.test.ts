@@ -110,10 +110,10 @@ describe('billing paths', () => {
     await admin.catalogue();
     await member.updateCatalogueItem(C, { priceMinor: 45000 });
     await admin.deactivateCatalogueItem(C);
-    await member.invoices({ state: 'paid', branchId: P, limit: 50, before: '2026-11-15T18:30:00.000Z' });
+    await member.invoices({ state: 'paid', branchId: P, limit: 50, cursor: `1763182800000_${I}`, from: '2026-11-01', to: '2026-11-15', q: 'Asha' });
     await admin.invoice(I);
     await admin.recordPayment(I, { mode: 'upi', reference: 'UTR1' });
-    await member.cancelInvoice(I, 'Wrong patient');
+    await member.cancelInvoice(I, 'Wrong patient', { mode: 'upi', reference: 'R1' });
     await admin.clinicDoctors();
     await catalogueAdminApi(client).disable(C);
     await catalogueAdminApi(client).enable(C);
@@ -122,7 +122,7 @@ describe('billing paths', () => {
       `GET /partner-workspace/admin/${P}/workspace/catalogue`,
       `PUT /partner-workspace/catalogue/${C}`,
       `DELETE /partner-workspace/admin/${P}/workspace/catalogue/${C}`,
-      `GET /partner-workspace/invoices?state=paid&branchId=${P}&limit=50&before=2026-11-15T18%3A30%3A00.000Z`,
+      `GET /partner-workspace/invoices?state=paid&branchId=${P}&limit=50&cursor=1763182800000_${I}&from=2026-11-01&to=2026-11-15&q=Asha`,
       `GET /partner-workspace/admin/${P}/workspace/invoices/${I}`,
       `POST /partner-workspace/admin/${P}/workspace/invoices/${I}/pay`,
       `POST /partner-workspace/invoices/${I}/cancel`,
@@ -131,7 +131,34 @@ describe('billing paths', () => {
       `POST /partner-workspace/admin/catalogue/${C}/enable`,
     ]);
     expect(calls[6]!.body).toEqual({ mode: 'upi', reference: 'UTR1' });
-    expect(calls[7]!.body).toEqual({ reason: 'Wrong patient' });
+    expect(calls[7]!.body).toEqual({ reason: 'Wrong patient', refund: { mode: 'upi', reference: 'R1' } });
+  });
+
+  it('Q10: inactive items, reactivate, bill lookup and abandon by key; keys checked before any path', async () => {
+    const { client, calls } = recorder();
+    const member = partnerBillingApi(client, { kind: 'member' });
+    const admin = partnerBillingApi(client, { kind: 'admin', partnerId: P });
+    await member.catalogue(undefined, true);
+    await admin.reactivateCatalogueItem(C);
+    await member.invoiceByKey('k'.repeat(32));
+    await admin.abandonInvoiceKey('k'.repeat(32));
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      'GET /partner-workspace/catalogue?includeInactive=true',
+      `POST /partner-workspace/admin/${P}/workspace/catalogue/${C}/reactivate`,
+      `GET /partner-workspace/invoices/by-key/${'k'.repeat(32)}`,
+      `POST /partner-workspace/admin/${P}/workspace/invoices/by-key/${'k'.repeat(32)}/abandon`,
+    ]);
+    expect(() => member.invoiceByKey('../x')).toThrow('Invalid request key');
+    expect(() => member.abandonInvoiceKey('a/b')).toThrow('Invalid request key');
+    expect(calls).toHaveLength(4);
+  });
+
+  it('a bills page carries the total and the next cursor', async () => {
+    const { client } = recorder(() => new Response(JSON.stringify({ success: true, data: [{ _id: I }], pagination: { total: 51, nextCursor: `1_${I}` } }), { status: 200 }));
+    const page = await partnerBillingApi(client, { kind: 'member' }).invoices({ limit: 1 });
+    expect(page).toMatchObject({ items: [{ _id: I }], total: 51, nextCursor: `1_${I}` });
+    const { client: last } = recorder(() => new Response(JSON.stringify({ success: true, data: [], pagination: { total: 0, nextCursor: null } }), { status: 200 }));
+    expect((await partnerBillingApi(last, { kind: 'member' }).invoices()).nextCursor).toBeNull();
   });
 
   it('the invoice request key travels in the body exactly as sent (no header), so a resend is identical', async () => {
