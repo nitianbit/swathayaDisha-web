@@ -24,13 +24,13 @@ export const canReadCatalogue = (ctx: ScopeContext) => holdsAny(ctx.actor, ['cat
  * Q12: `q` is searched on the server (name or code); while a new search runs the previous answer stays on screen. Every
  * variant shares the `[..., 'catalogue']` prefix, so one invalidation refreshes them all.
  */
-export function useCatalogue(ctx: ScopeContext, opts: { includeInactive?: boolean; q?: string } = {}) {
+export function useCatalogue(ctx: ScopeContext, opts: { includeInactive?: boolean; q?: string; enabled?: boolean } = {}) {
   const all = !!opts.includeInactive;
   const q = opts.q?.trim() || '';
   return useQuery({
     queryKey: [...ctx.key, 'catalogue', all ? 'all' : 'active', q],
     queryFn: () => ctx.billing.catalogue(undefined, all, q || undefined),
-    enabled: canReadCatalogue(ctx),
+    enabled: canReadCatalogue(ctx) && opts.enabled !== false,
     placeholderData: opts.q === undefined ? undefined : keepPreviousData,
   });
 }

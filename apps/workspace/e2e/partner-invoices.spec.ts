@@ -638,6 +638,25 @@ test('a bill issued just before a reload is found by its key and opened', async 
   expect(backend.calls.some((c) => c.path.endsWith('/abandon'))).toBe(false);
 });
 
+test('an open item edit survives searching for something else (the editor is not tied to the search results)', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await page.getByRole('button', { name: 'Edit CBC' }).click();
+  await page.getByLabel('Price (₹)').fill('499.75');
+  // A search whose results do not include CBC: the edit stays open with what was typed.
+  await page.getByLabel('Search by name or code').fill('thyroid');
+  await expect(page.getByRole('row').filter({ hasText: 'Thyroid profile' })).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'CBC' })).toHaveCount(0);
+  await expect(page.getByLabel('Price (₹)')).toHaveValue('499.75');
+  await page.getByLabel('Search by name or code').fill('');
+  await expect(page.getByRole('row').filter({ hasText: 'CBC' })).toBeVisible();
+  await expect(page.getByLabel('Price (₹)')).toHaveValue('499.75');
+  await page.getByRole('button', { name: 'Save item' }).click();
+  await expect(page.getByText('CBC was saved.')).toBeVisible();
+  expect(backend.calls.find((c) => c.method === 'PUT')).toMatchObject({ path: `/partner-workspace/catalogue/${CBC}`, body: { priceMinor: 49975 } });
+});
+
 test('a catalogue price changed after the line was added: the bill is refused, the form shows the new price, then issues', async ({ page }) => {
   const backend = await mockBackend(page);
   backend.priceChangeBeforeBill = { id: CBC, priceMinor: 47000 };

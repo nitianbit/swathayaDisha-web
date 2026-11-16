@@ -615,6 +615,10 @@ Still open:
 Verification: see the 2026-11-16 WQ7 row below. Playwright ran on port 5271 with a temporary config (`reuseExistingServer: false`), not committed:
 the planned 5261 was already held by the WQ4 worktree's own dev server.
 
+Review fix (Codex WQ7 236fe6a, LOW): the item being edited is read from the whole price list (an unfiltered query,
+enabled only while an edit is open), never from the search results, so searching for something else no longer unmounts
+the editor and loses what was typed. Journey: edit CBC, search "thyroid", clear the search, save: the typed price is sent.
+
 ## WQ4 doctor tools in the staff workspace (2026-11-16, taken autonomously at the owner's request)
 
 Backend: Q4a schedule, Q4b instant consultations, Q5 earnings, Q6 clinics, with the Q13 doctor gaps closed (`m0/q13-doctor-finance`

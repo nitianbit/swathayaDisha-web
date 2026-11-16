@@ -168,7 +168,11 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
   const p = partner.data;
   const kind = p?.kind ?? 'lab';
   const refresh = () => queryClient.invalidateQueries({ queryKey: [...ctx.key, 'catalogue'] });
-  const target = editing && editing !== 'new' ? items.data?.find((i) => i._id === editing && i.isActive) : undefined;
+  // The item being edited comes from the whole price list, never from the search results: searching for something
+  // else while an edit is open must not unmount the form (and lose what was typed). WQ7 review.
+  const editingItem = !!editing && editing !== 'new';
+  const everything = useCatalogue(ctx, { includeInactive: canManage, enabled: editingItem });
+  const target = editingItem ? everything.data?.find((i) => i._id === editing && i.isActive) : undefined;
   const shown = (items.data ?? []).filter((i) => (!kindFilter || i.kind === kindFilter)
     && (status === 'inactive' ? !i.isActive : i.isActive && (status === 'active' || (status === 'disabled') === i.adminDisabled)));
   const searching = q !== search.trim().slice(0, MAX_CATALOGUE_SEARCH) || (items.isFetching && items.isPlaceholderData);
