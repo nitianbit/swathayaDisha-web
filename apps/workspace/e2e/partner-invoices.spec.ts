@@ -56,6 +56,12 @@ interface Backend {
   priceChangeBeforeBill?: { id: string; priceMinor: number };
   /** Bill request keys given up (Q10 abandon): they can never issue a bill. */
   abandoned: Set<string>;
+  /** Reads of a bill's detail that fail (503) before one succeeds again. */
+  failDetailReads: number;
+  /** The next give-up answer waits for this promise (and is decided only then). */
+  holdAbandon?: Promise<void>;
+  /** Set once a held give-up has been answered. */
+  abandonAnswered: boolean;
   live: boolean;
 }
 
@@ -104,7 +110,7 @@ function invoice(id: string, number: number, extra: Rec = {}): Rec {
 async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular' | 'unregistered'; seed?: boolean; many?: number } = {}): Promise<Backend> {
   const b: Backend = {
     calls: [], me, live: false, loseNextCreateAnswer: false, dropNextCreate: false, linkingOffOnce: false, loseNextItemAnswer: false,
-    dropNextItem: false, loseNextPayAnswer: false, abandoned: new Set(),
+    dropNextItem: false, loseNextPayAnswer: false, abandoned: new Set(), failDetailReads: 0, abandonAnswered: false,
     partners: [partner(LAB, 'City Lab', 'lab', opts.tax ?? 'regular'), partner(CLINIC, 'Sunrise Clinic', 'clinic', 'regular')],
     catalogue: [
       { _id: CBC, partnerId: LAB, kind: 'test', name: 'CBC', code: 'CBC01', priceMinor: 45000, gstRate: 0, visitModes: ['lab', 'home'], reportTatHours: 12, isActive: true, adminDisabled: false, updatedAt: '2026-11-01T00:00:00.000Z' },
@@ -253,11 +259,12 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
     const byKey = /^\/invoices\/by-key\/([A-Za-z0-9_-]+)(\/abandon)?$/.exec(sub);
     if (byKey) {
       if (!can('invoices.create')) return deny();
+      if (byKey[2] && b.holdAbandon) { await b.holdAbandon; b.holdAbandon = undefined; }
       const found = b.invoices.find((i) => i.idempotencyKey === byKey[1]);
       if (byKey[2]) {
-        if (found) return ok(route, { state: 'used', invoice: found });
+        if (found) { await ok(route, { state: 'used', invoice: found }); b.abandonAnswered = true; return; }
         b.abandoned.add(byKey[1]!);
-        return ok(route, { state: 'abandoned' });
+        await ok(route, { state: 'abandoned' }); b.abandonAnswered = true; return;
       }
       return found ? ok(route, found) : fail(route, 404, 'INVOICE_NOT_FOUND', 'No bill was issued with this key');
     }
@@ -312,7 +319,10 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
       const inv = b.invoices.find((i) => i._id === one[1]);
       if (!inv) return fail(route, 404, 'INVOICE_NOT_FOUND', 'Invoice not found');
       const events = () => b.events.filter((e) => e.invoiceId === inv._id);
-      if (!one[2]) return can(...readers) ? ok(route, { invoice: inv, events: events() }) : deny();
+      if (!one[2]) {
+        if (b.failDetailReads > 0) { b.failDetailReads -= 1; return fail(route, 503, 'UNAVAILABLE', 'The service is busy; try again'); }
+        return can(...readers) ? ok(route, { invoice: inv, events: events() }) : deny();
+      }
       if (one[2] === '/pdf') {
         if (!can(...readers)) return deny();
         return route.fulfill({ status: 200, contentType: 'application/pdf', body: '%PDF-1.4\n%mock bill\n' });
@@ -903,7 +913,9 @@ test('pay and cancel are one at a time; a lost payment answer is resent unchange
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
   await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
+  // Its answer is lost, and reading the bill fails in the same outage: nothing can settle it but a resend.
   backend.loseNextPayAnswer = true;
+  backend.failDetailReads = 50;
   release();
   backend.holdPay = undefined;
   const unsure = page.getByRole('group', { name: 'Unconfirmed payment' });
@@ -911,11 +923,80 @@ test('pay and cancel are one at a time; a lost payment answer is resent unchange
   await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
   await unsure.getByRole('button', { name: 'Send the same payment again' }).click();
   await expect(page.getByText('Payment recorded.')).toBeVisible();
+  backend.failDetailReads = 0;
+  await expect(unsure).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeEnabled();
   const pays = backend.calls.filter((c) => c.path.endsWith('/pay'));
   expect(pays.map((c) => c.body)).toEqual([{ mode: 'cash' }, { mode: 'cash' }]);
   expect(backend.events.filter((e) => e.kind === 'payment')).toHaveLength(1);
   await expect(page.getByText(/^Paid by Cash/)).toHaveCount(1);
+});
+
+test('a lost UPI payment survives a failed refresh: the exact payment stays, no other can start, and the receipt settles it', async ({ page }) => {
+  const backend = await mockBackend(page, owner(), { seed: true });
+  await signInPartner(page);
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  backend.loseNextPayAnswer = true;
+  backend.failDetailReads = 50;
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByLabel('Paid by').selectOption('upi');
+  await page.getByLabel('Reference (optional)').fill('UTR9');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
+  const unsure = page.getByRole('group', { name: 'Unconfirmed payment' });
+  await expect(unsure).toContainText('by UPI (reference UTR9)');
+  await expect(page.getByText(/Could not refresh the bill: The service is busy/)).toBeVisible();
+  // The bill (as last read) stays on screen; no fresh Cash form is offered and cancelling stays locked.
+  await expect(page.getByRole('heading', { name: 'Bill LB/2627/0001' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record payment' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
+  // Leaving and coming back keeps it (session memory, not the form).
+  await page.getByRole('link', { name: 'Back to bills' }).click();
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  await expect(page.getByRole('group', { name: 'Unconfirmed payment' })).toContainText('by UPI (reference UTR9)');
+  // The service is back: the bill shows that very payment, which settles it without sending anything again.
+  backend.failDetailReads = 0;
+  const retry = page.getByRole('button', { name: 'Try again' });
+  if (await retry.count()) await retry.first().click();
+  await expect(page.getByText('Payment recorded.')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Unconfirmed payment' })).toHaveCount(0);
+  await expect(page.getByText('Paid by UPI · reference UTR9')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeEnabled();
+  expect(backend.calls.filter((c) => c.path.endsWith('/pay'))).toHaveLength(1);
+});
+
+test('a give-up answer from a page that was left does not settle the bill a returned page is resending', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.dropNextCreate = true;
+  await signInPartner(page);
+  await issueCbcBill(page);
+  const panelA = page.getByRole('group', { name: 'Unconfirmed bill' });
+  await panelA.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panelA).toContainText('Not recorded so far');
+  // Page A asks to give up K1; the answer is held.
+  let release!: () => void;
+  backend.holdAbandon = new Promise<void>((r) => { release = r; });
+  await panelA.getByRole('button', { name: 'Give up this bill' }).click();
+  // The person leaves and opens the new bill again (page B): it resends K1 (attempt 2), whose answer is lost.
+  await page.goto('/#/partner/invoices');
+  await page.goto('/#/partner/invoices/new');
+  backend.loseNextCreateAnswer = true;
+  const panelB = page.getByRole('group', { name: 'Unconfirmed bill' });
+  await panelB.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(panelB).toContainText('Could not reach the server');
+  // Page A's late answer: "used" (B's resend issued the bill). It must not settle B's attempt.
+  release();
+  await expect.poll(() => backend.abandonAnswered).toBe(true);
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 100)));
+  const key = (creates(backend)[0]!.body as Rec).idempotencyKey as string;
+  expect(await page.evaluate((k) => Object.values({ ...sessionStorage }).some((v) => v.includes(k)), key)).toBe(true);
+  await page.goto('/#/partner/invoices');
+  await page.goto('/#/partner/invoices/new');
+  const panelC = page.getByRole('group', { name: 'Unconfirmed bill' });
+  await expect(panelC).toBeVisible(); // not a fresh form: no second bill under a new key
+  await panelC.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Bill LB/2627/0001 had already been issued.')).toBeVisible();
+  expect(backend.invoices).toHaveLength(1);
 });
 
 test('admin switching partners: drafts, open forms and an unconfirmed bill stay with their own partner', async ({ page }) => {

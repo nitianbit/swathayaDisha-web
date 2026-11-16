@@ -177,10 +177,13 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
     if (op) memory.set(slot, op); else memory.delete(slot);
     setPendingState(op);
   };
-  const created = (it: CatalogueItem, requestKey: string, earlier = false) => {
-    resolveStored(memory, slot, requestKey);
+  /** An answer for `op` acts only while this page is on screen and the stored item is still exactly `op` (key + attempt). */
+  const owns = (op: PendingItem) => mounted.current && stillCurrent(memory.get<PendingItem>(slot), op);
+  const created = (it: CatalogueItem, op: PendingItem, earlier = false) => {
     void refresh();
-    if (!mounted.current) return;
+    if (!owns(op)) return; // a newer attempt owns the state; resending it replays this same item
+    const requestKey = op.requestKey;
+    resolveStored(memory, slot, requestKey);
     setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
     setEditing((e) => (e === 'new' ? null : e));
     setNotice(earlier ? `${it.name} had already been added.` : `${it.name} was added.`);
@@ -192,7 +195,7 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
     setCreateRefused(null);
     setPending(attempt);
     try {
-      created(await ctx.billing.createCatalogueItem(attempt.body), attempt.requestKey);
+      created(await ctx.billing.createCatalogueItem(attempt.body), attempt);
     } catch (err) {
       if (!stillCurrent(memory.get<PendingItem>(slot), attempt)) return;
       const next = afterFailure(attempt, err, messageOf(err));
@@ -222,12 +225,13 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
       {showPending ? (
         <PendingOpPanel key={pending.attempts} label="Unconfirmed item" op={pending} busy={createBusy} onResend={() => void sendCreate(pending)}
           fetchPage={itemFinder(ctx)}
-          onFound={(it) => created(it, pending.requestKey, true)}
+          onFound={(it) => created(it, pending, true)}
           // No content is kept after a reload, and items have no server abandon: a new item is a deliberate decision.
           forget={pending.restored ? {
             label: 'Add a new item instead', confirmLabel: 'It may be a duplicate: add a new item',
             consequence: 'If the earlier item was added after all, the price list will have it twice: deactivate the extra one.',
             onForget: () => {
+              if (!owns(pending)) return;
               const k = pending.requestKey;
               resolveStored(memory, slot, k);
               setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));

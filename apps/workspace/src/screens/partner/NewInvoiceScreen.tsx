@@ -161,11 +161,19 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
   const [refused, setRefused] = useState<string | null>(null);
   const [gaveUp, setGaveUp] = useState(false);
 
-  /** `requestKey` produced this bill (answer, replay or found in the list): end it, and only it, then open the bill. */
-  const issued = (inv: Invoice, requestKey: string, earlier = false) => {
-    resolveStored(memory, slot, requestKey);
+  /**
+   * Whether an answer started for `op` may still act: this page is on screen AND the stored bill is still exactly `op`
+   * (same key, same attempt). Otherwise a newer attempt (here or on a page opened since) owns the state, and an obsolete
+   * answer must leave it — and its reload marker — intact: resending it replays the same bill.
+   */
+  const owns = (op: Pending) => mounted.current && stillCurrent(memory.get<Pending>(slot), op);
+
+  /** `op` produced this bill (answer, replay, lookup or give-up `used`): end it, and only it, then open the bill. */
+  const issued = (inv: Invoice, op: Pending, earlier = false) => {
     void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'invoices'] });
-    if (!mounted.current) return;
+    if (!owns(op)) return;
+    resolveStored(memory, slot, op.requestKey);
+    const requestKey = op.requestKey;
     setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
     const linked = inv.customer?.userId ? ' It was added to the customer’s Jansetu account (Bills in their app).' : '';
     navigate(`${ctx.link('invoices')}/${inv._id}`, {
@@ -181,7 +189,7 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
     setGaveUp(false);
     setPending(attempt);
     try {
-      issued(await ctx.billing.createInvoice(attempt.body), attempt.requestKey);
+      issued(await ctx.billing.createInvoice(attempt.body), attempt);
     } catch (err) {
       // Q10: a catalogue line no longer matches the catalogue: read it again so the form shows the change.
       if (err instanceof ApiError && err.code === 'CATALOGUE_PRICE_CHANGED') void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'catalogue'] });
@@ -209,7 +217,7 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
       {pending && !(busy && pending.attempts === 1 && !pending.uncertain) ? (
         <PendingOpPanel key={pending.attempts} label="Unconfirmed bill" op={pending} busy={busy} onResend={() => void send(pending)}
           fetchPage={keyLookup(ctx, pending.requestKey)}
-          onFound={(inv) => issued(inv, pending.requestKey, true)}
+          onFound={(inv) => issued(inv, pending, true)}
           // Q10: giving up is decided by the server: `abandoned` = this bill can never be issued; `used` = here it is.
           abandon={async () => {
             const r = await ctx.billing.abandonInvoiceKey(pending.requestKey);
@@ -217,6 +225,8 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
           }}
           abandonWhenNotFound abandonLabel="Give up this bill"
           onDiscard={() => {
+            // Given up on the server; acts only for the attempt this panel showed, on this page.
+            if (!owns(pending)) return;
             const k = pending.requestKey;
             resolveStored(memory, slot, k);
             setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));

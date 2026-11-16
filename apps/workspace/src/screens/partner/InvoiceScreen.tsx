@@ -13,6 +13,7 @@ import { definitelyNotRecorded } from '../../requests.ts';
 import { sniffDocument } from '../pharmacy/documents.ts';
 import { money, useClinicDoctors } from './billing.tsx';
 import { stateTone } from './InvoicesScreen.tsx';
+import { useSession } from '../../session.tsx';
 import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
 const MODE_LABEL = Object.fromEntries(PAYMENT_MODES.map((m) => [m.value, m.label])) as Record<InvoicePaymentMode, string>;
@@ -44,6 +45,7 @@ export function mergeDetail(cur: Detail | undefined, r: { invoice: Invoice; even
 
 function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: string }) {
   const queryClient = useQueryClient();
+  const { memory } = useSession();
   const location = useLocation();
   const issuedNotice = (location.state as { issued?: string } | null)?.issued;
   const partner = useWorkspacePartner(ctx);
@@ -56,10 +58,55 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
   const [failure, setFailure] = useState<string | null>(null);
   /** One change at a time: while a payment or a cancellation is being sent, the other cannot start. */
   const [inFlight, setInFlight] = useState<'pay' | 'cancel' | null>(null);
-  /** A payment whose answer was lost stays on screen (to resend it unchanged) even if the bill now shows Paid. */
-  const [payUnsure, setPayUnsure] = useState(false);
+  /**
+   * A payment whose answer was lost: the exact payment (mode, reference, note) is held here, outside any form, and in
+   * session memory (leaving and coming back keeps it). It is resolved only by the matching receipt on the bill, by a
+   * definite refusal, or by resending it unchanged (Q10 answers a repeat with the payment already recorded); until
+   * then no other payment and no cancellation can start.
+   */
+  const paySlot = `invoice-payment:${scopeIdentity(ctx)}:${invoiceId}`;
+  const [unresolved, setUnresolvedState] = useState<UnresolvedPayment | undefined>(() => memory.get<UnresolvedPayment>(paySlot));
+  const setUnresolved = (u: UnresolvedPayment | undefined) => {
+    if (u) memory.set(paySlot, u); else memory.delete(paySlot);
+    setUnresolvedState(u);
+  };
   const inv = q.data?.invoice;
   const events = [...(q.data?.events ?? [])].sort((a, b) => a.version - b.version);
+
+  // The bill as read now settles an unresolved payment: its receipt (same mode and reference) → recorded; another
+  // payment, or a cancellation without one → not recorded. A bill still unpaid leaves it unresolved (resend is safe).
+  useEffect(() => {
+    if (!unresolved || !q.data || inFlight === 'pay') return;
+    const outcome = paymentOutcome(q.data, unresolved.body);
+    if (outcome === 'unknown') return;
+    setUnresolved(undefined);
+    if (outcome === 'recorded') { setFailure(null); setNotice('Payment recorded.'); }
+    else { setNotice(null); setFailure(`Payment not recorded: ${outcome.refused}`); }
+  }, [q.data, unresolved, inFlight]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function sendPayment(body: PaymentInput) {
+    setInFlight('pay');
+    setFailure(null);
+    try {
+      const r = await ctx.billing.recordPayment(invoiceId, body);
+      setUnresolved(undefined);
+      changed(r);
+      setNotice('Payment recorded.');
+    } catch (err) {
+      if (definitelyNotRecorded(err)) {
+        // E.g. "This bill is paid" (someone else recorded another payment): the server's message and the bill as it is.
+        setUnresolved(undefined);
+        setNotice(null);
+        setFailure(`Payment not recorded: ${messageOf(err)}`);
+      } else {
+        setNotice(null);
+        setUnresolved({ body, error: messageOf(err) });
+      }
+      void reload().catch(() => undefined);
+    } finally {
+      setInFlight(null);
+    }
+  }
 
   /** After any change or refusal, read the exact bill again (the server's state is what is shown). */
   const reload = async () => {
@@ -87,8 +134,15 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
       </PageHeading>
       {issuedNotice && !notice && <Alert tone="ok">{issuedNotice}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
+      {unresolved && canPay && (
+        <UnconfirmedPayment payment={unresolved} totalMinor={inv?.totals.totalMinor} busy={inFlight === 'pay'}
+          onResend={() => void sendPayment(unresolved.body)} />
+      )}
+      {q.isError && q.data && (
+        <ErrorState message={`Could not refresh the bill: ${messageOf(q.error)}`} onRetry={() => void q.refetch()} />
+      )}
       {q.isPending ? <Loading label="Loading the bill…" />
-        : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
+        : q.isError && !q.data ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : inv && (
           <>
             <section className="ws-section" aria-labelledby="inv-state-h">
@@ -108,14 +162,11 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
                 </ul>
               )}
               <div className="ws-actions">
-                {canPay && (inv.lifecycleState === 'issued' || payUnsure) && (
-                  <PaymentForm ctx={ctx} invoice={inv} locked={inFlight === 'cancel'} onBusy={(b) => setInFlight(b ? 'pay' : null)}
-                    onUnsure={async (u) => { setPayUnsure(u); if (u) { setNotice(null); await reload(); } }}
-                    onDone={(r) => { changed(r); setPayUnsure(false); setFailure(null); setNotice('Payment recorded.'); }}
-                    onRefused={async (message) => { setPayUnsure(false); setNotice(null); setFailure(`Payment not recorded: ${message}`); await reload(); }} />
+                {canPay && inv.lifecycleState === 'issued' && !unresolved && (
+                  <PaymentForm invoice={inv} locked={inFlight === 'cancel'} busy={inFlight === 'pay'} onRecord={sendPayment} />
                 )}
                 {inv.lifecycleState !== 'cancelled' && canCancel && (
-                  <CancelForm ctx={ctx} invoice={inv} locked={inFlight === 'pay' || payUnsure} onBusy={(b) => setInFlight(b ? 'cancel' : null)}
+                  <CancelForm ctx={ctx} invoice={inv} locked={inFlight === 'pay' || !!unresolved} onBusy={(b) => setInFlight(b ? 'cancel' : null)}
                     onDone={(r) => { changed(r); setFailure(null); setNotice(`Bill ${inv.serial} was cancelled.`); }}
                     onRefused={reload} />
                 )}
@@ -187,14 +238,41 @@ export function Totals({ totals, igst, label = 'Totals' }: { totals: Invoice['to
   );
 }
 
-/**
- * Mode and reference, then a confirmation: a recorded payment cannot be removed (the bill moves to Paid). A lost answer
- * keeps the exact payment on screen to resend: Q10 answers the same mode and reference with the payment already
- * recorded, so it is never recorded twice.
- */
-function PaymentForm({ ctx, invoice, locked, onBusy, onUnsure, onDone, onRefused }: {
-  ctx: ScopeContext; invoice: Invoice; locked: boolean; onBusy: (busy: boolean) => void; onUnsure: (unsure: boolean) => Promise<void>;
-  onDone: (r: { invoice: Invoice; event: InvoiceEvent }) => void; onRefused: (message: string) => Promise<void>;
+type UnresolvedPayment = { body: PaymentInput; error: string };
+
+/** What the bill as read says about a payment sent without an answer. */
+export function paymentOutcome(d: Detail, body: PaymentInput): 'recorded' | 'unknown' | { refused: string } {
+  const paid = d.events.find((e) => e.kind === 'payment');
+  if (paid) {
+    if (paid.mode === body.mode && (paid.reference ?? '') === (body.reference ?? '')) return 'recorded';
+    return { refused: `another payment was recorded first (${MODE_LABEL[paid.mode as InvoicePaymentMode] ?? paid.mode}${paid.reference ? ` · reference ${paid.reference}` : ''}).` };
+  }
+  if (d.invoice.lifecycleState === 'cancelled') return { refused: 'the bill was cancelled.' };
+  if (d.invoice.lifecycleState === 'paid') return 'unknown'; // events not read yet
+  return 'unknown';
+}
+
+function UnconfirmedPayment({ payment, totalMinor, busy, onResend }: {
+  payment: UnresolvedPayment; totalMinor: number | undefined; busy: boolean; onResend: () => void;
+}) {
+  const b = payment.body;
+  return (
+    <div className="confirm" role="group" aria-label="Unconfirmed payment">
+      <Alert tone="warn">
+        We could not confirm the payment{totalMinor !== undefined ? ` of ${money(totalMinor)}` : ''} by {MODE_LABEL[b.mode]}
+        {b.reference ? ` (reference ${b.reference})` : ''} ({payment.error}). Send the same payment again: if it was recorded,
+        the server answers with it; it is never recorded twice. No other payment or cancellation can start until this is settled.
+      </Alert>
+      <div className="confirm-actions">
+        <Button busy={busy} onClick={onResend}>Send the same payment again</Button>
+      </div>
+    </div>
+  );
+}
+
+/** Mode and reference, then a confirmation: a recorded payment cannot be removed (the bill moves to Paid). */
+function PaymentForm({ invoice, locked, busy, onRecord }: {
+  invoice: Invoice; locked: boolean; busy: boolean; onRecord: (body: PaymentInput) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -202,11 +280,8 @@ function PaymentForm({ ctx, invoice, locked, onBusy, onUnsure, onDone, onRefused
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  /** The payment as sent, while its outcome is unknown. */
-  const [unsure, setUnsure] = useState<{ body: PaymentInput; error: string } | null>(null);
 
-  if (!open && !unsure) return <Button disabled={locked} onClick={() => setOpen(true)}>Record payment</Button>;
+  if (!open) return <Button disabled={locked || busy} onClick={() => setOpen(true)}>Record payment</Button>;
 
   function review(e: FormEvent) {
     e.preventDefault();
@@ -215,45 +290,6 @@ function PaymentForm({ ctx, invoice, locked, onBusy, onUnsure, onDone, onRefused
     if (note.trim().length > MAX_NOTE) errs.note = `Use at most ${MAX_NOTE} characters.`;
     setErrors(errs);
     if (!Object.keys(errs).length) setConfirming(true);
-  }
-
-  async function record(body: PaymentInput) {
-    setBusy(true);
-    onBusy(true);
-    try {
-      const r = await ctx.billing.recordPayment(invoice._id, body);
-      setUnsure(null);
-      onDone(r);
-    } catch (err) {
-      setConfirming(false);
-      if (definitelyNotRecorded(err)) {
-        // E.g. "This bill is paid" (someone else recorded another payment): the server's message and the bill as it is.
-        setUnsure(null);
-        setOpen(false);
-        await onRefused(messageOf(err));
-      } else {
-        setUnsure({ body, error: messageOf(err) });
-        await onUnsure(true);
-      }
-    } finally {
-      setBusy(false);
-      onBusy(false);
-    }
-  }
-
-  if (unsure) {
-    return (
-      <div className="confirm" role="group" aria-label="Unconfirmed payment">
-        <Alert tone="warn">
-          We could not confirm the payment of {money(invoice.totals.totalMinor)} by {MODE_LABEL[unsure.body.mode]}
-          {unsure.body.reference ? ` (reference ${unsure.body.reference})` : ''} ({unsure.error}). Send the same payment again: if it was
-          recorded, the server answers with it; it is never recorded twice.
-        </Alert>
-        <div className="confirm-actions">
-          <Button busy={busy} onClick={() => void record(unsure.body)}>Send the same payment again</Button>
-        </div>
-      </div>
-    );
   }
 
   const body: PaymentInput = { mode, ...(reference.trim() ? { reference: reference.trim() } : {}), ...(note.trim() ? { note: note.trim() } : {}) };
@@ -285,7 +321,7 @@ function PaymentForm({ ctx, invoice, locked, onBusy, onUnsure, onDone, onRefused
           </div>
           {locked && <p className="ws-muted">A cancellation of this bill is being sent; wait for its answer.</p>}
           <div className="confirm-actions">
-            <Button busy={busy} disabled={locked} onClick={() => void record(body)}>Record {money(invoice.totals.totalMinor)} paid</Button>
+            <Button busy={busy} disabled={locked} onClick={() => { setConfirming(false); setOpen(false); void onRecord(body); }}>Record {money(invoice.totals.totalMinor)} paid</Button>
             <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>Back</Button>
           </div>
         </>

@@ -2,7 +2,7 @@ import type { CatalogueItem, Invoice, InvoiceEvent } from '@jansetu/api';
 import { money } from './billing.tsx';
 import { rebase } from '../../draft.ts';
 import { draftOf, itemBody } from './CatalogueScreen.tsx';
-import { mergeDetail } from './InvoiceScreen.tsx';
+import { mergeDetail, paymentOutcome } from './InvoiceScreen.tsx';
 import { billFilter } from './InvoicesScreen.tsx';
 import { buildInvoice, type InvoiceDraft } from './NewInvoiceScreen.tsx';
 
@@ -24,6 +24,18 @@ describe('bill page: answers never go back in time', () => {
     expect(cancelled.events.map((e) => e.kind)).toEqual(['payment', 'cancellation']);
     // A repeated answer for the same version replaces, never duplicates.
     expect(mergeDetail(cancelled, { invoice: inv(1, 'paid'), event: ev(1, 'payment') }).events).toHaveLength(2);
+  });
+});
+
+describe('an unconfirmed payment is settled only by the bill', () => {
+  const paidWith = (mode: string, reference?: string) => ({
+    invoice: inv(1, 'paid'), events: [{ ...ev(1, 'payment'), mode, ...(reference ? { reference } : {}) } as InvoiceEvent],
+  });
+  it('its own receipt settles it as recorded; another payment or a cancellation as not recorded; an unpaid bill leaves it open', () => {
+    expect(paymentOutcome(paidWith('upi', 'UTR9'), { mode: 'upi', reference: 'UTR9' })).toBe('recorded');
+    expect(paymentOutcome(paidWith('cash'), { mode: 'upi', reference: 'UTR9' })).toEqual({ refused: 'another payment was recorded first (Cash).' });
+    expect(paymentOutcome({ invoice: inv(1, 'cancelled'), events: [ev(1, 'cancellation')] }, { mode: 'cash' })).toEqual({ refused: 'the bill was cancelled.' });
+    expect(paymentOutcome({ invoice: inv(0, 'issued'), events: [] }, { mode: 'cash' })).toBe('unknown');
   });
 });
 
