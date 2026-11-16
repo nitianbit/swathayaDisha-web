@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Ban, Boxes, Building2, CalendarClock, ClipboardCheck, FlaskConical, ClipboardList, Handshake, History, House, MapPin, Package, PackageX, Receipt, Settings, ShieldAlert,
+  Ban, Boxes, Building2, CalendarCheck, CalendarClock, Stethoscope, ClipboardCheck, FlaskConical, ClipboardList, Handshake, History, House, MapPin, Package, PackageX, Receipt, Settings, ShieldAlert,
   TrendingDown, Undo2, Users,
 } from 'lucide-react';
 import { hasGlobalScope, holdsAny, type PartnerKind, type PartnerPermission } from '@jansetu/api';
@@ -17,6 +17,8 @@ import { InvoicesScreen } from './screens/partner/InvoicesScreen.tsx';
 import { LabBookingScreen } from './screens/partner/LabBookingScreen.tsx';
 import { LabBookingsScreen } from './screens/partner/LabBookingsScreen.tsx';
 import { SlotsScreen } from './screens/partner/SlotsScreen.tsx';
+import { ClinicDoctorsScreen } from './screens/partner/ClinicDoctorsScreen.tsx';
+import { DeskScreen } from './screens/partner/DeskScreen.tsx';
 import { NewInvoiceScreen } from './screens/partner/NewInvoiceScreen.tsx';
 import { BranchesScreen } from './screens/partner/BranchesScreen.tsx';
 import { ProfileScreen } from './screens/partner/ProfileScreen.tsx';
@@ -59,6 +61,9 @@ const INVOICE_READERS: readonly PartnerPermission[] = ['invoices.create', 'invoi
 /** WQ3 (`registerWorkspaceRoutes`): `GET /slots` readers, and `LAB_READERS` of `GET /lab-bookings[/:id]`. */
 const SLOT_READERS: readonly PartnerPermission[] = ['slots.manage', 'bookings.view', 'bookings.manage'];
 const LAB_READERS: readonly PartnerPermission[] = ['bookings.view', 'bookings.manage', 'reports.upload', 'reports.release'];
+/** WQ6 (Q6 routes): `GET /clinic/doctors` readers, and `GET /clinic/slots|appointments` readers. */
+const DOCTOR_READERS: readonly PartnerPermission[] = ['staff.manage', 'bookings.view', 'bookings.manage', 'invoices.create'];
+const DESK_READERS: readonly PartnerPermission[] = ['bookings.view', 'bookings.manage'];
 
 export const PAGES: readonly WorkspacePage[] = [
   { path: '/', roles: ['admin', 'pharmacy', 'partner'], element: <HomeScreen />, nav: { label: 'Home', icon: House, section: '' } },
@@ -119,6 +124,15 @@ export const PAGES: readonly WorkspacePage[] = [
     path: '/partner/slots', roles: ['partner'], element: <SlotsScreen />, partnerPermissions: SLOT_READERS, partnerKinds: ['lab'],
     nav: { label: 'Slots', icon: CalendarClock, section: 'Lab' },
   },
+  // WQ6: clinic doctors (by invitation) and the front desk (clinics only).
+  {
+    path: '/partner/desk', roles: ['partner'], element: <DeskScreen />, partnerPermissions: DESK_READERS, partnerKinds: ['clinic'],
+    nav: { label: 'Front desk', icon: CalendarCheck, section: 'Clinic' },
+  },
+  {
+    path: '/partner/clinic-doctors', roles: ['partner'], element: <ClinicDoctorsScreen />, partnerPermissions: DOCTOR_READERS, partnerKinds: ['clinic'],
+    nav: { label: 'Doctors', icon: Stethoscope, section: 'Clinic' },
+  },
   {
     path: '/admin/partners', roles: ['admin'], element: <PartnersScreen />,
     nav: { label: 'Labs and clinics', icon: Handshake, section: 'Admin' },
@@ -137,6 +151,8 @@ export const PAGES: readonly WorkspacePage[] = [
   { path: '/admin/partners/:partnerId/slots', roles: ['admin'], element: <SlotsScreen /> },
   { path: '/admin/partners/:partnerId/lab-bookings', roles: ['admin'], element: <LabBookingsScreen /> },
   { path: '/admin/partners/:partnerId/lab-bookings/:bookingId', roles: ['admin'], element: <LabBookingScreen /> },
+  { path: '/admin/partners/:partnerId/desk', roles: ['admin'], element: <DeskScreen /> },
+  { path: '/admin/partners/:partnerId/clinic-doctors', roles: ['admin'], element: <ClinicDoctorsScreen /> },
   {
     path: '/admin/lab-bookings', roles: ['admin'], element: <AdminLabBookingsScreen />,
     nav: { label: 'Lab bookings', icon: FlaskConical, section: 'Admin' },

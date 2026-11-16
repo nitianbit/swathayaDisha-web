@@ -70,3 +70,12 @@ export type {
   LabBookingQuery, LabBookingSlot, LabBookingStatus, LabLifecycleKey, LabPaymentStatus, LabReportRelease, LabSlot, NewManualSlot,
   SlotClosure, SlotQuery, SlotTemplate, SlotTemplateInput, SlotWindow, TemplateDays,
 } from './partnerLabs.ts';
+export {
+  appointmentAt, appointmentDay, appointmentRangeProblem, canonicalMobile, CLINIC_APPOINTMENT_STATUS_LABEL, CLINIC_APPOINTMENT_STATUSES, clinicBranchesFor,
+  deskActions, deskBookingProblems, doctorsAtBranch, DOCTOR_INVITE_STATE_LABEL, DOCTOR_INVITE_STATES, inviteProblems, MAX_APPOINTMENT_DAYS,
+  MAX_APPOINTMENTS, MAX_DESK_CANCEL_REASON, MAX_DESK_NAME, MAX_DESK_NOTES, MAX_INVITE_BRANCHES, partnerClinicApi,
+} from './clinic.ts';
+export type {
+  AppointmentQuery, ClinicAppointment, ClinicAppointmentStatus, ClinicDoctorRow, DeskAction, DeskActionOffer, DeskAppointment, DeskBookingInput,
+  DeskBookingResult, DeskSlot, DoctorInvite, DoctorInviteState, InviteDoctorInput, InviteResult,
+} from './clinic.ts';
