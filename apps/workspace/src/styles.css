@@ -124,3 +124,13 @@
 /* WQ2: bill lines */
 .ws-line { margin: 0; min-width: 0; }
 .ws-line legend { font-weight: 600; padding: 0 var(--space-1); }
+
+/* WQ3: lab slots and bookings */
+.ws-day { display: grid; gap: var(--space-2); }
+.ws-window { display: grid; grid-template-columns: repeat(2, minmax(140px, 220px)) auto; gap: var(--space-3); align-items: end; }
+@media (max-width: 760px) { .ws-window { grid-template-columns: 1fr; } }
+.ws-inline-form { display: grid; gap: var(--space-2); min-width: 200px; }
+.ws-timeline { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-2); }
+.ws-timeline li { display: grid; grid-template-columns: minmax(150px, max-content) 1fr; gap: var(--space-3); }
+.ws-timeline time { color: var(--muted); }
+@media (max-width: 760px) { .ws-timeline li { grid-template-columns: 1fr; gap: 0; } }

@@ -1,0 +1,584 @@
+import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useParams } from 'react-router';
+import { ArrowLeft } from 'lucide-react';
+import {
+  addDays, canReadDrafts, COLLECTOR_PHONE_PATTERN, eligibleSigners, hasGlobalScope, holdsAny, isBookable, istDateOf, LAB_BOOKING_STATUS_LABEL,
+  LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, labActions, MAX_COLLECTOR_NAME, MAX_LAB_REASON, MIN_LAB_REASON, OBJECT_ID_PATTERN,
+  releaseOf, REPORT_ACCEPT, reportFileName, reportFileProblem, type LabAction, type LabActionOffer, type LabBooking, type LabLifecycleKey,
+  type LabSlot, type PartnerMember,
+} from '@jansetu/api';
+import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, TextArea, TextField } from '@jansetu/ui';
+import { ConfirmAction } from '../../components/ConfirmAction.tsx';
+import { messageOf } from '../../errors.ts';
+import { PageHeading } from '../../PageHeading.tsx';
+import { definitelyNotRecorded } from '../../requests.ts';
+import { useStaff } from '../../session.tsx';
+import { money } from './billing.tsx';
+import {
+  formatDay, LabOnly, labStatusTone, ReportPreview, slotLabel, useNow, useReportViewer, ViewFileButton,
+} from './labs.tsx';
+import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
+
+const LIFECYCLE: readonly [LabLifecycleKey, string][] = [
+  ['paidAt', 'Paid'], ['confirmedAt', 'Confirmed'], ['collectedAt', 'Sample collected'], ['visitedAt', 'Visited the lab'],
+  ['processingAt', 'Processing started'], ['reportReadyAt', 'First report released'], ['completedAt', 'Completed'],
+  ['cancelledAt', 'Cancelled'], ['noShowAt', 'Marked as no-show'],
+];
+const CANCEL_REASON: Record<string, string> = { timeout: 'Not paid in time', customer: 'Cancelled by the customer', lab_reject: 'Rejected by the lab' };
+const GENDER_LABEL: Record<string, string> = { male: 'Male', female: 'Female', other: 'Other' };
+
+/** One online lab booking: what was booked, its timeline, the steps this person may take now, and its reports. */
+export function LabBookingScreen() {
+  const ctx = usePartnerScope();
+  const { bookingId = '' } = useParams();
+  if (!ctx || !OBJECT_ID_PATTERN.test(bookingId)) return <NoSuchPartner />;
+  // One subtree per partner and booking: an open form, confirmation or file preview never carries over to another.
+  return <BookingPage key={`${scopeIdentity(ctx)}:${bookingId}`} ctx={ctx} bookingId={bookingId} />;
+}
+
+function BookingPage({ ctx, bookingId }: { ctx: ScopeContext; bookingId: string }) {
+  const partner = useWorkspacePartner(ctx);
+  return (
+    <>
+      <Link className="ws-back" to={ctx.link('lab-bookings')}><ArrowLeft size={16} aria-hidden="true" /> Back to lab bookings</Link>
+      <LabOnly ctx={ctx}><BookingDetail ctx={ctx} bookingId={bookingId} partnerName={partner.data?.name} /></LabOnly>
+    </>
+  );
+}
+
+function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; bookingId: string; partnerName?: string }) {
+  const queryClient = useQueryClient();
+  const key = [...ctx.key, 'lab-booking', bookingId];
+  const q = useQuery({ queryKey: key, queryFn: () => ctx.labs.booking(bookingId) });
+  const branches = useBranches(ctx);
+  const now = useNow();
+  const [notice, setNotice] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [busy, setBusy] = useState<LabAction | null>(null);
+  const b = q.data;
+
+  /** A newer answer replaces the page's booking; an older one (lower status version) never does. */
+  async function apply(next: LabBooking) {
+    await queryClient.cancelQueries({ queryKey: key });
+    queryClient.setQueryData<LabBooking>(key, (old) => (!old || next.statusVersion >= old.statusVersion ? next : old));
+    void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'lab-bookings'] });
+  }
+  /**
+   * Runs one step for THIS booking (the subtree is keyed by partner and booking, so a late answer after leaving writes
+   * only this booking's own record and shows nothing anywhere else). One step at a time.
+   */
+  async function perform(action: LabAction, run: () => Promise<LabBooking>, done: string) {
+    setBusy(action);
+    setNotice(null);
+    setFailure(null);
+    try {
+      await apply(await run());
+      setNotice(done);
+    } catch (err) {
+      // The booking may have moved meanwhile (LAB_BOOKING_CHANGED, a state conflict): show it as it is now.
+      void queryClient.invalidateQueries({ queryKey: key });
+      throw err;
+    } finally {
+      setBusy(null);
+    }
+  }
+  const click = (action: LabAction, what: string, run: () => Promise<LabBooking>, done: string) =>
+    perform(action, run, done).catch((err: unknown) => setFailure(`${what}: ${messageOf(err)}`));
+
+  if (q.isPending) return <><PageHeading title="Lab booking" /><Loading label="Loading the booking…" /></>;
+  if (q.isError || !b) return <><PageHeading title="Lab booking" /><ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} /></>;
+
+  const branchName = branches.data?.find((x) => x._id === b.branchId)?.name ?? `Branch …${b.branchId.slice(-6)}`;
+  const offers = labActions(b, ctx.actor, now);
+  const offer = (a: LabAction) => offers.find((o) => o.action === a);
+  const disabled = busy !== null;
+  const tests = b.items.map((i) => i.name).join(', ');
+
+  return (
+    <>
+      <PageHeading title={`Lab booking: ${b.patient.name}`}>
+        {ctx.adminHome ? <>Managing {partnerName ?? 'this partner'} with owner authority. </> : null}
+        {slotLabel(b.slot)} · {LAB_VISIT_MODE_LABEL[b.visitMode]} · {branchName}
+      </PageHeading>
+      {notice && <Alert tone="ok">{notice}</Alert>}
+
+      <section className="ws-section" aria-labelledby="lb-status-h">
+        <h2 id="lb-status-h">Status</h2>
+        {failure && <Alert>{failure}</Alert>}
+        <div className="ws-actions">
+          <Badge tone={labStatusTone(b.status)}>{LAB_BOOKING_STATUS_LABEL[b.status] ?? b.status}</Badge>
+          <Badge tone={b.paymentStatus === 'paid' ? 'ok' : b.paymentStatus === 'refunded' ? 'danger' : 'warn'}>{LAB_PAYMENT_STATUS_LABEL[b.paymentStatus] ?? b.paymentStatus}</Badge>
+          {b.reschedule?.pending && <Badge tone="warn">New time proposed</Badge>}
+        </div>
+        {b.status === 'pending_payment' && (
+          <p className="ws-muted">The customer has not paid yet (until {formatDateTime(b.paymentDeadline)}). Nothing can be done on it until it is paid; unpaid bookings expire on their own.</p>
+        )}
+        {b.reschedule?.pending && b.reschedule.previousSlot && (
+          <Alert tone="warn">
+            You proposed {slotLabel(b.slot)} instead of {slotLabel(b.reschedule.previousSlot)}{b.reschedule.reason ? ` (“${b.reschedule.reason}”)` : ''}.
+            The customer has not accepted it yet; they may also cancel with a full refund.
+          </Alert>
+        )}
+        {b.cancellation && (
+          <p>{CANCEL_REASON[b.cancellation.reason] ?? b.cancellation.reason}{b.cancellation.note ? `: “${b.cancellation.note}”` : ''} · {formatDateTime(b.cancellation.at)}</p>
+        )}
+        {offers.length > 0 ? (
+          <div className="ws-actions">
+            {offer('collect') && (
+              <Step offer={offer('collect')!} disabled={disabled} busy={busy === 'collect'} label="Mark sample collected"
+                onClick={() => void click('collect', 'Not marked collected', () => ctx.labs.markCollected(b._id), 'Marked as sample collected.')} />
+            )}
+            {offer('visit') && (
+              <Step offer={offer('visit')!} disabled={disabled} busy={busy === 'visit'} label="Mark visited"
+                onClick={() => void click('visit', 'Not marked visited', () => ctx.labs.markVisited(b._id), 'Marked as visited.')} />
+            )}
+            {offer('process') && (
+              <Step offer={offer('process')!} disabled={disabled} busy={busy === 'process'} label="Start processing"
+                onClick={() => void click('process', 'Not moved to processing', () => ctx.labs.startProcessing(b._id), 'Processing started. Reports can be uploaded now.')} />
+            )}
+            {offer('no_show') && (offer('no_show')!.blocked
+              ? <Step offer={offer('no_show')!} disabled label="Mark no-show" onClick={() => undefined} />
+              : (
+                <ConfirmAction label="Mark no-show" danger disabled={disabled} confirmLabel="Mark no-show"
+                  consequence={<>Mark {b.patient.name} as not present for {slotLabel(b.slot)}? The booking ends here and the customer is not refunded. This cannot be undone.</>}
+                  onConfirm={() => perform('no_show', () => ctx.labs.markNoShow(b._id), 'Marked as no-show.')} />
+              ))}
+            {offer('complete') && (
+              <ConfirmAction label="Complete booking" disabled={disabled} confirmLabel="Complete booking"
+                consequence={<>Complete this booking? It ends here: no more reports can be uploaded or released, and the lab’s earning of {money(b.pricing.subtotalMinor)} is recorded.</>}
+                onConfirm={() => perform('complete', () => ctx.labs.complete(b._id), 'Booking completed.')} />
+            )}
+            {offer('assign') && <AssignCollector ctx={ctx} booking={b} disabled={disabled} perform={perform} />}
+            {offer('reschedule') && <ProposeTime ctx={ctx} booking={b} disabled={disabled} now={now} perform={perform} />}
+            {offer('reject') && (
+              <ConfirmAction label="Reject booking" danger disabled={disabled} reason reasonLabel="Why can the lab not take this booking? (the customer sees this)"
+                maxReason={MAX_LAB_REASON} confirmLabel="Reject and refund"
+                consequence={<>Reject this booking? It is cancelled, its seat is freed, and the customer’s full payment of {money(b.pricing.payableMinor)} goes back to their Jansetu wallet. This cannot be undone.</>}
+                onConfirm={(reason) => perform('reject', async () => (await ctx.labs.reject(b._id, reason)).booking, 'Booking rejected; the customer’s payment is back in their wallet.')} />
+            )}
+          </div>
+        ) : b.status !== 'pending_payment' && !['completed', 'cancelled', 'no_show'].includes(b.status) && (
+          <p className="ws-muted">You can view this booking; the next step needs another permission.</p>
+        )}
+      </section>
+
+      <Reports ctx={ctx} booking={b} offers={offers} disabled={disabled} perform={perform} />
+
+      <section className="ws-section" aria-labelledby="lb-visit-h">
+        <h2 id="lb-visit-h">Patient and visit</h2>
+        <dl className="ws-dl">
+          <dt>Patient</dt>
+          <dd>{b.patient.name}{b.patient.kind === 'dependent' ? ' (family member of the account holder)' : ''}</dd>
+          {b.patient.age !== undefined && <><dt>Age</dt><dd>{b.patient.age}</dd></>}
+          {b.patient.gender && <><dt>Gender</dt><dd>{GENDER_LABEL[b.patient.gender] ?? b.patient.gender}</dd></>}
+          <dt>Slot</dt><dd>{slotLabel(b.slot)} (India time)</dd>
+          <dt>Visit</dt><dd>{LAB_VISIT_MODE_LABEL[b.visitMode]} · {branchName}</dd>
+          {b.visitMode === 'home' && b.address && (
+            <><dt>Address</dt><dd>{[b.address.line1, b.address.line2, b.address.landmark, b.address.city, b.address.state, b.address.pincode].filter(Boolean).join(', ')}</dd></>
+          )}
+          {b.collector && <><dt>Collector</dt><dd>{b.collector.name}{b.collector.phone ? ` · ${b.collector.phone}` : ''}</dd></>}
+        </dl>
+      </section>
+
+      <section className="ws-section" aria-labelledby="lb-tests-h">
+        <h2 id="lb-tests-h">Tests and payment</h2>
+        <div className="ws-table-wrap">
+          <table className="j-table">
+            <caption className="j-sr-only">Tests booked: {tests}</caption>
+            <thead><tr><th scope="col">Test</th><th scope="col">Code</th><th scope="col">Type</th><th scope="col">Report within</th><th scope="col">Price</th></tr></thead>
+            <tbody>
+              {b.items.map((i) => (
+                <tr key={i.catalogItemId}>
+                  <td>{i.name}</td><td>{i.code ?? '—'}</td><td>{i.kind === 'package' ? 'Package' : 'Test'}</td>
+                  <td>{i.reportTatHours ? `${i.reportTatHours} h` : '—'}</td><td>{money(i.priceMinor)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <dl className="ws-dl" aria-label="Payment">
+          <dt>Tests</dt><dd>{money(b.pricing.subtotalMinor)}</dd>
+          {b.pricing.discountMinor > 0 && <><dt>Coupon{b.pricing.couponCode ? ` ${b.pricing.couponCode}` : ''}</dt><dd>− {money(b.pricing.discountMinor)}</dd></>}
+          <dt><strong>Paid by the customer</strong></dt><dd><strong>{money(b.pricing.payableMinor)}</strong> · {LAB_PAYMENT_STATUS_LABEL[b.paymentStatus] ?? b.paymentStatus}</dd>
+        </dl>
+      </section>
+
+      <Timeline booking={b} />
+    </>
+  );
+}
+
+/** A step button; a blocked step stays visible, disabled, with the reason next to it. */
+function Step({ offer, label, disabled, busy, onClick }: { offer: LabActionOffer; label: string; disabled: boolean; busy?: boolean; onClick: () => void }) {
+  return (
+    <div className="ws-action">
+      <Button disabled={disabled || !!offer.blocked} busy={busy} onClick={onClick}>{label}</Button>
+      {offer.blocked && <span className="ws-muted">{offer.blocked}</span>}
+    </div>
+  );
+}
+
+type Perform = (action: LabAction, run: () => Promise<LabBooking>, done: string) => Promise<void>;
+
+/** Who collects the sample: a member working at this branch (when staff can be listed), or someone named by hand. */
+function AssignCollector({ ctx, booking, disabled, perform }: { ctx: ScopeContext; booking: LabBooking; disabled: boolean; perform: Perform }) {
+  const [open, setOpen] = useState(false);
+  const canList = holdsAny(ctx.actor, ['staff.manage']);
+  const members = useQuery({ queryKey: [...ctx.key, 'members'], queryFn: () => ctx.api.members(), enabled: open && canList });
+  const [memberId, setMemberId] = useState('');
+  const [name, setName] = useState(booking.collector?.name ?? '');
+  const [phone, setPhone] = useState(booking.collector?.phone ?? '');
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const here = (members.data ?? []).filter((m: PartnerMember) => m.isActive !== false
+    && (hasGlobalScope(m) || m.branchIds.includes(booking.branchId)));
+  const chosen = here.find((m) => m._id === memberId);
+
+  if (!open) return <Button variant="secondary" disabled={disabled} onClick={() => setOpen(true)}>{booking.collector ? 'Change collector' : 'Assign collector'}</Button>;
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    const n = (chosen?.name ?? name).trim();
+    const p = phone.trim();
+    const errs: Record<string, string> = {};
+    if (!chosen && !n) errs.name = 'Enter the collector’s name.';
+    else if (n.length > MAX_COLLECTOR_NAME) errs.name = `Use at most ${MAX_COLLECTOR_NAME} characters.`;
+    if (p && !COLLECTOR_PHONE_PATTERN.test(p)) errs.phone = 'Enter 10 digits.';
+    setErrors(errs);
+    if (Object.keys(errs).length) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await perform('assign', () => ctx.labs.assignCollector(booking._id, { ...(chosen ? { memberId: chosen._id } : {}), name: n, ...(p ? { phone: p } : {}) }),
+        `${n} will collect the sample.`);
+      setOpen(false);
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="confirm" noValidate onSubmit={(e) => void submit(e)} aria-label="Assign collector">
+      {canList && (
+        <div className="j-field">
+          <label htmlFor="lb-collector">Who collects</label>
+          <select id="lb-collector" value={memberId} onChange={(e) => setMemberId(e.target.value)}>
+            <option value="">Someone else (type the name)</option>
+            {here.map((m) => <option key={m._id} value={m._id}>{m.name}</option>)}
+          </select>
+          {members.isError && <span className="j-field__hint">Staff could not be listed: {messageOf(members.error)}</span>}
+        </div>
+      )}
+      <div className="rx-form-row">
+        {!chosen && <TextField label="Collector’s name" value={name} maxLength={MAX_COLLECTOR_NAME} error={errors.name} onChange={(e) => setName(e.target.value)} />}
+        <TextField label="Collector’s mobile (optional)" inputMode="numeric" value={phone} maxLength={10} error={errors.phone} onChange={(e) => setPhone(e.target.value)} />
+      </div>
+      <p className="ws-muted">The customer sees the collector’s name and mobile number.</p>
+      {error && <Alert>{error}</Alert>}
+      <div className="confirm-actions">
+        <Button type="submit" busy={busy}>Save collector</Button>
+        <Button variant="ghost" disabled={busy} onClick={() => setOpen(false)}>Back</Button>
+      </div>
+    </form>
+  );
+}
+
+/** A new time from this branch's open slots (next two weeks) with a reason; the customer accepts or cancels for a refund. */
+function ProposeTime({ ctx, booking, disabled, now, perform }: { ctx: ScopeContext; booking: LabBooking; disabled: boolean; now: Date; perform: Perform }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const from = istDateOf(now);
+  const to = addDays(from, 13);
+  const slotsKey = [...ctx.key, 'slots', booking.branchId, booking.visitMode, from, to];
+  const slots = useQuery({
+    queryKey: slotsKey, enabled: open,
+    queryFn: () => ctx.labs.slots({ branchId: booking.branchId, visitMode: booking.visitMode, from, to }),
+  });
+  const [slotId, setSlotId] = useState('');
+  const [reason, setReason] = useState('');
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  if (!open) return <Button variant="secondary" disabled={disabled} onClick={() => setOpen(true)}>Propose a new time</Button>;
+
+  const choices = (slots.data ?? []).filter((s) => isBookable(s, now) && s._id !== booking.slot.slotId);
+  const byDay = new Map<string, LabSlot[]>();
+  for (const s of choices) byDay.set(s.date, [...(byDay.get(s.date) ?? []), s]);
+  const picked = choices.find((s) => s._id === slotId);
+
+  function review(e: FormEvent) {
+    e.preventDefault();
+    const errs: Record<string, string> = {};
+    if (!picked) errs.slot = 'Choose the new time.';
+    const r = reason.trim();
+    if (r.length < MIN_LAB_REASON) errs.reason = `Give a reason (at least ${MIN_LAB_REASON} characters).`;
+    else if (r.length > MAX_LAB_REASON) errs.reason = `Use at most ${MAX_LAB_REASON} characters.`;
+    setErrors(errs);
+    setError(null);
+    if (!Object.keys(errs).length) setConfirming(true);
+  }
+
+  async function propose() {
+    if (!picked) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await perform('reschedule', () => ctx.labs.reschedule(booking._id, picked._id, reason.trim()),
+        `New time proposed: ${slotLabel(picked)}. The customer has been told and can accept it or cancel for a full refund.`);
+      setOpen(false);
+    } catch (err) {
+      // E.g. "That slot is no longer available": show the current slots.
+      setError(messageOf(err));
+      setConfirming(false);
+      void queryClient.invalidateQueries({ queryKey: slotsKey });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="confirm" noValidate onSubmit={review} aria-label="Propose a new time">
+      {slots.isPending ? <Loading label="Loading open slots…" />
+        : slots.isError ? <ErrorState message={messageOf(slots.error)} onRetry={() => void slots.refetch()} />
+        : choices.length === 0 ? <p className="ws-muted">No open slot with a free seat in the next two weeks. Add a slot under Slots first.</p>
+        : !confirming ? (
+          <>
+            <div className="j-field">
+              <label htmlFor="lb-new-slot">New time</label>
+              <select id="lb-new-slot" value={slotId} aria-invalid={errors.slot ? true : undefined} aria-describedby={errors.slot ? 'lb-new-slot-err' : undefined}
+                onChange={(e) => setSlotId(e.target.value)}>
+                <option value="">Choose a slot</option>
+                {[...byDay].map(([day, rows]) => (
+                  <optgroup key={day} label={formatDay(day)}>
+                    {rows.map((s) => <option key={s._id} value={s._id}>{formatDay(s.date)}, {s.startTime}–{s.endTime} ({s.capacity - s.booked} free)</option>)}
+                  </optgroup>
+                ))}
+              </select>
+              {errors.slot && <span id="lb-new-slot-err" className="j-field__error">{errors.slot}</span>}
+            </div>
+            <TextArea label="Reason (the customer sees this)" value={reason} maxLength={MAX_LAB_REASON} error={errors.reason} onChange={(e) => setReason(e.target.value)} />
+          </>
+        ) : picked && (
+          <div className="confirm-text">
+            Propose {slotLabel(picked)} instead of {slotLabel(booking.slot)}? The new seat is taken now and the current one is freed.
+            The customer is told and can accept the new time or cancel for a full refund; until they answer, the booking cannot be marked
+            {booking.visitMode === 'home' ? ' collected' : ' visited'} or no-show.
+          </div>
+        )}
+      {error && <Alert>Not proposed: {error}</Alert>}
+      <div className="confirm-actions">
+        {!confirming ? <Button type="submit" disabled={choices.length === 0}>Continue</Button>
+          : <Button busy={busy} onClick={() => void propose()}>Propose the new time</Button>}
+        <Button variant="ghost" disabled={busy} onClick={() => (confirming ? setConfirming(false) : setOpen(false))}>Back</Button>
+      </div>
+    </form>
+  );
+}
+
+// ── Reports ──
+
+function Reports({ ctx, booking, offers, disabled, perform }: {
+  ctx: ScopeContext; booking: LabBooking; offers: LabActionOffer[]; disabled: boolean; perform: Perform;
+}) {
+  const viewer = useReportViewer(ctx, booking._id);
+  const drafts = booking.report.draftFiles;
+  const released = booking.report.releasedFiles;
+  const canUpload = offers.some((o) => o.action === 'upload');
+  const canRelease = offers.some((o) => o.action === 'release');
+  const seeDrafts = canReadDrafts(ctx.actor);
+  if (!drafts.length && !released.length && !canUpload) return null;
+  return (
+    <section className="ws-section" aria-labelledby="lb-reports-h">
+      <h2 id="lb-reports-h">Reports</h2>
+      <h3>Released to the customer</h3>
+      {released.length === 0 ? <p className="ws-muted">No report has been released yet.</p> : (
+        <ul className="ws-list" aria-label="Released reports">
+          {released.map((f) => {
+            const r = releaseOf(booking, f);
+            return (
+              <li key={f}>
+                <div className="ws-actions">
+                  <span>{reportFileName(f)}{r ? ` · released ${formatDateTime(r.releasedAt)} under ${r.signer.name}${r.signer.kind ? ` (${r.signer.kind})` : ''}, registration ${r.signer.registrationNumber}` : ''}</span>
+                  <ViewFileButton viewer={viewer} file={f} />
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <h3>Drafts (not visible to the customer)</h3>
+      {drafts.length === 0 ? <p className="ws-muted">No draft waiting.</p>
+        : !seeDrafts ? <p className="ws-muted">{drafts.length} {drafts.length === 1 ? 'draft is' : 'drafts are'} waiting for release. Only report staff can open drafts.</p>
+        : (
+          <ul className="ws-list" aria-label="Draft reports">
+            {drafts.map((f) => (
+              <li key={f}>
+                <div className="ws-actions">
+                  <span>{reportFileName(f)}</span>
+                  <ViewFileButton viewer={viewer} file={f} />
+                  {canRelease && <ReleaseDraft ctx={ctx} booking={booking} file={f} disabled={disabled} perform={perform} />}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      <ReportPreview viewer={viewer} />
+      {canUpload && <UploadReports ctx={ctx} booking={booking} disabled={disabled} perform={perform} />}
+    </section>
+  );
+}
+
+function UploadReports({ ctx, booking, disabled, perform }: { ctx: ScopeContext; booking: LabBooking; disabled: boolean; perform: Perform }) {
+  const queryClient = useQueryClient();
+  const input = useRef<HTMLInputElement>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const problems = files.map(reportFileProblem).filter((p): p is string => !!p);
+
+  async function upload(e: FormEvent) {
+    e.preventDefault();
+    if (files.length === 0) { setError('Choose the report files first.'); return; }
+    if (problems.length) { setError(problems.join(' ')); return; }
+    setBusy(true);
+    setError(null);
+    const n = files.length;
+    try {
+      await perform('upload', () => ctx.labs.uploadReports(booking._id, files),
+        `${n} ${n === 1 ? 'file was' : 'files were'} added as drafts. Release each one when it is checked.`);
+      setFiles([]);
+      if (input.current) input.current.value = '';
+    } catch (err) {
+      // No request key here: after a lost answer the files may be attached already (the booking is reloaded; check it).
+      setError(definitelyNotRecorded(err) ? `Not uploaded: ${messageOf(err)}`
+        : `${messageOf(err)} The files may have been uploaded: check the drafts above before uploading again (uploading again adds copies).`);
+      void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'lab-booking', booking._id] });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="rx-form" noValidate onSubmit={(e) => void upload(e)} aria-label="Upload reports">
+      <h3>Upload reports</h3>
+      <div className="j-field">
+        <label htmlFor="lb-files">Report files (PDF, JPEG, PNG or WebP; up to 10 MB each)</label>
+        <input id="lb-files" ref={input} type="file" multiple accept={REPORT_ACCEPT} aria-describedby={error ? 'lb-files-err' : undefined}
+          onChange={(e) => { setFiles([...(e.target.files ?? [])]); setError(null); }} />
+        {problems.length > 0 && <span className="j-field__error">{problems.join(' ')}</span>}
+      </div>
+      {error && <div id="lb-files-err"><Alert>{error}</Alert></div>}
+      <div><Button type="submit" busy={busy} disabled={disabled && !busy}>Upload as drafts</Button></div>
+    </form>
+  );
+}
+
+/**
+ * Releases one draft under a professional (`releaseReport`): members sign as themselves; admins name a member who may
+ * sign for this branch and has a professional registration on record. Confirmed first: the customer sees it at once.
+ */
+function ReleaseDraft({ ctx, booking, file, disabled, perform }: { ctx: ScopeContext; booking: LabBooking; file: string; disabled: boolean; perform: Perform }) {
+  const user = useStaff();
+  const admin = ctx.scope.kind === 'admin';
+  const [open, setOpen] = useState(false);
+  const members = useQuery({ queryKey: [...ctx.key, 'members'], queryFn: () => ctx.api.members(), enabled: open && admin });
+  const signers = eligibleSigners(members.data ?? [], booking.branchId);
+  const [signerId, setSignerId] = useState('');
+  const signer = signers.find((m) => m._id === signerId);
+  const name = reportFileName(file);
+  if (!open) return <Button variant="secondary" disabled={disabled} aria-label={`Release ${name}`} onClick={() => setOpen(true)}>Release</Button>;
+
+  let who: ReactNode;
+  if (!admin) who = <>under your own name ({user.name}) and your professional registration</>;
+  else if (signer) who = <>under {signer.name} ({signer.professional!.kind}, registration {signer.professional!.registrationNumber})</>;
+
+  return (
+    <div className="confirm" role="group" aria-label={`Release ${name}`}>
+      {admin && (members.isPending ? <Loading label="Loading who can sign…" />
+        : members.isError ? <ErrorState message={messageOf(members.error)} onRetry={() => void members.refetch()} />
+        : signers.length === 0 ? (
+          <Alert tone="warn">
+            Nobody can sign this report. A signer must be an owner or hold “Release reports”, work at this branch, and have a professional
+            registration number on their staff record; registration numbers cannot be added in the workspace yet.
+          </Alert>
+        ) : (
+          <div className="j-field">
+            <label htmlFor={`signer-${name}`}>Signed by</label>
+            <select id={`signer-${name}`} value={signerId} onChange={(e) => setSignerId(e.target.value)}>
+              <option value="">Choose the professional</option>
+              {signers.map((m) => <option key={m._id} value={m._id}>{m.name} · {m.professional!.registrationNumber}</option>)}
+            </select>
+          </div>
+        ))}
+      {who && (
+        <div className="confirm-text">
+          Release {name} to the customer {who}? They can open and download it in the Jansetu app at once and are told it is ready.
+          A released report cannot be withdrawn here.
+        </div>
+      )}
+      <ConfirmLess
+        label={`Release ${name}`} ready={!!who}
+        onConfirm={() => perform('release', () => ctx.labs.releaseReport(booking._id, file, admin ? signer?._id : undefined),
+          `${name} was released to the customer.`)}
+        onBack={() => setOpen(false)} />
+    </div>
+  );
+}
+
+/** The final buttons of an already explained step; shows the server's refusal in place. */
+function ConfirmLess({ label, ready, onConfirm, onBack }: { label: string; ready: boolean; onConfirm: () => Promise<void>; onBack: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function go() {
+    setBusy(true);
+    setError(null);
+    try { await onConfirm(); } catch (err) {
+      // Releasing the same file again is safe (an already released file is left as it is).
+      setError(`Not released: ${messageOf(err)}`);
+    } finally { setBusy(false); }
+  }
+  return (
+    <>
+      {error && <Alert>{error}</Alert>}
+      <div className="confirm-actions">
+        <Button busy={busy} disabled={!ready} onClick={() => void go()}>{label}</Button>
+        <Button variant="ghost" disabled={busy} onClick={onBack}>Back</Button>
+      </div>
+    </>
+  );
+}
+
+function Timeline({ booking: b }: { booking: LabBooking }) {
+  const events: { at: string; text: string }[] = [];
+  if (b.createdAt) events.push({ at: b.createdAt, text: 'Booked in the app' });
+  for (const [k, label] of LIFECYCLE) {
+    const at = b.lifecycle?.[k];
+    if (at) events.push({ at, text: label });
+  }
+  if (b.reschedule?.at && b.reschedule.previousSlot) {
+    events.push({
+      at: b.reschedule.at,
+      text: `New time proposed: ${slotLabel(b.slot)} instead of ${slotLabel(b.reschedule.previousSlot)}${b.reschedule.reason ? ` (“${b.reschedule.reason}”)` : ''}${b.reschedule.pending ? '; waiting for the customer' : '; accepted'}`,
+    });
+  }
+  for (const r of b.report.releases) {
+    events.push({ at: r.releasedAt, text: `Report ${reportFileName(r.path)} released under ${r.signer.name} (registration ${r.signer.registrationNumber})` });
+  }
+  events.sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
+  return (
+    <section className="ws-section" aria-labelledby="lb-time-h">
+      <h2 id="lb-time-h">Timeline</h2>
+      {events.length === 0 ? <p className="ws-muted">Nothing recorded yet.</p> : (
+        <ol className="ws-timeline">
+          {events.map((e, i) => <li key={i}><time dateTime={e.at}>{formatDateTime(e.at)}</time><span>{e.text}</span></li>)}
+        </ol>
+      )}
+    </section>
+  );
+}

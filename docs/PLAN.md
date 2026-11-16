@@ -267,6 +267,79 @@ Backend gaps found (not changed here):
 - Cancelling a paid bill records nothing about returning the money.
 - Catalogue item create takes no request key: a lost answer cannot be resent safely (the workspace sends the person to the list).
 
+## WQ3 partner lab operations: slots, online lab bookings, reports (2026-11-16, taken autonomously at the owner's request)
+
+Backend: Q3 slots + lab bookings (`SwasthaDisha-worktrees/q10-billing-hardening`, `src1/modules/partners`
+`{model/slot.ts,model/labBooking.ts,validation/labBooking.ts,services/slots.ts,services/labBookings.ts}`, D1 `file/access.ts`).
+API module `packages/api/src/partnerLabs.ts` (member/admin scope like WQ1/WQ2; ids, visit modes, dates and report files checked
+before any path).
+
+- **Pages** (deny by default, labs only via `partnerKinds: ['lab']`): `/partner/slots` "Slots" (`slots.manage`, `bookings.view` or
+  `bookings.manage` read; only `slots.manage` edits), `/partner/lab-bookings` and `/partner/lab-bookings/:id` (`LAB_READERS`:
+  `bookings.view`, `bookings.manage`, `reports.upload`, `reports.release`). Same screens under `/admin/partners/:id/{slots,lab-bookings}`
+  (an admin opening a clinic's URL is told these pages are for labs; the admin partner page links them for labs). Admin
+  `/admin/lab-bookings`: every lab's bookings (filters lab and status, lab names from the partner list, links to the
+  as-owner booking page).
+- **Slots**: branch (in the actor's scope, offering a visit type) + visit type + a Monday–Sunday week (India time); per slot
+  booked/seats, Open/Full/Started or why it is closed (holiday, no longer in the template, by staff), template or one-off.
+  Change seats (0–500, never below booked; the server's 409 is shown and the week reloaded), close and reopen with a
+  confirmation. Reopen is offered only for staff closures: the server's reopen clears any closure, but a holiday or template
+  closure is put back by the next expansion. Started slots offer no actions.
+- **Weekly template**: the server has no route that READS a template, so the editor starts from the slots the template
+  generated for the next two weeks (`deriveTemplate`: template-sourced slots still wanted; length and seats the most common
+  among unbooked ones; windows = runs of back-to-back starts), else the branch's opening hours, else nothing, and says so.
+  It is a `draft.ts` edit: refetches rebase untouched fields, the slots are read again right before saving and a field changed
+  both here and there is reset with a notice. Validated as the server does (`slotTemplateSchema`, `validateWindows`), shown
+  per day with slot counts, confirmed with a summary of what the expansion will do, then saved whole (every weekday sent; an
+  empty day = no slots). The answer's expansion counts are shown. A resend is safe (it sets, not adds).
+- **One-off slot**: date/start/end/seats checked like `manualSlotSchema`; no request key on the server, but a second slot at the
+  same start is refused (409 SLOT_EXISTS), so after a lost answer the person is told to look at the week before adding again.
+- **Lab bookings**: list by branch/status/slot dates (default from a week back; the server sorts oldest slot first, at most 500,
+  no paging, so a full page says so). The booking page: patient as the partner view gives it (name, age, gender, self/family),
+  slot, visit type, home address, collector, tests with prices, payment, cancellation, and a timeline (lifecycle times, the last
+  reschedule, each release with its signer).
+- **Steps = `labActions`** (mirror of `services/labBookings.ts`), only for paid bookings and only with the right permission:
+  confirmed → assign collector (home), sample collected (home) / visited (lab), no-show (after the slot start), propose a new
+  time, reject; collected/visited → processing; processing/report released → upload (`reports.upload`) and release
+  (`reports.release`); report released → complete. Collected/visited/no-show are shown disabled with the reason while a new
+  time waits for the customer. Confirmed first: no-show ("not refunded"), complete ("no more reports"), reject (reason 3–500;
+  "full payment back to the wallet"), new time, release. A step answer replaces the page's booking only if its status version
+  is not older; every refusal reloads the booking and shows the server's message.
+- **New time**: open slots with a free seat, still ahead, not the booking's own, from the next two weeks of the same branch and
+  visit type; reason 3–500; the consequence (seat moves now, customer accepts or cancels for a full refund, collected/visited/
+  no-show wait) before sending. A slot taken meanwhile is refused by the server and the list reloaded.
+- **Collector**: a member working at the booking's branch (only listable with `staff.manage`; admins always) or a name typed
+  by hand; the mobile is typed (a member's sign-in number is never sent on its own). The customer sees both.
+- **Reports**: upload PDF/JPEG/PNG/WebP up to 10 MB each (multipart `files` through the client's `form` option; checked first);
+  no request key on the server, so after a lost answer the booking is reloaded and the person is told a second upload adds
+  copies. Drafts are listed (and openable) only for report staff, as D1 reads them; released files for every reader, each with
+  its signer. Release: members sign as themselves (no signer sent; the server refuses another); admins choose from members the
+  server would accept (`eligibleSigners`: active, owner or `reports.release`, branch covered, professional registration on
+  record). Re-releasing a released file is a no-op on the server, so a lost answer can be retried.
+- **Files** are read with the session token through `GET /file/fetch?url=/api/static/partner-lab-reports/<booking>/<file>`
+  into in-memory blobs bound to the booking and file asked for (a newer view or leaving aborts the older one), shown only if
+  the bytes are a PDF or an image, saved under the file's name. No token or file link in any URL.
+- **WQ1/WQ2 review rules applied**: every screen keyed by `scopeIdentity(ctx)` (the booking page also by booking id; the slot
+  views by branch + visit type, and by week), so an admin switching partners (or a person switching branch/week/booking) starts
+  with nothing open and a late answer writes only its own booking's cache and shows nothing on the page now displayed.
+  Nothing about patients is written to browser storage.
+
+Backend gaps found (not changed here):
+- No route reads a slot template (only `PUT`): the editor can only infer it from generated slots; the PUT has no version or
+  precondition (last write wins).
+- No workspace route sets a member's `professional` registration (`addMemberSchema`/permissions/branches only), yet a release
+  requires one. Until it can be set, only members already holding one can sign; admins see "nobody can sign" otherwise.
+  Members cannot see their own registration (`GET /members` needs `staff.manage`; `/auth/profile` is not read for it).
+- Reopen clears any closure (holiday or template too), which the next expansion undoes; the UI offers it for staff closures only.
+- Lab-booking steps take no expected status version (the server's CAS uses its own read), so a step answers for the booking as
+  it is then, not as the person saw it.
+- Report upload and one-off slot create take no request key; report files cannot be deleted from drafts.
+- The partner list endpoint has no paging (at most 500, oldest slot first); the admin list has no paging, dates or search
+  (latest 200 by creation) and returns stored rows (report paths without `/api/static/`).
+- Uploads share the client's 20-second timeout (no per-request timeout); a 10 MB file on a slow line may time out (then the
+  booking is reloaded as for any lost answer).
+- `assignCollector` is accepted for lab visits too; the UI offers it for home collections only.
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -315,5 +388,6 @@ Backend gaps found (not changed here):
 | 2026-11-15 | WQ1 review fixes + Q8 | typecheck clean; Vitest 77/77 (+ draft baseline/rebase, Q8 paths, request key, Q8 rules); Playwright workspace 168/168 (+14 = 7 journeys x 2 devices: switching partners discards drafts and a running submission stays with its partner; permission revoked while editing detected, nothing sent; a branch name edit does not resend changed services/holidays; lost create answer locks the form and the resend reuses key and content (one partner); branch access change and branch reopen; staff see the profile read-only; partner search, paging and reinstate); release build with VITE_API_BASE_URL=https://api.example.test. |
 | 2026-11-15 | WQ1 (partner workspace foundation) | typecheck clean; Vitest 69/69 (+9: workspace/admin path building, id validation before any request, select per session mode, selection shape, delegation/scope/removal rules); Playwright workspace 154/154 (+20 = 10 journeys x 2 devices: single and multi-membership sign-in incl. native and expired ticket, nav by permission and scope, staff add/edit/remove with server refusal, branches add/deactivate with confirm, admin list/filter/create/verify/suspend, admin-as-owner staff via `/partner-workspace/admin/<id>/workspace/members`); release build with VITE_API_BASE_URL=https://api.example.test. Not yet run against a real backend or reviewed. |
 | 2026-11-15 | WQ2 (catalogue and bills) | typecheck clean; Vitest 87/87 (+18: paise parsing/formatting, preview rounding incl. half-paisa and odd-paisa SGST, IGST, classification, refusals, member/admin paths, admin item switches, body request key with no header, PDF blob, id checks; app: list cursor and repeats, IST date bound, item and bill builders); Playwright workspace 170/170 (+16 = 8 journeys x 2 devices: catalogue add/edit/deactivate in paise; no-GST supplier offered 0% only, GST item refused on a bill, 503 linking refusal unlocks and a changed bill gets a new key; live totals, lost answer resent with the same key and body, one bill, linked notice, nothing in browser storage; reload with an unconfirmed bill: check by key, forget after warning; pay with confirm, refused pay shows the server and the current bill, cancel with reason, PDF via blob for v2 and v0; finance read-only and biller read-only price list, pages absent without permission; clinic doctor picker and IGST; admin-as-owner bills, catalogue and disable/enable); release build with VITE_API_BASE_URL=https://api.example.test. Playwright ran on a spare port (another worktree's dev server held 5174). Not yet run against a real backend or reviewed. |
+| 2026-11-16 | WQ3 (lab slots, bookings, reports) | typecheck clean; Vitest 109/109 (+13: IST dates and weeks, template rules and derivation from generated slots, manual slot and capacity rules, reopen/bookable, the booking step table per state/visit mode/permission/payment, eligible signers, report file checks, member/admin paths and bodies, multipart upload, report blob via `/file/fetch` with the token in the header, id/mode/date/file checks before any request); Playwright workspace 204/204 (+14 = 7 journeys x 2 devices: week view, template from generated slots reviewed and saved whole, one-off slot and its 409 repeat, server capacity refusal then client refusal, close/reopen with confirm; a home collection through assign, collected, processing, upload (bad type refused), release as self, complete, nothing in storage; viewer and report-staff permissions, unpaid booking, clinic without lab pages; new time from open slots with a taken slot refused, then reject with reason and refund; admin list across labs, release under a chosen signer (only eligible offered), PDF and image via blob with no token in URLs; admin partner switch discards template and reject drafts, clinic URL says labs only; a held step answer after leaving shows nothing on the next booking, and a held capacity answer after changing week shows nothing); release build with VITE_API_BASE_URL=https://api.example.test. Playwright ran on a spare port (temporary config, not committed). Not yet run against a real backend or reviewed. |
 | 2026-11-15 | WQ2 fixes (WQ1 review rules) | After merging the WQ1 review fixes: typecheck clean; Vitest 96/96 (catalogue edits from a baseline: only changed fields, rebased field not sent back, price above the saved MRP refused); Playwright workspace 190/190 (+3 journeys x 2: item edit re-read sends only the name while someone else changed the price, a both-changed price is shown again and not sent; a lost item create is locked and sent to the list, one POST; admin switching partners keeps the unconfirmed bill, drafts and an open item edit with their own partner); release build. Spare port again (temporary config, not committed). |
 | 2026-11-15 | P8 web, N2 phone apps, P9 web approved | Codex approved P8 web (e0add83, after 3 rounds: attempt ownership, keyed recovery result, decision after waits), N2 (f4c3ff8: secure-store start gate, latest-attempt start-up) and P9 web (aab4e01, after 3 rounds: attachments keyed to their pharmacy, functional updates, no order while attaching, expectedPharmacyId recipient fence). vitest 60; Playwright customer 134, workspace 134; Android debug + unsigned iOS builds for both apps. |

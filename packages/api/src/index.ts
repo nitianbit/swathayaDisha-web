@@ -57,3 +57,16 @@ export type {
   InvoiceGender, InvoiceLine, InvoicePaymentMode, InvoicePreview, InvoiceQuery, InvoiceState, InvoiceSupplier, InvoiceTotals,
   LinePreview, NewCatalogueItem, NewInvoice, NewInvoiceLine, PaymentInput, SupplierTax, VisitMode,
 } from './partnerInvoices.ts';
+export {
+  addDays, canReadDrafts, capacityProblem, COLLECTOR_PHONE_PATTERN, deriveTemplate, eligibleSigners, isBookable, isRealDate, istDateOf,
+  LAB_BOOKING_STATUS_LABEL, LAB_BOOKING_STATUSES, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, LAB_VISIT_MODES, labActions,
+  labBookingsAdminApi, manualSlotProblems, MAX_ADMIN_LAB_BOOKINGS, MAX_COLLECTOR_NAME, MAX_LAB_BOOKINGS, MAX_LAB_REASON,
+  MAX_WINDOWS_PER_DAY, MIN_LAB_REASON, mondayOf, partnerLabsApi, releaseOf, reopenable, REPORT_ACCEPT, REPORT_MAX_BYTES,
+  reportFileBooking, reportFileName, reportFileProblem, ROLLING_DAYS, SLOT_CAPACITY_MIN, SLOT_CLOSURE_LABEL, SLOT_MINUTES_MAX,
+  SLOT_MINUTES_MIN, SLOT_SEATS_MAX, slotTimesFor, TEMPLATE_WEEKDAYS, templateProblems, weekdayOf,
+} from './partnerLabs.ts';
+export type {
+  AdminLabBookingQuery, AdminLabBookingRow, CollectorInput, ExpansionResult, LabAction, LabActionOffer, LabBooking, LabBookingItem,
+  LabBookingQuery, LabBookingSlot, LabBookingStatus, LabLifecycleKey, LabPaymentStatus, LabReportRelease, LabSlot, NewManualSlot,
+  SlotClosure, SlotQuery, SlotTemplate, SlotTemplateInput, SlotWindow, TemplateDays,
+} from './partnerLabs.ts';

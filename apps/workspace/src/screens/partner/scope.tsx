@@ -3,13 +3,13 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  ADMIN_ACTOR, OBJECT_ID_PATTERN, partnerBillingApi, partnerWorkspaceApi, type PartnerActorView, type PartnerScope,
+  ADMIN_ACTOR, OBJECT_ID_PATTERN, partnerBillingApi, partnerLabsApi, partnerWorkspaceApi, type PartnerActorView, type PartnerScope,
 } from '@jansetu/api';
 import { Empty } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 
-export type PartnerSection = 'profile' | 'staff' | 'branches' | 'audit' | 'catalogue' | 'invoices';
+export type PartnerSection = 'profile' | 'staff' | 'branches' | 'audit' | 'catalogue' | 'invoices' | 'slots' | 'lab-bookings';
 
 export interface ScopeContext {
   scope: PartnerScope;
@@ -22,6 +22,8 @@ export interface ScopeContext {
   api: ReturnType<typeof partnerWorkspaceApi>;
   /** WQ2: catalogue and invoices of the same workspace. */
   billing: ReturnType<typeof partnerBillingApi>;
+  /** WQ3: lab slots and online lab bookings of the same workspace. */
+  labs: ReturnType<typeof partnerLabsApi>;
   /** The admin partner page this workspace belongs to (admins only). */
   adminHome?: string;
 }
@@ -40,7 +42,7 @@ export function usePartnerScope(): ScopeContext | null {
     const root = `/admin/partners/${partnerId}`;
     return {
       scope, actor: ADMIN_ACTOR, key: ['partner-ws', partnerId], api: partnerWorkspaceApi(api, scope),
-      billing: partnerBillingApi(api, scope), adminHome: root,
+      billing: partnerBillingApi(api, scope), labs: partnerLabsApi(api, scope), adminHome: root,
       link: (s) => `${root}/${s}`,
     };
   }
@@ -53,6 +55,7 @@ export function usePartnerScope(): ScopeContext | null {
     key: ['partner-ws', 'member', user.partner.partner.id],
     api: partnerWorkspaceApi(api, scope),
     billing: partnerBillingApi(api, scope),
+    labs: partnerLabsApi(api, scope),
     link: (s) => (s === 'profile' ? '/partner' : `/partner/${s}`),
   };
 }

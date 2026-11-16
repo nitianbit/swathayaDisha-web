@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Ban, Boxes, Building2, ClipboardCheck, ClipboardList, Handshake, History, House, MapPin, Package, PackageX, Receipt, Settings, ShieldAlert,
+  Ban, Boxes, Building2, CalendarClock, ClipboardCheck, FlaskConical, ClipboardList, Handshake, History, House, MapPin, Package, PackageX, Receipt, Settings, ShieldAlert,
   TrendingDown, Undo2, Users,
 } from 'lucide-react';
 import { hasGlobalScope, holdsAny, type PartnerKind, type PartnerPermission } from '@jansetu/api';
 import type { StaffRole, StaffUser } from './session.tsx';
+import { AdminLabBookingsScreen } from './screens/admin/AdminLabBookingsScreen.tsx';
 import { NewPartnerScreen } from './screens/admin/NewPartnerScreen.tsx';
 import { PartnerScreen } from './screens/admin/PartnerScreen.tsx';
 import { PartnersScreen } from './screens/admin/PartnersScreen.tsx';
@@ -13,6 +14,9 @@ import { AuditScreen } from './screens/partner/AuditScreen.tsx';
 import { CatalogueScreen } from './screens/partner/CatalogueScreen.tsx';
 import { InvoiceScreen } from './screens/partner/InvoiceScreen.tsx';
 import { InvoicesScreen } from './screens/partner/InvoicesScreen.tsx';
+import { LabBookingScreen } from './screens/partner/LabBookingScreen.tsx';
+import { LabBookingsScreen } from './screens/partner/LabBookingsScreen.tsx';
+import { SlotsScreen } from './screens/partner/SlotsScreen.tsx';
 import { NewInvoiceScreen } from './screens/partner/NewInvoiceScreen.tsx';
 import { BranchesScreen } from './screens/partner/BranchesScreen.tsx';
 import { ProfileScreen } from './screens/partner/ProfileScreen.tsx';
@@ -52,6 +56,9 @@ export interface WorkspacePage {
 }
 
 const INVOICE_READERS: readonly PartnerPermission[] = ['invoices.create', 'invoices.cancel', 'payments.record', 'finance.view'];
+/** WQ3 (`registerWorkspaceRoutes`): `GET /slots` readers, and `LAB_READERS` of `GET /lab-bookings[/:id]`. */
+const SLOT_READERS: readonly PartnerPermission[] = ['slots.manage', 'bookings.view', 'bookings.manage'];
+const LAB_READERS: readonly PartnerPermission[] = ['bookings.view', 'bookings.manage', 'reports.upload', 'reports.release'];
 
 export const PAGES: readonly WorkspacePage[] = [
   { path: '/', roles: ['admin', 'pharmacy', 'partner'], element: <HomeScreen />, nav: { label: 'Home', icon: House, section: '' } },
@@ -102,6 +109,16 @@ export const PAGES: readonly WorkspacePage[] = [
   },
   { path: '/partner/invoices/new', roles: ['partner'], element: <NewInvoiceScreen />, partnerPermissions: ['invoices.create'] },
   { path: '/partner/invoices/:invoiceId', roles: ['partner'], element: <InvoiceScreen />, partnerPermissions: INVOICE_READERS },
+  // WQ3: lab slots and online lab bookings (labs only).
+  {
+    path: '/partner/lab-bookings', roles: ['partner'], element: <LabBookingsScreen />, partnerPermissions: LAB_READERS, partnerKinds: ['lab'],
+    nav: { label: 'Lab bookings', icon: FlaskConical, section: 'Lab' },
+  },
+  { path: '/partner/lab-bookings/:bookingId', roles: ['partner'], element: <LabBookingScreen />, partnerPermissions: LAB_READERS, partnerKinds: ['lab'] },
+  {
+    path: '/partner/slots', roles: ['partner'], element: <SlotsScreen />, partnerPermissions: SLOT_READERS, partnerKinds: ['lab'],
+    nav: { label: 'Slots', icon: CalendarClock, section: 'Lab' },
+  },
   {
     path: '/admin/partners', roles: ['admin'], element: <PartnersScreen />,
     nav: { label: 'Labs and clinics', icon: Handshake, section: 'Admin' },
@@ -117,6 +134,13 @@ export const PAGES: readonly WorkspacePage[] = [
   { path: '/admin/partners/:partnerId/invoices', roles: ['admin'], element: <InvoicesScreen /> },
   { path: '/admin/partners/:partnerId/invoices/new', roles: ['admin'], element: <NewInvoiceScreen /> },
   { path: '/admin/partners/:partnerId/invoices/:invoiceId', roles: ['admin'], element: <InvoiceScreen /> },
+  { path: '/admin/partners/:partnerId/slots', roles: ['admin'], element: <SlotsScreen /> },
+  { path: '/admin/partners/:partnerId/lab-bookings', roles: ['admin'], element: <LabBookingsScreen /> },
+  { path: '/admin/partners/:partnerId/lab-bookings/:bookingId', roles: ['admin'], element: <LabBookingScreen /> },
+  {
+    path: '/admin/lab-bookings', roles: ['admin'], element: <AdminLabBookingsScreen />,
+    nav: { label: 'Lab bookings', icon: FlaskConical, section: 'Admin' },
+  },
   {
     path: '/admin/order-cancellations', roles: ['admin'], element: <OrderCancellationsScreen />,
     nav: { label: 'Order cancellations', icon: PackageX, section: 'Admin' },
