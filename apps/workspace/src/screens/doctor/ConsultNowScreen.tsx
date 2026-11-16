@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
@@ -8,8 +8,14 @@ import {
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField, formatDateTime } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
+import { definitelyNotRecorded } from '../../requests.ts';
 import { PageHeading } from '../../PageHeading.tsx';
-import { appointmentsKey, NotADoctor, offersKey, rupeesOf, sortAppointments, useDoctor, useDoctorProfile, useTicker, type DoctorContext } from './doctor.tsx';
+import {
+  appointmentsKey, MeetLink, NotADoctor, offersKey, rupeesOf, sortAppointments, useDoctor, useDoctorProfile, useMeetPoll, useTicker, type DoctorContext,
+} from './doctor.tsx';
+
+/** Today's consultations (one cache entry shared by the accept outcome and the running list). */
+const todayKey = (d: DoctorContext, today: string) => [...appointmentsKey(d), 'day', today];
 import { useDoctorPresence } from './presence.tsx';
 
 /** How often the open offers are read again while this page is visible. */
@@ -72,21 +78,35 @@ function Availability({ d, profile }: { d: DoctorContext; profile?: DoctorProfil
         ? `You are available now for ${r.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')} at ${rupeesOf(r.instantFeeMinor)}.`
         : 'You are not available now. No new offers come to you.');
     } catch (err) {
-      setFailure(available
-        ? `Not switched on: ${messageOf(err)}`
-        : `${messageOf(err)} This page has stopped its heartbeat, so you stop being offered consultations within two minutes; try again to be sure.`);
+      // A lost answer is shown by the "not confirmed" notice below (the terms are unknown); a refusal changed nothing.
+      if (definitelyNotRecorded(err)) {
+        setFailure(available
+          ? `Not changed: ${messageOf(err)}`
+          : `Not switched off: ${messageOf(err)} This page has stopped its heartbeat, so you stop being offered consultations within two minutes.`);
+      }
     }
   }
+  const sent = p.unconfirmed?.input;
 
   return (
     <section className="ws-section" aria-labelledby="avail-h">
       <h2 id="avail-h">Available now</h2>
       <p>
-        {on ? <Badge tone="ok">On</Badge> : p.presence ? <Badge>Off</Badge> : <Badge tone="warn">Not set on this device</Badge>}{' '}
+        {on ? <Badge tone="ok">On</Badge> : p.presence ? <Badge>Off</Badge> : sent ? <Badge tone="warn">Not confirmed</Badge> : <Badge tone="warn">Not set on this device</Badge>}{' '}
         {on ? `${p.presence!.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')} · fee ${rupeesOf(p.presence!.instantFeeMinor)}`
           : p.presence ? 'You are not taking instant consultations.'
+          : sent ? 'Your availability and fee are not known here.'
           : 'The server does not tell the workspace whether you switched this on earlier (for example before a reload). Switch it on to take consultations, or off to be sure.'}
       </p>
+      {sent && (
+        <Alert tone="warn">
+          Your last change ({sent.available
+            ? `available for ${sent.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')}${sent.instantFeeMinor !== undefined ? ` at ${rupeesOf(sent.instantFeeMinor)}` : ''}`
+            : 'not available'}) was sent, but no answer came ({p.unconfirmed!.message}). It may or may not have been applied, so this page does not
+          know your fee and has stopped checking in: if it was applied, offers stop coming within two minutes. Send it again, or switch off, to be
+          sure. Offers cannot be accepted until the server confirms your terms.
+        </Alert>
+      )}
       {on && (
         <p className="ws-muted">
           Keep a workspace page open and visible: it tells the server you are here every minute. When the page is hidden or closed you stop
@@ -115,7 +135,7 @@ function Availability({ d, profile }: { d: DoctorContext; profile?: DoctorProfil
             hint="Offers come only from patients who paid at least this much. Empty = your consultation fee." onChange={(e) => setFee(e.target.value)} />
         </div>
         <div className="confirm-actions">
-          <Button type="submit" busy={p.busy}>{on ? 'Update' : 'Go available now'}</Button>
+          <Button type="submit" busy={p.busy}>{on ? 'Update' : sent?.available ? 'Send again' : 'Go available now'}</Button>
           {(on || !p.presence) && <Button variant="secondary" disabled={p.busy} onClick={() => void send(false)}>{on ? 'Stop being available' : 'Make sure I am not available'}</Button>}
         </div>
       </form>
@@ -192,7 +212,13 @@ function Offers({ d }: { d: DoctorContext }) {
     }
   }
 
-  const fee = presence.presence ? rupeesOf(presence.presence.instantFeeMinor) : null;
+  // The accepted booking as today's list has it now (its call link is made after the accept, and the list is re-read).
+  const today = istDateOf(new Date());
+  const day = useQuery({ queryKey: todayKey(d, today), queryFn: () => d.api.appointmentsOn(today) });
+  const acceptedBooking = outcome?.kind === 'accepted' ? day.data?.find((b) => b._id === outcome.booking._id) ?? outcome.booking : null;
+  // Accepting needs acknowledged terms: the fee named here is the one the server will use.
+  const canAccept = presence.confirmedOn;
+  const fee = canAccept && presence.presence ? rupeesOf(presence.presence.instantFeeMinor) : null;
   const list = offers.data ?? [];
   return (
     <section className="ws-section" aria-labelledby="offers-h">
@@ -200,10 +226,10 @@ function Offers({ d }: { d: DoctorContext }) {
       <p className="ws-muted">An offer stays open for 5 minutes. Accepting starts a {CONSULT_MINUTES}-minute consultation now.</p>
       {outcome?.kind === 'accepted' && (
         <Alert tone="ok">
-          You accepted the {offerLabel(outcome.offer).toLowerCase()} for {outcome.offer.patient.name}. It is on your <Link to="/doctor/appointments">appointments</Link>
-          {outcome.booking.virtualMeeting?.joinUrl ? <> · <a href={outcome.booking.virtualMeeting.joinUrl} target="_blank" rel="noreferrer noopener">Join the call</a></> : ''}.
+          You accepted the {offerLabel(outcome.offer).toLowerCase()} for {outcome.offer.patient.name}. It is on your <Link to="/doctor/appointments">appointments</Link>.
         </Alert>
       )}
+      {acceptedBooking && <MeetLink b={acceptedBooking} onRefresh={() => day.refetch()} />}
       {outcome?.kind === 'refused' && <Alert>Not accepted ({outcome.offer.patient.name}): {outcome.message}</Alert>}
       {outcome?.kind === 'unknown' && (
         <Alert tone="warn">
@@ -215,6 +241,13 @@ function Offers({ d }: { d: DoctorContext }) {
         : offers.isError ? <ErrorState message={messageOf(offers.error)} onRetry={() => void offers.refetch()} />
         : list.length === 0 ? <Empty title="No offers right now">{presence.presence?.available ? 'New offers appear here on their own.' : 'Go available now to receive offers.'}</Empty>
         : (
+          <>
+          {!canAccept && (
+            <Alert tone="warn">
+              {presence.busy ? 'Your change to “Available now” is on its way: accept once the server has confirmed it.'
+                : 'To accept, switch “Available now” on above and wait until the server confirms your types and fee.'}
+            </Alert>
+          )}
           <ul className="stock-list" aria-label="Open offers">
             {list.map((o) => {
               const left = offerSecondsLeft(o, now);
@@ -229,16 +262,16 @@ function Offers({ d }: { d: DoctorContext }) {
                     <div className="confirm" role="group" aria-label={`Accept the offer for ${o.patient.name}`}>
                       <div className="confirm-text">
                         Accept the {offerLabel(o).toLowerCase()} for {patientLabel(o)}? A {CONSULT_MINUTES}-minute consultation starts now and the patient is told you are joining.
-                        {' '}Your fee: {fee ?? 'your instant fee as last set'}. It is refused if your fee is above what the patient paid.
+                        {' '}Your fee: {fee ?? 'not confirmed'}. It is refused if your fee is above what the patient paid.
                       </div>
                       <div className="confirm-actions">
-                        <Button busy={sending === o.requestId} disabled={left === 0 || (sending !== null && sending !== o.requestId)} onClick={() => void accept(o)}>Accept and start</Button>
+                        <Button busy={sending === o.requestId} disabled={left === 0 || !canAccept || (sending !== null && sending !== o.requestId)} onClick={() => void accept(o)}>Accept and start</Button>
                         <Button variant="ghost" disabled={sending === o.requestId} onClick={() => setConfirmFor(null)}>Back</Button>
                       </div>
                     </div>
                   ) : (
                     <div className="ws-actions">
-                      <Button disabled={left === 0 || sending !== null} aria-label={`Accept the offer for ${o.patient.name}`}
+                      <Button disabled={left === 0 || !canAccept || sending !== null} aria-label={`Accept the offer for ${o.patient.name}`}
                         onClick={() => { setConfirmFor(o.requestId); setOutcome(null); }}>Accept…</Button>
                     </div>
                   )}
@@ -246,6 +279,7 @@ function Offers({ d }: { d: DoctorContext }) {
               );
             })}
           </ul>
+          </>
         )}
     </section>
   );
@@ -255,7 +289,9 @@ function Offers({ d }: { d: DoctorContext }) {
 
 function Running({ d }: { d: DoctorContext }) {
   const today = istDateOf(new Date());
-  const q = useQuery({ queryKey: [...appointmentsKey(d), 'day', today], queryFn: () => d.api.appointmentsOn(today) });
+  const meet = useMeetPoll();
+  const now = useTicker(15_000);
+  const q = useQuery({ queryKey: todayKey(d, today), queryFn: () => d.api.appointmentsOn(today), refetchInterval: (query) => meet.interval(query.state.data) });
   const running = sortAppointments((q.data ?? []).filter((b) => b.bookingKind === 'instant' && b.status === 'confirmed'));
   return (
     <section className="ws-section" aria-labelledby="running-h">
@@ -265,7 +301,10 @@ function Running({ d }: { d: DoctorContext }) {
         : running.length === 0 ? <Empty title="None running">Accepted instant consultations appear here so you can give them more time.</Empty>
         : (
           <ul className="stock-list" aria-label="Running instant consultations">
-            {running.map((b) => <RunningItem key={b._id} d={d} booking={b} />)}
+            {running.map((b) => (
+              <RunningItem key={b._id} d={d} booking={b}
+                link={<MeetLink b={b} gaveUp={meet.gaveUp(b._id, now)} onRefresh={() => { meet.restart(b._id); return q.refetch(); }} />} />
+            ))}
           </ul>
         )}
       <p className="ws-muted">Mark a consultation completed (or cancel it with a full refund) on <Link to="/doctor/appointments">Appointments</Link>.</p>
@@ -273,7 +312,7 @@ function Running({ d }: { d: DoctorContext }) {
   );
 }
 
-function RunningItem({ d, booking }: { d: DoctorContext; booking: DoctorAppointment }) {
+function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAppointment; link: ReactNode }) {
   const [minutes, setMinutes] = useState('10');
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -306,7 +345,7 @@ function RunningItem({ d, booking }: { d: DoctorContext; booking: DoctorAppointm
   return (
     <li className="doc-offer" aria-label={label}>
       <strong>{label}</strong>
-      {booking.virtualMeeting?.joinUrl && <a href={booking.virtualMeeting.joinUrl} target="_blank" rel="noreferrer noopener">Join the call</a>}
+      {link}
       {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
       <form className="ws-search" noValidate onSubmit={(e) => void extend(e)} aria-label={`Extend the ${label.toLowerCase()}`}>
         <TextField label="Extend by (minutes)" inputMode="numeric" value={minutes} error={fieldError} hint={`1 to ${EXTEND_MINUTES_MAX}; refused if it would run into your next booking`}

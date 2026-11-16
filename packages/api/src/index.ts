@@ -73,7 +73,7 @@ export type {
 export {
   APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentStart, CONSULT_MINUTES, CONSULT_MODE_LABEL, CONSULT_MODES, doctorStanding, doctorToolsApi,
   DOCTOR_ROLLING_DAYS, EXTEND_MINUTES_MAX, fromYmd, HEARTBEAT_MS, INSTANT_FEE_MAX_MINOR, INSTANT_MODES, INSTANT_REFUSAL, instantRefusal,
-  LEDGER_KIND_LABEL, OFFER_MS, offerSecondsLeft, payoutDetailsProblems, periodProblem, presenceProblems, PRESENCE_TTL_MS, SCHEDULE_MINUTES_MAX,
+  LEDGER_KIND_LABEL, meetingLinkState, OFFER_MS, offerSecondsLeft, payoutDetailsProblems, periodProblem, presenceProblems, PRESENCE_TTL_MS, SCHEDULE_MINUTES_MAX,
   SCHEDULE_MINUTES_MIN, SCHEDULE_WEEKDAYS, SCHEDULE_WINDOWS_MAX, scheduleProblems, schedulableBranches, scheduleSlotCount, soloPracticeProblems,
   STATEMENT_LIMIT_MAX, statementCsvName, toYmd,
 } from './doctorTools.ts';

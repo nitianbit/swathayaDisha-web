@@ -36,6 +36,10 @@ interface Backend {
   /** requestId → refusal code, 'lost' (recorded, answer lost) or absent (accepted). */
   acceptScript: Record<string, string>;
   extendRefusal?: string;
+  /** The next presence switch is applied, but its answer is lost. */
+  presenceLost?: boolean;
+  /** Whether call links have been made yet for instant consultations (they are made after the accept). */
+  meetReady?: boolean;
   appointments: Rec[];
   finance: Rec;
   statement: Rec[];
@@ -88,11 +92,12 @@ function seed(): Omit<Backend, 'calls' | 'live' | 'who'> {
     offers: [],
     acceptScript: {},
     appointments: [
-      appt(1, { primaryConcern: 'Chest pain follow-up' }),
+      appt(1, { primaryConcern: 'Chest pain follow-up', virtualMeeting: { status: 'active', joinUrl: 'https://meet.google.com/sch-edul-edx' } }),
       appt(2, { bookingTime: '09:00', consultationMode: 'in-person', serviceMode: 'clinic', clinicVisit: { partnerId: SUNRISE, branchId: BR1 } }),
       appt(3, { bookingDate: '20261119', bookingTime: '10:00', status: 'pending', paymentStatus: 'pending' }),
       appt(4, { bookingDate: '20261118', bookingTime: '15:00', status: 'cancelled', paymentStatus: 'refunded', cancellationReason: 'Patient asked' }),
-      appt(5, { bookingKind: 'instant', instantRequestId: rid(0), bookingTime: '09:50', virtualMeeting: { status: 'scheduled', joinUrl: 'https://meet.google.com/abc-defg-hij' } }),
+      appt(5, { bookingKind: 'instant', instantRequestId: rid(0), bookingTime: '09:50', virtualMeeting: { status: 'active', joinUrl: 'https://meet.google.com/abc-defg-hij' } }),
+      appt(6, { bookingDate: '20261121', bookingTime: '12:00', virtualMeeting: { status: 'failed', error: 'Google Calendar / Meet is not configured' } }),
     ],
     finance: {
       account: { _id: '5e'.repeat(12), ownerKind: 'doctor', ownerId: DOC, beneficiaryName: 'Dr Meera Rao', isActive: true,
@@ -183,6 +188,7 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
       const x = body as { available: boolean; modes: string[]; instantFeeMinor?: number };
       if (b.profile.isVerified === false) return fail(route, 403, 'SPECIALIST_NOT_ACTIVE', 'Only active, verified doctors can take instant consultations');
       b.presence = { doctorId: DOC, available: x.available, modes: x.modes, instantFeeMinor: x.instantFeeMinor ?? 60_000, specialization: 'Cardiology', lastSeenAt: new Date().toISOString() };
+      if (b.presenceLost) { b.presenceLost = false; return route.abort('connectionreset'); }
       return ok(route, b.presence);
     }
     if (p === '/presence/heartbeat') return ok(route, { online: b.presence?.available === true });
@@ -214,6 +220,13 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
     }
     // Appointments
     if (p === '/appointments') {
+      if (b.meetReady) {
+        for (const a of b.appointments) {
+          if (a.bookingKind === 'instant' && !a.virtualMeeting && ['call', 'video'].includes(a.consultationMode as string)) {
+            a.virtualMeeting = { status: 'active', joinUrl: `https://meet.google.com/new-${(a._id as string).slice(0, 4)}` };
+          }
+        }
+      }
       const view = url.searchParams.get('view');
       const list = view === 'day' ? b.appointments.filter((a) => a.bookingDate === url.searchParams.get('date'))
         : b.appointments.filter((a) => (a.bookingDate as string).startsWith(url.searchParams.get('yearMonth') ?? 'x'));
@@ -300,6 +313,12 @@ async function signIn(page: Page, as: 'Doctor' | 'Lab or clinic staff' | 'Admin'
   await page.getByLabel('6-digit code').fill('123456');
   await page.getByRole('button', { name: 'Verify and sign in' }).click();
   await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+}
+
+/** Switches "available now" on with the form as it is (video, the consultation fee) and waits for the server's answer. */
+async function goAvailable(page: Page) {
+  await page.getByRole('button', { name: 'Go available now' }).click();
+  await expect(page.getByText(/You are available now for/)).toBeVisible();
 }
 
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main' });
@@ -497,6 +516,7 @@ test('offers: countdown, accept after confirming, every refusal in words, a lost
   backend.acceptScript[rid(8)] = 'lost';
   await signIn(page);
   await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  await goAvailable(page);
   const offers = page.getByRole('list', { name: 'Open offers' });
   const asha = offers.getByRole('listitem', { name: 'Offer for Asha Rao' });
   await expect(asha).toContainText('Video consultation · Cardiology');
@@ -516,7 +536,7 @@ test('offers: countdown, accept after confirming, every refusal in words, a lost
   await offers.getByRole('button', { name: 'Accept the offer for Asha Rao' }).click();
   const confirm = page.getByRole('group', { name: 'Accept the offer for Asha Rao' });
   await expect(confirm).toContainText('Accept the video consultation · cardiology for Asha Rao, 31 years, female?');
-  await expect(confirm).toContainText('Your fee: your instant fee as last set.');
+  await expect(confirm).toContainText('Your fee: ₹600.00.');
   await confirm.getByRole('button', { name: 'Accept and start' }).click();
   await expect(page.getByText(/You accepted the video consultation · cardiology for Asha Rao/)).toBeVisible();
   await expect(offers.getByRole('listitem', { name: 'Offer for Asha Rao' })).toHaveCount(0);
@@ -546,12 +566,13 @@ test('an accept answer arriving after leaving the page changes nothing on the pa
   backend.hold = { match: /\/accept$/, gate: new Promise<void>((r) => { release = r; }) };
   await signIn(page);
   await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  await goAvailable(page);
   await page.getByRole('button', { name: 'Accept the offer for Asha Rao' }).click();
   await page.getByRole('group', { name: 'Accept the offer for Asha Rao' }).getByRole('button', { name: 'Accept and start' }).click();
   await nav(page).getByRole('link', { name: 'Schedule' }).click();
   await expect(page.getByRole('heading', { name: 'Schedule', level: 1 })).toBeVisible();
   release();
-  await expect.poll(() => backend.appointments.length).toBe(6);
+  await expect.poll(() => backend.appointments.length).toBe(7);
   await page.waitForTimeout(300);
   await expect(page.getByText(/You accepted/)).toHaveCount(0);
   await expect(page).toHaveURL(/#\/doctor\/schedule$/);
@@ -713,4 +734,82 @@ test('earnings: balance, statement with running balance and paging, CSV via blob
   await dest.getByRole('button', { name: 'Change payout details' }).click();
   await dest.getByLabel('Account number').fill('123456789012');
   expect(await storage(page)).not.toMatch(/123456789012|meera\.rao/);
+});
+
+test('a fee change whose answer is lost: terms unknown, no heartbeat, no accept until the server confirms them again', async ({ page }) => {
+  const backend = await mockBackend(page, { install: true });
+  backend.offers = [offer(1, 'Asha Rao', { offerExpiresAt: plusMin(30) })]; // still open after the minutes run below
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  const fee = page.getByLabel('Your fee for an instant consultation (₹)');
+  await fee.fill('500');
+  await goAvailable(page);
+  await page.clock.runFor(61_000);
+  await expect.poll(() => heartbeats(backend)).toBe(1);
+  // ₹500 → ₹100: the server applies it, the answer is lost.
+  backend.presenceLost = true;
+  await fee.fill('100');
+  await page.getByRole('button', { name: 'Update' }).click();
+  const avail = page.getByRole('region', { name: 'Available now' });
+  await expect(avail.getByText('Not confirmed', { exact: true })).toBeVisible();
+  await expect(avail).toContainText('Your last change (available for Video at ₹100.00) was sent, but no answer came');
+  await expect(avail).toContainText('Your availability and fee are not known here.');
+  await expect(avail).not.toContainText('fee ₹500.00');
+  await expect(page.getByRole('button', { name: 'Accept the offer for Asha Rao' })).toBeDisabled();
+  await expect(page.getByText('To accept, switch “Available now” on above and wait until the server confirms your types and fee.')).toBeVisible();
+  // The uncertain presence is not kept alive.
+  await page.clock.runFor(180_000);
+  expect(heartbeats(backend)).toBe(1);
+  await nav(page).getByRole('link', { name: 'Home' }).click();
+  await expect(page.getByRole('region', { name: 'Your status' })).toContainText('Not confirmed');
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  // Sent again and acknowledged: the fee is definite, accepting opens again, heartbeats resume.
+  await page.getByLabel('Your fee for an instant consultation (₹)').fill('100');
+  await page.getByRole('button', { name: 'Send again' }).click();
+  await expect(page.getByText('You are available now for Video at ₹100.00.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.path === '/specialists/me/presence').map((c) => (c.body as { instantFeeMinor: number }).instantFeeMinor)).toEqual([50_000, 10_000, 10_000]);
+  await page.getByRole('button', { name: 'Accept the offer for Asha Rao' }).click();
+  await expect(page.getByRole('group', { name: 'Accept the offer for Asha Rao' })).toContainText('Your fee: ₹100.00.');
+  await page.clock.runFor(60_000);
+  await expect.poll(() => heartbeats(backend)).toBe(2);
+});
+
+test('a call link made after the accept: “being prepared”, picked up by reading again on Consult now and Appointments, Refresh, and a failed one explained', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.offers = [offer(1, 'Asha Rao'), offer(8, 'Hari', { mode: 'call' })];
+  backend.acceptScript[rid(8)] = 'lost';
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  await goAvailable(page);
+  const offersRegion = page.getByRole('region', { name: 'Offers for you' });
+  await page.getByRole('button', { name: 'Accept the offer for Asha Rao' }).click();
+  await page.getByRole('group', { name: 'Accept the offer for Asha Rao' }).getByRole('button', { name: 'Accept and start' }).click();
+  await expect(offersRegion.getByText(/You accepted the video consultation/)).toBeVisible();
+  const running = page.getByRole('list', { name: 'Running instant consultations' });
+  const asha = running.getByRole('listitem', { name: 'Video consultation accepted at 10:00' });
+  await expect(asha.getByText('The call link is being prepared…')).toBeVisible();
+  await expect(offersRegion.getByText('The call link is being prepared…')).toBeVisible();
+  // The link is made a moment later: the page reads today's list again on its own and shows it in both places.
+  backend.meetReady = true;
+  await expect(asha.getByRole('link', { name: 'Join the call' })).toBeVisible({ timeout: 12_000 });
+  await expect(offersRegion.getByRole('link', { name: 'Join the call' })).toHaveAttribute('href', /meet\.google\.com\/new-/);
+
+  // A lost accept answer, recovered from today's appointments before its link exists; Refresh picks it up.
+  backend.meetReady = false;
+  await page.getByRole('button', { name: 'Accept the offer for Hari' }).click();
+  await page.getByRole('group', { name: 'Accept the offer for Hari' }).getByRole('button', { name: 'Accept and start' }).click();
+  await expect(offersRegion.getByText(/You accepted the phone call consultation · cardiology for Hari/)).toBeVisible();
+  await expect(offersRegion.getByText('The call link is being prepared…')).toBeVisible();
+  await nav(page).getByRole('link', { name: 'Appointments' }).click();
+  const table = page.getByRole('table', { name: 'Appointments' });
+  const waiting = table.getByRole('row').filter({ hasText: 'The call link is being prepared…' });
+  await expect(waiting).toHaveCount(1);
+  await expect(waiting).toContainText('Phone call');
+  backend.meetReady = true;
+  await waiting.getByRole('button', { name: 'Refresh' }).click();
+  await expect(table.getByRole('row').filter({ hasText: 'Phone call' }).filter({ hasText: '10:00' }).getByRole('link', { name: 'Join the call' })).toBeVisible();
+  await expect(table.getByText('The call link is being prepared…')).toHaveCount(0);
+  // A link the server could not make says so (no endless waiting).
+  await page.getByLabel('Show').selectOption('upcoming');
+  await expect(table.getByRole('row').filter({ hasText: '21 Nov' })).toContainText('The call link could not be made (Google Calendar / Meet is not configured).');
 });

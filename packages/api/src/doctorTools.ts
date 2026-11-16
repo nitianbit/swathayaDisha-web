@@ -268,7 +268,8 @@ export interface DoctorAppointment {
   settlementSystem?: 'legacy' | 'ledger' | 'clinic';
   clinicVisit?: { partnerId: string; branchId: string };
   clinicDesk?: { partnerId: string; branchId: string };
-  virtualMeeting?: { status?: string; joinUrl?: string };
+  /** The call link (`syncBookingMeet`), made AFTER a booking commits: it may be missing for a while, or have failed. */
+  virtualMeeting?: { status?: 'active' | 'cancelled' | 'failed'; joinUrl?: string; error?: string };
   cancellationReason?: string;
   createdAt?: string;
 }
@@ -291,6 +292,17 @@ export function appointmentActions(b: DoctorAppointment, now: Date): Appointment
   const at = appointmentInstant(b.bookingDate, b.bookingTime);
   if (paid && at && at.at.getTime() <= now.getTime()) out.push('no_show');
   return out;
+}
+
+/**
+ * The call link of an appointment (`isInternalMeetApplicable` + `syncBookingMeet`): only paid, confirmed call and video
+ * consultations get one; it is made after the booking commits (for an instant one, after the accept), so it can be
+ * 'preparing' for a while; 'failed' carries the server's reason. 'none' = no link is expected.
+ */
+export function meetingLinkState(b: Pick<DoctorAppointment, 'consultationMode' | 'status' | 'paymentStatus' | 'virtualMeeting'>): 'none' | 'ready' | 'preparing' | 'failed' {
+  if ((b.consultationMode !== 'call' && b.consultationMode !== 'video') || b.status !== 'confirmed' || b.paymentStatus !== 'paid') return 'none';
+  if (b.virtualMeeting?.joinUrl && b.virtualMeeting.status !== 'cancelled') return 'ready';
+  return b.virtualMeeting?.status === 'failed' ? 'failed' : 'preparing';
 }
 
 /** When an appointment starts, or null when its time cannot be read. */

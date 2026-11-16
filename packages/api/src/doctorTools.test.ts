@@ -1,6 +1,6 @@
 import { ApiError, createApiClient } from './client.ts';
 import {
-  appointmentActions, doctorStanding, doctorToolsApi, fromYmd, instantRefusal, offerSecondsLeft, payoutDetailsProblems, periodProblem,
+  appointmentActions, doctorStanding, meetingLinkState, doctorToolsApi, fromYmd, instantRefusal, offerSecondsLeft, payoutDetailsProblems, periodProblem,
   presenceProblems, scheduleProblems, schedulableBranches, scheduleSlotCount, soloPracticeProblems, statementCsvName, toYmd,
   type DoctorAppointment, type SoloPracticeInput,
 } from './doctorTools.ts';
@@ -117,6 +117,19 @@ describe('appointment commands offered (updateAppointmentStatus, markNoShow, can
     expect(appointmentActions(appt({ paymentStatus: 'pending', settlementSystem: 'clinic' }), after)).toEqual(['complete', 'cancel']);
     for (const status of ['completed', 'cancelled', 'no_show'] as const) expect(appointmentActions(appt({ status }), after)).toEqual([]);
     expect(appointmentActions(appt({ status: 'pending', bookingKind: 'instant' }), after)).toEqual([]);
+  });
+});
+
+describe('call links (isInternalMeetApplicable + syncBookingMeet)', () => {
+  it('expects a link only for paid, confirmed call and video consultations, and tells preparing from failed', () => {
+    expect(meetingLinkState(appt({ consultationMode: 'video' }))).toBe('preparing');
+    expect(meetingLinkState(appt({ consultationMode: 'call', virtualMeeting: { status: 'active', joinUrl: 'https://meet.google.com/x' } }))).toBe('ready');
+    expect(meetingLinkState(appt({ consultationMode: 'video', virtualMeeting: { status: 'failed', error: 'no email' } }))).toBe('failed');
+    expect(meetingLinkState(appt({ consultationMode: 'video', virtualMeeting: { status: 'failed', joinUrl: 'https://meet.google.com/x' } }))).toBe('ready');
+    expect(meetingLinkState(appt({ consultationMode: 'chat' }))).toBe('none');
+    expect(meetingLinkState(appt({ consultationMode: 'in-person' }))).toBe('none');
+    expect(meetingLinkState(appt({ consultationMode: 'video', status: 'completed' }))).toBe('none');
+    expect(meetingLinkState(appt({ consultationMode: 'video', paymentStatus: 'pending' }))).toBe('none');
   });
 });
 

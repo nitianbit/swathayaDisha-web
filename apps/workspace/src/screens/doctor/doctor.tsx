@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import {
-  addDays, appointmentStart, CONSULT_MODE_LABEL, doctorToolsApi, fromYmd, istDateOf, type ConsultMode, type DoctorAppointment, type DoctorToolsApi,
+  addDays, appointmentStart, CONSULT_MODE_LABEL, doctorToolsApi, fromYmd, istDateOf, meetingLinkState, type ConsultMode, type DoctorAppointment, type DoctorToolsApi,
 } from '@jansetu/api';
-import { Empty, formatRupees } from '@jansetu/ui';
+import { Button, Empty, formatRupees } from '@jansetu/ui';
 import { useSession, useStaff, type StaffUser } from '../../session.tsx';
 import { formatDay } from '../partner/labs.tsx';
 
@@ -57,16 +57,73 @@ export function useTicker(ms: number): Date {
 const byStart = (a: DoctorAppointment, b: DoctorAppointment) =>
   (appointmentStart(a)?.getTime() ?? 0) - (appointmentStart(b)?.getTime() ?? 0) || a._id.localeCompare(b._id);
 
+// ── Call links ──
+
+/** While an instant consultation's call link is being prepared, its list is read again this often… */
+export const MEET_POLL_MS = 5_000;
+/** …for at most this long per consultation (then a Refresh button starts another round). */
+export const MEET_POLL_FOR_MS = 2 * 60_000;
+
+/**
+ * Bounded reading-again while instant consultations wait for their call link (it is made after the accept commits, so
+ * a just-accepted or recovered booking often has none yet). Use `interval` as a query's `refetchInterval` (react-query
+ * pauses it while the page is hidden); `restart` gives one consultation another round after a manual refresh.
+ */
+export function useMeetPoll() {
+  const since = useRef(new Map<string, number>());
+  const interval = useCallback((list: readonly DoctorAppointment[] | undefined): number | false => {
+    const now = Date.now();
+    let poll = false;
+    for (const b of list ?? []) {
+      if (b.bookingKind !== 'instant' || meetingLinkState(b) !== 'preparing') continue;
+      if (!since.current.has(b._id)) since.current.set(b._id, now);
+      if (now - since.current.get(b._id)! < MEET_POLL_FOR_MS) poll = true;
+    }
+    return poll ? MEET_POLL_MS : false;
+  }, []);
+  const gaveUp = useCallback((id: string, now: Date) => {
+    const t = since.current.get(id);
+    return t !== undefined && now.getTime() - t >= MEET_POLL_FOR_MS;
+  }, []);
+  const restart = useCallback((id: string) => { since.current.delete(id); }, []);
+  return { interval, gaveUp, restart };
+}
+
+/** The call link of a consultation, or why there is none yet, with a Refresh button while it is missing. */
+export function MeetLink({ b, onRefresh, gaveUp = false }: { b: DoctorAppointment; onRefresh?: () => Promise<unknown>; gaveUp?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const state = meetingLinkState(b);
+  if (state === 'none') return null;
+  if (state === 'ready') return <a href={b.virtualMeeting!.joinUrl} target="_blank" rel="noreferrer noopener">Join the call</a>;
+  const refresh = onRefresh && (
+    <Button variant="secondary" busy={busy} onClick={() => { setBusy(true); void onRefresh().finally(() => setBusy(false)); }}>Refresh</Button>
+  );
+  return (
+    <div className="doc-meet">
+      <span role="status">
+        {state === 'failed'
+          ? `The call link could not be made${b.virtualMeeting?.error ? ` (${b.virtualMeeting.error})` : ''}. Contact Jansetu support, or reach the patient another way.`
+          : gaveUp ? 'The call link has not arrived yet. Refresh to check again.'
+          : 'The call link is being prepared…'}
+      </span>
+      {refresh}
+    </div>
+  );
+}
+
 /**
  * Appointments from today (India time) for `days` days, read by month (`view=month`: the whole month, no paging) and
  * kept to that range, oldest first. Shared by Home and Appointments (one cache entry per doctor and month).
  */
-export function useUpcomingAppointments(d: DoctorContext, days: number) {
+export function useUpcomingAppointments(d: DoctorContext, days: number, refetchInterval?: (list: DoctorAppointment[] | undefined) => number | false) {
   const today = istDateOf(new Date());
   const last = addDays(today, days - 1);
   const months = [...new Set([today.slice(0, 7), last.slice(0, 7)])];
   const qs = useQueries({
-    queries: months.map((m) => ({ queryKey: [...appointmentsKey(d), 'month', m], queryFn: () => d.api.appointmentsIn(m) })),
+    queries: months.map((m) => ({
+      queryKey: [...appointmentsKey(d), 'month', m], queryFn: () => d.api.appointmentsIn(m),
+      ...(refetchInterval ? { refetchInterval: (q: { state: { data?: DoctorAppointment[] } }) => refetchInterval(q.state.data) } : {}),
+    })),
   });
   const error = qs.find((q) => q.isError)?.error ?? null;
   const pending = qs.some((q) => q.isPending);

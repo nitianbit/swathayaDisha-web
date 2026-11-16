@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiError, doctorToolsApi, HEARTBEAT_MS, instantRefusal, type Presence, type PresenceInput } from '@jansetu/api';
 import { messageOf } from '../../errors.ts';
+import { definitelyNotRecorded } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 
 /**
@@ -10,9 +11,20 @@ import { useSession } from '../../session.tsx';
  * While it is on and the page is visible, a heartbeat goes every minute (the server counts a doctor online for two
  * minutes after the last one); when the page is hidden the heartbeats stop, so the doctor drops out of the offers two
  * minutes later. One change at a time; an answer for an older state (a heartbeat sent before a switch) changes nothing.
+ *
+ * Only ACKNOWLEDGED terms are ever shown or used. A switch whose answer is lost (timeout, network, server error) may or
+ * may not have been applied, so the terms become unknown: `presence` is null, `unconfirmed` keeps what was sent, and no
+ * heartbeat goes (an uncertain presence is not kept alive: the server drops it two minutes later). Nothing can be
+ * accepted until the doctor sends the terms again and the server acknowledges them. No heartbeat goes while a switch is
+ * on its way either. A definite refusal changed nothing on the server, so the previous acknowledged terms stay.
  */
 export interface PresenceValue {
+  /** The last terms the server acknowledged in this session (null: never set here, or the last switch is unconfirmed). */
   presence: Presence | null;
+  /** A switch sent whose outcome is unknown: its terms, and why. Cleared by the next acknowledged switch. */
+  unconfirmed: { input: PresenceInput; message: string } | null;
+  /** Available now with acknowledged terms and no switch on its way: the only state in which offers may be accepted. */
+  confirmedOn: boolean;
   /** The last heartbeat's answer: false = in a consultation now, or switched off elsewhere. */
   online: boolean | null;
   lastBeatAt: number | null;
@@ -31,6 +43,7 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
   const { api } = useSession();
   const doctor = useMemo(() => doctorToolsApi(api), [api]);
   const [presence, setPresence] = useState<Presence | null>(null);
+  const [unconfirmed, setUnconfirmed] = useState<PresenceValue['unconfirmed']>(null);
   const [online, setOnline] = useState<boolean | null>(null);
   const [lastBeatAt, setLastBeatAt] = useState<number | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -51,12 +64,23 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
       const p = await doctor.setPresence(input);
       if (generation.current === mine) {
         setPresence(p);
+        setUnconfirmed(null);
         setOnline(p.available);
         lastBeat.current = p.available ? Date.now() : null; // the switch itself counts as a heartbeat (`lastSeenAt: now`)
         setLastBeatAt(lastBeat.current);
         setProblem(null);
       }
       return p;
+    } catch (err) {
+      if (generation.current === mine && !definitelyNotRecorded(err)) {
+        // It may have been applied: the terms are unknown from here on, and nothing keeps them alive.
+        setPresence(null);
+        setUnconfirmed({ input, message: messageOf(err) });
+        setOnline(null);
+        lastBeat.current = null;
+        setLastBeatAt(null);
+      }
+      throw err;
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -68,6 +92,8 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
     if (!available) return undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
     const beat = async () => {
+      // Never while a switch is on its way (its terms are not acknowledged yet).
+      if (busyRef.current) return;
       // Bound to the state it was sent for: a switch (or "Update") made while it travels makes its answer stale.
       const mine = generation.current;
       try {
@@ -105,7 +131,9 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
     return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
   }, [available, doctor]);
 
-  const value = useMemo(() => ({ presence, online, lastBeatAt, problem, busy, set }), [presence, online, lastBeatAt, problem, busy, set]);
+  const confirmedOn = presence?.available === true && unconfirmed === null && !busy;
+  const value = useMemo(() => ({ presence, unconfirmed, confirmedOn, online, lastBeatAt, problem, busy, set }),
+    [presence, unconfirmed, confirmedOn, online, lastBeatAt, problem, busy, set]);
   return <PresenceContext.Provider value={value}>{children}</PresenceContext.Provider>;
 }
 

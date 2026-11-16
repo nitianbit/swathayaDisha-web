@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   APPOINTMENT_STATUS_LABEL, appointmentActions, CONSULT_MODE_LABEL, isRealDate, istDateOf, type AppointmentAction, type DoctorAppointment,
@@ -8,7 +8,11 @@ import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { formatDay } from '../partner/labs.tsx';
-import { appointmentsKey, formatYmd, NotADoctor, sortAppointments, useDoctor, useTicker, useUpcomingAppointments, type DoctorContext } from './doctor.tsx';
+import {
+  appointmentsKey, formatYmd, MeetLink, NotADoctor, sortAppointments, useDoctor, useMeetPoll, useTicker, useUpcomingAppointments, type DoctorContext,
+} from './doctor.tsx';
+
+type MeetPoll = ReturnType<typeof useMeetPoll>;
 
 const UPCOMING_DAYS = 14;
 type View = 'today' | 'upcoming' | 'day';
@@ -44,23 +48,28 @@ function Appointments({ d }: { d: DoctorContext }) {
 }
 
 function UpcomingList({ d, days }: { d: DoctorContext; days: number }) {
-  const q = useUpcomingAppointments(d, days);
+  // A just-accepted instant consultation's call link arrives after it: read again (bounded) while one is missing.
+  const meet = useMeetPoll();
+  const q = useUpcomingAppointments(d, days, meet.interval);
   if (q.pending) return <Loading label="Loading appointments…" />;
   if (q.error) return <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />;
-  return <AppointmentTable d={d} items={q.items} empty={days === 1 ? 'No appointments today.' : `No appointments in the next ${days} days.`} />;
+  return <AppointmentTable d={d} items={q.items} meet={meet} refresh={q.refetch} empty={days === 1 ? 'No appointments today.' : `No appointments in the next ${days} days.`} />;
 }
 
 function DayList({ d, day }: { d: DoctorContext; day: string }) {
-  const q = useQuery({ queryKey: [...appointmentsKey(d), 'day', day], queryFn: () => d.api.appointmentsOn(day) });
+  const meet = useMeetPoll();
+  const q = useQuery({ queryKey: [...appointmentsKey(d), 'day', day], queryFn: () => d.api.appointmentsOn(day), refetchInterval: (query) => meet.interval(query.state.data) });
   if (q.isPending) return <Loading label="Loading appointments…" />;
   if (q.isError) return <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />;
-  return <AppointmentTable d={d} items={sortAppointments(q.data ?? [])} empty={`No appointments on ${formatDay(day)}.`} />;
+  return <AppointmentTable d={d} items={sortAppointments(q.data ?? [])} meet={meet} refresh={q.refetch} empty={`No appointments on ${formatDay(day)}.`} />;
 }
 
 const statusTone = (s: DoctorAppointment['status']) => (s === 'completed' ? 'ok' : s === 'cancelled' || s === 'no_show' ? 'danger' : s === 'pending' ? 'warn' : undefined);
 export const appointmentLabel = (b: DoctorAppointment) => `${formatYmd(b.bookingDate)}, ${b.bookingTime}`;
 
-function AppointmentTable({ d, items, empty }: { d: DoctorContext; items: DoctorAppointment[]; empty: string }) {
+function AppointmentTable({ d, items, empty, meet, refresh }: {
+  d: DoctorContext; items: DoctorAppointment[]; empty: string; meet: MeetPoll; refresh: () => Promise<unknown>;
+}) {
   const queryClient = useQueryClient();
   const now = useTicker(30_000);
   const [notice, setNotice] = useState<string | null>(null);
@@ -78,6 +87,7 @@ function AppointmentTable({ d, items, empty }: { d: DoctorContext; items: Doctor
             {items.map((b) => (
               // Keyed by status too: once the booking moves on, an open confirmation for its old state is gone.
               <Row key={`${b._id}:${b.status}`} d={d} b={b} actions={appointmentActions(b, now)} onChanged={changed}
+                link={<MeetLink b={b} gaveUp={meet.gaveUp(b._id, now)} onRefresh={() => { meet.restart(b._id); return refresh(); }} />}
                 onRefused={() => void queryClient.invalidateQueries({ queryKey: appointmentsKey(d) })} />
             ))}
           </tbody>
@@ -87,8 +97,8 @@ function AppointmentTable({ d, items, empty }: { d: DoctorContext; items: Doctor
   );
 }
 
-function Row({ d, b, actions, onChanged, onRefused }: {
-  d: DoctorContext; b: DoctorAppointment; actions: AppointmentAction[]; onChanged: (m: string) => void; onRefused: () => void;
+function Row({ d, b, actions, link, onChanged, onRefused }: {
+  d: DoctorContext; b: DoctorAppointment; actions: AppointmentAction[]; link: ReactNode; onChanged: (m: string) => void; onRefused: () => void;
 }) {
   const label = appointmentLabel(b);
   const run = async (status: 'confirmed' | 'completed' | 'cancelled' | 'no_show', done: string, reason?: string) => {
@@ -107,7 +117,7 @@ function Row({ d, b, actions, onChanged, onRefused }: {
       <td>{b.bookingKind === 'instant' ? 'Instant' : clinic ? 'At a clinic' : 'Booked'}{b.dependentId ? ' · family member' : ''}</td>
       <td>
         {b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode : '—'}
-        {b.virtualMeeting?.joinUrl && b.status === 'confirmed' && <> · <a href={b.virtualMeeting.joinUrl} target="_blank" rel="noreferrer noopener">Join</a></>}
+        {link && <div>{link}</div>}
       </td>
       <td>{b.primaryConcern || '—'}</td>
       <td><Badge tone={statusTone(b.status)}>{APPOINTMENT_STATUS_LABEL[b.status] ?? b.status}</Badge>{b.cancellationReason ? <div className="ws-muted">{b.cancellationReason}</div> : null}</td>
