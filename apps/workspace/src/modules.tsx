@@ -4,6 +4,7 @@ import {
   Ban, Boxes, Building2, CalendarClock, ClipboardCheck, FlaskConical, ClipboardList, Handshake, History, House, MapPin, Package, PackageX, Receipt, Settings, ShieldAlert,
   TrendingDown, Undo2, Users,
 } from 'lucide-react';
+import { Banknote, Landmark, Wallet } from 'lucide-react';
 import { hasGlobalScope, holdsAny, type PartnerKind, type PartnerPermission } from '@jansetu/api';
 import type { StaffRole, StaffUser } from './session.tsx';
 import { AdminLabBookingsScreen } from './screens/admin/AdminLabBookingsScreen.tsx';
@@ -33,6 +34,10 @@ import { QualityScreen } from './screens/pharmacy/QualityScreen.tsx';
 import { RxReviewScreen } from './screens/pharmacy/RxReviewScreen.tsx';
 import { StockScreen } from './screens/pharmacy/StockScreen.tsx';
 import { SettingsScreen } from './screens/pharmacy/SettingsScreen.tsx';
+import { PartnerFinanceScreen } from './screens/finance/PartnerFinanceScreen.tsx';
+import { PayoutsQueueScreen } from './screens/finance/PayoutsQueueScreen.tsx';
+import { SettlementAccountScreen } from './screens/finance/SettlementAccountScreen.tsx';
+import { SettlementsScreen } from './screens/finance/SettlementsScreen.tsx';
 
 /**
  * Every workspace page is declared here with the roles that may open it. A path not listed here does not exist, and
@@ -119,6 +124,11 @@ export const PAGES: readonly WorkspacePage[] = [
     path: '/partner/slots', roles: ['partner'], element: <SlotsScreen />, partnerPermissions: SLOT_READERS, partnerKinds: ['lab'],
     nav: { label: 'Slots', icon: CalendarClock, section: 'Lab' },
   },
+  // WQ5: finance needs `finance.view` AND partner-wide scope (`assertPartnerFinanceReader`); owners change the destination.
+  {
+    path: '/partner/finance', roles: ['partner'], element: <PartnerFinanceScreen />, partnerPermissions: ['finance.view'], partnerWide: true,
+    nav: { label: 'Finance', icon: Wallet, section: 'Billing' },
+  },
   {
     path: '/admin/partners', roles: ['admin'], element: <PartnersScreen />,
     nav: { label: 'Labs and clinics', icon: Handshake, section: 'Admin' },
@@ -137,6 +147,7 @@ export const PAGES: readonly WorkspacePage[] = [
   { path: '/admin/partners/:partnerId/slots', roles: ['admin'], element: <SlotsScreen /> },
   { path: '/admin/partners/:partnerId/lab-bookings', roles: ['admin'], element: <LabBookingsScreen /> },
   { path: '/admin/partners/:partnerId/lab-bookings/:bookingId', roles: ['admin'], element: <LabBookingScreen /> },
+  { path: '/admin/partners/:partnerId/finance', roles: ['admin'], element: <PartnerFinanceScreen /> },
   {
     path: '/admin/lab-bookings', roles: ['admin'], element: <AdminLabBookingsScreen />,
     nav: { label: 'Lab bookings', icon: FlaskConical, section: 'Admin' },
@@ -152,6 +163,16 @@ export const PAGES: readonly WorkspacePage[] = [
   {
     path: '/admin/external-cancellations', roles: ['admin'], element: <ExternalCancellationsScreen />,
     nav: { label: 'External cancellations', icon: Ban, section: 'Admin' },
+  },
+  // WQ5: settlement accounts, payouts and adjustments (`/api/v1/settlements`, admins only).
+  {
+    path: '/admin/settlements', roles: ['admin'], element: <SettlementsScreen />,
+    nav: { label: 'Settlements', icon: Landmark, section: 'Admin' },
+  },
+  { path: '/admin/settlements/:accountId', roles: ['admin'], element: <SettlementAccountScreen /> },
+  {
+    path: '/admin/payouts', roles: ['admin'], element: <PayoutsQueueScreen />,
+    nav: { label: 'Payouts', icon: Banknote, section: 'Admin' },
   },
 ];
 

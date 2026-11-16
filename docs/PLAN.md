@@ -348,6 +348,72 @@ Review fixes (Codex WQ3 214e97b: MEDIUM report response ordering, LOW late slot-
 - Slots: every opened editor (template or one-off slot) gets its own generation. A save or add answered after another
   editor was opened still shows its notice, but closes nothing and does not move the week.
 
+## WQ5 partner earnings and admin settlements/payouts (2026-11-16, taken autonomously at the owner's request)
+
+Backend: Q5 finance (`SwasthaDisha-worktrees/q11-lab-ops`, `src1/modules/partners` `{model/settlement.ts,validation/finance.ts,
+services/finance.ts,controller/finance.ts}`, routes in `routes/index.ts`; admin router mounted at `/api/v1/settlements`). API module
+`packages/api/src/finance.ts` (member/admin-as-owner workspace scope like WQ1–WQ3, plus `settlementsApi`; ids, dates, the statement
+cursor, limits and request keys are checked before any path is built; CSV read into a blob).
+
+- **Pages** (deny by default, `modules.tsx`): `/partner/finance` "Finance" (Billing section) needs `finance.view` AND partner-wide
+  scope (`partnerWide`, mirroring `assertPartnerFinanceReader`: a branch-limited member is refused 403 FINANCE_SCOPE_REQUIRED). The
+  same screen at `/admin/partners/:partnerId/finance` (admin as owner; linked from the admin partner page and from the settlement
+  account). Admin only: `/admin/settlements` "Settlements", `/admin/settlements/:accountId`, `/admin/payouts` "Payouts". Partners
+  never see the admin pages (route roles), and the admin router refuses them anyway (`denyRoles('partner')` + `requireAdmin`).
+- **Partner finance**: balance and lifetime totals (earned, reversed, paid out, adjustments; last payout), statement newest first
+  with the server's running balance ("balance after" is over the whole account, whatever the period), paged by the server's
+  `(at, _id)` cursor, India-date period filter, CSV of the same period, payouts (latest 100), finance events (latest 200; "You" /
+  "A member" / "Jansetu admin", only the event's own amount, reference, destination or reason). No account yet = "Nothing earned yet".
+- **Payout destination**: shown as the server gives it (owners: masked `XXXX1234`; admins: the full number they transfer to). Only
+  owners change it (`setPayoutDetails` refuses staff with OWNER_REQUIRED; staff see it read-only); admins as owner and on the account
+  page too. The page says first that any change, even to the same values, must be verified again by Jansetu before the next payout.
+  Bank (holder, account number typed twice, IFSC, optional bank) or UPI, validated and normalised as `normalizeDetails` does; a
+  review step says what happens before the PUT. The masked number is never put back into the form. Draft baseline (`draft.ts`) plus
+  the details version the edit started from: a change elsewhere replaces the draft with what is saved (notice), and the account is
+  read again right before sending; a different version stops the save.
+- **Admin accounts**: filters owner kind, "only with a balance due" (default on: the payout queue view), payout-details state, name
+  search; 50 a page by `skip`; the count and the total due over every matching account (`adminListAccounts` aggregate). Filters live in
+  the page, never in the URL (account names include doctors' names).
+- **Account page**: balance, payout details with **Mark as verified** (confirm; sends the exact version shown; 409
+  PAYOUT_DETAILS_CHANGED reloads) and edit, **Record a payout**, **Post an adjustment**, statement + CSV, payouts, earlier history
+  (legacy, "not part of the balance"), events. One money action at a time per account (`useOneAtATime`, the WQ3 `perform` gate): a
+  second action, also from a confirmation already open, is refused with "Another action on this account is still running".
+- **Record a payout**: only to verified details with something due; amount in rupees → paise (`rupeesToPaise`), ≤ the balance shown
+  (the server decides on its own balance: 409 INSUFFICIENT_BALANCE), method, UTR 4–64, paid-on India date not in the future, note.
+  The review names the details version and the balance before/after; it closes itself if the version or balance changes meanwhile.
+  The body carries `detailsVersion` (a destination changed since is refused 409 PAYOUT_DETAILS_CHANGED and the page shows the new
+  details) and a `requestKey` (once per admin+key; the server replays the same key and content). A lost answer locks the payout
+  (session memory; a body-less reload marker): resend unchanged, or "Check whether it was recorded" in the account's payouts (lists
+  never return the key, so it is matched by account + UTR + amount + date; a UTR is unique per account among recorded payouts). Only
+  a refusal of a sole first attempt unlocks the form (typed values kept).
+- **Post an adjustment**: add to / take from the balance (may go below zero; said in the review), amount, reason 3–500; confirm;
+  once-only by `requestKey`; a lost answer is resent unchanged or found in the statement by its key (`sourceId = <admin>:<key>`),
+  also after a reload.
+- **Void** (Payouts queue; `?account=<id>` from an account page, an id only): reason 3–500 and a confirmation that says the amount
+  goes back into the balance and that it cannot be undone. Voiding a voided payout is answered unchanged, so a lost answer is resent
+  safely; the list and balances are re-read after every attempt. The queue has filters state (default Recorded), paid-from/to dates,
+  and "Show more" up to the server's 500.
+- **Review rules applied**: the partner page is keyed by `scopeIdentity(ctx)` and the account page by account id; late answers write
+  only their own once-only state (`stillCurrent`, mounted check); CSV/blob downloads are aborted when the period changes or the page
+  goes; nothing private in storage or URLs (the reload marker holds only the key and times); four states on every list; money in paise
+  shown with `formatRupees`; India dates.
+
+Backend gaps found (not changed here):
+- `PUT /finance/payout-details` (partner and admin) takes no expected version: last write wins. The client re-reads right before
+  sending, which narrows but does not close the window. It also has no request key: after a lost answer the page reloads and asks the
+  person to check the details shown (a resend is harmless but bumps the version again).
+- `financeVersion` is never returned; the only fence a client can send is the details version (verify `version`, payout
+  `detailsVersion`). A payout is not fenced on the balance the admin looked at (only "≤ current balance"); adjustments carry no
+  expected version at all.
+- No lookup or abandon by request key for payouts and adjustments (`/request-keys` kinds do not include them), and payout lists strip
+  `requestKey`. A lost payout is found by UTR/amount/date; after a reload only its key survives, so the admin must look in the payouts
+  list (re-recording the same UTR is refused 409 PAYOUT_REFERENCE_EXISTS; under another UTR it would be a second payout to void).
+- The payout queue has no paging beyond `limit` (≤ 500) and its rows carry no account name: names come from the accounts list (first
+  200 by balance), others are shown by id.
+- The partner workspace has no history route (legacy history only for admins and doctors); partner payouts (100) and events (200)
+  have no paging.
+- Doctors' own finance (`/specialists/me/finance`) is not part of this packet (no doctor workspace yet).
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -368,6 +434,7 @@ Review fixes (Codex WQ3 214e97b: MEDIUM report response ordering, LOW late slot-
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-16 | WQ5 (partner finance, admin settlements/payouts) | typecheck clean; Vitest 122/122 (+13: member/admin-as-owner and `/settlements` paths and queries, request key in the body and identical on resend, CSV blob with the token in the header, id/date/cursor/limit/key checks before any request, destination normalisation as `normalizeDetails`, payout and reason rules, India "today", finding a lost adjustment by key and a lost payout by UTR/amount/date; app: destination labels, form baseline never holding a masked number, event texts, India dates); Playwright workspace 226/226 (+18 = 9 journeys x 2 devices: partner balance, statement paging with running balance, period filter and CSV blob; owner changes the destination after a review saying it must be verified again, then a change made elsewhere stops the save after the re-read; staff with finance.view read-only, without it or branch-limited no page and no request; admin accounts filters, totals and paging; verify, stale details version refused, lost payout answer resent once (one payout); adjustment lost answer found by key; adjustment sent before a reload found by key afterwards (only a body-less marker kept); void from the queue with reason; admin as owner with the full account number; nothing private in storage or URLs); release build with VITE_API_BASE_URL=https://api.example.test. Playwright ran on port 5197 (temporary config, not committed). Not yet run against a real backend or reviewed. |
 | 2026-11-14 | W1 (first cut) | typecheck clean; Vitest 10/10; Playwright 14/14; release build guards. Codex review: 6 findings (file URL shape, queue scope x2, late 401 across sign-ins, "opened" ≠ readable, body timeout). |
 | 2026-11-14 | W1 (fixes) | typecheck clean; Vitest 16/16; Playwright 22/22 (desktop + tablet, mocked API, incl. corrupt image, download-only file, buyer/cancelled read-only, late 401 after re-sign-in); backend P1 integration 16/16 on the local replica set (new queue check). Not yet run against a real backend. |
 | 2026-11-14 | W3b approved | Codex approved W3b after 3 re-reviews: backend 5e94bb7 (booking-level reconcile, open-order reuse, fair 5-minute recovery sweep, keyed create with stored validated terms, free bookings inserted unpaid — closes C7b), frontend 8963313. Final: backend w3b-reconcile 17/17, retry-integrity 26/26, A2a 14/14, A2b 18/18, A1 12/12; customer Vitest 37/37, Playwright 46/46. Real hosted Checkout, CSP and devices not yet exercised. |
