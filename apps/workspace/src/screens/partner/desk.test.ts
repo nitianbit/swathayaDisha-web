@@ -1,5 +1,5 @@
 import type { ClinicAppointment } from '@jansetu/api';
-import { deskBookingSlot, lookalikes, mergeAnswer } from './desk.ts';
+import { deskBookingSlot, lookalikes } from './desk.ts';
 
 const S1 = 'e1'.repeat(12);
 const S2 = 'e2'.repeat(12);
@@ -24,14 +24,5 @@ describe('desk booking recovery helpers', () => {
     ];
     expect(lookalikes(rows, { slotId: S1, customer: { phone: '+91 98000 00001' } }).map((r) => r.bookingId)).toEqual(['a']);
     expect(lookalikes(rows, { slotId: S1, customer: { phone: 'bad' } })).toEqual([]);
-  });
-
-  it('folds a step answer into its row and keeps what only the list knows', () => {
-    const r = row({});
-    const merged = mergeAnswer(r, { ...r, status: 'completed', branchId: undefined, payAtClinic: true });
-    expect(merged.status).toBe('completed');
-    expect(merged.branchId).toBe(r.branchId);
-    expect(merged.patient).toEqual(r.patient);
-    expect(mergeAnswer(r, { ...r, bookingId: 'other', status: 'cancelled' })).toBe(r);
   });
 });

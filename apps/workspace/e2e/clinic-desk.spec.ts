@@ -46,6 +46,8 @@ interface Backend {
   takeBeforeBook?: string;
   /** This slot fills up just before the next reschedule is decided. */
   fillBeforeMove?: string;
+  /** The day list cannot be read (503). */
+  failAppointments?: boolean;
   /** The answer to the next request whose path matches waits for `release()` (the server has already acted). */
   hold?: { match: RegExp; gate: Promise<void> };
   live: boolean;
@@ -215,6 +217,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
         .map((s) => ({ slotId: s.slotId, date: s.date, startTime: s.startTime, endTime: s.endTime, startsAt: istInstant(s.date, s.startTime), seatsLeft: s.max - s.current })));
     }
     if (sub === '/clinic/appointments' && method === 'GET') {
+      if (b.failAppointments) return fail(route, 503, 'UNAVAILABLE', 'The appointments could not be read right now');
       const q = Object.fromEntries(url.searchParams);
       return ok(route, b.appts.filter((a) => a.partnerId === pid && a.bookingDate >= ymd(q.from!) && a.bookingDate <= ymd(q.to!)
         && (!q.branchId || a.branchId === q.branchId) && (!q.doctorId || a.doctorId === q.doctorId))
@@ -273,8 +276,10 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
         free(a.slotId);
         Object.assign(a, { slotId: t.slotId, bookingDate: ymd(t.date), bookingTime: t.startTime, branchId: t.branchId, arrivedAt: null });
       }
+      // The answer is the record as this command left it (a held answer may arrive after later changes).
+      const answer = deskView(a);
       await held(sub);
-      return ok(route, deskView(a));
+      return ok(route, answer);
     }
     return fail(route, 404, 'NOT_FOUND', 'Not found');
   });
@@ -649,6 +654,47 @@ test('one step at a time per appointment (an open confirmation included); a late
   await expect(page.getByText('Asha Rao’s visit is marked as seen.')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Mark arrived' })).toBeEnabled();
   expect(writes(backend)).toEqual([`POST /partner-workspace/clinic/appointments/${AP1}/arrived`, `POST /partner-workspace/clinic/appointments/${AP1}/complete`]);
+});
+
+test('a held step answer from a page that was left never overwrites a newer change; a failed re-read offers no stale appointment', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await openDesk(page);
+  await page.getByRole('button', { name: 'Open Chitra N at 12:00' }).click();
+  const release = hold(backend, /\/arrived$/);
+  await page.getByRole('button', { name: 'Mark arrived' }).click();
+  await expect.poll(() => backend.calls.some((c) => c.path.endsWith('/arrived'))).toBe(true);
+
+  // Leave and come back; meanwhile the appointment is moved to 10:30 (which clears its check-in).
+  await nav(page).getByRole('link', { name: 'Doctors' }).click();
+  await expect(page.getByRole('heading', { name: 'Doctors', level: 1 })).toBeVisible();
+  await openDesk(page);
+  await page.getByRole('button', { name: 'Open Chitra N at 12:00' }).click();
+  await page.getByRole('button', { name: 'Move to another time' }).click();
+  const move = page.getByRole('form', { name: 'Move to another time' });
+  await move.getByLabel('New time').selectOption({ label: '10:30–10:45 (1 free)' });
+  await move.getByRole('button', { name: 'Continue' }).click();
+  await move.getByRole('button', { name: 'Move the appointment' }).click();
+  await expect(page.getByText('Moved to Tue, 17 Nov, 2026, 10:30 at Indiranagar.', { exact: false })).toBeVisible();
+  await expect(appointments(page).getByRole('row').filter({ hasText: 'Chitra N' })).toContainText('10:30');
+  await expect(page.getByRole('heading', { name: 'Appointment: Chitra N, Tue, 17 Nov, 2026, 10:30' })).toBeVisible();
+
+  // The old "arrived" answer (12:00, checked in) lands now, and the day cannot be read again.
+  backend.failAppointments = true;
+  release();
+  await expect(page.getByText('The appointments could not be read right now')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('heading', { name: /Appointment: Chitra N/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Mark|Move to another time|Cancel appointment/ })).toHaveCount(0);
+  await expect(page.getByText(/12:00/)).toHaveCount(0);
+  await expect(page.getByText('Chitra N is marked as arrived.')).toHaveCount(0);
+
+  // Once the day can be read again: the newer time, not checked in.
+  backend.failAppointments = false;
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(appointments(page).getByRole('row').filter({ hasText: 'Chitra N' })).toContainText('10:30');
+  await expect(appointments(page).getByRole('row').filter({ hasText: 'Chitra N' })).not.toContainText('Arrived');
+  await expect(page.getByRole('heading', { name: 'Appointment: Chitra N, Tue, 17 Nov, 2026, 10:30' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Mark arrived' })).toBeEnabled();
 });
 
 test('permissions: view-only desk staff, a biller sees doctors only, a lab has no clinic pages', async ({ page }) => {

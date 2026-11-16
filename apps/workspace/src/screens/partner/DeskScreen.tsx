@@ -15,7 +15,7 @@ import { useSession } from '../../session.tsx';
 import {
   appointmentLabel, appointmentTone, ClinicOnly, clinicLink, istTime, useClinicApi, useDoctorList, type ClinicApi,
 } from './clinic.tsx';
-import { deskBookingSlot, lookalikes, mergeAnswer, type DeskPending, type DeskPendingBody } from './desk.ts';
+import { deskBookingSlot, lookalikes, type DeskPending, type DeskPendingBody } from './desk.ts';
 import { formatDay, useNow } from './labs.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
@@ -109,14 +109,14 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
     if (selectedRef.current === id) { setStepNotice(null); setStepFailure(null); }
     try {
       const next = await run();
-      // The answer is this partner's own record (the subtree is keyed by partner); the list rows take it at once.
-      queryClient.setQueriesData<ClinicAppointment[]>({ queryKey: [...ctx.key, 'clinic-appointments'] }, (old) => old?.map((r) => mergeAnswer(r, next)));
-      // A late answer (the person left the page or opened another appointment) shows nothing.
+      // The answer is never written into the cached day: it carries no version, so a late one (from a page the person
+      // left and came back to) could put an older time or status over a newer change. Only the re-read below shows state.
+      // A late answer (the person left the page or opened another appointment) shows nothing, not even its notice.
       if (mounted.current && selectedRef.current === id) setStepNotice({ id, text: done(next) });
     } finally {
       inFlight.current.delete(id);
       if (mounted.current) setBusy(({ [id]: _done, ...rest }) => rest);
-      // Success or not (it may have changed meanwhile), read the day again so the page settles on the server's state.
+      // Success or not (it may have changed meanwhile), read the day again: the page settles on the server's state.
       refresh();
     }
   };
@@ -277,9 +277,11 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
           )}
       </section>
 
-      {current && (
+      {/* Only from a day read that succeeded: when the re-read fails, the list shows the error with a retry and no
+          appointment (or its steps) is offered from the last copy. While it is being read again, steps wait for it. */}
+      {current && !list.isError && (
         <AppointmentPanel key={current.bookingId} ctx={ctx} clinic={clinic} appt={current} doctors={doctors.data ?? []} branches={offered}
-          branchName={branchNames.get(current.branchId ?? '') ?? 'this clinic'} now={now} busy={busy[current.bookingId]}
+          branchName={branchNames.get(current.branchId ?? '') ?? 'this clinic'} now={now} busy={busy[current.bookingId]} reading={list.isFetching}
           failure={stepFailure?.id === current.bookingId ? stepFailure.text : null}
           perform={perform} click={click} onClose={() => setSelected(null)} />
       )}
@@ -505,15 +507,16 @@ function UnconfirmedBooking({ op, busy, onResend, onForget, check }: {
 
 // ── One appointment ──
 
-function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, now, busy, failure, perform, click, onClose }: {
+function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, now, busy, reading, failure, perform, click, onClose }: {
   ctx: ScopeContext; clinic: ClinicApi; appt: ClinicAppointment; doctors: ClinicDoctorRow[]; branches: Branch[]; branchName: string; now: Date;
-  busy: DeskAction | undefined; failure: string | null; perform: Perform;
+  busy: DeskAction | undefined; reading: boolean; failure: string | null; perform: Perform;
   click: (a: ClinicAppointment, action: DeskAction, what: string, run: () => Promise<DeskAppointment>, done: (n: DeskAppointment) => string) => Promise<void>;
   onClose: () => void;
 }) {
   const offers = deskActions(appt, ctx.actor, now);
   const offer = (a: DeskAction) => offers.find((o) => o.action === a);
-  const disabled = busy !== undefined;
+  // A step waits while one runs on this appointment, and while the day is being read again (it may have changed).
+  const disabled = busy !== undefined || reading;
   const who = patientName(appt);
   const when = appointmentLabel(appt);
   const finished = ['completed', 'cancelled', 'no_show'].includes(appt.status);

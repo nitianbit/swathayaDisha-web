@@ -1,4 +1,4 @@
-import { canonicalMobile, type ClinicAppointment, type DeskAppointment, type DeskBookingInput } from '@jansetu/api';
+import { canonicalMobile, type ClinicAppointment, type DeskBookingInput } from '@jansetu/api';
 import type { PendingOp } from '../../requests.ts';
 
 /**
@@ -23,10 +23,4 @@ export function lookalikes(rows: readonly ClinicAppointment[], req: Pick<DeskBoo
   const phone = canonicalMobile(req.customer.phone);
   return rows.filter((r) => r.source === 'desk' && r.slotId === req.slotId && r.status !== 'cancelled'
     && !!phone && canonicalMobile(r.patient?.phone ?? '') === phone);
-}
-
-/** A desk command's answer folded into a list row (the row keeps what only the list has: source, patient, payment). */
-export function mergeAnswer(row: ClinicAppointment, answer: DeskAppointment): ClinicAppointment {
-  if (row.bookingId !== answer.bookingId) return row;
-  return { ...row, ...answer, branchId: answer.branchId ?? row.branchId, source: row.source, patient: row.patient, paidOnline: row.paidOnline };
 }
