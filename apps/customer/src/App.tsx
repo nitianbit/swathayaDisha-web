@@ -18,6 +18,13 @@ import { StoreScreen } from './screens/pharmacy/StoreScreen.tsx';
 import { CartScreen } from './screens/pharmacy/CartScreen.tsx';
 import { PharmacyOrdersScreen } from './screens/pharmacy/OrdersScreen.tsx';
 import { PharmacyOrderScreen } from './screens/pharmacy/OrderScreen.tsx';
+import { LabsScreen } from './screens/labs/LabsScreen.tsx';
+import { LabScreen } from './screens/labs/LabScreen.tsx';
+import { LabBookingScreen } from './screens/labs/LabBookingScreen.tsx';
+import { ConsultScreen } from './screens/consult/ConsultScreen.tsx';
+import { InstantRequestScreen } from './screens/consult/InstantRequestScreen.tsx';
+import { BillsScreen } from './screens/bills/BillsScreen.tsx';
+import { BillScreen } from './screens/bills/BillScreen.tsx';
 
 const TABS = [
   { to: '/', label: 'Home', icon: House },
@@ -65,6 +72,13 @@ function router() {
       { path: '/lab-bookings/:bookingId', element: <ExternalBookingScreen /> },
       { path: '/doctors', element: <DoctorsScreen /> },
       { path: '/doctors/:doctorId', element: <DoctorScreen /> },
+      { path: '/labs', element: <LabsScreen /> },
+      { path: '/labs/:partnerId', element: <LabScreen /> },
+      { path: '/partner-lab-bookings/:bookingId', element: <LabBookingScreen /> },
+      { path: '/consult', element: <ConsultScreen /> },
+      { path: '/consult/requests/:requestId', element: <InstantRequestScreen /> },
+      { path: '/bills', element: <BillsScreen /> },
+      { path: '/bills/:invoiceId', element: <BillScreen /> },
       { path: '/pharmacy', element: <StoresScreen /> },
       { path: '/pharmacy/stores/:pharmacyId', element: <StoreScreen /> },
       { path: '/pharmacy/cart', element: <CartScreen /> },

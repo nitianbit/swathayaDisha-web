@@ -735,6 +735,68 @@ held-interval read, schedule and payout-detail preconditions, paged events and p
 - Legacy history (500) is unpaged; leave accepts past dates (the UI asks for today or later).
 - Not built: the prescription route (`POST /me/appointments/:id/prescription`), patient history, and the legacy `/me/slots` editor.
 
+## WC1 customer app: partner labs, bills and Consult now (2026-11-15, taken autonomously)
+
+Backend: Q2 bills, Q3 partner labs, Q4b instant consultations (`m0/q7-partner-signin`). API modules `customerLabs.ts`,
+`customerBills.ts`, `instantConsult.ts` (amounts in paise, `fromPaise` for display).
+
+- **Home** gains Consult now, Lab tests (partner labs; the LabStack/Healthians bookings stay as they were) and Bills.
+- **Lab tests**: labs by pincode or city → one screen per lab (visit type, branch, tests from the catalogue for that
+  visit type, 7-day slots, for self/family, home address checked with the backend's own limits, coupon via
+  `/coupons/validate` with the create's context, wallet) → keyed once-only create (same rules as doctor bookings; a
+  reloaded unknown request is settled with `/request-keys/abandon` `lab_booking_create`) → Razorpay → booking page:
+  status, progress timeline from the lifecycle times, pay again inside the 30-minute window (server reuses the open
+  order; a 409 after the window keeps reading the booking), cancel with the 2-hour rule shown first (lifted while a lab
+  reschedule is unanswered), accept the lab's new time by its version (a newer proposal is reported, not accepted),
+  released reports.
+- **Private files** (lab reports, bill PDFs): read with the token through the API client (`/file/fetch`, `/bills/:id/pdf`),
+  typed by their first bytes, offered from a `blob:` URL (Open / Save); never a token in a URL, nothing stored.
+- **Consult now**: speciality (free text) + mode → doctors online now (always read fresh) or any available → quote
+  → pay upfront (keyed create, `instant_request_create`) → waiting screen: presence reported every 2 minutes while
+  visible, 5-minute offer countdown, then offer again (any / a doctor within the paid amount and the coupon's doctors)
+  or refund to the wallet (two steps). Accepted: the returned difference, Join the call (Meet link when ready), and the
+  consultation booking, which shows no Cancel (instant bookings cannot be cancelled by the customer).
+- **Bills**: list and detail (lines, discounts, CGST/SGST or IGST, totals, paid by / unpaid / cancelled, supplier and
+  GSTIN, doctor name from the public doctor profile), PDF.
+- **My bookings** lists Consult now requests and partner lab bookings as their own sections.
+
+**Codex review round 1 (5 MEDIUM) and backend Q9** (`m0/q9-customer-reads`, 78b9efe):
+- **Price fences.** Lab bookings send `acceptedPayableMinor` + `acceptedSubtotalMinor`, Consult now sends `acceptedQuoteMinor` +
+  `acceptedPayableMinor`: exactly the price on screen. A price is "agreed" per choice (tests / doctor, patient, coupon;
+  prices excluded): the first price shown for a choice counts as seen; if it changes for the same choice (server re-read,
+  coupon re-check) nothing can be sent until the customer taps "Accept the new price". 409 `PRICE_CHANGED` /
+  `QUOTE_CHANGED` re-reads the prices or quote and re-checks the coupon.
+- **Coupons belong to their context.** A coupon result counts only for the lab, visit type, tests and prices (or doctor,
+  patient and quote) it was checked for; any change re-checks it; late answers for another context are dropped; nothing
+  is sent while a check is running.
+- **Completions belong to their request and page.** A create's success counts only while its key still owns the slot (an
+  ended or replaced intent, or a second answer for the same key, does nothing); Checkout and navigation happen only while
+  the page is on screen. Pay-again runs are numbered: an older answer, or one arriving after the page was left, opens
+  nothing; the panel is keyed by record + payment attempt.
+- **After a reload** a lost create is looked up read-only (`GET /request-keys/lookup`): made → opened; abandoned →
+  start again; unknown → check again, or give it up for good only when the customer confirms (abandon).
+- **Accepted Consult now** keeps reading the request (15 s) and its consultation until it ends: the Meet link appears when
+  it is created, a doctor cancellation shows the refund; Refresh button and error-with-retry.
+- **Private files** are keyed by document identity (report file; bill id + lifecycle version) and the bill PDF is
+  requested for the version on screen (`?version=`); the bill page always re-reads the bill.
+- **Q9 reads adopted:** paged bills / lab bookings / Consult now requests (Show more); `doctorName` on bills; lab and
+  branch names on lab bookings; report signers paired by `file`; `GET /partner-labs/:partnerId`; a speciality picker from
+  `GET /instant/specialities?mode` (with online counts, always fresh); held refunds read from `refunded`.
+
+**Codex review round 2 (2 MEDIUM):**
+- A create's success finishes the operation only for the newest attempt of that request on a page still on screen
+  (`stillCurrent` + live page). An older attempt, or a page that was left, never clears a newer attempt's state; the
+  newer attempt gets the same record from the server and completes it.
+- The price agreement follows the coupon the customer chose (applied or removed by hand), not whether it still checks
+  out: a coupon dropped by an automatic re-check raises the price, which must be accepted again (labs and Consult now).
+  `INVALID_COUPON` on create (the server checks the coupon before the price) re-reads the price and re-checks the coupon,
+  like `PRICE_CHANGED` / `QUOTE_CHANGED`.
+
+Backend gaps still open (not changed):
+- Opening an unpaid lab booking/request checks only its latest payment attempt (`/payments/reconcile`); "Pay now"
+  reconciles them all on the server.
+- Native: Open/Save of `blob:` files needs the planned filesystem/file-viewer plugin inside the Capacitor shell.
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -801,3 +863,7 @@ held-interval read, schedule and payout-detail preconditions, paged events and p
 | 2026-11-16 | WQ2 re-review 2 fix | typecheck clean; Vitest 100/100; Playwright workspace 212/212 (+2 journeys x 2, both failing on e3c6440: page A's held UPI payment is shown on page B instead of a new form with cancel locked, B's resend loses its answer with failing reads, A's late 409 leaves B's record, a remount still shows it, the receipt then settles it; a payment sent just before a reload is shown as unconfirmed and a new one is offered only after a fresh unpaid read and a confirm step); release build. Spare port (temporary config, not committed). |
 | 2026-11-16 | WQ6 (clinic doctors and front desk) | typecheck clean; Vitest 129/129 (+14: mobile canonical form, invitation scope and branch rules, in-clinic branches and doctors per branch, desk booking field rules, 31-day range, IST appointment times in both stored formats, desk steps per status/source/permission/time, member and admin paths and bodies (key in the body, no header), id/mobile/date/state/key checks before any request; app: look-alike rows for a lost booking, answers folded into rows); Playwright workspace 264/264 (+20 = 10 journeys x 2 devices: doctors list, invite by mobile and by id with branch choice, a repeat answering the pending invitation, server refusals, revoke after a confirmation; day view by branch/doctor/day with online bookings view-only; booking reviewed and sent once with a key, then arrived and seen, nothing about the patient in storage or the URL; a lost answer locks the booking, the day list shows a look-alike, the same request resent books once, then a loss before a reload is set aside only after a confirmation; a slot taken (409) keeps the details and the next time gets a new key; no-show only after the time and no-show/cancel confirmations saying no money moves; reschedule to another day with a taken slot refused and reloaded; one step at a time with an open confirmation disabled and a late answer silent on another appointment; view-only staff, a biller and a lab; admin as owner with partner switching, admin paths and a lab told the pages are for clinics), clinic spec also 60/60 with --repeat-each=3; release build with VITE_API_BASE_URL=https://api.example.test. Spare port 5198 (temporary config, not committed). Not yet run against a real backend or reviewed. |
 | 2026-11-16 | WQ6 review fix | typecheck clean; Vitest 128/128 (the answer-merge helper and its test removed); Playwright workspace 266/266 (+2 = 1 journey x 2 devices, failing on 80adab5: an "arrived" answer is held, the person leaves and comes back, moves the appointment to 10:30, then the old answer lands and the day cannot be read: no stale 12:00 appointment and no steps are shown, only the error with a retry; after the retry 10:30, not checked in), clinic spec 66/66 with --repeat-each=3; release build. Spare port 5236 with a temporary config that never reuses another worktree's server (5198 was taken by a sibling worktree's dev server), not committed. |\n| 2026-11-15 | P8 web, N2 phone apps, P9 web approved | Codex approved P8 web (e0add83, after 3 rounds: attempt ownership, keyed recovery result, decision after waits), N2 (f4c3ff8: secure-store start gate, latest-attempt start-up) and P9 web (aab4e01, after 3 rounds: attachments keyed to their pharmacy, functional updates, no order while attaching, expectedPharmacyId recipient fence). vitest 60; Playwright customer 134, workspace 134; Android debug + unsigned iOS builds for both apps. |
+| 2026-11-15 | P8 web, N2 phone apps, P9 web approved | Codex approved P8 web (e0add83, after 3 rounds: attempt ownership, keyed recovery result, decision after waits), N2 (f4c3ff8: secure-store start gate, latest-attempt start-up) and P9 web (aab4e01, after 3 rounds: attachments keyed to their pharmacy, functional updates, no order while attaching, expectedPharmacyId recipient fence). vitest 60; Playwright customer 134, workspace 134; Android debug + unsigned iOS builds for both apps. |
+| 2026-11-15 | WC1 (customer: partner labs, bills, Consult now) | typecheck clean; Vitest 82/82 (+ lab/bill/instant api modules, cancel rule, timeline, GST split, waiting rules, file sniffing); Playwright customer 176/176 (new: partner-labs 20, instant-consult 16, bills 6; desktop + Pixel 7, mocked API); release build with VITE_API_BASE_URL=https://api.example.test. The existing "inside 24 hours" test now accepts the Monday 48-hour rule (it failed when 5 hours ahead fell on a Monday). Not yet run against a real backend; not Codex-reviewed. |
+| 2026-11-15 | WC1 review round 1 + Q9 | Codex WC1: 5 MEDIUM (quote not bound to funding; stale lab coupon; unowned create/pay completions; no refresh after acceptance; file state across bill versions). Fixed with backend Q9 (78b9efe). typecheck clean; Vitest 89/89 (+ price agreement, paging, single lab, payable mirrors, versioned PDF, recorded refunds); Playwright customer 194/194 (new: coupon re-checked on test change, price refused then accepted (labs and Consult now), late create and pay answers after leaving open nothing, reload lookup used / unknown → confirmed give-up, Meet link after acceptance + doctor cancellation, bill PDF follows the version, report signers by file); release build with VITE_API_BASE_URL=https://api.example.test. |
+| 2026-11-16 | WC1 review round 2 | Codex WC1 re-review: 2 MEDIUM (older/left-page create success consumed a newer attempt's request; a coupon dropped by an automatic re-check auto-accepted the higher price). Fixed. typecheck clean; Vitest 89/89; Playwright customer 200/200 (new: out-of-order answers across remounts keep the newer attempt and complete it once; coupon dropped by re-check requires accepting the higher price, labs and Consult now); release build with VITE_API_BASE_URL=https://api.example.test. |

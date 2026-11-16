@@ -105,3 +105,21 @@ export type {
   PayoutDetailsView as DoctorPayoutDetailsView, Presence, PresenceInput, PresenceWrite, Reservation, ScheduleDays, ScheduleExpansion, ScheduleInput, ScheduleSaved, ScheduleWindow,
   SettlementAccountView, SoloPractice, SoloPracticeCreated, SoloPracticeInput, StatementLine as DoctorStatementLine, StatementPage as DoctorStatementPage, StatementQuery as DoctorStatementQuery,
 } from './doctorTools.ts';
+// WC1 customer app: names shared with the workspace modules are exported with a Customer prefix.
+export {
+  addressErrors, customerLabsApi, fromPaise, istDay, labPayableMinor, normalizeLab, LAB_ADDRESS_LIMITS, LAB_CANCEL_CUTOFF_HOURS, LAB_MAX_ITEMS, LAB_PAYMENT_WINDOW_MIN,
+  LAB_PINCODE_PATTERN, labCancelCheck, labTimeline,
+} from './customerLabs.ts';
+export type {
+  LabAddress, LabBooking as CustomerLabBooking, LabBookingItem as CustomerLabBookingItem, LabBookingPayment, LabBookingSlot as CustomerLabBookingSlot, LabBookingStatus as CustomerLabBookingStatus, LabBranch, LabCancelCheck, LabCatalogueItem,
+  LabSlot as CustomerLabSlot, NewLabBooking, PartnerLab, TimelineStep, VisitMode as CustomerVisitMode,
+} from './customerLabs.ts';
+export { BILL_KIND_LABEL, BILL_PAYMENT_MODE, billFileName, customerBillsApi, gstSplit } from './customerBills.ts';
+export type { Bill, BillDocumentKind, BillEvent, BillLine, BillPaymentMode, BillState, BillTotals } from './customerBills.ts';
+export {
+  countdown, heldRefundMinor, INSTANT_INACTIVITY_MIN, INSTANT_MODE_LABEL, INSTANT_MODES as CUSTOMER_INSTANT_MODES, INSTANT_OFFER_MIN, INSTANT_PAYMENT_WINDOW_MIN,
+  instantConsultApi, instantPayableMinor, SPECIALITY_LIMITS, waitingState,
+} from './instantConsult.ts';
+export type {
+  InstantMode as CustomerInstantMode, InstantPayment, InstantQuote, InstantSpeciality, InstantRequest, InstantStatus, InstantTarget, MoneySplit, NewInstantRequest, OnlineDoctor,
+} from './instantConsult.ts';

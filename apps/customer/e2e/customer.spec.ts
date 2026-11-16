@@ -183,7 +183,8 @@ test('inside 24 hours a paid booking cannot be cancelled, and the app says why',
   await signIn(page);
   await tab(page, 'Bookings').click();
   await page.getByRole('link', { name: /Full body check/ }).click();
-  await expect(page.getByText(/Paid bookings can be cancelled until 24 hours before the appointment/)).toBeVisible();
+  // 5 hours from now may fall on a Monday (48-hour rule): either way the window has closed.
+  await expect(page.getByText(/Paid bookings can be cancelled until (24|48) hours before the appointment/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Cancel this booking' })).toHaveCount(0);
   expect(backend.calls.filter((c) => c.path.endsWith('/cancel'))).toHaveLength(0);
 });

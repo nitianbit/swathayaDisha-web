@@ -83,7 +83,7 @@ export const PHONE_PATTERN = /^[0-9]{10}$/;
 export const OTP_PATTERN = /^[0-9]{6}$/;
 
 /** D4: once-only operations whose outcome a reloaded page never saw. */
-export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_create' | 'pharmacy_checkout';
+export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_create' | 'pharmacy_checkout' | 'lab_booking_create' | 'instant_request_create';
 
 /**
  * Abandons an unresolved request key on the server: afterwards the old request can never be performed, so a new one
@@ -91,6 +91,12 @@ export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_crea
  */
 export function requestKeysApi(c: ApiClient) {
   return {
+    /**
+     * Q9 read-only: 'used' (with the record it made), 'abandoned', or 'unknown' (not made and not abandoned: it may still
+     * be on its way). Never changes anything.
+     */
+    lookup: (kind: OnceOnlyKind, key: string) =>
+      c.get<{ state: 'used' | 'abandoned' | 'unknown'; record?: Record<string, unknown> & { _id: string } }>('/request-keys/lookup', { query: { kind, key } }),
     /** 'used' comes with the exact record the key produced (return receipt, or the booking's id). */
     abandon: (kind: OnceOnlyKind, key: string) =>
       c.post<{ state: 'abandoned' | 'used'; record?: Record<string, unknown> & { _id: string } }>('/request-keys/abandon', { body: { kind, key } }),

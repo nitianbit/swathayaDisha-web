@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { CalendarDays, Pill, Stethoscope, Users, Wallet } from 'lucide-react';
+import { CalendarDays, FlaskConical, Pill, ReceiptText, Stethoscope, Users, Video, Wallet } from 'lucide-react';
 import { customerApi } from '@jansetu/api';
 import { Alert, formatRupees, Loading } from '@jansetu/ui';
 import { PageHeading } from '../common.tsx';
@@ -30,7 +30,9 @@ export function HomeScreen() {
         </Alert>
       )}
       <ul className="tiles">
+        <li><Link to="/consult" className="tile"><Video aria-hidden="true" /><span>Consult now</span></Link></li>
         <li><Link to="/doctors" className="tile"><Stethoscope aria-hidden="true" /><span>Book a doctor</span></Link></li>
+        <li><Link to="/labs" className="tile"><FlaskConical aria-hidden="true" /><span>Lab tests</span></Link></li>
         <li><Link to="/pharmacy" className="tile"><Pill aria-hidden="true" /><span>Order medicines</span></Link></li>
         <li><Link to="/bookings" className="tile"><CalendarDays aria-hidden="true" /><span>My bookings</span></Link></li>
         <li>
@@ -39,6 +41,7 @@ export function HomeScreen() {
             <span>Wallet{wallet.data ? <strong className="tile-value">{formatRupees(wallet.data.balance)}</strong> : null}</span>
           </Link>
         </li>
+        <li><Link to="/bills" className="tile"><ReceiptText aria-hidden="true" /><span>Bills</span></Link></li>
         <li><Link to="/profile/family" className="tile"><Users aria-hidden="true" /><span>Family members</span></Link></li>
       </ul>
     </>

@@ -84,3 +84,14 @@ body { background: var(--canvas); }
 .stepper { display: inline-flex; align-items: center; gap: var(--space-2); }
 .stepper > span { min-width: 2ch; text-align: center; font-weight: 600; }
 .plain { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1); }
+
+/* WC1: partner labs, Consult now, bills */
+.fieldset-plain { border: 0; padding: 0; margin: 0; }
+.fieldset-plain > legend { font-weight: 600; margin-bottom: var(--space-2); }
+.timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.timeline li { display: grid; grid-template-columns: 20px 1fr; gap: var(--space-2); align-items: start; }
+.timeline li[data-done='false'] { color: var(--muted); }
+.timeline svg { margin-top: 2px; }
+.lines { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
+.lines li { display: grid; gap: 2px; }
+.countdown { font-size: var(--text-xl); font-weight: 700; color: var(--brand-strong); font-variant-numeric: tabular-nums; }
