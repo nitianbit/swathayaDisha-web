@@ -4,6 +4,7 @@ import { LogOut } from 'lucide-react';
 import { Button } from '@jansetu/ui';
 import { pagesFor } from './modules.tsx';
 import { useSession, useStaff } from './session.tsx';
+import { DoctorPresenceProvider } from './screens/doctor/presence.tsx';
 
 export function Shell({ children }: { children: ReactNode }) {
   const user = useStaff();
@@ -35,7 +36,10 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className="ws-user">
           <div>
             <div className="ws-user-name">{user.name}</div>
-            <div className="ws-user-role">{user.partner ? `${user.roleLabel} · ${user.partner.partner.name}` : user.roleLabel}</div>
+            <div className="ws-user-role">
+              {user.partner ? `${user.roleLabel} · ${user.partner.partner.name}`
+                : user.doctor?.specialization ? `${user.roleLabel} · ${user.doctor.specialization}` : user.roleLabel}
+            </div>
           </div>
           {/* A deliberate sign-out starts the next person at Home; an expired session keeps its page to resume. */}
           <Button variant="ghost" onClick={() => { window.history.replaceState(null, '', '#/'); signOut(); }}>
@@ -43,7 +47,8 @@ export function Shell({ children }: { children: ReactNode }) {
           </Button>
         </div>
       </aside>
-      <main id="main" className="ws-main">{children}</main>
+      {/* WQ4: a doctor's "available now" (and its heartbeat) lives as long as the signed-in shell, across pages. */}
+      <main id="main" className="ws-main">{user.role === 'specialist' ? <DoctorPresenceProvider key={user.id}>{children}</DoctorPresenceProvider> : children}</main>
     </div>
   );
 }

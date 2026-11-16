@@ -70,3 +70,16 @@ export type {
   LabBookingQuery, LabBookingSlot, LabBookingStatus, LabLifecycleKey, LabPaymentStatus, LabReportRelease, LabSlot, NewManualSlot,
   SlotClosure, SlotQuery, SlotTemplate, SlotTemplateInput, SlotWindow, TemplateDays,
 } from './partnerLabs.ts';
+export {
+  APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentStart, CONSULT_MINUTES, CONSULT_MODE_LABEL, CONSULT_MODES, doctorStanding, doctorToolsApi,
+  DOCTOR_ROLLING_DAYS, EXTEND_MINUTES_MAX, fromYmd, HEARTBEAT_MS, INSTANT_FEE_MAX_MINOR, INSTANT_MODES, INSTANT_REFUSAL, instantRefusal,
+  LEDGER_KIND_LABEL, OFFER_MS, offerSecondsLeft, payoutDetailsProblems, periodProblem, presenceProblems, PRESENCE_TTL_MS, SCHEDULE_MINUTES_MAX,
+  SCHEDULE_MINUTES_MIN, SCHEDULE_WEEKDAYS, SCHEDULE_WINDOWS_MAX, scheduleProblems, schedulableBranches, scheduleSlotCount, soloPracticeProblems,
+  STATEMENT_LIMIT_MAX, statementCsvName, toYmd,
+} from './doctorTools.ts';
+export type {
+  AppointmentAction, AppointmentStatus, ClinicBranchRef, ConsultMode, DoctorAppointment, DoctorProfile, DoctorSchedule, DoctorToolsApi,
+  FinanceEvent, FinanceSummary, HistoryRef, InstantMode, InstantOffer, LedgerKind, MyClinics, Payout, PayoutDetailsInput, PayoutDetailsState,
+  PayoutDetailsView, Presence, PresenceInput, Reservation, ScheduleDays, ScheduleExpansion, ScheduleInput, ScheduleSaved, ScheduleWindow,
+  SettlementAccountView, SoloPractice, SoloPracticeCreated, SoloPracticeInput, StatementLine, StatementPage, StatementQuery,
+} from './doctorTools.ts';

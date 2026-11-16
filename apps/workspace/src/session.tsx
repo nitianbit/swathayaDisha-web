@@ -8,9 +8,9 @@ import {
   type Principal, type SignedIn, type UserType, type VerificationState,
 } from '@jansetu/api';
 
-/** Who may sign in to the workspace today. HR and doctors join when their modules exist. */
-export type StaffRole = Extract<UserType, 'admin' | 'pharmacy' | 'partner'>;
-export const STAFF_ROLES: readonly StaffRole[] = ['admin', 'pharmacy', 'partner'];
+/** Who may sign in to the workspace today (WQ4: doctors as `specialist`). HR joins when its module exists. */
+export type StaffRole = Extract<UserType, 'admin' | 'pharmacy' | 'partner' | 'specialist'>;
+export const STAFF_ROLES: readonly StaffRole[] = ['admin', 'pharmacy', 'partner', 'specialist'];
 const APP = 'workspace';
 /** N1: inside the phone app the refresh token lives in the OS secure store (see nativeSession.ts). */
 const NATIVE_APP = 'workspace' as const;
@@ -29,11 +29,13 @@ export interface StaffUser {
   /** The account id; for pharmacy staff this is the pharmacy's id; for partners the member's id. */
   id: string;
   name: string;
-  /** "Admin", "Pharmacy", or the partner's kind ("Lab" / "Clinic"). */
+  /** "Admin", "Pharmacy", "Doctor", or the partner's kind ("Lab" / "Clinic"). */
   roleLabel: string;
   raw: Record<string, unknown>;
   /** Partners only. */
   partner?: PartnerSession;
+  /** Doctors only: from the specialist profile at sign-in (the doctor pages read the profile again). */
+  doctor?: { specialization?: string; isVerified: boolean; isActive: boolean };
 }
 
 type SessionState =
@@ -71,7 +73,7 @@ function displayName(user: Record<string, unknown>, role: StaffRole): string {
     const v = user[key];
     if (typeof v === 'string' && v.trim()) return v.trim();
   }
-  return role === 'admin' ? 'Admin' : role === 'partner' ? 'Member' : 'Pharmacy';
+  return role === 'admin' ? 'Admin' : role === 'partner' ? 'Member' : role === 'specialist' ? 'Doctor' : 'Pharmacy';
 }
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
@@ -104,7 +106,7 @@ function partnerSessionOf(member: Record<string, unknown>, partner: Record<strin
   };
 }
 
-const ROLE_LABEL: Record<Exclude<StaffRole, 'partner'>, string> = { admin: 'Admin', pharmacy: 'Pharmacy' };
+const ROLE_LABEL: Record<Exclude<StaffRole, 'partner'>, string> = { admin: 'Admin', pharmacy: 'Pharmacy', specialist: 'Doctor' };
 
 const isPending = (v: unknown): v is PendingMarker =>
   !!v && typeof v === 'object' && typeof (v as PendingMarker).requestKey === 'string' && typeof (v as PendingMarker).attempts === 'number';
@@ -279,6 +281,10 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       name: partner ? partner.member.name : displayName(raw, staffRole),
       roleLabel: partner ? PARTNER_KIND_LABEL[partner.partner.kind] : ROLE_LABEL[staffRole as Exclude<StaffRole, 'partner'>],
       ...(partner ? { partner } : {}),
+      ...(staffRole === 'specialist' ? { doctor: {
+        ...(typeof raw.specialization === 'string' && raw.specialization.trim() ? { specialization: raw.specialization.trim() } : {}),
+        isVerified: raw.isVerified !== false, isActive: raw.isActive !== false,
+      } } : {}),
     } });
     return true;
   }, [auth, schedule]);

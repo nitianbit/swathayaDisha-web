@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Ban, Boxes, Building2, CalendarClock, ClipboardCheck, FlaskConical, ClipboardList, Handshake, History, House, MapPin, Package, PackageX, Receipt, Settings, ShieldAlert,
-  TrendingDown, Undo2, Users,
+  Ban, Boxes, Building2, CalendarClock, CalendarDays, ClipboardCheck, FlaskConical, ClipboardList, Handshake, History, Hospital, House, MapPin, Package, PackageX,
+  Receipt, Settings, ShieldAlert, Stethoscope, TrendingDown, Undo2, Users, Video, Wallet,
 } from 'lucide-react';
 import { hasGlobalScope, holdsAny, type PartnerKind, type PartnerPermission } from '@jansetu/api';
 import type { StaffRole, StaffUser } from './session.tsx';
@@ -33,6 +33,11 @@ import { QualityScreen } from './screens/pharmacy/QualityScreen.tsx';
 import { RxReviewScreen } from './screens/pharmacy/RxReviewScreen.tsx';
 import { StockScreen } from './screens/pharmacy/StockScreen.tsx';
 import { SettingsScreen } from './screens/pharmacy/SettingsScreen.tsx';
+import { AppointmentsScreen } from './screens/doctor/AppointmentsScreen.tsx';
+import { ClinicsScreen } from './screens/doctor/ClinicsScreen.tsx';
+import { ConsultNowScreen } from './screens/doctor/ConsultNowScreen.tsx';
+import { EarningsScreen } from './screens/doctor/EarningsScreen.tsx';
+import { ScheduleScreen } from './screens/doctor/ScheduleScreen.tsx';
 
 /**
  * Every workspace page is declared here with the roles that may open it. A path not listed here does not exist, and
@@ -61,7 +66,28 @@ const SLOT_READERS: readonly PartnerPermission[] = ['slots.manage', 'bookings.vi
 const LAB_READERS: readonly PartnerPermission[] = ['bookings.view', 'bookings.manage', 'reports.upload', 'reports.release'];
 
 export const PAGES: readonly WorkspacePage[] = [
-  { path: '/', roles: ['admin', 'pharmacy', 'partner'], element: <HomeScreen />, nav: { label: 'Home', icon: House, section: '' } },
+  { path: '/', roles: ['admin', 'pharmacy', 'partner', 'specialist'], element: <HomeScreen />, nav: { label: 'Home', icon: House, section: '' } },
+  // WQ4: doctors (`specialist` sessions; every route is `requireSpecialist` under /specialists/me).
+  {
+    path: '/doctor/consult-now', roles: ['specialist'], element: <ConsultNowScreen />,
+    nav: { label: 'Consult now', icon: Video, section: 'Doctor' },
+  },
+  {
+    path: '/doctor/appointments', roles: ['specialist'], element: <AppointmentsScreen />,
+    nav: { label: 'Appointments', icon: Stethoscope, section: 'Doctor' },
+  },
+  {
+    path: '/doctor/schedule', roles: ['specialist'], element: <ScheduleScreen />,
+    nav: { label: 'Schedule', icon: CalendarDays, section: 'Doctor' },
+  },
+  {
+    path: '/doctor/clinics', roles: ['specialist'], element: <ClinicsScreen />,
+    nav: { label: 'Clinics', icon: Hospital, section: 'Doctor' },
+  },
+  {
+    path: '/doctor/earnings', roles: ['specialist'], element: <EarningsScreen />,
+    nav: { label: 'Earnings', icon: Wallet, section: 'Doctor' },
+  },
   {
     path: '/pharmacy/orders', roles: ['pharmacy'], element: <OrdersScreen />,
     nav: { label: 'Orders', icon: Package, section: 'Pharmacy' },

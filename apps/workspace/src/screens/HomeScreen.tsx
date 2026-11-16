@@ -3,6 +3,7 @@ import { Alert, Empty } from '@jansetu/ui';
 import { pagesFor } from '../modules.tsx';
 import { PageHeading } from '../PageHeading.tsx';
 import { useStaff } from '../session.tsx';
+import { DoctorHome } from './doctor/DoctorHome.tsx';
 
 export function HomeScreen() {
   const user = useStaff();
@@ -19,6 +20,7 @@ export function HomeScreen() {
             : `${user.partner.partner.name} is waiting for verification by Jansetu. The workspace opens once it is verified.`}
         </Alert>
       )}
+      {user.role === 'specialist' && <DoctorHome />}
       {pages.length === 0 ? (
         <Empty title="Nothing here yet">Tools for your role are being added.</Empty>
       ) : (

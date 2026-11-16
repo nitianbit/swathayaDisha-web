@@ -8,6 +8,7 @@ const RESEND_SECONDS = 30;
 const ROLES: { value: StaffRole; label: string }[] = [
   { value: 'pharmacy', label: 'Pharmacy staff' },
   { value: 'partner', label: 'Lab or clinic staff' },
+  { value: 'specialist', label: 'Doctor' },
   { value: 'admin', label: 'Admin' },
 ];
 
