@@ -73,7 +73,7 @@ export interface CatalogueItem {
   createdAt?: string;
   /** Sent back as `expectedUpdatedAt` on an edit (Q10: 409 CATALOGUE_ITEM_CHANGED when it moved). */
   updatedAt?: string;
-  /** Q10: the request key the item was created with (stored on the item; used to find a create whose answer was lost). */
+  /** Q10: the request key the item was created with (stored on the item). WQ7: a lost create is resolved by key (Q12), not by this field. */
   createRequestKey?: string;
 }
 
@@ -215,6 +215,12 @@ export interface NewInvoice {
 export interface InvoiceQuery { state?: InvoiceState; branchId?: string; limit?: number; cursor?: string; from?: string; to?: string; q?: string }
 /** `recordPaymentSchema`. Q10: the same mode and reference again answers the payment already recorded. */
 export interface PaymentInput { mode: InvoicePaymentMode; reference?: string; note?: string }
+/** `recordPayment` (controller/invoice.ts). Q12: `replayed` is inside `data` (true = this payment had already been recorded). */
+export interface PaymentAnswer { invoice: Invoice; event: InvoiceEvent; replayed?: boolean }
+/** Q12 `catalogueListQuerySchema.q`: trimmed, 1–60 characters; searches name or code (case-insensitive, literal). */
+export const MAX_CATALOGUE_SEARCH = 60;
+/** Q12 `abandonKey`: `abandoned` = that key can never make an item; `used` = it did (with the item). */
+export interface CatalogueKeyAbandon { state: 'abandoned' | 'used'; item?: CatalogueItem | null }
 /** `cancelInvoiceSchema.refund`: required for a PAID bill (400 REFUND_REQUIRED), refused for an unpaid one (NOTHING_TO_REFUND). */
 export interface RefundInput { mode: InvoicePaymentMode; reference?: string; note?: string }
 
@@ -358,6 +364,18 @@ function checkKey(key: string): string {
   if (!BILL_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
   return key;
 }
+/** Q12 `catalogueKeyParamSchema`: 8–100 path-safe characters. */
+function checkItemKey(key: string): string {
+  if (!ITEM_REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
+  return key;
+}
+/** Q12: the search text the server accepts, or undefined for none (an over-long one is refused before any request). */
+function searchText(q: string | undefined): string | undefined {
+  const t = q?.trim();
+  if (!t) return undefined;
+  if (t.length > MAX_CATALOGUE_SEARCH) throw new Error('Search is too long');
+  return t;
+}
 
 /** A customer GSTIN as the server stores it (`trim().uppercase()`), or the problem with it. */
 export function customerGstinProblem(raw: string): string | null {
@@ -373,10 +391,14 @@ export function partnerBillingApi(c: ApiClient, scope: PartnerScope) {
   return {
     /**
      * Active items (admin-disabled ones included, flagged), sorted by name; no paging. `includeInactive` adds
-     * deactivated ones for catalogue managers (others get active ones only).
+     * deactivated ones for catalogue managers (others get active ones only). Q12: `q` searches name or code on the server.
      */
-    catalogue: (kind?: CatalogueItemKind, includeInactive = false) =>
-      c.get<CatalogueItem[]>(`${base()}/catalogue`, { query: { kind, includeInactive: includeInactive ? 'true' : undefined } }),
+    catalogue: (kind?: CatalogueItemKind, includeInactive = false, q?: string) =>
+      c.get<CatalogueItem[]>(`${base()}/catalogue`, { query: { kind, includeInactive: includeInactive ? 'true' : undefined, q: searchText(q) } }),
+    /** Q12: the item a create request key made (404 ITEM_NOT_FOUND: not made yet, never, or given up). `catalogue.manage`. */
+    catalogueItemByKey: (key: string) => c.get<CatalogueItem>(`${base()}/catalogue/by-key/${checkItemKey(key)}`),
+    /** Q12: gives up a lost item create, decided by the server (the key is claimed with the item). `catalogue.manage`. */
+    abandonCatalogueKey: (key: string) => c.post<CatalogueKeyAbandon>(`${base()}/catalogue/by-key/${checkItemKey(key)}/abandon`, { body: {} }),
     catalogueItem: (id: string) => c.get<CatalogueItem>(item(id)),
     createCatalogueItem: (body: NewCatalogueItem) => c.post<CatalogueItem>(`${base()}/catalogue`, { body }),
     updateCatalogueItem: (id: string, body: CatalogueItemUpdate) => c.put<CatalogueItem>(item(id), { body }),
@@ -398,7 +420,7 @@ export function partnerBillingApi(c: ApiClient, scope: PartnerScope) {
     /** The bill's PDF as of lifecycle `version` (0 = as issued; default = now), read with the session's token. */
     invoicePdf: (id: string, version?: number, signal?: AbortSignal) =>
       c.blob(`${invoice(id)}/pdf`, { query: { version }, signal }),
-    recordPayment: (id: string, body: PaymentInput) => c.post<{ invoice: Invoice; event: InvoiceEvent }>(`${invoice(id)}/pay`, { body }),
+    recordPayment: (id: string, body: PaymentInput) => c.post<PaymentAnswer>(`${invoice(id)}/pay`, { body }),
     cancelInvoice: (id: string, reason: string, refund?: RefundInput) =>
       c.post<{ invoice: Invoice; event: InvoiceEvent }>(`${invoice(id)}/cancel`, { body: { reason, ...(refund ? { refund } : {}) } }),
 

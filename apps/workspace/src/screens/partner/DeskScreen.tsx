@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
@@ -7,15 +7,16 @@ import {
   type Branch, type ClinicAppointment, type ClinicDoctorRow, type DeskAction, type DeskActionOffer, type DeskAppointment, type DeskBookingResult,
   type DeskSlot,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
+import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { messageOf } from '../../errors.ts';
-import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent } from '../../requests.ts';
+import { afterFailure, beginAttempt, keyedLookup, newRequestKey, resolveStored, startOp, stillCurrent, wasAbandoned } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import {
   appointmentLabel, appointmentTone, ClinicOnly, clinicLink, istTime, useClinicApi, useDoctorList, type ClinicApi,
 } from './clinic.tsx';
-import { deskBookingSlot, lookalikes, type DeskPending, type DeskPendingBody } from './desk.ts';
+import { deskBookingSlot, type DeskPending, type DeskPendingBody } from './desk.ts';
 import { formatDay, useNow } from './labs.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
@@ -26,6 +27,11 @@ const clock = (raw: string) => {
 };
 const BILL_READERS = ['invoices.create', 'invoices.cancel', 'payments.record', 'finance.view'] as const;
 const NO_MONEY = 'Nothing is charged or refunded through Jansetu: desk appointments are paid at the clinic.';
+/** Q13 409 BOOKING_CHANGED: the step named the version the person saw, and the appointment had changed since. */
+const isChanged = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'BOOKING_CHANGED';
+const CHANGED = 'The appointment changed since you opened it (someone else updated it), so nothing was done. It has been read again: check it and try again.';
+/** Q13: the slot is taken (SLOT_NOT_AVAILABLE) or has started meanwhile (SLOT_STARTED): choose another; the details stay. */
+const slotGoneCodes = new Set(['SLOT_NOT_AVAILABLE', 'SLOT_STARTED']);
 
 /** The clinic's front desk: a day of appointments per branch and doctor, booking walk-in and phone patients, and the desk steps. */
 export function DeskScreen() {
@@ -113,6 +119,10 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
       // left and came back to) could put an older time or status over a newer change. Only the re-read below shows state.
       // A late answer (the person left the page or opened another appointment) shows nothing, not even its notice.
       if (mounted.current && selectedRef.current === id) setStepNotice({ id, text: done(next) });
+    } catch (err) {
+      // Q13: refused because the appointment moved on since it was shown; the re-read below shows it as it is now.
+      if (isChanged(err) && mounted.current && selectedRef.current === id) setStepFailure({ id, text: CHANGED });
+      throw err;
     } finally {
       inFlight.current.delete(id);
       if (mounted.current) setBusy(({ [id]: _done, ...rest }) => rest);
@@ -121,7 +131,9 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
     }
   };
   const click = (a: ClinicAppointment, action: DeskAction, what: string, run: () => Promise<DeskAppointment>, done: (n: DeskAppointment) => string) =>
-    perform(a, action, run, done).catch((err: unknown) => { if (mounted.current && selectedRef.current === a.bookingId) setStepFailure({ id: a.bookingId, text: `${what}: ${messageOf(err)}` }); });
+    perform(a, action, run, done).catch((err: unknown) => {
+      if (mounted.current && selectedRef.current === a.bookingId) setStepFailure({ id: a.bookingId, text: isChanged(err) ? CHANGED : `${what}: ${messageOf(err)}` });
+    });
 
   // ── Booking: once only, with the server's request key; an unknown outcome locks the form ──
   const slotKey = deskBookingSlot(scopeIdentity(ctx));
@@ -130,8 +142,8 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
   const [chosen, setChosen] = useState<Chosen | null>(null);
   const [patient, setPatient] = useState<Patient>(NO_PATIENT);
   const [refused, setRefused] = useState<string | null>(null);
-  const [receipt, setReceipt] = useState<{ result: DeskBookingResult; body: DeskPendingBody } | null>(null);
-  const [forgotten, setForgotten] = useState(false);
+  const [receipt, setReceipt] = useState<ReceiptView | null>(null);
+  const [gaveUp, setGaveUp] = useState<string | null>(null);
   const setPending = (p: DeskPending | undefined) => {
     if (p) memory.set(slotKey, p); else memory.delete(slotKey);
     setPendingState(p);
@@ -139,7 +151,11 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
   /** Whether an answer started for `op` may still act: this page is on screen AND the stored booking is still exactly `op`. */
   const owns = (op: DeskPending) => mounted.current && stillCurrent(memory.get<DeskPending>(slotKey), op);
 
-  function booked(result: DeskBookingResult, op: DeskPending) {
+  /**
+   * `op` made this appointment (its answer, a replay, a by-key lookup or a give-up answered `used`): end it, and only it,
+   * while this page owns it, then show the day with the appointment open. After a reload `op.body` is gone.
+   */
+  function settled(view: ReceiptView, op: DeskPending) {
     refresh();
     if (!owns(op)) return;
     resolveStored(memory, slotKey, op.requestKey);
@@ -147,13 +163,33 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
     setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
     setChosen(null);
     setPatient(NO_PATIENT);
-    setReceipt({ result, body: op.body });
-    // Show the day, branch and doctor of the appointment just made, with it opened.
-    const d = appointmentDay(result.booking.bookingDate);
+    setReceipt(view);
+    const b = view.booking;
+    const d = appointmentDay(b.bookingDate);
     if (d) setDay(d);
-    setBranchChoice(result.booking.branchId ?? op.body.shown.branchId);
-    setDoctorChoice(result.booking.doctorId ?? op.body.shown.doctorId);
-    setSelected(result.booking.bookingId);
+    const branchId = b.branchId ?? op.body?.shown.branchId;
+    if (branchId) setBranchChoice(branchId);
+    const doctorId = b.doctorId ?? op.body?.shown.doctorId;
+    if (doctorId) setDoctorChoice(doctorId);
+    setSelected(b.bookingId);
+  }
+  const viewOf = (b: DeskAppointment, op: DeskPending, extra: Pick<ReceiptView, 'replayed' | 'created'>): ReceiptView => ({
+    booking: b, ...extra,
+    who: op.body ? op.body.request.customer.name?.trim() || canonicalMobile(op.body.request.customer.phone) || op.body.request.customer.phone : undefined,
+    branchName: op.body?.shown.branchName ?? branchNames.get(b.branchId ?? '') ?? 'the clinic',
+    doctorName: b.doctorName ?? op.body?.shown.doctorName,
+  });
+  const booked = (result: DeskBookingResult, op: DeskPending) =>
+    settled(viewOf(result.booking, op, { replayed: result.replayed, created: result.customer.created }), op);
+
+  /** Given up on the server, or known booked but outside this desk's branches: ends `op` only while this page owns it. */
+  function closeWith(op: DeskPending, text: string) {
+    refresh();
+    if (!owns(op)) return;
+    const k = op.requestKey;
+    resolveStored(memory, slotKey, k);
+    setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
+    setGaveUp(text);
   }
 
   /** Sends exactly `p` (same key, same content). Only success, or a definite refusal of its FIRST attempt, ends it. */
@@ -161,20 +197,25 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
     const attempt = beginAttempt(p);
     setSending(true);
     setRefused(null);
-    setForgotten(false);
+    setGaveUp(null);
     setPending(attempt);
     try {
       booked(await clinic.book(attempt.body.request), attempt);
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) refresh(); // e.g. the slot was taken: show the free slots now
       if (!stillCurrent(memory.get<DeskPending>(slotKey), attempt)) return;
+      // Q13: the key was given up (e.g. in another tab after a reload): nothing was or can ever be booked with it.
+      if (wasAbandoned(err)) {
+        closeWith(attempt, 'This booking was given up earlier, so it was not made and never will be. Book the patient again if needed.');
+        return;
+      }
       // Customer linking is checked before anything is written; on a first attempt that refusal is definite too.
       const linkingOff = err instanceof ApiError && err.code === 'CUSTOMER_LINKING_UNAVAILABLE' && attempt.attempts === 1 && !attempt.uncertain;
       const next = linkingOff ? null : afterFailure(attempt, err, messageOf(err));
       if (mounted.current) {
         setPending(next ?? undefined);
         if (!next) {
-          const slotGone = err instanceof ApiError && err.code === 'SLOT_NOT_AVAILABLE';
+          const slotGone = err instanceof ApiError && !!err.code && slotGoneCodes.has(err.code);
           setRefused(slotGone ? `${messageOf(err)}. Choose another time; the patient’s details are kept.` : messageOf(err));
           if (slotGone) setChosen(null);
         }
@@ -184,13 +225,6 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
     }
   }
 
-  function forget(op: DeskPending) {
-    if (!owns(op)) return;
-    const k = op.requestKey;
-    resolveStored(memory, slotKey, k);
-    setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
-    setForgotten(true);
-  }
 
   const locked = !!pending;
   const rows = list.data ?? [];
@@ -210,10 +244,23 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
   return (
     <>
       {pending && !(sending && pending.attempts === 1 && !pending.uncertain) && (
-        <UnconfirmedBooking key={pending.attempts} op={pending} busy={sending} onResend={() => void send(pending)} onForget={() => forget(pending)}
-          check={() => clinic.appointments({ from: pending.body?.shown.day ?? day, to: pending.body?.shown.day ?? day, branchId: pending.body?.shown.branchId, doctorId: pending.body?.shown.doctorId })} />
+        <PendingOpPanel key={pending.attempts} label="Unconfirmed booking" op={pending} busy={sending} onResend={() => void send(pending)}
+          // Q13: the exact appointment this desk member's key booked (`GET /clinic/appointments/by-key/:key`), also after a reload.
+          fetchPage={keyedLookup(pending.requestKey, () => clinic.appointmentByKey(pending.requestKey))}
+          onFound={(b) => settled(viewOf(b, pending, { replayed: true }), pending)}
+          // Q13: decided by the server: `abandoned` = it can never be booked; `used` = here it is (or it is no longer in your branches).
+          abandon={async () => {
+            const r = await clinic.abandonBookingKey(pending.requestKey);
+            if (r.state === 'used' && !r.booking) {
+              closeWith(pending, 'The earlier booking was made, but the appointment is no longer at one of your branches (it was moved). Nothing more to do here.');
+            }
+            return { state: r.state, record: r.booking ? { ...r.booking, requestKey: pending.requestKey } : undefined };
+          }}
+          abandonWhenNotFound abandonLabel="Give up this booking"
+          onDiscard={() => closeWith(pending, 'The unconfirmed booking was given up: it can never be made. You can book the patient again now.')}
+          summary={pending.restored || !pending.body ? null : <PendingBookingSummary body={pending.body} />} />
       )}
-      {forgotten && <Alert tone="ok">The unconfirmed booking was set aside. Check the day list before booking the same patient again.</Alert>}
+      {gaveUp && !pending && <Alert tone="ok">{gaveUp}</Alert>}
       {receipt && <Receipt ctx={ctx} receipt={receipt} />}
 
       <div className="ws-search">
@@ -280,7 +327,9 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
       {/* Only from a day read that succeeded: when the re-read fails, the list shows the error with a retry and no
           appointment (or its steps) is offered from the last copy. While it is being read again, steps wait for it. */}
       {current && !list.isError && (
-        <AppointmentPanel key={current.bookingId} ctx={ctx} clinic={clinic} appt={current} doctors={doctors.data ?? []} branches={offered}
+        // Keyed by the appointment's version too (Q13 `updatedAt`): when the appointment changes, an open confirmation or
+        // move form closes, so a step is only ever sent for the version the person was looking at.
+        <AppointmentPanel key={`${current.bookingId}:${current.updatedAt ?? ''}`} ctx={ctx} clinic={clinic} appt={current} doctors={doctors.data ?? []} branches={offered}
           branchName={branchNames.get(current.branchId ?? '') ?? 'this clinic'} now={now} busy={busy[current.bookingId]} reading={list.isFetching}
           failure={stepFailure?.id === current.bookingId ? stepFailure.text : null}
           perform={perform} click={click} onClose={() => setSelected(null)} />
@@ -304,10 +353,10 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
                   <thead><tr><th scope="col">Time</th><th scope="col">Seats left</th>{manage && <th scope="col">Book</th>}</tr></thead>
                   <tbody>
                     {slots.data!.map((s) => {
-                      const started = Date.parse(s.startsAt) <= now.getTime();
+                      // Q13: the server lists only slots that have not started (and refuses one that starts meanwhile).
                       return (
                         <tr key={s.slotId} aria-current={chosen?.slot.slotId === s.slotId ? 'true' : undefined}>
-                          <td>{clock(s.startTime)}–{clock(s.endTime)}{started ? <span className="ws-muted"> (started)</span> : null}</td>
+                          <td>{clock(s.startTime)}–{clock(s.endTime)}</td>
                           <td>{s.seatsLeft}</td>
                           {manage && (
                             <td>
@@ -345,19 +394,30 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
 
 const patientName = (r: Pick<ClinicAppointment, 'patient'>) => r.patient?.name || 'Name not given';
 
+/** What a settled booking shows (from its answer, or from a by-key lookup when the details are gone after a reload). */
+interface ReceiptView { booking: DeskAppointment; replayed: boolean; created?: boolean; who?: string; branchName: string; doctorName?: string }
+
 /** The answer to a booking: what was booked, the fee to collect, and the way to bill it. */
-function Receipt({ ctx, receipt }: { ctx: ScopeContext; receipt: { result: DeskBookingResult; body: DeskPendingBody } }) {
-  const { result, body } = receipt;
-  const b = result.booking;
-  const who = body.request.customer.name?.trim() || canonicalMobile(body.request.customer.phone) || body.request.customer.phone;
+function Receipt({ ctx, receipt }: { ctx: ScopeContext; receipt: ReceiptView }) {
+  const b = receipt.booking;
   return (
     <Alert tone="ok">
-      {result.replayed ? 'This booking had already been made; nothing was booked twice. ' : 'Booked. '}
-      {who} with {b.doctorName ?? body.shown.doctorName} on {appointmentLabel(b)} at {body.shown.branchName}.
+      {receipt.replayed ? 'This booking had already been made; nothing was booked twice. ' : 'Booked. '}
+      {receipt.who ?? 'The patient'} with {receipt.doctorName ?? 'the doctor'} on {appointmentLabel(b)} at {receipt.branchName}.
       {' '}Fee {formatRupees(b.fee ?? 0)}, paid at the clinic.
-      {result.customer.created ? ' A Jansetu account was created for this mobile number.' : ''}
+      {receipt.created ? ' A Jansetu account was created for this mobile number.' : ''}
       {' '}<BillLink ctx={ctx} />
     </Alert>
+  );
+}
+
+/** The booking held while its outcome is unknown (session memory only; never stored or put in a URL). */
+function PendingBookingSummary({ body }: { body: DeskPendingBody }) {
+  const { request, shown } = body;
+  return (
+    <div>
+      {request.customer.name ? `${request.customer.name} (${request.customer.phone})` : request.customer.phone} with {shown.doctorName} on {formatDay(shown.day)}, {shown.time} at {shown.branchName}.
+    </div>
   );
 }
 
@@ -429,82 +489,6 @@ function BookingForm({ chosen, patient, setPatient, sending, refused, onCancel, 
   );
 }
 
-const FORGET_CONSEQUENCE = (
-  <>
-    The server cannot look up or cancel a desk booking request by its key. If it was booked after all, it shows in the day list;
-    booking again could then make a second appointment for the same patient, which you would have to cancel.
-  </>
-);
-
-/**
- * A desk booking whose answer was lost. Resending it unchanged is the safe way on (the server answers a repeated key with
- * the appointment it made). The day list can be checked for a look-alike, but the list has no request key, so only a
- * resend proves it. After a reload its details are gone: the person checks the day list, then may set it aside.
- * Render with `key={op.attempts}` so a check never outlives a later attempt.
- */
-function UnconfirmedBooking({ op, busy, onResend, onForget, check }: {
-  op: DeskPending; busy: boolean; onResend: () => void; onForget: () => void; check: () => Promise<ClinicAppointment[]>;
-}) {
-  const [checking, setChecking] = useState(false);
-  const [note, setNote] = useState<{ tone: 'ok' | 'warn' | 'error'; text: ReactNode } | null>(null);
-  const [notFound, setNotFound] = useState(false);
-
-  if (op.restored || !op.body) {
-    return (
-      <div className="confirm" role="group" aria-label="Unconfirmed booking">
-        <Alert tone="warn">
-          A desk booking made on this device ({formatDateTime(new Date(op.firstAttemptAt).toISOString())}) was not confirmed before the page was
-          reloaded or you signed out. Its details are not kept on this device, so it cannot be sent again, and the server has no
-          way to look a desk booking up by its key. Look for it in the day list below before booking that patient again.
-        </Alert>
-        <div className="confirm-actions">
-          <ConfirmAction label="I have checked the day list" danger confirmLabel="Set it aside" consequence={FORGET_CONSEQUENCE} onConfirm={async () => onForget()} />
-        </div>
-      </div>
-    );
-  }
-
-  const { request, shown } = op.body;
-  async function look() {
-    setChecking(true);
-    setNote(null);
-    try {
-      const found = lookalikes(await check(), request);
-      if (found.length) {
-        setNotFound(false);
-        setNote({ tone: 'ok', text: <>The day list has a desk appointment for this mobile number at this time ({found.map((f) => appointmentLabel(f)).join('; ')}). Send the same booking again to get its receipt: nothing is booked twice.</> });
-      } else {
-        setNotFound(true);
-        setNote({ tone: 'warn', text: 'Not in the day list so far. It may still be on its way: send the same booking again. Set it aside only if you are sure it was not booked.' });
-      }
-    } catch (err) {
-      setNote({ tone: 'error', text: `Could not read the day list: ${messageOf(err)}` });
-    } finally {
-      setChecking(false);
-    }
-  }
-
-  return (
-    <div className="confirm" role="group" aria-label="Unconfirmed booking">
-      <Alert tone="warn">
-        {busy ? 'Sending… ' : ''}The answer to this booking was lost{op.error ? ` (${op.error})` : ''}. It may already be booked. Sending
-        the same booking again is safe: the server answers with the appointment it made and never books it twice.
-      </Alert>
-      <div>
-        {request.customer.name ? `${request.customer.name} (${request.customer.phone})` : request.customer.phone} with {shown.doctorName} on {formatDay(shown.day)}, {shown.time} at {shown.branchName}.
-      </div>
-      {note && <Alert tone={note.tone}>{note.text}</Alert>}
-      <div className="confirm-actions">
-        <Button busy={busy} disabled={checking} onClick={onResend}>Send the same booking again</Button>
-        <Button variant="secondary" busy={checking} disabled={busy} onClick={() => void look()}>Check the day list</Button>
-        {notFound && !busy && (
-          <ConfirmAction label="Set this booking aside" danger confirmLabel="Set it aside" consequence={FORGET_CONSEQUENCE} onConfirm={async () => onForget()} />
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── One appointment ──
 
 function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, now, busy, reading, failure, perform, click, onClose }: {
@@ -544,14 +528,14 @@ function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, no
         <div className="ws-actions">
           {offer('arrived') && (
             <Button disabled={disabled} busy={busy === 'arrived'}
-              onClick={() => void click(appt, 'arrived', 'Not marked arrived', () => clinic.arrived(appt.bookingId), () => `${who} is marked as arrived.`)}>
+              onClick={() => void click(appt, 'arrived', 'Not marked arrived', () => clinic.arrived(appt.bookingId, appt.updatedAt), () => `${who} is marked as arrived.`)}>
               Mark arrived
             </Button>
           )}
           {offer('complete') && (
             <ConfirmAction label="Mark as seen" disabled={disabled} confirmLabel="Mark as seen"
               consequence={<>Mark {who}’s visit with {appt.doctorName ?? 'the doctor'} as seen? The appointment ends here and the doctor’s time is freed. The fee of {formatRupees(appt.fee ?? 0)} is paid at the clinic: make a bill for it under Bills.</>}
-              onConfirm={() => perform(appt, 'complete', () => clinic.complete(appt.bookingId), () => `${who}’s visit is marked as seen.`)} />
+              onConfirm={() => perform(appt, 'complete', () => clinic.complete(appt.bookingId, appt.updatedAt), () => `${who}’s visit is marked as seen.`)} />
           )}
           {offer('no_show') && <NoShow appt={appt} offer={offer('no_show')!} who={who} when={when} disabled={disabled} perform={perform} clinic={clinic} />}
           {offer('reschedule') && (
@@ -561,7 +545,7 @@ function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, no
             <ConfirmAction label="Cancel appointment" danger disabled={disabled} reason="optional" reasonLabel="Reason" maxReason={MAX_DESK_CANCEL_REASON}
               confirmLabel="Cancel appointment"
               consequence={<>Cancel {who}’s appointment with {appt.doctorName ?? 'the doctor'} on {when}? The seat and the doctor’s time are freed at once. No money moves: desk appointments are paid at the clinic, so nothing was taken online (if a bill was issued for this visit, cancel it under Bills). Without a reason, “Cancelled by the clinic” is recorded. This cannot be undone.</>}
-              onConfirm={(reason) => perform(appt, 'cancel', () => clinic.cancel(appt.bookingId, reason), () => `${who}’s appointment is cancelled.`)} />
+              onConfirm={(reason) => perform(appt, 'cancel', () => clinic.cancel(appt.bookingId, reason, appt.updatedAt), () => `${who}’s appointment is cancelled.`)} />
           )}
         </div>
       ) : appt.source === 'online' ? (
@@ -591,7 +575,7 @@ function NoShow({ appt, offer, who, when, disabled, perform, clinic }: {
   return (
     <ConfirmAction label="Mark did not come" danger disabled={disabled} confirmLabel="Mark did not come"
       consequence={<>Mark {who} as not come for {when}? The appointment ends and the doctor’s time is freed. {NO_MONEY} This cannot be undone.</>}
-      onConfirm={() => perform(appt, 'no_show', () => clinic.noShow(appt.bookingId), () => `${who} is marked as not come.`)} />
+      onConfirm={() => perform(appt, 'no_show', () => clinic.noShow(appt.bookingId, appt.updatedAt), () => `${who} is marked as not come.`)} />
   );
 }
 
@@ -637,12 +621,13 @@ function Reschedule({ ctx, clinic, appt, doctors, branches, now, disabled, perfo
     setSending(true);
     setError(null);
     try {
-      await perform(appt, 'reschedule', () => clinic.reschedule(appt.bookingId, picked.slotId),
+      await perform(appt, 'reschedule', () => clinic.reschedule(appt.bookingId, picked.slotId, appt.updatedAt),
         (n) => `Moved to ${appointmentLabel(n)} at ${target?.name ?? 'the clinic'}. Tell the patient: Jansetu does not notify them of desk appointment changes.`);
       setOpen(false);
     } catch (err) {
-      // E.g. the slot was taken meanwhile: show the free slots as they are now.
-      setError(messageOf(err));
+      // E.g. the slot was taken or has started meanwhile (409 SLOT_NOT_AVAILABLE / SLOT_STARTED): show the free slots
+      // as they are now. A changed appointment (BOOKING_CHANGED) is said above the steps and the day is read again.
+      setError(isChanged(err) ? CHANGED : messageOf(err));
       setConfirming(false);
       void queryClient.invalidateQueries({ queryKey: slotsKey });
     } finally {

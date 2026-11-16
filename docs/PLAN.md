@@ -552,6 +552,69 @@ Codex review of 80adab5 (REQUEST_CHANGES, 1 MEDIUM), fixed:
   shown only from a successful read: when the re-read fails the list shows the error with "Try again" and no appointment or step is offered;
   while the day is being read again the steps wait.
 
+## WQ7 WQ2/WQ5/WQ6 screens on the Q12/Q13 endpoints (2026-11-16, taken autonomously at the owner's request)
+
+Backend (read-only): `SwasthaDisha-worktrees/q13-doctor-finance` `m0/q13-doctor-finance` 4d877b6 (contains Q12), `src1/modules/partners/{routes/index.ts,
+controller,validation,services}/{catalogue,invoice,finance,clinic}.ts`, `bookings/holds.ts`, `requestKeys/index.ts`. Branch `wq/integration` (WQ5 + WQ6 on WQ1–WQ3).
+Doctor files (WQ4) were not touched.
+
+- **API modules.** `partnerInvoices.ts`: `catalogue(kind, includeInactive, q)` (server search, trimmed, 1–60 characters), `catalogueItemByKey`,
+  `abandonCatalogueKey` (key 8–100, checked before any path), `recordPayment` answers `PaymentAnswer` with `replayed` inside `data`. `finance.ts`:
+  `financeVersion` on accounts; `setPayoutDetails(body, expectedDetailsVersion)` (partner and admin); `expectedFinanceVersion` on payouts and
+  adjustments; `payoutByKey` / `abandonPayoutKey` / `adjustmentByKey` / `abandonAdjustmentKey`; payouts, events and the queue are cursor pages
+  (`PageQuery`, `<ms>_<id>` checked, limit ≤ 500) and queue rows are `QueuePayout` (with `account`). `isPayoutFor` / `isAdjustmentFor` are gone.
+  `clinic.ts`: invitations carry `doctor`, desk rows `updatedAt`; every desk step takes the version it was decided on (`expectedUpdatedAt`, an ISO
+  date checked first); `appointmentByKey` / `abandonBookingKey`.
+- **One recovery shape everywhere** (as WQ2 bills already had): a lost once-only create is shown by `PendingOpPanel` with "Send the same request
+  again", "Check whether it was recorded" (an exact by-key lookup, `keyedLookup` in `requests.ts`; a 404 means "not recorded so far", nothing more)
+  and, once a check found nothing, "Give up this …" (the server's abandon: `abandoned` = it can never be recorded, then the form opens; `used` = the
+  record, which settles it). After a reload the body-less marker's key is enough for both. A resend refused 409 `REQUEST_ABANDONED` (the key was
+  given up elsewhere, e.g. another tab after a reload) settles it as "given up, never recorded" for ANY attempt (`wasAbandoned`): the claim and the
+  record are written in one transaction, so no attempt with that key can ever commit. Every one of these answers acts only while its page is on
+  screen and the stored record is still that key and attempt (`owns` / `stillCurrent`); the pending record is still stored before each send.
+- **Price list (WQ2).** Lost item create: by-key lookup and give-up replace the price-list scan by `createRequestKey` and the "possible duplicate"
+  path. Search goes to the server (`GET /catalogue?q=`) 300 ms after typing stops; the text is page state only (never the URL); the previous answer
+  stays while a new search runs ("Searching…"); "No matching items" names the search. Type and status filters stay on the device. A replayed bill
+  payment says "It had already been recorded: nothing was recorded twice" (read from `data.replayed`).
+- **Finance (WQ5).** The destination PUT names the version it was reviewed on; 409 PAYOUT_DETAILS_CHANGED (a save landing between the re-read and
+  the write) closes the review, re-reads and shows what is saved now (the WQ5 reviewed-version capture before the re-read is kept). Payout and
+  adjustment reviews record `financeVersion` and close ("The account changed while you were reviewing…") when the account moves (another payout,
+  adjustment, void, destination change or verification); the body carries `expectedFinanceVersion`, so a stale decision is refused 409
+  FINANCE_CHANGED and the account is read again (the form keeps what was typed). Lost payout / adjustment: by-key lookup and give-up replace the
+  UTR/amount/date match and the statement scan; after a reload the marker + key are resolved definitively ("Forget" is gone). Payout queue: exact
+  cursor paging ("N payouts · showing M", "Show older payouts"), newest RECORDED first (the server's new order), names from each row's `account`
+  (owner name, else beneficiary): the 200-account name lookup is gone; the single-account view takes its name from a row or the account read.
+  Account payouts/events and partner payouts/events page the same way (`PagedSection`, 50 a page, four states, next-page error with retry).
+- **Front desk (WQ6).** A lost desk booking uses the same panel: lookup by key and give-up replace the day-list look-alike hint and "set aside",
+  also after a reload (the receipt then names the doctor, time and branch from the appointment; the patient's details are not kept). A give-up
+  answered `used` without an appointment (moved out of this desk's branches) settles it with that said. Started slots are no longer marked
+  "(started)" (the server leaves them out); 409 SLOT_STARTED is handled like a taken slot (details kept, slots read again) for bookings and moves.
+  Every step sends the `updatedAt` of the row it was decided on: the appointment panel is keyed by `bookingId:updatedAt`, so an open confirmation
+  or move form closes when the appointment changes, and the closure that sends always holds the version the person saw. 409 BOOKING_CHANGED says
+  "The appointment changed since you opened it … nothing was done" and the day is read again (as after every step). Invitations show the doctor's
+  name and speciality from the list (the in-memory names learnt from invite answers are gone).
+- **Review rules kept:** late answers only with `stillCurrent` on a live page; pending records stored before sending and settled only by their
+  owner; WQ5's version/generation capture before the re-read; one action at a time (`useOneAtATime`, the desk's per-appointment gate); no
+  unversioned answer written over a cache (desk answers still never are; finance and catalogue re-read); nothing private in storage, logs or URLs
+  (markers hold the key and times only; search text not in the URL); four states on every list; confirmations unchanged.
+
+Gaps closed (from the WQ2, WQ5 and WQ6 lists): server catalogue search; `replayed` inside `data`; item create lookup by key; payout-details PUT
+version (both); `financeVersion` + fenced payouts/adjustments; payout and adjustment key lookup/abandon; queue paging and account names; partner
+payouts/events paging; desk key lookup/abandon; invitation doctor names; started slots listed/bookable; desk step versions; desk answers without a
+version (steps are now fenced; the page still re-reads rather than overlaying answers).
+
+Still open:
+- `POST /invoices/:id/pay` takes no amount (no part payments: deferred in Q12 until an owner asks).
+- Payout-details PUT has no request key: a lost answer still reloads and asks the person to check (a resend with the old version is now refused
+  instead of overwriting).
+- Clinics cannot search Jansetu doctors (deferred in Q13: privacy, owner to decide); desk fees stay legacy rupees; no patient notification for desk
+  bookings/moves/cancellations; no invoice ↔ appointment link; family members not bookable at the desk; the day list is still capped at 1000 rows.
+- The partner workspace still has no legacy history route; doctors' own finance belongs to WQ4.
+- WQ3's lab gaps are untouched by this packet.
+
+Verification: see the 2026-11-16 WQ7 row below. Playwright ran on port 5271 with a temporary config (`reuseExistingServer: false`), not committed:
+the planned 5261 was already held by the WQ4 worktree's own dev server.
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -572,6 +635,7 @@ Codex review of 80adab5 (REQUEST_CHANGES, 1 MEDIUM), fixed:
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-16 | WQ7 (WQ2/WQ5/WQ6 on Q12/Q13) | typecheck clean; Vitest 143/143 (+4: catalogue search/by-key/abandon paths and key checks; finance cursor pages with total and queue account names, payout/adjustment by-key and abandon, `expectedDetailsVersion` and `expectedFinanceVersion` bodies, cursor/version checks before any request; desk step versions in every body and by-key/abandon paths; the look-alike and UTR-match helpers and their tests removed); Playwright workspace 308/308 (+18 = 9 journeys x 2 devices: catalogue item lost before a reload given up by key then a second one found by key; a resend of a given-up item key refused for good; payout lost before a reload checked by key, given up, a new one recorded, and its given-up resend refused; adjustment given up after a check, and one landing after the check answered `used` by the give-up; FINANCE_CHANGED on a stale adjustment and a payout review closed when the account moved; PAYOUT_DETAILS_CHANGED after the re-read closes the review and shows the saved details; queue/account/partner cursor paging with totals and row names; desk booking dropped before a reload given up, then a given-up resend refused; started slots not offered and SLOT_STARTED for a booking and a move; BOOKING_CHANGED on a stale cancel then a step on the new version; existing journeys updated: by-key checks, version bodies, replay text, invitation names, an open confirmation closing when the appointment changes, a move on a cached day refused then retried), no flakes; release build with VITE_API_BASE_URL=https://api.example.test. Port 5271, temporary config, not committed. Not yet run against a real backend or reviewed. |
 | 2026-11-16 | WQ5 review fixes | typecheck clean; Vitest 128/128; Playwright workspace 268/268 (+6 = 3 journeys x 2 devices: a background refresh during the details save's re-read moves the baseline and the reviewed older details are not sent; for a payout and for an adjustment, a left page's late success does not settle the attempt another page resent and lost (still shown after remounting, found by the check, recorded once)); all 3 journeys fail on 1c21528; release build. Spare port (temporary config, not committed). |
 | 2026-11-16 | WQ5 (partner finance, admin settlements/payouts) | typecheck clean; Vitest 122/122 (+13: member/admin-as-owner and `/settlements` paths and queries, request key in the body and identical on resend, CSV blob with the token in the header, id/date/cursor/limit/key checks before any request, destination normalisation as `normalizeDetails`, payout and reason rules, India "today", finding a lost adjustment by key and a lost payout by UTR/amount/date; app: destination labels, form baseline never holding a masked number, event texts, India dates); Playwright workspace 226/226 (+18 = 9 journeys x 2 devices: partner balance, statement paging with running balance, period filter and CSV blob; owner changes the destination after a review saying it must be verified again, then a change made elsewhere stops the save after the re-read; staff with finance.view read-only, without it or branch-limited no page and no request; admin accounts filters, totals and paging; verify, stale details version refused, lost payout answer resent once (one payout); adjustment lost answer found by key; adjustment sent before a reload found by key afterwards (only a body-less marker kept); void from the queue with reason; admin as owner with the full account number; nothing private in storage or URLs); release build with VITE_API_BASE_URL=https://api.example.test. Playwright ran on port 5197 (temporary config, not committed). Not yet run against a real backend or reviewed. |
 | 2026-11-14 | W1 (first cut) | typecheck clean; Vitest 10/10; Playwright 14/14; release build guards. Codex review: 6 findings (file URL shape, queue scope x2, late 401 across sign-ins, "opened" ≠ readable, body timeout). |

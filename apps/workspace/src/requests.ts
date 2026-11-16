@@ -80,3 +80,26 @@ export function resolveStored(memory: { get<T>(key: string): T | undefined; dele
   if (!stored || stored.requestKey === requestKey) memory.delete(slot);
 }
 
+
+/**
+ * The server refused the request because its key was given up (`REQUEST_ABANDONED`): the key's claim is abandoned, and
+ * the claim is written in the same transaction as the record, so nothing was or ever will be recorded under it. Unlike
+ * other refusals this is definite for every attempt, not only a sole first one.
+ */
+export const wasAbandoned = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'REQUEST_ABANDONED';
+
+/**
+ * An exact by-key lookup (Q10/Q12/Q13 `GET .../by-key/:key`) as the newest-first "records" `PendingOpPanel` checks: the
+ * record that key produced, or nothing on a 404 (not recorded yet: only a give-up on the server settles that).
+ */
+export function keyedLookup<T>(requestKey: string, find: () => Promise<T>) {
+  return async (page: number): Promise<Page<T & { requestKey: string }>> => {
+    let items: (T & { requestKey: string })[] = [];
+    try {
+      items = [{ ...(await find()), requestKey }];
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 404)) throw err;
+    }
+    return { items, page, limit: 1, total: items.length, totalPages: 1 };
+  };
+}

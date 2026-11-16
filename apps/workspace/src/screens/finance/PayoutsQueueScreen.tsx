@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
-import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import {
-  isRealDate, MAX_FINANCE_REASON, OBJECT_ID_PATTERN, PAYOUT_STATE_LABEL, PAYOUTS_LIMIT_MAX, settlementsApi,
-  type PayoutsQuery, type PayoutState, type SettlementPayout,
+  isRealDate, MAX_FINANCE_REASON, OBJECT_ID_PATTERN, PAYOUT_STATE_LABEL, settlementsApi,
+  type PayoutsQuery, type PayoutState, type QueuePayout,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
@@ -16,10 +16,13 @@ import { formatDate, PayoutsTable, useOneAtATime } from './finance.tsx';
 const STATES: PayoutState[] = ['recorded', 'voided'];
 const STEP = 100;
 
+/** The account a queue row belongs to, as the row names it (Q13: the owner's current name, else the beneficiary). */
+const accountName = (p: QueuePayout) => p.account?.ownerName || p.account?.beneficiaryName || `Account …${p.settlementAccountId.slice(-6)}`;
+
 /**
- * Admin: recorded payouts across every account, newest paid first (`adminListPayouts`), filtered by state, paid-on
- * dates and (from an account page) one account; void a payout recorded by mistake. The server has no paging beyond a
- * limit (at most 500), so "Show more" asks for a longer list.
+ * Admin: payouts across every account, newest RECORDED first (Q13 `adminPayoutsPage`), filtered by state, paid-on dates
+ * and (from an account page) one account; void a payout recorded by mistake. Paged by the server's exact cursor with
+ * the total; each row names its account, so no separate account list is read for names.
  */
 export function PayoutsQueueScreen() {
   const { api } = useSession();
@@ -31,18 +34,25 @@ export function PayoutsQueueScreen() {
   const [state, setState] = useState<'' | PayoutState>('recorded');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const [limit, setLimit] = useState(STEP);
   const bad = (from && !isRealDate(from)) || (to && !isRealDate(to)) ? 'Enter real dates.' : from && to && from > to ? 'The period ends before it starts.' : null;
-  const q: PayoutsQuery = { accountId, state: state || undefined, from: from || undefined, to: to || undefined, limit };
-  const list = useQuery({ queryKey: ['settlements', 'payouts', q], queryFn: () => s.payoutQueue(q), enabled: !bad, placeholderData: keepPreviousData });
-  // Payout rows carry only the account id: names come from the account list (largest balances first, up to 200).
-  const accounts = useQuery({ queryKey: ['settlements', 'accounts', 'names'], queryFn: () => s.accounts({ limit: 200 }) });
-  const names = useMemo(() => new Map((accounts.data?.rows ?? []).map((a) => [a._id, a.beneficiaryName])), [accounts.data]);
+  const q: PayoutsQuery = { accountId, state: state || undefined, from: from || undefined, to: to || undefined, limit: STEP };
+  const list = useInfiniteQuery({
+    queryKey: ['settlements', 'payouts', q], enabled: !bad, placeholderData: keepPreviousData,
+    queryFn: ({ pageParam }) => s.payoutQueue({ ...q, cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+  const rows = useMemo(() => {
+    const seen = new Set<string>();
+    const out: QueuePayout[] = [];
+    for (const p of list.data?.pages ?? []) for (const r of p.items) if (!seen.has(r._id)) { seen.add(r._id); out.push(r); }
+    return out;
+  }, [list.data]);
+  const total = list.data?.pages.at(-1)?.total ?? rows.length;
   const { perform, busy } = useOneAtATime('payout list');
   const [notice, setNotice] = useState<string | null>(null);
-  const reset = () => setLimit(STEP);
 
-  async function voidIt(p: SettlementPayout, reason: string) {
+  async function voidIt(p: QueuePayout, reason: string) {
     await perform(async () => {
       try {
         const v = await s.voidPayout(p._id, reason);
@@ -54,26 +64,31 @@ export function PayoutsQueueScreen() {
     });
   }
 
-  const rows = list.data ?? [];
+  const only = rows.find((r) => r.settlementAccountId.toLowerCase() === accountId);
+  // With no row of that account listed (e.g. none recorded), its name comes from the account itself (same cache as its page).
+  const single = useQuery({
+    queryKey: ['settlements', 'account', accountId ?? '', 'summary'], queryFn: () => s.account(accountId!), enabled: !!accountId && !only && !list.isPending,
+  });
+  const singleName = only ? accountName(only) : single.data?.account?.beneficiaryName;
   return (
     <>
-      <PageHeading title="Payouts">Transfers recorded for labs, clinics and doctors, newest first. Void one recorded by mistake.</PageHeading>
+      <PageHeading title="Payouts">Transfers recorded for labs, clinics and doctors, newest recorded first. Void one recorded by mistake.</PageHeading>
       {notice && <Alert tone="ok">{notice}</Alert>}
       <div className="ws-search" role="group" aria-label="Filters">
         <div className="j-field ws-filter">
           <label htmlFor="pq-state">Status</label>
-          <select id="pq-state" value={state} onChange={(e) => { setState(e.target.value as '' | PayoutState); reset(); }}>
+          <select id="pq-state" value={state} onChange={(e) => { setState(e.target.value as '' | PayoutState); }}>
             <option value="">All</option>
             {STATES.map((x) => <option key={x} value={x}>{PAYOUT_STATE_LABEL[x]}</option>)}
           </select>
         </div>
-        <TextField label="Paid from" type="date" value={from} error={bad} onChange={(e) => { setFrom(e.target.value); reset(); }} />
-        <TextField label="Paid to" type="date" value={to} onChange={(e) => { setTo(e.target.value); reset(); }} />
+        <TextField label="Paid from" type="date" value={from} error={bad} onChange={(e) => { setFrom(e.target.value); }} />
+        <TextField label="Paid to" type="date" value={to} onChange={(e) => { setTo(e.target.value); }} />
       </div>
       {accountId && (
         <p className="ws-muted">
-          Only {names.get(accountId) ?? `account …${accountId.slice(-6)}`}.{' '}
-          <Button variant="ghost" onClick={() => { const n = new URLSearchParams(params); n.delete('account'); setParams(n, { replace: true }); reset(); }}>Show every account</Button>
+          Only {singleName ?? `account …${accountId.slice(-6)}`}.{' '}
+          <Button variant="ghost" onClick={() => { const n = new URLSearchParams(params); n.delete('account'); setParams(n, { replace: true }); }}>Show every account</Button>
         </p>
       )}
       {bad ? null
@@ -82,22 +97,23 @@ export function PayoutsQueueScreen() {
         : rows.length === 0 ? <Empty title="No payouts">{state || from || to || accountId ? 'No payout matches these filters.' : 'Payouts recorded from an account appear here.'}</Empty>
         : (
           <>
-            {list.isError && <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />}
-            <PayoutsTable payouts={rows} caption="Payouts, newest paid first"
-              accountCell={(p) => <Link to={`/admin/settlements/${p.settlementAccountId}`}>{names.get(p.settlementAccountId) ?? `Account …${p.settlementAccountId.slice(-6)}`}</Link>}
+            {list.isError && !list.isFetchNextPageError && <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />}
+            <p className="ws-count">{total} {total === 1 ? 'payout' : 'payouts'} · showing {rows.length}</p>
+            <PayoutsTable payouts={rows} caption="Payouts, newest recorded first"
+              accountCell={(p) => <Link to={`/admin/settlements/${p.settlementAccountId}`}>{accountName(p)}</Link>}
               actions={(p) => (p.state !== 'recorded' ? null : (
                 <ConfirmAction label="Void" danger disabled={busy} reason reasonLabel="Why is it voided?" maxReason={MAX_FINANCE_REASON} confirmLabel="Void the payout"
                   consequence={<>
                     Void the payout of {money(p.amountMinor)} paid on {formatDate(p.paidOn)} (reference {p.reference})? It stays listed as voided and
-                    {' '}{money(p.amountMinor)} is credited back to {names.get(p.settlementAccountId) ?? 'the account'}’s balance. Do this only if the transfer did not
+                    {' '}{money(p.amountMinor)} is credited back to {p.account ? accountName(p) : 'the account'}’s balance. Do this only if the transfer did not
                     reach them or came back. It cannot be undone.
                   </>}
                   onConfirm={(reason) => voidIt(p, reason)} />
               ))} />
-            {rows.length >= limit && limit < PAYOUTS_LIMIT_MAX && (
-              <div><Button variant="secondary" busy={list.isFetching} onClick={() => setLimit(Math.min(PAYOUTS_LIMIT_MAX, limit + STEP))}>Show more</Button></div>
+            {list.isFetchNextPageError && <ErrorState message={`Could not load more: ${messageOf(list.error)}`} onRetry={() => void list.fetchNextPage()} />}
+            {list.hasNextPage && (
+              <div><Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>Show older payouts</Button></div>
             )}
-            {rows.length >= PAYOUTS_LIMIT_MAX && <p className="ws-muted">Only the latest {PAYOUTS_LIMIT_MAX} are listed: narrow the dates to see older ones.</p>}
           </>
         )}
     </>

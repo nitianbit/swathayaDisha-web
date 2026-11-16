@@ -6,8 +6,11 @@ import { messageOf } from '../../errors.ts';
 import { useSession } from '../../session.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from '../partner/scope.tsx';
 import {
-  EventsList, ListSection, PayoutDetailsForm, PayoutDetailsList, PayoutsTable, StatementSection, SummaryCards,
+  EventsList, PagedSection, PayoutDetailsForm, PayoutDetailsList, PayoutsTable, StatementSection, SummaryCards,
 } from './finance.tsx';
+
+/** Q13 cursor pages of payouts and finance events. */
+const PAGE = 50;
 
 /**
  * Partner finance (`/partner/finance`; admins as owner at `/admin/partners/:partnerId/finance`): balance and totals, the
@@ -30,8 +33,6 @@ function PartnerFinance({ ctx }: { ctx: ScopeContext }) {
   const partner = useWorkspacePartner(ctx);
   const key = [...ctx.key, 'finance'];
   const summary = useQuery({ queryKey: [...key, 'summary'], queryFn: () => fin.summary() });
-  const payouts = useQuery({ queryKey: [...key, 'payouts'], queryFn: () => fin.payouts() });
-  const events = useQuery({ queryKey: [...key, 'events'], queryFn: () => fin.events() });
   const [editing, setEditing] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
   const isOwner = ctx.actor.role === 'owner';
@@ -71,7 +72,7 @@ function PartnerFinance({ ctx }: { ctx: ScopeContext }) {
               ) : editing ? (
                 <PayoutDetailsForm account={s.account} audience={admin ? 'admin' : 'owner'}
                   reread={async () => (await fin.summary()).account}
-                  save={(body) => fin.setPayoutDetails(body)}
+                  save={(body, version) => fin.setPayoutDetails(body, version)}
                   onSaved={(a) => {
                     setEditing(false);
                     setNotice({ tone: 'ok', text: `Payout details saved (version ${a.payoutDetailsVersion}). They wait for Jansetu’s verification; no payout is made until then.` });
@@ -91,12 +92,14 @@ function PartnerFinance({ ctx }: { ctx: ScopeContext }) {
             )}
           </>
         )}
-      <ListSection id="fin-po-h" title="Payouts" q={payouts} empty="Transfers Jansetu records appear here.">
+      <PagedSection id="fin-po-h" title="Payouts" queryKey={[...key, 'payouts']} load={(cursor) => fin.payouts({ cursor, limit: PAGE })}
+        empty="Transfers Jansetu records appear here." more="Show older payouts">
         {(rows) => <PayoutsTable payouts={rows} caption="Payouts, newest first" />}
-      </ListSection>
-      <ListSection id="fin-ev-h" title="Finance events" q={events} empty="Changes to payout details, payouts and adjustments appear here.">
+      </PagedSection>
+      <PagedSection id="fin-ev-h" title="Finance events" queryKey={[...key, 'events']} load={(cursor) => fin.events({ cursor, limit: PAGE })}
+        empty="Changes to payout details, payouts and adjustments appear here." more="Show older events">
         {(rows) => <EventsList events={rows} selfId={ctx.actor.memberId} />}
-      </ListSection>
+      </PagedSection>
     </>
   );
 }

@@ -1,7 +1,6 @@
 import { createApiClient } from './client.ts';
 import {
-  isAdjustmentFor, isPayoutFor, isStatementCsv, istToday, partnerFinanceApi, payoutDetailsProblems, payoutProblems, reasonProblem,
-  settlementsApi, statementCsvName, type SettlementPayout,
+  isStatementCsv, istToday, partnerFinanceApi, payoutDetailsProblems, payoutProblems, reasonProblem, settlementsApi, statementCsvName,
 } from './finance.ts';
 
 const P = 'a1'.repeat(12);
@@ -30,14 +29,50 @@ describe('finance paths', () => {
     await admin.payouts();
     await admin.events();
     await admin.setPayoutDetails({ method: 'upi', upiId: 'lab@okbank' });
+    // Q13: cursor pages, and the details version the edit started from.
+    await member.payouts({ cursor: `1763000000000_${A}`, limit: 50 });
+    await member.events({ limit: 50 });
+    await member.setPayoutDetails({ method: 'upi', upiId: 'lab@okbank' }, 0);
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       'GET /partner-workspace/finance',
       `GET /partner-workspace/finance/statement?from=2026-11-01&to=2026-11-15&before=1763000000000_${A}&limit=50`,
       `GET /partner-workspace/admin/${P}/workspace/finance/payouts`,
       `GET /partner-workspace/admin/${P}/workspace/finance/events`,
       `PUT /partner-workspace/admin/${P}/workspace/finance/payout-details`,
+      `GET /partner-workspace/finance/payouts?cursor=1763000000000_${A}&limit=50`,
+      'GET /partner-workspace/finance/events?limit=50',
+      'PUT /partner-workspace/finance/payout-details',
     ]);
     expect(calls[4]!.body).toEqual({ method: 'upi', upiId: 'lab@okbank' });
+    expect(calls[7]!.body).toEqual({ method: 'upi', upiId: 'lab@okbank', expectedDetailsVersion: 0 });
+  });
+
+  it('Q13: reads payouts, events and the queue as cursor pages with the total; the queue rows name their account', async () => {
+    const row = { _id: PO, settlementAccountId: A, amountMinor: 100, account: { accountId: A, ownerKind: 'partner', ownerId: P, beneficiaryName: 'City Lab', ownerName: 'City Lab' } };
+    const { client } = recorder(() => new Response(JSON.stringify({ success: true, data: [row], pagination: { total: 7, nextCursor: `1763000000000_${PO}` } }), { status: 200 }));
+    const s = settlementsApi(client);
+    const q = await s.payoutQueue({ state: 'recorded' });
+    expect(q.items[0]!.account?.ownerName).toBe('City Lab');
+    expect(q.total).toBe(7);
+    expect(q.nextCursor).toBe(`1763000000000_${PO}`);
+    const last = await settlementsApi(recorder(() => new Response(JSON.stringify({ success: true, data: [], pagination: { total: 0, nextCursor: null } }), { status: 200 })).client).events(A);
+    expect(last).toMatchObject({ items: [], total: 0, nextCursor: null });
+  });
+
+  it('Q13: looks up and gives up a lost payout or adjustment by its key on the account', async () => {
+    const { client, calls } = recorder(() => new Response(JSON.stringify({ success: true, data: { state: 'abandoned' } }), { status: 200 }));
+    const s = settlementsApi(client);
+    await s.payoutByKey(A, KEY);
+    await s.abandonPayoutKey(A, KEY);
+    await s.adjustmentByKey(A, KEY);
+    expect(await s.abandonAdjustmentKey(A, KEY)).toEqual({ state: 'abandoned' });
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `GET /settlements/accounts/${A}/payouts/by-key/${KEY}`,
+      `POST /settlements/accounts/${A}/payouts/by-key/${KEY}/abandon`,
+      `GET /settlements/accounts/${A}/adjustments/by-key/${KEY}`,
+      `POST /settlements/accounts/${A}/adjustments/by-key/${KEY}/abandon`,
+    ]);
+    expect(calls[1]!.body).toEqual({});
   });
 
   it('builds the admin settlements paths and queries', async () => {
@@ -53,6 +88,8 @@ describe('finance paths', () => {
     await s.verifyPayoutDetails(A, 3);
     await s.payoutQueue({ accountId: A, state: 'recorded', from: '2026-11-01', limit: 100 });
     await s.voidPayout(PO, 'Transfer bounced');
+    await s.payoutQueue({ cursor: `1763000000000_${PO}`, limit: 100 });
+    await s.setPayoutDetails(A, { method: 'upi', upiId: 'lab@okbank' }, 4);
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       'GET /settlements/accounts?ownerKind=doctor&due=true&search=Rao&detailsState=unverified&limit=50&skip=50',
       'GET /settlements/accounts',
@@ -64,7 +101,10 @@ describe('finance paths', () => {
       `POST /settlements/accounts/${A}/payout-details/verify`,
       `GET /settlements/payouts?accountId=${A}&from=2026-11-01&state=recorded&limit=100`,
       `POST /settlements/payouts/${PO}/void`,
+      `GET /settlements/payouts?cursor=1763000000000_${PO}&limit=100`,
+      `PUT /settlements/accounts/${A}/payout-details`,
     ]);
+    expect(calls[11]!.body).toEqual({ method: 'upi', upiId: 'lab@okbank', expectedDetailsVersion: 4 });
     expect(calls[7]!.body).toEqual({ version: 3 });
     expect(calls[9]!.body).toEqual({ reason: 'Transfer bounced' });
   });
@@ -72,16 +112,17 @@ describe('finance paths', () => {
   it('sends the request key in the body (no header) and the same body again on a resend', async () => {
     const { client, calls } = recorder(() => new Response(JSON.stringify({ success: true, data: { payout: {}, replayed: true } }), { status: 200 }));
     const s = settlementsApi(client);
-    const body = { amountMinor: 150000, method: 'bank_transfer' as const, reference: 'UTR12345', paidOn: '2026-11-15', detailsVersion: 2, requestKey: KEY };
+    const body = { amountMinor: 150000, method: 'bank_transfer' as const, reference: 'UTR12345', paidOn: '2026-11-15', detailsVersion: 2, requestKey: KEY,
+      expectedFinanceVersion: 5 };
     await s.recordPayout(A, body);
     await s.recordPayout(A, body);
-    await s.postAdjustment(A, { amountMinor: -5000, reason: 'Recovery of a duplicate earning', requestKey: KEY });
+    await s.postAdjustment(A, { amountMinor: -5000, reason: 'Recovery of a duplicate earning', requestKey: KEY, expectedFinanceVersion: 6 });
     expect(calls[0]!.url).toBe(`/settlements/accounts/${A}/payouts`);
     expect(calls[0]!.body).toEqual(body);
     expect(calls[1]!.body).toEqual(calls[0]!.body);
     expect(calls[0]!.headers['Idempotency-Key']).toBeUndefined();
     expect(calls[2]!.url).toBe(`/settlements/accounts/${A}/adjustments`);
-    expect(calls[2]!.body).toEqual({ amountMinor: -5000, reason: 'Recovery of a duplicate earning', requestKey: KEY });
+    expect(calls[2]!.body).toEqual({ amountMinor: -5000, reason: 'Recovery of a duplicate earning', requestKey: KEY, expectedFinanceVersion: 6 });
   });
 
   it('reads the CSV as a blob with the token in the header, never in the URL', async () => {
@@ -118,6 +159,13 @@ describe('finance paths', () => {
     expect(() => s.recordPayout(A, { amountMinor: 1, method: 'upi', reference: 'UTR1', paidOn: '2026-11-15', detailsVersion: 1, requestKey: 'short' }))
       .toThrow('Invalid request key');
     expect(() => s.postAdjustment(A, { amountMinor: 1, reason: 'abc', requestKey: 'bad key!' })).toThrow('Invalid request key');
+    expect(() => s.postAdjustment(A, { amountMinor: 1, reason: 'abc', requestKey: KEY, expectedFinanceVersion: -1 })).toThrow('Invalid finance version');
+    expect(() => s.payouts(A, { cursor: '12_x' })).toThrow('Invalid page cursor');
+    expect(() => member.events({ limit: 501 })).toThrow('Invalid limit');
+    expect(() => s.payoutQueue({ cursor: 'abc' })).toThrow('Invalid page cursor');
+    expect(() => s.payoutByKey(A, 'short')).toThrow('Invalid request key');
+    expect(() => s.abandonAdjustmentKey('x', KEY)).toThrow('Invalid account id');
+    expect(() => member.setPayoutDetails({ method: 'upi', upiId: 'lab@okbank' }, 1.5)).toThrow('Invalid details version');
     expect(() => partnerFinanceApi(client, { kind: 'admin', partnerId: 'x' }).summary()).toThrow('Invalid partner id');
     expect(calls).toHaveLength(0);
   });
@@ -154,15 +202,4 @@ describe('finance rules mirrored from services/finance.ts', () => {
     expect(istToday(new Date('2026-11-15T18:31:00.000Z'))).toBe('2026-11-16');
   });
 
-  it('recognises a lost adjustment by its key and a lost payout by account, reference, amount and date', () => {
-    expect(isAdjustmentFor({ source: 'admin_adjustment', sourceId: `ad:${KEY}` }, KEY)).toBe(true);
-    expect(isAdjustmentFor({ source: 'payout_void', sourceId: `ad:${KEY}` }, KEY)).toBe(false);
-    expect(isAdjustmentFor({ source: 'admin_adjustment', sourceId: `ad:x${KEY}` }, KEY)).toBe(false);
-    const p: SettlementPayout = { _id: PO, settlementAccountId: A, amountMinor: 150000, method: 'bank_transfer', reference: 'UTR1234', paidOn: '2026-11-15',
-      destination: { method: 'bank', label: 'HDFC0001234 XXXX9012', detailsVersion: 2 }, state: 'recorded', by: 'ad' };
-    const body = { amountMinor: 150000, method: 'bank_transfer' as const, reference: ' UTR1234 ', paidOn: '2026-11-15', detailsVersion: 2 };
-    expect(isPayoutFor(p, A.toUpperCase(), body)).toBe(true);
-    expect(isPayoutFor({ ...p, state: 'voided' }, A, body)).toBe(false);
-    expect(isPayoutFor(p, A, { ...body, amountMinor: 1 })).toBe(false);
-  });
 });

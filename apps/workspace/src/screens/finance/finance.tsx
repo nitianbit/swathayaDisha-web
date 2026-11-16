@@ -5,7 +5,7 @@ import { Download } from 'lucide-react';
 import {
   ApiError, DETAILS_STATE_LABEL, isRealDate, isStatementCsv, LEDGER_KIND_LABEL, MAX_ACCOUNT_NAME, MAX_BANK_NAME, MAX_UPI_ID,
   PAYOUT_METHOD_LABEL, PAYOUT_STATE_LABEL, payoutDetailsProblems, statementCsvName,
-  type FinanceEvent, type FinanceSummary, type PayoutDetailsInput, type PayoutDetailsState, type PayoutDetailsView, type PeriodQuery,
+  type FinanceEvent, type FinanceSummary, type Page, type PayoutDetailsInput, type PayoutDetailsState, type PayoutDetailsView, type PeriodQuery,
   type SettlementAccount, type SettlementPayout, type StatementLine, type StatementPage, type StatementQuery,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
@@ -254,12 +254,12 @@ function CsvDownload({ period, csv, csvPrefix }: { period: PeriodQuery; csv: (q:
 
 // ── Payouts and events ──
 
-export function PayoutsTable({ payouts, caption, accountCell, actions }: {
-  payouts: readonly SettlementPayout[];
+export function PayoutsTable<P extends SettlementPayout>({ payouts, caption, accountCell, actions }: {
+  payouts: readonly P[];
   caption: string;
   /** Admin queue: which account each payout belongs to. */
-  accountCell?: (p: SettlementPayout) => ReactNode;
-  actions?: (p: SettlementPayout) => ReactNode;
+  accountCell?: (p: P) => ReactNode;
+  actions?: (p: P) => ReactNode;
 }) {
   return (
     <div className="ws-table-wrap">
@@ -343,6 +343,48 @@ export function EventsList({ events, selfId }: { events: readonly FinanceEvent[]
   );
 }
 
+/**
+ * Q13: a list read one exact cursor page at a time (`pagination {total, nextCursor}`), with the four states, the total and
+ * "Show more". `queryKey` must identify the list (account and scope); pages are de-duplicated by `_id`.
+ */
+export function PagedSection<T extends { _id: string }>({ id, title, queryKey, load, empty, more = 'Show more', children }: {
+  id: string; title: string; queryKey: readonly unknown[];
+  load: (cursor: string | undefined) => Promise<Page<T>>;
+  empty: ReactNode; more?: string; children: (rows: T[]) => ReactNode;
+}) {
+  const list = useInfiniteQuery({
+    queryKey,
+    queryFn: ({ pageParam }) => load(pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+  const rows = useMemo(() => {
+    const seen = new Set<string>();
+    const out: T[] = [];
+    for (const p of list.data?.pages ?? []) for (const r of p.items) if (!seen.has(r._id)) { seen.add(r._id); out.push(r); }
+    return out;
+  }, [list.data]);
+  const total = list.data?.pages.at(-1)?.total ?? rows.length;
+  return (
+    <section className="ws-section" aria-labelledby={id}>
+      <h2 id={id}>{title}</h2>
+      {list.isPending ? <Loading label={`Loading ${title.toLowerCase()}…`} />
+        : list.isError && !list.data ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
+        : rows.length === 0 ? <Empty title={`No ${title.toLowerCase()}`}>{empty}</Empty>
+        : (
+          <>
+            <p className="ws-count">{total} in all · showing {rows.length}</p>
+            {children(rows)}
+            {list.isFetchNextPageError && <ErrorState message={`Could not load more: ${messageOf(list.error)}`} onRetry={() => void list.fetchNextPage()} />}
+            {list.hasNextPage && (
+              <div><Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>{more}</Button></div>
+            )}
+          </>
+        )}
+    </section>
+  );
+}
+
 /** A list section with the four states. */
 export function ListSection<T>({ id, title, q, empty, children }: {
   id: string; title: string;
@@ -376,16 +418,18 @@ export function draftOfDetails(a: SettlementAccount | null): DetailsDraft {
 }
 
 /**
- * Change where payouts go (`payoutDetailsSchema`). The server has no expected-version on this PUT (last write wins), so
- * the form keeps the version it started from: a change made elsewhere meanwhile replaces the draft with what is saved
- * (with a notice), and the account is read again right before sending; a different version there stops the save.
- * Any change makes the destination unverified: payouts wait for an admin's verification of the new version.
+ * Change where payouts go (`payoutDetailsSchema`). The form keeps the version it started from: a change made elsewhere
+ * meanwhile replaces the draft with what is saved (with a notice), and the account is read again right before sending; a
+ * different version there stops the save. Q13: the PUT also names that version (`expectedDetailsVersion`), so a change
+ * landing between the re-read and the write is refused by the server (409 PAYOUT_DETAILS_CHANGED): the form then shows
+ * what is saved now and closes the review. Any change makes the destination unverified until an admin verifies it.
  */
 export function PayoutDetailsForm({ account, audience, reread, save, perform, onSaved, onLost, onStale, onCancel }: {
   account: SettlementAccount | null;
   audience: 'owner' | 'admin';
   reread: () => Promise<SettlementAccount | null>;
-  save: (body: PayoutDetailsInput) => Promise<SettlementAccount>;
+  /** Sends the destination with the version it was reviewed on (`expectedDetailsVersion`). */
+  save: (body: PayoutDetailsInput, expectedDetailsVersion: number) => Promise<SettlementAccount>;
   perform?: Perform;
   onSaved: (saved: SettlementAccount) => void;
   /** The answer did not come back: the details may or may not have changed (the caller reloads and says so). */
@@ -470,13 +514,26 @@ export function PayoutDetailsForm({ account, audience, reread, save, perform, on
         return null;
       }
       sent = true;
-      return save(body);
+      return save(body, reviewedVersion);
     };
     try {
       const saved = await (perform ? perform(run) : run());
       if (saved && live.current) onSaved(saved);
     } catch (err) {
       if (!live.current) return;
+      if (sent && err instanceof ApiError && err.code === 'PAYOUT_DETAILS_CHANGED') {
+        // Q13: someone saved other details after the re-read; nothing was saved here. Show what is saved now.
+        setReviewing(false);
+        onStale?.();
+        try {
+          const now = await reread();
+          if (!live.current) return;
+          const v = now?.payoutDetailsVersion ?? 0;
+          if (baseVersion.current !== v) moveTo(draftOfDetails(now), v, true);
+        } catch { /* the page's own refresh shows the details */ }
+        if (live.current) setStale('The payout details were changed elsewhere just as you saved, so nothing was saved. The form shows what is saved now; make your change again if it is still needed.');
+        return;
+      }
       if (!sent || definitelyNotRecorded(err)) setError(sent ? `Not saved: ${messageOf(err)}` : messageOf(err));
       else onLost(`The answer did not come back (${messageOf(err)}), so the details may or may not have been saved. Check the payout details shown before changing them again.`);
     } finally {

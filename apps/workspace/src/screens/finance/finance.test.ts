@@ -3,7 +3,7 @@ import { detailsLabel, draftOfDetails, eventText, formatDate } from './finance.t
 
 const account = (o: Partial<SettlementAccount>): SettlementAccount => ({
   _id: 'c1'.repeat(12), ownerKind: 'partner', ownerId: 'a1'.repeat(12), beneficiaryName: 'City Lab', isActive: true, payoutDetails: null,
-  payoutDetailsState: 'none', payoutDetailsVersion: 0, ...o,
+  payoutDetailsState: 'none', payoutDetailsVersion: 0, financeVersion: 0, ...o,
 });
 const ev = (action: string, detail: Record<string, unknown>): FinanceEvent => ({ _id: 'e', settlementAccountId: 'c', action, byKind: 'admin', by: 'x', detail, at: '2026-11-16T06:30:00.000Z' });
 

@@ -3,24 +3,28 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  isAdjustmentFor, isPayoutFor, istToday, MAX_FINANCE_MINOR, MAX_FINANCE_REASON, MAX_PAYOUT_NOTE, MAX_PAYOUT_REFERENCE,
+  istToday, MAX_FINANCE_MINOR, MAX_FINANCE_REASON, MAX_PAYOUT_NOTE, MAX_PAYOUT_REFERENCE,
   OBJECT_ID_PATTERN, OWNER_KIND_LABEL, PAYOUT_METHOD_LABEL, PAYOUT_METHODS, payoutProblems, reasonProblem, rupeesToPaise, settlementsApi,
-  type AdjustmentInput, type FinanceSummary, type Page, type PayoutMethod, type RecordPayoutInput, type SettlementAccount,
-  type SettlementPayout, type StatementLine,
+  type AdjustmentInput, type FinanceSummary, type PayoutMethod, type RecordPayoutInput, type SettlementAccount, type SettlementPayout,
 } from '@jansetu/api';
 import { Alert, Button, ErrorState, formatDateTime, Loading, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
-import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
+import {
+  afterFailure, beginAttempt, keyedLookup, newRequestKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp,
+} from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { NoSuchPartner } from '../partner/scope.tsx';
 import { money } from '../partner/billing.tsx';
 import {
-  detailsLabel, EventsList, formatDate, ListSection, PayoutDetailsForm, PayoutDetailsList, PayoutsTable, Signed, StatementSection,
+  detailsLabel, EventsList, formatDate, ListSection, PagedSection, PayoutDetailsForm, PayoutDetailsList, PayoutsTable, Signed, StatementSection,
   SummaryCards, useOneAtATime, type Perform,
 } from './finance.tsx';
+
+/** Q13 cursor pages of the account's payouts and events. */
+const PAGE = 50;
 
 type Api = ReturnType<typeof settlementsApi>;
 type Funded = FinanceSummary & { account: SettlementAccount };
@@ -39,9 +43,7 @@ function AccountPage({ accountId }: { accountId: string }) {
   const s = useMemo(() => settlementsApi(api), [api]);
   const key = ['settlements', 'account', accountId];
   const summary = useQuery({ queryKey: [...key, 'summary'], queryFn: () => s.account(accountId) });
-  const payouts = useQuery({ queryKey: [...key, 'payouts'], queryFn: () => s.payouts(accountId) });
   const history = useQuery({ queryKey: [...key, 'history'], queryFn: () => s.history(accountId) });
-  const events = useQuery({ queryKey: [...key, 'events'], queryFn: () => s.events(accountId) });
   const { perform, busy } = useOneAtATime('account');
   const [editing, setEditing] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
@@ -78,7 +80,7 @@ function AccountPage({ accountId }: { accountId: string }) {
               {editing ? (
                 <PayoutDetailsForm account={a} audience="admin" perform={perform}
                   reread={async () => (await s.account(accountId)).account}
-                  save={(body) => s.setPayoutDetails(accountId, body)}
+                  save={(body, version) => s.setPayoutDetails(accountId, body, version)}
                   onSaved={(x) => { setEditing(false); setNotice({ tone: 'ok', text: `Payout details saved as version ${x.payoutDetailsVersion}. Verify them before recording a payout.` }); reload(); }}
                   onLost={(text) => { setEditing(false); setNotice({ tone: 'warn', text }); reload(); }}
                   onStale={reload}
@@ -114,14 +116,15 @@ function AccountPage({ accountId }: { accountId: string }) {
               csvPrefix={`account-${accountId}`} emptyText="Earnings, payouts and adjustments appear here." />
           </>
         )}
-      <ListSection id="sa-po-h" title="Payouts" q={payouts} empty="Payouts recorded for this account appear here.">
+      <PagedSection id="sa-po-h" title="Payouts" queryKey={[...key, 'payouts']} load={(cursor) => s.payouts(accountId, { cursor, limit: PAGE })}
+        empty="Payouts recorded for this account appear here." more="Show older payouts">
         {(rows) => (
           <>
             <PayoutsTable payouts={rows} caption="Payouts of this account, newest first" />
             <p className="ws-muted">A payout recorded by mistake is voided from <Link to={`/admin/payouts?account=${accountId}`}>Payouts</Link>.</p>
           </>
         )}
-      </ListSection>
+      </PagedSection>
       <ListSection id="sa-hist-h" title="Earlier history" q={history} empty="No history from before the ledger.">
         {(rows) => (
           <>
@@ -143,37 +146,19 @@ function AccountPage({ accountId }: { accountId: string }) {
           </>
         )}
       </ListSection>
-      <ListSection id="sa-ev-h" title="Finance events" q={events} empty="Changes to payout details, payouts and adjustments appear here.">
+      <PagedSection id="sa-ev-h" title="Finance events" queryKey={[...key, 'events']} load={(cursor) => s.events(accountId, { cursor, limit: PAGE })}
+        empty="Changes to payout details, payouts and adjustments appear here." more="Show older events">
         {(rows) => <EventsList events={rows} />}
-      </ListSection>
+      </PagedSection>
     </>
   );
 }
 
-/** A one-page "list" of this account's payouts in which a lost payout is recognised (lists never return request keys). */
-function payoutFinder(s: Api, accountId: string, op: PendingOp<RecordPayoutInput>) {
-  return async (): Promise<Page<SettlementPayout & { requestKey?: string }>> => {
-    const rows = await s.payouts(accountId);
-    return {
-      items: rows.map((p) => ({ ...p, requestKey: !op.restored && isPayoutFor(p, accountId, op.body) ? op.requestKey : undefined })),
-      page: 1, limit: rows.length, total: rows.length, totalPages: 1,
-    };
-  };
-}
-
-/** The statement as newest-first pages in which an adjustment is found by its key (`sourceId = <admin>:<key>`). */
-function adjustmentFinder(s: Api, accountId: string, requestKey: string) {
-  let cursor: string | undefined;
-  return async (page: number): Promise<Page<StatementLine & { requestKey?: string; createdAt: string }>> => {
-    if (page === 1) cursor = undefined;
-    const r = await s.statement(accountId, { limit: 200, before: cursor });
-    cursor = r.nextCursor ?? undefined;
-    return {
-      items: r.lines.map((l) => ({ ...l, requestKey: isAdjustmentFor(l, requestKey) ? requestKey : undefined, createdAt: l.at })),
-      page, limit: 200, total: r.lines.length, totalPages: cursor ? page + 1 : page,
-    };
-  };
-}
+/**
+ * The finance version a review was made on closes the review when the account moves (another payout, adjustment, void,
+ * destination change or verification): the admin then looks at the account as it is now before deciding again.
+ */
+const MOVED = 'The account changed while you were reviewing (a payout, adjustment or change of payout details). Check it and review again.';
 
 /** Whether the component is still on the page (a late answer then only updates session memory). */
 function useMounted() {
@@ -188,8 +173,10 @@ type PendingPayout = PendingOp<RecordPayoutInput>;
 
 /**
  * Records a transfer the admin already made, exactly once (`requestKey` per admin; the server replays the same key and
- * content). The body names the verified details version the admin saw (`detailsVersion`): a change since is refused
- * (409 PAYOUT_DETAILS_CHANGED). A lost answer locks the payout: resend it unchanged, or find it in the payouts list.
+ * content). The body names the verified details version the admin saw (`detailsVersion`: 409 PAYOUT_DETAILS_CHANGED) and
+ * the account's finance version (Q13 `expectedFinanceVersion`: 409 FINANCE_CHANGED). A lost answer locks the payout:
+ * resend it unchanged, look it up by its key (Q13 `GET .../payouts/by-key/:key`), or give it up on the server (`abandon`:
+ * then it can never be recorded). The same works after a reload, from the body-less marker's key.
  */
 function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api: Api; accountId: string; summary: Funded; perform: Perform; onChanged: () => void }) {
   const { memory } = useSession();
@@ -225,6 +212,16 @@ function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api:
     setFormKey((k) => k + 1);
   };
 
+  /** Given up on the server (abandon, or a resend refused REQUEST_ABANDONED): ends `op` only while this page owns it. */
+  const givenUp = (op: PendingPayout, text: string) => {
+    onChanged();
+    if (!owns(op)) return;
+    const k = op.requestKey;
+    resolveStored(memory, slot, k);
+    setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
+    setDone(text);
+  };
+
   /** Sends exactly `p` (same key, same content). Only success, or a definite refusal of its FIRST attempt, ends it. */
   async function send(p: PendingPayout) {
     try {
@@ -240,6 +237,10 @@ function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api:
         } catch (err) {
           onChanged();
           if (!owns(attempt)) return;
+          if (wasAbandoned(err)) {
+            givenUp(attempt, 'This payout was given up earlier, so it was not recorded and never will be. Record it again if the transfer was made.');
+            return;
+          }
           const next = afterFailure(attempt, err, messageOf(err));
           setPending(next ?? undefined);
           // A refusal (stale details, balance, reference): the account is read again and shown as it is now.
@@ -271,29 +272,17 @@ function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api:
       {done && <Alert tone="ok">{done}</Alert>}
       {refused && <Alert>Not recorded: {refused}</Alert>}
       {showPanel ? (
-        <>
-          {pending.restored && (
-            <Alert tone="warn">
-              Look for it in the payouts below (same bank reference, amount and date). If it is there, it was recorded.
-              Recording the same transfer again with the same bank reference is refused by the server: a reference is recorded once per account.
-            </Alert>
-          )}
-          <PendingOpPanel key={pending.attempts} label="Unconfirmed payout" op={pending} busy={busy} onResend={() => void send(pending)}
-            fetchPage={payoutFinder(s, accountId, pending)}
-            onFound={(p) => recorded(p, pending, true)}
-            forget={{
-              label: 'Record a payout from the start',
-              confirmLabel: 'Forget the unconfirmed payout',
-              consequence: 'Only after checking the payouts list. If the earlier payout was recorded after all, the same bank reference is refused; under another reference the balance would go down twice and one payout must then be voided.',
-              onForget: () => {
-                if (!owns(pending)) return;
-                const k = pending.requestKey;
-                resolveStored(memory, slot, k);
-                setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
-              },
-            }}
-            summary={pending.restored ? null : <PayoutSummary body={pending.body} />} />
-        </>
+        <PendingOpPanel key={pending.attempts} label="Unconfirmed payout" op={pending} busy={busy} onResend={() => void send(pending)}
+          fetchPage={keyedLookup(pending.requestKey, () => s.payoutByKey(accountId, pending.requestKey))}
+          onFound={(p) => recorded(p, pending, true)}
+          // Q13: decided by the server: `abandoned` = this payout can never be recorded; `used` = here it is.
+          abandon={async () => {
+            const r = await s.abandonPayoutKey(accountId, pending.requestKey);
+            return { state: r.state, record: r.payout ? { ...r.payout, requestKey: pending.requestKey } : undefined };
+          }}
+          abandonWhenNotFound abandonLabel="Give up this payout"
+          onDiscard={() => givenUp(pending, 'The unconfirmed payout was given up: it can never be recorded. Record the transfer again if it was made.')}
+          summary={pending.restored ? null : <PayoutSummary body={pending.body} />} />
       ) : blocked ? <p className="ws-muted">{blocked}</p>
         : (
           <PayoutForm key={formKey} summary={summary} busy={busy} refused={refused}
@@ -331,21 +320,26 @@ function PayoutForm({ summary, busy, refused, onRecord }: {
   const errors = tried ? all : {};
   const edit = (fn: () => void) => { fn(); setReview(null); setChanged(null); };
 
-  // A refusal sends the person back to the form as typed; a change of details or balance closes a review made before it.
+  // A refusal sends the person back to the form as typed; a change of details, balance or (Q13) finance version closes a
+  // review made before it.
   useEffect(() => { if (refused) setReview(null); }, [refused]);
   useEffect(() => {
     if (review && (review.detailsVersion !== a.payoutDetailsVersion || review.amountMinor > summary.balanceMinor)) {
       setReview(null);
       setChanged('The payout details or the balance changed while you were reviewing. Check them and review again.');
+    } else if (review && review.expectedFinanceVersion !== a.financeVersion) {
+      setReview(null);
+      setChanged(MOVED);
     }
-  }, [review, a.payoutDetailsVersion, summary.balanceMinor]);
+  }, [review, a.payoutDetailsVersion, a.financeVersion, summary.balanceMinor]);
 
   function submit(e: FormEvent) {
     e.preventDefault();
     setTried(true);
     setChanged(null);
     if (Object.keys(all).length || amountMinor === null) return;
-    setReview({ amountMinor, method, reference: reference.trim(), paidOn, ...(note.trim() ? { note: note.trim() } : {}), detailsVersion: a.payoutDetailsVersion });
+    setReview({ amountMinor, method, reference: reference.trim(), paidOn, ...(note.trim() ? { note: note.trim() } : {}), detailsVersion: a.payoutDetailsVersion,
+      expectedFinanceVersion: a.financeVersion });
   }
 
   return (
@@ -389,8 +383,9 @@ function PayoutForm({ summary, busy, refused, onRecord }: {
 type PendingAdjustment = PendingOp<AdjustmentInput>;
 
 /**
- * A signed correction with a reason, exactly once per (admin, requestKey). A lost answer is resent unchanged, or found
- * in the statement by its key (the entry's `sourceId` carries it), also after a reload.
+ * A signed correction with a reason, exactly once per (admin, requestKey), fenced on the finance version it was reviewed
+ * on (Q13). A lost answer is resent unchanged, looked up by its key (`GET .../adjustments/by-key/:key`) or given up on the
+ * server, also after a reload.
  */
 function PostAdjustment({ api: s, accountId, summary, perform, onChanged }: { api: Api; accountId: string; summary: Funded; perform: Perform; onChanged: () => void }) {
   const { memory } = useSession();
@@ -420,6 +415,15 @@ function PostAdjustment({ api: s, accountId, summary, perform, onChanged }: { ap
     setFormKey((k) => k + 1);
   };
 
+  const givenUp = (op: PendingAdjustment, text: string) => {
+    onChanged();
+    if (!owns(op)) return;
+    const k = op.requestKey;
+    resolveStored(memory, slot, k);
+    setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
+    setDone(text);
+  };
+
   async function send(p: PendingAdjustment) {
     try {
       await perform(async () => {
@@ -432,7 +436,12 @@ function PostAdjustment({ api: s, accountId, summary, perform, onChanged }: { ap
           const r = await s.postAdjustment(accountId, attempt.body);
           posted(r.entry.amountMinor, attempt, r.replayed);
         } catch (err) {
+          onChanged();
           if (!owns(attempt)) return;
+          if (wasAbandoned(err)) {
+            givenUp(attempt, 'This adjustment was given up earlier, so it was not posted and never will be. Post it again if it is still needed.');
+            return;
+          }
           const next = afterFailure(attempt, err, messageOf(err));
           setPending(next ?? undefined);
           if (!next) setRefused(messageOf(err));
@@ -455,19 +464,14 @@ function PostAdjustment({ api: s, accountId, summary, perform, onChanged }: { ap
       {refused && <Alert>Not posted: {refused}</Alert>}
       {showPanel ? (
         <PendingOpPanel key={pending.attempts} label="Unconfirmed adjustment" op={pending} busy={busy} onResend={() => void send(pending)}
-          fetchPage={adjustmentFinder(s, accountId, pending.requestKey)}
+          fetchPage={keyedLookup(pending.requestKey, () => s.adjustmentByKey(accountId, pending.requestKey))}
           onFound={(l) => posted(l.amountMinor, pending, true)}
-          forget={{
-            label: 'Post an adjustment from the start',
-            confirmLabel: 'Forget the unconfirmed adjustment',
-            consequence: 'If it was posted after all, the balance is adjusted twice and must be corrected with another adjustment.',
-            onForget: () => {
-              if (!owns(pending)) return;
-              const k = pending.requestKey;
-              resolveStored(memory, slot, k);
-              setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
-            },
+          abandon={async () => {
+            const r = await s.abandonAdjustmentKey(accountId, pending.requestKey);
+            return { state: r.state, record: r.entry ? { ...r.entry, requestKey: pending.requestKey } : undefined };
           }}
+          abandonWhenNotFound abandonLabel="Give up this adjustment"
+          onDiscard={() => givenUp(pending, 'The unconfirmed adjustment was given up: it can never be posted. Post it again if it is still needed.')}
           summary={pending.restored ? null : (
             <div>{pending.body.amountMinor < 0 ? `Take ${money(-pending.body.amountMinor)} from` : `Add ${money(pending.body.amountMinor)} to`} the balance: “{pending.body.reason}”.</div>
           )} />
@@ -491,17 +495,24 @@ function AdjustmentForm({ summary, busy, refused, onPost }: {
   const [reason, setReason] = useState('');
   const [tried, setTried] = useState(false);
   const [review, setReview] = useState<Omit<AdjustmentInput, 'requestKey'> | null>(null);
+  const [changed, setChanged] = useState<string | null>(null);
   const paise = rupeesToPaise(amount);
   const amountError = paise === null ? 'Enter rupees, like 500 or 500.50.' : paise < 1 ? 'Enter an amount above zero.' : paise > MAX_FINANCE_MINOR ? 'This is above the largest adjustment the server accepts.' : null;
   const reasonError = reasonProblem(reason);
-  const edit = (fn: () => void) => { fn(); setReview(null); };
+  const edit = (fn: () => void) => { fn(); setReview(null); setChanged(null); };
   useEffect(() => { if (refused) setReview(null); }, [refused]);
+  // Q13: the review names the finance version it was made on; any move of the account closes it.
+  const financeVersion = summary.account.financeVersion;
+  useEffect(() => {
+    if (review && review.expectedFinanceVersion !== financeVersion) { setReview(null); setChanged(MOVED); }
+  }, [review, financeVersion]);
 
   function submit(e: FormEvent) {
     e.preventDefault();
     setTried(true);
+    setChanged(null);
     if (amountError || reasonError || paise === null) return;
-    setReview({ amountMinor: direction === 'debit' ? -paise : paise, reason: reason.trim() });
+    setReview({ amountMinor: direction === 'debit' ? -paise : paise, reason: reason.trim(), expectedFinanceVersion: financeVersion });
   }
 
   const after = review ? summary.balanceMinor + review.amountMinor : 0;
@@ -516,6 +527,7 @@ function AdjustmentForm({ summary, busy, refused, onPost }: {
         <TextField label="Adjustment amount (₹)" inputMode="decimal" value={amount} error={tried ? amountError : null} onChange={(e) => edit(() => setAmount(e.target.value))} />
       </div>
       <TextArea label="Reason (kept with the entry)" value={reason} maxLength={MAX_FINANCE_REASON} error={tried ? reasonError : null} onChange={(e) => edit(() => setReason(e.target.value))} />
+      {changed && <Alert tone="warn">{changed}</Alert>}
       {!review ? (
         <div className="rx-actions"><Button type="submit">Review the adjustment</Button></div>
       ) : (

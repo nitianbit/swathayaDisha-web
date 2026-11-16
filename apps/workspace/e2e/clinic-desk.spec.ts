@@ -28,11 +28,17 @@ const NOW = new Date('2026-11-17T04:30:00.000Z');
 type Rec = Record<string, unknown>;
 interface Me { _id: string; partnerId: string; name: string; role: 'owner' | 'staff'; permissions: string[]; branchIds: string[] }
 interface Call { method: string; path: string; body: unknown; headers: Record<string, string> }
-interface Slot { slotId: string; partnerId: string; doctorId: string; branchId: string; date: string; startTime: string; endTime: string; max: number; current: number }
+interface Slot {
+  slotId: string; partnerId: string; doctorId: string; branchId: string; date: string; startTime: string; endTime: string; max: number; current: number;
+  /** Q13: treated as already started (as if the clock had passed its start). */
+  started?: boolean;
+}
 interface Appt {
   bookingId: string; partnerId: string; bookingDate: string; bookingTime: string; status: string; doctorId: string; doctorName: string; branchId: string;
   slotId: string; consultationMode: string; fee: number; payAtClinic: boolean; arrivedAt: string | null; source: 'desk' | 'online'; paidOnline: boolean;
   patient: Rec; requestKey?: string; requestHash?: string; cancellationReason?: string;
+  /** Q13: the Booking's updatedAt (changed by every write). */
+  updatedAt: string;
 }
 interface Backend {
   calls: Call[];
@@ -48,6 +54,12 @@ interface Backend {
   fillBeforeMove?: string;
   /** The day list cannot be read (503). */
   failAppointments?: boolean;
+  /** Q13: the next desk booking never reaches the server. */
+  dropNextBook?: boolean;
+  /** Q13: this slot starts just before the next booking or move is decided (409 SLOT_STARTED). */
+  startBeforeBook?: string;
+  /** Q13: desk keys given up (`desk:<member>:<key>`): they can never book. */
+  abandoned: Set<string>;
   /** The answer to the next request whose path matches waits for `release()` (the server has already acted). */
   hold?: { match: RegExp; gate: Promise<void> };
   live: boolean;
@@ -63,6 +75,7 @@ function seedSlots(): Slot[] {
     ({ slotId: slotIdOf(doctorId, branchId, date, start), partnerId, doctorId, branchId, date, startTime: start, endTime: end, max: 1, current: 0, ...o });
   return [
     s(D1, BR1, '2026-11-17', '09:30', '09:45', { current: 1 }), // AP1
+    s(D1, BR1, '2026-11-17', '09:45', '10:00'), // free, but it has already started: Q13 leaves it out of the list
     s(D1, BR1, '2026-11-17', '10:15', '10:30'),
     s(D1, BR1, '2026-11-17', '10:30', '10:45'),
     s(D1, BR1, '2026-11-17', '11:00', '11:15', { current: 1 }), // AP2 (online)
@@ -78,9 +91,12 @@ function appt(id: string, o: Partial<Appt>): Appt {
   return {
     bookingId: id, partnerId: CLINIC, bookingDate: '20261117', bookingTime: '09:30', status: 'confirmed', doctorId: D1, doctorName: 'Dr Mehta', branchId: BR1,
     slotId: slotIdOf(D1, BR1, '2026-11-17', '09:30'), consultationMode: 'in-person', fee: 500, payAtClinic: true, arrivedAt: null, source: 'desk', paidOnline: false,
-    patient: { name: 'Asha Rao', phone: '9800000001' }, ...o,
+    patient: { name: 'Asha Rao', phone: '9800000001' }, updatedAt: '2026-11-16T05:00:00.000Z', ...o,
   };
 }
+let version = 0;
+/** Every write moves the Booking's updatedAt (Q13 `expectedUpdatedAt` compares it). */
+const touch = (a: Appt) => { a.updatedAt = new Date(Date.parse('2026-11-17T04:00:00.000Z') + ++version * 1000).toISOString(); };
 function seedAppts(): Appt[] {
   return [
     appt(AP1, {}),
@@ -100,7 +116,7 @@ const staff = (...permissions: string[]): Me => ({ _id: STAFF, partnerId: CLINIC
 
 async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
-  const b: Backend = { calls: [], me, appts: seedAppts(), slots: seedSlots(), live: false,
+  const b: Backend = { calls: [], me, appts: seedAppts(), slots: seedSlots(), live: false, abandoned: new Set(),
     invites: [{ _id: 'f0'.repeat(12), partnerId: CLINIC, doctorId: D6, branchIds: [BR2], invitedBy: OWNER, state: 'pending', createdAt: '2026-11-10T05:00:00.000Z' }] };
   const partners: Rec[] = [
     { _id: CLINIC, kind: 'clinic', name: 'Sunrise Clinic', contact: { phone: '9000000008' }, verification: { state: 'verified' }, taxRegime: 'unregistered', invoiceSeries: { prefix: 'SC' }, activeOwnerCount: 1, isActive: true },
@@ -129,6 +145,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
     { _id: D1, name: 'Dr Mehta', specialization: 'General physician', phone: '9833333333' },
     { _id: D4, name: 'Dr Iyer', specialization: 'Cardiologist', phone: '9811111111' },
     { _id: D5, name: 'Dr Khan', specialization: 'Paediatrician', phone: '9822222222' },
+    { _id: D6, name: 'Dr Pillai', specialization: 'Orthopaedic surgeon', phone: '9844444444' },
   ];
   const customers = new Set(['9800000001', '9800000002', '9800000003']);
   let seq = 0;
@@ -183,7 +200,11 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
     if (sub === '/clinic/doctor-invites' && method === 'GET') {
       if (!can('staff.manage')) return deny();
       const st = url.searchParams.get('state');
-      return ok(route, b.invites.filter((i) => i.partnerId === pid && (!st || i.state === st)).reverse());
+      // Q13: each invitation names its doctor (current name and speciality only).
+      return ok(route, b.invites.filter((i) => i.partnerId === pid && (!st || i.state === st)).reverse().map((i) => {
+        const sp = specialists.find((x) => x._id === i.doctorId);
+        return { ...i, doctor: { doctorId: i.doctorId, name: sp?.name ?? null, specialization: sp?.specialization ?? null } };
+      }));
     }
     if (sub === '/clinic/doctor-invites' && method === 'POST') {
       if (!can('staff.manage')) return deny();
@@ -213,7 +234,8 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
     if (sub === '/clinic/slots') {
       const q = Object.fromEntries(url.searchParams);
       if (!(branches[pid] ?? []).some((x) => x._id === q.branchId && (x.services as Rec).inClinic)) return fail(route, 409, 'BRANCH_NOT_IN_CLINIC', 'This branch does not take in-clinic consultations');
-      return ok(route, b.slots.filter((s) => s.partnerId === pid && s.doctorId === q.doctorId && s.branchId === q.branchId && s.date === q.date && s.current < s.max)
+      const notStarted = (s: Slot) => !s.started && Date.parse(istInstant(s.date, s.startTime)) > NOW.getTime();
+      return ok(route, b.slots.filter((s) => s.partnerId === pid && s.doctorId === q.doctorId && s.branchId === q.branchId && s.date === q.date && s.current < s.max && notStarted(s))
         .map((s) => ({ slotId: s.slotId, date: s.date, startTime: s.startTime, endTime: s.endTime, startsAt: istInstant(s.date, s.startTime), seatsLeft: s.max - s.current })));
     }
     if (sub === '/clinic/appointments' && method === 'GET') {
@@ -225,17 +247,34 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
         .map(({ requestKey: _k, requestHash: _h, partnerId: _p, cancellationReason: _c, ...a }) => a));
     }
     if (!can('bookings.manage')) return deny();
+    const started = (s: Slot) => !!s.started || Date.parse(istInstant(s.date, s.startTime)) <= NOW.getTime();
+    // Q13: the desk member's own key: look it up, or give it up (used = the appointment it made).
+    const byKey = /^\/clinic\/appointments\/by-key\/([A-Za-z0-9_-]{8,100})(\/abandon)?$/.exec(sub);
+    if (byKey) {
+      const key = `desk:${actor._id}:${byKey[1]}`;
+      const made = b.appts.find((a) => a.requestKey === key && a.partnerId === pid);
+      if (byKey[2]) {
+        if (made) return ok(route, { state: 'used', booking: deskView(made) });
+        b.abandoned.add(key);
+        return ok(route, { state: 'abandoned' });
+      }
+      return made ? ok(route, deskView(made)) : fail(route, 404, 'BOOKING_NOT_FOUND', 'No appointment was made with this key');
+    }
     if (sub === '/clinic/appointments' && method === 'POST') {
       const x = body as { slotId: string; customer: { phone: string; name?: string }; notes?: string; requestKey: string };
       const key = `desk:${actor._id}:${x.requestKey}`;
+      if (b.dropNextBook) { b.dropNextBook = false; return route.abort('failed'); }
       const hash = JSON.stringify([x.slotId, x.customer.phone, x.notes ?? null]);
       const prior = b.appts.find((a) => a.requestKey === key);
       if (prior) {
         if (prior.requestHash !== hash) return fail(route, 409, 'IDEMPOTENCY_KEY_REUSED', 'This request key was already used for a different appointment');
         return ok(route, { booking: deskView(prior), customer: { userId: '99'.repeat(12), phone: x.customer.phone, created: false }, replayed: true });
       }
+      if (b.abandoned.has(key)) return fail(route, 409, 'REQUEST_ABANDONED', 'This request was cancelled before it was recorded; make a new one');
       const s = b.slots.find((y) => y.slotId === x.slotId && y.partnerId === pid);
       if (s && b.takeBeforeBook === s.slotId) { s.current = s.max; b.takeBeforeBook = undefined; }
+      if (s && b.startBeforeBook === s.slotId) { s.started = true; b.startBeforeBook = undefined; }
+      if (s && started(s)) return fail(route, 409, 'SLOT_STARTED', 'This slot has already started; choose a later one');
       if (!s || s.current >= s.max) return fail(route, 409, 'SLOT_NOT_AVAILABLE', 'Slot is not available for booking');
       s.current++;
       const created = !customers.has(x.customer.phone);
@@ -243,6 +282,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       const doc = (doctors[pid] ?? []).find((d) => d.doctorId === s.doctorId)!;
       const a = appt(`9${++seq}`.padEnd(24, '0'), { partnerId: pid, bookingDate: ymd(s.date), bookingTime: s.startTime, doctorId: s.doctorId, doctorName: doc.name as string,
         branchId: s.branchId, slotId: s.slotId, fee: doc.consultationFee as number, patient: { name: x.customer.name, phone: x.customer.phone }, requestKey: key, requestHash: hash });
+      touch(a);
       b.appts.push(a);
       if (b.loseNextBook) { b.loseNextBook = false; return route.abort('failed'); }
       await held(sub);
@@ -253,6 +293,9 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       const a = b.appts.find((y) => y.bookingId === one[1] && y.partnerId === pid && y.source === 'desk');
       if (!a) return fail(route, 404, 'BOOKING_NOT_FOUND', 'Appointment not found');
       const cmd = one[2];
+      // Q13: a step names the version it was decided on; any other current version refuses it.
+      const expected = (body as { expectedUpdatedAt?: string } | null)?.expectedUpdatedAt;
+      if (expected !== undefined && expected !== a.updatedAt) return fail(route, 409, 'BOOKING_CHANGED', 'The appointment changed since it was loaded; reload and try again');
       const free = (slotId: string) => { const s = b.slots.find((y) => y.slotId === slotId); if (s) s.current--; };
       if (cmd === 'arrived') {
         if (a.status !== 'confirmed' || a.arrivedAt) return fail(route, 409, 'BOOKING_STATE_CONFLICT', a.arrivedAt ? 'Already marked as arrived' : `A ${a.status} appointment cannot be checked in`);
@@ -271,11 +314,14 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       } else {
         const t = b.slots.find((y) => y.slotId === (body as { slotId: string }).slotId && y.partnerId === pid);
         if (t && b.fillBeforeMove === t.slotId) { t.current = t.max; b.fillBeforeMove = undefined; }
+        if (t && b.startBeforeBook === t.slotId) { t.started = true; b.startBeforeBook = undefined; }
+        if (t && started(t)) return fail(route, 409, 'SLOT_STARTED', 'This slot has already started; choose a later one');
         if (!t || t.current >= t.max || t.doctorId !== a.doctorId) return fail(route, 409, 'SLOT_NOT_AVAILABLE', 'Slot is not available for booking');
         t.current++;
         free(a.slotId);
         Object.assign(a, { slotId: t.slotId, bookingDate: ymd(t.date), bookingTime: t.startTime, branchId: t.branchId, arrivedAt: null });
       }
+      touch(a);
       // The answer is the record as this command left it (a held answer may arrive after later changes).
       const answer = deskView(a);
       await held(sub);
@@ -347,7 +393,9 @@ test('doctors: the list, inviting by mobile or doctor id with branches, a repeat
   await expect(list.getByRole('row').filter({ hasText: 'Dr Absent' })).toContainText('Not bookable');
 
   const invites = page.getByRole('table', { name: 'Invitations to doctors' });
-  await expect(invites.getByRole('row').filter({ hasText: 'Doctor …d6d6d6' })).toContainText('The name shows here once they accept.');
+  // Q13: the server names the invited doctor (name and speciality), also before they accept.
+  await expect(invites.getByRole('row').filter({ hasText: 'Dr Pillai' })).toContainText('Orthopaedic surgeon');
+  await expect(invites.getByText(/Doctor …/)).toHaveCount(0);
 
   // Checked before sending: nothing goes out for a bad number.
   const form = page.getByRole('form', { name: 'Invite a doctor' });
@@ -491,7 +539,7 @@ test('desk booking: details checked, reviewed, booked once with a key; then arri
   expect(page.url()).not.toMatch(/9800000009|Kiran/);
 });
 
-test('a lost booking answer locks the form; resending the same request books once; after a reload the person checks the day list first', async ({ page }) => {
+test('a lost booking answer locks the form; the key finds it (also after a reload) and resending the same request books once', async ({ page }) => {
   const backend = await mockBackend(page);
   backend.loseNextBook = true;
   await signInPartner(page);
@@ -500,7 +548,7 @@ test('a lost booking answer locks the form; resending the same request books onc
   await fillPatient(page, '9800000009', 'Kiran Shah');
   await page.getByRole('button', { name: 'Book appointment' }).click();
   const panel = page.getByRole('group', { name: 'Unconfirmed booking' });
-  await expect(panel).toContainText('The answer to this booking was lost');
+  await expect(panel).toContainText('The outcome of this request is not known yet');
   await expect(panel).toContainText('Kiran Shah (9800000009) with Dr Mehta on Tue, 17 Nov, 2026, 10:15 at Indiranagar.');
   await expect(page.getByLabel(/Patient.s mobile number/)).toHaveCount(0);
   await expect(freeSlots(page).getByRole('button', { name: 'Book 10:30' })).toBeDisabled();
@@ -508,34 +556,129 @@ test('a lost booking answer locks the form; resending the same request books onc
   // The marker kept for a reload has the key only.
   expect(await storage(page)).not.toMatch(/Kiran|9800000009/);
 
-  await panel.getByRole('button', { name: 'Check the day list' }).click();
-  await expect(panel).toContainText('The day list has a desk appointment for this mobile number at this time (Tue, 17 Nov, 2026, 10:15)');
-  await panel.getByRole('button', { name: 'Send the same booking again' }).click();
+  // Q13: the check is an exact lookup by the key (no look-alike guess from the day list).
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
   await expect(page.getByText('This booking had already been made; nothing was booked twice. Kiran Shah with Dr Mehta on Tue, 17 Nov, 2026, 10:15 at Indiranagar.')).toBeVisible();
   await expect(panel).toHaveCount(0);
-  const [first, second] = books(backend);
-  expect(second!.body).toEqual(first!.body);
+  const [first] = books(backend);
+  const key1 = (first!.body as { requestKey: string }).requestKey;
+  expect(backend.calls.some((c) => c.path === `/partner-workspace/clinic/appointments/by-key/${key1}`)).toBe(true);
+  expect(books(backend)).toHaveLength(1);
   expect(backend.appts.filter((a) => a.patient.phone === '9800000009')).toHaveLength(1);
+  await expect(page.getByRole('heading', { name: 'Appointment: Kiran Shah, Tue, 17 Nov, 2026, 10:15' })).toBeVisible();
   expect(await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.includes('clinic-desk')))).toEqual([]);
 
-  // Lost again, then the page is reloaded: the details are gone, so the day list is checked before setting it aside.
+  // Lost again; a resend answers with the appointment it made.
   backend.loseNextBook = true;
   await freeSlots(page).getByRole('button', { name: 'Book 10:30' }).click();
   await fillPatient(page, '9800000010', 'Meena');
   await page.getByRole('button', { name: 'Book appointment' }).click();
-  await expect(panel).toContainText('The answer to this booking was lost');
+  await expect(panel).toContainText('The outcome of this request is not known yet');
   await page.reload();
-  await expect(panel).toContainText('was not confirmed before the page was reloaded or you signed out');
+  // After a reload the details are gone, but the key still finds it.
+  await expect(panel).toContainText('A request made earlier on this device');
   await expect(panel).not.toContainText('Meena');
-  await expect(appointments(page).getByRole('row').filter({ hasText: 'Meena' })).toContainText('10:30');
-  await page.getByLabel('Doctor', { exact: true }).selectOption({ label: 'Dr Mehta (General physician)' });
-  await expect(page.getByText('Settle the unconfirmed booking above before booking another.')).toBeVisible();
-  await panel.getByRole('button', { name: 'I have checked the day list' }).click();
-  await expect(panel).toContainText('booking again could then make a second appointment for the same patient');
-  await panel.getByRole('button', { name: 'Set it aside' }).click();
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('This booking had already been made; nothing was booked twice. The patient with Dr Mehta on Tue, 17 Nov, 2026, 10:30 at Indiranagar.', { exact: false })).toBeVisible();
   await expect(panel).toHaveCount(0);
-  await expect(page.getByText('The unconfirmed booking was set aside.', { exact: false })).toBeVisible();
-  expect(books(backend)).toHaveLength(3);
+  await expect(page.getByRole('heading', { name: 'Appointment: Meena, Tue, 17 Nov, 2026, 10:30' })).toBeVisible();
+  expect(books(backend)).toHaveLength(2);
+  expect(await storage(page)).not.toMatch(/Meena|9800000010/);
+});
+
+test('Q13: a booking that never arrived is given up on the server after a check, even after a reload; a resend of a given-up key is refused', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.dropNextBook = true;
+  await signInPartner(page);
+  await openDesk(page, 'Dr Mehta (General physician)');
+  await freeSlots(page).getByRole('button', { name: 'Book 10:15' }).click();
+  await fillPatient(page, '9800000009', 'Kiran Shah');
+  await page.getByRole('button', { name: 'Book appointment' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed booking' });
+  await expect(panel).toContainText('The outcome of this request is not known yet');
+  const key1 = (books(backend)[0]!.body as { requestKey: string }).requestKey;
+  await page.reload();
+  await expect(panel).toContainText('A request made earlier on this device');
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panel).toContainText('Not found in the records. It may still be on its way.');
+  await panel.getByRole('button', { name: 'Give up this booking' }).click();
+  await expect(page.getByText('The unconfirmed booking was given up: it can never be made. You can book the patient again now.')).toBeVisible();
+  expect(backend.abandoned.has(`desk:${OWNER}:${key1}`)).toBe(true);
+  expect(writes(backend).at(-1)).toBe(`POST /partner-workspace/clinic/appointments/by-key/${key1}/abandon`);
+
+  // Booking again (a new key): its answer is lost, and its key is given up elsewhere meanwhile. The resend is refused for good.
+  await page.getByLabel('Doctor', { exact: true }).selectOption({ label: 'Dr Mehta (General physician)' });
+  await freeSlots(page).getByRole('button', { name: 'Book 10:15' }).click();
+  await fillPatient(page, '9800000009', 'Kiran Shah');
+  backend.dropNextBook = true;
+  await page.getByRole('button', { name: 'Book appointment' }).click();
+  await expect(panel).toContainText('The outcome of this request is not known yet');
+  const key2 = (books(backend).at(-1)!.body as { requestKey: string }).requestKey;
+  expect(key2).not.toBe(key1);
+  backend.abandoned.add(`desk:${OWNER}:${key2}`);
+  await panel.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(page.getByText('This booking was given up earlier, so it was not made and never will be.', { exact: false })).toBeVisible();
+  await expect(panel).toHaveCount(0);
+  await expect(freeSlots(page).getByRole('button', { name: 'Book 10:15' })).toBeEnabled();
+  expect(backend.appts.filter((a) => a.patient.phone === '9800000009')).toHaveLength(0);
+  expect(await storage(page)).not.toMatch(/Kiran|9800000009/);
+});
+
+test('Q13: started slots are not offered; a slot that starts meanwhile is refused (SLOT_STARTED) with the details kept, as is a move onto one', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await openDesk(page, 'Dr Mehta (General physician)');
+  // 09:45 is free but has started (it is 10:00): the server leaves it out, and nothing is marked "(started)".
+  await expect(freeSlots(page).getByRole('row')).toHaveText([/Time/, /10:15–10:30/, /10:30–10:45/]);
+  await expect(page.getByText('(started)')).toHaveCount(0);
+  backend.startBeforeBook = slotIdOf(D1, BR1, '2026-11-17', '10:15');
+  await freeSlots(page).getByRole('button', { name: 'Book 10:15' }).click();
+  await fillPatient(page, '9800000009', 'Kiran Shah');
+  await page.getByRole('button', { name: 'Book appointment' }).click();
+  await expect(page.getByText('Not booked: This slot has already started; choose a later one. Choose another time; the patient’s details are kept.')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Unconfirmed booking' })).toHaveCount(0);
+  await expect(freeSlots(page).getByRole('row')).toHaveText([/Time/, /10:30–10:45/]);
+  await freeSlots(page).getByRole('button', { name: 'Book 10:30' }).click();
+  await expect(page.getByLabel(/Patient.s mobile number/)).toHaveValue('9800000009');
+
+  // Moving Chitra onto a slot that starts just before the move is decided: refused, the free slots are read again.
+  await page.getByRole('button', { name: 'Back' }).click();
+  await page.getByRole('button', { name: 'Open Chitra N at 12:00' }).click();
+  await page.getByRole('button', { name: 'Move to another time' }).click();
+  const move = page.getByRole('form', { name: 'Move to another time' });
+  backend.startBeforeBook = slotIdOf(D1, BR1, '2026-11-17', '10:30');
+  await move.getByLabel('New time').selectOption({ label: '10:30–10:45 (1 free)' });
+  await move.getByRole('button', { name: 'Continue' }).click();
+  await move.getByRole('button', { name: 'Move the appointment' }).click();
+  await expect(move).toContainText('Not moved: This slot has already started; choose a later one');
+  await expect(move.getByLabel('New time')).toHaveCount(0);
+  expect(backend.appts.find((a) => a.bookingId === AP3)!.bookingTime).toBe('12:00');
+});
+
+test('Q13: a step names the version it was decided on; a change made elsewhere is refused (BOOKING_CHANGED) and the day is read again', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await openDesk(page);
+  await page.getByRole('button', { name: 'Open Chitra N at 12:00' }).click();
+  const seen = backend.appts.find((a) => a.bookingId === AP3)!.updatedAt;
+  // Someone at another desk checks Chitra in; this page still shows the version it read.
+  const other = backend.appts.find((a) => a.bookingId === AP3)!;
+  other.arrivedAt = '2026-11-17T04:25:00.000Z';
+  other.updatedAt = '2026-11-17T04:25:00.000Z';
+  await page.getByRole('button', { name: 'Cancel appointment' }).click();
+  await page.getByRole('group', { name: 'Cancel appointment' }).getByRole('button', { name: 'Cancel appointment' }).click();
+  await expect(page.getByText('The appointment changed since you opened it (someone else updated it), so nothing was done.', { exact: false })).toBeVisible();
+  await expect(appointments(page).getByRole('row').filter({ hasText: 'Chitra N' })).toContainText('Arrived 09:55');
+  await expect(page.getByRole('group', { name: 'Cancel appointment' })).toHaveCount(0);
+  expect(backend.appts.find((a) => a.bookingId === AP3)!.status).toBe('confirmed');
+  const cancels = backend.calls.filter((c) => c.path.endsWith('/cancel'));
+  expect(cancels.map((c) => c.body)).toEqual([{ expectedUpdatedAt: seen }]);
+
+  // Decided again on what is shown now: it goes through with the new version.
+  await page.getByRole('button', { name: 'Mark as seen' }).click();
+  await page.getByRole('group', { name: 'Mark as seen' }).getByRole('button', { name: 'Mark as seen' }).click();
+  await expect(page.getByText('Chitra N’s visit is marked as seen.')).toBeVisible();
+  expect(backend.calls.find((c) => c.path.endsWith('/complete'))!.body).toEqual({ expectedUpdatedAt: '2026-11-17T04:25:00.000Z' });
 });
 
 test('a slot taken meanwhile (409) is refused, the patient details stay, and another time books with a new key', async ({ page }) => {
@@ -593,7 +736,7 @@ test('no-show only after the time, and no-show and cancel each need a confirmati
   await expect(page.getByText('Chitra N’s appointment is cancelled.')).toBeVisible();
   await expect(appointments(page).getByRole('row').filter({ hasText: 'Chitra N' })).toContainText('Cancelled');
   expect(writes(backend)).toEqual([`POST /partner-workspace/clinic/appointments/${AP1}/no-show`, `POST /partner-workspace/clinic/appointments/${AP3}/cancel`]);
-  expect(backend.calls.find((c) => c.path.endsWith('/cancel'))!.body).toEqual({ reason: 'Doctor away' });
+  expect(backend.calls.find((c) => c.path.endsWith('/cancel'))!.body).toEqual({ reason: 'Doctor away', expectedUpdatedAt: '2026-11-16T05:00:00.000Z' });
   expect(backend.appts.find((a) => a.bookingId === AP3)!.cancellationReason).toBe('Doctor away');
 });
 
@@ -622,7 +765,10 @@ test('reschedule: another day’s free slot after a confirmation; a slot taken m
   await expect(page.getByText('Moved to Wed, 18 Nov, 2026, 11:15 at Indiranagar. Tell the patient: Jansetu does not notify them of desk appointment changes.')).toBeVisible();
   await expect(appointments(page).getByRole('row').filter({ hasText: 'Chitra N' })).toHaveCount(0);
   const moves = backend.calls.filter((c) => c.path.endsWith('/reschedule'));
-  expect(moves.map((c) => c.body)).toEqual([{ slotId: slotIdOf(D1, BR1, '2026-11-18', '11:00') }, { slotId: slotIdOf(D1, BR1, '2026-11-18', '11:15') }]);
+  expect(moves.map((c) => c.body)).toEqual([
+    { slotId: slotIdOf(D1, BR1, '2026-11-18', '11:00'), expectedUpdatedAt: '2026-11-16T05:00:00.000Z' },
+    { slotId: slotIdOf(D1, BR1, '2026-11-18', '11:15'), expectedUpdatedAt: '2026-11-16T05:00:00.000Z' },
+  ]);
   await page.getByRole('button', { name: 'Next day' }).click();
   await expect(appointments(page).getByRole('row').filter({ hasText: 'Chitra N' })).toContainText('11:15');
 });
@@ -640,8 +786,8 @@ test('one step at a time per appointment (an open confirmation included); a late
   await expect(page.getByRole('button', { name: 'Mark as seen' })).toBeDisabled();
   release();
   await expect(page.getByText('Asha Rao is marked as arrived.')).toBeVisible();
-  await expect(cancel.getByRole('button', { name: 'Cancel appointment' })).toBeEnabled();
-  await cancel.getByRole('button', { name: 'Back' }).click();
+  // Q13: the appointment changed (it is checked in now), so the confirmation opened on the older version closes.
+  await expect(cancel).toHaveCount(0);
 
   // A held answer for Asha arrives while Chitra is open: Chitra's page shows nothing of it.
   const release2 = hold(backend, /\/complete$/);
@@ -672,6 +818,16 @@ test('a held step answer from a page that was left never overwrites a newer chan
   await page.getByRole('button', { name: 'Open Chitra N at 12:00' }).click();
   await page.getByRole('button', { name: 'Move to another time' }).click();
   const move = page.getByRole('form', { name: 'Move to another time' });
+  await move.getByLabel('New time').selectOption({ label: '10:30–10:45 (1 free)' });
+  await move.getByRole('button', { name: 'Continue' }).click();
+  await move.getByRole('button', { name: 'Move the appointment' }).click();
+  // Q13: the day shown was the cached copy from before the check-in (the server already acted; only its answer is held),
+  // so the move named an older version and is refused; the day is read again and shows the check-in.
+  await expect(page.getByText('The appointment changed since you opened it', { exact: false }).first()).toBeVisible();
+  await expect(appointments(page).getByRole('row').filter({ hasText: 'Chitra N' })).toContainText('Arrived');
+  expect(backend.appts.find((a) => a.bookingId === AP3)!.bookingTime).toBe('12:00');
+  // Decided again on the version shown now: the move goes through.
+  await page.getByRole('button', { name: 'Move to another time' }).click();
   await move.getByLabel('New time').selectOption({ label: '10:30–10:45 (1 free)' });
   await move.getByRole('button', { name: 'Continue' }).click();
   await move.getByRole('button', { name: 'Move the appointment' }).click();

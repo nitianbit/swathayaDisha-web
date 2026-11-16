@@ -24,12 +24,20 @@ interface Call { method: string; path: string; body: unknown; auth?: string }
 interface Account {
   _id: string; ownerKind: 'partner' | 'doctor'; ownerId: string; beneficiaryName: string; isActive: boolean;
   details: Rec | null; state: 'none' | 'unverified' | 'verified'; version: number; changedAt?: string; verifiedAt?: string;
+  /** Q13: bumped by payouts, voids, adjustments, destination changes and verifications. */
+  financeVersion?: number;
 }
 interface Entry { _id: string; accountId: string; at: string; kind: string; source: string; sourceId: string; description: string; reference?: string; note?: string; amountMinor: number }
 interface Payout extends Rec { _id: string; settlementAccountId: string; amountMinor: number; reference: string; paidOn: string; state: string; by: string; requestKey: string; requestHash: string; createdAt: string }
 interface Backend {
   calls: Call[]; me: Me; accounts: Account[]; entries: Entry[]; payouts: Payout[]; events: Rec[]; live: boolean;
   loseNextPayoutAnswer?: boolean; loseNextAdjustmentAnswer?: boolean; changeDetailsBeforeNextPayout?: boolean;
+  /** Q13: the next payout or adjustment request never reaches the server. */
+  dropNext?: RegExp;
+  /** Q13: keys given up on the server (`settlement_payout:` / `settlement_adjustment:` scopes): they can never record. */
+  abandoned: Set<string>;
+  /** Q13: someone else saves new details right after the next account read is answered (before this person's PUT). */
+  changeDetailsAfterNextRead?: boolean;
   /** The next request whose path matches waits for `release()` before the server looks at it. */
   holdBefore?: { match: RegExp; gate: Promise<void> };
   /** The server has acted on the next matching request; its answer waits for `release()`. */
@@ -87,7 +95,7 @@ const staff = (permissions: string[], branchIds: string[] = []): Me => ({ _id: S
 
 async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
-  const b: Backend = { calls: [], me, live: false, ...seed() };
+  const b: Backend = { calls: [], me, live: false, abandoned: new Set(), ...seed() };
   const partners: Rec[] = [
     { _id: LAB, kind: 'lab', name: 'City Lab', contact: { phone: '9000000000' }, verification: { state: 'verified' }, taxRegime: 'unregistered', invoiceSeries: { prefix: 'LB' }, activeOwnerCount: 1, isActive: true },
     { _id: LAB2, kind: 'lab', name: 'Lake Lab', contact: { phone: '9000000009' }, verification: { state: 'verified' }, taxRegime: 'unregistered', invoiceSeries: { prefix: 'LK' }, activeOwnerCount: 1, isActive: true },
@@ -103,7 +111,26 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       : { method: 'bank', accountName: d.accountName, ifsc: d.ifsc, bankName: d.bankName, accountNumberLast4: d.accountNumberLast4,
         ...(full ? { accountNumber: d.accountNumber } : { accountNumberMasked: `XXXX${String(d.accountNumber).slice(-4)}` }) };
     return { _id: a._id, ownerKind: a.ownerKind, ownerId: a.ownerId, beneficiaryName: a.beneficiaryName, isActive: a.isActive, payoutDetails: details,
-      payoutDetailsState: a.state, payoutDetailsVersion: a.version, payoutDetailsChangedAt: a.changedAt, payoutDetailsVerifiedAt: a.verifiedAt };
+      payoutDetailsState: a.state, payoutDetailsVersion: a.version, payoutDetailsChangedAt: a.changedAt, payoutDetailsVerifiedAt: a.verifiedAt,
+      financeVersion: a.financeVersion ?? 0 };
+  };
+  const bump = (a: Account) => { a.financeVersion = (a.financeVersion ?? 0) + 1; };
+  /** Q13 `cursorPage`: newest first by `field`, ties by id, an exact `<ms>_<id>` cursor and the total. */
+  const paged = (route: Route, rows: Rec[], field: 'createdAt' | 'at', q: URLSearchParams, def: number) => {
+    const sorted = [...rows].sort((x, y) => Date.parse(String(y[field])) - Date.parse(String(x[field])) || String(y._id).localeCompare(String(x._id)));
+    const limit = Number(q.get('limit') ?? def);
+    const cursor = q.get('cursor');
+    let from = 0;
+    if (cursor) {
+      if (!/^\d{1,15}_[0-9a-f]{24}$/.test(cursor)) return fail(route, 400, 'INVALID_CURSOR', 'Invalid cursor');
+      const [ms, id] = cursor.split('_');
+      from = sorted.findIndex((r) => Date.parse(String(r[field])) < Number(ms) || (Date.parse(String(r[field])) === Number(ms) && String(r._id) < id!));
+      if (from < 0) from = sorted.length;
+    }
+    const items = sorted.slice(from, from + limit);
+    const last = items.at(-1);
+    const nextCursor = from + limit < sorted.length && last ? `${Date.parse(String(last[field]))}_${last._id}` : null;
+    return json(route, 200, { success: true, data: items, pagination: { total: sorted.length, nextCursor } });
   };
   const publicPayout = (p: Payout) => { const { requestKey: _k, requestHash: _h, ...rest } = p; return rest; };
   const summary = (a: Account | undefined, full: boolean) => {
@@ -155,17 +182,22 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       ? { method: 'bank', accountName: body.accountName, accountNumber: body.accountNumber, accountNumberLast4: String(body.accountNumber).slice(-4), ifsc: body.ifsc, bankName: body.bankName }
       : { method: 'upi', upiId: body.upiId, accountName: body.accountName };
     Object.assign(a, { details, state: 'unverified', version: a.version + 1, changedAt: NOW.toISOString(), verifiedAt: undefined });
+    bump(a);
     event(a, 'finance.payout_details_changed', byKind, by, { method: body.method, version: a.version });
   };
   const financeRoutes = async (route: Route, a: Account | undefined, sub: string, q: URLSearchParams, full: boolean, method: string) => {
-    if (sub === '' && method === 'GET') return ok(route, summary(a, full));
+    if (sub === '' && method === 'GET') {
+      const answer = summary(a, full);
+      if (b.changeDetailsAfterNextRead && a) { b.changeDetailsAfterNextRead = false; setDetails(a, { method: 'upi', upiId: 'other@okicici' }, 'member', OWNER); }
+      return ok(route, answer);
+    }
     if (sub === '/statement') return ok(route, a ? statement(a._id, q) : { lines: [], nextCursor: null });
     if (sub === '/statement.csv') {
       return route.fulfill({ status: 200, contentType: 'text/csv; charset=utf-8', headers: { 'Content-Disposition': 'attachment; filename="x.csv"', 'Cache-Control': 'no-store' },
         body: a ? csv(a._id, q) : '' });
     }
-    if (sub === '/payouts' && method === 'GET') return ok(route, b.payouts.filter((p) => p.settlementAccountId === a?._id).sort((x, y) => y.createdAt.localeCompare(x.createdAt)).map(publicPayout));
-    if (sub === '/events') return ok(route, b.events.filter((e) => e.settlementAccountId === a?._id));
+    if (sub === '/payouts' && method === 'GET') return paged(route, b.payouts.filter((p) => p.settlementAccountId === a?._id).map(publicPayout), 'createdAt', q, 100);
+    if (sub === '/events') return paged(route, b.events.filter((e) => e.settlementAccountId === a?._id), 'at', q, 200);
     if (sub === '/history') return ok(route, a?._id === ACC2 ? [{ _id: oid('eh'), settlementAccountId: ACC2, source: 'legacy_import', legacyKind: 'disbursal', legacyId: 'L1', periodLabel: 'Oct 2026', amountMinor: 500000, at: '2026-10-31T05:00:00.000Z' }] : []);
     return null;
   };
@@ -216,15 +248,19 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       }
       if (path === '/settlements/payouts') {
         const rows = b.payouts.filter((p) => (!q.get('accountId') || p.settlementAccountId === q.get('accountId')) && (!q.get('state') || p.state === q.get('state'))
-          && (!q.get('from') || p.paidOn >= q.get('from')!) && (!q.get('to') || p.paidOn <= q.get('to')!))
-          .sort((x, y) => y.paidOn.localeCompare(x.paidOn) || y.createdAt.localeCompare(x.createdAt));
-        return ok(route, rows.slice(0, Number(q.get('limit') ?? 100)).map(publicPayout));
+          && (!q.get('from') || p.paidOn >= q.get('from')!) && (!q.get('to') || p.paidOn <= q.get('to')!));
+        // Q13: each row names its account (owner's current name and the beneficiary).
+        return paged(route, rows.map((p) => {
+          const acc = b.accounts.find((x) => x._id === p.settlementAccountId);
+          return { ...publicPayout(p), account: acc ? { accountId: acc._id, ownerKind: acc.ownerKind, ownerId: acc.ownerId, beneficiaryName: acc.beneficiaryName, ownerName: acc.beneficiaryName } : null };
+        }), 'createdAt', q, 100);
       }
       const vd = /^\/settlements\/payouts\/([0-9a-f]{24})\/void$/.exec(path);
       if (vd) {
         const p = b.payouts.find((x) => x._id === vd[1]);
         if (!p) return fail(route, 404, 'PAYOUT_NOT_FOUND', 'Payout not found');
         if (p.state === 'recorded') {
+          bump(b.accounts.find((x) => x._id === p.settlementAccountId)!);
           Object.assign(p, { state: 'voided', voidReason: (body as Rec).reason, voidedAt: NOW.toISOString(), voidedBy: ADMIN });
           b.entries.push({ _id: oid('eb'), accountId: p.settlementAccountId, at: NOW.toISOString(), kind: 'adjustment', source: 'payout_void', sourceId: p._id,
             description: `Payout voided · ${p.paidOn} · ref ${p.reference}`, reference: p.reference, note: String((body as Rec).reason), amountMinor: p.amountMinor });
@@ -237,26 +273,53 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       const sub = m[2] ?? '';
       const read = await financeRoutes(route, a, sub, q, true, method);
       if (read !== null) return read;
-      if (sub === '/payout-details' && method === 'PUT') { setDetails(a, body as Rec, 'admin', ADMIN); return ok(route, view(a, true)); }
+      if (sub === '/payout-details' && method === 'PUT') {
+        const ev = (body as Rec).expectedDetailsVersion;
+        if (ev !== undefined && ev !== a.version) return fail(route, 409, 'PAYOUT_DETAILS_CHANGED', 'The payout details changed since they were loaded; review them again');
+        const { expectedDetailsVersion: _e, ...details } = body as Rec;
+        setDetails(a, details, 'admin', ADMIN); return ok(route, view(a, true));
+      }
+      // Q13: a lost payout or adjustment, looked up or given up by the admin's own key on this account.
+      const byKey = /^\/(payouts|adjustments)\/by-key\/([A-Za-z0-9_-]{8,100})(\/abandon)?$/.exec(sub);
+      if (byKey) {
+        const [, kind, key, give] = byKey;
+        const scope = `${kind}:${a._id}:${key}`;
+        const made = kind === 'payouts' ? b.payouts.find((p) => p.settlementAccountId === a._id && p.by === ADMIN && p.requestKey === key)
+          : b.entries.find((e) => e.accountId === a._id && e.source === 'admin_adjustment' && e.sourceId === `${ADMIN}:${key}`);
+        const record = made && kind === 'payouts' ? publicPayout(made as Payout) : made;
+        if (give) {
+          if (record) return ok(route, kind === 'payouts' ? { state: 'used', payout: record } : { state: 'used', entry: record });
+          b.abandoned.add(scope);
+          return ok(route, { state: 'abandoned' });
+        }
+        return record ? ok(route, record) : fail(route, 404, kind === 'payouts' ? 'PAYOUT_NOT_FOUND' : 'ADJUSTMENT_NOT_FOUND', 'Not found with this key');
+      }
       if (sub === '/payout-details/verify') {
         const v = (body as { version: number }).version;
         if (a.state === 'verified' && a.version === v) return ok(route, view(a, true));
         if (a.state !== 'unverified' || a.version !== v) return fail(route, 409, 'PAYOUT_DETAILS_CHANGED', 'The payout details changed since they were loaded; review them again');
         Object.assign(a, { state: 'verified', verifiedAt: NOW.toISOString() });
+        bump(a);
         event(a, 'finance.payout_details_verified', 'admin', ADMIN, { version: v });
         return ok(route, view(a, true));
       }
       if (sub === '/payouts' && method === 'POST') {
-        const x = body as Rec & { requestKey: string; amountMinor: number; reference: string; paidOn: string; detailsVersion: number };
-        const { requestKey, ...rest } = x;
+        const x = body as Rec & { requestKey: string; amountMinor: number; reference: string; paidOn: string; detailsVersion: number; expectedFinanceVersion?: number };
+        // The fence is not part of the request's identity (a replay still answers).
+        const { requestKey, expectedFinanceVersion, ...rest } = x;
         const hash = JSON.stringify(rest);
+        if (b.dropNext?.test(path)) { b.dropNext = undefined; return route.abort('failed'); }
         const prior = b.payouts.find((p) => p.by === ADMIN && p.requestKey === requestKey);
         if (prior) {
           if (prior.requestHash !== hash) return fail(route, 409, 'REQUEST_KEY_REUSED', 'This request key was already used for a different payout');
           return finish({ payout: publicPayout(prior), replayed: true });
         }
+        if (b.abandoned.has(`payouts:${a._id}:${requestKey}`)) return fail(route, 409, 'REQUEST_ABANDONED', 'This request was cancelled before it was recorded; make a new one');
         // The doctor changed the destination and another admin verified it, after this admin loaded the page.
         if (b.changeDetailsBeforeNextPayout) { b.changeDetailsBeforeNextPayout = false; setDetails(a, { method: 'upi', upiId: 'meera.new@okaxis' }, 'doctor', DOC); a.state = 'verified'; }
+        if (expectedFinanceVersion !== undefined && expectedFinanceVersion !== (a.financeVersion ?? 0)) {
+          return fail(route, 409, 'FINANCE_CHANGED', 'This account changed since it was loaded (a payout, adjustment or destination change); review it again');
+        }
         if (a.state !== 'verified') return fail(route, 409, 'PAYOUT_DETAILS_NOT_VERIFIED', 'Verify the payout details before recording a payout');
         if (a.version !== x.detailsVersion) return fail(route, 409, 'PAYOUT_DETAILS_CHANGED', 'The payout details changed since they were loaded; review them again');
         const bal = balance(a._id);
@@ -269,6 +332,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
           ...(x.note ? { note: x.note } : {}), destination: { method: d.method, label: d.method === 'upi' ? `UPI ${d.upiId}` : `${d.ifsc}`, detailsVersion: a.version },
           state: 'recorded', by: ADMIN, requestKey, requestHash: hash, createdAt: NOW.toISOString() };
         b.payouts.push(p);
+        bump(a);
         b.entries.push({ _id: oid('eb'), accountId: a._id, at: NOW.toISOString(), kind: 'payout', source: 'payout', sourceId: p._id, description: `Payout · ${p.paidOn}`,
           reference: p.reference, amountMinor: -p.amountMinor });
         event(a, 'finance.payout_recorded', 'admin', ADMIN, { payoutId: p._id, amountMinor: p.amountMinor, reference: p.reference, paidOn: p.paidOn });
@@ -276,16 +340,22 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
         return finish({ payout: publicPayout(p), replayed: false }, 201);
       }
       if (sub === '/adjustments') {
-        const x = body as { amountMinor: number; reason: string; requestKey: string };
+        const x = body as { amountMinor: number; reason: string; requestKey: string; expectedFinanceVersion?: number };
         const sourceId = `${ADMIN}:${x.requestKey}`;
+        if (b.dropNext?.test(path)) { b.dropNext = undefined; return route.abort('failed'); }
         const prior = b.entries.find((e) => e.accountId === a._id && e.source === 'admin_adjustment' && e.sourceId === sourceId);
         if (prior) {
           if (prior.amountMinor !== x.amountMinor || prior.note !== x.reason) return fail(route, 409, 'REQUEST_KEY_REUSED', 'This request key was already used for a different adjustment');
           return finish({ entry: prior, replayed: true });
         }
+        if (b.abandoned.has(`adjustments:${a._id}:${x.requestKey}`)) return fail(route, 409, 'REQUEST_ABANDONED', 'This request was cancelled before it was recorded; make a new one');
+        if (x.expectedFinanceVersion !== undefined && x.expectedFinanceVersion !== (a.financeVersion ?? 0)) {
+          return fail(route, 409, 'FINANCE_CHANGED', 'This account changed since it was loaded (a payout, adjustment or destination change); review it again');
+        }
         const entry: Entry = { _id: oid('eb'), accountId: a._id, at: NOW.toISOString(), kind: 'adjustment', source: 'admin_adjustment', sourceId, description: 'Adjustment',
           note: x.reason, amountMinor: x.amountMinor };
         b.entries.push(entry);
+        bump(a);
         event(a, 'finance.adjustment_posted', 'admin', ADMIN, { entryId: entry._id, amountMinor: x.amountMinor, reason: x.reason });
         if (b.loseNextAdjustmentAnswer) { b.loseNextAdjustmentAnswer = false; return route.abort('failed'); }
         return finish({ entry, replayed: false }, 201);
@@ -310,7 +380,9 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       const a = b.accounts.find((x) => x.ownerKind === 'partner' && x.ownerId === pid);
       if (fsub === '/payout-details' && method === 'PUT') {
         if (actor && actor.role !== 'owner') return fail(route, 403, 'OWNER_REQUIRED', 'Only an owner can change where payouts are sent');
-        setDetails(a!, body as Rec, actor ? 'member' : 'admin', actor ? actor._id : ADMIN);
+        const { expectedDetailsVersion: ev, ...details } = body as Rec;
+        if (ev !== undefined && ev !== a!.version) return fail(route, 409, 'PAYOUT_DETAILS_CHANGED', 'The payout details changed since they were loaded; review them again');
+        setDetails(a!, details, actor ? 'member' : 'admin', actor ? actor._id : ADMIN);
         return ok(route, view(a!, !actor));
       }
       if (actor && actor.role !== 'owner' && !actor.permissions.includes('finance.view')) return fail(route, 403, 'PARTNER_PERMISSION_REQUIRED', 'You do not have permission to do this');
@@ -435,7 +507,8 @@ test('partner finance: an owner changes the payout destination after a review th
   await expect(page.getByText('Payout details saved (version 2). They wait for Jansetu’s verification; no payout is made until then.')).toBeVisible();
   const put = backend.calls.find((c) => c.method === 'PUT')!;
   expect(put.path).toBe('/partner-workspace/finance/payout-details');
-  expect(put.body).toEqual({ method: 'bank', accountName: 'City Lab Pvt Ltd', accountNumber: '998877665544', ifsc: 'ICIC0004321', bankName: 'HDFC' });
+  // Q13: the PUT names the details version the edit started from.
+  expect(put.body).toEqual({ method: 'bank', accountName: 'City Lab Pvt Ltd', accountNumber: '998877665544', ifsc: 'ICIC0004321', bankName: 'HDFC', expectedDetailsVersion: 1 });
   // The account was read again right before the change was sent.
   const i = backend.calls.indexOf(put);
   expect(backend.calls[i - 1]!.path).toBe('/partner-workspace/finance');
@@ -551,11 +624,12 @@ test('admin account: verify details, a stale details version is refused, a lost 
   await expect(review).toContainText('Record ₹1,000.00 paid to Dr Meera Rao at UPI meera@okaxis (details version 1)');
   await expect(review).toContainText('from ₹3,000.00 to ₹2,000.00');
 
-  // The destination changed (and was verified again) after this page was loaded: the payout names version 1, so it is
-  // refused, and the page shows the details as they are now; the form keeps what was typed.
+  // The destination changed (and was verified again) after this page was loaded: the payout names the finance version
+  // it was reviewed on (Q13), so it is refused, and the page shows the details as they are now; the form keeps what was typed.
   backend.changeDetailsBeforeNextPayout = true;
   await review.getByRole('button', { name: 'Record payout' }).click();
-  await expect(page.getByText('Not recorded: The payout details changed since they were loaded; review them again')).toBeVisible();
+  await expect(page.getByText('Not recorded: This account changed since it was loaded (a payout, adjustment or destination change); review it again')).toBeVisible();
+  await expect(form.getByRole('group', { name: 'Record the payout' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Payout details' })).toContainText('meera.new@okaxis');
   await expect(page.getByRole('region', { name: 'Payout details' })).toContainText('Verified · version 2');
   expect(backend.payouts.filter((p) => p.settlementAccountId === ACC2)).toHaveLength(0);
@@ -576,7 +650,8 @@ test('admin account: verify details, a stale details version is refused, a lost 
   const posts = backend.calls.filter((c) => c.method === 'POST' && c.path === `/settlements/accounts/${ACC2}/payouts`);
   expect(posts).toHaveLength(3);
   expect(posts[2]!.body).toEqual(posts[1]!.body);
-  expect(posts[1]!.body).toMatchObject({ amountMinor: 100000, method: 'upi', reference: 'UPI-A2', paidOn: '2026-11-16', detailsVersion: 2 });
+  expect(posts[1]!.body).toMatchObject({ amountMinor: 100000, method: 'upi', reference: 'UPI-A2', paidOn: '2026-11-16', detailsVersion: 2, expectedFinanceVersion: 2 });
+  expect(posts[0]!.body).toMatchObject({ detailsVersion: 1, expectedFinanceVersion: 1 });
   expect((posts[1]!.body as Rec).requestKey).not.toBe((posts[0]!.body as Rec).requestKey);
   expect(backend.payouts.filter((p) => p.settlementAccountId === ACC2)).toHaveLength(1);
   await expect(page.getByRole('definition').filter({ hasText: '₹' }).first()).toHaveText('₹2,000.00');
@@ -585,7 +660,7 @@ test('admin account: verify details, a stale details version is refused, a lost 
   expect(page.url()).toMatch(new RegExp(`#/admin/settlements/${ACC2}$`));
 });
 
-test('admin adjustment: confirm with a reason; a lost answer is found in the statement by its key and posted once', async ({ page }) => {
+test('admin adjustment: confirm with a reason; a lost answer is found by its key and posted once', async ({ page }) => {
   const backend = await mockBackend(page);
   await signInAdmin(page);
   await page.evaluate((id) => { window.location.hash = `#/admin/settlements/${id}`; }, ACC1);
@@ -610,14 +685,16 @@ test('admin adjustment: confirm with a reason; a lost answer is found in the sta
   await expect(page.getByText('This adjustment had already been posted (₹250.00 taken from the balance). Nothing was posted twice.')).toBeVisible();
   const posts = backend.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/adjustments'));
   expect(posts).toHaveLength(1);
-  expect(posts[0]!.body).toMatchObject({ amountMinor: -25000, reason: 'Duplicate earning for one booking' });
+  expect(posts[0]!.body).toMatchObject({ amountMinor: -25000, reason: 'Duplicate earning for one booking', expectedFinanceVersion: 0 });
+  // Q13: an exact lookup by the key, not a scan of the statement.
+  expect(backend.calls.some((c) => c.path === `/settlements/accounts/${ACC1}/adjustments/by-key/${(posts[0]!.body as Rec).requestKey}`)).toBe(true);
   expect(backend.entries.filter((e) => e.source === 'admin_adjustment')).toHaveLength(1);
   await expect(page.getByRole('definition').filter({ hasText: '₹' }).first()).toHaveText('₹14,500.00');
   await expect(page.getByRole('listitem').filter({ hasText: 'Adjustment posted' })).toContainText('− ₹250.00 · “Duplicate earning for one booking”');
   expect(await storage(page)).not.toMatch(/Duplicate|sd:pend/);
 });
 
-test('an adjustment sent just before a reload: only a body-less marker survives, and the key finds it in the statement', async ({ page }) => {
+test('an adjustment sent just before a reload: only a body-less marker survives, and the key finds it', async ({ page }) => {
   const backend = await mockBackend(page);
   await signInAdmin(page);
   await page.evaluate((id) => { window.location.hash = `#/admin/settlements/${id}`; }, ACC1);
@@ -650,7 +727,7 @@ test('admin payouts: filters and a void with a reason after confirming', async (
   await signInAdmin(page);
   await nav(page).getByRole('link', { name: 'Payouts' }).click();
   await expect(page.getByRole('heading', { name: 'Payouts', level: 1 })).toBeVisible();
-  const table = page.getByRole('table', { name: 'Payouts, newest paid first' });
+  const table = page.getByRole('table', { name: 'Payouts, newest recorded first' });
   const row = table.getByRole('row').filter({ hasText: 'UTR0001' });
   await expect(row).toContainText('City Lab');
   await expect(row).toContainText('₹10,000.00');
@@ -707,7 +784,7 @@ test('admin as owner: the partner finance page through the admin workspace route
   await dest.getByRole('button', { name: 'Save payout details' }).click();
   await expect(page.getByText(/Payout details saved \(version 2\)/)).toBeVisible();
   expect(writes(backend)).toEqual([`PUT /partner-workspace/admin/${LAB}/workspace/finance/payout-details`]);
-  expect(backend.calls.filter((c) => c.method === 'PUT')[0]!.body).toEqual({ method: 'bank', accountName: 'City Lab Pvt Ltd', accountNumber: '123456789012', ifsc: 'HDFC0001234', bankName: 'HDFC Bank' });
+  expect(backend.calls.filter((c) => c.method === 'PUT')[0]!.body).toEqual({ method: 'bank', accountName: 'City Lab Pvt Ltd', accountNumber: '123456789012', ifsc: 'HDFC0001234', bankName: 'HDFC Bank', expectedDetailsVersion: 1 });
   expect(backend.calls.some((c) => c.path === `/partner-workspace/admin/${LAB}/workspace/finance/statement?limit=50`)).toBe(true);
   expect(backend.calls.filter((c) => c.path.includes('/finance')).every((c) => c.path.startsWith(`/partner-workspace/admin/${LAB}/workspace/finance`))).toBe(true);
   expect(await storage(page)).not.toMatch(/123456789012|HDFC/);
@@ -794,3 +871,197 @@ for (const kind of ['payout', 'adjustment'] as const) {
     expect(await storage(page)).not.toMatch(/sd:pend/);
   });
 }
+
+test('Q13: a payout lost before a reload is checked by key, given up on the server, then recorded anew; a resend of a given-up key is refused', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await page.evaluate((id) => { window.location.hash = `#/admin/settlements/${id}`; }, ACC1);
+  const form = page.getByRole('form', { name: 'Record a payout' });
+  await form.getByLabel('Amount paid (₹)').fill('500');
+  await form.getByLabel('Bank reference (UTR)').fill('UTR-DROP-1');
+  await form.getByRole('button', { name: 'Review the payout' }).click();
+  backend.dropNext = /\/payouts$/;
+  await form.getByRole('group', { name: 'Record the payout' }).getByRole('button', { name: 'Record payout' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed payout' })).toBeVisible();
+  const key = (backend.calls.find((c) => c.method === 'POST' && c.path.endsWith('/payouts'))!.body as Rec).requestKey as string;
+  expect(await storage(page)).not.toMatch(/UTR-DROP|50000/);
+
+  await page.reload();
+  await signInAdmin(page);
+  await page.evaluate((id) => { window.location.hash = `#/admin/settlements/${id}`; }, ACC1);
+  const panel = page.getByRole('group', { name: 'Unconfirmed payout' });
+  await expect(panel).toContainText('A request made earlier on this device');
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panel).toContainText('Not found in the records. It may still be on its way.');
+  expect(backend.calls.some((c) => c.path === `/settlements/accounts/${ACC1}/payouts/by-key/${key}`)).toBe(true);
+  await panel.getByRole('button', { name: 'Give up this payout' }).click();
+  await expect(page.getByText('The unconfirmed payout was given up: it can never be recorded.', { exact: false })).toBeVisible();
+  expect(backend.abandoned.has(`payouts:${ACC1}:${key}`)).toBe(true);
+  expect(await storage(page)).not.toMatch(/sd:pend/);
+
+  // A new payout (new key) can be recorded now.
+  await form.getByLabel('Amount paid (₹)').fill('500');
+  await form.getByLabel('Bank reference (UTR)').fill('UTR-NEW-1');
+  await form.getByRole('button', { name: 'Review the payout' }).click();
+  // Its answer is lost; meanwhile its key is given up elsewhere (another tab after a reload): the resend is refused for good.
+  backend.dropNext = /\/payouts$/;
+  await form.getByRole('group', { name: 'Record the payout' }).getByRole('button', { name: 'Record payout' }).click();
+  const panel2 = page.getByRole('group', { name: 'Unconfirmed payout' });
+  await expect(panel2).toContainText('The outcome of this request is not known yet');
+  const key2 = (backend.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/payouts')).at(-1)!.body as Rec).requestKey as string;
+  expect(key2).not.toBe(key);
+  backend.abandoned.add(`payouts:${ACC1}:${key2}`);
+  await panel2.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(page.getByText('This payout was given up earlier, so it was not recorded and never will be.', { exact: false })).toBeVisible();
+  await expect(panel2).toHaveCount(0);
+  await expect(page.getByRole('form', { name: 'Record a payout' })).toBeVisible();
+  expect(backend.payouts.filter((p) => p.settlementAccountId === ACC1)).toHaveLength(1);
+  expect(await storage(page)).not.toMatch(/sd:pend/);
+});
+
+test('Q13: a lost adjustment given up after a check (nothing posted); one that lands after the check is answered "used" by the give-up and posted once', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await page.evaluate((id) => { window.location.hash = `#/admin/settlements/${id}`; }, ACC1);
+  const form = page.getByRole('form', { name: 'Post an adjustment' });
+  await form.getByLabel('Adjustment amount (₹)').fill('40');
+  await form.getByLabel('Reason (kept with the entry)').fill('Lost before a reload');
+  await form.getByRole('button', { name: 'Review the adjustment' }).click();
+  backend.dropNext = /\/adjustments$/;
+  await form.getByRole('group', { name: 'Post the adjustment' }).getByRole('button', { name: 'Post adjustment' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed adjustment' });
+  await expect(panel).toContainText('The outcome of this request is not known yet');
+  // Before a reload: a check that finds nothing offers the give-up next to the resend.
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panel).toContainText('Not recorded so far, but it may still be finishing.');
+  await panel.getByRole('button', { name: 'Give up this adjustment' }).click();
+  await expect(page.getByText('The unconfirmed adjustment was given up: it can never be posted.', { exact: false })).toBeVisible();
+  expect(backend.entries.filter((e) => e.source === 'admin_adjustment')).toHaveLength(0);
+  const key = (backend.calls.find((c) => c.method === 'POST' && c.path.endsWith('/adjustments'))!.body as Rec).requestKey as string;
+  expect(backend.calls.some((c) => c.method === 'POST' && c.path === `/settlements/accounts/${ACC1}/adjustments/by-key/${key}/abandon`)).toBe(true);
+
+  // A second one: its answer is lost, its resend is held before the server acts, and the admin leaves and comes back.
+  await form.getByLabel('Adjustment amount (₹)').fill('60');
+  await form.getByLabel('Reason (kept with the entry)').fill('Lands after the check');
+  await form.getByRole('button', { name: 'Review the adjustment' }).click();
+  backend.dropNext = /\/adjustments$/;
+  await form.getByRole('group', { name: 'Post the adjustment' }).getByRole('button', { name: 'Post adjustment' }).click();
+  await expect(panel).toContainText('The outcome of this request is not known yet');
+  const release = hold(backend, 'holdBefore', /\/adjustments$/);
+  await panel.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect.poll(() => backend.holdBefore).toBeUndefined();
+  await nav(page).getByRole('link', { name: 'Settlements' }).click();
+  await page.getByRole('link', { name: 'City Lab' }).click();
+  const back = page.getByRole('group', { name: 'Unconfirmed adjustment' });
+  await back.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(back).toContainText('Not recorded so far, but it may still be finishing.');
+  // The held resend reaches the server now and posts it; the give-up then finds the key used and shows what it posted.
+  const landed = page.waitForResponse((r) => /\/adjustments$/.test(new URL(r.url()).pathname) && r.status() === 201);
+  release();
+  await landed;
+  await back.getByRole('button', { name: 'Give up this adjustment' }).click();
+  await expect(page.getByText('This adjustment had already been posted (₹60.00 added to the balance). Nothing was posted twice.')).toBeVisible();
+  expect(backend.entries.filter((e) => e.source === 'admin_adjustment').map((e) => e.amountMinor)).toEqual([6000]);
+  expect(await storage(page)).not.toMatch(/sd:pend|Lands after/);
+});
+
+test('Q13: a review closes when the account moves; FINANCE_CHANGED on a stale decision shows the account as it is now', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await page.evaluate((id) => { window.location.hash = `#/admin/settlements/${id}`; }, ACC1);
+  const adj = page.getByRole('form', { name: 'Post an adjustment' });
+  await adj.getByLabel('Adjustment amount (₹)').fill('100');
+  await adj.getByLabel('Reason (kept with the entry)').fill('Correction after review');
+  await adj.getByRole('button', { name: 'Review the adjustment' }).click();
+  await expect(adj.getByRole('group', { name: 'Post the adjustment' })).toContainText('It goes from ₹14,750.00 to ₹14,850.00.');
+  // Another admin posts an adjustment of ₹250 meanwhile (finance version 0 → 1); this page has not read it yet.
+  const acc = backend.accounts.find((a) => a._id === ACC1)!;
+  backend.entries.push({ _id: 'eb'.repeat(12), accountId: ACC1, at: NOW.toISOString(), kind: 'adjustment', source: 'admin_adjustment', sourceId: 'other:key', description: 'Adjustment', note: 'Elsewhere', amountMinor: 25000 });
+  acc.financeVersion = 1;
+  await adj.getByRole('button', { name: 'Post adjustment' }).click();
+  await expect(page.getByText('Not posted: This account changed since it was loaded (a payout, adjustment or destination change); review it again')).toBeVisible();
+  await expect(adj.getByRole('group', { name: 'Post the adjustment' })).toHaveCount(0);
+  await expect(page.getByRole('definition').filter({ hasText: '₹' }).first()).toHaveText('₹15,000.00');
+  expect(backend.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/adjustments')).map((c) => (c.body as Rec).expectedFinanceVersion)).toEqual([0]);
+  await expect(adj.getByLabel('Adjustment amount (₹)')).toHaveValue('100');
+
+  // Reviewing again names version 1; a payout review open on this page closes once the adjustment moves the account.
+  const pay = page.getByRole('form', { name: 'Record a payout' });
+  await pay.getByLabel('Amount paid (₹)').fill('100');
+  await pay.getByLabel('Bank reference (UTR)').fill('UTR-REVIEW');
+  await pay.getByRole('button', { name: 'Review the payout' }).click();
+  await expect(pay.getByRole('group', { name: 'Record the payout' })).toBeVisible();
+  await adj.getByRole('button', { name: 'Review the adjustment' }).click();
+  await adj.getByRole('button', { name: 'Post adjustment' }).click();
+  await expect(page.getByText('Adjustment posted: ₹100.00 added to the balance.')).toBeVisible();
+  await expect(pay.getByRole('group', { name: 'Record the payout' })).toHaveCount(0);
+  await expect(pay.getByText('The account changed while you were reviewing', { exact: false })).toBeVisible();
+  expect(backend.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/adjustments')).map((c) => (c.body as Rec).expectedFinanceVersion)).toEqual([0, 1]);
+  expect(backend.calls.some((c) => c.method === 'POST' && c.path.endsWith('/payouts'))).toBe(false);
+});
+
+test('Q13: details saved elsewhere after the re-read are refused by the server (PAYOUT_DETAILS_CHANGED); the form shows them and closes the review', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Finance' }).click();
+  const dest = page.getByRole('region', { name: 'Where payouts are sent' });
+  await dest.getByRole('button', { name: 'Change payout details' }).click();
+  await dest.getByRole('radio', { name: 'UPI' }).check();
+  await dest.getByLabel('UPI ID').fill('citylab@okhdfc');
+  await dest.getByRole('button', { name: 'Review the change' }).click();
+  backend.changeDetailsAfterNextRead = true;
+  await dest.getByRole('group', { name: 'Save the payout details' }).getByRole('button', { name: 'Save payout details' }).click();
+  await expect(dest.getByText('The payout details were changed elsewhere just as you saved, so nothing was saved.', { exact: false })).toBeVisible();
+  await expect(dest.getByRole('group', { name: 'Save the payout details' })).toHaveCount(0);
+  await expect(dest.getByLabel('UPI ID')).toHaveValue('other@okicici');
+  await expect(dest.getByRole('definition').filter({ hasText: 'other@okicici' })).toBeVisible();
+  const puts = backend.calls.filter((c) => c.method === 'PUT');
+  expect(puts.map((c) => (c.body as Rec).expectedDetailsVersion)).toEqual([1]);
+  expect(backend.accounts.find((a) => a._id === ACC1)!.details).toEqual({ method: 'upi', upiId: 'other@okicici' });
+  expect(await storage(page)).not.toMatch(/citylab|okicici/);
+});
+
+test('Q13: payouts and events page by the server cursor (account, queue and partner), with totals and names from the rows', async ({ page }) => {
+  const backend = await mockBackend(page);
+  for (let i = 0; i < 120; i++) {
+    const at = new Date(Date.parse('2026-10-01T06:00:00.000Z') + Math.floor(i / 2) * 60_000).toISOString(); // pairs share an instant
+    backend.payouts.push({ _id: `fa${String(i).padStart(22, '0')}`, settlementAccountId: i % 2 ? ACC1 : ACC2, amountMinor: 1000 + i, method: 'bank_transfer',
+      reference: `UTRP${String(i).padStart(3, '0')}`, paidOn: at.slice(0, 10), destination: { method: 'bank', label: 'x', detailsVersion: 1 }, state: 'recorded', by: ADMIN,
+      requestKey: `seedkey${i}xx`, requestHash: '-', createdAt: at });
+    backend.events.push({ _id: `ec${String(i).padStart(22, '0')}`, settlementAccountId: ACC1, action: 'finance.payout_details_verified', byKind: 'admin', by: ADMIN, at, detail: { version: 1 } });
+  }
+  await signInAdmin(page);
+  await nav(page).getByRole('link', { name: 'Payouts' }).click();
+  const table = page.getByRole('table', { name: 'Payouts, newest recorded first' });
+  await expect(page.getByText('121 payouts · showing 100')).toBeVisible();
+  await expect(table.getByRole('row').filter({ hasText: 'UTRP119' })).toContainText('City Lab');
+  await expect(table.getByRole('row').filter({ hasText: 'UTRP118' })).toContainText('Dr Meera Rao');
+  await page.getByRole('button', { name: 'Show older payouts' }).click();
+  await expect(page.getByText('121 payouts · showing 121')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Show older payouts' })).toHaveCount(0);
+  const queue = backend.calls.filter((c) => c.path.startsWith('/settlements/payouts?')).map((c) => c.path);
+  expect(queue[1]).toMatch(/^\/settlements\/payouts\?state=recorded&cursor=\d+_fa0+21&limit=100$/);
+  expect(new Set(await table.locator('tbody tr td:nth-child(5)').allTextContents()).size).toBe(121);
+  // No account list is read for names any more.
+  expect(backend.calls.some((c) => c.path.startsWith('/settlements/accounts?'))).toBe(false);
+
+  await table.getByRole('link', { name: 'City Lab' }).first().click();
+  await expect(page.getByRole('heading', { name: 'City Lab', level: 1 })).toBeVisible();
+  const payouts = page.getByRole('region', { name: 'Payouts', exact: true });
+  await expect(payouts.getByText('61 in all · showing 50')).toBeVisible();
+  await payouts.getByRole('button', { name: 'Show older payouts' }).click();
+  await expect(payouts.getByText('61 in all · showing 61')).toBeVisible();
+  const events = page.getByRole('region', { name: 'Finance events', exact: true });
+  await expect(events.getByText('123 in all · showing 50')).toBeVisible();
+  await events.getByRole('button', { name: 'Show older events' }).click();
+  await expect(events.getByText('123 in all · showing 100')).toBeVisible();
+  expect(backend.calls.some((c) => new RegExp(`^/settlements/accounts/${ACC1}/events\\?cursor=\\d+_ec\\d{22}&limit=50$`).test(c.path))).toBe(true);
+  expect(backend.calls.some((c) => new RegExp(`^/settlements/accounts/${ACC1}/payouts\\?cursor=\\d+_fa0+\\d+&limit=50$`).test(c.path))).toBe(true);
+
+  // The partner's own page pages the same way through its workspace routes.
+  await page.evaluate((id) => { window.location.hash = `#/admin/partners/${id}/finance`; }, LAB);
+  await expect(page.getByRole('region', { name: 'Payouts', exact: true }).getByText('61 in all · showing 50')).toBeVisible();
+  await page.getByRole('region', { name: 'Payouts', exact: true }).getByRole('button', { name: 'Show older payouts' }).click();
+  await expect(page.getByRole('region', { name: 'Payouts', exact: true }).getByText('61 in all · showing 61')).toBeVisible();
+  expect(backend.calls.some((c) => c.path === `/partner-workspace/admin/${LAB}/workspace/finance/events?limit=50`)).toBe(true);
+});

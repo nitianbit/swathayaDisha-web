@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   holdsAny, paiseToRupees, type CatalogueItemKind, type PartnerKind, type VisitMode,
 } from '@jansetu/api';
@@ -21,14 +21,17 @@ export const canReadCatalogue = (ctx: ScopeContext) => holdsAny(ctx.actor, ['cat
 
 /**
  * Active catalogue items (admin-disabled ones included); `includeInactive` adds deactivated ones (catalogue managers).
- * Every variant shares the `[..., 'catalogue']` prefix, so one invalidation refreshes them all.
+ * Q12: `q` is searched on the server (name or code); while a new search runs the previous answer stays on screen. Every
+ * variant shares the `[..., 'catalogue']` prefix, so one invalidation refreshes them all.
  */
-export function useCatalogue(ctx: ScopeContext, opts: { includeInactive?: boolean } = {}) {
+export function useCatalogue(ctx: ScopeContext, opts: { includeInactive?: boolean; q?: string } = {}) {
   const all = !!opts.includeInactive;
+  const q = opts.q?.trim() || '';
   return useQuery({
-    queryKey: [...ctx.key, 'catalogue', all ? 'all' : 'active'],
-    queryFn: () => ctx.billing.catalogue(undefined, all),
+    queryKey: [...ctx.key, 'catalogue', all ? 'all' : 'active', q],
+    queryFn: () => ctx.billing.catalogue(undefined, all, q || undefined),
     enabled: canReadCatalogue(ctx),
+    placeholderData: opts.q === undefined ? undefined : keepPreviousData,
   });
 }
 

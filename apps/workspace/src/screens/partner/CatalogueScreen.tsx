@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  allowedGstRates, ApiError, catalogueAdminApi, chargesGst, holdsAny, ITEM_KINDS_FOR, MAX_CODE, MAX_DESCRIPTION, MAX_ITEM_NAME,
+  allowedGstRates, ApiError, catalogueAdminApi, chargesGst, holdsAny, ITEM_KINDS_FOR, MAX_CATALOGUE_SEARCH, MAX_CODE, MAX_DESCRIPTION, MAX_ITEM_NAME,
   MAX_PREPARATION, MAX_PRICE_MINOR, MAX_SAC, MAX_SAMPLE_TYPE, paiseToInput, rupeesToPaise, TAX_REGIME_LABEL, usesVisitModes,
-  type CatalogueItem, type CatalogueItemKind, type CatalogueItemUpdate, type GstRate, type NewCatalogueItem, type Page, type Partner,
+  type CatalogueItem, type CatalogueItemKind, type CatalogueItemUpdate, type GstRate, type NewCatalogueItem, type Partner,
   type PartnerKind, type VisitMode,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextArea, TextField } from '@jansetu/ui';
@@ -11,7 +11,9 @@ import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { dirtyKeys, staleMessage, useDraft, type DraftState } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
-import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
+import {
+  afterFailure, beginAttempt, keyedLookup, newRequestKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp,
+} from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { ITEM_KIND_LABEL, money, useCatalogue, VISIT_MODE_LABEL } from './billing.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
@@ -124,13 +126,17 @@ export function itemBody(s: DraftState<Draft>, rates: readonly GstRate[], kind: 
 /** A new item sent and not yet confirmed (Q10: exactly once per `requestKey`). Session memory + body-less reload marker. */
 type PendingItem = PendingOp<NewCatalogueItem & { requestKey: string }>;
 
-/** The price list as newest-first "records" a lost create is looked up in, by its stored `createRequestKey`. */
-function itemFinder(ctx: ScopeContext) {
-  return async (page: number): Promise<Page<CatalogueItem & { requestKey?: string; createdAt?: string }>> => {
-    const all = await ctx.billing.catalogue(undefined, true);
-    const items = all.map((i) => ({ ...i, requestKey: i.createRequestKey }));
-    return { items, page, limit: items.length, total: items.length, totalPages: 1 };
-  };
+/** The search waits this long after the last keystroke before asking the server (Q12 `GET /catalogue?q=`). */
+const SEARCH_DELAY_MS = 300;
+
+/** `value`, once it has stopped changing for `ms`. */
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return settled;
 }
 
 /** Tests and packages (labs) or services (clinics) with their prices: `catalogue.manage` edits, `invoices.create` reads. */
@@ -148,11 +154,13 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
   const { api, memory } = useSession();
   const partner = useWorkspacePartner(ctx);
   const canManage = holdsAny(ctx.actor, ['catalogue.manage']);
+  // The search text lives in this page's state only (never the URL); the server searches name and code (Q12).
+  const [search, setSearch] = useState('');
+  const q = useDebounced(search.trim().slice(0, MAX_CATALOGUE_SEARCH), SEARCH_DELAY_MS);
   // Q10: catalogue managers also see deactivated items (to reactivate them).
-  const items = useCatalogue(ctx, { includeInactive: canManage });
+  const items = useCatalogue(ctx, { includeInactive: canManage, q });
   const [kindFilter, setKindFilter] = useState<'' | CatalogueItemKind>('');
   const [status, setStatus] = useState<StatusFilter>('active');
-  const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<string | 'new' | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -161,16 +169,16 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
   const kind = p?.kind ?? 'lab';
   const refresh = () => queryClient.invalidateQueries({ queryKey: [...ctx.key, 'catalogue'] });
   const target = editing && editing !== 'new' ? items.data?.find((i) => i._id === editing && i.isActive) : undefined;
-  const q = search.trim().toLowerCase();
   const shown = (items.data ?? []).filter((i) => (!kindFilter || i.kind === kindFilter)
-    && (status === 'inactive' ? !i.isActive : i.isActive && (status === 'active' || (status === 'disabled') === i.adminDisabled))
-    && (!q || i.name.toLowerCase().includes(q) || (i.code ?? '').toLowerCase().includes(q)));
+    && (status === 'inactive' ? !i.isActive : i.isActive && (status === 'active' || (status === 'disabled') === i.adminDisabled)));
+  const searching = q !== search.trim().slice(0, MAX_CATALOGUE_SEARCH) || (items.isFetching && items.isPlaceholderData);
 
   // ── Exactly-once create (Q10 requestKey) ──
   const slot = `catalogue-create:${scopeIdentity(ctx)}`;
   const [pending, setPendingState] = useState<PendingItem | undefined>(() => memory.get<PendingItem>(slot));
   const [createBusy, setCreateBusy] = useState(false);
   const [createRefused, setCreateRefused] = useState<string | null>(null);
+  const [gaveUp, setGaveUp] = useState<string | null>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const setPending = (op: PendingItem | undefined) => {
@@ -188,16 +196,30 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
     setEditing((e) => (e === 'new' ? null : e));
     setNotice(earlier ? `${it.name} had already been added.` : `${it.name} was added.`);
   };
+  /** Given up on the server (abandon, or a resend refused REQUEST_ABANDONED): ends `op` only while this page owns it. */
+  const givenUp = (op: PendingItem, text: string) => {
+    if (!owns(op)) return;
+    const k = op.requestKey;
+    resolveStored(memory, slot, k);
+    setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
+    setGaveUp(text);
+  };
   /** Sends exactly `op` (same key, same content); only success or a definite refusal of its first attempt ends it. */
   async function sendCreate(op: PendingItem) {
     const attempt = beginAttempt(op);
     setCreateBusy(true);
     setCreateRefused(null);
+    setGaveUp(null);
     setPending(attempt);
     try {
       created(await ctx.billing.createCatalogueItem(attempt.body), attempt);
     } catch (err) {
       if (!stillCurrent(memory.get<PendingItem>(slot), attempt)) return;
+      // Q12: the key was given up (e.g. from another tab after a reload): no item was or can ever be made with it.
+      if (wasAbandoned(err)) {
+        givenUp(attempt, 'This item was given up earlier, so it was never added and never will be. Add it again if it is still needed.');
+        return;
+      }
       const next = afterFailure(attempt, err, messageOf(err));
       if (mounted.current) {
         setPending(next ?? undefined);
@@ -217,6 +239,7 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
       </PartnerPageHeading>
       {notice && <Alert tone="ok">{notice}</Alert>}
       {failure && <Alert>{failure}</Alert>}
+      {gaveUp && !pending && <Alert tone="ok">{gaveUp}</Alert>}
       {p && !chargesGst(p) && (
         <p className="ws-muted">
           {p.name} cannot charge GST ({TAX_REGIME_LABEL[p.taxRegime]}{p.taxRegime !== 'unregistered' && !p.gstin ? ', no GSTIN' : ''}): items carry 0% GST.
@@ -224,22 +247,19 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
       )}
       {showPending ? (
         <PendingOpPanel key={pending.attempts} label="Unconfirmed item" op={pending} busy={createBusy} onResend={() => void sendCreate(pending)}
-          fetchPage={itemFinder(ctx)}
+          // Q12: exact lookup by key (`GET /catalogue/by-key/:key`); "not found" only means "not added so far".
+          fetchPage={keyedLookup(pending.requestKey, () => ctx.billing.catalogueItemByKey(pending.requestKey))}
           onFound={(it) => created(it, pending, true)}
-          // No content is kept after a reload, and items have no server abandon: a new item is a deliberate decision.
-          forget={pending.restored ? {
-            label: 'Add a new item instead', confirmLabel: 'It may be a duplicate: add a new item',
-            consequence: 'If the earlier item was added after all, the price list will have it twice: deactivate the extra one.',
-            onForget: () => {
-              if (!owns(pending)) return;
-              const k = pending.requestKey;
-              resolveStored(memory, slot, k);
-              setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
-            },
-          } : undefined}
+          // Q12: giving up is decided by the server: `abandoned` = this item can never be added; `used` = here it is.
+          abandon={async () => {
+            const r = await ctx.billing.abandonCatalogueKey(pending.requestKey);
+            return { state: r.state, record: r.item ? { ...r.item, requestKey: pending.requestKey } : undefined };
+          }}
+          abandonWhenNotFound abandonLabel="Give up this item"
+          onDiscard={() => givenUp(pending, 'The earlier item was given up: it can never be added. You can add it again now.')}
           summary={pending.restored ? null : <div>New item: {pending.body.name} at {money(pending.body.priceMinor)}.</div>} />
       ) : canManage && editing === null && (
-        <div><Button onClick={() => { setEditing('new'); setNotice(null); setCreateRefused(null); }}>Add an item</Button></div>
+        <div><Button onClick={() => { setEditing('new'); setNotice(null); setCreateRefused(null); setGaveUp(null); }}>Add an item</Button></div>
       )}
       {!canManage && <p className="ws-muted">You can see the catalogue to make bills; someone with “Manage tests and services” changes it.</p>}
       {p && ((editing === 'new' && !showPending) || target) && (
@@ -268,12 +288,14 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
             {canManage && <option value="inactive">Deactivated</option>}
           </select>
         </div>
-        <TextField label="Search by name or code" type="search" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <TextField label="Search by name or code" type="search" value={search} maxLength={MAX_CATALOGUE_SEARCH}
+          onChange={(e) => setSearch(e.target.value)} hint={searching ? 'Searching…' : undefined} />
       </div>
       {items.isPending || partner.isPending ? <Loading label="Loading the catalogue…" />
         : items.isError ? <ErrorState message={messageOf(items.error)} onRetry={() => void items.refetch()} />
         : partner.isError ? <ErrorState message={messageOf(partner.error)} onRetry={() => void partner.refetch()} />
-        : items.data.length === 0 ? <Empty title="No items yet">{canManage ? 'Add the first item to start billing and taking bookings.' : null}</Empty>
+        : items.data.length === 0 && !q ? <Empty title="No items yet">{canManage ? 'Add the first item to start billing and taking bookings.' : null}</Empty>
+        : items.data.length === 0 ? <Empty title="No matching items">Nothing is called or coded “{q}”. Change the search to see more.</Empty>
         : shown.length === 0 ? <Empty title="No matching items">Change the filters to see more.</Empty>
         : (
           <div className="ws-table-wrap">

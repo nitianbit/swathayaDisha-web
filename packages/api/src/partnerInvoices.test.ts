@@ -153,6 +153,26 @@ describe('billing paths', () => {
     expect(calls).toHaveLength(4);
   });
 
+  it('Q12: server search of the price list, item lookup and give-up by key; checked before any path', async () => {
+    const { client, calls } = recorder();
+    const member = partnerBillingApi(client, { kind: 'member' });
+    const admin = partnerBillingApi(client, { kind: 'admin', partnerId: P });
+    await member.catalogue(undefined, true, '  cbc & co ');
+    await member.catalogue(undefined, false, '   ');
+    await member.catalogueItemByKey('k'.repeat(32));
+    await admin.abandonCatalogueKey('k'.repeat(32));
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      'GET /partner-workspace/catalogue?includeInactive=true&q=cbc+%26+co',
+      'GET /partner-workspace/catalogue',
+      `GET /partner-workspace/catalogue/by-key/${'k'.repeat(32)}`,
+      `POST /partner-workspace/admin/${P}/workspace/catalogue/by-key/${'k'.repeat(32)}/abandon`,
+    ]);
+    expect(() => member.catalogue(undefined, false, 'x'.repeat(61))).toThrow('Search is too long');
+    expect(() => member.catalogueItemByKey('short')).toThrow('Invalid request key');
+    expect(() => member.abandonCatalogueKey('a/bcdefghij')).toThrow('Invalid request key');
+    expect(calls).toHaveLength(4);
+  });
+
   it('a bills page carries the total and the next cursor', async () => {
     const { client } = recorder(() => new Response(JSON.stringify({ success: true, data: [{ _id: I }], pagination: { total: 51, nextCursor: `1_${I}` } }), { status: 200 }));
     const page = await partnerBillingApi(client, { kind: 'member' }).invoices({ limit: 1 });

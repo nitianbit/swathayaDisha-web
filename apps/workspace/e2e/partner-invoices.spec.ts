@@ -58,6 +58,8 @@ interface Backend {
   priceChangeBeforeBill?: { id: string; priceMinor: number };
   /** Bill request keys given up (Q10 abandon): they can never issue a bill. */
   abandoned: Set<string>;
+  /** Q12: catalogue item create keys given up: they can never make an item. */
+  abandonedItems: Set<string>;
   /** Reads of a bill's detail that fail (503) before one succeeds again. */
   failDetailReads: number;
   /** The next give-up answer waits for this promise (and is decided only then). */
@@ -114,7 +116,7 @@ function invoice(id: string, number: number, extra: Rec = {}): Rec {
 async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular' | 'unregistered'; seed?: boolean; many?: number } = {}): Promise<Backend> {
   const b: Backend = {
     calls: [], me, live: false, loseNextCreateAnswer: false, dropNextCreate: false, linkingOffOnce: false, loseNextItemAnswer: false,
-    dropNextItem: false, loseNextPayAnswer: false, abandoned: new Set(), failDetailReads: 0, abandonAnswered: false,
+    dropNextItem: false, loseNextPayAnswer: false, abandoned: new Set(), abandonedItems: new Set(), failDetailReads: 0, abandonAnswered: false,
     partners: [partner(LAB, 'City Lab', 'lab', opts.tax ?? 'regular'), partner(CLINIC, 'Sunrise Clinic', 'clinic', 'regular')],
     catalogue: [
       { _id: CBC, partnerId: LAB, kind: 'test', name: 'CBC', code: 'CBC01', priceMinor: 45000, gstRate: 0, visitModes: ['lab', 'home'], reportTatHours: 12, isActive: true, adminDisabled: false, updatedAt: '2026-11-01T00:00:00.000Z' },
@@ -190,7 +192,21 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
       if (!can('catalogue.manage', 'invoices.create')) return deny();
       const kind = url.searchParams.get('kind');
       const all = url.searchParams.get('includeInactive') === 'true' && can('catalogue.manage');
-      return ok(route, b.catalogue.filter((i) => i.partnerId === pid && (all || i.isActive) && (!kind || i.kind === kind)));
+      // Q12: `q` searches name or code (case-insensitive, literal).
+      const q = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+      const hit = (i: Rec) => !q || [i.name, i.code].some((v) => String(v ?? '').toLowerCase().includes(q));
+      return ok(route, b.catalogue.filter((i) => i.partnerId === pid && (all || i.isActive) && (!kind || i.kind === kind) && hit(i)));
+    }
+    const itemKey = /^\/catalogue\/by-key\/([A-Za-z0-9_-]{8,100})(\/abandon)?$/.exec(sub);
+    if (itemKey) {
+      if (!can('catalogue.manage')) return deny();
+      const made = b.catalogue.find((i) => i.partnerId === pid && i.createRequestKey === itemKey[1]);
+      if (itemKey[2]) {
+        if (made) return ok(route, { state: 'used', item: made });
+        b.abandonedItems.add(itemKey[1]!);
+        return ok(route, { state: 'abandoned' });
+      }
+      return made ? ok(route, made) : fail(route, 404, 'ITEM_NOT_FOUND', 'No item was made with this key');
     }
     if (sub === '/catalogue' && method === 'POST') {
       if (!can('catalogue.manage')) return deny();
@@ -201,6 +217,7 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
           : fail(route, 409, 'REQUEST_KEY_REUSED', 'This request key was already used for a different item');
       }
       if (b.dropNextItem) { b.dropNextItem = false; return route.abort('failed'); }
+      if (b.abandonedItems.has(requestKey as string)) return fail(route, 409, 'REQUEST_ABANDONED', 'This request was cancelled before it was recorded; make a new one');
       const kinds = p.kind === 'clinic' ? ['consultation', 'procedure', 'package', 'other'] : ['test', 'package'];
       if (!kinds.includes(data.kind as string)) return fail(route, 400, 'ITEM_KIND_NOT_ALLOWED', `A ${p.kind} catalogue takes: ${kinds.join(', ')}`);
       if (p.kind === 'clinic' && (data.visitModes as unknown[] | undefined)?.length) return fail(route, 400, 'VISIT_MODES_NOT_ALLOWED', 'Clinic items have no visit modes');
@@ -352,7 +369,8 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
           // Q10: the same mode and reference again answers the payment already recorded.
           const prior = events().find((e) => e.kind === 'payment');
           if (prior && prior.mode === x.mode && (prior.reference ?? '') === (x.reference ?? '')) {
-            return json(route, 200, { success: true, data: { invoice: { ...inv }, event: prior }, replayed: true });
+            // Q12: `replayed` inside data (kept at the top level too).
+            return json(route, 200, { success: true, data: { invoice: { ...inv }, event: prior, replayed: true }, replayed: true });
           }
         }
         if (inv.lifecycleState !== 'issued') return fail(route, 409, 'INVOICE_STATE_CONFLICT', `This bill is ${inv.lifecycleState}`);
@@ -407,9 +425,16 @@ test('catalogue: add with prices in rupees sent as paise, edit only what changed
   await expect(page.getByRole('row').filter({ hasText: 'CBC' })).toHaveCount(0);
   await page.getByLabel('Status').selectOption('active');
   await expect(page.getByRole('row').filter({ hasText: 'Old panel' })).toHaveCount(0); // deactivated: listed only under "Deactivated"
-  await page.getByLabel('Search by name or code').fill('cbc01');
+  // Q12: searched on the server once typing stops; the text stays in the page, never in the URL.
+  await page.getByLabel('Search by name or code').pressSequentially('cbc01', { delay: 40 });
   await expect(page.getByRole('row')).toHaveCount(2);
+  // One request once typing stopped, not one per key.
+  expect(backend.calls.filter((c) => c.path.includes('q=')).map((c) => c.path)).toEqual(['/partner-workspace/catalogue?includeInactive=true&q=cbc01']);
+  expect(page.url()).not.toContain('cbc01');
+  await page.getByLabel('Search by name or code').fill('zz-none');
+  await expect(page.getByText('Nothing is called or coded “zz-none”.', { exact: false })).toBeVisible();
   await page.getByLabel('Search by name or code').fill('');
+  await expect(page.getByRole('row').filter({ hasText: 'Thyroid profile' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Add an item' }).click();
   await page.getByRole('button', { name: 'Add item' }).click();
@@ -830,7 +855,7 @@ test('a new item whose answer is lost is locked to "send again" with the same ke
   expect(backend.catalogue.filter((i) => i.name === 'Lipid profile')).toHaveLength(1);
 });
 
-test('a new item lost before a reload: found by its key if it was added; otherwise a new one only after a duplicate warning', async ({ page }) => {
+test('Q12: a new item lost before a reload is checked by its key and given up on the server; one that was added is found by its key', async ({ page }) => {
   const backend = await mockBackend(page);
   backend.dropNextItem = true;
   await signInPartner(page);
@@ -840,16 +865,51 @@ test('a new item lost before a reload: found by its key if it was added; otherwi
   await page.getByLabel('Price (₹)').fill('450');
   await page.getByRole('button', { name: 'Add item' }).click();
   await expect(page.getByRole('group', { name: 'Unconfirmed item' })).toBeVisible();
+  const key1 = (backend.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/catalogue')!.body as Rec).requestKey as string;
   await page.reload();
   const panel = page.getByRole('group', { name: 'Unconfirmed item' });
   await expect(panel).toContainText('A request made earlier on this device');
   await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
-  await expect(panel).toContainText('Not found in the records');
-  await panel.getByRole('button', { name: 'Add a new item instead' }).click();
-  await expect(panel).toContainText('the price list will have it twice');
-  await panel.getByRole('button', { name: 'It may be a duplicate: add a new item' }).click();
+  await expect(panel).toContainText('Not found in the records. It may still be on its way.');
+  expect(backend.calls.some((c) => c.path === `/partner-workspace/catalogue/by-key/${key1}`)).toBe(true);
+  await panel.getByRole('button', { name: 'Give up this item' }).click();
+  await expect(page.getByText('The earlier item was given up: it can never be added. You can add it again now.')).toBeVisible();
+  expect(backend.abandonedItems.has(key1)).toBe(true);
   await expect(page.getByRole('button', { name: 'Add an item' })).toBeVisible();
-  expect(backend.calls.some((c) => c.path === '/partner-workspace/catalogue?includeInactive=true')).toBe(true);
+
+  // Added on the server, answer lost, then a reload: the key finds the item (no duplicate warning, no list scan).
+  backend.loseNextItemAnswer = true;
+  await page.getByRole('button', { name: 'Add an item' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Lipid profile');
+  await page.getByLabel('Price (₹)').fill('450');
+  await page.getByRole('button', { name: 'Add item' }).click();
+  await expect(panel).toContainText('The outcome of this request is not known yet');
+  await page.reload();
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Lipid profile had already been added.')).toBeVisible();
+  await expect(panel).toHaveCount(0);
+  expect(backend.catalogue.filter((i) => i.name === 'Lipid profile')).toHaveLength(1);
+  expect(await page.evaluate(() => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }))).not.toMatch(/Lipid|45000/);
+});
+
+test('Q12: a resend of an item whose key was given up elsewhere is refused for good, and the form opens again', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.dropNextItem = true;
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await page.getByRole('button', { name: 'Add an item' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Lipid profile');
+  await page.getByLabel('Price (₹)').fill('450');
+  await page.getByRole('button', { name: 'Add item' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed item' });
+  await expect(panel).toContainText('The outcome of this request is not known yet');
+  const key = (backend.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/catalogue')!.body as Rec).requestKey as string;
+  backend.abandonedItems.add(key); // given up in another tab after a reload
+  await panel.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(page.getByText('This item was given up earlier, so it was never added and never will be.', { exact: false })).toBeVisible();
+  await expect(panel).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Add an item' })).toBeVisible();
+  expect(backend.catalogue.filter((i) => i.name === 'Lipid profile')).toHaveLength(0);
 });
 
 test('an item edit that someone else saved in between is refused (expectedUpdatedAt) and shown again', async ({ page }) => {
@@ -931,7 +991,8 @@ test('pay and cancel are one at a time; a lost payment answer is resent unchange
   await expect(unsure).toContainText('We could not confirm the payment of ₹1,008.00 by Cash');
   await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
   await unsure.getByRole('button', { name: 'Send the same payment again' }).click();
-  await expect(page.getByText('Payment recorded.')).toBeVisible();
+  // Q12: the replay flag is read inside `data`.
+  await expect(page.getByText('Payment recorded. It had already been recorded: nothing was recorded twice.')).toBeVisible();
   backend.failDetailReads = 0;
   await expect(unsure).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeEnabled();

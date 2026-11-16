@@ -107,7 +107,8 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
       queryClient.setQueryData<Detail>(key, (cur) => mergeDetail(cur, r)); // version-fenced: always safe to fold in
       if (!owns(attempt)) return; // a newer attempt or another page owns the record: it settles it
       storePay(undefined);
-      setNotice('Payment recorded.');
+      // Q12: `replayed` (inside data) = this payment had already been recorded; the answer is its receipt.
+      setNotice(r.replayed ? 'Payment recorded. It had already been recorded: nothing was recorded twice.' : 'Payment recorded.');
       void reload().catch(() => undefined);
     } catch (err) {
       if (!owns(attempt)) return;

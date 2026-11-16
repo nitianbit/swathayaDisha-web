@@ -14,6 +14,10 @@ import {
  *
  * Routes: `registerWorkspaceRoutes` in `partners/routes/index.ts`, for members (`/partner-workspace/clinic/...`) and admins
  * acting as owner (`/partner-workspace/admin/:partnerId/workspace/clinic/...`).
+ *
+ * Q13 (`m0/q13-doctor-finance`): invitations name the doctor; started slots are left out of `/clinic/slots` and refused
+ * (409 SLOT_STARTED); a lost desk booking is looked up or given up by its key (`/clinic/appointments/by-key/:key(/abandon)`,
+ * the desk member's own keys); desk steps name the appointment's `updatedAt` (`expectedUpdatedAt`; 409 BOOKING_CHANGED).
  */
 
 // ── Doctors and invitations (model/clinicDoctor.ts, services/clinic.ts) ──
@@ -29,7 +33,7 @@ export const DOCTOR_INVITE_STATE_LABEL: Record<DoctorInviteState, string> = {
   pending: 'Waiting for the doctor', accepted: 'Accepted', declined: 'Declined by the doctor', revoked: 'Revoked',
 };
 
-/** `IClinicDoctorInvite` as stored (the list returns the stored rows: no doctor name). */
+/** `IClinicDoctorInvite` as stored; Q13: the list adds the doctor's current name and speciality (no contact details). */
 export interface DoctorInvite {
   _id: string;
   partnerId: string;
@@ -42,6 +46,8 @@ export interface DoctorInvite {
   memberId?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** Q13 `listInvites` (the invite answer itself carries the doctor beside the invitation). */
+  doctor?: { doctorId: string; name: string | null; specialization: string | null };
 }
 
 /** `inviteDoctorSchema`: exactly one of `doctorId` or `phone` (xor), and up to 50 branches (empty = all). */
@@ -99,7 +105,10 @@ export const doctorsAtBranch = <D extends Pick<ClinicDoctor, 'active' | 'branchI
 
 // ── Front desk (services/clinic.ts: deskSlots, createDeskAppointment, listClinicAppointments, desk steps) ──
 
-/** A bookable in-clinic slot of one doctor at one branch on one day (a seat is free and the doctor's time is not held). */
+/**
+ * A bookable in-clinic slot of one doctor at one branch on one day (a seat is free and the doctor's time is not held).
+ * Q13: slots that have already started are not listed (and refused at booking: 409 SLOT_STARTED).
+ */
 export interface DeskSlot {
   slotId: string;
   /** India-time date YYYY-MM-DD. */
@@ -136,7 +145,11 @@ export interface DeskAppointment {
   /** `settlementSystem === 'clinic'`: a desk appointment, paid at the clinic, never through Jansetu. */
   payAtClinic: boolean;
   arrivedAt?: string | null;
+  /** Q13: the Booking's `updatedAt`; a desk step names it (`expectedUpdatedAt`) to refuse acting on a stale view. */
+  updatedAt?: string;
 }
+/** Q13 `abandonDeskKey`: `abandoned` = the key can never book; `used` = it did (the appointment, or null when it is no longer in this desk's branches). */
+export interface DeskKeyAbandon { state: 'abandoned' | 'used'; booking?: DeskAppointment | null }
 
 /** `listClinicAppointments`: desk and online consultations at the clinic's branches in scope. */
 export interface ClinicAppointment extends DeskAppointment {
@@ -237,6 +250,16 @@ function checkDate(date: string, what: string): string {
   if (!isRealDate(date)) throw new Error(`Invalid ${what} date`);
   return date;
 }
+function checkKey(key: string): string {
+  if (!REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
+  return key;
+}
+/** Q13 `deskStepSchema.expectedUpdatedAt` (an ISO date): the version the step was decided on, when known. */
+function expected(updatedAt: string | undefined): { expectedUpdatedAt?: string } {
+  if (updatedAt === undefined) return {};
+  if (Number.isNaN(Date.parse(updatedAt))) throw new Error('Invalid appointment version');
+  return { expectedUpdatedAt: updatedAt };
+}
 const STATES = new Set<string>(DOCTOR_INVITE_STATES);
 const STATUSES = new Set<string>(CLINIC_APPOINTMENT_STATUSES);
 
@@ -288,18 +311,27 @@ export function partnerClinicApi(c: ApiClient, scope: PartnerScope) {
      */
     book: (body: DeskBookingInput) => {
       checkId(body.slotId, 'slot');
-      if (!REQUEST_KEY_PATTERN.test(body.requestKey)) throw new Error('Invalid request key');
+      checkKey(body.requestKey);
       const phone = canonicalMobile(body.customer.phone);
       if (!phone) throw new Error('Invalid mobile number');
       return c.post<DeskBookingResult>(`${base()}/appointments`, { body: { ...body, customer: { ...body.customer, phone } } });
     },
-    arrived: (id: string) => c.post<DeskAppointment>(appt(id, 'arrived'), { body: {} }),
-    complete: (id: string) => c.post<DeskAppointment>(appt(id, 'complete'), { body: {} }),
-    noShow: (id: string) => c.post<DeskAppointment>(appt(id, 'no-show'), { body: {} }),
+    /** Q13: the appointment this desk member's `key` booked, within their clinic and branches (404 BOOKING_NOT_FOUND otherwise). */
+    appointmentByKey: (key: string) => c.get<DeskAppointment>(`${base()}/appointments/by-key/${checkKey(key)}`),
+    /** Q13: gives up a lost desk booking, decided by the server (the key is claimed in the booking transaction). */
+    abandonBookingKey: (key: string) => c.post<DeskKeyAbandon>(`${base()}/appointments/by-key/${checkKey(key)}/abandon`, { body: {} }),
+    /**
+     * The desk steps. Q13: each names the `updatedAt` of the appointment as the person saw it; the server refuses a step on
+     * an appointment that changed since (409 BOOKING_CHANGED).
+     */
+    arrived: (id: string, updatedAt?: string) => c.post<DeskAppointment>(appt(id, 'arrived'), { body: expected(updatedAt) }),
+    complete: (id: string, updatedAt?: string) => c.post<DeskAppointment>(appt(id, 'complete'), { body: expected(updatedAt) }),
+    noShow: (id: string, updatedAt?: string) => c.post<DeskAppointment>(appt(id, 'no-show'), { body: expected(updatedAt) }),
     /** No money moves: desk appointments are paid at the clinic. An empty reason is stored as "Cancelled by the clinic". */
-    cancel: (id: string, reason?: string) =>
-      c.post<DeskAppointment>(appt(id, 'cancel'), { body: reason?.trim() ? { reason: reason.trim() } : {} }),
+    cancel: (id: string, reason?: string, updatedAt?: string) =>
+      c.post<DeskAppointment>(appt(id, 'cancel'), { body: { ...(reason?.trim() ? { reason: reason.trim() } : {}), ...expected(updatedAt) } }),
     /** Another slot of the same doctor at one of this clinic's branches in the actor's scope; clears the check-in. */
-    reschedule: (id: string, slotId: string) => c.post<DeskAppointment>(appt(id, 'reschedule'), { body: { slotId: checkId(slotId, 'slot') } }),
+    reschedule: (id: string, slotId: string, updatedAt?: string) =>
+      c.post<DeskAppointment>(appt(id, 'reschedule'), { body: { slotId: checkId(slotId, 'slot'), ...expected(updatedAt) } }),
   };
 }

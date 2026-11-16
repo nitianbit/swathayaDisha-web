@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ApiError, clinicBranchesFor, DOCTOR_INVITE_STATE_LABEL, DOCTOR_INVITE_STATES, hasGlobalScope, holdsAny, inviteProblems,
-  type DoctorInvite, type DoctorInviteState, type InviteResult,
+  type DoctorInvite, type DoctorInviteState,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
@@ -82,18 +82,6 @@ function DoctorList({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
   );
 }
 
-/** Names learnt from invitation answers (the invitation list carries only the doctor's id). Kept in memory, per partner. */
-function useInvitedNames(ctx: ScopeContext) {
-  const queryClient = useQueryClient();
-  const key = [...ctx.key, 'clinic-invite-names'];
-  const names = useQuery({ queryKey: key, queryFn: () => new Map<string, string>(), staleTime: Infinity, gcTime: Infinity }).data;
-  const remember = (doctorId: string, name?: string) => {
-    if (!name) return;
-    queryClient.setQueryData<Map<string, string>>(key, (old) => new Map(old ?? []).set(doctorId, name));
-  };
-  return { names: names ?? new Map<string, string>(), remember };
-}
-
 function Invitations({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
   const queryClient = useQueryClient();
   const [state, setState] = useState<'' | DoctorInviteState>('pending');
@@ -101,8 +89,12 @@ function Invitations({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) 
   const doctors = useDoctorList(ctx, clinic);
   const branches = useBranches(ctx);
   const branchNames = useMemo(() => new Map((branches.data ?? []).map((b) => [b._id, b.name])), [branches.data]);
-  const invited = useInvitedNames(ctx);
-  const doctorName = (id: string) => doctors.data?.find((d) => d.doctorId === id)?.name ?? invited.names.get(id);
+  // Q13: each invitation names its doctor (current name and speciality); the doctor list is only a fallback.
+  const doctorOf = (inv: DoctorInvite) => {
+    const member = doctors.data?.find((d) => d.doctorId === inv.doctorId);
+    return { name: inv.doctor?.name ?? member?.name ?? undefined, specialization: inv.doctor?.specialization ?? member?.specialization ?? undefined };
+  };
+  const doctorName = (inv: DoctorInvite) => doctorOf(inv).name;
   const [notice, setNotice] = useState<string | null>(null);
   const revoking = useRef(new Set<string>());
   const mounted = useRef(true);
@@ -115,7 +107,7 @@ function Invitations({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) 
     revoking.current.add(inv._id);
     try {
       await clinic.revokeInvite(inv._id);
-      if (mounted.current) setNotice(`The invitation to ${doctorName(inv.doctorId) ?? 'the doctor'} was revoked. They can no longer accept it.`);
+      if (mounted.current) setNotice(`The invitation to ${doctorName(inv) ?? 'the doctor'} was revoked. They can no longer accept it.`);
     } finally {
       revoking.current.delete(inv._id);
       // Revoked or refused (e.g. already accepted meanwhile): the list shows the server's current state either way.
@@ -150,11 +142,11 @@ function Invitations({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) 
                   <thead><tr><th scope="col">Doctor</th><th scope="col">Branches</th><th scope="col">Sent</th><th scope="col">State</th><th scope="col">Action</th></tr></thead>
                   <tbody>
                     {rows.map((inv) => {
-                      const name = doctorName(inv.doctorId);
-                      const who = name ?? `Doctor …${inv.doctorId.slice(-6)}`;
+                      const d = doctorOf(inv);
+                      const who = d.name ?? `Doctor …${inv.doctorId.slice(-6)}`;
                       return (
                         <tr key={inv._id}>
-                          <td>{who}{!name && <div className="ws-muted">The name shows here once they accept.</div>}</td>
+                          <td>{who}{d.specialization ? <div className="ws-muted">{d.specialization}</div> : !d.name ? <div className="ws-muted">No name on record</div> : null}</td>
                           <td>{branchLabel(branchNames, inv.branchIds)}</td>
                           <td>{formatDateTime(inv.createdAt)}</td>
                           <td>
@@ -177,12 +169,12 @@ function Invitations({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) 
             </>
           )}
       </section>
-      <InviteForm ctx={ctx} clinic={clinic} onInvited={(r) => invited.remember(r.doctor.doctorId, r.doctor.name)} />
+      <InviteForm ctx={ctx} clinic={clinic} />
     </>
   );
 }
 
-function InviteForm({ ctx, clinic, onInvited }: { ctx: ScopeContext; clinic: ClinicApi; onInvited: (r: InviteResult) => void }) {
+function InviteForm({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
   const queryClient = useQueryClient();
   const branches = useBranches(ctx);
   const offered = clinicBranchesFor(branches.data ?? [], ctx.actor);
@@ -213,7 +205,6 @@ function InviteForm({ ctx, clinic, onInvited }: { ctx: ScopeContext; clinic: Cli
     setError(null);
     try {
       const r = await clinic.invite(by === 'phone' ? { phone: value.trim(), branchIds } : { doctorId: value.trim().toLowerCase(), branchIds });
-      onInvited(r);
       void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'clinic-invites'] });
       if (!mounted.current) return;
       const who = r.doctor.name ?? 'The doctor';

@@ -155,6 +155,32 @@ describe('partnerClinicApi paths (member and admin-as-owner)', () => {
     expect(calls[13]!.body).toEqual({ slotId: S });
   });
 
+  it('Q13: desk steps name the version they were decided on; a lost booking is looked up or given up by its key', async () => {
+    const { client, calls } = recorder();
+    const api = partnerClinicApi(client, { kind: 'member' });
+    const v = '2026-11-17T04:00:00.000Z';
+    await api.arrived(K, v);
+    await api.complete(K, v);
+    await api.noShow(K, v);
+    await api.cancel(K, ' Doctor away ', v);
+    await api.cancel(K, '', v);
+    await api.reschedule(K, S, v);
+    await api.appointmentByKey('k'.repeat(32));
+    await api.abandonBookingKey('k'.repeat(32));
+    expect(calls.map((c) => c.body)).toEqual([
+      { expectedUpdatedAt: v }, { expectedUpdatedAt: v }, { expectedUpdatedAt: v }, { reason: 'Doctor away', expectedUpdatedAt: v },
+      { expectedUpdatedAt: v }, { slotId: S, expectedUpdatedAt: v }, undefined, {},
+    ]);
+    expect(calls.slice(6).map((c) => `${c.method} ${c.url}`)).toEqual([
+      `GET /partner-workspace/clinic/appointments/by-key/${'k'.repeat(32)}`,
+      `POST /partner-workspace/clinic/appointments/by-key/${'k'.repeat(32)}/abandon`,
+    ]);
+    expect(() => api.arrived(K, 'yesterday')).toThrow(/appointment version/);
+    expect(() => api.appointmentByKey('../x')).toThrow(/request key/);
+    expect(() => api.abandonBookingKey('short')).toThrow(/request key/);
+    expect(calls).toHaveLength(8);
+  });
+
   it('builds admin-as-owner paths', async () => {
     const { client, calls } = recorder();
     const api = partnerClinicApi(client, { kind: 'admin', partnerId: P });

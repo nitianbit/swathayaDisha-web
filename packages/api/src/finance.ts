@@ -1,4 +1,4 @@
-import type { ApiClient } from './client.ts';
+import type { ApiClient, Page } from './client.ts';
 import { OBJECT_ID_PATTERN, partnerWorkspaceBase, REQUEST_KEY_PATTERN, type PartnerScope } from './partners.ts';
 import { isRealDate, istDateOf } from './partnerLabs.ts';
 
@@ -14,6 +14,11 @@ import { isRealDate, istDateOf } from './partnerLabs.ts';
  *   `/finance/events`; `PUT /finance/payout-details` (owners only: `setPayoutDetails` refuses staff with OWNER_REQUIRED);
  * - admins (`/api/v1/settlements`, `settlementAdminRouter`): accounts, statements, payouts, history, events, payout
  *   details (edit, verify), record payout, adjustment, the payout queue and void.
+ *
+ * Q13 (`m0/q13-doctor-finance`): payout-detail PUTs take `expectedDetailsVersion`; accounts expose `financeVersion` and
+ * payouts/adjustments take `expectedFinanceVersion` (409 FINANCE_CHANGED); a lost payout or adjustment is looked up or
+ * given up by its key (`/accounts/:id/{payouts,adjustments}/by-key/:key(/abandon)`); payouts, events and the admin queue
+ * page by an exact `<ms>_<id>` cursor (`pagination {total, nextCursor}`, 400 INVALID_CURSOR).
  */
 
 export type SettlementOwnerKind = 'partner' | 'doctor';
@@ -42,7 +47,7 @@ export type PayoutDetailsView =
     accountNumberMasked?: string;
   };
 
-/** `accountView`. `financeVersion` is never returned (it serializes writes on the server only). */
+/** `accountView`. */
 export interface SettlementAccount {
   _id: string;
   ownerKind: SettlementOwnerKind;
@@ -55,6 +60,11 @@ export interface SettlementAccount {
   payoutDetailsVersion: number;
   payoutDetailsChangedAt?: string;
   payoutDetailsVerifiedAt?: string;
+  /**
+   * Q13: bumped by payouts, voids, adjustments, destination changes and verifications (never by earnings). A payout or an
+   * adjustment names the version it was decided on (`expectedFinanceVersion`; 409 FINANCE_CHANGED otherwise).
+   */
+  financeVersion: number;
 }
 
 export interface FinanceTotals { earnedMinor: number; reversedMinor: number; paidOutMinor: number; adjustedMinor: number }
@@ -137,8 +147,20 @@ export interface AccountsPage { total: number; totalDueMinor: number; rows: Acco
 export interface AccountsQuery {
   ownerKind?: SettlementOwnerKind; due?: boolean; search?: string; detailsState?: PayoutDetailsState; limit?: number; skip?: number;
 }
-/** `payoutsQuerySchema`. `from`/`to` filter `paidOn`. Newest paid first; no paging beyond `limit` (≤ 500). */
-export interface PayoutsQuery { accountId?: string; from?: string; to?: string; state?: PayoutState; limit?: number }
+/** Q13 `pageQuerySchema`: the `<ms>_<id>` cursor from the previous page's `pagination.nextCursor`, and 1–500 rows. */
+export interface PageQuery { cursor?: string; limit?: number }
+/**
+ * `payoutsQuerySchema` (Q13): `from`/`to` filter `paidOn`; newest RECORDED first (`createdAt`, then id) with an exact
+ * cursor and the total (`adminPayoutsPage`).
+ */
+export interface PayoutsQuery extends PageQuery { accountId?: string; from?: string; to?: string; state?: PayoutState }
+/** Q13 `adminPayoutsPage`: each queue row names its account (the owner's current display name; null if gone). */
+export interface QueuePayout extends SettlementPayout {
+  account: { accountId: string; ownerKind: SettlementOwnerKind; ownerId: string; beneficiaryName: string; ownerName: string | null } | null;
+}
+/** Q13 key give-up answers: `abandoned` = that key can never record; `used` = it did (with what it recorded). */
+export interface PayoutKeyAbandon { state: 'abandoned' | 'used'; payout?: SettlementPayout | null }
+export interface AdjustmentKeyAbandon { state: 'abandoned' | 'used'; entry?: LedgerEntry | null }
 /** `statementQuerySchema` (`from`/`to` are India calendar dates). */
 export interface StatementQuery { before?: string; limit?: number; from?: string; to?: string }
 export interface PeriodQuery { from?: string; to?: string }
@@ -151,15 +173,19 @@ export type PayoutDetailsInput =
 /** `recordPayoutSchema`. */
 export interface RecordPayoutInput {
   amountMinor: number; method: PayoutMethod; reference: string; paidOn: string; note?: string; detailsVersion: number; requestKey: string;
+  /** Q13: the account's `financeVersion` the admin decided on (a fence, not part of the request's identity: replays still answer). */
+  expectedFinanceVersion?: number;
 }
 /** `adjustmentSchema`: signed (+ credit, − recovery). */
-export interface AdjustmentInput { amountMinor: number; reason: string; requestKey: string }
+export interface AdjustmentInput { amountMinor: number; reason: string; requestKey: string; expectedFinanceVersion?: number }
 
 // ── Limits and rules (mirrors of validation/finance.ts and services/finance.ts) ──
 
 /** `MAX_MINOR` (₹1,00,00,00,000): the largest payout or adjustment. */
 export const MAX_FINANCE_MINOR = 1_000_000_000_00;
 export const STATEMENT_PAGE_MAX = 200;
+/** Q13 `pageQuerySchema.limit` and `payoutsQuerySchema.limit`. */
+export const PAGE_LIMIT_MAX = 500;
 export const ACCOUNTS_PAGE_MAX = 200;
 export const PAYOUTS_LIMIT_MAX = 500;
 export const MAX_ACCOUNT_SEARCH = 100;
@@ -177,6 +203,8 @@ export const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 export const UPI_ID_PATTERN = /^[a-z0-9._-]{2,256}@[a-z][a-z0-9]{1,63}$/;
 /** `parseCursor`: `<ms>_<entryId>`. */
 export const STATEMENT_CURSOR_PATTERN = /^\d{1,15}_[0-9a-fA-F]{24}$/;
+/** Q13 `pageCursor`: the same `<ms>_<id>` shape for payouts, events and the queue (400 INVALID_CURSOR otherwise). */
+export const PAGE_CURSOR_PATTERN = STATEMENT_CURSOR_PATTERN;
 
 /** Field problems of a destination, or the body the server accepts (`payoutDetailsSchema` + `normalizeDetails`). */
 export function payoutDetailsProblems(raw: {
@@ -231,18 +259,6 @@ export function reasonProblem(reason: string): string | null {
 /** Today in India (payout dates are India calendar dates; the server refuses a future one). */
 export const istToday = (now: Date = new Date()) => istDateOf(now);
 
-/** An adjustment line recorded under `requestKey` (`postAdjustment` stores `sourceId = <adminId>:<requestKey>`). */
-export const isAdjustmentFor = (line: Pick<StatementLine, 'source' | 'sourceId'>, requestKey: string) =>
-  line.source === 'admin_adjustment' && line.sourceId.endsWith(`:${requestKey}`);
-
-/**
- * The recorded payout a lost `recordPayout` would have created. Payout lists never return the request key, but a
- * reference is unique per account among recorded payouts, so the same account + reference + amount + date is it.
- */
-export const isPayoutFor = (p: SettlementPayout, accountId: string, body: Omit<RecordPayoutInput, 'requestKey'>) =>
-  p.state === 'recorded' && p.settlementAccountId.toLowerCase() === accountId.toLowerCase() && p.reference === body.reference.trim()
-  && p.amountMinor === body.amountMinor && p.paidOn === body.paidOn;
-
 /** The file name the server gives a statement CSV (`csvName` in controller/finance.ts). */
 export function statementCsvName(prefix: string, q: PeriodQuery = {}): string {
   return `${prefix}-statement${q.from ? `-${q.from}` : ''}${q.to ? `-to-${q.to}` : ''}.csv`;
@@ -284,6 +300,18 @@ function checkKey(key: string): string {
   if (!REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
   return key;
 }
+function pageQuery(q: PageQuery) {
+  if (q.cursor !== undefined && !PAGE_CURSOR_PATTERN.test(q.cursor)) throw new Error('Invalid page cursor');
+  return { cursor: q.cursor, limit: checkLimit(q.limit, PAGE_LIMIT_MAX) };
+}
+function checkVersion(v: number | undefined, what: string): number | undefined {
+  if (v === undefined) return undefined;
+  if (!Number.isInteger(v) || v < 0) throw new Error(`Invalid ${what} version`);
+  return v;
+}
+/** The destination body, with the version the edit started from (Q13: 409 PAYOUT_DETAILS_CHANGED if it moved). */
+const detailsBody = (body: PayoutDetailsInput, expectedDetailsVersion?: number) =>
+  ({ ...body, ...(checkVersion(expectedDetailsVersion, 'details') !== undefined ? { expectedDetailsVersion } : {}) });
 
 /** The partner's own finance (member with `finance.view` and partner-wide scope, or an admin acting as owner). */
 export function partnerFinanceApi(c: ApiClient, scope: PartnerScope) {
@@ -293,12 +321,16 @@ export function partnerFinanceApi(c: ApiClient, scope: PartnerScope) {
     statement: (q: StatementQuery = {}, signal?: AbortSignal) => c.get<StatementPage>(`${base()}/statement`, { query: { ...statementQuery(q) }, signal }),
     /** The statement CSV for a period, read with the session's token into memory. 400 EXPORT_TOO_LARGE over 5,000 entries. */
     statementCsv: (q: PeriodQuery = {}, signal?: AbortSignal) => c.blob(`${base()}/statement.csv`, { query: { ...period(q) }, signal }),
-    /** The latest 100 payouts, newest first. */
-    payouts: () => c.get<SettlementPayout[]>(`${base()}/payouts`),
-    /** The latest 200 finance events, newest first. */
-    events: () => c.get<FinanceEvent[]>(`${base()}/events`),
-    /** Owners (and admins): replaces the destination; it is unverified until an admin verifies the new version. */
-    setPayoutDetails: (body: PayoutDetailsInput) => c.put<SettlementAccount>(`${base()}/payout-details`, { body }),
+    /** Q13: payouts newest recorded first, one cursor page at a time with the total. */
+    payouts: (q: PageQuery = {}): Promise<Page<SettlementPayout>> => c.page<SettlementPayout>(`${base()}/payouts`, { query: { ...pageQuery(q) } }),
+    /** Q13: finance events newest first, one cursor page at a time with the total. */
+    events: (q: PageQuery = {}): Promise<Page<FinanceEvent>> => c.page<FinanceEvent>(`${base()}/events`, { query: { ...pageQuery(q) } }),
+    /**
+     * Owners (and admins): replaces the destination; it is unverified until an admin verifies the new version. Q13: with
+     * `expectedDetailsVersion` the server refuses (409 PAYOUT_DETAILS_CHANGED) if the destination moved since.
+     */
+    setPayoutDetails: (body: PayoutDetailsInput, expectedDetailsVersion?: number) =>
+      c.put<SettlementAccount>(`${base()}/payout-details`, { body: detailsBody(body, expectedDetailsVersion) }),
   };
 }
 
@@ -320,10 +352,13 @@ export function settlementsApi(c: ApiClient) {
     statement: (id: string, q: StatementQuery = {}, signal?: AbortSignal) =>
       c.get<StatementPage>(`${acc(id)}/statement`, { query: { ...statementQuery(q) }, signal }),
     statementCsv: (id: string, q: PeriodQuery = {}, signal?: AbortSignal) => c.blob(`${acc(id)}/statement.csv`, { query: { ...period(q) }, signal }),
-    payouts: (id: string) => c.get<SettlementPayout[]>(`${acc(id)}/payouts`),
+    /** Q13: the account's payouts, newest recorded first, one cursor page at a time with the total. */
+    payouts: (id: string, q: PageQuery = {}): Promise<Page<SettlementPayout>> => c.page<SettlementPayout>(`${acc(id)}/payouts`, { query: { ...pageQuery(q) } }),
     history: (id: string) => c.get<HistoryRef[]>(`${acc(id)}/history`),
-    events: (id: string) => c.get<FinanceEvent[]>(`${acc(id)}/events`),
-    setPayoutDetails: (id: string, body: PayoutDetailsInput) => c.put<SettlementAccount>(`${acc(id)}/payout-details`, { body }),
+    /** Q13: the account's finance events, newest first, one cursor page at a time with the total. */
+    events: (id: string, q: PageQuery = {}): Promise<Page<FinanceEvent>> => c.page<FinanceEvent>(`${acc(id)}/events`, { query: { ...pageQuery(q) } }),
+    setPayoutDetails: (id: string, body: PayoutDetailsInput, expectedDetailsVersion?: number) =>
+      c.put<SettlementAccount>(`${acc(id)}/payout-details`, { body: detailsBody(body, expectedDetailsVersion) }),
     /** Verifies exactly `version` (409 PAYOUT_DETAILS_CHANGED if the details changed since); a repeat is answered as done. */
     verifyPayoutDetails: (id: string, version: number) => {
       if (!Number.isInteger(version) || version < 1) throw new Error('Invalid details version');
@@ -332,21 +367,32 @@ export function settlementsApi(c: ApiClient) {
     /**
      * Exactly once per (admin, requestKey): a resend with the same key and content answers the payout already recorded
      * (`replayed: true`); other content under the key is refused (409 REQUEST_KEY_REUSED). Refusals: 409
-     * PAYOUT_DETAILS_NOT_VERIFIED, PAYOUT_DETAILS_CHANGED (`detailsVersion` is stale), INSUFFICIENT_BALANCE,
-     * PAYOUT_REFERENCE_EXISTS, ACCOUNT_INACTIVE.
+     * PAYOUT_DETAILS_NOT_VERIFIED, PAYOUT_DETAILS_CHANGED (`detailsVersion` is stale), FINANCE_CHANGED (Q13:
+     * `expectedFinanceVersion` is stale), INSUFFICIENT_BALANCE, PAYOUT_REFERENCE_EXISTS, ACCOUNT_INACTIVE, REQUEST_ABANDONED
+     * (the key was given up: it can never record).
      */
     recordPayout: (id: string, body: RecordPayoutInput) => {
       checkKey(body.requestKey);
+      checkVersion(body.expectedFinanceVersion, 'finance');
       return c.post<{ payout: SettlementPayout; replayed: boolean }>(`${acc(id)}/payouts`, { body });
     },
     /** Exactly once per (admin, requestKey) as above; may take the balance below zero (a recovery owed). */
     postAdjustment: (id: string, body: AdjustmentInput) => {
       checkKey(body.requestKey);
+      checkVersion(body.expectedFinanceVersion, 'finance');
       return c.post<{ entry: LedgerEntry; replayed: boolean }>(`${acc(id)}/adjustments`, { body });
     },
-    payoutQueue: (q: PayoutsQuery = {}) => c.get<SettlementPayout[]>('/settlements/payouts', { query: {
-      accountId: q.accountId === undefined ? undefined : checkId(q.accountId, 'account'), ...period(q), state: q.state,
-      limit: checkLimit(q.limit, PAYOUTS_LIMIT_MAX),
+    /** Q13: the payout this admin recorded on this account with `key` (404 PAYOUT_NOT_FOUND: not recorded, yet or ever). */
+    payoutByKey: (id: string, key: string) => c.get<SettlementPayout>(`${acc(id)}/payouts/by-key/${checkKey(key)}`),
+    /** Q13: gives up a lost payout, decided by the server (the key is claimed with the payout). */
+    abandonPayoutKey: (id: string, key: string) => c.post<PayoutKeyAbandon>(`${acc(id)}/payouts/by-key/${checkKey(key)}/abandon`, { body: {} }),
+    /** Q13: the adjustment this admin posted on this account with `key` (404 ADJUSTMENT_NOT_FOUND). */
+    adjustmentByKey: (id: string, key: string) => c.get<LedgerEntry>(`${acc(id)}/adjustments/by-key/${checkKey(key)}`),
+    abandonAdjustmentKey: (id: string, key: string) =>
+      c.post<AdjustmentKeyAbandon>(`${acc(id)}/adjustments/by-key/${checkKey(key)}/abandon`, { body: {} }),
+    /** Q13: every account's payouts, newest recorded first, one cursor page at a time with the total and each row's account. */
+    payoutQueue: (q: PayoutsQuery = {}): Promise<Page<QueuePayout>> => c.page<QueuePayout>('/settlements/payouts', { query: {
+      accountId: q.accountId === undefined ? undefined : checkId(q.accountId, 'account'), ...period(q), state: q.state, ...pageQuery(q),
     } }),
     /** Marks a recorded payout voided and credits it back (an `adjustment`); voiding a voided payout answers it unchanged. */
     voidPayout: (payoutId: string, reason: string) =>
