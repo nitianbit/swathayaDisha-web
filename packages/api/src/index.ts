@@ -91,3 +91,17 @@ export type {
   AppointmentQuery, ClinicAppointment, ClinicAppointmentStatus, ClinicDoctorRow, DeskAction, DeskActionOffer, DeskAppointment, DeskBookingInput, DeskKeyAbandon,
   DeskBookingResult, DeskSlot, DoctorInvite, DoctorInviteState, InviteDoctorInput, InviteResult,
 } from './clinic.ts';
+// WQ4 doctor tools: names shared with finance.ts are exported with a Doctor prefix.
+export {
+  APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentStart, CONSULT_MINUTES, CONSULT_MODE_LABEL, CONSULT_MODES, doctorStanding, doctorToolsApi,
+  DOCTOR_ROLLING_DAYS, EXTEND_MINUTES_MAX, fromYmd, HEARTBEAT_MS, INSTANT_FEE_MAX_MINOR, INSTANT_MODES, INSTANT_REFUSAL, instantRefusal,
+  FINANCE_PAGE, LEDGER_KIND_LABEL as DOCTOR_LEDGER_KIND_LABEL, meetingLinkState, OFFER_MS, offerSecondsLeft, payoutDetailsProblems as doctorPayoutDetailsProblems, periodProblem, presenceProblems, PRESENCE_TTL_MS, SCHEDULE_MINUTES_MAX,
+  SCHEDULE_MINUTES_MIN, SCHEDULE_WEEKDAYS, SCHEDULE_WINDOWS_MAX, scheduleProblems, schedulableBranches, scheduleSlotCount, soloPracticeProblems,
+  STATEMENT_LIMIT_MAX, statementCsvName as doctorStatementCsvName, toYmd,
+} from './doctorTools.ts';
+export type {
+  AppointmentAction, AppointmentStatus, ClinicBranchRef, ConsultMode, DoctorAppointment, DoctorProfile, DoctorSchedule, DoctorToolsApi,
+  FinanceEvent as DoctorFinanceEvent, FinanceSummary as DoctorFinanceSummary, HistoryRef as DoctorHistoryRef, InstantBookingView, InstantMode, InstantOffer, LedgerKind as DoctorLedgerKind, MyClinics, Payout, PayoutDetailsInput as DoctorPayoutDetailsInput, PayoutDetailsState as DoctorPayoutDetailsState,
+  PayoutDetailsView as DoctorPayoutDetailsView, Presence, PresenceInput, PresenceWrite, Reservation, ScheduleDays, ScheduleExpansion, ScheduleInput, ScheduleSaved, ScheduleWindow,
+  SettlementAccountView, SoloPractice, SoloPracticeCreated, SoloPracticeInput, StatementLine as DoctorStatementLine, StatementPage as DoctorStatementPage, StatementQuery as DoctorStatementQuery,
+} from './doctorTools.ts';

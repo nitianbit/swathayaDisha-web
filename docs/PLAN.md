@@ -11,7 +11,7 @@ uses a Capacitor plugin for that one thing (the NIYA employee app model).
 | Scope | Completely new apps. Existing references: `admin_panel_template` (live admin panel), `myewacare-mobile-app` (customer RN app), `pharmacy-app` (pharmacy RN app) and `NIYA_EMPLOYEE_APP` (web + Capacitor pattern). Nothing is copied wholesale. |
 | Shape | One repo, npm workspaces: `packages/api` (typed client), `packages/ui` (tokens + small components), `apps/workspace` (staff, web only), `apps/customer` (browser + Capacitor iOS/Android). |
 | Stack | Vite 8, React 19, TypeScript 6 strict, React Router 8 (hash routes: static hosting and Capacitor need no rewrites), TanStack Query 5, plain CSS tokens, lucide icons. Vitest + Playwright. |
-| Staff | Admin and pharmacy staff use the web workspace (desk/counter). HR and doctors join when their modules exist. |
+| Staff | Admin, pharmacy, lab/clinic staff (WQ1) and doctors (WQ4) use the web workspace. HR joins when its module exists. |
 | Brand | Working name Jansetu (the roadmap's product name). The brand lives only in `packages/ui/src/tokens.css`. |
 | Web session | D4 (2026-11-15): access token in memory (15 min); the session is an HttpOnly, first-party `__Host-` cookie the server rotates, so a reload keeps people signed in. Sign-in / refresh / sign-out run under one cross-tab lock; tabs announce identity changes; a renewed token is installed only for the same person. Nothing readable about the session is stored in the browser (only body-less reload markers of unconfirmed once-only requests, in sessionStorage). Native: secure storage (Keychain/Keystore), protocol specified in the backend D4 design. |
 | Access | The backend enforces access. The UI declares every page with its roles and denies anything not declared. |
@@ -615,6 +615,122 @@ Still open:
 Verification: see the 2026-11-16 WQ7 row below. Playwright ran on port 5271 with a temporary config (`reuseExistingServer: false`), not committed:
 the planned 5261 was already held by the WQ4 worktree's own dev server.
 
+## WQ4 doctor tools in the staff workspace (2026-11-16, taken autonomously at the owner's request)
+
+Backend: Q4a schedule, Q4b instant consultations, Q5 earnings, Q6 clinics, with the Q13 doctor gaps closed (`m0/q13-doctor-finance`
+approved at 4d877b6, `SwasthaDisha-worktrees/q13-doctor-finance`; first built against Q11 `q11-lab-ops`), routes
+`/specialists/me/*` in `specialists/routes/index.ts`; services `doctors/services/{schedule,instant}.ts`, `partners/services/{clinic,finance}.ts`,
+`specialistPortal/services`). API module `packages/api/src/doctorTools.ts` (ids, dates, cursors, minutes, presence, practice and payout
+details checked before any request; rules mirrored with the backend function cited).
+
+- **Sign-in**: "Doctor" on the workspace login (`/auth/specialist/*`, OTP like other staff; the workspace session audiences already
+  allow `specialist`). `StaffRole` gains `specialist`; name and speciality come from the specialist profile `/auth/profile` returns
+  ("Doctor · Cardiology"). Pages for the role: Home, Consult now, Appointments, Schedule, Clinics, Earnings (deny by default; doctors see no
+  partner/admin/pharmacy page and nobody else sees a doctor page).
+- **One subtree and cache per doctor**: every doctor page renders under `key="doctor:<id>"` and reads under `['doctor', <id>, …]`.
+- **Home**: verification state (active / waiting / not active, from `GET /me/profile`), "available now" as known in this session, open
+  offers (read every 30 s), the next three appointments of the next two weeks.
+- **Schedule** (`/doctor/schedule`): weekly windows with types (video, call, chat, in person) and a place: online / own place, or a branch of
+  a *verified* clinic the doctor consults at (`GET /me/clinics`; unverified clinics named as not offered; a saved branch no longer allowed
+  is shown as such and refused). Mirrors `scheduleTemplateSchema` + `validateTemplate` (5–240 min, ≤12 windows, at least one slot per
+  window, no overlap, clinic windows in person only). `draft.ts` edit: refetches rebase untouched days; the schedule is read again right
+  before the PUT and a day changed both here and there is reset with a notice; confirmed with a per-day summary; the expansion counts are
+  shown; server refusals (e.g. `CLINIC_BRANCH_NOT_ALLOWED`) shown as "Not saved". Leave days: upcoming list, add (today or later) and
+  remove, each confirmed; both are idempotent on the server.
+- **Consult now** (`/doctor/consult-now`): "available now" with types and fee (rupees typed → paise by string arithmetic; empty = the
+  consultation fee). It lives in a provider in the signed-in shell, so the heartbeat (every 60 s) continues on any workspace page while the
+  page is visible and stops while it is hidden; becoming visible after more than a minute sends one at once. Going off stops the heartbeat
+  locally whatever the answer (the server drops the doctor two minutes later) and resends the types and fee (the server would reset the fee).
+  One switch at a time; a heartbeat answer for an older state is ignored; a 403 takes the doctor offline with the reason. Offers are read
+  every 15 s while visible, each with a countdown (closed offers cannot be accepted). Accept confirms the patient basics and the fee; every
+  refusal has its own words (`INSTANT_REFUSAL`: speciality, coupon, busy, expired, fee above the patient's payment, not available, taken,
+  account not active). A lost answer — or "taken", which may be this doctor's own earlier attempt — is checked against today's appointments
+  (`instantRequestId`) before anything is said. Answers belong to their attempt and to the page: after leaving, a late answer shows
+  nothing. Today's running instant consultations can be extended by 1–60 minutes (a lost answer is not resent: it would add again).
+- **Appointments** (`/doctor/appointments`): Today, next 14 days (month views) or one day; kind, type, concern, status, payment, join link.
+  Commands only as `appointmentActions` mirrors the server: confirm (waiting and paid), complete (confirmed; ledger bookings only once
+  paid), cancel by the doctor with a reason (full refund to the patient's wallet; instant ones through `cancelAccepted`), no-show (paid,
+  confirmed, after the start). Each confirmed first; rows keyed by status so a confirmation never outlives the state it was opened for.
+- **Clinics** (`/doctor/clinics`): invitations (accept / decline, confirmed), memberships with verification and branches, leave
+  (confirmed; owners cannot). Solo practice: form mirroring `soloPracticeSchema`, confirmed, explained (verified by an admin before
+  in-clinic hours can be added or booked; managed by signing in as "Lab or clinic staff" with the same mobile, where the Q7 choice handles
+  several memberships). No request key on the server, but one practice per doctor: a resend answers the existing practice (content
+  ignored), so after a lost answer the page re-reads `GET /me/practice` and a resend is safe.
+- **Earnings** (`/doctor/earnings`): balance and totals (paise, `formatRupees`), last payout; statement newest first with the running
+  balance, 50 a page via the `before` cursor, an IST period; CSV of the period read with the token into a blob and saved under the server's
+  file name (mirrored: the header is not readable); payouts (voided with reason); earlier (legacy) payouts marked as not in the balance;
+  account activity. Payout destination shown masked with its verification state, and "any change, even to the same details, needs
+  Jansetu's verification before the next payout"; bank or UPI form mirroring `normalizeDetails`, confirmed; the account is read again just
+  before saving and a destination version changed since the form opened stops the save with what is there now (this also stops a blind
+  resend after a lost answer). Account numbers live only in the form's memory.
+
+Codex review of f740811 (REQUEST_CHANGES, 2 MEDIUM), fixed:
+1. **Unacknowledged presence terms are unknown.** A switch whose answer is lost (timeout, network, 5xx) may have been applied:
+   the provider then drops its terms (`presence` null, `unconfirmed` keeps what was sent, shown as "Not confirmed" on Consult now
+   and Home), stops the heartbeat (an uncertain presence is not kept alive; the server lets it lapse in two minutes) and sends no
+   heartbeat while any switch is on its way. Accept is offered only with acknowledged terms (`confirmedOn`: on, no switch on its
+   way, nothing unconfirmed), and the confirmation names the acknowledged fee; otherwise the page asks to switch on (or "Send again")
+   and wait for the server. A definite refusal changed nothing, so the previous acknowledged terms stay. Independent of the Q13
+   `GET /specialists/me/presence` (which will let the page re-read instead of resending).
+2. **Call links made after the accept.** `meetingLinkState` mirrors `isInternalMeetApplicable` + `syncBookingMeet` (paid,
+   confirmed call/video: ready, preparing, or failed with the server's reason). Wherever a consultation is shown (Consult now's
+   running list and accept outcome, which reads the booking from today's list rather than the accept answer; Appointments, all three
+   views) a missing link says "The call link is being prepared…" with a Refresh button, and the list is read again every 5 s while an
+   instant consultation's link is missing — at most two minutes per consultation (Refresh starts another round), only while the
+   page is visible. After that it says the link has not arrived yet; a failed link says why.
+
+Codex re-review of 9d9660c (REQUEST_CHANGES, 1 MEDIUM: an earlier presence write that times out can still run after newer terms
+were acknowledged and overwrite them), fixed with the Q13 write fence:
+- **Presence is read and written in order.** The shell reads `GET /me/presence` on start (no more "unknown after a reload"): on and still
+  checked in → this page keeps it alive; on but no check-in for two minutes → "On, not checked in", not revived on its own. Every change
+  sends `expectedPresenceVersion` (the last acknowledged `presenceVersion`); a stale one is refused 409 `PRESENCE_CHANGED` and the page
+  reads and shows the server's terms. After a lost answer the only way on is "Check what the server has" (a fresh read, shown with its
+  version), then a change against that version. Terms are acknowledged only by a definite answer, a fresh read or a heartbeat answer
+  (the heartbeat now returns the same view); accept and heartbeats run only on acknowledged terms (no heartbeat while a read or change is
+  on its way). A request lost earlier that reaches the server late names an old version and can never overwrite newer terms.
+- **Other Q13 doctor endpoints adopted:** offers show what the patient paid and accept is not offered when the acknowledged fee is above
+  it (`quotedAmountMinor`, `feeWithinQuote`); a 200 `replayed` accept is the same success ("your earlier accept had gone through");
+  extensions carry a request key, a lost answer is looked for on `GET /me/instant/bookings/:id` and only the same extension (same key and
+  minutes, added once) can be sent again; the schedule save sends `expectedUpdatedAt` (409 `SCHEDULE_CHANGED` → the hours are read in and
+  rebased); payout details send `expectedDetailsVersion` (409 `PAYOUT_DETAILS_CHANGED` → the current details are shown and become the
+  base); payouts and account activity page by the server's exact cursor (`pagination.nextCursor`, 50 a page).
+
+Codex re-review of 7b32cff (REQUEST_CHANGES, 2 MEDIUM + 1 LOW), fixed:
+1. **A read does not retire a lost write.** A presence change whose answer is lost may still commit later on the version it named, so
+   after it a fresh read only SHOWS the server's terms ("The server last showed … (version N), not yet confirmed"); accept and heartbeats
+   stay blocked until "Confirm these terms" (or a changed set of terms) is acknowledged as an ordered write against the version just read.
+   Acknowledged, the version has moved past the lost write for good; refused 409 (the lost write, or another device, got there first),
+   the terms are read and shown again and the step repeats. The doubt is stored before every write (session memory with a body-less
+   marker), so a reload starts uncertain too instead of acknowledging its first read. A read acknowledges only when no write of this
+   page is unresolved (start without a marker, heartbeats, the 409 refresh of an ordinary change).
+2. **Extensions are owned once-only operations.** Key and minutes are stored in session memory per booking BEFORE the POST (`PendingOp`,
+   body-less reload marker); leaving the page, a remount or a query error keeps it. While unresolved only reconciliation is offered: the
+   booking read (`instantExtensions` carry the request key; checked again on every return) or the unchanged same-key resend — after a
+   reload, whose marker has no minutes, only the check. It settles on a recorded key, a definite refusal of a sole first attempt
+   (`afterFailure`), or a booking no longer held (it can never be added); a late answer settles only what its attempt still owns.
+3. **Heartbeats are serialised** (one in flight; none while a read or change is on its way) and an answer whose `presenceVersion` is
+   older than the adopted one is ignored.
+Q13 final eligibility mirrored: `doctorStanding` needs both stored flags true (`isEligibleDoctor`).
+
+Codex re-review of 511eff2 (REQUEST_CHANGES, 1 MEDIUM + 1 LOW), fixed:
+1. **An extension is settled only by the attempt that owns it, on its live page.** Success, failure and every reconciliation answer
+   change the stored operation only if the page that asked is still mounted and `stillCurrent(stored, captured attempt)` holds (as
+   WQ2 3da8f10). An older attempt answering after the doctor left and sent a same-key retry from the returned page leaves the retry's
+   state alone; the next check on a mounted page finds the key recorded and settles it once.
+2. **One submit for the presence form.** While uncertain, the form's submit (Enter included) does what its primary button does:
+   confirm the shown terms, so confirming "Off" never switches the doctor on.
+
+Backend gaps found (not changed here; Q13 closed: presence read and ordering, quote on offers, accept replay, keyed extensions and the
+held-interval read, schedule and payout-detail preconditions, paged events and payouts):
+- Presence is per account: a change made on another device is seen at the next heartbeat or read (and refuses this page's next change).
+- Call links are made after the booking commits, with no event to the workspace: the page polls (bounded) for instant ones.
+- Accept recovery after a lost answer still also looks in today's appointments (an accept just before midnight India time and checked
+  after it would be missed there), but accepting again is now safe: the server answers the same doctor's booking (`replayed`).
+- Appointment lists carry no patient name (`userId`/`dependentId` only); month views are unpaged; `view=all` pages with `meta`, not
+  `pagination`. Generic `confirmed` is accepted for unpaid waiting bookings (the UI offers it only for paid ones).
+- Legacy history (500) is unpaged; leave accepts past dates (the UI asks for today or later).
+- Not built: the prescription route (`POST /me/appointments/:id/prescription`), patient history, and the legacy `/me/slots` editor.
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -669,6 +785,11 @@ the planned 5261 was already held by the WQ4 worktree's own dev server.
 | 2026-11-15 | WQ1 (partner workspace foundation) | typecheck clean; Vitest 69/69 (+9: workspace/admin path building, id validation before any request, select per session mode, selection shape, delegation/scope/removal rules); Playwright workspace 154/154 (+20 = 10 journeys x 2 devices: single and multi-membership sign-in incl. native and expired ticket, nav by permission and scope, staff add/edit/remove with server refusal, branches add/deactivate with confirm, admin list/filter/create/verify/suspend, admin-as-owner staff via `/partner-workspace/admin/<id>/workspace/members`); release build with VITE_API_BASE_URL=https://api.example.test. Not yet run against a real backend or reviewed. |
 | 2026-11-15 | WQ2 (catalogue and bills) | typecheck clean; Vitest 87/87 (+18: paise parsing/formatting, preview rounding incl. half-paisa and odd-paisa SGST, IGST, classification, refusals, member/admin paths, admin item switches, body request key with no header, PDF blob, id checks; app: list cursor and repeats, IST date bound, item and bill builders); Playwright workspace 170/170 (+16 = 8 journeys x 2 devices: catalogue add/edit/deactivate in paise; no-GST supplier offered 0% only, GST item refused on a bill, 503 linking refusal unlocks and a changed bill gets a new key; live totals, lost answer resent with the same key and body, one bill, linked notice, nothing in browser storage; reload with an unconfirmed bill: check by key, forget after warning; pay with confirm, refused pay shows the server and the current bill, cancel with reason, PDF via blob for v2 and v0; finance read-only and biller read-only price list, pages absent without permission; clinic doctor picker and IGST; admin-as-owner bills, catalogue and disable/enable); release build with VITE_API_BASE_URL=https://api.example.test. Playwright ran on a spare port (another worktree's dev server held 5174). Not yet run against a real backend or reviewed. |
 | 2026-11-16 | WQ3 (lab slots, bookings, reports) | typecheck clean; Vitest 109/109 (+13: IST dates and weeks, template rules and derivation from generated slots, manual slot and capacity rules, reopen/bookable, the booking step table per state/visit mode/permission/payment, eligible signers, report file checks, member/admin paths and bodies, multipart upload, report blob via `/file/fetch` with the token in the header, id/mode/date/file checks before any request); Playwright workspace 204/204 (+14 = 7 journeys x 2 devices: week view, template from generated slots reviewed and saved whole, one-off slot and its 409 repeat, server capacity refusal then client refusal, close/reopen with confirm; a home collection through assign, collected, processing, upload (bad type refused), release as self, complete, nothing in storage; viewer and report-staff permissions, unpaid booking, clinic without lab pages; new time from open slots with a taken slot refused, then reject with reason and refund; admin list across labs, release under a chosen signer (only eligible offered), PDF and image via blob with no token in URLs; admin partner switch discards template and reject drafts, clinic URL says labs only; a held step answer after leaving shows nothing on the next booking, and a held capacity answer after changing week shows nothing); release build with VITE_API_BASE_URL=https://api.example.test. Playwright ran on a spare port (temporary config, not committed). Not yet run against a real backend or reviewed. |
+| 2026-11-16 | WQ4 re-review fixes (Codex, 511eff2) | Against Q13 4d877b6. typecheck clean; Vitest 131/131; Playwright workspace 278/278 (+4 = 2 journeys x 2 devices, both failing on 511eff2: attempt 1 held, the doctor leaves and returns, attempt 2 with the same key lost, attempt 1's success released to the left page — the returned page stays locked and a remount's check settles it once (one extension, two POSTs with one key); uncertain with the server showing Off, Enter in the fee field confirms Off against the read version); release build with VITE_API_BASE_URL=https://api.example.test. Unique port 5281, temporary config with `reuseExistingServer: false`, not committed. |
+| 2026-11-16 | WQ4 re-review fixes (Codex, 7b32cff) | Against Q13 4d877b6. typecheck clean; Vitest 131/131 (standing per `isEligibleDoctor`); Playwright workspace 274/274 (+6 = 3 journeys x 2 devices, each failing on 7b32cff: a lost change held before its compare-and-set, a reload (still uncertain), a read showing ₹500/v1 with accept and heartbeats blocked, the lost change committing, a confirmation of ₹500 refused 409 and A's ₹100/v2 shown, then ₹100 confirmed as v3 and only then accept and heartbeats; an extension lost, the page left and reopened with the same minutes locked and only the same-key resend (added once), then a reload leaving only the check, settled when the consultation is no longer held; a heartbeat held while the page is shown again sends no second one and the page ends on the newer presence); existing journeys confirm the shown terms after a check; release build with VITE_API_BASE_URL=https://api.example.test. Unique port 5261, temporary config with `reuseExistingServer: false`, not committed. |
+| 2026-11-16 | WQ4 re-review fix + Q13 (Codex, 9d9660c) | Against backend Q13 (7032f9d + 4ac16b6). typecheck clean; Vitest 131/131 (doctor API paths/bodies updated: presence read, `expectedPresenceVersion`, keyed extend and booking read, `expectedUpdatedAt`, `expectedDetailsVersion`, cursor-paged payouts/events; cursor, key, version and timestamp checks before any request); Playwright workspace 268/268 (+2 = 1 journey x 2 devices: Codex's sequence — a change whose answer is lost and that reaches the server late, a re-read, newer terms acknowledged, then the late request refused 409 by its stale version: server and page keep the newer fee, heartbeat and accept use it, and a change made elsewhere refuses the next one and shows the server's terms; fails on 9d9660c. Extended journeys: presence read on start and after reload, a lapsed presence not revived, busy shown from the heartbeat; lost fee change → read → resend against the read version; patient's paid amount and a too-high fee blocked; replayed accept; extension lost after or before the server with lookup and same-key resend; schedule and payout-detail 409s from the server-side fences; activity paged by cursor); release build with VITE_API_BASE_URL=https://api.example.test. Unique spare port 5251, temporary config with `reuseExistingServer: false`, not committed. |
+| 2026-11-16 | WQ4 review fixes (Codex, f740811) | typecheck clean; Vitest 131/131 (+1: call-link state per mode, status, payment, ready/preparing/failed); Playwright workspace 266/266 on the merged branch (+4 = 2 journeys x 2 devices, both failing on f740811: a ₹500→₹100 change whose answer is lost shows "Not confirmed", hides the old fee, blocks accept and sends no heartbeat for three minutes, then "Send again" is acknowledged, the confirmation names ₹100 and heartbeats resume; an accepted and a recovered consultation show "The call link is being prepared…", the link appears by reading again on Consult now and by Refresh on Appointments, and a failed link says why); existing journeys now switch on before accepting; release build with VITE_API_BASE_URL=https://api.example.test. Spare port, temporary config not committed. |
+| 2026-11-16 | WQ4 (doctor tools) | typecheck clean; Vitest 124/124 (+15: YYYYMMDD dates, schedule rules incl. clinic branches and overlap, slot counts, presence rules, offer countdown, refusal words vs unknown outcomes, appointment commands per state/payment/time, practice and payout-detail checks, period and CSV name, every `/specialists/me` path and body, ids/dates/cursors/minutes refused before any request, CSV blob with the token in the header only); Playwright workspace 222/222 (+18 = 9 journeys x 2 devices: doctor sign-in, doctor-only nav and Home status card, other roles' pages absent; partner and admin see no doctor page; schedule with a verified clinic window, overlap refused, server refusal, a day changed elsewhere reset and not sent, leave add/remove; available now with types and fee, heartbeats only while visible and on any page, an answer after Update shown, off again; offers with countdown, accept after confirming, eight refusals in words, a lost answer found in the appointments with one POST, extend and its refusal, nothing in storage; a held accept answer after leaving shows nothing; appointments today/14 days/one day with cancel (reason, refund), complete, no-show only after the start, confirm only when paid; invitations accept/decline, leave, solo practice once; earnings balance, statement paging and period, CSV download, payouts, payout details changed elsewhere stop the save, then saved and shown as waiting for verification); release build with VITE_API_BASE_URL=https://api.example.test. Playwright ran on a spare port (temporary config, not committed). Not yet run against a real backend or reviewed. |
 | 2026-11-16 | WQ3 review fixes | typecheck clean; Vitest 109/109; Playwright workspace 208/208 (+2 journeys x 2: an open release cannot be confirmed while an upload runs, then both drafts stay correct (one release, two uploads); a held template save after opening the one-off slot form keeps that draft and the week, and the reverse); both new journeys fail on 214e97b; release build. Spare port (temporary config, not committed). |
 | 2026-11-15 | WQ2 fixes (WQ1 review rules) | After merging the WQ1 review fixes: typecheck clean; Vitest 96/96 (catalogue edits from a baseline: only changed fields, rebased field not sent back, price above the saved MRP refused); Playwright workspace 190/190 (+3 journeys x 2: item edit re-read sends only the name while someone else changed the price, a both-changed price is shown again and not sent; a lost item create is locked and sent to the list, one POST; admin switching partners keeps the unconfirmed bill, drafts and an open item edit with their own partner); release build. Spare port again (temporary config, not committed). |
 | 2026-11-16 | WQ2 Codex fixes + Q10 | typecheck clean; Vitest 99/99 (mergeDetail both answer orders, bill filters, clinic item kinds, Q10 paths: includeInactive, reactivate, by-key lookup/abandon with key checks, cancel refund, cursor page with total/nextCursor); Playwright workspace 204/204 (24 partner-invoices journeys x 2: catalogue reactivate and expectedUpdatedAt, stale edit 409, clinic kinds, lost item create resent with the same key, lost item create after reload with duplicate confirmation, bill lost before reload abandoned by key, bill issued before reload found by key, catalogue price changed refused then reissued, paid cancel with refund, pay/cancel one at a time with a lost payment replayed, cursor paging across a shared instant, search and date range); release build. Spare port (temporary config, not committed). |
