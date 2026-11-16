@@ -134,3 +134,5 @@
 .ws-timeline li { display: grid; grid-template-columns: minmax(150px, max-content) 1fr; gap: var(--space-3); }
 .ws-timeline time { color: var(--muted); }
 @media (max-width: 760px) { .ws-timeline li { grid-template-columns: 1fr; gap: 0; } }
+/* A form body frozen while it is being saved (nothing typed during the save can change what is sent). */
+.ws-frozen { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: var(--space-4); }

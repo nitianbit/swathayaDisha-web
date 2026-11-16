@@ -1,5 +1,5 @@
-import type { ApiClient } from './client.ts';
-import { GSTIN_PATTERN, OBJECT_ID_PATTERN, partnerWorkspaceBase, type PartnerScope, type TaxRegime } from './partners.ts';
+import type { ApiClient, Page } from './client.ts';
+import { GSTIN_PATTERN, OBJECT_ID_PATTERN, partnerWorkspaceBase, type PartnerKind, type PartnerScope, type TaxRegime } from './partners.ts';
 
 /**
  * Q2 partner catalogue and in-house invoices (labs and clinics). Typed from the backend's
@@ -12,7 +12,17 @@ import { GSTIN_PATTERN, OBJECT_ID_PATTERN, partnerWorkspaceBase, type PartnerSco
  * acting as owner (`/partner-workspace/admin/:partnerId/workspace/...`).
  */
 
-export type CatalogueItemKind = 'test' | 'package';
+/** Q10: labs sell tests and packages (with visit modes); clinics consultations, procedures, packages and other items (none). */
+export type CatalogueItemKind = 'test' | 'package' | 'consultation' | 'procedure' | 'other';
+/** `assertItemFits` (Q10 `services/catalogue.ts`): the kinds each partner type may list. */
+export const ITEM_KINDS_FOR: Record<PartnerKind, readonly CatalogueItemKind[]> = {
+  lab: ['test', 'package'],
+  clinic: ['consultation', 'procedure', 'package', 'other'],
+};
+/** Labs need at least one visit mode; clinic items have none. */
+export const usesVisitModes = (kind: PartnerKind) => kind === 'lab';
+/** Q10 `createCatalogueItemSchema.requestKey`. */
+export const ITEM_REQUEST_KEY_PATTERN = /^[A-Za-z0-9_-]{8,100}$/;
 export type VisitMode = 'home' | 'lab';
 /** `Joi.number().valid(0, 5, 12, 18, 28)`. */
 export const GST_RATES = [0, 5, 12, 18, 28] as const;
@@ -53,14 +63,18 @@ export interface CatalogueItem {
   mrpMinor?: number;
   gstRate: GstRate;
   sac?: string;
-  visitModes: VisitMode[];
+  /** Labs only (clinic items have none). */
+  visitModes?: VisitMode[];
   reportTatHours?: number;
-  /** Deactivated items are never listed (the list returns active ones only). */
+  /** Deactivated items are listed only with `includeInactive` (catalogue managers) and can be reactivated. */
   isActive: boolean;
   /** Switched off by a Jansetu admin: listed (flagged) but neither bookable nor billable. Only an admin undoes it. */
   adminDisabled: boolean;
   createdAt?: string;
+  /** Sent back as `expectedUpdatedAt` on an edit (Q10: 409 CATALOGUE_ITEM_CHANGED when it moved). */
   updatedAt?: string;
+  /** Q10: the request key the item was created with (stored on the item; used to find a create whose answer was lost). */
+  createRequestKey?: string;
 }
 
 /** `createCatalogueItemSchema`. */
@@ -76,11 +90,17 @@ export interface NewCatalogueItem {
   mrpMinor?: number;
   gstRate: GstRate;
   sac?: string;
-  visitModes: VisitMode[];
+  /** Labs: one or more. Clinics: none. */
+  visitModes?: VisitMode[];
   reportTatHours?: number;
+  /** Q10: exactly once per key; a replay answers the same item, other content under the key is 409 REQUEST_KEY_REUSED. */
+  requestKey?: string;
 }
 /** `updateCatalogueItemSchema` (at least one field; the kind never changes; no field can be cleared). */
-export type CatalogueItemUpdate = Partial<Omit<NewCatalogueItem, 'kind'>>;
+export type CatalogueItemUpdate = Partial<Omit<NewCatalogueItem, 'kind' | 'requestKey'>> & {
+  /** Q10: the item's `updatedAt` the edit started from. */
+  expectedUpdatedAt?: string;
+};
 
 export type DocumentKind = 'tax_invoice' | 'bill_of_supply' | 'commercial_invoice';
 export type InvoiceState = 'issued' | 'paid' | 'cancelled';
@@ -161,6 +181,8 @@ export interface InvoiceEvent {
   reference?: string;
   reason?: string;
   note?: string;
+  /** Q10: how the money of a paid bill went back (on its cancellation). */
+  refund?: RefundInput;
   version: number;
   at: string;
   by: string;
@@ -186,10 +208,15 @@ export interface NewInvoice {
   items: NewInvoiceLine[];
   idempotencyKey: string;
 }
-/** `invoiceQuerySchema`: newest first; `before` pages back by issue time (exclusive); `limit` 1–200 (server default 50). */
-export interface InvoiceQuery { state?: InvoiceState; branchId?: string; limit?: number; before?: string }
-/** `recordPaymentSchema`. */
+/**
+ * `invoiceQuerySchema` (Q10): newest first; `cursor` is the exact `<ms>_<id>` from `pagination.nextCursor`; `from`/`to`
+ * are IST dates (YYYY-MM-DD, inclusive); `q` searches serial, customer name and phone; `limit` 1–200 (default 50).
+ */
+export interface InvoiceQuery { state?: InvoiceState; branchId?: string; limit?: number; cursor?: string; from?: string; to?: string; q?: string }
+/** `recordPaymentSchema`. Q10: the same mode and reference again answers the payment already recorded. */
 export interface PaymentInput { mode: InvoicePaymentMode; reference?: string; note?: string }
+/** `cancelInvoiceSchema.refund`: required for a PAID bill (400 REFUND_REQUIRED), refused for an unpaid one (NOTHING_TO_REFUND). */
+export interface RefundInput { mode: InvoicePaymentMode; reference?: string; note?: string }
 
 /** `GET /clinic/doctors` (Q6): the clinic's doctors visible to the caller. */
 export interface ClinicDoctor {
@@ -325,6 +352,13 @@ function checkId(id: string, what: string): string {
   return id;
 }
 
+/** `invoiceKeyParamSchema` allows 1–100 characters; the workspace only ever makes path-safe keys. */
+const BILL_KEY_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
+function checkKey(key: string): string {
+  if (!BILL_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
+  return key;
+}
+
 /** A customer GSTIN as the server stores it (`trim().uppercase()`), or the problem with it. */
 export function customerGstinProblem(raw: string): string | null {
   const v = raw.trim().toUpperCase();
@@ -337,15 +371,27 @@ export function partnerBillingApi(c: ApiClient, scope: PartnerScope) {
   const item = (id: string) => `${base()}/catalogue/${checkId(id, 'catalogue item')}`;
   const invoice = (id: string) => `${base()}/invoices/${checkId(id, 'invoice')}`;
   return {
-    /** Active items (admin-disabled ones included, flagged), sorted by name; no paging. */
-    catalogue: (kind?: CatalogueItemKind) => c.get<CatalogueItem[]>(`${base()}/catalogue`, { query: { kind } }),
+    /**
+     * Active items (admin-disabled ones included, flagged), sorted by name; no paging. `includeInactive` adds
+     * deactivated ones for catalogue managers (others get active ones only).
+     */
+    catalogue: (kind?: CatalogueItemKind, includeInactive = false) =>
+      c.get<CatalogueItem[]>(`${base()}/catalogue`, { query: { kind, includeInactive: includeInactive ? 'true' : undefined } }),
     catalogueItem: (id: string) => c.get<CatalogueItem>(item(id)),
     createCatalogueItem: (body: NewCatalogueItem) => c.post<CatalogueItem>(`${base()}/catalogue`, { body }),
     updateCatalogueItem: (id: string, body: CatalogueItemUpdate) => c.put<CatalogueItem>(item(id), { body }),
-    /** Sets `isActive: false`; the item disappears from the list. No endpoint reactivates it. */
+    /** Sets `isActive: false` (listed again only with `includeInactive`). */
     deactivateCatalogueItem: (id: string) => c.delete<unknown>(item(id)),
+    /** Q10: a deactivated item comes back (409 ITEM_ALREADY_ACTIVE); an admin-disabled one stays disabled. */
+    reactivateCatalogueItem: (id: string) => c.post<CatalogueItem>(`${item(id)}/reactivate`, { body: {} }),
 
-    invoices: (q: InvoiceQuery = {}) => c.get<Invoice[]>(`${base()}/invoices`, { query: { ...q } }),
+    /** One page of bills with `total` and `nextCursor`. */
+    invoices: (q: InvoiceQuery = {}): Promise<Page<Invoice>> => c.page<Invoice>(`${base()}/invoices`, { query: { ...q } }),
+    /** Q10: the bill a request key produced (404 INVOICE_NOT_FOUND when none, in the caller's scope). */
+    invoiceByKey: (key: string) => c.get<Invoice>(`${base()}/invoices/by-key/${checkKey(key)}`),
+    /** Q10: gives up a lost bill: `abandoned` = it can never be issued; `used` = it was, with the bill. */
+    abandonInvoiceKey: (key: string) =>
+      c.post<{ state: 'abandoned' | 'used'; invoice?: Invoice | null }>(`${base()}/invoices/by-key/${checkKey(key)}/abandon`, { body: {} }),
     invoice: (id: string) => c.get<{ invoice: Invoice; events: InvoiceEvent[] }>(invoice(id)),
     /** Once-only by `body.idempotencyKey`: the same key with the same request answers the bill already issued. */
     createInvoice: (body: NewInvoice) => c.post<Invoice>(`${base()}/invoices`, { body }),
@@ -353,8 +399,8 @@ export function partnerBillingApi(c: ApiClient, scope: PartnerScope) {
     invoicePdf: (id: string, version?: number, signal?: AbortSignal) =>
       c.blob(`${invoice(id)}/pdf`, { query: { version }, signal }),
     recordPayment: (id: string, body: PaymentInput) => c.post<{ invoice: Invoice; event: InvoiceEvent }>(`${invoice(id)}/pay`, { body }),
-    cancelInvoice: (id: string, reason: string) =>
-      c.post<{ invoice: Invoice; event: InvoiceEvent }>(`${invoice(id)}/cancel`, { body: { reason } }),
+    cancelInvoice: (id: string, reason: string, refund?: RefundInput) =>
+      c.post<{ invoice: Invoice; event: InvoiceEvent }>(`${invoice(id)}/cancel`, { body: { reason, ...(refund ? { refund } : {}) } }),
 
     /** Clinics only (Q6). */
     clinicDoctors: () => c.get<ClinicDoctor[]>(`${base()}/clinic/doctors`),

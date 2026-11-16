@@ -1,4 +1,4 @@
-import type { ApiClient, Page } from './client.ts';
+import { ApiError, type ApiClient, type Page } from './client.ts';
 
 /**
  * Q1 partner workspace (labs and clinics): the partner account, its members (staff) and branches, and the activity
@@ -78,6 +78,7 @@ export interface Partner {
   solo?: boolean;
   isActive: boolean;
   createdAt?: string;
+  /** Q10: sent back as `expectedUpdatedAt` by an edit (409 RECORD_CHANGED when it moved). */
   updatedAt?: string;
 }
 
@@ -95,6 +96,7 @@ export interface PartnerMember {
   isActive: boolean;
   invitedBy?: string;
   createdAt?: string;
+  updatedAt?: string;
 }
 
 export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
@@ -118,6 +120,7 @@ export interface Branch {
   services?: Partial<BranchServices>;
   isActive: boolean;
   createdAt?: string;
+  updatedAt?: string;
 }
 
 /** `createBranchSchema` (geo is not edited here). */
@@ -177,6 +180,13 @@ export interface PartnerQuery {
 /** Q8 `createPartnerSchema.requestKey`: exactly-once creation per admin. */
 export const REQUEST_KEY_PATTERN = /^[A-Za-z0-9_-]{8,100}$/;
 
+/**
+ * Q10 optimistic concurrency: the `updatedAt` of the record an edit started from. The server refuses the edit with 409
+ * RECORD_CHANGED when the record moved since. Omitted when the record carries no `updatedAt`.
+ */
+export type Version = string | undefined;
+const fence = (v: Version) => (v ? { expectedUpdatedAt: v } : {});
+
 /** Whose workspace: the signed-in member's own partner, or (admins) any partner by id. */
 export type PartnerScope = { kind: 'member' } | { kind: 'admin'; partnerId: string };
 
@@ -196,22 +206,23 @@ export function partnerWorkspaceApi(c: ApiClient, scope: PartnerScope) {
   const base = () => partnerWorkspaceBase(scope);
   return {
     me: () => c.get<Partner>(`${base()}/me`),
-    updateMe: (body: MyPartnerUpdate) => c.put<Partner>(`${base()}/me`, { body }),
+    updateMe: (body: MyPartnerUpdate, version?: Version) => c.put<Partner>(`${base()}/me`, { body: { ...body, ...fence(version) } }),
     members: () => c.get<PartnerMember[]>(`${base()}/members`),
     /** Q8: a staff member's branch access, replaced whole (empty = all branches). Not for owners or yourself. */
-    setBranches: (id: string, branchIds: string[]) =>
-      c.put<PartnerMember>(`${base()}/members/${checkId(id, 'member')}/branches`, { body: { branchIds } }),
+    setBranches: (id: string, branchIds: string[], version?: Version) =>
+      c.put<PartnerMember>(`${base()}/members/${checkId(id, 'member')}/branches`, { body: { branchIds, ...fence(version) } }),
     member: (id: string) => c.get<PartnerMember>(`${base()}/members/${checkId(id, 'member')}`),
     addMember: (body: NewMember) => c.post<PartnerMember>(`${base()}/members`, { body }),
     removeMember: (id: string) => c.delete<unknown>(`${base()}/members/${checkId(id, 'member')}`),
-    setPermissions: (id: string, permissions: PartnerPermission[]) =>
-      c.put<PartnerMember>(`${base()}/members/${checkId(id, 'member')}/permissions`, { body: { permissions } }),
+    setPermissions: (id: string, permissions: PartnerPermission[], version?: Version) =>
+      c.put<PartnerMember>(`${base()}/members/${checkId(id, 'member')}/permissions`, { body: { permissions, ...fence(version) } }),
     /** Q8: every member may read its branches; closed ones too (`includeInactive`) only for branch managers. */
     branches: (o: { includeInactive?: boolean } = {}) =>
       c.get<Branch[]>(`${base()}/branches`, { query: { includeInactive: o.includeInactive ? 'true' : undefined } }),
     branch: (id: string) => c.get<Branch>(`${base()}/branches/${checkId(id, 'branch')}`),
     createBranch: (body: BranchInput) => c.post<Branch>(`${base()}/branches`, { body }),
-    updateBranch: (id: string, body: Partial<BranchInput>) => c.put<Branch>(`${base()}/branches/${checkId(id, 'branch')}`, { body }),
+    updateBranch: (id: string, body: Partial<BranchInput>, version?: Version) =>
+      c.put<Branch>(`${base()}/branches/${checkId(id, 'branch')}`, { body: { ...body, ...fence(version) } }),
     deactivateBranch: (id: string) => c.delete<unknown>(`${base()}/branches/${checkId(id, 'branch')}`),
     /** Q8: reopens a closed branch (all-branch actors with `branches.manage`); 409 BRANCH_ALREADY_ACTIVE. */
     reactivateBranch: (id: string) => c.post<Branch>(`${base()}/branches/${checkId(id, 'branch')}/reactivate`, { body: {} }),
@@ -235,7 +246,25 @@ export function partnerAdminApi(c: ApiClient) {
       return c.post<{ partner: Partner; owner: PartnerMember }>('/partner-workspace/admin', { body: { requestKey, ...body } });
     },
     get: (id: string) => c.get<Partner>(one(id)),
-    update: (id: string, body: PartnerUpdate) => c.put<Partner>(one(id), { body }),
+    update: (id: string, body: PartnerUpdate, version?: Version) => c.put<Partner>(one(id), { body: { ...body, ...fence(version) } }),
+    /**
+     * Q10: what this admin's create key produced; null when nothing was created under it (404). Not finding it proves
+     * nothing on its own (the request may still arrive): only `abandonCreate` settles that.
+     */
+    createdByKey: async (key: string): Promise<{ partner: Partner; owner: PartnerMember } | null> => {
+      if (!REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
+      try {
+        return await c.get<{ partner: Partner; owner: PartnerMember }>(`/partner-workspace/admin/by-key/${key}`);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    /** Q10: 'abandoned' = this key can never create a partner; 'used' = it did (here it is). */
+    abandonCreate: (key: string) => {
+      if (!REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
+      return c.post<{ state: 'abandoned' | 'used'; partner?: Partner }>(`/partner-workspace/admin/by-key/${key}/abandon`, { body: {} });
+    },
     /** pending → verified only (409 VERIFICATION_STATE_CONFLICT otherwise). */
     verify: (id: string) => c.post<Partner>(`${one(id)}/verify`, { body: {} }),
     /** Any state but suspended → suspended and inactive (409 ALREADY_SUSPENDED). No endpoint reinstates a partner. */

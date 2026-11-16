@@ -7,7 +7,7 @@ import {
   VERIFICATION_LABEL, type Partner, type PartnerUpdate, type TaxRegime,
 } from '@jansetu/api';
 import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
-import { changedFields, staleMessage, useDraft } from '../../draft.ts';
+import { changedFields, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
@@ -137,8 +137,15 @@ function TaxForm({ partner }: { partner: Partner }) {
       if (conflicts.length) { setStale(staleMessage(conflicts.map((k) => TAX_LABEL[k]))); return; }
       const { body } = taxChanges(changedFields(d.current()));
       if (Object.keys(body).length === 0) { setNotice('Nothing has changed.'); return; }
-      await admin.update(partner._id, body);
-      setNotice('Saved.');
+      try {
+        // Q10: refused (409 RECORD_CHANGED) if the partner moved after the read above.
+        await admin.update(partner._id, body, fresh.updatedAt);
+        setNotice('Saved.');
+      } catch (err) {
+        if (!isRecordChanged(err)) throw err;
+        const c = rebaseTo(taxOf(await admin.get(partner._id)));
+        setStale(c.length ? staleMessage(c.map((k) => TAX_LABEL[k])) : RECORD_CHANGED_MESSAGE);
+      }
     } catch (err) {
       setError(messageOf(err));
     } finally {
@@ -154,6 +161,7 @@ function TaxForm({ partner }: { partner: Partner }) {
     <section className="ws-section" aria-labelledby="tax-h">
       <h2 id="tax-h">Tax and invoicing</h2>
       <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
+        <fieldset className="ws-frozen" disabled={busy}>
         <div className="rx-form-row">
           <TextField label="GSTIN" maxLength={15} {...text('gstin')} />
           <TextField label="PAN" maxLength={10} {...text('pan')} />
@@ -165,6 +173,7 @@ function TaxForm({ partner }: { partner: Partner }) {
           </div>
           <TextField label="Invoice prefix" maxLength={6} {...text('prefix')} />
         </div>
+        </fieldset>
         {stale && <Alert tone="warn">{stale}</Alert>}
         {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}

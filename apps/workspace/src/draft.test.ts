@@ -36,3 +36,13 @@ describe('edit drafts keep their baseline', () => {
     expect(staleMessage(['services', 'holidays'])).toMatch(/^Someone else changed the services and holidays while you were editing/);
   });
 });
+
+describe('Q10 RECORD_CHANGED', () => {
+  it('is recognised only by its status and code', async () => {
+    const { ApiError } = await import('@jansetu/api');
+    const { isRecordChanged } = await import('./draft.ts');
+    expect(isRecordChanged(new ApiError(409, 'Someone else changed this meanwhile; reload and review', 'RECORD_CHANGED'))).toBe(true);
+    expect(isRecordChanged(new ApiError(409, 'x', 'MEMBER_ALREADY_EXISTS'))).toBe(false);
+    expect(isRecordChanged(new Error('x'))).toBe(false);
+  });
+});
