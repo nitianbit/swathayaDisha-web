@@ -230,6 +230,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
           if (!starts.has(s.startTime) && s.closed === null) { s.closed = 'template'; x.closed++; } else if (starts.has(s.startTime) && s.booked === 0 && s.capacity !== t.capacity) { s.capacity = t.capacity; x.updated++; }
         }
       }
+      await held();
       return ok(route, { template: { _id: 'f0'.repeat(12), partnerId: pid, branchId: tpl[1], visitMode: tpl[2], isActive: true, ...t }, expansion: x });
     }
     if (sub === '/slots' && method === 'POST') {
@@ -240,6 +241,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       }
       const s = slot(x.visitMode, x.date, x.startTime, x.endTime, { capacity: x.capacity, source: 'manual', branchId: x.branchId });
       b.slots.push(s);
+      await held();
       return ok(route, s, 201);
     }
     const so = /^\/slots\/([0-9a-f]{24})\/(capacity|close|reopen)$/.exec(sub);
@@ -736,5 +738,69 @@ test('a late answer after leaving changes nothing on the page now shown', async 
   late();
   await page.waitForTimeout(300);
   await expect(page.getByText(/now has 5 seats/)).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: /Week of .*23 Nov/ })).toBeVisible();
+});
+
+test('one step at a time: an open release waits for an upload; the page then shows every draft the server holds', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await page.goto(`/#/partner/lab-bookings/${BK3}`);
+  await expect(page.getByRole('heading', { name: 'Lab booking: Chitra N' })).toBeVisible();
+  const input = page.getByLabel('Report files (PDF, JPEG, PNG or WebP; up to 10 MB each)');
+  await input.setInputFiles([{ name: 'a.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 a') }]);
+  await page.getByRole('button', { name: 'Upload as drafts' }).click();
+  const drafts = page.getByRole('list', { name: 'Draft reports' });
+  await expect(drafts).toContainText('a.pdf');
+
+  // The release confirmation is open; an upload starts and is still running: the release cannot be confirmed now.
+  await drafts.getByRole('button', { name: 'Release a.pdf' }).click();
+  const group = page.getByRole('group', { name: 'Release a.pdf' });
+  await expect(group.getByRole('button', { name: 'Release a.pdf' })).toBeEnabled();
+  const upload = hold(backend, /\/reports$/);
+  await input.setInputFiles([{ name: 'b.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 b') }]);
+  await page.getByRole('button', { name: 'Upload as drafts' }).click();
+  await expect(group.getByRole('button', { name: 'Release a.pdf' })).toBeDisabled();
+  upload();
+  await expect(drafts).toContainText('b.pdf');
+  await group.getByRole('button', { name: 'Release a.pdf' }).click();
+  await expect(page.getByText('a.pdf was released to the customer.')).toBeVisible();
+  await expect(drafts).toContainText('b.pdf'); // the newer upload is not lost from the page
+  await expect(page.getByRole('list', { name: 'Released reports' })).toContainText('a.pdf · released');
+  expect(writes(backend)).toEqual([
+    `POST /partner-workspace/lab-bookings/${BK3}/reports`,
+    `POST /partner-workspace/lab-bookings/${BK3}/reports`,
+    `POST /partner-workspace/lab-bookings/${BK3}/reports/release`,
+  ]);
+});
+
+test('a template save answered after another editor was opened leaves that editor and the week as they are', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Slots' }).click();
+  await page.getByRole('button', { name: 'Next week' }).click();
+  await expect(page.getByRole('heading', { name: /Week of .*23 Nov/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit the weekly template' }).click();
+  await page.getByLabel('Seats per slot').fill('3');
+  await page.getByRole('button', { name: 'Review the template' }).click();
+  const save = hold(backend, /\/slot-templates\//);
+  await page.getByRole('group', { name: 'Save the weekly template' }).getByRole('button', { name: 'Save the template' }).click();
+  await page.getByRole('button', { name: 'Add a one-off slot' }).click();
+  await page.getByLabel('Starts').fill('18:00');
+  save();
+  await expect(page.getByText(/Weekly template saved for home collection at Indiranagar/)).toBeVisible();
+  await expect(page.getByLabel('Starts')).toHaveValue('18:00'); // the new draft is still open
+  await expect(page.getByRole('heading', { name: /Week of .*23 Nov/ })).toBeVisible();
+
+  // The reverse: a one-off slot answered after the template editor was opened leaves the editor and the week alone.
+  await page.getByLabel('Date').fill('2026-11-20');
+  await page.getByLabel('Ends').fill('18:30');
+  await page.getByLabel('Seats', { exact: true }).fill('1');
+  const add = hold(backend, /^\/partner-workspace\/slots$/);
+  await page.getByRole('button', { name: 'Add slot' }).click();
+  await page.getByRole('button', { name: 'Edit the weekly template' }).click();
+  await page.getByLabel('Seats per slot').fill('4');
+  add();
+  await expect(page.getByText(/Slot .*20 Nov.*18:00–18:30 added with 1 seat\./)).toBeVisible();
+  await expect(page.getByLabel('Seats per slot')).toHaveValue('4');
   await expect(page.getByRole('heading', { name: /Week of .*23 Nov/ })).toBeVisible();
 });

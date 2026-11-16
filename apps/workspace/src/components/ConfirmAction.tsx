@@ -61,7 +61,8 @@ export function ConfirmAction({
       )}
       {error && <Alert>{error}</Alert>}
       <div className="confirm-actions">
-        <Button variant={danger ? 'danger' : 'primary'} busy={busy} onClick={() => void confirm()}>{confirmLabel}</Button>
+        {/* A step that started after this was opened blocks it too (screens with one-step-at-a-time guards refuse it anyway). */}
+        <Button variant={danger ? 'danger' : 'primary'} busy={busy} disabled={disabled && !busy} onClick={() => void confirm()}>{confirmLabel}</Button>
         <Button variant="ghost" disabled={busy} onClick={() => { setOpen(false); setError(null); setFieldError(null); }}>
           Back
         </Button>
