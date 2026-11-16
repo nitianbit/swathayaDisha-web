@@ -12,7 +12,7 @@ export {
 export type {
   Branch, BranchAddress, BranchInput, BranchServices, MemberRole, MyPartnerUpdate, NewMember, NewPartner, Partner,
   PartnerActorView, PartnerAuditEvent, PartnerKind, PartnerMember, PartnerPermission, PartnerQuery, PartnerScope,
-  PartnerUpdate, TaxRegime, VerificationState, Weekday, WeeklyHours,
+  PartnerUpdate, TaxRegime, VerificationState, Version, Weekday, WeeklyHours,
 } from './partners.ts';
 export { clearSignOutPending, markSignOutPending, nativeSecureStore, nativeSignOut, refreshTokenKey, rotateNative, signOutState } from './nativeSession.ts';
 export type { SecureStore, SignOutState } from './nativeSession.ts';
@@ -47,7 +47,7 @@ export { customerPharmacyApi, normalizeCart, PHARMACY_PAYMENT_WINDOW_MIN, shelfO
 export type { Cart, CartItem, Checkout, CheckoutResult, PharmacyStore, ShelfItem, StockRow } from './customerPharmacy.ts';
 export {
   allowedGstRates, catalogueAdminApi, chargesGst, classifyDocument, customerGstinProblem, DOCUMENT_KIND_LABEL, GST_RATES,
-  INVOICE_PHONE_PATTERN, INVOICE_STATE_LABEL, invoicePdfName, MAX_BILL_MINOR, MAX_CANCEL_REASON, MAX_CODE, MAX_DESCRIPTION,
+  INVOICE_PHONE_PATTERN, INVOICE_STATE_LABEL, invoicePdfName, ITEM_KINDS_FOR, ITEM_REQUEST_KEY_PATTERN, usesVisitModes, MAX_BILL_MINOR, MAX_CANCEL_REASON, MAX_CODE, MAX_DESCRIPTION,
   MAX_ITEM_NAME, MAX_LINE_DESCRIPTION, MAX_LINES, MAX_NOTE, MAX_PREPARATION, MAX_PRICE_MINOR, MAX_QTY, MAX_REFERENCE, MAX_SAC,
   MAX_SAMPLE_TYPE, paiseToInput, paiseToRupees, partnerBillingApi, PAYMENT_MODES, previewInvoice, registrationProblem,
   rupeesToPaise, STATE_CODE_PATTERN, taxRateProblem,
@@ -55,7 +55,7 @@ export {
 export type {
   CatalogueItem, CatalogueItemKind, CatalogueItemUpdate, ClinicDoctor, DocumentKind, GstRate, Invoice, InvoiceCustomer, InvoiceEvent,
   InvoiceGender, InvoiceLine, InvoicePaymentMode, InvoicePreview, InvoiceQuery, InvoiceState, InvoiceSupplier, InvoiceTotals,
-  LinePreview, NewCatalogueItem, NewInvoice, NewInvoiceLine, PaymentInput, SupplierTax, VisitMode,
+  LinePreview, NewCatalogueItem, NewInvoice, NewInvoiceLine, PaymentInput, RefundInput, SupplierTax, VisitMode,
 } from './partnerInvoices.ts';
 export {
   addDays, canReadDrafts, capacityProblem, COLLECTOR_PHONE_PATTERN, deriveTemplate, eligibleSigners, isBookable, isRealDate, istDateOf,

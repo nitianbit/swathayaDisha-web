@@ -25,6 +25,13 @@ interface Props<B, R extends { requestKey?: string; createdAt?: string }> {
    * may decide to forget it, after a second step that says what that risks (a duplicate they then have to undo).
    */
   forget?: { label: string; confirmLabel: string; consequence: ReactNode; onForget: () => void };
+  /**
+   * WQ2 (bills, Q10): also offer `abandon` for a request still held on this device, once a check found nothing. Safe
+   * whenever the server fences it (an abandoned key can never be recorded afterwards; a used one returns its record).
+   */
+  abandonWhenNotFound?: boolean;
+  /** The words on the abandon button (default "Cancel it and start again"). */
+  abandonLabel?: string;
 }
 
 /**
@@ -33,7 +40,7 @@ interface Props<B, R extends { requestKey?: string; createdAt?: string }> {
  * Render with `key={op.attempts}` so a lookup result never outlives a later attempt.
  */
 export function PendingOpPanel<B, R extends { requestKey?: string; createdAt?: string }>(
-  { label, op, summary, busy, onResend, fetchPage, onFound, onDiscard, abandon, forget }: Props<B, R>,
+  { label, op, summary, busy, onResend, fetchPage, onFound, onDiscard, abandon, forget, abandonWhenNotFound, abandonLabel = 'Cancel it and start again' }: Props<B, R>,
 ) {
   const [checking, setChecking] = useState(false);
   const [note, setNote] = useState<{ tone: 'warn' | 'error'; text: string } | null>(null);
@@ -71,7 +78,9 @@ export function PendingOpPanel<B, R extends { requestKey?: string; createdAt?: s
           : 'Not found in the records. It may still be on its way, or it was never recorded: this cannot be told apart from here.' });
       } else {
         setNotFound(true);
-        setNote({ tone: 'warn', text: 'Not found in the recent records. That does not prove it was not recorded: it may still be finishing. Send the same request again; if it was not recorded it will be now, and if it was you get its record.' });
+        setNote({ tone: 'warn', text: abandon && abandonWhenNotFound
+          ? 'Not recorded so far, but it may still be finishing. Send the same request again (it is never recorded twice), or give it up: the server then makes sure it can never be recorded.'
+          : 'Not found in the recent records. That does not prove it was not recorded: it may still be finishing. Send the same request again; if it was not recorded it will be now, and if it was you get its record.' });
       }
     } catch (err) {
       setNote({ tone: 'error', text: `Could not check the records: ${messageOf(err)}` });
@@ -91,7 +100,7 @@ export function PendingOpPanel<B, R extends { requestKey?: string; createdAt?: s
         {note && <Alert tone={note.tone}>{note.text}</Alert>}
         <div className="confirm-actions">
           <Button busy={checking} disabled={abandoning} onClick={() => void check()}>Check whether it was recorded</Button>
-          {notFound && abandon && <Button variant="secondary" busy={abandoning} disabled={checking} onClick={() => void cancelIt()}>Cancel it and start again</Button>}
+          {notFound && abandon && <Button variant="secondary" busy={abandoning} disabled={checking} onClick={() => void cancelIt()}>{abandonLabel}</Button>}
           {notFound && !abandon && forget && (
             <ConfirmAction label={forget.label} danger confirmLabel={forget.confirmLabel} consequence={forget.consequence}
               onConfirm={async () => forget.onForget()} />
@@ -112,6 +121,9 @@ export function PendingOpPanel<B, R extends { requestKey?: string; createdAt?: s
       <div className="confirm-actions">
         <Button busy={busy} disabled={checking} onClick={onResend}>Send the same request again</Button>
         <Button variant="secondary" busy={checking} disabled={busy} onClick={() => void check()}>Check whether it was recorded</Button>
+        {notFound && !busy && abandon && abandonWhenNotFound && (
+          <Button variant="secondary" busy={abandoning} disabled={checking} onClick={() => void cancelIt()}>{abandonLabel}</Button>
+        )}
         {notFound && !busy && !abandon && forget && (
           <ConfirmAction label={forget.label} danger confirmLabel={forget.confirmLabel} consequence={forget.consequence}
             onConfirm={async () => forget.onForget()} />

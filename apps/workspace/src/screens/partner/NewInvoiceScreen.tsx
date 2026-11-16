@@ -15,7 +15,6 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { money, useCatalogue, useClinicDoctors } from './billing.tsx';
-import { nextCursor } from './InvoicesScreen.tsx';
 import { Totals } from './InvoiceScreen.tsx';
 import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
@@ -43,7 +42,8 @@ const lineKey = () => `l${++lineSeq}`;
  * Validates a draft against `createInvoiceSchema` and builds the request (without its key) and the preview of what the
  * server will compute. Amounts typed in rupees go out as integer paise.
  */
-export function buildInvoice(d: InvoiceDraft, partner: Pick<Partner, 'taxRegime' | 'gstin'>, branch: Pick<Branch, 'address'> | undefined):
+export function buildInvoice(d: InvoiceDraft, partner: Pick<Partner, 'taxRegime' | 'gstin'>, branch: Pick<Branch, 'address'> | undefined,
+  offeredIds?: ReadonlySet<string>):
   { body: Omit<NewInvoice, 'idempotencyKey'>; errors: Record<string, string>; preview: InvoicePreview } {
   const errors: Record<string, string> = {};
   const rates = allowedGstRates(partner);
@@ -92,6 +92,10 @@ export function buildInvoice(d: InvoiceDraft, partner: Pick<Partner, 'taxRegime'
   const stateCode = branch?.address?.stateCode ?? '';
   const preview = previewInvoice(partner, stateCode, pos || undefined, items);
   preview.lines.forEach((p, i) => { if (p.problem) errors[`${d.lines[i]!.key}.amount`] = p.problem; });
+  // A catalogue line whose item is no longer offered (deactivated or disabled by Jansetu) cannot be billed.
+  d.lines.forEach((l) => {
+    if (l.item && offeredIds && !offeredIds.has(l.item._id)) errors[`${l.key}.amount`] = `${l.item.name} is no longer offered: remove this line.`;
+  });
   if (branch && !stateCode) errors.branchId = 'Set the branch GST state code before billing (Branches).';
   const general = preview.problems.filter((p) => !preview.lines.some((l) => l.problem === p));
   if (general.length) errors.bill = general.join(' ');
@@ -110,17 +114,20 @@ export function buildInvoice(d: InvoiceDraft, partner: Pick<Partner, 'taxRegime'
   };
 }
 
-/** The bills list as a newest-first "page" source for finding a request by its key (`idempotencyKey`). */
-function keyFinder(ctx: ScopeContext) {
-  let cursor: string | undefined;
+/**
+ * Q10 `GET /invoices/by-key/:key` as the "records" a pending bill is looked up in: the bill that key issued, or none
+ * (404). Exact, so "not found" means not issued (yet): the server can then abandon the key for good.
+ */
+function keyLookup(ctx: ScopeContext, key: string) {
   return async (page: number): Promise<Page<Invoice & { requestKey: string; createdAt: string }>> => {
-    if (page === 1) cursor = undefined;
-    const rows = await ctx.billing.invoices({ limit: 50, before: cursor });
-    cursor = nextCursor(rows);
-    return {
-      items: rows.map((r) => ({ ...r, requestKey: r.idempotencyKey, createdAt: r.issuedAt })),
-      page, limit: 50, total: rows.length, totalPages: cursor ? page + 1 : page,
-    };
+    let items: (Invoice & { requestKey: string; createdAt: string })[] = [];
+    try {
+      const inv = await ctx.billing.invoiceByKey(key);
+      items = [{ ...inv, requestKey: inv.idempotencyKey, createdAt: inv.issuedAt }];
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 404)) throw err;
+    }
+    return { items, page, limit: 1, total: items.length, totalPages: 1 };
   };
 }
 
@@ -152,12 +159,21 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
     setPendingState(p);
   };
   const [refused, setRefused] = useState<string | null>(null);
+  const [gaveUp, setGaveUp] = useState(false);
 
-  /** `requestKey` produced this bill (answer, replay or found in the list): end it, and only it, then open the bill. */
-  const issued = (inv: Invoice, requestKey: string, earlier = false) => {
-    resolveStored(memory, slot, requestKey);
+  /**
+   * Whether an answer started for `op` may still act: this page is on screen AND the stored bill is still exactly `op`
+   * (same key, same attempt). Otherwise a newer attempt (here or on a page opened since) owns the state, and an obsolete
+   * answer must leave it — and its reload marker — intact: resending it replays the same bill.
+   */
+  const owns = (op: Pending) => mounted.current && stillCurrent(memory.get<Pending>(slot), op);
+
+  /** `op` produced this bill (answer, replay, lookup or give-up `used`): end it, and only it, then open the bill. */
+  const issued = (inv: Invoice, op: Pending, earlier = false) => {
     void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'invoices'] });
-    if (!mounted.current) return;
+    if (!owns(op)) return;
+    resolveStored(memory, slot, op.requestKey);
+    const requestKey = op.requestKey;
     setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
     const linked = inv.customer?.userId ? ' It was added to the customer’s Jansetu account (Bills in their app).' : '';
     navigate(`${ctx.link('invoices')}/${inv._id}`, {
@@ -170,10 +186,13 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
     const attempt = beginAttempt(p);
     setBusy(true);
     setRefused(null);
+    setGaveUp(false);
     setPending(attempt);
     try {
-      issued(await ctx.billing.createInvoice(attempt.body), attempt.requestKey);
+      issued(await ctx.billing.createInvoice(attempt.body), attempt);
     } catch (err) {
+      // Q10: a catalogue line no longer matches the catalogue: read it again so the form shows the change.
+      if (err instanceof ApiError && err.code === 'CATALOGUE_PRICE_CHANGED') void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'catalogue'] });
       if (!stillCurrent(memory.get<Pending>(slot), attempt)) return;
       // Customer linking is checked before anything is written; on a first attempt that refusal is definite too.
       const linkingOff = err instanceof ApiError && err.code === 'CUSTOMER_LINKING_UNAVAILABLE' && attempt.attempts === 1 && !attempt.uncertain;
@@ -197,17 +216,21 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
       </PageHeading>
       {pending && !(busy && pending.attempts === 1 && !pending.uncertain) ? (
         <PendingOpPanel key={pending.attempts} label="Unconfirmed bill" op={pending} busy={busy} onResend={() => void send(pending)}
-          fetchPage={keyFinder(ctx)}
-          onFound={(inv) => issued(inv, pending.requestKey, true)}
-          forget={{
-            label: 'Start a new bill instead',
-            confirmLabel: 'Forget it and start a new bill',
-            consequence: 'If the earlier bill was issued after all, there will be two bills for the same sale: find it in the bills list and cancel the one not needed. Nothing is cancelled automatically.',
-            onForget: () => {
-              const k = pending.requestKey;
-              resolveStored(memory, slot, k);
-              setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
-            },
+          fetchPage={keyLookup(ctx, pending.requestKey)}
+          onFound={(inv) => issued(inv, pending, true)}
+          // Q10: giving up is decided by the server: `abandoned` = this bill can never be issued; `used` = here it is.
+          abandon={async () => {
+            const r = await ctx.billing.abandonInvoiceKey(pending.requestKey);
+            return { state: r.state, record: r.invoice ? { ...r.invoice, requestKey: r.invoice.idempotencyKey, createdAt: r.invoice.issuedAt } : undefined };
+          }}
+          abandonWhenNotFound abandonLabel="Give up this bill"
+          onDiscard={() => {
+            // Given up on the server; acts only for the attempt this panel showed, on this page.
+            if (!owns(pending)) return;
+            const k = pending.requestKey;
+            resolveStored(memory, slot, k);
+            setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
+            setGaveUp(true);
           }}
           summary={pending.restored ? null : <PendingSummary body={pending.body} />} />
       ) : partner.isPending || branches.isPending || catalogue.isPending ? <Loading label="Loading…" />
@@ -216,12 +239,15 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
         : catalogue.isError ? <ErrorState message={messageOf(catalogue.error)} onRetry={() => void catalogue.refetch()} />
         : branches.data.length === 0 ? <Empty title="No branch to bill from">A bill is issued by a branch. {ctx.actor.role === 'owner' ? 'Add one under Branches first.' : 'Ask an owner for access to a branch.'}</Empty>
         : (
+          <>
+          {gaveUp && <Alert tone="ok">The earlier bill was given up: it can never be issued. Make the bill again below.</Alert>}
           <InvoiceForm partner={p!} branches={branches.data} catalogue={catalogue.data} doctors={doctors.data} doctorsError={doctors.isError ? messageOf(doctors.error) : null}
             busy={busy} refused={refused}
             onIssue={(body) => {
               const requestKey = newRequestKey();
               void send(startOp(requestKey, { ...body, idempotencyKey: requestKey }));
             }} />
+          </>
         )}
     </>
   );
@@ -249,7 +275,10 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
   const branch = branches.find((b) => b._id === d.branchId);
   const offered = catalogue.filter((i) => i.isActive && !i.adminDisabled);
   const rates = allowedGstRates(partner);
-  const built = useMemo(() => buildInvoice(d, partner, branch), [d, partner, branch]);
+  const offeredIds = useMemo(() => new Set(offered.map((i) => i._id)), [catalogue]); // eslint-disable-line react-hooks/exhaustive-deps
+  const built = useMemo(() => buildInvoice(d, partner, branch, offeredIds), [d, partner, branch, offeredIds]);
+  /** Catalogue lines whose item changed price or GST since they were added (Q10 refuses them: CATALOGUE_PRICE_CHANGED). */
+  const [priceNotice, setPriceNotice] = useState<string | null>(null);
   const errors: Record<string, string> = tried ? built.errors : {};
   const shown = (k: string) => errors[k] ?? (k.endsWith('.amount') ? built.errors[k] : undefined);
   const branchDoctors = (doctors ?? []).filter((x) => x.active && (x.branchIds.length === 0 || x.branchIds.includes(d.branchId)));
@@ -259,6 +288,24 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
 
   // A refusal of the issue sends the person back to the form, as typed.
   useEffect(() => { if (refused) setReviewing(false); }, [refused]);
+
+  // The catalogue was read again (e.g. after CATALOGUE_PRICE_CHANGED): catalogue lines take the current price and GST,
+  // and the person is told what changed before reviewing again.
+  useEffect(() => {
+    const changes: string[] = [];
+    setD((x) => {
+      let touched = false;
+      const lines = x.lines.map((l) => {
+        const cur = l.item ? catalogue.find((i) => i._id === l.item!._id) : undefined;
+        if (!l.item || !cur || (cur.priceMinor === l.item.priceMinor && cur.gstRate === l.item.gstRate)) return l;
+        touched = true;
+        changes.push(`${cur.name} is now ${money(cur.priceMinor)} at ${cur.gstRate}% GST`);
+        return { ...l, item: { ...l.item, priceMinor: cur.priceMinor, gstRate: cur.gstRate, sac: cur.sac }, price: paiseToInput(cur.priceMinor), gstRate: String(cur.gstRate) };
+      });
+      return touched ? { ...x, lines } : x;
+    });
+    if (changes.length) { setReviewing(false); setPriceNotice(`${[...new Set(changes)].join('; ')}. Review the bill before issuing it.`); }
+  }, [catalogue]);
 
   function addFromCatalogue() {
     const it = offered.find((i) => i._id === pick);
@@ -337,6 +384,7 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
       <section className="ws-section" aria-labelledby="nb-items-h">
         <h2 id="nb-items-h">Items</h2>
         {!chargesGst(partner) && <p className="ws-muted">{partner.name} is not registered for regular GST: every item is billed at 0% GST.</p>}
+        {priceNotice && <Alert tone="warn">{priceNotice}</Alert>}
         <div className="ws-search">
           <div className="j-field">
             <label htmlFor="nb-pick">From the catalogue</label>
