@@ -1133,3 +1133,58 @@ test('heartbeats never overlap: one in flight at a time, and the page ends on th
   await expect.poll(() => heartbeats(backend)).toBe(2);
   await expect(avail).toContainText('Video at ₹300.00');
 });
+
+test('an older extension attempt answering late never settles a newer same-key retry (Codex WQ4 #6)', async ({ page }) => {
+  const backend = await mockBackend(page);
+  let release!: () => void;
+  backend.hold = { match: /\/extend$/, gate: new Promise<void>((r) => { release = r; }) };
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  const row = () => page.getByRole('list', { name: 'Running instant consultations' }).getByRole('listitem', { name: 'Video consultation accepted at 09:50' });
+  const posts = () => backend.calls.filter((c) => c.path === `/specialists/me/instant/bookings/${bid(5)}/extend`).map((c) => c.body);
+  const checks = () => backend.calls.filter((c) => c.method === 'GET' && c.path === `/specialists/me/instant/bookings/${bid(5)}`).length;
+  // Attempt 1 is on its way (held before the server acts on it); the doctor leaves and comes back.
+  await row().getByLabel('Extend by (minutes)').fill('5');
+  await row().getByRole('button', { name: 'Extend' }).click();
+  await expect.poll(() => posts().length).toBe(1);
+  await nav(page).getByRole('link', { name: 'Schedule' }).click();
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  await expect(row().getByLabel('Extend by (minutes)')).toHaveValue('5');
+  await expect(row()).toContainText('The extension is not recorded yet.');
+  // Attempt 2: the same key, its answer lost.
+  backend.extendLost = 'dropped';
+  const before = checks();
+  await row().getByRole('button', { name: 'Send the same extension again' }).click();
+  await expect.poll(() => posts().length).toBe(2);
+  await expect.poll(() => checks()).toBeGreaterThan(before);
+  // Attempt 1 now succeeds on the server and answers the page that was left: it must not settle attempt 2's state.
+  release();
+  await expect.poll(() => backend.extensions[bid(5)]?.length ?? 0).toBe(1);
+  await page.waitForTimeout(300);
+  await expect(row().getByLabel('Extend by (minutes)')).toBeDisabled();
+  // A remount still has the pending extension and its check settles it, once.
+  await nav(page).getByRole('link', { name: 'Schedule' }).click();
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  await expect(row()).toContainText('Extended by 5 minutes');
+  await expect(row().getByRole('button', { name: 'Extend', exact: true })).toBeVisible();
+  expect(posts()).toHaveLength(2);
+  expect(posts()[1]).toEqual(posts()[0]);
+  expect(backend.extensions[bid(5)]!.map((e) => e.minutes)).toEqual([5]);
+});
+
+test('while unconfirmed and the server shows Off, Enter confirms Off like the button (never goes available)', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  const avail = page.getByRole('region', { name: 'Available now' });
+  await goAvailable(page); // version 1
+  backend.presenceLost = true; // switching off is applied (version 2), its answer lost
+  await page.getByRole('button', { name: 'Stop being available' }).click();
+  await expect(avail.getByText('Not confirmed', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Check what the server has' }).click();
+  await expect(avail).toContainText('The server has: not available (version 2).');
+  await page.getByLabel('Your fee for an instant consultation (₹)').press('Enter');
+  await expect(page.getByText('You are not available now. No new offers come to you.')).toBeVisible();
+  expect(presencePuts(backend).at(-1)).toEqual({ available: false, modes: ['video'], instantFeeMinor: 60_000, expectedPresenceVersion: 2 });
+  expect(backend.presence).toMatchObject({ available: false, presenceVersion: 3 });
+});

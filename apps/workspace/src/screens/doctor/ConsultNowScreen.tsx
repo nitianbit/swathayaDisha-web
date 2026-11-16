@@ -8,7 +8,7 @@ import {
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField, formatDateTime } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
-import { afterFailure, beginAttempt, definitelyNotRecorded, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
+import { afterFailure, beginAttempt, definitelyNotRecorded, newRequestKey, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { PageHeading } from '../../PageHeading.tsx';
 import {
@@ -115,6 +115,8 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
 
   const sent = p.unconfirmed?.input;
   const doubt = p.unconfirmed;
+  /** What the form's one submit does (its primary button and Enter alike): confirm the shown terms while uncertain, else go on. */
+  const primaryAvailable = doubt && p.shown ? p.shown.available : true;
   if (p.loading) return <section className="ws-section" aria-labelledby="avail-h"><h2 id="avail-h">Available now</h2><Loading label="Reading your availability…" /></section>;
   return (
     <section className="ws-section" aria-labelledby="avail-h">
@@ -164,7 +166,7 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
           <Button busy={p.busy} onClick={() => void check()}>Check what the server has</Button>
         </div>
       ) : (
-        <form className="rx-form" noValidate onSubmit={(e) => void send(true, e)} aria-label="Available now">
+        <form className="rx-form" noValidate onSubmit={(e) => void send(primaryAvailable, e)} aria-label="Available now">
           <fieldset className="ws-checks" aria-describedby={errors.modes ? 'avail-modes-err' : undefined}>
             <legend>Consultation types you take now</legend>
             {INSTANT_MODES.map((m) => (
@@ -183,7 +185,7 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
           {doubt && p.shown ? (
             <div className="confirm-actions">
               {/* An ordered write against the version just read: acknowledged, no earlier change of this page can commit any more. */}
-              <Button busy={p.busy} onClick={() => void send(p.shown!.available)}>Confirm these terms</Button>
+              <Button type="submit" busy={p.busy}>Confirm these terms</Button>
               {p.shown.available && <Button variant="secondary" disabled={p.busy} onClick={() => void send(false)}>Stop being available</Button>}
               <Button variant="ghost" disabled={p.busy} onClick={() => void check()}>Check again</Button>
             </div>
@@ -406,19 +408,23 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
   async function reconcile(cause?: string) {
     const current = memory.get<PendingOp<ExtendBody>>(slot);
     if (!current) return;
+    // The answer may settle only the operation it was asked for, on the page that asked: a check captured before a
+    // newer attempt started (or by a page since left) never deletes or rewrites that attempt's recovery state.
+    const owns = () => alive.current && stillCurrent(memory.get<PendingOp<ExtendBody>>(slot), current);
     setChecking(true);
     try {
       const b = await d.api.instantBooking(booking._id);
+      if (!owns()) return;
       const done = b.extensions.find((x) => x.requestKey === current.requestKey);
       if (done) {
-        resolveStored(memory, slot, current.requestKey);
+        memory.delete(slot);
         sync();
         say('ok', `Extended by ${done.minutes} minutes: your time is held until ${formatDateTime(done.endTime)}.`);
         return;
       }
       if (b.status !== 'confirmed' || !b.held?.isActive) {
         // The consultation is over: this extension can never be added any more.
-        resolveStored(memory, slot, current.requestKey);
+        memory.delete(slot);
         sync();
         say('warn', 'Not extended: the consultation is no longer held, so this extension can never be added.');
         return;
@@ -427,6 +433,7 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
         ? 'Its details were not kept after the reload, so it can only be checked again.'
         : 'Send the same extension again: it is added once, never twice.'}`);
     } catch (err) {
+      if (!owns()) return;
       say('warn', `${cause ? `${cause} ` : ''}Could not check whether it was recorded (${messageOf(err)}). ${current.restored
         ? 'Check again in a moment.' : 'Sending the same extension again is safe: it is added once.'}`);
     } finally {
@@ -459,16 +466,19 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
     setNotice(null);
     try {
       const r = await d.api.extend(booking._id, attempt.body.minutes, attempt.requestKey);
-      resolveStored(memory, slot, attempt.requestKey); // this key is recorded: whichever attempt answered
+      // Settled only by the attempt that still owns the stored operation, on the page that sent it. An older attempt
+      // answering late (its page left, a same-key retry made since) leaves the newer attempt's state alone: the next
+      // check on that page finds the key recorded and settles it.
+      if (!alive.current || !stillCurrent(memory.get<PendingOp<ExtendBody>>(slot), attempt)) return;
+      memory.delete(slot);
       sync();
       say('ok', `Extended by ${attempt.body.minutes} minutes: your time is held until ${formatDateTime(r.extension?.endTime ?? r.endTime)}.`);
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return; // the session ended
+      if (!alive.current || !stillCurrent(memory.get<PendingOp<ExtendBody>>(slot), attempt)) return;
       const refusal = instantRefusal(err);
       const after = afterFailure(attempt, err, messageOf(err));
-      if (stillCurrent(memory.get<PendingOp<ExtendBody>>(slot), attempt)) {
-        if (after) memory.set(slot, after); else memory.delete(slot);
-      }
+      if (after) memory.set(slot, after); else memory.delete(slot);
       sync();
       if (!after) { say('error', `Not extended: ${refusal ?? messageOf(err)}`); return; }
       await reconcile(refusal ? `Not extended this time: ${refusal}` : messageOf(err));
