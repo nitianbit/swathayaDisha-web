@@ -145,6 +145,7 @@ describe('billing paths', () => {
     expect(() => api.recordPayment(I, { ...ok, splits: [] })).toThrow(/payment/);
     expect(() => api.recordPayment(I, { ...ok, splits: [{ mode: 'cash', amountMinor: 0 }] })).toThrow(/payment/);
     expect(() => api.recordPayment(I, { ...ok, splits: [{ mode: 'gold' as never, amountMinor: 5 }] })).toThrow(/payment/);
+    expect(() => api.recordPayment(I, { requestKey: 'p'.repeat(32), expectedLifecycleVersion: 0, mode: 'gold' as never })).toThrow(/payment/);
     expect(() => api.invoices({ appointmentId: '../x' })).toThrow(/appointment id/);
     expect(() => api.createInvoice({ branchId: P, customer: { name: 'A' }, items: [], idempotencyKey: 'k', appointmentId: 'x' })).toThrow(/appointment id/);
     expect(calls).toHaveLength(1);
@@ -162,6 +163,8 @@ describe('Q14 part payments (paidOf, withDue, recordPayment)', () => {
     expect(takesPayment(bill({ lifecycleState: 'partly_paid', paidMinor: 50000, dueMinor: 50800 }))).toBe(true);
     expect(takesPayment(bill({ lifecycleState: 'paid' }))).toBe(false);
     expect(takesPayment(bill({ lifecycleState: 'cancelled' }))).toBe(false);
+    // Q14 review: a ₹0 bill can still be marked paid (with a plain method).
+    expect(takesPayment(bill({ totals: { totalMinor: 0 } as Invoice['totals'] }))).toBe(true);
   });
 
   it('never more than is due; with part payments off exactly what is due; 1–10 positive parts', () => {

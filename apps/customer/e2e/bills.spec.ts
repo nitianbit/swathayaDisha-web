@@ -52,7 +52,7 @@ async function mockBackend(page: Page): Promise<Backend> {
       const b = bills[m[1]!];
       if (!b) return json(route, 404, { error: 404, code: 'INVOICE_NOT_FOUND', message: 'Bill not found' });
       if (m[2]) return route.fulfill({ status: 200, contentType: 'application/pdf', body: `%PDF-1.4\nbill v${url.searchParams.get('version')}` });
-      const events = [
+      const events = (b as Record<string, unknown>).events as Record<string, unknown>[] | undefined ?? [
         ...(b.lifecycleVersion >= 1 ? [{ kind: 'payment', mode: 'upi', version: 1, at: '2026-11-14T06:00:00.000Z' }] : []),
         ...(b.lifecycleState === 'cancelled' ? [{ kind: 'cancellation', reason: 'Billed twice', version: 2, at: '2026-11-14T07:00:00.000Z' }] : []),
       ];
@@ -133,4 +133,15 @@ test('the PDF follows the bill’s version: a bill cancelled after its PDF was f
   await expect(page.getByRole('link', { name: 'Save bill PDF' })).toHaveAttribute('download', 'SUN-2026-27-000123-v2.pdf');
   expect(backend.calls.filter((c) => c.path.startsWith(`/bills/${PAID}/pdf`)).map((c) => c.path))
     .toEqual([`/bills/${PAID}/pdf?version=1`, `/bills/${PAID}/pdf?version=2`]);
+});
+
+test('Q14: a partly paid bill shows each payment with its methods and what is still due', async ({ page }) => {
+  const backend = await mockBackend(page);
+  Object.assign(backend.bills[UNPAID]!, { lifecycleState: 'partly_paid', lifecycleVersion: 1, paidMinor: 20000, dueMinor: 9500,
+    events: [{ kind: 'payment', amountMinor: 20000, splits: [{ mode: 'cash', amountMinor: 5000 }, { mode: 'upi', amountMinor: 15000 }], version: 1, at: '2026-11-14T06:00:00.000Z' }] });
+  await signIn(page);
+  await expect(page.getByRole('link', { name: /CarePlus Clinic/ })).toContainText('Partly paid');
+  await page.getByRole('link', { name: /CarePlus Clinic/ }).click();
+  await expect(page.getByText('Paid ₹200.00 by Cash + UPI on', { exact: false })).toBeVisible();
+  await expect(page.getByText('Partly paid: ₹95.00 is still due. Pay the rest at the CarePlus Clinic counter.')).toBeVisible();
 });

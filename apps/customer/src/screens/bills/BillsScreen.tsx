@@ -7,6 +7,7 @@ import { useSession } from '../../session.tsx';
 
 export const BILL_STATE: Record<BillState, { label: string; tone?: 'ok' | 'warn' | 'danger' }> = {
   issued: { label: 'Unpaid', tone: 'warn' },
+  partly_paid: { label: 'Partly paid', tone: 'warn' },
   paid: { label: 'Paid', tone: 'ok' },
   cancelled: { label: 'Cancelled', tone: 'danger' },
 };

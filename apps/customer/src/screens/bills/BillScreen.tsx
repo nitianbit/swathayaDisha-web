@@ -32,7 +32,8 @@ export function BillScreen() {
 function BillView({ bill: b, events }: { bill: Bill; events: BillEvent[] }) {
   const { api } = useSession();
   const s = BILL_STATE[b.lifecycleState] ?? { label: b.lifecycleState };
-  const payment = events.find((e) => e.kind === 'payment');
+  const payments = events.filter((e) => e.kind === 'payment');
+  const methods = (e: BillEvent) => (e.splits?.length ? e.splits.map((x) => BILL_PAYMENT_MODE[x.mode] ?? x.mode).join(' + ') : e.mode ? BILL_PAYMENT_MODE[e.mode] ?? e.mode : '');
   const cancellation = events.find((e) => e.kind === 'cancellation');
   const t = b.totals;
   return (
@@ -48,10 +49,15 @@ function BillView({ bill: b, events }: { bill: Bill; events: BillEvent[] }) {
           {b.supplier.gstin && <><dt>GSTIN</dt><dd>{b.supplier.gstin}</dd></>}
         </dl>
       </section>
-      {payment && (
-        <Alert tone="ok">Paid{payment.mode ? ` by ${BILL_PAYMENT_MODE[payment.mode] ?? payment.mode}` : ''} on {formatDateTime(payment.at)}.</Alert>
-      )}
+      {payments.map((p) => (
+        <Alert key={p.version} tone="ok">
+          Paid{p.amountMinor ? ` ${rupees(p.amountMinor)}` : ''}{methods(p) ? ` by ${methods(p)}` : ''} on {formatDateTime(p.at)}.
+        </Alert>
+      ))}
       {b.lifecycleState === 'issued' && <Alert tone="warn">Not paid yet. Pay at the {b.supplier.name} counter.</Alert>}
+      {b.lifecycleState === 'partly_paid' && (
+        <Alert tone="warn">Partly paid{typeof b.dueMinor === 'number' ? `: ${rupees(b.dueMinor)} is still due` : ''}. Pay the rest at the {b.supplier.name} counter.</Alert>
+      )}
       {cancellation && <Alert tone="warn">This bill was cancelled on {formatDateTime(cancellation.at)}{cancellation.reason ? `: “${cancellation.reason}”` : '.'}</Alert>}
 
       <section className="card stack" aria-labelledby="lines-h">

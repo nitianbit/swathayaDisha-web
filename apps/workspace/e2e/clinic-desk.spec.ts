@@ -364,7 +364,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       if (b.loseNextBook) { b.loseNextBook = false; return route.abort('failed'); }
       await held(sub);
       return ok(route, { booking: { ...deskView(a), dependentId: x.patient ? '5d'.repeat(12) : null }, customer: { userId: '98'.repeat(12), phone: x.customer.phone, created },
-        patient: x.patient ? { dependentId: '5d'.repeat(12), name: x.patient.name, relationship: x.patient.relation, created: true } : null, replayed: false }, 201);
+        patient: x.patient ? { dependentId: '5d'.repeat(12), name: x.patient.name, relationship: x.patient.relation } : null, replayed: false }, 201);
     }
     // Q14: a desk no-show moved once (keyed, fenced by updatedAt).
     const nsm = /^\/clinic\/appointments\/([0-9a-f]{24})\/reschedule-no-show$/.exec(sub);
@@ -1061,7 +1061,8 @@ test('Q14 family members: the desk books a family member by name and relation (n
   await expect(review).toContainText('The patient and the doctor will be notified.');
   await review.getByRole('button', { name: 'Book appointment' }).click();
   await expect(page.getByText('Booked. Meena Shah (Mother) with Dr Mehta on Tue, 17 Nov, 2026, 10:15 at Indiranagar.', { exact: false })).toBeVisible();
-  await expect(page.getByText('Meena Shah was added to the account’s family members.', { exact: false })).toBeVisible();
+  // Q14 review: the answer does not say whether the family member is new, so the receipt does not either.
+  await expect(page.getByText(/added to the account/)).toHaveCount(0);
   const [post] = books(backend);
   expect(post!.body).toEqual({ slotId: slotIdOf(D1, BR1, '2026-11-17', '10:15'), customer: { phone: '9800000002', name: 'Kiran Shah' },
     patient: { name: 'Meena Shah', relation: 'Mother', gender: 'Female', dateOfBirth: '1958-03-04' }, requestKey: expect.stringMatching(/^[0-9a-f]{32}$/) });
@@ -1129,6 +1130,9 @@ test('Q14 bill for an appointment: "Create bill" opens the form with the patient
   await expect(page.getByLabel('Branch', { exact: true })).toHaveValue(BR1);
   await expect(page.getByLabel('Branch', { exact: true })).toBeDisabled();
   await expect(page.getByLabel('Doctor (optional)')).toHaveValue(D1);
+  // The bill's customer is the appointment's account holder: fixed while linked.
+  await expect(page.getByLabel('Customer name')).not.toBeEditable();
+  await expect(page.getByLabel('Mobile number (optional)')).not.toBeEditable();
   // Nothing about the patient travels in the URL or browser storage.
   expect(page.url()).not.toMatch(/Asha|9800000001|e1e1/);
   expect(await storage(page)).not.toMatch(/Asha|9800000001/);

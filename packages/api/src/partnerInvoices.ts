@@ -243,7 +243,8 @@ export interface PaymentSplit { mode: InvoicePaymentMode; amountMinor: number; r
  * `lifecycleVersion` the cashier decided on (409 LIFECYCLE_VERSION_CONFLICT otherwise). Never more than is due (409
  * AMOUNT_EXCEEDS_DUE); less than is due only where the partner allows part payments (409 PART_PAYMENTS_NOT_ALLOWED).
  */
-export interface PaymentInput { splits: PaymentSplit[]; note?: string; requestKey: string; expectedLifecycleVersion: number }
+export type PaymentInput = { note?: string; requestKey: string; expectedLifecycleVersion: number }
+  & ({ splits: PaymentSplit[]; mode?: never } | { /** Q14 review: a ₹0 bill is marked paid with a plain method. */ mode: InvoicePaymentMode; splits?: never });
 /** `recordPaymentSchema.splits.max(10)`. */
 export const MAX_PAYMENT_SPLITS = 10;
 /** `recordPayment` (controller/invoice.ts). Q12: `replayed` is inside `data` (true = this payment had already been recorded). */
@@ -312,7 +313,7 @@ export function dueOf(inv: Pick<Invoice, 'paidMinor' | 'dueMinor' | 'lifecycleSt
 }
 /** A bill can take a payment while something is due and it is neither paid nor cancelled. */
 export const takesPayment = (inv: Pick<Invoice, 'paidMinor' | 'dueMinor' | 'lifecycleState' | 'totals'>) =>
-  (inv.lifecycleState === 'issued' || inv.lifecycleState === 'partly_paid') && dueOf(inv) > 0;
+  (inv.lifecycleState === 'issued' || inv.lifecycleState === 'partly_paid') && (dueOf(inv) > 0 || inv.totals.totalMinor === 0);
 
 /**
  * Why the server would refuse this payment (`recordPaymentSchema` + `recordPayment`): 1–10 parts, each a positive
@@ -499,8 +500,10 @@ export function partnerBillingApi(c: ApiClient, scope: PartnerScope) {
     recordPayment: (id: string, body: PaymentInput) => {
       if (!ITEM_REQUEST_KEY_PATTERN.test(body.requestKey)) throw new Error('Invalid request key');
       if (!Number.isSafeInteger(body.expectedLifecycleVersion) || body.expectedLifecycleVersion < 0) throw new Error('Invalid bill version');
-      if (body.splits.length < 1 || body.splits.length > MAX_PAYMENT_SPLITS
-        || body.splits.some((x) => !Number.isSafeInteger(x.amountMinor) || x.amountMinor <= 0 || !PAYMENT_MODES.some((m) => m.value === x.mode))) {
+      const knownMode = (m: string) => PAYMENT_MODES.some((x) => x.value === m);
+      if (body.mode !== undefined ? !knownMode(body.mode) || body.splits !== undefined
+        : !body.splits || body.splits.length < 1 || body.splits.length > MAX_PAYMENT_SPLITS
+          || body.splits.some((x) => !Number.isSafeInteger(x.amountMinor) || x.amountMinor <= 0 || !knownMode(x.mode))) {
         throw new Error('Invalid payment');
       }
       return c.post<PaymentAnswer>(`${invoice(id)}/pay`, { body });

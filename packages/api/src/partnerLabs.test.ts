@@ -176,6 +176,15 @@ describe('lab booking transitions (services/labBookings.ts §4)', () => {
 });
 
 describe('Q14 lab no-shows (rescheduleNoShow)', () => {
+  it('a booking moved after a no-show offers no ordinary new time and no rejection', () => {
+    const now = new Date('2026-11-17T05:00:00.000Z');
+    const b = { status: 'confirmed', paymentStatus: 'paid', visitMode: 'lab', reschedule: { version: 0, pending: false },
+      slot: { slotId: S, date: '2026-11-17', startTime: '09:00', endTime: '09:30', startsAt: '2026-11-17T03:30:00.000Z' },
+      report: { draftFiles: [], releasedFiles: [], releases: [] } } as unknown as LabBooking;
+    expect(labActions(b, ADMIN_ACTOR, now).map((o) => o.action)).toEqual(['visit', 'no_show', 'reschedule', 'reject']);
+    expect(labActions({ ...b, noShowReschedules: 1 }, ADMIN_ACTOR, now).map((o) => o.action)).toEqual(['visit', 'no_show']);
+  });
+
   it('a no-show can be moved once by bookings.manage; a moved one shows as used', () => {
     const viewer = { role: 'staff' as const, permissions: ['bookings.view' as const] };
     const manager = { role: 'staff' as const, permissions: ['bookings.manage' as const] };

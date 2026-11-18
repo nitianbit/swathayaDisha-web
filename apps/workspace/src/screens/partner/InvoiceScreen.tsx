@@ -26,6 +26,10 @@ const PAY_REFUSAL: Record<string, string> = {
   PART_PAYMENTS_NOT_ALLOWED: 'This partner takes full payment only, so nothing was recorded. Record everything that is due.',
 };
 const payRefusal = (err: unknown) => (err instanceof ApiError && err.code && PAY_REFUSAL[err.code]) || messageOf(err);
+/** Q14 review: 503 INVOICE_INDEXES_OUTDATED is answered before anything is written (its message is shown as the server gives it). */
+const isIndexesOutdated = (err: unknown) => err instanceof ApiError && err.status === 503 && err.code === 'INVOICE_INDEXES_OUTDATED';
+/** What the payment form produces; the key and the version it was decided on are added when it is sent. */
+type PaymentDraft = { note?: string } & ({ splits: PaymentSplit[] } | { mode: InvoicePaymentMode });
 
 /** How a payment was made: its methods (each with its amount when there are several), references, and the amount. */
 export function paymentText(e: Pick<InvoiceEvent, 'mode' | 'reference' | 'splits' | 'amountMinor'>): string {
@@ -130,7 +134,7 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
       void reload().catch(() => undefined);
     } catch (err) {
       if (!owns(attempt)) return;
-      const next = afterFailure(attempt, err, messageOf(err));
+      const next = isIndexesOutdated(err) && attempt.attempts === 1 && !attempt.uncertain ? null : afterFailure(attempt, err, messageOf(err));
       storePay(next ?? undefined);
       // Refused outright (e.g. "This bill is paid": someone else recorded another payment): the server's message.
       if (!next) setFailure(`Payment not recorded: ${payRefusal(err)}`);
@@ -209,7 +213,7 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
                     onRecord={async (draft) => {
                       // Q14: the server's request key and the bill version this payment was decided on.
                       const requestKey = newRequestKey();
-                      await sendPayment(startOp(requestKey, { ...draft, requestKey, expectedLifecycleVersion: inv.lifecycleVersion }));
+                      await sendPayment(startOp(requestKey, { ...draft, requestKey, expectedLifecycleVersion: inv.lifecycleVersion } as PaymentInput));
                     }} />
                 )}
                 {inv.lifecycleState !== 'cancelled' && canCancel && (
@@ -314,14 +318,15 @@ export function paymentOutcome(d: Detail, op: Pick<PayOp, 'requestKey' | 'body' 
   return 'unknown';
 }
 
-const splitsTotal = (b: Pick<PaymentInput, 'splits'>) => b.splits.reduce((n, x) => n + x.amountMinor, 0);
+const splitsTotal = (splits: readonly PaymentSplit[]) => splits.reduce((n, x) => n + x.amountMinor, 0);
 /** "of ₹1,008.00 by UPI (reference UTR9)", or with several methods "of ₹1,008.00 (Cash ₹500.00 + UPI ₹508.00)". */
 function payWords(b: PaymentInput): string {
+  if (!b.splits) return ` of ${money(0)} by ${MODE_LABEL[b.mode]}`;
   if (b.splits.length === 1) {
     const x = b.splits[0]!;
     return ` of ${money(x.amountMinor)} by ${MODE_LABEL[x.mode]}${x.reference ? ` (reference ${x.reference})` : ''}`;
   }
-  return ` of ${money(splitsTotal(b))} (${b.splits.map((x) => `${MODE_LABEL[x.mode]} ${money(x.amountMinor)}${x.reference ? `, reference ${x.reference}` : ''}`).join(' + ')})`;
+  return ` of ${money(splitsTotal(b.splits))} (${b.splits.map((x) => `${MODE_LABEL[x.mode]} ${money(x.amountMinor)}${x.reference ? `, reference ${x.reference}` : ''}`).join(' + ')})`;
 }
 
 function UnconfirmedPayment({ op, sending, billUnpaid, onResend, onCheck, onForget }: {
@@ -376,7 +381,37 @@ const nth = (i: number) => (i === 0 ? '' : ` (method ${i + 1})`);
  */
 function PaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }: {
   invoice: Invoice; allowPartPayments: boolean; locked: boolean; busy: boolean;
-  onRecord: (body: Omit<PaymentInput, 'requestKey' | 'expectedLifecycleVersion'>) => Promise<void>;
+  onRecord: (body: PaymentDraft) => Promise<void>;
+}) {
+  if (invoice.totals.totalMinor === 0) return <ZeroBillPayment invoice={invoice} locked={locked} busy={busy} onRecord={onRecord} />;
+  return <SplitPaymentForm invoice={invoice} allowPartPayments={allowPartPayments} locked={locked} busy={busy} onRecord={onRecord} />;
+}
+
+/** Q14 review: a bill of ₹0 is marked paid with a plain method (there is no amount to split). */
+function ZeroBillPayment({ invoice, locked, busy, onRecord }: { invoice: Invoice; locked: boolean; busy: boolean; onRecord: (body: PaymentDraft) => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<InvoicePaymentMode>('cash');
+  if (!open) return <Button disabled={locked || busy} onClick={() => setOpen(true)}>Record payment</Button>;
+  return (
+    <div className="confirm" role="group" aria-label="Record payment">
+      <div className="j-field">
+        <label htmlFor="pay-zero-mode">Paid by</label>
+        <select id="pay-zero-mode" value={mode} onChange={(e) => setMode(e.target.value as InvoicePaymentMode)}>
+          {PAYMENT_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+      </div>
+      <div className="confirm-text">Bill {invoice.serial} is for {money(0)}. Mark it as paid? It will show Paid; this cannot be changed or removed.</div>
+      <div className="confirm-actions">
+        <Button busy={busy} disabled={locked} onClick={() => { setOpen(false); void onRecord({ mode }); }}>Mark as paid</Button>
+        <Button variant="ghost" disabled={busy} onClick={() => setOpen(false)}>Back</Button>
+      </div>
+    </div>
+  );
+}
+
+function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }: {
+  invoice: Invoice; allowPartPayments: boolean; locked: boolean; busy: boolean;
+  onRecord: (body: PaymentDraft) => Promise<void>;
 }) {
   const due = dueOf(invoice);
   const [open, setOpen] = useState(false);
@@ -406,7 +441,7 @@ function PaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }: {
     if (!Object.keys(errs).length) setConfirming(true);
   }
 
-  const body: Omit<PaymentInput, 'requestKey' | 'expectedLifecycleVersion'> = {
+  const body: { splits: PaymentSplit[]; note?: string } = {
     splits: splits.map((x) => ({ mode: x.mode, amountMinor: x.amountMinor!, ...(x.reference ? { reference: x.reference } : {}) })),
     ...(note.trim() ? { note: note.trim() } : {}),
   };

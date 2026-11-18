@@ -7,7 +7,8 @@ import type { ApiClient, Page } from './client.ts';
  */
 
 export type BillDocumentKind = 'tax_invoice' | 'bill_of_supply' | 'commercial_invoice';
-export type BillState = 'issued' | 'paid' | 'cancelled';
+/** Q14: `partly_paid` = some payments recorded, an amount still due (where the partner takes part payments). */
+export type BillState = 'issued' | 'partly_paid' | 'paid' | 'cancelled';
 export type BillPaymentMode = 'cash' | 'upi' | 'card' | 'bank' | 'other';
 
 export interface BillLine {
@@ -53,6 +54,9 @@ export interface Bill {
   totals: BillTotals;
   lifecycleState: BillState;
   lifecycleVersion: number;
+  /** Q14: paid so far and still due (paise). */
+  paidMinor?: number;
+  dueMinor?: number;
 }
 
 /** A payment or the cancellation, in lifecycle order. */
@@ -63,6 +67,9 @@ export interface BillEvent {
   reference?: string;
   reason?: string;
   note?: string;
+  /** Q14: a payment's amount and methods (one or several). The customer view carries no request key or staff id. */
+  amountMinor?: number;
+  splits?: { mode: BillPaymentMode; amountMinor: number; reference?: string }[];
   version: number;
   at: string;
 }

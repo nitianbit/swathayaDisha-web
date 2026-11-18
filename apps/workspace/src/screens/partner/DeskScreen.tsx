@@ -197,12 +197,13 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
     booking: b, ...extra,
     who: op.body ? familyOf(op.body) ?? (op.body.request.customer.name?.trim() || canonicalMobile(op.body.request.customer.phone) || op.body.request.customer.phone) : undefined,
     phone: op.body ? canonicalMobile(op.body.request.customer.phone) ?? undefined : undefined,
+    holder: op.body?.request.customer.name?.trim() || undefined,
     branchName: op.body?.shown.branchName ?? branchNames.get(b.branchId ?? '') ?? 'the clinic',
     doctorName: b.doctorName ?? op.body?.shown.doctorName,
   });
   const booked = (result: DeskBookingResult, op: DeskPending) =>
     settled(viewOf(result.booking, op, { replayed: result.replayed, created: result.customer.created,
-      family: result.patient ? { name: result.patient.name, relationship: result.patient.relationship, created: result.patient.created } : undefined }), op);
+      family: result.patient ? { name: result.patient.name, relationship: result.patient.relationship } : undefined }), op);
 
   /** Given up on the server, or known booked but outside this desk's branches: ends `op` only while this page owns it. */
   function closeWith(op: DeskPending, text: string) {
@@ -442,8 +443,10 @@ const familyOf = (body: DeskPendingBody) => (body.request.patient && 'name' in b
 /** What a settled booking shows (from its answer, or from a by-key lookup when the details are gone after a reload). */
 interface ReceiptView {
   booking: DeskAppointment; replayed: boolean; created?: boolean; who?: string; phone?: string; branchName: string; doctorName?: string;
+  /** Q14: the account holder (the bill's customer for this appointment), as typed at the desk. */
+  holder?: string;
   /** Q14: the family member being seen (from the answer). */
-  family?: { name: string | null; relationship: string | null; created: boolean };
+  family?: { name: string | null; relationship: string | null };
 }
 
 /** The answer to a booking: what was booked, the fee to collect, and the way to bill it. */
@@ -456,9 +459,8 @@ function Receipt({ ctx, receipt, memory }: { ctx: ScopeContext; receipt: Receipt
       {who ?? 'The patient'}{receipt.family?.relationship ? ` (${receipt.family.relationship})` : ''} with {receipt.doctorName ?? 'the doctor'} on {appointmentLabel(b)} at {receipt.branchName}.
       {' '}Fee {formatRupees(b.fee ?? 0)}, paid at the clinic.
       {receipt.created ? ' A Jansetu account was created for this mobile number.' : ''}
-      {receipt.family?.created ? ` ${receipt.family.name ?? 'The family member'} was added to the account’s family members.` : ''}
       {' '}The patient and the doctor are notified.
-      {' '}<BillLink ctx={ctx} memory={memory} prefill={{ appointmentId: b.bookingId, branchId: b.branchId ?? '', doctorId: b.doctorId, name: who ?? '', phone: receipt.phone ?? '',
+      {' '}<BillLink ctx={ctx} memory={memory} prefill={{ appointmentId: b.bookingId, branchId: b.branchId ?? '', doctorId: b.doctorId, name: receipt.holder ?? '', phone: receipt.phone ?? '',
         label: `${receipt.doctorName ?? b.doctorName ?? 'the doctor'}, ${appointmentLabel(b)}` }} />
     </Alert>
   );
@@ -486,8 +488,10 @@ function BillLink({ ctx, memory, prefill, label = 'Make a bill for this visit' }
   return null;
 }
 
+/** Q14: the bill's customer is the appointment's account holder (409 APPOINTMENT_CUSTOMER_MISMATCH otherwise), not a family member. */
 const prefillOf = (a: ClinicAppointment): BillPrefill => ({
-  appointmentId: a.bookingId, branchId: a.branchId ?? '', doctorId: a.doctorId, name: a.patient?.name ?? '', phone: a.patient?.phone ?? '',
+  appointmentId: a.bookingId, branchId: a.branchId ?? '', doctorId: a.doctorId,
+  name: (a.patient?.relationship ? a.patient.accountName : a.patient?.name) ?? '', phone: a.patient?.phone ?? '',
   label: `${a.doctorName ?? 'the doctor'}, ${appointmentLabel(a)}`,
 });
 

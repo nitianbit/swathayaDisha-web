@@ -29,8 +29,11 @@ interface LineDraft {
 export interface InvoiceDraft {
   branchId: string; name: string; phone: string; age: string; gender: '' | InvoiceGender; gstin: string; placeOfSupply: string;
   doctorId: string; lines: LineDraft[];
-  /** Q14: the clinic appointment this bill is for (its branch and doctor are fixed while it is linked). */
-  appointment?: { id: string; label: string };
+  /**
+   * Q14: the clinic appointment this bill is for. While it is linked, its branch, doctor and customer (the account holder:
+   * mobile, and the name when one was given) are fixed as booked.
+   */
+  appointment?: { id: string; label: string; nameFixed: boolean };
 }
 
 /** The bill type in a sentence. */
@@ -278,7 +281,7 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
 }) {
   const [d, setD] = useState<InvoiceDraft>(() => (prefill
     ? { ...EMPTY, branchId: prefill.branchId, doctorId: prefill.doctorId, name: prefill.name, phone: prefill.phone,
-      appointment: { id: prefill.appointmentId, label: prefill.label } }
+      appointment: { id: prefill.appointmentId, label: prefill.label, nameFixed: !!prefill.name.trim() } }
     : { ...EMPTY, branchId: branches.length === 1 ? branches[0]!._id : '' }));
   const linked = !!d.appointment;
   // Field errors appear once the person has asked to review the bill, then follow every change.
@@ -353,7 +356,7 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
         <h2 id="nb-who-h">Branch and customer</h2>
         {d.appointment && (
           <div className="ws-actions" role="group" aria-label="Appointment">
-            <span>For the clinic appointment with {d.appointment.label}. Its branch and doctor stay as booked.</span>
+            <span>For the clinic appointment with {d.appointment.label}. Its branch, doctor and customer (the account holder) stay as booked.</span>
             <Button variant="ghost" onClick={() => set({ appointment: undefined })}>Not for this appointment</Button>
           </div>
         )}
@@ -381,8 +384,10 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
           )}
         </div>
         <div className="rx-form-row">
-          <TextField label="Customer name" value={d.name} maxLength={MAX_NAME} error={errors.name} onChange={(e) => set({ name: e.target.value })} />
-          <TextField label="Mobile number (optional)" inputMode="tel" value={d.phone} error={errors.phone} onChange={(e) => set({ phone: e.target.value })} />
+          <TextField label="Customer name" value={d.name} maxLength={MAX_NAME} error={errors.name} readOnly={!!d.appointment?.nameFixed}
+            onChange={(e) => set({ name: e.target.value })} />
+          <TextField label="Mobile number (optional)" inputMode="tel" value={d.phone} error={errors.phone} readOnly={linked}
+            onChange={(e) => set({ phone: e.target.value })} />
           <TextField label="Age (optional)" inputMode="numeric" value={d.age} error={errors.age} onChange={(e) => set({ age: e.target.value.replace(/\D/g, '') })} />
           <div className="j-field">
             <label htmlFor="nb-gender">Gender (optional)</label>

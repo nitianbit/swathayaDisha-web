@@ -50,6 +50,8 @@ interface Backend {
   changeAfterRead?: Rec;
   /** The next payment is recorded but its answer never arrives. */
   loseNextPayAnswer: boolean;
+  /** Q14 review: the next payment is refused (503 INVOICE_INDEXES_OUTDATED), nothing written. */
+  indexesOutdatedOnce?: boolean;
   /** The next payment request (only that one) waits for this promise. */
   holdPay?: Promise<void>;
   /** The held payment then loses the compare-and-set: 409 "This bill is paid". */
@@ -373,7 +375,10 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
           if (b.heldPayConflict) { b.heldPayConflict = false; await fail(route, 409, 'INVOICE_STATE_CONFLICT', 'This bill is paid'); b.heldPayAnswered = true; return; }
         }
         // Q14: splits + requestKey + expectedLifecycleVersion; paidMinor/dueMinor; partly_paid where the partner allows it.
-        const x = body as { splits: { mode: string; amountMinor: number; reference?: string }[]; note?: string; requestKey: string; expectedLifecycleVersion: number };
+        const raw = body as { mode?: string; splits?: { mode: string; amountMinor: number; reference?: string }[]; note?: string; requestKey: string; expectedLifecycleVersion: number };
+        if (b.indexesOutdatedOnce) { b.indexesOutdatedOnce = false; return fail(route, 503, 'INVOICE_INDEXES_OUTDATED', 'Bills need a database update before payments can be recorded. Ask an admin.'); }
+        // A plain method pays all that is due (a ₹0 bill: nothing).
+        const x = { ...raw, splits: raw.splits ?? [{ mode: raw.mode!, amountMinor: Math.max(0, ((inv.totals as Rec).totalMinor as number) - ((inv.paidMinor as number | undefined) ?? 0)) }] };
         const total = (inv.totals as Rec).totalMinor as number;
         if (b.paidElsewhere === inv._id && inv.lifecycleState === 'issued') {
           transition('paid', { kind: 'payment', mode: 'cash', reference: 'OTHER', amountMinor: total, splits: [{ mode: 'cash', amountMinor: total, reference: 'OTHER' }] });
@@ -1295,4 +1300,24 @@ test('Q14 full payment only (the default): a part is refused before sending; a p
   await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
   await expect(page.getByText('Payment not recorded: The bill changed while you were recording this (another payment or a cancellation), so nothing was recorded.', { exact: false })).toBeVisible();
   expect(backend.calls.filter((c) => c.path.endsWith('/pay')).map((c) => (c.body as Rec).expectedLifecycleVersion)).toEqual([0]);
+});
+
+test('Q14 review: a ₹0 bill is marked paid with a plain method; a payment refused because bill indexes are outdated says so and records nothing', async ({ page }) => {
+  const backend = await mockBackend(page, owner(), { seed: true });
+  const inv = backend.invoices.find((i) => i._id === INV2)!;
+  inv.totals = { ...(inv.totals as Rec), totalMinor: 0, subtotalMinor: 0, taxableMinor: 0 };
+  await signInPartner(page);
+  await page.goto(`/#/partner/invoices/${INV2}`);
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByLabel('Paid by').selectOption('upi');
+  await expect(page.getByText('Bill LB/2627/0002 is for ₹0.00. Mark it as paid?', { exact: false })).toBeVisible();
+  backend.indexesOutdatedOnce = true;
+  await page.getByRole('button', { name: 'Mark as paid' }).click();
+  await expect(page.getByText('Payment not recorded: Bills need a database update before payments can be recorded. Ask an admin.')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Unconfirmed payment' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByRole('button', { name: 'Mark as paid' }).click();
+  await expect(page.getByText('Payment recorded.')).toBeVisible();
+  const pays = backend.calls.filter((c) => c.path.endsWith('/pay')).map((c) => c.body as Rec);
+  expect(pays[1]).toEqual({ mode: 'cash', requestKey: expect.stringMatching(/^[0-9a-f]{32}$/), expectedLifecycleVersion: 0 });
 });

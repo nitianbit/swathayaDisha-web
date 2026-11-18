@@ -859,6 +859,9 @@ test('Q14: a lab no-show is not refunded and earns nothing; it is moved once to 
   await expect(page.getByText('Asha Rao’s no-show has been moved to a new time (it can be moved only once). Nothing more to do.')).toBeVisible();
   await expect(page.getByRole('list', { name: 'No-show history' })).toContainText('Missed Tue, 17 Nov, 2026, 09:00–09:30');
   await expect(page.getByRole('list', { name: 'No-show history' })).toContainText('moved to Wed, 18 Nov, 2026, 10:00–10:30');
+  // Moved after a no-show: no ordinary new time and no rejection (never refunded).
+  await expect(page.getByRole('button', { name: 'Propose a new time' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Reject booking' })).toHaveCount(0);
   const moves = backend.calls.filter((c) => c.path.endsWith('/reschedule-no-show'));
   expect(moves).toHaveLength(1);
   expect(moves[0]!.body).toEqual({ slotId: slotId('home', '2026-11-18', '10:00'), requestKey: expect.stringMatching(/^[0-9a-f]{32}$/), expectedVersion: 2 });

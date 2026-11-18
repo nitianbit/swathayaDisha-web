@@ -247,8 +247,8 @@ export interface DeskBookingInput {
 export interface DeskBookingResult {
   booking: DeskAppointment;
   customer: { userId: string; phone: string | null; created: boolean };
-  /** Q14 `patientView`: the family member being seen (`created` = added with this booking); null = the account holder. */
-  patient?: { dependentId: string; name: string | null; relationship: string | null; created: boolean } | null;
+  /** Q14 `patientView`: the family member being seen; null = the account holder. */
+  patient?: { dependentId: string; name: string | null; relationship: string | null } | null;
   /** The key had already booked this exact appointment: this is its receipt (nothing new was booked). */
   replayed: boolean;
 }

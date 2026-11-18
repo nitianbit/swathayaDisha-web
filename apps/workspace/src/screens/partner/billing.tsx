@@ -67,4 +67,5 @@ export const APPOINTMENT_BILL_REFUSAL: Record<string, string> = {
   APPOINTMENT_DOCTOR_MISMATCH: 'The bill names a different doctor than the appointment.',
   APPOINTMENT_CANCELLED: 'This appointment was cancelled, so it cannot be billed.',
   APPOINTMENT_NOT_FOUND: 'This appointment was not found at this clinic (or not at one of your branches).',
+  APPOINTMENT_CUSTOMER_MISMATCH: 'A bill for an appointment is made out to the appointment’s account holder (the mobile it was booked with).',
 };

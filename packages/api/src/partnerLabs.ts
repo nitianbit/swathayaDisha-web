@@ -359,7 +359,7 @@ export interface LabActionOffer { action: LabAction; blocked?: string }
  * - `reports.upload`: add draft files while processing or report released; `reports.release`: release a draft then.
  * Unpaid (`pending_payment`) and finished bookings offer nothing.
  */
-export function labActions(b: Pick<LabBooking, 'status' | 'paymentStatus' | 'visitMode' | 'reschedule' | 'slot' | 'report'>,
+export function labActions(b: Pick<LabBooking, 'status' | 'paymentStatus' | 'visitMode' | 'reschedule' | 'slot' | 'report' | 'noShows' | 'noShowReschedules'>,
   actor: Pick<PartnerActorView, 'role' | 'permissions'>, now: Date): LabActionOffer[] {
   if (b.paymentStatus !== 'paid') return [];
   const manage = holdsAny(actor, ['bookings.manage']);
@@ -370,7 +370,9 @@ export function labActions(b: Pick<LabBooking, 'status' | 'paymentStatus' | 'vis
     else out.push({ action: 'visit', blocked: waiting });
     const started = Date.parse(b.slot.startsAt) <= now.getTime();
     out.push({ action: 'no_show', blocked: waiting ?? (started ? undefined : 'A no-show can be marked only after the slot time.') });
-    out.push({ action: 'reschedule' }, { action: 'reject' });
+    // Q14: a booking moved after a no-show is neither moved again the ordinary way (409 NO_SHOW_RESCHEDULE_USED) nor
+    // rejected for a refund (409 NO_SHOW_NOT_REFUNDABLE).
+    if (!noShowMovedOnce(b)) out.push({ action: 'reschedule' }, { action: 'reject' });
   }
   if ((b.status === 'sample_collected' || b.status === 'visited') && manage) out.push({ action: 'process' });
   if (b.status === 'processing' || b.status === 'report_ready') {
