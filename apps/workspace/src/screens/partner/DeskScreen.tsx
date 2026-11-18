@@ -2,17 +2,20 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  addDays, ApiError, appointmentAt, appointmentDay, canonicalMobile, CLINIC_APPOINTMENT_STATUS_LABEL, clinicBranchesFor, deskActions,
-  deskBookingProblems, doctorsAtBranch, holdsAny, isRealDate, istDateOf, MAX_APPOINTMENTS, MAX_DESK_CANCEL_REASON, MAX_DESK_NAME, MAX_DESK_NOTES,
+  addDays, ApiError, appointmentAt, appointmentDay, canonicalMobile, CLINIC_APPOINTMENT_STATUS_LABEL, clinicBranchesFor, DESK_GENDERS, DESK_RELATIONS,
+  deskActions, deskBookingProblems, doctorsAtBranch, familyMemberProblems, holdsAny, INVOICE_STATE_LABEL, isRealDate, istDateOf, MAX_APPOINTMENTS,
+  MAX_DESK_CANCEL_REASON, MAX_DESK_NAME, MAX_DESK_NOTES, MAX_FAMILY_NAME,
   type Branch, type ClinicAppointment, type ClinicDoctorRow, type DeskAction, type DeskActionOffer, type DeskAppointment, type DeskBookingResult,
-  type DeskSlot,
+  type DeskGender, type DeskPatientInput, type DeskRelation, type DeskSlot,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
+import { NoShowMove, noShowMoveSlot, type NoShowMoveOp, type NoShowTarget } from '../../components/NoShowMove.tsx';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { messageOf } from '../../errors.ts';
 import { afterFailure, beginAttempt, keyedLookup, newRequestKey, resolveStored, startOp, stillCurrent, wasAbandoned } from '../../requests.ts';
-import { useSession } from '../../session.tsx';
+import { useSession, type SessionMemory } from '../../session.tsx';
+import { billPrefillSlot, type BillPrefill } from './billing.tsx';
 import {
   appointmentLabel, appointmentTone, ClinicOnly, clinicLink, istTime, useClinicApi, useDoctorList, type ClinicApi,
 } from './clinic.tsx';
@@ -55,10 +58,15 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
   );
 }
 
-type Patient = { phone: string; name: string; notes: string };
-const NO_PATIENT: Patient = { phone: '', name: '', notes: '' };
+/**
+ * Q14: who is seen — the account holder of the mobile, or a family member named here (name and relation; the server
+ * reuses an active family member with the same name and relation). The desk never sees an account's family list.
+ */
+type Patient = { phone: string; name: string; notes: string; forFamily: boolean; familyName: string; relation: '' | DeskRelation; gender: '' | DeskGender; dateOfBirth: string };
+const NO_PATIENT: Patient = { phone: '', name: '', notes: '', forFamily: false, familyName: '', relation: '', gender: '', dateOfBirth: '' };
 interface Chosen { slot: DeskSlot; doctor: ClinicDoctorRow; branch: Branch }
 type Perform = (a: ClinicAppointment, action: DeskAction, run: () => Promise<DeskAppointment>, done: (next: DeskAppointment) => string) => Promise<void>;
+type Guard = <T>(a: ClinicAppointment, action: DeskAction, run: () => Promise<T>) => Promise<T>;
 
 function DeskDay({ ctx }: { ctx: ScopeContext }) {
   const { memory } = useSession();
@@ -104,9 +112,9 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
   const [stepNotice, setStepNotice] = useState<{ id: string; text: string } | null>(null);
   const [stepFailure, setStepFailure] = useState<{ id: string; text: string } | null>(null);
 
-  const perform: Perform = async (a, action, run, done) => {
+  /** The single gate for every step on an appointment, including confirmations that were already open when another started. */
+  const guard: Guard = async (a, action, run) => {
     const id = a.bookingId;
-    // The single gate for every step, including confirmations that were already open when another step started.
     if (inFlight.current.has(id)) {
       throw new ApiError(409, 'Another step on this appointment is still running. Wait for it to finish, then try again.', 'STEP_IN_FLIGHT');
     }
@@ -114,11 +122,7 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
     setBusy((b) => ({ ...b, [id]: action }));
     if (selectedRef.current === id) { setStepNotice(null); setStepFailure(null); }
     try {
-      const next = await run();
-      // The answer is never written into the cached day: it carries no version, so a late one (from a page the person
-      // left and came back to) could put an older time or status over a newer change. Only the re-read below shows state.
-      // A late answer (the person left the page or opened another appointment) shows nothing, not even its notice.
-      if (mounted.current && selectedRef.current === id) setStepNotice({ id, text: done(next) });
+      return await run();
     } catch (err) {
       // Q13: refused because the appointment moved on since it was shown; the re-read below shows it as it is now.
       if (isChanged(err) && mounted.current && selectedRef.current === id) setStepFailure({ id, text: CHANGED });
@@ -129,6 +133,22 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
       // Success or not (it may have changed meanwhile), read the day again: the page settles on the server's state.
       refresh();
     }
+  };
+  const perform: Perform = async (a, action, run, done) => {
+    const id = a.bookingId;
+    const next = await guard(a, action, run);
+    // The answer is never written into the cached day: it carries no version, so a late one (from a page the person
+    // left and came back to) could put an older time or status over a newer change. Only the re-read shows state.
+    // A late answer (the person left the page or opened another appointment) shows nothing, not even its notice.
+    if (mounted.current && selectedRef.current === id) setStepNotice({ id, text: done(next) });
+  };
+  /** Q14: the one move of a desk no-show settled (only for the attempt that owns it): show its new day, the appointment open. */
+  const moved = (id: string, next: DeskAppointment) => {
+    if (!mounted.current) return;
+    const d = appointmentDay(next.bookingDate);
+    if (d) setDay(d);
+    if (next.branchId) setBranchChoice(next.branchId);
+    setSelected(id);
   };
   const click = (a: ClinicAppointment, action: DeskAction, what: string, run: () => Promise<DeskAppointment>, done: (n: DeskAppointment) => string) =>
     perform(a, action, run, done).catch((err: unknown) => {
@@ -173,14 +193,16 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
     if (doctorId) setDoctorChoice(doctorId);
     setSelected(b.bookingId);
   }
-  const viewOf = (b: DeskAppointment, op: DeskPending, extra: Pick<ReceiptView, 'replayed' | 'created'>): ReceiptView => ({
+  const viewOf = (b: DeskAppointment, op: DeskPending, extra: Pick<ReceiptView, 'replayed' | 'created' | 'family'>): ReceiptView => ({
     booking: b, ...extra,
-    who: op.body ? op.body.request.customer.name?.trim() || canonicalMobile(op.body.request.customer.phone) || op.body.request.customer.phone : undefined,
+    who: op.body ? familyOf(op.body) ?? (op.body.request.customer.name?.trim() || canonicalMobile(op.body.request.customer.phone) || op.body.request.customer.phone) : undefined,
+    phone: op.body ? canonicalMobile(op.body.request.customer.phone) ?? undefined : undefined,
     branchName: op.body?.shown.branchName ?? branchNames.get(b.branchId ?? '') ?? 'the clinic',
     doctorName: b.doctorName ?? op.body?.shown.doctorName,
   });
   const booked = (result: DeskBookingResult, op: DeskPending) =>
-    settled(viewOf(result.booking, op, { replayed: result.replayed, created: result.customer.created }), op);
+    settled(viewOf(result.booking, op, { replayed: result.replayed, created: result.customer.created,
+      family: result.patient ? { name: result.patient.name, relationship: result.patient.relationship, created: result.patient.created } : undefined }), op);
 
   /** Given up on the server, or known booked but outside this desk's branches: ends `op` only while this page owns it. */
   function closeWith(op: DeskPending, text: string) {
@@ -230,6 +252,20 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
   const rows = list.data ?? [];
   const current = rows.find((r) => r.bookingId === selected);
 
+  // Q14: a no-show whose move was sent but not confirmed, and which has left the day it was on (a no-show can only leave
+  // its day by its one move): read after the attempt, at that same day, branch and doctor, it is settled as moved.
+  useEffect(() => {
+    if (!selected || current || !list.isSuccess || list.isFetching) return;
+    const slot = noShowMoveSlot(scopeIdentity(ctx), selected);
+    const op = memory.get<NoShowMoveOp>(slot);
+    const from = op?.body?.from;
+    if (!op || !from || list.dataUpdatedAt <= op.lastAttemptAt) return;
+    if (from.day !== day || (from.branchId && from.branchId !== branch?._id) || (doctor && from.doctorId !== doctor.doctorId)) return;
+    resolveStored(memory, slot, op.requestKey);
+    setStepFailure(null);
+    setStepNotice({ id: selected, text: 'The no-show has been moved to a new time (it can be moved only once): it is no longer on this day. Nothing more to do.' });
+  }, [selected, current, list.isSuccess, list.isFetching, list.dataUpdatedAt, day, branch?._id, doctor?.doctorId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (branches.isPending || doctors.isPending) return <Loading label="Loading the front desk…" />;
   if (branches.isError) return <ErrorState message={messageOf(branches.error)} onRetry={() => void branches.refetch()} />;
   if (doctors.isError) return <ErrorState message={messageOf(doctors.error)} onRetry={() => void doctors.refetch()} />;
@@ -261,7 +297,7 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
           summary={pending.restored || !pending.body ? null : <PendingBookingSummary body={pending.body} />} />
       )}
       {gaveUp && !pending && <Alert tone="ok">{gaveUp}</Alert>}
-      {receipt && <Receipt ctx={ctx} receipt={receipt} />}
+      {receipt && <Receipt ctx={ctx} receipt={receipt} memory={memory} />}
 
       <div className="ws-search">
         <div className="j-field ws-filter">
@@ -298,12 +334,12 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
               <div className="ws-table-wrap">
                 <table className="j-table">
                   <caption className="j-sr-only">Appointments on {formatDay(day)}</caption>
-                  <thead><tr><th scope="col">Time</th><th scope="col">Patient</th><th scope="col">Doctor</th><th scope="col">Booked</th><th scope="col">Status</th><th scope="col">Details</th></tr></thead>
+                  <thead><tr><th scope="col">Time</th><th scope="col">Patient</th><th scope="col">Doctor</th><th scope="col">Booked</th><th scope="col">Status</th><th scope="col">Bill</th><th scope="col">Details</th></tr></thead>
                   <tbody>
                     {rows.map((r) => (
                       <tr key={r.bookingId} aria-current={r.bookingId === selected ? 'true' : undefined}>
                         <td>{clock(r.bookingTime)}</td>
-                        <td>{patientName(r)}{r.patient?.phone ? <div className="ws-muted">{r.patient.phone}</div> : null}</td>
+                        <td>{patientName(r)}{r.patient?.relationship ? <div className="ws-muted">{familyLine(r)}</div> : null}{r.patient?.phone ? <div className="ws-muted">{r.patient.phone}</div> : null}</td>
                         <td>{r.doctorName ?? '—'}</td>
                         <td>{r.source === 'desk' ? 'At the desk' : r.paidOnline ? 'Online, paid' : 'Online'}</td>
                         <td>
@@ -311,6 +347,7 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
                           {r.arrivedAt && r.status === 'confirmed' && <> <Badge tone="ok">Arrived {istTime(r.arrivedAt)}</Badge></>}
                           {busy[r.bookingId] && <div className="ws-muted">Saving…</div>}
                         </td>
+                        <td><BillCell ctx={ctx} appt={r} memory={memory} branchName={branchNames.get(r.branchId ?? '') ?? ''} /></td>
                         <td>
                           <Button variant="ghost" aria-label={`Open ${patientName(r)} at ${clock(r.bookingTime)}`}
                             onClick={() => { setSelected(r.bookingId); setStepNotice(null); setStepFailure(null); }}>Open</Button>
@@ -332,7 +369,10 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
         <AppointmentPanel key={`${current.bookingId}:${current.updatedAt ?? ''}`} ctx={ctx} clinic={clinic} appt={current} doctors={doctors.data ?? []} branches={offered}
           branchName={branchNames.get(current.branchId ?? '') ?? 'this clinic'} now={now} busy={busy[current.bookingId]} reading={list.isFetching}
           failure={stepFailure?.id === current.bookingId ? stepFailure.text : null}
-          perform={perform} click={click} onClose={() => setSelected(null)} />
+          perform={perform} guard={guard} click={click} onClose={() => setSelected(null)} readAt={list.dataUpdatedAt} memory={memory}
+          onMoveNotice={(text) => { if (mounted.current && selectedRef.current === current.bookingId) { setStepFailure(null); setStepNotice({ id: current.bookingId, text }); } }}
+          onMoveFailure={(text) => { if (mounted.current && selectedRef.current === current.bookingId) { setStepNotice(null); setStepFailure({ id: current.bookingId, text }); } }}
+          onMoved={moved} />
       )}
 
       <section className="ws-section" aria-labelledby="desk-slots-h">
@@ -393,20 +433,33 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
 }
 
 const patientName = (r: Pick<ClinicAppointment, 'patient'>) => r.patient?.name || 'Name not given';
+/** Q14: who is being seen, when it is a family member: "Mother of Kiran Shah". */
+const familyLine = (r: Pick<ClinicAppointment, 'patient'>) =>
+  r.patient?.relationship ? `${r.patient.relationship} of ${r.patient.accountName ?? 'the account holder'}` : '';
+/** The family member named in a desk booking request, if any. */
+const familyOf = (body: DeskPendingBody) => (body.request.patient && 'name' in body.request.patient ? body.request.patient.name : undefined);
 
 /** What a settled booking shows (from its answer, or from a by-key lookup when the details are gone after a reload). */
-interface ReceiptView { booking: DeskAppointment; replayed: boolean; created?: boolean; who?: string; branchName: string; doctorName?: string }
+interface ReceiptView {
+  booking: DeskAppointment; replayed: boolean; created?: boolean; who?: string; phone?: string; branchName: string; doctorName?: string;
+  /** Q14: the family member being seen (from the answer). */
+  family?: { name: string | null; relationship: string | null; created: boolean };
+}
 
 /** The answer to a booking: what was booked, the fee to collect, and the way to bill it. */
-function Receipt({ ctx, receipt }: { ctx: ScopeContext; receipt: ReceiptView }) {
+function Receipt({ ctx, receipt, memory }: { ctx: ScopeContext; receipt: ReceiptView; memory: SessionMemory }) {
   const b = receipt.booking;
+  const who = receipt.family?.name ?? receipt.who;
   return (
     <Alert tone="ok">
       {receipt.replayed ? 'This booking had already been made; nothing was booked twice. ' : 'Booked. '}
-      {receipt.who ?? 'The patient'} with {receipt.doctorName ?? 'the doctor'} on {appointmentLabel(b)} at {receipt.branchName}.
+      {who ?? 'The patient'}{receipt.family?.relationship ? ` (${receipt.family.relationship})` : ''} with {receipt.doctorName ?? 'the doctor'} on {appointmentLabel(b)} at {receipt.branchName}.
       {' '}Fee {formatRupees(b.fee ?? 0)}, paid at the clinic.
       {receipt.created ? ' A Jansetu account was created for this mobile number.' : ''}
-      {' '}<BillLink ctx={ctx} />
+      {receipt.family?.created ? ` ${receipt.family.name ?? 'The family member'} was added to the account’s family members.` : ''}
+      {' '}The patient and the doctor are notified.
+      {' '}<BillLink ctx={ctx} memory={memory} prefill={{ appointmentId: b.bookingId, branchId: b.branchId ?? '', doctorId: b.doctorId, name: who ?? '', phone: receipt.phone ?? '',
+        label: `${receipt.doctorName ?? b.doctorName ?? 'the doctor'}, ${appointmentLabel(b)}` }} />
     </Alert>
   );
 }
@@ -416,16 +469,48 @@ function PendingBookingSummary({ body }: { body: DeskPendingBody }) {
   const { request, shown } = body;
   return (
     <div>
-      {request.customer.name ? `${request.customer.name} (${request.customer.phone})` : request.customer.phone} with {shown.doctorName} on {formatDay(shown.day)}, {shown.time} at {shown.branchName}.
+      {familyOf(body) ? `${familyOf(body)}, family member of ${request.customer.phone}` : request.customer.name ? `${request.customer.name} (${request.customer.phone})` : request.customer.phone} with {shown.doctorName} on {formatDay(shown.day)}, {shown.time} at {shown.branchName}.
     </div>
   );
 }
 
-/** WQ2's new-bill form starts empty (it cannot be prefilled), so this links to it, or to the bills list. */
-function BillLink({ ctx }: { ctx: ScopeContext }) {
-  if (holdsAny(ctx.actor, ['invoices.create'])) return <Link to={`${ctx.link('invoices')}/new`}>Make a bill for this visit</Link>;
+/**
+ * Q14: the new-bill form for this visit, prefilled with the patient, doctor, branch and appointment (handed over in
+ * session memory only, never in the URL), or the bills list for other bill readers.
+ */
+function BillLink({ ctx, memory, prefill, label = 'Make a bill for this visit' }: { ctx: ScopeContext; memory: SessionMemory; prefill: BillPrefill; label?: string }) {
+  if (holdsAny(ctx.actor, ['invoices.create'])) {
+    return <Link to={`${ctx.link('invoices')}/new`} onClick={() => memory.set(billPrefillSlot(scopeIdentity(ctx)), prefill)}>{label}</Link>;
+  }
   if (holdsAny(ctx.actor, BILL_READERS)) return <Link to={ctx.link('invoices')}>Bills</Link>;
   return null;
+}
+
+const prefillOf = (a: ClinicAppointment): BillPrefill => ({
+  appointmentId: a.bookingId, branchId: a.branchId ?? '', doctorId: a.doctorId, name: a.patient?.name ?? '', phone: a.patient?.phone ?? '',
+  label: `${a.doctorName ?? 'the doctor'}, ${appointmentLabel(a)}`,
+});
+
+/**
+ * Q14: an appointment's bill (its open bill, else the latest cancelled one): its number and status with a link; or, for
+ * a desk appointment without an open bill, "Create bill" for bill makers.
+ */
+function BillCell({ ctx, appt, memory, branchName }: { ctx: ScopeContext; appt: ClinicAppointment; memory: SessionMemory; branchName: string }) {
+  const bill = appt.bill;
+  const open = bill && bill.state !== 'cancelled';
+  const readers = holdsAny(ctx.actor, BILL_READERS);
+  return (
+    <>
+      {bill && (readers
+        ? <Link to={`${ctx.link('invoices')}/${bill.invoiceId}`} aria-label={`Bill ${bill.serial}, ${INVOICE_STATE_LABEL[bill.state] ?? bill.state}`}>{bill.serial}</Link>
+        : <span>{bill.serial}</span>)}
+      {bill && <div className="ws-muted">{INVOICE_STATE_LABEL[bill.state] ?? bill.state}</div>}
+      {!open && appt.source === 'desk' && appt.status !== 'cancelled' && holdsAny(ctx.actor, ['invoices.create']) && (
+        <div><BillLink ctx={ctx} memory={memory} prefill={prefillOf(appt)} label="Create bill" /><span className="j-sr-only"> for {patientName(appt)} at {branchName}</span></div>
+      )}
+      {!bill && !(appt.source === 'desk' && appt.status !== 'cancelled' && holdsAny(ctx.actor, ['invoices.create'])) && <span className="ws-muted">—</span>}
+    </>
+  );
 }
 
 function BookingForm({ chosen, patient, setPatient, sending, refused, onCancel, onBook }: {
@@ -434,13 +519,22 @@ function BookingForm({ chosen, patient, setPatient, sending, refused, onCancel, 
 }) {
   const [tried, setTried] = useState(false);
   const [reviewing, setReviewing] = useState(false);
-  const problems = deskBookingProblems(patient);
+  const today = istDateOf(new Date());
+  const family = patient.forFamily
+    ? familyMemberProblems({ name: patient.familyName, relation: patient.relation, gender: patient.gender, dateOfBirth: patient.dateOfBirth }, today) : {};
+  const problems: Record<string, string | undefined> = { ...deskBookingProblems(patient), ...(patient.forFamily ? {
+    familyName: family.name, relation: family.relation, gender: family.gender, dateOfBirth: family.dateOfBirth } : {}) };
+  for (const k of Object.keys(problems)) if (!problems[k]) delete problems[k];
   const errors = tried ? problems : {};
   const set = (p: Partial<Patient>) => { setPatient({ ...patient, ...p }); setReviewing(false); };
   useEffect(() => { if (refused) setReviewing(false); }, [refused]);
   const when = `${formatDay(chosen.slot.date)}, ${clock(chosen.slot.startTime)}`;
   const fee = chosen.doctor.consultationFee;
   const name = patient.name.trim();
+  const familyName = patient.familyName.trim().replace(/\s+/g, ' ');
+  const seen: DeskPatientInput | undefined = patient.forFamily && patient.relation
+    ? { name: familyName, relation: patient.relation, ...(patient.gender ? { gender: patient.gender } : {}), ...(patient.dateOfBirth ? { dateOfBirth: patient.dateOfBirth } : {}) }
+    : undefined;
 
   function review(e: FormEvent) {
     e.preventDefault();
@@ -457,9 +551,38 @@ function BookingForm({ chosen, patient, setPatient, sending, refused, onCancel, 
           <div className="rx-form-row">
             <TextField label="Patient’s mobile number" inputMode="tel" value={patient.phone} error={errors.phone} onChange={(e) => set({ phone: e.target.value })}
               hint="The appointment is made for the Jansetu account of this number; one is created if there is none." />
-            <TextField label="Patient’s name (optional)" value={patient.name} maxLength={MAX_DESK_NAME} error={errors.name} onChange={(e) => set({ name: e.target.value })}
+            <TextField label={patient.forFamily ? 'Account holder’s name (optional)' : 'Patient’s name (optional)'} value={patient.name} maxLength={MAX_DESK_NAME} error={errors.name} onChange={(e) => set({ name: e.target.value })}
               hint="Saved only if the account has no name yet; an existing account is never changed." />
           </div>
+          <fieldset className="ws-checks">
+            <legend>Who is seen</legend>
+            <label className="ws-check"><input type="radio" name="desk-who" checked={!patient.forFamily} onChange={() => set({ forFamily: false })} /> The account holder (the person with this mobile number)</label>
+            <label className="ws-check"><input type="radio" name="desk-who" checked={patient.forFamily} onChange={() => set({ forFamily: true })} /> A family member of the account holder</label>
+          </fieldset>
+          {patient.forFamily && (
+            <div className="rx-form-row">
+              <TextField label="Family member’s name" value={patient.familyName} maxLength={MAX_FAMILY_NAME} error={errors.familyName}
+                onChange={(e) => set({ familyName: e.target.value })}
+                hint="If the account already has a family member with this name and relation, that one is used; otherwise they are added to the account." />
+              <div className="j-field">
+                <label htmlFor="desk-relation">Relation to the account holder</label>
+                <select id="desk-relation" value={patient.relation} aria-invalid={errors.relation ? true : undefined} aria-describedby={errors.relation ? 'desk-relation-err' : undefined}
+                  onChange={(e) => set({ relation: e.target.value as DeskRelation })}>
+                  <option value="">Choose</option>
+                  {DESK_RELATIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+                {errors.relation && <span id="desk-relation-err" className="j-field__error">{errors.relation}</span>}
+              </div>
+              <div className="j-field">
+                <label htmlFor="desk-gender">Gender (optional)</label>
+                <select id="desk-gender" value={patient.gender} onChange={(e) => set({ gender: e.target.value as DeskGender })}>
+                  <option value="">Not given</option>
+                  {DESK_GENDERS.map((g) => <option key={g} value={g}>{g}</option>)}
+                </select>
+              </div>
+              <TextField label="Date of birth (optional)" type="date" max={today} value={patient.dateOfBirth} error={errors.dateOfBirth} onChange={(e) => set({ dateOfBirth: e.target.value })} />
+            </div>
+          )}
           <TextArea label="Notes for the clinic (optional)" value={patient.notes} maxLength={MAX_DESK_NOTES} error={errors.notes} onChange={(e) => set({ notes: e.target.value })} />
         </fieldset>
         {refused && <Alert>Not booked: {refused}</Alert>}
@@ -471,14 +594,17 @@ function BookingForm({ chosen, patient, setPatient, sending, refused, onCancel, 
         ) : (
           <div className="confirm" role="group" aria-label="Book the appointment">
             <div className="confirm-text">
-              Book {name || canonicalMobile(patient.phone)}{name ? ` (${canonicalMobile(patient.phone)})` : ''} with {chosen.doctor.name} on {when} at {chosen.branch.name}?
+              {seen && 'name' in seen
+                ? <>Book {seen.name} ({seen.relation} of the account holder of {canonicalMobile(patient.phone)}) with {chosen.doctor.name} on {when} at {chosen.branch.name}?</>
+                : <>Book {name || canonicalMobile(patient.phone)}{name ? ` (${canonicalMobile(patient.phone)})` : ''} with {chosen.doctor.name} on {when} at {chosen.branch.name}?</>}
               {fee ? ` The fee of ${formatRupees(fee)} is paid at the clinic.` : ' The fee is paid at the clinic.'}
+              {' '}The patient and the doctor will be notified.
               {' '}It is booked once: if the answer is lost, the same booking can be sent again safely.
             </div>
             <div className="confirm-actions">
               <Button busy={sending} onClick={() => {
                 const notes = patient.notes.trim();
-                onBook({ slotId: chosen.slot.slotId, customer: { phone: canonicalMobile(patient.phone)!, ...(name ? { name } : {}) }, ...(notes ? { notes } : {}) });
+                onBook({ slotId: chosen.slot.slotId, customer: { phone: canonicalMobile(patient.phone)!, ...(name ? { name } : {}) }, ...(seen ? { patient: seen } : {}), ...(notes ? { notes } : {}) });
               }}>Book appointment</Button>
               <Button variant="ghost" disabled={sending} onClick={() => setReviewing(false)}>Back to the details</Button>
             </div>
@@ -491,13 +617,19 @@ function BookingForm({ chosen, patient, setPatient, sending, refused, onCancel, 
 
 // ── One appointment ──
 
-function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, now, busy, reading, failure, perform, click, onClose }: {
+function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, now, busy, reading, failure, perform, guard, click, onClose, readAt, memory,
+  onMoveNotice, onMoveFailure, onMoved }: {
   ctx: ScopeContext; clinic: ClinicApi; appt: ClinicAppointment; doctors: ClinicDoctorRow[]; branches: Branch[]; branchName: string; now: Date;
-  busy: DeskAction | undefined; reading: boolean; failure: string | null; perform: Perform;
+  busy: DeskAction | undefined; reading: boolean; failure: string | null; perform: Perform; guard: Guard;
   click: (a: ClinicAppointment, action: DeskAction, what: string, run: () => Promise<DeskAppointment>, done: (n: DeskAppointment) => string) => Promise<void>;
-  onClose: () => void;
+  onClose: () => void; readAt: number; memory: SessionMemory;
+  onMoveNotice: (text: string) => void; onMoveFailure: (text: string) => void; onMoved: (id: string, next: DeskAppointment) => void;
 }) {
+  const queryClient = useQueryClient();
   const offers = deskActions(appt, ctx.actor, now);
+  // Q14: the one move of a desk no-show (also while a move sent earlier is unconfirmed, whatever the status is now).
+  const moveSlot = noShowMoveSlot(scopeIdentity(ctx), appt.bookingId);
+  const showMove = !!offers.find((o) => o.action === 'reschedule_no_show') || (holdsAny(ctx.actor, ['bookings.manage']) && !!memory.get(moveSlot));
   const offer = (a: DeskAction) => offers.find((o) => o.action === a);
   // A step waits while one runs on this appointment, and while the day is being read again (it may have changed).
   const disabled = busy !== undefined || reading;
@@ -510,7 +642,7 @@ function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, no
       <h2 id="desk-appt-h">Appointment: {who}, {when}</h2>
       <dl className="ws-dl">
         <dt>Patient</dt>
-        <dd>{who}{appt.patient?.relationship ? ` (${appt.patient.relationship} of ${appt.patient.accountName ?? 'the account holder'})` : ''}</dd>
+        <dd>{who}{appt.patient?.relationship ? ` (${familyLine(appt)})` : ''}</dd>
         {appt.patient?.phone && <><dt>Mobile</dt><dd>{appt.patient.phone}</dd></>}
         <dt>Doctor</dt><dd>{appt.doctorName ?? '—'}</dd>
         <dt>When</dt><dd>{when} (India time) · {branchName}</dd>
@@ -523,8 +655,26 @@ function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, no
           {appt.arrivedAt && appt.status === 'confirmed' && <> Arrived at {istTime(appt.arrivedAt)}</>}
         </dd>
       </dl>
+      {appt.bill && (
+        <p>Bill: {holdsAny(ctx.actor, BILL_READERS) ? <Link to={`${ctx.link('invoices')}/${appt.bill.invoiceId}`}>{appt.bill.serial}</Link> : appt.bill.serial} · {INVOICE_STATE_LABEL[appt.bill.state] ?? appt.bill.state}</p>
+      )}
       {failure && <Alert>{failure}</Alert>}
-      {offers.length > 0 ? (
+      {appt.status === 'no_show' && appt.source === 'desk' && (
+        <p className="ws-muted">Did not come. Nothing is charged or refunded through Jansetu, and the doctor earns nothing for it. The desk may move it once to a new time.</p>
+      )}
+      {showMove && (
+        <div className="ws-actions">
+          <NoShowMove<DeskAppointment & { replayed?: boolean }> slot={moveSlot} who={who} missed={when} state="offer" status={appt.status} readAt={readAt} reading={reading} disabled={busy !== undefined || reading} version={appt.updatedAt}
+            consequence={<>The seat moves now; the patient and the doctor are notified of the new time.</>}
+            picker={(choose) => <DeskSlotPicker ctx={ctx} clinic={clinic} appt={appt} doctors={doctors} branches={branches} now={now} onChoose={choose} />}
+            send={(t: NoShowTarget, requestKey) => guard(appt, 'reschedule_no_show', () => clinic.rescheduleNoShow(appt.bookingId, t.slotId, requestKey, typeof t.version === 'string' ? t.version : undefined))}
+            onMoved={(next: DeskAppointment) => onMoved(appt.bookingId, next)}
+            reread={() => void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'clinic-appointments'] })}
+            onNotice={onMoveNotice} onFailure={onMoveFailure}
+            onSlotRefused={() => void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'clinic-slots'] })} />
+        </div>
+      )}
+      {offers.some((o) => o.action !== 'reschedule_no_show') ? (
         <div className="ws-actions">
           {offer('arrived') && (
             <Button disabled={disabled} busy={busy === 'arrived'}
@@ -548,13 +698,15 @@ function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, no
               onConfirm={(reason) => perform(appt, 'cancel', () => clinic.cancel(appt.bookingId, reason, appt.updatedAt), () => `${who}’s appointment is cancelled.`)} />
           )}
         </div>
-      ) : appt.source === 'online' ? (
+      ) : showMove ? null : appt.source === 'online' ? (
         <p className="ws-muted">Booked online in the Jansetu app. The clinic can view it; the doctor or the patient makes any change.</p>
       ) : !finished && !holdsAny(ctx.actor, ['bookings.manage']) ? (
         <p className="ws-muted">You can view this appointment; the steps need the “Manage bookings” permission.</p>
       ) : null}
       <div className="ws-actions">
-        {appt.source === 'desk' && appt.status !== 'cancelled' && <BillLink ctx={ctx} />}
+        {appt.source === 'desk' && appt.status !== 'cancelled' && (!appt.bill || appt.bill.state === 'cancelled') && (
+          <BillLink ctx={ctx} memory={memory} prefill={prefillOf(appt)} />
+        )}
         <Button variant="ghost" onClick={onClose}>Close</Button>
       </div>
     </section>
@@ -622,7 +774,7 @@ function Reschedule({ ctx, clinic, appt, doctors, branches, now, disabled, perfo
     setError(null);
     try {
       await perform(appt, 'reschedule', () => clinic.reschedule(appt.bookingId, picked.slotId, appt.updatedAt),
-        (n) => `Moved to ${appointmentLabel(n)} at ${target?.name ?? 'the clinic'}. Tell the patient: Jansetu does not notify them of desk appointment changes.`);
+        (n) => `Moved to ${appointmentLabel(n)} at ${target?.name ?? 'the clinic'}. The patient and the doctor are notified.`);
       setOpen(false);
     } catch (err) {
       // E.g. the slot was taken or has started meanwhile (409 SLOT_NOT_AVAILABLE / SLOT_STARTED): show the free slots
@@ -667,7 +819,7 @@ function Reschedule({ ctx, clinic, appt, doctors, branches, now, disabled, perfo
       ) : (
         <div className="confirm-text">
           Move {patientName(appt)} from {appointmentLabel(appt)} to {when} at {target?.name}? The new seat is taken and the old one freed at once.
-          {appt.arrivedAt ? ' The check-in is cleared: mark them arrived again when they come.' : ''} Jansetu does not tell the patient; let them know yourself.
+          {appt.arrivedAt ? ' The check-in is cleared: mark them arrived again when they come.' : ''} The patient and the doctor are notified of the new time.
         </div>
       )}
       {error && <Alert>Not moved: {error}</Alert>}
@@ -677,5 +829,56 @@ function Reschedule({ ctx, clinic, appt, doctors, branches, now, disabled, perfo
         <Button variant="ghost" disabled={sending} onClick={() => (confirming ? setConfirming(false) : setOpen(false))}>Back</Button>
       </div>
     </form>
+  );
+}
+
+/** Q14: a free slot of the same doctor at a branch of this clinic in scope (any day), for the one move of a desk no-show. */
+function DeskSlotPicker({ ctx, clinic, appt, doctors, branches, now, onChoose }: {
+  ctx: ScopeContext; clinic: ClinicApi; appt: ClinicAppointment; doctors: ClinicDoctorRow[]; branches: Branch[]; now: Date; onChoose: (t: NoShowTarget | null) => void;
+}) {
+  const doctor = doctors.find((d) => d.doctorId === appt.doctorId);
+  const places = branches.filter((b) => (doctor ? doctor.active && (doctor.branchIds.length === 0 || doctor.branchIds.includes(b._id)) : b._id === appt.branchId));
+  const [branchId, setBranchId] = useState(() => (places.some((b) => b._id === appt.branchId) ? appt.branchId! : places[0]?._id ?? ''));
+  const [date, setDate] = useState(() => istDateOf(now));
+  const [slotId, setSlotId] = useState('');
+  const dateOk = isRealDate(date);
+  const slots = useQuery({
+    queryKey: [...ctx.key, 'clinic-slots', appt.doctorId, branchId, date], enabled: !!branchId && dateOk,
+    queryFn: () => clinic.deskSlots({ doctorId: appt.doctorId, branchId, date }),
+  });
+  const choices = (slots.data ?? []).filter((s) => s.slotId !== appt.slotId);
+  const pick = (id: string) => {
+    setSlotId(id);
+    const s = choices.find((x) => x.slotId === id);
+    const b = places.find((x) => x._id === branchId);
+    onChoose(s ? { slotId: s.slotId, label: `${formatDay(s.date)}, ${clock(s.startTime)} at ${b?.name ?? 'the clinic'}`,
+      from: { day: appointmentDay(appt.bookingDate) ?? '', branchId: appt.branchId, doctorId: appt.doctorId } } : null);
+  };
+  if (places.length === 0) return <p className="ws-muted">{appt.doctorName ?? 'This doctor'} does not consult at any branch you can book.</p>;
+  return (
+    <>
+      <div className="rx-form-row">
+        <div className="j-field">
+          <label htmlFor="desk-noshow-branch">Branch</label>
+          <select id="desk-noshow-branch" value={branchId} onChange={(e) => { setBranchId(e.target.value); pick(''); }}>
+            {places.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
+          </select>
+        </div>
+        <TextField label="New day" type="date" value={date} error={dateOk ? undefined : 'Enter a real date.'} onChange={(e) => { setDate(e.target.value); pick(''); }} />
+      </div>
+      {!dateOk ? null
+        : slots.isPending ? <Loading label="Loading free slots…" />
+        : slots.isError ? <ErrorState message={messageOf(slots.error)} onRetry={() => void slots.refetch()} />
+        : choices.length === 0 ? <p className="ws-muted">No free slot of {appt.doctorName ?? 'this doctor'} on this day at this branch.</p>
+        : (
+          <div className="j-field">
+            <label htmlFor="desk-noshow-slot">New time</label>
+            <select id="desk-noshow-slot" value={slotId} onChange={(e) => pick(e.target.value)}>
+              <option value="">Choose a time</option>
+              {choices.map((s) => <option key={s.slotId} value={s.slotId}>{clock(s.startTime)}–{clock(s.endTime)} ({s.seatsLeft} free)</option>)}
+            </select>
+          </div>
+        )}
+    </>
   );
 }

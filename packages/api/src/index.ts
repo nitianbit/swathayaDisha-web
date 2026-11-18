@@ -47,7 +47,7 @@ export { customerPharmacyApi, normalizeCart, PHARMACY_PAYMENT_WINDOW_MIN, shelfO
 export type { Cart, CartItem, Checkout, CheckoutResult, PharmacyStore, ShelfItem, StockRow } from './customerPharmacy.ts';
 export {
   allowedGstRates, catalogueAdminApi, chargesGst, classifyDocument, customerGstinProblem, DOCUMENT_KIND_LABEL, GST_RATES,
-  INVOICE_PHONE_PATTERN, INVOICE_STATE_LABEL, invoicePdfName, ITEM_KINDS_FOR, ITEM_REQUEST_KEY_PATTERN, usesVisitModes, MAX_BILL_MINOR, MAX_CANCEL_REASON, MAX_CATALOGUE_SEARCH, MAX_CODE, MAX_DESCRIPTION,
+  dueOf, INVOICE_PHONE_PATTERN, INVOICE_STATE_LABEL, INVOICE_STATES, invoicePdfName, MAX_PAYMENT_SPLITS, paidOf, paymentProblem, takesPayment, ITEM_KINDS_FOR, ITEM_REQUEST_KEY_PATTERN, usesVisitModes, MAX_BILL_MINOR, MAX_CANCEL_REASON, MAX_CATALOGUE_SEARCH, MAX_CODE, MAX_DESCRIPTION,
   MAX_ITEM_NAME, MAX_LINE_DESCRIPTION, MAX_LINES, MAX_NOTE, MAX_PREPARATION, MAX_PRICE_MINOR, MAX_QTY, MAX_REFERENCE, MAX_SAC,
   MAX_SAMPLE_TYPE, paiseToInput, paiseToRupees, partnerBillingApi, PAYMENT_MODES, previewInvoice, registrationProblem,
   rupeesToPaise, STATE_CODE_PATTERN, taxRateProblem,
@@ -55,19 +55,19 @@ export {
 export type {
   CatalogueItem, CatalogueItemKind, CatalogueItemUpdate, CatalogueKeyAbandon, ClinicDoctor, DocumentKind, GstRate, Invoice, InvoiceCustomer, InvoiceEvent,
   InvoiceGender, InvoiceLine, InvoicePaymentMode, InvoicePreview, InvoiceQuery, InvoiceState, InvoiceSupplier, InvoiceTotals,
-  LinePreview, NewCatalogueItem, NewInvoice, NewInvoiceLine, PaymentAnswer, PaymentInput, RefundInput, SupplierTax, VisitMode,
+  LinePreview, NewCatalogueItem, NewInvoice, NewInvoiceLine, PaymentAnswer, PaymentInput, PaymentSplit, RefundInput, SupplierTax, VisitMode,
 } from './partnerInvoices.ts';
 export {
   addDays, canReadDrafts, capacityProblem, COLLECTOR_PHONE_PATTERN, deriveTemplate, eligibleSigners, isBookable, isRealDate, istDateOf,
   LAB_BOOKING_STATUS_LABEL, LAB_BOOKING_STATUSES, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, LAB_VISIT_MODES, labActions,
-  labBookingsAdminApi, manualSlotProblems, MAX_ADMIN_LAB_BOOKINGS, MAX_COLLECTOR_NAME, MAX_LAB_BOOKINGS, MAX_LAB_REASON,
+  labBookingsAdminApi, labNoShowMove, manualSlotProblems, MAX_ADMIN_LAB_BOOKINGS, MAX_COLLECTOR_NAME, MAX_LAB_BOOKINGS, MAX_LAB_REASON,
   MAX_WINDOWS_PER_DAY, MIN_LAB_REASON, mondayOf, partnerLabsApi, releaseOf, reopenable, REPORT_ACCEPT, REPORT_MAX_BYTES,
   reportFileBooking, reportFileName, reportFileProblem, ROLLING_DAYS, SLOT_CAPACITY_MIN, SLOT_CLOSURE_LABEL, SLOT_MINUTES_MAX,
   SLOT_MINUTES_MIN, SLOT_SEATS_MAX, slotTimesFor, TEMPLATE_WEEKDAYS, templateProblems, weekdayOf,
 } from './partnerLabs.ts';
 export type {
   AdminLabBookingQuery, AdminLabBookingRow, CollectorInput, ExpansionResult, LabAction, LabActionOffer, LabBooking, LabBookingItem,
-  LabBookingQuery, LabBookingSlot, LabBookingStatus, LabLifecycleKey, LabPaymentStatus, LabReportRelease, LabSlot, NewManualSlot,
+  LabBookingQuery, LabBookingSlot, LabBookingStatus, LabLifecycleKey, LabNoShowMove, LabPaymentStatus, LabReportRelease, LabSlot, NewManualSlot,
   SlotClosure, SlotQuery, SlotTemplate, SlotTemplateInput, SlotWindow, TemplateDays,
 } from './partnerLabs.ts';
 export {
@@ -84,23 +84,29 @@ export type {
 } from './finance.ts';
 export {
   appointmentAt, appointmentDay, appointmentRangeProblem, canonicalMobile, CLINIC_APPOINTMENT_STATUS_LABEL, CLINIC_APPOINTMENT_STATUSES, clinicBranchesFor,
-  deskActions, deskBookingProblems, doctorsAtBranch, DOCTOR_INVITE_STATE_LABEL, DOCTOR_INVITE_STATES, inviteProblems, MAX_APPOINTMENT_DAYS,
-  MAX_APPOINTMENTS, MAX_DESK_CANCEL_REASON, MAX_DESK_NAME, MAX_DESK_NOTES, MAX_INVITE_BRANCHES, partnerClinicApi,
+  DESK_GENDERS, DESK_RELATIONS, deskActions, deskBookingProblems, doctorsAtBranch, DOCTOR_INVITE_STATE_LABEL, DOCTOR_INVITE_STATES, familyMemberProblems,
+  LINK_REFUSAL, linkProblems, MAX_APPOINTMENT_DAYS, MAX_APPOINTMENTS, MAX_DESK_CANCEL_REASON, MAX_DESK_NAME, MAX_DESK_NOTES, MAX_FAMILY_NAME, MAX_LINK_BRANCHES,
+  partnerClinicApi,
 } from './clinic.ts';
 export type {
-  AppointmentQuery, ClinicAppointment, ClinicAppointmentStatus, ClinicDoctorRow, DeskAction, DeskActionOffer, DeskAppointment, DeskBookingInput, DeskKeyAbandon,
-  DeskBookingResult, DeskSlot, DoctorInvite, DoctorInviteState, InviteDoctorInput, InviteResult,
+  AppointmentBill, AppointmentQuery, BookingNoShowMove, ClinicAppointment, ClinicAppointmentStatus, ClinicDoctorRow, DeskAction, DeskActionOffer, DeskAppointment,
+  DeskBookingInput, DeskGender, DeskKeyAbandon, DeskPatientInput, DeskRelation, DeskBookingResult, DeskSlot, DoctorInvite,
+  DoctorInviteState, DoctorLinkResult, DoctorUnlinkResult, LinkDoctorInput,
 } from './clinic.ts';
+export { isNoShowMoveUsed, isSlotRefusal, NO_SHOW_MOVE_REFUSAL, noShowMovedOnce } from './noShows.ts';
+export type { NoShowHistory } from './noShows.ts';
 // WQ4 doctor tools: names shared with finance.ts are exported with a Doctor prefix.
 export {
-  APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentStart, CONSULT_MINUTES, CONSULT_MODE_LABEL, CONSULT_MODES, doctorStanding, doctorToolsApi,
+  APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentStart, CONSULT_MINUTES, CONSULT_MODE_LABEL, CONSULT_MODES, doctorAdminApi, doctorClinicProblems,
+  doctorNoShowMove, doctorStanding, doctorToolsApi, MAX_DIRECTORY_SEARCH, movableSlot,
   DOCTOR_ROLLING_DAYS, EXTEND_MINUTES_MAX, fromYmd, HEARTBEAT_MS, INSTANT_FEE_MAX_MINOR, INSTANT_MODES, INSTANT_REFUSAL, instantRefusal,
   FINANCE_PAGE, LEDGER_KIND_LABEL as DOCTOR_LEDGER_KIND_LABEL, meetingLinkState, OFFER_MS, offerSecondsLeft, payoutDetailsProblems as doctorPayoutDetailsProblems, periodProblem, presenceProblems, PRESENCE_TTL_MS, SCHEDULE_MINUTES_MAX,
   SCHEDULE_MINUTES_MIN, SCHEDULE_WEEKDAYS, SCHEDULE_WINDOWS_MAX, scheduleProblems, schedulableBranches, scheduleSlotCount, soloPracticeProblems,
   STATEMENT_LIMIT_MAX, statementCsvName as doctorStatementCsvName, toYmd,
 } from './doctorTools.ts';
 export type {
-  AppointmentAction, AppointmentStatus, ClinicBranchRef, ConsultMode, DoctorAppointment, DoctorProfile, DoctorSchedule, DoctorToolsApi,
+  AppointmentAction, AppointmentStatus, ClinicBranchRef, ConsultMode, DirectoryDoctor, DoctorAppointment, DoctorClinicCreated, DoctorClinicFound, DoctorClinicInput,
+  DoctorProfile, DoctorSchedule, DoctorSlot, DoctorToolsApi,
   FinanceEvent as DoctorFinanceEvent, FinanceSummary as DoctorFinanceSummary, HistoryRef as DoctorHistoryRef, InstantBookingView, InstantMode, InstantOffer, LedgerKind as DoctorLedgerKind, MyClinics, Payout, PayoutDetailsInput as DoctorPayoutDetailsInput, PayoutDetailsState as DoctorPayoutDetailsState,
   PayoutDetailsView as DoctorPayoutDetailsView, Presence, PresenceInput, PresenceWrite, Reservation, ScheduleDays, ScheduleExpansion, ScheduleInput, ScheduleSaved, ScheduleWindow,
   SettlementAccountView, SoloPractice, SoloPracticeCreated, SoloPracticeInput, StatementLine as DoctorStatementLine, StatementPage as DoctorStatementPage, StatementQuery as DoctorStatementQuery,

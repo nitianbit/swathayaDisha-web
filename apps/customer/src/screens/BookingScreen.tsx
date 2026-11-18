@@ -40,7 +40,10 @@ function BookingView({ booking: b }: { booking: Booking }) {
   const paymentError = (useLocation().state as { paymentError?: string } | null)?.paymentError;
   const queryClient = useQueryClient();
   const paid = isPaid(b.paymentStatus);
-  const cancellable = b.status === 'pending' || b.status === 'confirmed';
+  // Q14: a booking moved after a no-show is never refunded, so it cannot be cancelled here (NO_SHOW_NOT_REFUNDABLE).
+  const movedAfterNoShow = (b.noShows?.length ?? 0) > 0 || (b.noShowReschedules ?? 0) > 0;
+  const cancellable = (b.status === 'pending' || b.status === 'confirmed') && !movedAfterNoShow;
+  const missed = b.noShows?.[0];
   const check = canCancelNow(b.bookingDate, b.bookingTime, paid);
   return (
     <>
@@ -57,6 +60,19 @@ function BookingView({ booking: b }: { booking: Booking }) {
         <Alert tone="warn">
           This booking expired because it was not paid within {BOOKING_PAYMENT_WINDOW_MIN} minutes, so the time was released.
           Any wallet money used for it is back in your wallet. You can book a new time with the doctor.
+        </Alert>
+      )}
+      {b.status === 'no_show' && (
+        <Alert tone="warn">
+          You were marked as not present for this appointment. A missed appointment is not refunded.
+          {movedAfterNoShow ? ' It had already been moved once after a missed time, so it cannot be moved again.' : ' The doctor or clinic may offer you one new time; you will be told if they do.'}
+        </Alert>
+      )}
+      {movedAfterNoShow && b.status !== 'no_show' && (
+        <Alert tone="warn">
+          You missed {missed?.fromDate && missed.fromTime ? `the earlier time (${formatAppointment(missed.fromDate, missed.fromTime)})` : 'the earlier time'}, so
+          the appointment was moved to the new time: {formatAppointment(b.bookingDate, b.bookingTime)}. It is not refunded and cannot be cancelled
+          for a refund. If this time is missed too, it is final.
         </Alert>
       )}
       {paymentError && b.paymentStatus !== 'paid' && <Alert>The payment page could not open: {paymentError} You can pay below.</Alert>}

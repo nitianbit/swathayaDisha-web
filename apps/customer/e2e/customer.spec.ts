@@ -300,3 +300,28 @@ test('an unpaid booking that has already started can still be cancelled (no time
   await expect(page.getByText('Cancelled', { exact: true })).toBeVisible();
   expect(backend.calls.some((c) => c.path === `/bookings/${id}/cancel`)).toBe(true);
 });
+
+test('Q14: a missed appointment says it is not refunded; one moved after a no-show shows the new time and offers no cancel or reschedule', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const missed = 'b3'.repeat(12);
+  const moved = 'b4'.repeat(12);
+  backend.bookings[missed] = { _id: missed, bookingType: 'consultation', doctorName: 'Dr. Missed', ...istAt(-30), price: 500, status: 'no_show', paymentStatus: 'paid',
+    noShow: { at: new Date().toISOString() } };
+  backend.bookings[moved] = { _id: moved, bookingType: 'consultation', doctorName: 'Dr. Moved', bookingDate: '20261125', bookingTime: '16:00', price: 500, status: 'confirmed',
+    paymentStatus: 'paid', noShowReschedules: 1,
+    noShows: [{ at: '2026-11-17T05:00:00.000Z', rescheduledAt: '2026-11-17T06:00:00.000Z', fromDate: '20261117', fromTime: '10:00', toSlotId: 'a9'.repeat(12) }] };
+  await signIn(page);
+  await tab(page, 'Bookings').click();
+  await expect(page.getByRole('link', { name: /Dr\. Missed/ })).toContainText('Missed (no refund)');
+  await page.getByRole('link', { name: /Dr\. Missed/ }).click();
+  await expect(page.getByText('You were marked as not present for this appointment. A missed appointment is not refunded.')).toBeVisible();
+  await expect(page.getByText('The doctor or clinic may offer you one new time; you will be told if they do.')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Cancel|Reschedule/ })).toHaveCount(0);
+
+  await page.goto(`/#/bookings/${moved}`);
+  await expect(page.getByText('You missed the earlier time (Tue, 17 Nov, 2026 · 10:00 am), so the appointment was moved to the new time: Wed, 25 Nov, 2026 · 4:00 pm.', { exact: false })).toBeVisible();
+  await expect(page.getByText('It is not refunded and cannot be cancelled for a refund. If this time is missed too, it is final.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel this booking' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Reschedule/ })).toHaveCount(0);
+  expect(backend.calls.filter((c) => c.method !== 'GET' && c.path.startsWith('/bookings'))).toHaveLength(0);
+});

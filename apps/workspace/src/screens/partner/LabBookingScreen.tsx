@@ -4,16 +4,17 @@ import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
   addDays, ApiError, canReadDrafts, COLLECTOR_PHONE_PATTERN, eligibleSigners, hasGlobalScope, holdsAny, isBookable, istDateOf, LAB_BOOKING_STATUS_LABEL,
-  LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, labActions, MAX_COLLECTOR_NAME, MAX_LAB_REASON, MIN_LAB_REASON, OBJECT_ID_PATTERN,
+  LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, labActions, labNoShowMove, MAX_COLLECTOR_NAME, MAX_LAB_REASON, MIN_LAB_REASON, OBJECT_ID_PATTERN,
   releaseOf, REPORT_ACCEPT, reportFileName, reportFileProblem, type LabAction, type LabActionOffer, type LabBooking, type LabLifecycleKey,
   type LabSlot, type PartnerMember,
 } from '@jansetu/api';
 import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
+import { NoShowMove, noShowMoveSlot, type NoShowTarget } from '../../components/NoShowMove.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded } from '../../requests.ts';
-import { useStaff } from '../../session.tsx';
+import { useSession, useStaff } from '../../session.tsx';
 import { money } from './billing.tsx';
 import {
   formatDay, LabOnly, labStatusTone, ReportPreview, slotLabel, useNow, useReportViewer, ViewFileButton,
@@ -53,11 +54,13 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
   const q = useQuery({ queryKey: key, queryFn: () => ctx.labs.booking(bookingId) });
   const branches = useBranches(ctx);
   const now = useNow();
+  const { memory } = useSession();
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-  const [busy, setBusy] = useState<LabAction | null>(null);
+  const [busy, setBusy] = useState<Step | null>(null);
   const inFlight = useRef(false);
   const b = q.data;
+  const moveSlot = noShowMoveSlot(scopeIdentity(ctx), bookingId);
 
   /** A newer answer replaces the page's booking; an older one (lower status version) never does. */
   async function apply(next: LabBooking) {
@@ -70,8 +73,13 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
    * only this booking's own record and shows nothing anywhere else). One step at a time.
    */
   async function perform(action: LabAction, run: () => Promise<LabBooking>, done: string) {
-    // The single gate for every step, including confirmations that were already open when another step started: two
-    // steps never run together (an upload keeps the status version, so out-of-order snapshots could not be told apart).
+    await guarded(action, async () => { await apply(await run()); setNotice(done); });
+  }
+  /**
+   * The single gate for every step, including confirmations that were already open when another step started: two
+   * steps never run together (an upload keeps the status version, so out-of-order snapshots could not be told apart).
+   */
+  async function guarded<T>(action: Step, run: () => Promise<T>): Promise<T> {
     if (inFlight.current) {
       throw new ApiError(409, 'Another step on this booking is still running. Wait for it to finish, then try again.', 'STEP_IN_FLIGHT');
     }
@@ -80,8 +88,7 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
     setNotice(null);
     setFailure(null);
     try {
-      await apply(await run());
-      setNotice(done);
+      return await run();
     } finally {
       inFlight.current = false;
       setBusy(null);
@@ -98,6 +105,9 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
 
   const branchName = branches.data?.find((x) => x._id === b.branchId)?.name ?? `Branch …${b.branchId.slice(-6)}`;
   const offers = labActions(b, ctx.actor, now);
+  // Q14: the one move of a no-show (also shown while a move sent earlier is still unconfirmed, whatever the status now).
+  const move = labNoShowMove(b, ctx.actor);
+  const showMove = !!move || (holdsAny(ctx.actor, ['bookings.manage']) && !!memory.get(moveSlot));
   const offer = (a: LabAction) => offers.find((o) => o.action === a);
   const disabled = busy !== null;
   const tests = b.items.map((i) => i.name).join(', ');
@@ -130,6 +140,25 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
         {b.cancellation && (
           <p>{CANCEL_REASON[b.cancellation.reason] ?? b.cancellation.reason}{b.cancellation.note ? `: “${b.cancellation.note}”` : ''} · {formatDateTime(b.cancellation.at)}</p>
         )}
+        {b.status === 'no_show' && (
+          <p className="ws-muted">
+            Not refunded: the customer missed the slot. The lab earns nothing for a no-show; it earns only when a booking is completed.
+            {move === 'offer' ? ' The lab may move it once to a new time.' : ''}
+          </p>
+        )}
+        <NoShowHistory booking={b} />
+        {showMove && (
+          <div className="ws-actions">
+            <NoShowMove key={`${b._id}:${b.statusVersion}`} slot={moveSlot} who={b.patient.name} missed={slotLabel(b.slot)} state={move === 'used' ? 'used' : 'offer'}
+              status={b.status} readAt={q.dataUpdatedAt} reading={q.isFetching} disabled={busy !== null || q.isFetching} version={b.statusVersion}
+              consequence={<>The seat moves now; the customer is told the new time. The lab earns only once the booking is completed.</>}
+              picker={(choose) => <LabSlotPicker ctx={ctx} booking={b} now={now} onChoose={choose} />}
+              send={(t: NoShowTarget, requestKey) => guarded('reschedule_no_show', () => ctx.labs.rescheduleNoShow(b._id, t.slotId, requestKey, typeof t.version === 'number' ? t.version : undefined))}
+              reread={() => void queryClient.invalidateQueries({ queryKey: key, exact: true })}
+              onNotice={(t) => { setFailure(null); setNotice(t); }} onFailure={(t) => { setNotice(null); setFailure(t); }}
+              onSlotRefused={() => void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'slots', b.branchId, b.visitMode] })} />
+          </div>
+        )}
         {offers.length > 0 ? (
           <div className="ws-actions">
             {offer('collect') && (
@@ -148,7 +177,7 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
               ? <Step offer={offer('no_show')!} disabled label="Mark no-show" onClick={() => undefined} />
               : (
                 <ConfirmAction label="Mark no-show" danger disabled={disabled} confirmLabel="Mark no-show"
-                  consequence={<>Mark {b.patient.name} as not present for {slotLabel(b.slot)}? The booking ends here and the customer is not refunded. This cannot be undone.</>}
+                  consequence={<>Mark {b.patient.name} as not present for {slotLabel(b.slot)}? The customer is not refunded and the lab earns nothing for it. Afterwards the lab may move it once to a new time; otherwise the booking ends here. This cannot be undone.</>}
                   onConfirm={() => perform('no_show', () => ctx.labs.markNoShow(b._id), 'Marked as no-show.')} />
               ))}
             {offer('complete') && (
@@ -165,7 +194,7 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
                 onConfirm={(reason) => perform('reject', async () => (await ctx.labs.reject(b._id, reason)).booking, 'Booking rejected; the customer’s payment is back in their wallet.')} />
             )}
           </div>
-        ) : b.status !== 'pending_payment' && !['completed', 'cancelled', 'no_show'].includes(b.status) && (
+        ) : !showMove && b.status !== 'pending_payment' && !['completed', 'cancelled', 'no_show'].includes(b.status) && (
           <p className="ws-muted">You can view this booking; the next step needs another permission.</p>
         )}
       </section>
@@ -227,6 +256,57 @@ function Step({ offer, label, disabled, busy, onClick }: { offer: LabActionOffer
 }
 
 type Perform = (action: LabAction, run: () => Promise<LabBooking>, done: string) => Promise<void>;
+/** A step on this booking: the WQ3 transitions, and Q14's one move of a no-show. */
+type Step = LabAction | 'reschedule_no_show';
+
+/** Q14: the no-show this booking was moved after (when, from which slot, to which). */
+function NoShowHistory({ booking: b }: { booking: LabBooking }) {
+  if (!b.noShows?.length) return null;
+  return (
+    <ul className="ws-list" aria-label="No-show history">
+      {b.noShows.map((n, i) => (
+        <li key={i}>
+          Missed {slotLabel(n.fromSlot)}{n.at ? ` (marked ${formatDateTime(n.at)})` : ''} · moved to {slotLabel(n.toSlot)} on {formatDateTime(n.rescheduledAt)}
+          {n.byKind === 'admin' ? ' by a Jansetu admin' : ''}. A second no-show is final.
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Q14: a later open slot of this branch and visit mode (next two weeks), for the one move of a no-show. */
+function LabSlotPicker({ ctx, booking, now, onChoose }: { ctx: ScopeContext; booking: LabBooking; now: Date; onChoose: (t: NoShowTarget | null) => void }) {
+  const from = istDateOf(now);
+  const to = addDays(from, 13);
+  const slots = useQuery({
+    queryKey: [...ctx.key, 'slots', booking.branchId, booking.visitMode, from, to],
+    queryFn: () => ctx.labs.slots({ branchId: booking.branchId, visitMode: booking.visitMode, from, to }),
+  });
+  const [slotId, setSlotId] = useState('');
+  if (slots.isPending) return <Loading label="Loading open slots…" />;
+  if (slots.isError) return <ErrorState message={messageOf(slots.error)} onRetry={() => void slots.refetch()} />;
+  const choices = (slots.data ?? []).filter((s) => isBookable(s, now) && s._id !== booking.slot.slotId);
+  if (choices.length === 0) return <p className="ws-muted">No open slot with a free seat in the next two weeks. Add a slot under Slots first.</p>;
+  const byDay = new Map<string, LabSlot[]>();
+  for (const s of choices) byDay.set(s.date, [...(byDay.get(s.date) ?? []), s]);
+  return (
+    <div className="j-field">
+      <label htmlFor="lb-noshow-slot">New time</label>
+      <select id="lb-noshow-slot" value={slotId} onChange={(e) => {
+        setSlotId(e.target.value);
+        const s = choices.find((x) => x._id === e.target.value);
+        onChoose(s ? { slotId: s._id, label: slotLabel(s) } : null);
+      }}>
+        <option value="">Choose a slot</option>
+        {[...byDay].map(([day, rows]) => (
+          <optgroup key={day} label={formatDay(day)}>
+            {rows.map((s) => <option key={s._id} value={s._id}>{formatDay(s.date)}, {s.startTime}–{s.endTime} ({s.capacity - s.booked} free)</option>)}
+          </optgroup>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 /** Who collects the sample: a member working at this branch (when staff can be listed), or someone named by hand. */
 function AssignCollector({ ctx, booking, disabled, perform }: { ctx: ScopeContext; booking: LabBooking; disabled: boolean; perform: Perform }) {
@@ -578,6 +658,10 @@ function Timeline({ booking: b }: { booking: LabBooking }) {
   }
   for (const r of b.report.releases) {
     events.push({ at: r.releasedAt, text: `Report ${reportFileName(r.path)} released under ${r.signer.name} (registration ${r.signer.registrationNumber})` });
+  }
+  for (const n of b.noShows ?? []) {
+    if (n.at) events.push({ at: n.at, text: `Marked as no-show (${slotLabel(n.fromSlot)})` });
+    events.push({ at: n.rescheduledAt, text: `No-show moved to ${slotLabel(n.toSlot)}` });
   }
   events.sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
   return (

@@ -103,7 +103,9 @@ export type CatalogueItemUpdate = Partial<Omit<NewCatalogueItem, 'kind' | 'reque
 };
 
 export type DocumentKind = 'tax_invoice' | 'bill_of_supply' | 'commercial_invoice';
-export type InvoiceState = 'issued' | 'paid' | 'cancelled';
+/** Q14: `partly_paid` = some payments recorded, an amount still due (only where the partner allows part payments). */
+export type InvoiceState = 'issued' | 'partly_paid' | 'paid' | 'cancelled';
+export const INVOICE_STATES: readonly InvoiceState[] = ['issued', 'partly_paid', 'paid', 'cancelled'];
 export type InvoicePaymentMode = 'cash' | 'upi' | 'card' | 'bank' | 'other';
 
 /** The words printed on the PDF (`invoicePdf.ts` TITLES), with what they mean for staff. */
@@ -111,7 +113,7 @@ export const DOCUMENT_KIND_LABEL: Record<DocumentKind, string> = {
   tax_invoice: 'Tax invoice', bill_of_supply: 'Bill of supply', commercial_invoice: 'Invoice (no GST)',
 };
 /** The PDF calls an issued bill "Unpaid" (`statusAfter`). */
-export const INVOICE_STATE_LABEL: Record<InvoiceState, string> = { issued: 'Unpaid', paid: 'Paid', cancelled: 'Cancelled' };
+export const INVOICE_STATE_LABEL: Record<InvoiceState, string> = { issued: 'Unpaid', partly_paid: 'Partly paid', paid: 'Paid', cancelled: 'Cancelled' };
 export const PAYMENT_MODES: readonly { value: InvoicePaymentMode; label: string }[] = [
   { value: 'cash', label: 'Cash' }, { value: 'upi', label: 'UPI' }, { value: 'card', label: 'Card' },
   { value: 'bank', label: 'Bank transfer' }, { value: 'other', label: 'Other' },
@@ -164,11 +166,16 @@ export interface Invoice {
   supplier: InvoiceSupplier;
   customer: InvoiceCustomer;
   doctorId?: string;
+  /** Q14: the clinic appointment (booking id) this bill is for; part of the issued document. */
+  appointmentId?: string;
   items: InvoiceLine[];
   totals: InvoiceTotals;
   lifecycleState: InvoiceState;
-  /** 0 as issued; +1 per event (payment, cancellation). */
+  /** 0 as issued; +1 per event (payment, cancellation). Q14: a payment names it (`expectedLifecycleVersion`). */
   lifecycleVersion: number;
+  /** Q14 `withDue`: what has been paid so far and what is still due (paise; a cancelled bill has nothing due). */
+  paidMinor?: number;
+  dueMinor?: number;
   createdBy: string;
   idempotencyKey: string;
   createdAt?: string;
@@ -181,8 +188,13 @@ export interface InvoiceEvent {
   reference?: string;
   reason?: string;
   note?: string;
-  /** Q10: how the money of a paid bill went back (on its cancellation). */
+  /** Q10: how the money of a paid bill went back (on its cancellation). Q14: `amountMinor` = what had been paid. */
   refund?: RefundInput;
+  /** Q14: a payment's amount and its methods (one or several); absent on payments made before Q14 (the full total). */
+  amountMinor?: number;
+  splits?: PaymentSplit[];
+  /** Q14: the payment's request key (the same key again answers this payment). */
+  requestKey?: string;
   version: number;
   at: string;
   by: string;
@@ -205,6 +217,12 @@ export interface NewInvoice {
   branchId: string;
   customer: { name: string; phone?: string; gstin?: string; age?: number; gender?: InvoiceGender; placeOfSupply?: string };
   doctorId?: string;
+  /**
+   * Q14 `createInvoiceSchema.appointmentId`: the clinic appointment this bill is for (an in-clinic consultation of this
+   * clinic, at the bill's branch, with the bill's doctor, not cancelled; one open bill per appointment: 409
+   * APPOINTMENT_ALREADY_BILLED, 400 APPOINTMENT_BRANCH_MISMATCH / APPOINTMENT_DOCTOR_MISMATCH, 409 APPOINTMENT_CANCELLED).
+   */
+  appointmentId?: string;
   items: NewInvoiceLine[];
   idempotencyKey: string;
 }
@@ -212,9 +230,22 @@ export interface NewInvoice {
  * `invoiceQuerySchema` (Q10): newest first; `cursor` is the exact `<ms>_<id>` from `pagination.nextCursor`; `from`/`to`
  * are IST dates (YYYY-MM-DD, inclusive); `q` searches serial, customer name and phone; `limit` 1–200 (default 50).
  */
-export interface InvoiceQuery { state?: InvoiceState; branchId?: string; limit?: number; cursor?: string; from?: string; to?: string; q?: string }
-/** `recordPaymentSchema`. Q10: the same mode and reference again answers the payment already recorded. */
-export interface PaymentInput { mode: InvoicePaymentMode; reference?: string; note?: string }
+export interface InvoiceQuery {
+  state?: InvoiceState; branchId?: string; limit?: number; cursor?: string; from?: string; to?: string; q?: string;
+  /** Q14: only the bills of this appointment. */
+  appointmentId?: string;
+}
+/** Q14 `recordPaymentSchema.splits[]`: one method and its amount (paise, ≥ 1). */
+export interface PaymentSplit { mode: InvoicePaymentMode; amountMinor: number; reference?: string }
+/**
+ * Q14 `recordPaymentSchema` as the workspace sends it: always `splits` (one or several methods summing to the payment),
+ * the request key (the same key and content answer the payment already recorded: `replayed`), and the
+ * `lifecycleVersion` the cashier decided on (409 LIFECYCLE_VERSION_CONFLICT otherwise). Never more than is due (409
+ * AMOUNT_EXCEEDS_DUE); less than is due only where the partner allows part payments (409 PART_PAYMENTS_NOT_ALLOWED).
+ */
+export interface PaymentInput { splits: PaymentSplit[]; note?: string; requestKey: string; expectedLifecycleVersion: number }
+/** `recordPaymentSchema.splits.max(10)`. */
+export const MAX_PAYMENT_SPLITS = 10;
 /** `recordPayment` (controller/invoice.ts). Q12: `replayed` is inside `data` (true = this payment had already been recorded). */
 export interface PaymentAnswer { invoice: Invoice; event: InvoiceEvent; replayed?: boolean }
 /** Q12 `catalogueListQuerySchema.q`: trimmed, 1–60 characters; searches name or code (case-insensitive, literal). */
@@ -222,7 +253,11 @@ export const MAX_CATALOGUE_SEARCH = 60;
 /** Q12 `abandonKey`: `abandoned` = that key can never make an item; `used` = it did (with the item). */
 export interface CatalogueKeyAbandon { state: 'abandoned' | 'used'; item?: CatalogueItem | null }
 /** `cancelInvoiceSchema.refund`: required for a PAID bill (400 REFUND_REQUIRED), refused for an unpaid one (NOTHING_TO_REFUND). */
-export interface RefundInput { mode: InvoicePaymentMode; reference?: string; note?: string }
+export interface RefundInput {
+  mode: InvoicePaymentMode; reference?: string; note?: string;
+  /** Q14: when given it must equal the amount paid (400 REFUND_AMOUNT_MISMATCH): a payment landing meanwhile refuses the cancellation. */
+  amountMinor?: number;
+}
 
 /** `GET /clinic/doctors` (Q6): the clinic's doctors visible to the caller. */
 export interface ClinicDoctor {
@@ -260,6 +295,40 @@ export function paiseToInput(minor: number | undefined): string {
   const r = Math.floor(minor / 100);
   const p = minor % 100;
   return p === 0 ? String(r) : `${r}.${String(p).padStart(2, '0')}`;
+}
+
+// ── Payments (Q14 mirrors of services/invoice.ts `paidOf`, `withDue`, `recordPayment`) ──
+
+/** What a bill has been paid: `paidMinor` when the server says it; otherwise (pre-Q14 answers) a paid bill counts as paid in full. */
+export function paidOf(inv: Pick<Invoice, 'paidMinor' | 'lifecycleState' | 'totals'>): number {
+  if (typeof inv.paidMinor === 'number') return inv.paidMinor;
+  return inv.lifecycleState === 'paid' ? inv.totals.totalMinor : 0;
+}
+/** What is still due: nothing on a cancelled bill. */
+export function dueOf(inv: Pick<Invoice, 'paidMinor' | 'dueMinor' | 'lifecycleState' | 'totals'>): number {
+  if (inv.lifecycleState === 'cancelled') return 0;
+  if (typeof inv.dueMinor === 'number') return inv.dueMinor;
+  return Math.max(0, inv.totals.totalMinor - paidOf(inv));
+}
+/** A bill can take a payment while something is due and it is neither paid nor cancelled. */
+export const takesPayment = (inv: Pick<Invoice, 'paidMinor' | 'dueMinor' | 'lifecycleState' | 'totals'>) =>
+  (inv.lifecycleState === 'issued' || inv.lifecycleState === 'partly_paid') && dueOf(inv) > 0;
+
+/**
+ * Why the server would refuse this payment (`recordPaymentSchema` + `recordPayment`): 1–10 parts, each a positive
+ * amount, references ≤ 200; never more than is due (AMOUNT_EXCEEDS_DUE); with part payments off, exactly what is due
+ * (PART_PAYMENTS_NOT_ALLOWED). Null when it would be accepted.
+ */
+export function paymentProblem(splits: readonly { amountMinor: number | null; reference?: string }[], dueMinor: number, allowPartPayments: boolean,
+  money: (minor: number) => string = (m) => `₹${(m / 100).toFixed(2)}`): string | null {
+  if (splits.length === 0) return 'Add how the bill was paid.';
+  if (splits.length > MAX_PAYMENT_SPLITS) return `At most ${MAX_PAYMENT_SPLITS} methods in one payment.`;
+  if (splits.some((x) => x.amountMinor === null || !Number.isSafeInteger(x.amountMinor) || x.amountMinor <= 0)) return 'Enter each amount in rupees, more than ₹0.';
+  if (splits.some((x) => (x.reference ?? '').trim().length > MAX_REFERENCE)) return `Use at most ${MAX_REFERENCE} characters for a reference.`;
+  const total = splits.reduce((n, x) => n + (x.amountMinor ?? 0), 0);
+  if (total > dueMinor) return `That is more than is due (${money(dueMinor)}). A bill is never paid more than what is due.`;
+  if (!allowPartPayments && total !== dueMinor) return `Only full payment is taken here: the amounts must add up to ${money(dueMinor)}.`;
+  return null;
 }
 
 // ── Tax rules (mirrors of services/invoice.ts) ──
@@ -408,7 +477,10 @@ export function partnerBillingApi(c: ApiClient, scope: PartnerScope) {
     reactivateCatalogueItem: (id: string) => c.post<CatalogueItem>(`${item(id)}/reactivate`, { body: {} }),
 
     /** One page of bills with `total` and `nextCursor`. */
-    invoices: (q: InvoiceQuery = {}): Promise<Page<Invoice>> => c.page<Invoice>(`${base()}/invoices`, { query: { ...q } }),
+    invoices: (q: InvoiceQuery = {}): Promise<Page<Invoice>> => {
+      if (q.appointmentId !== undefined) checkId(q.appointmentId, 'appointment');
+      return c.page<Invoice>(`${base()}/invoices`, { query: { ...q } });
+    },
     /** Q10: the bill a request key produced (404 INVOICE_NOT_FOUND when none, in the caller's scope). */
     invoiceByKey: (key: string) => c.get<Invoice>(`${base()}/invoices/by-key/${checkKey(key)}`),
     /** Q10: gives up a lost bill: `abandoned` = it can never be issued; `used` = it was, with the bill. */
@@ -416,11 +488,23 @@ export function partnerBillingApi(c: ApiClient, scope: PartnerScope) {
       c.post<{ state: 'abandoned' | 'used'; invoice?: Invoice | null }>(`${base()}/invoices/by-key/${checkKey(key)}/abandon`, { body: {} }),
     invoice: (id: string) => c.get<{ invoice: Invoice; events: InvoiceEvent[] }>(invoice(id)),
     /** Once-only by `body.idempotencyKey`: the same key with the same request answers the bill already issued. */
-    createInvoice: (body: NewInvoice) => c.post<Invoice>(`${base()}/invoices`, { body }),
+    createInvoice: (body: NewInvoice) => {
+      if (body.appointmentId !== undefined) checkId(body.appointmentId, 'appointment');
+      return c.post<Invoice>(`${base()}/invoices`, { body });
+    },
     /** The bill's PDF as of lifecycle `version` (0 = as issued; default = now), read with the session's token. */
     invoicePdf: (id: string, version?: number, signal?: AbortSignal) =>
       c.blob(`${invoice(id)}/pdf`, { query: { version }, signal }),
-    recordPayment: (id: string, body: PaymentInput) => c.post<PaymentAnswer>(`${invoice(id)}/pay`, { body }),
+    /** Q14: always as `splits` with the request key and the version decided on (see `PaymentInput`). */
+    recordPayment: (id: string, body: PaymentInput) => {
+      if (!ITEM_REQUEST_KEY_PATTERN.test(body.requestKey)) throw new Error('Invalid request key');
+      if (!Number.isSafeInteger(body.expectedLifecycleVersion) || body.expectedLifecycleVersion < 0) throw new Error('Invalid bill version');
+      if (body.splits.length < 1 || body.splits.length > MAX_PAYMENT_SPLITS
+        || body.splits.some((x) => !Number.isSafeInteger(x.amountMinor) || x.amountMinor <= 0 || !PAYMENT_MODES.some((m) => m.value === x.mode))) {
+        throw new Error('Invalid payment');
+      }
+      return c.post<PaymentAnswer>(`${invoice(id)}/pay`, { body });
+    },
     cancelInvoice: (id: string, reason: string, refund?: RefundInput) =>
       c.post<{ invoice: Invoice; event: InvoiceEvent }>(`${invoice(id)}/cancel`, { body: { reason, ...(refund ? { refund } : {}) } }),
 

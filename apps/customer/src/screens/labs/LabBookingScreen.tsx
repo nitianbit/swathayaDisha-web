@@ -72,7 +72,18 @@ function LabBookingView({ booking: b }: { booking: LabBooking }) {
       </section>
 
       {b.status === 'cancelled' && <CancelledNote booking={b} />}
-      {b.status === 'no_show' && <Alert tone="warn">The lab marked you as not present for this time. A missed booking is not refunded.</Alert>}
+      {b.status === 'no_show' && (
+        <Alert tone="warn">
+          The lab marked you as not present for this time. A missed booking is not refunded.
+          {b.noShows?.length ? ' It had already been moved once after a missed time, so it cannot be moved again.' : ' The lab may offer you one new time; you will be told if they do.'}
+        </Alert>
+      )}
+      {!!b.noShows?.length && b.status !== 'no_show' && (
+        <Alert tone="warn">
+          You missed {slotText(b.noShows[0]!.fromSlot)}, so the lab moved the booking to the new time: {slotText(b.slot)}. It is not refunded and cannot be
+          cancelled for a refund. If this time is missed too, it is final.
+        </Alert>
+      )}
       {paymentError && b.paymentStatus === 'pending' && <Alert>The payment page could not open: {paymentError} You can pay below.</Alert>}
       {b.status === 'pending_payment' && b.paymentStatus === 'pending' && (
         <PayAgainPanel key={`${b._id}:${b.paymentTransactionId ?? ''}`} what="booking" deadline={b.paymentDeadline} paymentTransactionId={b.paymentTransactionId}
@@ -110,6 +121,8 @@ function LabBookingView({ booking: b }: { booking: LabBooking }) {
                   : 'The booking is cancelled and the time is released. Any wallet money held for it goes back to your wallet.'}
                 onConfirm={async (reason) => { try { await customerLabsApi(api).cancel(b._id, reason || undefined); } finally { await refresh(); } }} />
             </>
+          ) : cancel.reason === 'no_show_moved' ? (
+            <Alert tone="warn">This booking was moved after a missed time, so it is not refunded and cannot be cancelled.</Alert>
           ) : (
             <Alert tone="warn">Paid bookings can be cancelled until {LAB_CANCEL_CUTOFF_HOURS} hours before the time. That time has passed.</Alert>
           )}

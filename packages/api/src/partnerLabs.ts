@@ -1,7 +1,8 @@
 import type { ApiClient } from './client.ts';
+import { noShowMovedOnce } from './noShows.ts';
 import type { VisitMode } from './partnerInvoices.ts';
 import {
-  HHMM_PATTERN, holdsAny, ISO_DATE_PATTERN, OBJECT_ID_PATTERN, partnerWorkspaceBase, type PartnerActorView, type PartnerMember,
+  HHMM_PATTERN, holdsAny, ISO_DATE_PATTERN, OBJECT_ID_PATTERN, partnerWorkspaceBase, REQUEST_KEY_PATTERN, type PartnerActorView, type PartnerMember,
   type PartnerScope, type Weekday,
 } from './partners.ts';
 
@@ -270,9 +271,34 @@ export interface LabBooking {
   collector?: { memberId?: string; name: string; phone?: string };
   report: { draftFiles: string[]; releasedFiles: string[]; releases: LabReportRelease[] };
   lifecycle: Partial<Record<LabLifecycleKey, string>>;
+  /** Q14: the no-show this booking was moved after (at most one; a second no-show is final). */
+  noShows?: LabNoShowMove[];
+  noShowReschedules?: number;
   createdAt?: string;
   updatedAt?: string;
 }
+
+/** Q14 `IPartnerLabBooking.noShows[]`: when the slot was missed, when and by whom it was moved, from and to which slot. */
+export interface LabNoShowMove {
+  at?: string;
+  rescheduledAt: string;
+  by?: string;
+  byKind?: 'member' | 'admin';
+  fromSlot: LabBookingSlot;
+  toSlot: LabBookingSlot;
+}
+
+/**
+ * Q14 `rescheduleNoShow` (`services/labBookings.ts`): a lab no-show may be moved once, by `bookings.manage`, to a later
+ * open slot of the same branch and visit mode. 'offer' = it can be moved now; 'used' = it was moved once already (a
+ * second no-show is final); null = not a no-show, or not this person's step.
+ */
+export function labNoShowMove(b: Pick<LabBooking, 'status' | 'noShows' | 'noShowReschedules'>,
+  actor: Pick<PartnerActorView, 'role' | 'permissions'>): 'offer' | 'used' | null {
+  if (b.status !== 'no_show' || !holdsAny(actor, ['bookings.manage'])) return null;
+  return noShowMovedOnce(b) ? 'used' : 'offer';
+}
+
 /** Admin list rows are the stored records (report paths without the `/api/static/` prefix). */
 export type AdminLabBookingRow = Omit<LabBooking, 'report'> & { report?: { draftFiles?: string[]; releasedFiles?: string[] } };
 
@@ -433,6 +459,18 @@ export function partnerLabsApi(c: ApiClient, scope: PartnerScope) {
     /** Moves the seat to another slot now; the customer accepts it or cancels with a full refund. */
     reschedule: (id: string, slotId: string, reason: string) =>
       c.post<LabBooking>(`${booking(id)}/reschedule`, { body: { slotId: checkId(slotId, 'slot'), reason } }),
+    /**
+     * Q14: moves a no-show once to a later open slot of its branch and visit mode (same price, no payment, no refund);
+     * back to confirmed. `expectedVersion` is the `statusVersion` the move was decided on (409 LAB_BOOKING_CHANGED).
+     * The same key and slot again answer the move already made (`replayed`); a booking moved once is 409 NO_SHOW_RESCHEDULE_USED.
+     */
+    rescheduleNoShow: (id: string, slotId: string, requestKey: string, expectedVersion?: number) => {
+      if (!REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
+      if (expectedVersion !== undefined && (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0)) throw new Error('Invalid booking version');
+      return c.post<LabBooking & { replayed?: boolean }>(`${booking(id)}/reschedule-no-show`, {
+        body: { slotId: checkId(slotId, 'slot'), requestKey, ...(expectedVersion !== undefined ? { expectedVersion } : {}) },
+      });
+    },
     /** multipart `files`: each becomes a draft report of this booking (not visible to the customer). */
     uploadReports: (id: string, files: readonly File[]) => {
       const form = new FormData();

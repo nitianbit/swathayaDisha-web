@@ -84,6 +84,11 @@ export interface LabBooking {
   lab?: { name?: string };
   branch?: { name?: string; address?: LabAddress; phone?: string };
   lifecycle?: Partial<Record<'paidAt' | 'confirmedAt' | 'collectedAt' | 'visitedAt' | 'processingAt' | 'reportReadyAt' | 'completedAt' | 'cancelledAt' | 'noShowAt', string>>;
+  /**
+   * Q14 `customerView.noShows`: a missed slot the lab moved once to a new time (`slot` is the new time). Such a booking
+   * is never refunded (409 NO_SHOW_NOT_REFUNDABLE on cancel).
+   */
+  noShows?: { at?: string; rescheduledAt: string; fromSlot: LabBookingSlot; toSlot: LabBookingSlot }[];
   createdAt?: string;
   updatedAt?: string;
 }
@@ -141,14 +146,16 @@ export function addressErrors(a: { line1: string; line2?: string; city: string; 
 
 export type LabCancelCheck =
   | { ok: true; deadline: Date | null; refund: boolean }
-  | { ok: false; reason: 'state' | 'window_closed' };
+  | { ok: false; reason: 'state' | 'window_closed' | 'no_show_moved' };
 
 /**
  * `customerCancel`: only pending_payment or confirmed bookings can be cancelled; once money was captured, only until
  * 2 hours before the slot, except while a lab-proposed new time is unanswered (then any time, full refund).
  */
-export function labCancelCheck(b: Pick<LabBooking, 'status' | 'paymentStatus' | 'reschedule' | 'slot'>, now = new Date()): LabCancelCheck {
+export function labCancelCheck(b: Pick<LabBooking, 'status' | 'paymentStatus' | 'reschedule' | 'slot' | 'noShows'>, now = new Date()): LabCancelCheck {
   if (b.status !== 'pending_payment' && b.status !== 'confirmed') return { ok: false, reason: 'state' };
+  // Q14: a booking moved after a no-show is never refunded (`NO_SHOW_NOT_REFUNDABLE`).
+  if ((b.noShows?.length ?? 0) > 0) return { ok: false, reason: 'no_show_moved' };
   const paid = b.paymentStatus === 'paid';
   if (!paid || b.reschedule?.pending) return { ok: true, deadline: null, refund: paid };
   const starts = Date.parse(b.slot.startsAt);

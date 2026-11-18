@@ -797,6 +797,69 @@ Backend gaps still open (not changed):
   reconciles them all on the server.
 - Native: Open/Save of `blob:` files needs the planned filesystem/file-viewer plugin inside the Capacitor shell.
 
+## WQ8 owner decisions of 18 Nov 2026 (2026-11-18, taken autonomously at the owner's request)
+
+Backend (read-only): Q14 `SwasthaDisha-worktrees/q14-owner-decisions` `m0/q14-owner-decisions` 85a4ec1 (design doc §11 last rows; `partners/{routes,
+validation,controller,services}/{clinic,invoice,labBooking}.ts`, `bookings/{holds.ts,services,utils/noShowView.ts}`, `specialists/routes`). Branch
+`wq8/owner-decisions` on `stage` 915a2db. Every endpoint and field below is in `packages/api` (`noShows.ts`, `clinic.ts`, `partnerLabs.ts`,
+`partnerInvoices.ts`, `partners.ts`, `doctorTools.ts`, `customer.ts`, `customerLabs.ts`).
+
+- **No-shows (decision 1).** No refund and no earning without the service. A no-show may be moved ONCE to a later slot (same price, nothing paid or
+  refunded) by the lab (`bookings.manage`), the clinic desk (its own desk appointments), the doctor (`/specialists/me/bookings/:id/reschedule-no-show`)
+  or an admin; never by the customer; instant consultations never. One component (`components/NoShowMove.tsx`) serves the lab booking page, the desk
+  appointment panel and the doctor's appointments: "Reschedule no-show" → slot picker (lab: open slots of the branch and visit mode, two weeks; desk:
+  free slots of the doctor at the clinic's branches, any day; doctor: the doctor's own open, not-started slots of a day, online or clinic as the
+  booking) → confirmation (once only; a second no-show is final) → sent with a request key and the version the move was decided on (lab
+  `expectedVersion` = `statusVersion`, desk/doctor `expectedUpdatedAt`), stored with the version BEFORE sending (session memory + body-less marker).
+  Resending is the same request; the server replays by key, refuses any second move (409 NO_SHOW_RESCHEDULE_USED → said, settled) and SAME_SLOT /
+  SLOT_STARTED / SLOT_NOT_AVAILABLE (→ choose another time, slots read again). An answer settles only while the page is on screen and it owns the
+  stored attempt; a read made after the last attempt settles a lost answer (no longer a no-show = moved; still a no-show after the move was used =
+  final; a desk no-show that left its day at the same branch/doctor filter = moved). A restored move (after a reload) can only be checked, or
+  forgotten once the booking is read still a no-show (safe: a booking moves once). Once used, the step stays visible and disabled (lab and doctor
+  from `noShows[]`/`noShowReschedules`; desk rows carry no history, so the server's 409 decides there). History: lab "No-show history" list and
+  timeline entries, doctor "Moved after a no-show (missed …)". Copy: lab/doctor no-show confirmations now say nobody earns; the doctor's Earnings
+  page says a no-show earns nothing. Cancel is no longer offered on a booking moved after a no-show (doctor; customer consultation and lab) —
+  NO_SHOW_NOT_REFUNDABLE (desk rows paid at the clinic excepted). Customer app: a no-show says "not refunded" (and that one new time may be offered);
+  a moved one shows the missed and the new time and offers no cancel; no reschedule button anywhere.
+- **Desk notifications (decision 7).** Sent by the server. The desk booking confirmation says "The patient and the doctor will be notified", the
+  receipt and moves say they are; the old "Jansetu does not notify them" copy is gone.
+- **Bill linked to its appointment (decision 8).** Desk rows have a Bill column: the appointment's bill (serial + state, linked to the bill) or, for
+  bill makers on a desk appointment without an open bill, "Create bill" — it hands the new-bill form the patient, mobile, doctor, branch and
+  appointment through session memory only (never the URL or browser storage), read once. The form shows "For the clinic appointment with …",
+  freezes branch and doctor while linked ("Not for this appointment" unlinks) and sends `appointmentId`. Refusals in words:
+  APPOINTMENT_ALREADY_BILLED (the desk is read again), APPOINTMENT_BRANCH_MISMATCH, APPOINTMENT_DOCTOR_MISMATCH, APPOINTMENT_CANCELLED,
+  APPOINTMENT_NOT_FOUND. The bill shows its appointment with "All bills of this appointment" (bills list filtered by `appointmentId`, an id in page
+  state only; "Show all bills" clears it).
+- **Family members at the desk (decision 9).** The desk never browses an account's family list (privacy, per Q14). The booking form asks "Who is seen":
+  the account holder, or a family member named here (name, relation from `DESK_RELATIONS`, optional gender and past date of birth, checked as
+  `deskPatientSchema`); the server reuses an active family member with the same name and relation. Sent as `patient {name, relation, gender?,
+  dateOfBirth?}`; the receipt names them (and whether they were added). The day list and the panel show "Mother of Kiran Shah". `patient
+  {dependentId}` is typed but not offered (no picker without a family list).
+- **Part payments and split methods (decision 5).** Owners (admins as owner) set "Payments at the counter" on the profile (`allowPartPayments`, checked
+  against a fresh read, sent with `expectedUpdatedAt`; 409 RECORD_CHANGED re-reads). A payment is one or several methods whose amounts (rupees in
+  the UI, paise on the wire, WQ2 helpers) add up to it; off = exactly what is due, on = anything up to it; more than is due is refused before
+  sending (`paymentProblem`) and by the server (AMOUNT_EXCEEDS_DUE, PART_PAYMENTS_NOT_ALLOWED, LIFECYCLE_VERSION_CONFLICT in words). Every payment
+  is sent as `splits` with the server's request key and `expectedLifecycleVersion`; a lost answer resends the same request (replayed by key). The
+  bill as read settles a stored payment: its own receipt (event with its key) = recorded; the bill past the version it named, or cancelled =
+  never recorded. After a reload a new payment may be recorded once the bill shows no receipt (both name versions, so only one can land). The bill
+  shows Paid x of y / Due, state "Partly paid", each payment's methods and amounts; the list filters partly paid and shows what is due. Cancelling a
+  bill with payments records the refund of all that was paid (`refund.amountMinor`; REFUND_AMOUNT_MISMATCH re-reads).
+- **Doctor ↔ clinic links (decision 6).** The clinic Doctors screen has no Invite form; it keeps the list and, for the owner (admins as owner),
+  "Remove" (`DELETE /clinic/doctors/:doctorId`, confirmation; DOCTOR_IS_OWNER shown). Earlier invitations stay listed (staff.manage) with Revoke.
+  Admins (admin-as-owner page) "Add doctor": search verified, active doctors (`GET /specialists?search=&isVerified=true&isActive=true`), choose, pick
+  branches (every branch or in-clinic branches), confirm, linked once per request key (stored before sending; a resend answers the same link; a
+  doctor already on the list settles it; forgetting is safe because a second link is refused DOCTOR_ALREADY_MEMBER). Doctors: invitations show
+  "No longer valid" with Dismiss (decline) only. "Your own clinic": "Create my clinic" (`POST /specialists/me/clinic`, keyed; the same once-only
+  shape, a lost answer looked up by key `GET /me/clinic/by-key/:key`; DOCTOR_CLINIC_EXISTS settled with that said; offered only to active, verified
+  doctors). The clinic then shows pending verification and how to open its workspace (sign in as clinic staff with the doctor's mobile).
+
+Assumed (not in Q14): nothing on the wire. Not shown because the server does not send it: desk rows' no-show history (`deskView`), so the desk's
+"used" state comes from the 409. Admin search by mobile depends on the server's text index (rows show each doctor's mobile to check). The admin route
+for moving any doctor's no-show is in `doctorAdminApi` but has no screen yet (no admin consultation-bookings page).
+
+Verification: see the 2026-11-18 WQ8 row below. Playwright ran on ports 5291 (workspace) and 5292 (customer) with temporary configs
+(`reuseExistingServer: false`), not committed.
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -817,6 +880,7 @@ Backend gaps still open (not changed):
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-18 | WQ8 (owner decisions, Q14 85a4ec1) | typecheck clean; Vitest 201/201 (+13: no-show move offers and paths for lab/desk/doctor, doctor slots, paid/due and payment rules, split payment bodies with key and version, appointment filter, link/unlink paths and rules, family member rules, own clinic body, admin doctor search, no cancel after a moved no-show); Playwright workspace 364/364 (+20 = 10 journeys x 2 devices: lab no-show moved once with a lost answer and then final, a used move refused; desk family member, desk no-show moved with a lost answer and a refused second move, bill from an appointment with prefill/appointmentId/second bill refused, admin link with a lost answer resent once, owner removes a doctor; doctor no-show move, own clinic created once found by key, DOCTOR_CLINIC_EXISTS and unverified; part and split payments with the owner setting and the refund, full-payment-only and a version refusal); customer 204/204 (+4: missed and moved consultation, missed and moved lab booking); both release builds OK. |
 | 2026-11-16 | WQ7 (WQ2/WQ5/WQ6 on Q12/Q13) | typecheck clean; Vitest 143/143 (+4: catalogue search/by-key/abandon paths and key checks; finance cursor pages with total and queue account names, payout/adjustment by-key and abandon, `expectedDetailsVersion` and `expectedFinanceVersion` bodies, cursor/version checks before any request; desk step versions in every body and by-key/abandon paths; the look-alike and UTR-match helpers and their tests removed); Playwright workspace 308/308 (+18 = 9 journeys x 2 devices: catalogue item lost before a reload given up by key then a second one found by key; a resend of a given-up item key refused for good; payout lost before a reload checked by key, given up, a new one recorded, and its given-up resend refused; adjustment given up after a check, and one landing after the check answered `used` by the give-up; FINANCE_CHANGED on a stale adjustment and a payout review closed when the account moved; PAYOUT_DETAILS_CHANGED after the re-read closes the review and shows the saved details; queue/account/partner cursor paging with totals and row names; desk booking dropped before a reload given up, then a given-up resend refused; started slots not offered and SLOT_STARTED for a booking and a move; BOOKING_CHANGED on a stale cancel then a step on the new version; existing journeys updated: by-key checks, version bodies, replay text, invitation names, an open confirmation closing when the appointment changes, a move on a cached day refused then retried), no flakes; release build with VITE_API_BASE_URL=https://api.example.test. Port 5271, temporary config, not committed. Not yet run against a real backend or reviewed. |
 | 2026-11-16 | WQ5 review fixes | typecheck clean; Vitest 128/128; Playwright workspace 268/268 (+6 = 3 journeys x 2 devices: a background refresh during the details save's re-read moves the baseline and the reviewed older details are not sent; for a payout and for an adjustment, a left page's late success does not settle the attempt another page resent and lost (still shown after remounting, found by the check, recorded once)); all 3 journeys fail on 1c21528; release build. Spare port (temporary config, not committed). |
 | 2026-11-16 | WQ5 (partner finance, admin settlements/payouts) | typecheck clean; Vitest 122/122 (+13: member/admin-as-owner and `/settlements` paths and queries, request key in the body and identical on resend, CSV blob with the token in the header, id/date/cursor/limit/key checks before any request, destination normalisation as `normalizeDetails`, payout and reason rules, India "today", finding a lost adjustment by key and a lost payout by UTR/amount/date; app: destination labels, form baseline never holding a masked number, event texts, India dates); Playwright workspace 226/226 (+18 = 9 journeys x 2 devices: partner balance, statement paging with running balance, period filter and CSV blob; owner changes the destination after a review saying it must be verified again, then a change made elsewhere stops the save after the re-read; staff with finance.view read-only, without it or branch-limited no page and no request; admin accounts filters, totals and paging; verify, stale details version refused, lost payout answer resent once (one payout); adjustment lost answer found by key; adjustment sent before a reload found by key afterwards (only a body-less marker kept); void from the queue with reason; admin as owner with the full account number; nothing private in storage or URLs); release build with VITE_API_BASE_URL=https://api.example.test. Playwright ran on port 5197 (temporary config, not committed). Not yet run against a real backend or reviewed. |

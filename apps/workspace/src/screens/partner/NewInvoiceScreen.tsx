@@ -14,7 +14,7 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
-import { money, useCatalogue, useClinicDoctors } from './billing.tsx';
+import { APPOINTMENT_BILL_REFUSAL, billPrefillSlot, money, useCatalogue, useClinicDoctors, type BillPrefill } from './billing.tsx';
 import { Totals } from './InvoiceScreen.tsx';
 import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
@@ -29,6 +29,8 @@ interface LineDraft {
 export interface InvoiceDraft {
   branchId: string; name: string; phone: string; age: string; gender: '' | InvoiceGender; gstin: string; placeOfSupply: string;
   doctorId: string; lines: LineDraft[];
+  /** Q14: the clinic appointment this bill is for (its branch and doctor are fixed while it is linked). */
+  appointment?: { id: string; label: string };
 }
 
 /** The bill type in a sentence. */
@@ -107,6 +109,7 @@ export function buildInvoice(d: InvoiceDraft, partner: Pick<Partner, 'taxRegime'
         ...(d.gender ? { gender: d.gender } : {}), ...(pos ? { placeOfSupply: pos } : {}),
       },
       ...(d.doctorId ? { doctorId: d.doctorId } : {}),
+      ...(d.appointment ? { appointmentId: d.appointment.id } : {}),
       items,
     },
     errors,
@@ -160,6 +163,10 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
   };
   const [refused, setRefused] = useState<string | null>(null);
   const [gaveUp, setGaveUp] = useState(false);
+  // Q14: handed over once by "Create bill" on a clinic appointment (session memory only).
+  const prefillSlot = billPrefillSlot(scopeIdentity(ctx));
+  const [prefill] = useState(() => memory.get<BillPrefill>(prefillSlot));
+  useEffect(() => { memory.delete(prefillSlot); }, [memory, prefillSlot]);
 
   /**
    * Whether an answer started for `op` may still act: this page is on screen AND the stored bill is still exactly `op`
@@ -171,6 +178,7 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
   /** `op` produced this bill (answer, replay, lookup or give-up `used`): end it, and only it, then open the bill. */
   const issued = (inv: Invoice, op: Pending, earlier = false) => {
     void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'invoices'] });
+    void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'clinic-appointments'] });
     if (!owns(op)) return;
     resolveStored(memory, slot, op.requestKey);
     const requestKey = op.requestKey;
@@ -193,13 +201,15 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
     } catch (err) {
       // Q10: a catalogue line no longer matches the catalogue: read it again so the form shows the change.
       if (err instanceof ApiError && err.code === 'CATALOGUE_PRICE_CHANGED') void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'catalogue'] });
+      // Q14: another bill was issued for the appointment meanwhile: the desk rows show it once read again.
+      if (err instanceof ApiError && err.code === 'APPOINTMENT_ALREADY_BILLED') void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'clinic-appointments'] });
       if (!stillCurrent(memory.get<Pending>(slot), attempt)) return;
       // Customer linking is checked before anything is written; on a first attempt that refusal is definite too.
       const linkingOff = err instanceof ApiError && err.code === 'CUSTOMER_LINKING_UNAVAILABLE' && attempt.attempts === 1 && !attempt.uncertain;
       const next = linkingOff ? null : afterFailure(attempt, err, messageOf(err));
       if (mounted.current) {
         setPending(next ?? undefined);
-        if (!next) setRefused(messageOf(err));
+        if (!next) setRefused((err instanceof ApiError && err.code && APPOINTMENT_BILL_REFUSAL[err.code]) || messageOf(err));
       } else if (next) memory.set(slot, next); else memory.delete(slot);
     } finally {
       if (mounted.current) setBusy(false);
@@ -242,7 +252,7 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
           <>
           {gaveUp && <Alert tone="ok">The earlier bill was given up: it can never be issued. Make the bill again below.</Alert>}
           <InvoiceForm partner={p!} branches={branches.data} catalogue={catalogue.data} doctors={doctors.data} doctorsError={doctors.isError ? messageOf(doctors.error) : null}
-            busy={busy} refused={refused}
+            busy={busy} refused={refused} prefill={prefill}
             onIssue={(body) => {
               const requestKey = newRequestKey();
               void send(startOp(requestKey, { ...body, idempotencyKey: requestKey }));
@@ -262,11 +272,15 @@ function PendingSummary({ body }: { body: NewInvoice }) {
   );
 }
 
-function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy, refused, onIssue }: {
+function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy, refused, prefill, onIssue }: {
   partner: Partner; branches: Branch[]; catalogue: CatalogueItem[]; doctors: ClinicDoctor[] | undefined; doctorsError: string | null;
-  busy: boolean; refused: string | null; onIssue: (body: Omit<NewInvoice, 'idempotencyKey'>) => void;
+  busy: boolean; refused: string | null; prefill?: BillPrefill; onIssue: (body: Omit<NewInvoice, 'idempotencyKey'>) => void;
 }) {
-  const [d, setD] = useState<InvoiceDraft>(() => ({ ...EMPTY, branchId: branches.length === 1 ? branches[0]!._id : '' }));
+  const [d, setD] = useState<InvoiceDraft>(() => (prefill
+    ? { ...EMPTY, branchId: prefill.branchId, doctorId: prefill.doctorId, name: prefill.name, phone: prefill.phone,
+      appointment: { id: prefill.appointmentId, label: prefill.label } }
+    : { ...EMPTY, branchId: branches.length === 1 ? branches[0]!._id : '' }));
+  const linked = !!d.appointment;
   // Field errors appear once the person has asked to review the bill, then follow every change.
   const [tried, setTried] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
@@ -337,10 +351,16 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
     <form className="rx-form" noValidate onSubmit={review}>
       <section className="ws-section" aria-labelledby="nb-who-h">
         <h2 id="nb-who-h">Branch and customer</h2>
+        {d.appointment && (
+          <div className="ws-actions" role="group" aria-label="Appointment">
+            <span>For the clinic appointment with {d.appointment.label}. Its branch and doctor stay as booked.</span>
+            <Button variant="ghost" onClick={() => set({ appointment: undefined })}>Not for this appointment</Button>
+          </div>
+        )}
         <div className="rx-form-row">
           <div className="j-field">
             <label htmlFor="nb-branch">Branch</label>
-            <select id="nb-branch" value={d.branchId} aria-invalid={errors.branchId ? true : undefined} aria-describedby={errors.branchId ? 'nb-branch-error' : undefined}
+            <select id="nb-branch" value={d.branchId} disabled={linked} aria-invalid={errors.branchId ? true : undefined} aria-describedby={errors.branchId ? 'nb-branch-error' : undefined}
               onChange={(e) => set({ branchId: e.target.value, doctorId: '' })}>
               <option value="">Choose a branch</option>
               {branches.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
@@ -350,7 +370,7 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
           {partner.kind === 'clinic' && (
             <div className="j-field">
               <label htmlFor="nb-doctor">Doctor (optional)</label>
-              <select id="nb-doctor" value={d.doctorId} disabled={!d.branchId} aria-describedby="nb-doctor-hint" onChange={(e) => set({ doctorId: e.target.value })}>
+              <select id="nb-doctor" value={d.doctorId} disabled={!d.branchId || linked} aria-describedby="nb-doctor-hint" onChange={(e) => set({ doctorId: e.target.value })}>
                 <option value="">No doctor named</option>
                 {branchDoctors.map((x) => <option key={x.doctorId} value={x.doctorId}>{x.name}{x.specialization ? ` (${x.specialization})` : ''}</option>)}
               </select>
@@ -454,7 +474,7 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
       ) : (
         <div className="confirm" role="group" aria-label="Issue the bill">
           <div className="confirm-text">
-            Issue {KIND_TEXT[pv.documentKind]} for {money(pv.totals.totalMinor)} to {built.body.customer.name} from {branch?.name}?
+            Issue {KIND_TEXT[pv.documentKind]} for {money(pv.totals.totalMinor)} to {built.body.customer.name} from {branch?.name}{d.appointment ? `, for the appointment with ${d.appointment.label}` : ''}?
             It gets the next number in the series and cannot be changed afterwards; it can only be cancelled.
             {built.body.customer.phone ? ' It will be added to the Jansetu account of the mobile number given.' : ''}
           </div>

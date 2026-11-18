@@ -37,6 +37,10 @@ interface Appt {
   bookingId: string; partnerId: string; bookingDate: string; bookingTime: string; status: string; doctorId: string; doctorName: string; branchId: string;
   slotId: string; consultationMode: string; fee: number; payAtClinic: boolean; arrivedAt: string | null; source: 'desk' | 'online'; paidOnline: boolean;
   patient: Rec; requestKey?: string; requestHash?: string; cancellationReason?: string;
+  /** Q14: the appointment's bill (open, else the latest cancelled one). */
+  bill?: Rec | null;
+  /** Q14: the one no-show move (not on desk rows: deskView carries no history). */
+  noShowMoves?: Rec[];
   /** Q13: the Booking's updatedAt (changed by every write). */
   updatedAt: string;
 }
@@ -46,6 +50,14 @@ interface Backend {
   appts: Appt[];
   slots: Slot[];
   invites: Rec[];
+  /** Q14: admin links made (by request key). */
+  links: Rec[];
+  /** Q14: bills issued from the desk's appointments. */
+  bills: Rec[];
+  /** Q14: the next no-show move is made, then its answer is lost. */
+  loseNextNoShowMove?: boolean;
+  /** Q14: the next admin link is recorded, then its answer is lost. */
+  loseNextLink?: boolean;
   /** The next desk booking is recorded, then its answer is lost on the network. */
   loseNextBook?: boolean;
   /** This slot is taken by someone else just before the next booking is decided. */
@@ -107,7 +119,7 @@ function seedAppts(): Appt[] {
 }
 
 const deskView = (a: Appt) => {
-  const { source: _s, paidOnline: _p, patient: _pt, requestKey: _k, requestHash: _h, partnerId: _pid, cancellationReason: _c, ...rest } = a;
+  const { source: _s, paidOnline: _p, patient: _pt, requestKey: _k, requestHash: _h, partnerId: _pid, cancellationReason: _c, bill: _b, noShowMoves: _n, ...rest } = a;
   return rest;
 };
 
@@ -116,7 +128,7 @@ const staff = (...permissions: string[]): Me => ({ _id: STAFF, partnerId: CLINIC
 
 async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
-  const b: Backend = { calls: [], me, appts: seedAppts(), slots: seedSlots(), live: false, abandoned: new Set(),
+  const b: Backend = { calls: [], me, appts: seedAppts(), slots: seedSlots(), live: false, abandoned: new Set(), links: [], bills: [],
     invites: [{ _id: 'f0'.repeat(12), partnerId: CLINIC, doctorId: D6, branchIds: [BR2], invitedBy: OWNER, state: 'pending', createdAt: '2026-11-10T05:00:00.000Z' }] };
   const partners: Rec[] = [
     { _id: CLINIC, kind: 'clinic', name: 'Sunrise Clinic', contact: { phone: '9000000008' }, verification: { state: 'verified' }, taxRegime: 'unregistered', invoiceSeries: { prefix: 'SC' }, activeOwnerCount: 1, isActive: true },
@@ -180,6 +192,13 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       return ok(route, { user: { ...b.me, phone: '9000000001', isActive: true }, partner: partners.find((x) => x._id === b.me.partnerId), userRole: 'partner' });
     }
     if (/^\/partner-workspace\/admin\/[0-9a-f]{24}$/.test(path)) return ok(route, partners.find((p) => path.endsWith(p._id as string)));
+    // Q14: admins search verified doctors (GET /specialists?search=).
+    if (path === '/specialists') {
+      if (!admin) return fail(route, 403, 'FORBIDDEN', 'Admin access is required');
+      const q = (url.searchParams.get('search') ?? '').toLowerCase();
+      const items = specialists.filter((x) => String(x.name).toLowerCase().includes(q) || String(x.phone).includes(q) || String(x.specialization).toLowerCase().includes(q));
+      return json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
+    }
     const ws = /^\/partner-workspace(?:\/admin\/([0-9a-f]{24})\/workspace)?(\/.*)$/.exec(path);
     if (!ws) return fail(route, 404, 'NOT_FOUND', 'Not found');
     if (ws[1] && !admin) return fail(route, 403, 'FORBIDDEN', 'Admin access is required');
@@ -192,11 +211,41 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
 
     if (sub === '/me') return ok(route, p);
     if (sub === '/branches') return ok(route, branches[pid] ?? []);
+    // Q14: just enough of the bills routes for a bill made from an appointment.
+    if (sub === '/catalogue') return ok(route, [{ _id: 'ca'.repeat(12), partnerId: pid, kind: 'consultation', name: 'Consultation', priceMinor: 50000, gstRate: 0, isActive: true, adminDisabled: false }]);
+    if (sub === '/invoices' && method === 'POST') {
+      const x = body as { branchId: string; doctorId?: string; appointmentId?: string; customer: Rec; items: Rec[]; idempotencyKey: string };
+      const a = x.appointmentId ? b.appts.find((y) => y.bookingId === x.appointmentId && y.partnerId === pid) : undefined;
+      if (x.appointmentId && !a) return fail(route, 404, 'APPOINTMENT_NOT_FOUND', 'Appointment not found');
+      if (a && a.branchId !== x.branchId) return fail(route, 400, 'APPOINTMENT_BRANCH_MISMATCH', 'Bill the appointment from the branch where it takes place');
+      if (a && x.doctorId && a.doctorId !== x.doctorId) return fail(route, 400, 'APPOINTMENT_DOCTOR_MISMATCH', 'The bill names a different doctor than the appointment');
+      if (a && a.bill && a.bill.state !== 'cancelled') return fail(route, 409, 'APPOINTMENT_ALREADY_BILLED', 'This appointment already has a bill; cancel it first to issue a new one');
+      const total = x.items.reduce((n, l) => n + (l.unitPriceMinor as number) * (l.qty as number), 0);
+      const inv = { _id: `b${++seq}`.padEnd(24, '0'), partnerId: pid, branchId: x.branchId, number: seq, financialYear: '2627', serial: `SC/2627/000${seq}`,
+        documentKind: 'commercial_invoice', issuedAt: NOW.toISOString(), supplier: { name: 'Sunrise Clinic', address: '1 Main Rd', placeOfSupply: '29' },
+        customer: x.customer, ...(x.doctorId ? { doctorId: x.doctorId } : {}), ...(x.appointmentId ? { appointmentId: x.appointmentId } : {}),
+        items: x.items.map((l) => ({ ...l, discountMinor: 0, amountMinor: (l.unitPriceMinor as number) * (l.qty as number) })),
+        totals: { subtotalMinor: total, discountMinor: 0, taxableMinor: total, cgstMinor: 0, sgstMinor: 0, igstMinor: 0, totalMinor: total, currency: 'INR' },
+        lifecycleState: 'issued', lifecycleVersion: 0, paidMinor: 0, dueMinor: total, createdBy: actor._id, idempotencyKey: x.idempotencyKey };
+      b.bills.push(inv);
+      if (a) a.bill = { invoiceId: inv._id, serial: inv.serial, number: inv.number, state: 'issued' };
+      return ok(route, inv, 201);
+    }
+    const bill = /^\/invoices\/([0-9a-f]{24})$/.exec(sub);
+    if (bill) {
+      const inv = b.bills.find((y) => y._id === bill[1]);
+      return inv ? ok(route, { invoice: inv, events: [] }) : fail(route, 404, 'INVOICE_NOT_FOUND', 'Invoice not found');
+    }
+    if (sub === '/invoices') {
+      const appointmentId = url.searchParams.get('appointmentId');
+      const items = b.bills.filter((y) => !appointmentId || y.appointmentId === appointmentId);
+      return json(route, 200, { success: true, data: items, pagination: { total: items.length, nextCursor: null } });
+    }
     if (!sub.startsWith('/clinic/')) return fail(route, 404, 'NOT_FOUND', 'Not found');
     if (p.kind !== 'clinic') return fail(route, 409, 'NOT_A_CLINIC', 'Only clinics work with doctors');
 
     // ── doctors and invitations ──
-    if (sub === '/clinic/doctors') return can('staff.manage', 'bookings.view', 'bookings.manage', 'invoices.create') ? ok(route, doctors[pid] ?? []) : deny();
+    if (sub === '/clinic/doctors' && method === 'GET') return can('staff.manage', 'bookings.view', 'bookings.manage', 'invoices.create') ? ok(route, doctors[pid] ?? []) : deny();
     if (sub === '/clinic/doctor-invites' && method === 'GET') {
       if (!can('staff.manage')) return deny();
       const st = url.searchParams.get('state');
@@ -218,6 +267,31 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       const invite = { _id: `f${++seq}`.padEnd(24, '0'), partnerId: pid, doctorId: sp._id, branchIds: x.branchIds, invitedBy: actor._id, state: 'pending', createdAt: NOW.toISOString() };
       b.invites.push(invite);
       return ok(route, { invite, doctor, created: true }, 201);
+    }
+    // Q14: an admin links a doctor directly (members 403); the owner or an admin removes one.
+    if (sub === '/clinic/doctors' && method === 'POST') {
+      if (!ws[1]) return fail(route, 403, 'DOCTOR_LINK_ADMIN_ONLY', 'Doctors are linked to clinics by the platform team after checking');
+      const x = body as { doctorId: string; branchIds: string[]; requestKey: string };
+      const prior = b.links.find((l) => l.partnerId === pid && l.requestKey === x.requestKey);
+      const sp = specialists.find((s) => s._id === x.doctorId);
+      const view = (l: Rec, replayed: boolean) => ({ link: l, doctor: { doctorId: x.doctorId, name: sp?.name ?? null, specialization: sp?.specialization ?? null }, memberId: l.memberId, replayed });
+      if (prior) return ok(route, view(prior, true));
+      if (!sp) return fail(route, 404, 'DOCTOR_NOT_FOUND', 'Doctor not found');
+      if ((doctors[pid] ?? []).some((d) => d.doctorId === sp._id)) return fail(route, 409, 'DOCTOR_ALREADY_MEMBER', 'This doctor already consults here');
+      const link = { _id: `f${++seq}`.padEnd(24, '0'), partnerId: pid, doctorId: sp._id, branchIds: x.branchIds, state: 'accepted', via: 'admin_link', requestKey: x.requestKey, memberId: `7${seq}`.padEnd(24, '0') };
+      b.links.push(link);
+      (doctors[pid] ??= []).push({ memberId: link.memberId, doctorId: sp._id, role: 'staff', branchIds: x.branchIds, name: sp.name, specialization: sp.specialization, consultationFee: 700, active: true });
+      if (b.loseNextLink) { b.loseNextLink = false; return route.abort('failed'); }
+      return ok(route, view(link, false), 201);
+    }
+    const unlink = /^\/clinic\/doctors\/([0-9a-f]{24})$/.exec(sub);
+    if (unlink && method === 'DELETE') {
+      if (actor.role !== 'owner') return fail(route, 403, 'OWNER_REQUIRED', 'Only an owner can remove a doctor from the clinic');
+      const list = doctors[pid] ?? [];
+      const i = list.findIndex((d) => d.doctorId === unlink[1]);
+      if (i < 0) return fail(route, 404, 'DOCTOR_NOT_AT_CLINIC', 'This doctor does not consult here');
+      list.splice(i, 1);
+      return ok(route, { unlinked: true, membershipEnded: true });
     }
     const inv = /^\/clinic\/doctor-invites\/([0-9a-f]{24})$/.exec(sub);
     if (inv && method === 'DELETE') {
@@ -244,7 +318,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       return ok(route, b.appts.filter((a) => a.partnerId === pid && a.bookingDate >= ymd(q.from!) && a.bookingDate <= ymd(q.to!)
         && (!q.branchId || a.branchId === q.branchId) && (!q.doctorId || a.doctorId === q.doctorId))
         .sort((x, y) => x.bookingTime.localeCompare(y.bookingTime))
-        .map(({ requestKey: _k, requestHash: _h, partnerId: _p, cancellationReason: _c, ...a }) => a));
+        .map(({ requestKey: _k, requestHash: _h, partnerId: _p, cancellationReason: _c, noShowMoves: _n, ...a }) => ({ ...a, bill: a.bill ?? null })));
     }
     if (!can('bookings.manage')) return deny();
     const started = (s: Slot) => !!s.started || Date.parse(istInstant(s.date, s.startTime)) <= NOW.getTime();
@@ -261,10 +335,10 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       return made ? ok(route, deskView(made)) : fail(route, 404, 'BOOKING_NOT_FOUND', 'No appointment was made with this key');
     }
     if (sub === '/clinic/appointments' && method === 'POST') {
-      const x = body as { slotId: string; customer: { phone: string; name?: string }; notes?: string; requestKey: string };
+      const x = body as { slotId: string; customer: { phone: string; name?: string }; patient?: { name: string; relation: string }; notes?: string; requestKey: string };
       const key = `desk:${actor._id}:${x.requestKey}`;
       if (b.dropNextBook) { b.dropNextBook = false; return route.abort('failed'); }
-      const hash = JSON.stringify([x.slotId, x.customer.phone, x.notes ?? null]);
+      const hash = JSON.stringify([x.slotId, x.customer.phone, x.notes ?? null, ...(x.patient ? [x.patient] : [])]);
       const prior = b.appts.find((a) => a.requestKey === key);
       if (prior) {
         if (prior.requestHash !== hash) return fail(route, 409, 'IDEMPOTENCY_KEY_REUSED', 'This request key was already used for a different appointment');
@@ -281,12 +355,37 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       customers.add(x.customer.phone);
       const doc = (doctors[pid] ?? []).find((d) => d.doctorId === s.doctorId)!;
       const a = appt(`9${++seq}`.padEnd(24, '0'), { partnerId: pid, bookingDate: ymd(s.date), bookingTime: s.startTime, doctorId: s.doctorId, doctorName: doc.name as string,
-        branchId: s.branchId, slotId: s.slotId, fee: doc.consultationFee as number, patient: { name: x.customer.name, phone: x.customer.phone }, requestKey: key, requestHash: hash });
+        branchId: s.branchId, slotId: s.slotId, fee: doc.consultationFee as number, requestKey: key, requestHash: hash,
+        // Q14: the person seen may be a family member (created under the account with the booking).
+        patient: x.patient ? { name: x.patient.name, relationship: x.patient.relation, accountName: x.customer.name, phone: x.customer.phone, dependentId: '5d'.repeat(12) }
+          : { name: x.customer.name, phone: x.customer.phone, dependentId: null } });
       touch(a);
       b.appts.push(a);
       if (b.loseNextBook) { b.loseNextBook = false; return route.abort('failed'); }
       await held(sub);
-      return ok(route, { booking: deskView(a), customer: { userId: '98'.repeat(12), phone: x.customer.phone, created }, replayed: false }, 201);
+      return ok(route, { booking: { ...deskView(a), dependentId: x.patient ? '5d'.repeat(12) : null }, customer: { userId: '98'.repeat(12), phone: x.customer.phone, created },
+        patient: x.patient ? { dependentId: '5d'.repeat(12), name: x.patient.name, relationship: x.patient.relation, created: true } : null, replayed: false }, 201);
+    }
+    // Q14: a desk no-show moved once (keyed, fenced by updatedAt).
+    const nsm = /^\/clinic\/appointments\/([0-9a-f]{24})\/reschedule-no-show$/.exec(sub);
+    if (nsm) {
+      const a = b.appts.find((y) => y.bookingId === nsm[1] && y.partnerId === pid && y.source === 'desk');
+      if (!a) return fail(route, 404, 'BOOKING_NOT_FOUND', 'Appointment not found');
+      const x = body as { slotId: string; requestKey: string; expectedUpdatedAt?: string };
+      const moves = a.noShowMoves ?? [];
+      if (moves.some((m) => m.requestKey === x.requestKey)) return ok(route, { ...deskView(a), replayed: true });
+      if (moves.length) return fail(route, 409, 'NO_SHOW_RESCHEDULE_USED', 'This booking was already rescheduled once after a no-show; a second no-show is final');
+      if (a.status !== 'no_show') return fail(route, 409, 'BOOKING_NOT_NO_SHOW', `A ${a.status} booking is not a no-show`);
+      if (x.expectedUpdatedAt !== undefined && x.expectedUpdatedAt !== a.updatedAt) return fail(route, 409, 'BOOKING_CHANGED', 'The appointment changed since it was loaded; reload and try again');
+      if (x.slotId === a.slotId) return fail(route, 409, 'SAME_SLOT', 'Pick a later slot');
+      const t = b.slots.find((y) => y.slotId === x.slotId && y.partnerId === pid);
+      if (!t || t.current >= t.max || t.doctorId !== a.doctorId) return fail(route, 409, 'SLOT_NOT_AVAILABLE', 'Slot is not available for booking');
+      t.current++;
+      moves.push({ requestKey: x.requestKey, fromDate: a.bookingDate, fromTime: a.bookingTime });
+      Object.assign(a, { noShowMoves: moves, status: 'confirmed', slotId: t.slotId, bookingDate: ymd(t.date), bookingTime: t.startTime, branchId: t.branchId, arrivedAt: null });
+      touch(a);
+      if (b.loseNextNoShowMove) { b.loseNextNoShowMove = false; return route.abort('failed'); }
+      return ok(route, { ...deskView(a), replayed: false });
     }
     const one = /^\/clinic\/appointments\/([0-9a-f]{24})\/(arrived|complete|no-show|cancel|reschedule)$/.exec(sub);
     if (one) {
@@ -380,77 +479,85 @@ async function fillPatient(page: Page, phone: string, name = '', notes = '') {
   await page.getByRole('button', { name: 'Review the booking' }).click();
 }
 
-test('doctors: the list, inviting by mobile or doctor id with branches, a repeat answers the pending one, revoke after a confirmation', async ({ page }) => {
+test('Q14 doctors: the list; clinics no longer invite; the owner removes a doctor after a confirmation; earlier invitations can be revoked', async ({ page }) => {
   const backend = await mockBackend(page);
   await signInPartner(page);
   await nav(page).getByRole('link', { name: 'Doctors' }).click();
   await expect(page.getByRole('heading', { name: 'Doctors', level: 1 })).toBeVisible();
-  await expect(page.getByText('A doctor consults here only after accepting your invitation in their own Jansetu doctor app.')).toBeVisible();
+  await expect(page.getByText('Doctors are linked to this clinic by the Jansetu team after checking.')).toBeVisible();
   const list = page.getByRole('table', { name: 'Doctors consulting at this clinic' });
   await expect(list.getByRole('row').filter({ hasText: 'Dr Mehta' })).toContainText('All branches');
   await expect(list.getByRole('row').filter({ hasText: 'Dr Mehta' })).toContainText('₹500.00');
   await expect(list.getByRole('row').filter({ hasText: 'Dr Rao' })).toContainText('Koramangala');
   await expect(list.getByRole('row').filter({ hasText: 'Dr Absent' })).toContainText('Not bookable');
+  // No invitation can be sent from the clinic any more, and only admins add doctors.
+  await expect(page.getByRole('form', { name: 'Invite a doctor' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Add doctor' })).toHaveCount(0);
+
+  // Remove: a confirmation first; Back sends nothing.
+  await list.getByRole('button', { name: 'Remove Dr Rao' }).click();
+  await expect(page.getByText('Remove Dr Rao from this clinic? New bookings with them here stop at once')).toBeVisible();
+  await page.getByRole('group', { name: 'Remove Dr Rao' }).getByRole('button', { name: 'Back' }).click();
+  expect(backend.calls.some((c) => c.method === 'DELETE')).toBe(false);
+  await list.getByRole('button', { name: 'Remove Dr Rao' }).click();
+  await page.getByRole('button', { name: 'Remove from this clinic' }).click();
+  await expect(page.getByText('Dr Rao no longer consults here.')).toBeVisible();
+  await expect(list.getByRole('row').filter({ hasText: 'Dr Rao' })).toHaveCount(0);
+  expect(backend.calls.filter((c) => c.method === 'DELETE').map((c) => c.path)).toEqual([`/partner-workspace/clinic/doctors/${D2}`]);
 
   const invites = page.getByRole('table', { name: 'Invitations to doctors' });
-  // Q13: the server names the invited doctor (name and speciality), also before they accept.
+  // Q13: the server names the invited doctor (name and speciality).
   await expect(invites.getByRole('row').filter({ hasText: 'Dr Pillai' })).toContainText('Orthopaedic surgeon');
-  await expect(invites.getByText(/Doctor …/)).toHaveCount(0);
+  await expect(page.getByText('Clinics no longer invite doctors, and doctors can no longer accept these.')).toBeVisible();
+  await invites.getByRole('button', { name: 'Revoke invitation to Dr Pillai' }).click();
+  await expect(page.getByText('Revoke the invitation to Dr Pillai? They can no longer accept it.')).toBeVisible();
+  await page.getByRole('button', { name: 'Revoke invitation', exact: true }).click();
+  await expect(page.getByText('The invitation to Dr Pillai was revoked. They can no longer accept it.')).toBeVisible();
+  await expect(invites).toHaveCount(0);
+  expect(backend.calls.filter((c) => c.method === 'POST' && c.path.includes('doctor')).length).toBe(0);
+});
 
-  // Checked before sending: nothing goes out for a bad number.
-  const form = page.getByRole('form', { name: 'Invite a doctor' });
-  await form.getByLabel('Doctor’s mobile number').fill('12345');
-  await form.getByRole('button', { name: 'Send invitation' }).click();
-  await expect(form.getByText('Enter the doctor’s ten-digit mobile number.')).toBeVisible();
-  // Only branches taking in-clinic consultations are offered.
+test('Q14 admin as owner: find a verified doctor, choose branches, confirm the link; a lost answer is resent with the same key and linked once', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.loseNextLink = true;
+  await signInAdmin(page);
+  await page.goto(`/#/admin/partners/${CLINIC}/clinic-doctors`);
+  const add = page.getByRole('region', { name: 'Add doctor' });
+  await page.getByLabel('Doctor’s name, speciality or mobile number').fill('9811111111');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  const found = page.getByRole('table', { name: /Verified doctors matching/ });
+  await expect(found.getByRole('row').filter({ hasText: 'Dr Iyer' })).toContainText('Cardiologist');
+  expect(backend.calls.some((c) => c.path === '/specialists?search=9811111111&isVerified=true&isActive=true&page=1&limit=20')).toBe(true);
+  await found.getByRole('button', { name: 'Choose Dr Iyer' }).click();
+  const form = page.getByRole('form', { name: 'Add doctor' });
   await form.getByLabel('Every branch, including ones added later').uncheck();
   await expect(form.getByLabel('Store room')).toHaveCount(0);
-  await form.getByLabel('Doctor’s mobile number').fill('+91 98111 11111');
-  await form.getByRole('button', { name: 'Send invitation' }).click();
+  await form.getByRole('button', { name: 'Continue' }).click();
   await expect(form.getByText('Choose at least one branch, or every branch.')).toBeVisible();
-  expect(writes(backend)).toEqual([]);
   await form.getByLabel('Indiranagar').check();
-  await form.getByRole('button', { name: 'Send invitation' }).click();
-  await expect(page.getByText('Invitation sent to Dr Iyer (Cardiologist). They accept it in their Jansetu doctor app')).toBeVisible();
-  await expect(invites.getByRole('row').filter({ hasText: 'Dr Iyer' })).toContainText('Indiranagar');
-  await expect(invites.getByRole('row').filter({ hasText: 'Dr Iyer' })).toContainText('Waiting for the doctor');
+  await form.getByRole('button', { name: 'Continue' }).click();
+  await expect(form).toContainText('Link Dr Iyer to this clinic at Indiranagar? They consult here at once (there is no acceptance step)');
+  expect(backend.calls.some((c) => c.method === 'POST' && c.path.endsWith('/clinic/doctors'))).toBe(false);
+  await form.getByRole('button', { name: 'Link Dr Iyer' }).click();
+  // The answer is lost: the same link (same key) is sent again; the server answers the link it made.
+  const unsure = page.getByRole('group', { name: 'Unconfirmed doctor link' });
+  await expect(unsure).toContainText('Dr Iyer at Indiranagar.');
+  await unsure.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(add.getByText('Dr Iyer had already been linked: nothing was done twice.')).toBeVisible();
+  const posts = backend.calls.filter((c) => c.method === 'POST' && c.path === `/partner-workspace/admin/${CLINIC}/workspace/clinic/doctors`).map((c) => c.body as Rec);
+  expect(posts).toHaveLength(2);
+  expect(posts[0]).toEqual({ doctorId: D4, branchIds: [BR1], requestKey: expect.stringMatching(/^[0-9a-f]{32}$/) });
+  expect(posts[1]).toEqual(posts[0]);
+  expect(backend.links).toHaveLength(1);
+  await expect(page.getByRole('table', { name: 'Doctors consulting at this clinic' }).getByRole('row').filter({ hasText: 'Dr Iyer' })).toContainText('Indiranagar');
 
-  // The same doctor again: the server answers the pending invitation; nothing new is sent.
-  await form.getByLabel('Doctor’s mobile number').fill('9811111111');
-  await form.getByRole('button', { name: 'Send invitation' }).click();
-  await expect(page.getByText('Dr Iyer already had a pending invitation from this clinic (consults at: Indiranagar). Nothing new was sent')).toBeVisible();
-
-  // By doctor id, every branch; an unknown number is refused as the server says; a member already consults here.
-  await form.getByLabel('Jansetu doctor id').check();
-  await form.getByLabel('Doctor id', { exact: true }).fill(D5);
-  await form.getByRole('button', { name: 'Send invitation' }).click();
-  await expect(page.getByText('Invitation sent to Dr Khan (Paediatrician).', { exact: false })).toBeVisible();
-  await expect(invites.getByRole('row').filter({ hasText: 'Dr Khan' })).toContainText('All branches');
-  await form.getByLabel('Doctor id', { exact: true }).fill(D1);
-  await form.getByRole('button', { name: 'Send invitation' }).click();
-  await expect(form.getByText('Not sent: This doctor already consults here')).toBeVisible();
-  await form.getByLabel('Mobile number registered with Jansetu').check();
-  await form.getByLabel('Doctor’s mobile number').fill('9899999999');
-  await form.getByRole('button', { name: 'Send invitation' }).click();
-  await expect(form.getByText('Not sent: No active, verified doctor with these details')).toBeVisible();
-  const posts = backend.calls.filter((c) => c.method === 'POST' && c.path === '/partner-workspace/clinic/doctor-invites').map((c) => c.body);
-  expect(posts).toEqual([
-    { phone: '9811111111', branchIds: [BR1] }, { phone: '9811111111', branchIds: [] }, { doctorId: D5, branchIds: [] },
-    { doctorId: D1, branchIds: [] }, { phone: '9899999999', branchIds: [] },
-  ]);
-
-  // Revoke: a confirmation first; Back sends nothing.
-  await invites.getByRole('button', { name: 'Revoke invitation to Dr Iyer' }).click();
-  await expect(page.getByText('Revoke the invitation to Dr Iyer? They can no longer accept it.')).toBeVisible();
-  await page.getByRole('button', { name: 'Back' }).click();
-  expect(backend.calls.some((c) => c.method === 'DELETE')).toBe(false);
-  await invites.getByRole('button', { name: 'Revoke invitation to Dr Iyer' }).click();
-  await page.getByRole('button', { name: 'Revoke invitation', exact: true }).click();
-  await expect(page.getByText('The invitation to Dr Iyer was revoked. They can no longer accept it.')).toBeVisible();
-  await expect(invites.getByRole('row').filter({ hasText: 'Dr Iyer' })).toHaveCount(0);
-  await page.getByLabel('Show').selectOption('revoked');
-  await expect(invites.getByRole('row').filter({ hasText: 'Dr Iyer' })).toContainText('Revoked');
-  expect(backend.calls.filter((c) => c.method === 'DELETE').map((c) => c.path)).toEqual([`/partner-workspace/clinic/doctor-invites/${backend.invites[1]!._id}`]);
+  // A doctor who already consults here is caught before sending.
+  await page.getByLabel('Doctor’s name, speciality or mobile number').fill('Mehta');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await found.getByRole('button', { name: 'Choose Dr Mehta' }).click();
+  await form.getByRole('button', { name: 'Continue' }).click();
+  await expect(form.getByText('Dr Mehta already consults here.')).toBeVisible();
+  expect(await storage(page)).not.toMatch(/Iyer|9811111111/);
 });
 
 test('desk day view: appointments by branch and doctor, free slots, other days, online bookings view-only', async ({ page }) => {
@@ -507,10 +614,10 @@ test('desk booking: details checked, reviewed, booked once with a key; then arri
   await expect(page.getByText('Enter a ten-digit mobile number.')).toBeVisible();
   await fillPatient(page, '+91 98000 00009', 'Kiran Shah', 'Walk-in, fever');
   const review = page.getByRole('group', { name: 'Book the appointment' });
-  await expect(review).toContainText('Book Kiran Shah (9800000009) with Dr Mehta on Tue, 17 Nov, 2026, 10:15 at Indiranagar? The fee of ₹500.00 is paid at the clinic.');
+  await expect(review).toContainText('Book Kiran Shah (9800000009) with Dr Mehta on Tue, 17 Nov, 2026, 10:15 at Indiranagar? The fee of ₹500.00 is paid at the clinic. The patient and the doctor will be notified.');
   expect(books(backend)).toHaveLength(0);
   await review.getByRole('button', { name: 'Book appointment' }).click();
-  await expect(page.getByText('Booked. Kiran Shah with Dr Mehta on Tue, 17 Nov, 2026, 10:15 at Indiranagar. Fee ₹500.00, paid at the clinic. A Jansetu account was created for this mobile number.')).toBeVisible();
+  await expect(page.getByText('Booked. Kiran Shah with Dr Mehta on Tue, 17 Nov, 2026, 10:15 at Indiranagar. Fee ₹500.00, paid at the clinic. A Jansetu account was created for this mobile number. The patient and the doctor are notified.')).toBeVisible();
   await expect(page.getByRole('link', { name: 'Make a bill for this visit' }).first()).toHaveAttribute('href', '#/partner/invoices/new');
   const [post] = books(backend);
   const sent = post!.body as { requestKey: string };
@@ -522,13 +629,13 @@ test('desk booking: details checked, reviewed, booked once with a key; then arri
   await expect(page.getByRole('heading', { name: 'Appointment: Kiran Shah, Tue, 17 Nov, 2026, 10:15' })).toBeVisible();
   await page.getByRole('button', { name: 'Mark arrived' }).click();
   await expect(page.getByText('Kiran Shah is marked as arrived.')).toBeVisible();
-  await expect(appointments(page).getByRole('row').filter({ hasText: 'Kiran Shah' })).toContainText('Arrived 10:00');
+  await expect(appointments(page).getByRole('row').filter({ hasText: '9800000009' })).toContainText('Arrived 10:00');
   await expect(page.getByRole('button', { name: 'Mark arrived' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Mark as seen' }).click();
   await expect(page.getByText('The fee of ₹500.00 is paid at the clinic: make a bill for it under Bills.', { exact: false })).toBeVisible();
   await page.getByRole('group', { name: 'Mark as seen' }).getByRole('button', { name: 'Mark as seen' }).click();
   await expect(page.getByText('Kiran Shah’s visit is marked as seen.')).toBeVisible();
-  await expect(appointments(page).getByRole('row').filter({ hasText: 'Kiran Shah' })).toContainText('Seen');
+  await expect(appointments(page).getByRole('row').filter({ hasText: '9800000009' })).toContainText('Seen');
   const id = backend.appts.at(-1)!.bookingId;
   expect(writes(backend)).toEqual([
     'POST /partner-workspace/clinic/appointments',
@@ -762,7 +869,7 @@ test('reschedule: another day’s free slot after a confirmation; a slot taken m
   await move.getByLabel('New time').selectOption({ label: '11:15–11:30 (1 free)' });
   await move.getByRole('button', { name: 'Continue' }).click();
   await move.getByRole('button', { name: 'Move the appointment' }).click();
-  await expect(page.getByText('Moved to Wed, 18 Nov, 2026, 11:15 at Indiranagar. Tell the patient: Jansetu does not notify them of desk appointment changes.')).toBeVisible();
+  await expect(page.getByText('Moved to Wed, 18 Nov, 2026, 11:15 at Indiranagar. The patient and the doctor are notified.')).toBeVisible();
   await expect(appointments(page).getByRole('row').filter({ hasText: 'Chitra N' })).toHaveCount(0);
   const moves = backend.calls.filter((c) => c.path.endsWith('/reschedule'));
   expect(moves.map((c) => c.body)).toEqual([
@@ -865,7 +972,7 @@ test('permissions: view-only desk staff, a biller sees doctors only, a lab has n
   await expect(page.getByRole('button', { name: /Mark|Cancel appointment|Move/ })).toHaveCount(0);
   await nav(page).getByRole('link', { name: 'Doctors' }).click();
   await expect(page.getByRole('table', { name: 'Doctors consulting at this clinic' })).toBeVisible();
-  await expect(page.getByText('Invitations are sent and revoked by staff with the “Manage staff” permission.')).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Remove/ })).toHaveCount(0);
   await expect(page.getByRole('form', { name: 'Invite a doctor' })).toHaveCount(0);
   expect(backend.calls.some((c) => c.path.includes('doctor-invites'))).toBe(false);
   expect(writes(backend)).toEqual([]);
@@ -928,4 +1035,125 @@ test('admin as owner: clinic pages under the partner, switching partners discard
   await page.goto(`/#/admin/partners/${LAB}`);
   await expect(page.getByRole('link', { name: 'Front desk' })).toHaveCount(0);
   expect(backend.calls.some((c) => c.path.includes(`/admin/${LAB}/workspace/clinic`))).toBe(false);
+});
+
+test('Q14 family members: the desk books a family member by name and relation (never browsing the account’s family); the list shows who is seen', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await openDesk(page, 'Dr Mehta (General physician)');
+  await freeSlots(page).getByRole('button', { name: 'Book 10:15' }).click();
+  await page.getByLabel(/Patient.s mobile number/).fill('9800000002');
+  await page.getByLabel('A family member of the account holder').check();
+  await page.getByLabel(/Account holder.s name/).fill('Kiran Shah');
+  await page.getByRole('button', { name: 'Review the booking' }).click();
+  await expect(page.getByText('Enter the family member’s name.')).toBeVisible();
+  await expect(page.getByText('Choose how they are related to the account holder.')).toBeVisible();
+  await page.getByLabel('Family member’s name').fill('  Meena   Shah ');
+  await page.getByLabel('Relation to the account holder').selectOption('Mother');
+  await page.getByLabel('Gender (optional)').selectOption('Female');
+  await page.getByLabel('Date of birth (optional)').fill('2026-12-01');
+  await page.getByRole('button', { name: 'Review the booking' }).click();
+  await expect(page.getByText('Enter a real date that is not in the future.')).toBeVisible();
+  await page.getByLabel('Date of birth (optional)').fill('1958-03-04');
+  await page.getByRole('button', { name: 'Review the booking' }).click();
+  const review = page.getByRole('group', { name: 'Book the appointment' });
+  await expect(review).toContainText('Book Meena Shah (Mother of the account holder of 9800000002) with Dr Mehta on Tue, 17 Nov, 2026, 10:15 at Indiranagar?');
+  await expect(review).toContainText('The patient and the doctor will be notified.');
+  await review.getByRole('button', { name: 'Book appointment' }).click();
+  await expect(page.getByText('Booked. Meena Shah (Mother) with Dr Mehta on Tue, 17 Nov, 2026, 10:15 at Indiranagar.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Meena Shah was added to the account’s family members.', { exact: false })).toBeVisible();
+  const [post] = books(backend);
+  expect(post!.body).toEqual({ slotId: slotIdOf(D1, BR1, '2026-11-17', '10:15'), customer: { phone: '9800000002', name: 'Kiran Shah' },
+    patient: { name: 'Meena Shah', relation: 'Mother', gender: 'Female', dateOfBirth: '1958-03-04' }, requestKey: expect.stringMatching(/^[0-9a-f]{32}$/) });
+  await expect(appointments(page).getByRole('row').filter({ hasText: 'Meena Shah' })).toContainText('Mother of Kiran Shah');
+  // No family list is ever read from the desk.
+  expect(backend.calls.some((c) => /dependents|family|customers/.test(c.path))).toBe(false);
+  expect(await storage(page)).not.toMatch(/Meena|9800000002/);
+});
+
+test('Q14 desk no-show: moved once to a later slot after a confirmation (key and version); a lost answer is settled by the day read again; a second move is refused', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.appts.find((a) => a.bookingId === AP1)!.status = 'no_show';
+  backend.loseNextNoShowMove = true;
+  await signInPartner(page);
+  await openDesk(page);
+  await page.getByRole('button', { name: 'Open Asha Rao at 09:30' }).click();
+  await expect(page.getByText('Did not come. Nothing is charged or refunded through Jansetu, and the doctor earns nothing for it.')).toBeVisible();
+  await page.getByRole('button', { name: 'Reschedule no-show' }).click();
+  const form = page.getByRole('form', { name: 'Reschedule no-show' });
+  await form.getByLabel('New day').fill('2026-11-18');
+  await form.getByLabel('New time').selectOption({ label: '11:00–11:15 (1 free)' });
+  await form.getByRole('button', { name: 'Continue' }).click();
+  await expect(form).toContainText('Move Asha Rao’s missed time (Tue, 17 Nov, 2026, 09:30) to Wed, 18 Nov, 2026, 11:00 at Indiranagar? It is booked again at the same price: nothing is paid or refunded.');
+  await expect(form).toContainText('the patient and the doctor are notified of the new time');
+  await form.getByRole('button', { name: 'Move to Wed, 18 Nov, 2026, 11:00 at Indiranagar' }).click();
+  // The move was made but its answer was lost: the day read again no longer has the appointment (a no-show leaves its
+  // day only by its one move). A read made after the attempt settles it; the page clock moves on so the read is later.
+  await expect(appointments(page).getByRole('row').filter({ hasText: 'Asha Rao' })).toHaveCount(0);
+  await page.clock.setFixedTime(new Date(NOW.getTime() + 60_000));
+  await page.getByRole('button', { name: 'Next day' }).click();
+  await page.getByRole('button', { name: 'Previous day' }).click();
+  await expect(page.getByText(/no-show has been moved to a new time \(it can be moved only once\)/)).toBeVisible();
+  const moves = backend.calls.filter((c) => c.path.endsWith('/reschedule-no-show'));
+  expect(moves).toHaveLength(1);
+  expect(moves[0]!.body).toEqual({ slotId: slotIdOf(D1, BR1, '2026-11-18', '11:00'), requestKey: expect.stringMatching(/^[0-9a-f]{32}$/), expectedUpdatedAt: '2026-11-16T05:00:00.000Z' });
+  await page.getByRole('button', { name: 'Next day' }).click();
+  await expect(appointments(page).getByRole('row').filter({ hasText: 'Asha Rao' })).toContainText('Booked');
+
+  // Marked a no-show again: the server refuses a second move; the page says it is final.
+  const a = backend.appts.find((x) => x.bookingId === AP1)!;
+  a.status = 'no_show';
+  touch(a);
+  await page.reload();
+  await openDesk(page);
+  await page.getByLabel('Day').fill('2026-11-18');
+  await page.getByRole('button', { name: 'Open Asha Rao at 11:00' }).click();
+  const form2 = page.getByRole('form', { name: 'Reschedule no-show' });
+  await page.getByRole('button', { name: 'Reschedule no-show' }).click();
+  await form2.getByLabel('New time').selectOption({ index: 1 });
+  await form2.getByRole('button', { name: 'Continue' }).click();
+  await form2.getByRole('button', { name: /^Move to/ }).click();
+  await expect(page.getByText('This booking was already moved once after a no-show. A second no-show is final, so it cannot be moved again.')).toBeVisible();
+});
+
+test('Q14 bill for an appointment: "Create bill" opens the form with the patient, doctor and appointment; the row then shows the bill; a second bill is refused', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await openDesk(page);
+  const row = appointments(page).getByRole('row').filter({ hasText: 'Asha Rao' });
+  await row.getByRole('link', { name: 'Create bill' }).click();
+  await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Appointment' })).toContainText('For the clinic appointment with Dr Mehta, Tue, 17 Nov, 2026, 09:30.');
+  await expect(page.getByLabel('Customer name')).toHaveValue('Asha Rao');
+  await expect(page.getByLabel('Mobile number (optional)')).toHaveValue('9800000001');
+  await expect(page.getByLabel('Branch', { exact: true })).toHaveValue(BR1);
+  await expect(page.getByLabel('Branch', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Doctor (optional)')).toHaveValue(D1);
+  // Nothing about the patient travels in the URL or browser storage.
+  expect(page.url()).not.toMatch(/Asha|9800000001|e1e1/);
+  expect(await storage(page)).not.toMatch(/Asha|9800000001/);
+  await page.getByLabel('From the catalogue').selectOption({ label: 'Consultation · ₹500.00' });
+  await page.getByRole('button', { name: 'Add item' }).click();
+  await page.getByRole('button', { name: 'Review the bill' }).click();
+  await expect(page.getByRole('group', { name: 'Issue the bill' })).toContainText('for the appointment with Dr Mehta, Tue, 17 Nov, 2026, 09:30?');
+  await page.getByRole('button', { name: 'Issue bill' }).click();
+  await expect(page.getByText(/^Bill SC\/2627\/000\d+ issued\./)).toBeVisible();
+  const create = backend.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/invoices')!;
+  expect(create.body).toMatchObject({ branchId: BR1, doctorId: D1, appointmentId: AP1, customer: { name: 'Asha Rao', phone: '9800000001' } });
+  // The bill shows its appointment, with the bills of that appointment one click away.
+  await expect(page.getByRole('definition').filter({ hasText: `Clinic appointment …${AP1.slice(-6)}` })).toBeVisible();
+
+  // Back at the desk the row shows the bill's number and status instead of "Create bill".
+  await page.goto('/#/partner/desk');
+  await expect(row.getByRole('link', { name: /^Bill SC\/2627\/000\d+, Unpaid$/ })).toBeVisible();
+  await expect(row.getByRole('link', { name: 'Create bill' })).toHaveCount(0);
+
+  // A second bill from a form opened before (another tab): refused, and said in plain words.
+  backend.appts.find((a) => a.bookingId === AP3)!.bill = { invoiceId: 'bb'.repeat(12), serial: 'SC/2627/0099', number: 99, state: 'issued' };
+  await appointments(page).getByRole('row').filter({ hasText: 'Chitra N' }).getByRole('link', { name: 'Create bill' }).click();
+  await page.getByLabel('From the catalogue').selectOption({ label: 'Consultation · ₹500.00' });
+  await page.getByRole('button', { name: 'Add item' }).click();
+  await page.getByRole('button', { name: 'Review the bill' }).click();
+  await page.getByRole('button', { name: 'Issue bill' }).click();
+  await expect(page.getByText('Not issued: This appointment already has a bill. Open it from the front desk; cancel it first to issue a new one.')).toBeVisible();
 });

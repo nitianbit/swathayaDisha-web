@@ -1,6 +1,6 @@
 import { createApiClient } from './client.ts';
 import {
-  addDays, capacityProblem, deriveTemplate, eligibleSigners, isBookable, isRealDate, istDateOf, labActions, labBookingsAdminApi,
+  addDays, capacityProblem, deriveTemplate, eligibleSigners, isBookable, isRealDate, istDateOf, labActions, labBookingsAdminApi, labNoShowMove,
   manualSlotProblems, mondayOf, partnerLabsApi, reopenable, reportFileBooking, reportFileName, reportFileProblem, slotTimesFor,
   templateProblems, weekdayOf, type LabBooking, type LabSlot,
 } from './partnerLabs.ts';
@@ -172,6 +172,29 @@ describe('lab booking transitions (services/labBookings.ts §4)', () => {
     expect(reportFileProblem({ name: 'r.docx', size: 10 })).toBe('r.docx: only PDF, JPEG, PNG or WebP files can be uploaded.');
     expect(reportFileProblem({ name: 'big.pdf', size: 10 * 1024 * 1024 + 1 })).toBe('big.pdf is larger than 10 MB.');
     expect(reportFileProblem({ name: 'empty.png', size: 0 })).toBe('empty.png is empty.');
+  });
+});
+
+describe('Q14 lab no-shows (rescheduleNoShow)', () => {
+  it('a no-show can be moved once by bookings.manage; a moved one shows as used', () => {
+    const viewer = { role: 'staff' as const, permissions: ['bookings.view' as const] };
+    const manager = { role: 'staff' as const, permissions: ['bookings.manage' as const] };
+    expect(labNoShowMove({ status: 'no_show' }, manager)).toBe('offer');
+    expect(labNoShowMove({ status: 'no_show', noShowReschedules: 1 }, manager)).toBe('used');
+    expect(labNoShowMove({ status: 'no_show' }, viewer)).toBeNull();
+    expect(labNoShowMove({ status: 'confirmed' }, ADMIN_ACTOR)).toBeNull();
+  });
+
+  it('sends the slot, the key and the status version; checks them first', async () => {
+    const { client, calls } = recorder();
+    const api = partnerLabsApi(client, { kind: 'admin', partnerId: P });
+    await api.rescheduleNoShow(K, S, 'n'.repeat(32), 3);
+    expect(calls[0]).toMatchObject({ method: 'POST', url: `/partner-workspace/admin/${P}/workspace/lab-bookings/${K}/reschedule-no-show`,
+      body: { slotId: S, requestKey: 'n'.repeat(32), expectedVersion: 3 } });
+    expect(() => api.rescheduleNoShow(K, S, 'short')).toThrow(/request key/);
+    expect(() => api.rescheduleNoShow(K, S, 'n'.repeat(32), -1)).toThrow(/version/);
+    expect(() => api.rescheduleNoShow(K, 'x', 'n'.repeat(32))).toThrow(/slot id/);
+    expect(calls).toHaveLength(1);
   });
 });
 

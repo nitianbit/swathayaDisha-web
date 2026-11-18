@@ -1,7 +1,7 @@
 import { createApiClient } from './client.ts';
 import {
-  allowedGstRates, catalogueAdminApi, classifyDocument, invoicePdfName, MAX_BILL_MINOR, paiseToInput, paiseToRupees,
-  partnerBillingApi, previewInvoice, registrationProblem, rupeesToPaise, type NewInvoiceLine,
+  allowedGstRates, catalogueAdminApi, classifyDocument, dueOf, invoicePdfName, MAX_BILL_MINOR, paidOf, paiseToInput, paiseToRupees,
+  partnerBillingApi, paymentProblem, previewInvoice, registrationProblem, rupeesToPaise, takesPayment, type Invoice, type NewInvoiceLine,
 } from './partnerInvoices.ts';
 
 const P = 'a1'.repeat(12);
@@ -112,8 +112,8 @@ describe('billing paths', () => {
     await admin.deactivateCatalogueItem(C);
     await member.invoices({ state: 'paid', branchId: P, limit: 50, cursor: `1763182800000_${I}`, from: '2026-11-01', to: '2026-11-15', q: 'Asha' });
     await admin.invoice(I);
-    await admin.recordPayment(I, { mode: 'upi', reference: 'UTR1' });
-    await member.cancelInvoice(I, 'Wrong patient', { mode: 'upi', reference: 'R1' });
+    await admin.recordPayment(I, { splits: [{ mode: 'cash', amountMinor: 50000 }, { mode: 'upi', amountMinor: 50800, reference: 'UTR1' }], requestKey: 'p'.repeat(32), expectedLifecycleVersion: 1 });
+    await member.cancelInvoice(I, 'Wrong patient', { mode: 'upi', reference: 'R1', amountMinor: 100800 });
     await admin.clinicDoctors();
     await catalogueAdminApi(client).disable(C);
     await catalogueAdminApi(client).enable(C);
@@ -130,8 +130,52 @@ describe('billing paths', () => {
       `POST /partner-workspace/admin/catalogue/${C}/disable`,
       `POST /partner-workspace/admin/catalogue/${C}/enable`,
     ]);
-    expect(calls[6]!.body).toEqual({ mode: 'upi', reference: 'UTR1' });
-    expect(calls[7]!.body).toEqual({ reason: 'Wrong patient', refund: { mode: 'upi', reference: 'R1' } });
+    expect(calls[6]!.body).toEqual({ splits: [{ mode: 'cash', amountMinor: 50000 }, { mode: 'upi', amountMinor: 50800, reference: 'UTR1' }], requestKey: 'p'.repeat(32), expectedLifecycleVersion: 1 });
+    expect(calls[7]!.body).toEqual({ reason: 'Wrong patient', refund: { mode: 'upi', reference: 'R1', amountMinor: 100800 } });
+  });
+
+  it('Q14: payments are split methods with a key and the version decided on; bills of one appointment; checked before sending', async () => {
+    const { client, calls } = recorder();
+    const api = partnerBillingApi(client, { kind: 'member' });
+    await api.invoices({ appointmentId: C, limit: 50 });
+    expect(calls[0]!.url).toBe(`/partner-workspace/invoices?appointmentId=${C}&limit=50`);
+    const ok = { splits: [{ mode: 'cash' as const, amountMinor: 100 }], requestKey: 'p'.repeat(32), expectedLifecycleVersion: 0 };
+    expect(() => api.recordPayment(I, { ...ok, requestKey: 'short' })).toThrow(/request key/);
+    expect(() => api.recordPayment(I, { ...ok, expectedLifecycleVersion: -1 })).toThrow(/version/);
+    expect(() => api.recordPayment(I, { ...ok, splits: [] })).toThrow(/payment/);
+    expect(() => api.recordPayment(I, { ...ok, splits: [{ mode: 'cash', amountMinor: 0 }] })).toThrow(/payment/);
+    expect(() => api.recordPayment(I, { ...ok, splits: [{ mode: 'gold' as never, amountMinor: 5 }] })).toThrow(/payment/);
+    expect(() => api.invoices({ appointmentId: '../x' })).toThrow(/appointment id/);
+    expect(() => api.createInvoice({ branchId: P, customer: { name: 'A' }, items: [], idempotencyKey: 'k', appointmentId: 'x' })).toThrow(/appointment id/);
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe('Q14 part payments (paidOf, withDue, recordPayment)', () => {
+  const bill = (o: Partial<Invoice>) => ({ lifecycleState: 'issued', totals: { totalMinor: 100800 }, ...o }) as Invoice;
+  it('reads what was paid and what is due, also for bills read before Q14', () => {
+    expect([paidOf(bill({})), dueOf(bill({}))]).toEqual([0, 100800]);
+    expect([paidOf(bill({ lifecycleState: 'paid' })), dueOf(bill({ lifecycleState: 'paid' }))]).toEqual([100800, 0]);
+    expect([paidOf(bill({ lifecycleState: 'partly_paid', paidMinor: 50000, dueMinor: 50800 })), dueOf(bill({ lifecycleState: 'partly_paid', paidMinor: 50000, dueMinor: 50800 }))]).toEqual([50000, 50800]);
+    expect(dueOf(bill({ lifecycleState: 'cancelled', paidMinor: 50000 }))).toBe(0);
+    expect(takesPayment(bill({}))).toBe(true);
+    expect(takesPayment(bill({ lifecycleState: 'partly_paid', paidMinor: 50000, dueMinor: 50800 }))).toBe(true);
+    expect(takesPayment(bill({ lifecycleState: 'paid' }))).toBe(false);
+    expect(takesPayment(bill({ lifecycleState: 'cancelled' }))).toBe(false);
+  });
+
+  it('never more than is due; with part payments off exactly what is due; 1–10 positive parts', () => {
+    const m = (n: number) => `₹${n / 100}`;
+    expect(paymentProblem([{ amountMinor: 100800 }], 100800, false, m)).toBeNull();
+    expect(paymentProblem([{ amountMinor: 50000 }, { amountMinor: 50800 }], 100800, false, m)).toBeNull();
+    expect(paymentProblem([{ amountMinor: 50000 }], 100800, false, m)).toBe('Only full payment is taken here: the amounts must add up to ₹1008.');
+    expect(paymentProblem([{ amountMinor: 50000 }], 100800, true, m)).toBeNull();
+    expect(paymentProblem([{ amountMinor: 100900 }], 100800, true, m)).toMatch(/more than is due \(₹1008\)/);
+    expect(paymentProblem([{ amountMinor: null }], 100800, true, m)).toMatch(/Enter each amount/);
+    expect(paymentProblem([{ amountMinor: 0 }], 100800, true, m)).toMatch(/Enter each amount/);
+    expect(paymentProblem([], 100800, true, m)).toMatch(/how the bill was paid/);
+    expect(paymentProblem(Array.from({ length: 11 }, () => ({ amountMinor: 1 })), 100800, true, m)).toMatch(/At most 10/);
+    expect(paymentProblem([{ amountMinor: 1, reference: 'x'.repeat(201) }], 100800, true, m)).toMatch(/200 characters/);
   });
 
   it('Q10: inactive items, reactivate, bill lookup and abandon by key; keys checked before any path', async () => {

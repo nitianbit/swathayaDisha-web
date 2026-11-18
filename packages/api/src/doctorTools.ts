@@ -1,8 +1,10 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import { appointmentInstant } from './cancellationWindow.ts';
+import type { BookingNoShowMove } from './clinic.ts';
+import { noShowMovedOnce } from './noShows.ts';
 import { isRealDate } from './partnerLabs.ts';
 import {
-  GSTIN_PATTERN, HHMM_PATTERN, INVOICE_PREFIX_PATTERN, OBJECT_ID_PATTERN, PAN_PATTERN, PARTNER_PHONE_PATTERN, type BranchAddress,
+  EMAIL_PATTERN, GSTIN_PATTERN, HHMM_PATTERN, INVOICE_PREFIX_PATTERN, OBJECT_ID_PATTERN, PAN_PATTERN, PARTNER_PHONE_PATTERN, type BranchAddress,
   type VerificationState, type Weekday,
 } from './partners.ts';
 
@@ -308,10 +310,51 @@ export interface DoctorAppointment {
   /** The call link (`syncBookingMeet`), made AFTER a booking commits: it may be missing for a while, or have failed. */
   virtualMeeting?: { status?: 'active' | 'cancelled' | 'failed'; joinUrl?: string; error?: string };
   cancellationReason?: string;
+  /** Q14: the current no-show (who marked it, when), and the no-show it was moved after (at most one) with the count. */
+  noShow?: { at: string; by: string; byKind: string };
+  noShows?: BookingNoShowMove[];
+  noShowReschedules?: number;
   createdAt?: string;
+  /** The version a no-show move names (`expectedUpdatedAt`, 409 BOOKING_CHANGED when it moved). */
+  updatedAt?: string;
 }
 
 export type AppointmentAction = 'confirm' | 'complete' | 'cancel' | 'no_show';
+
+/**
+ * Q14 `rescheduleNoShow` (`bookings/services`): the doctor may move their own no-show once to a later slot (same price,
+ * no payment, no refund). Instant consultations are never moved. 'offer' = it can be moved now; 'used' = it was moved
+ * once already (a second no-show is final); null = nothing to move.
+ */
+export function doctorNoShowMove(b: Pick<DoctorAppointment, 'status' | 'bookingKind' | 'noShows' | 'noShowReschedules'>): 'offer' | 'used' | null {
+  if (b.status !== 'no_show' || b.bookingKind === 'instant') return null;
+  return noShowMovedOnce(b) ? 'used' : 'offer';
+}
+
+/** `GET /specialists/me/slots?date=` (`findManagedBySpecialistId`): every slot of the doctor that day, as stored. */
+export interface DoctorSlot {
+  _id: string;
+  /** YYYYMMDD. */
+  date: string;
+  /** "HH:mm" (template slots) or "h:mm AM" (older slots). */
+  startTime: string;
+  endTime: string;
+  maxBookings?: number;
+  currentBookings?: number;
+  isAvailable?: boolean;
+  isActive?: boolean;
+  /** A clinic branch for in-person slots. */
+  branchId?: string;
+  closedReason?: string;
+}
+
+/** A slot the doctor could move a no-show onto: open, a seat free, and not yet started (`reserveSlot`, `startedClock`). */
+export function movableSlot(s: DoctorSlot, now: Date): boolean {
+  if (s.isActive === false || s.isAvailable === false || s.closedReason) return false;
+  if ((s.currentBookings ?? 0) >= (s.maxBookings ?? 1)) return false;
+  const at = appointmentInstant(s.date, s.startTime)?.at;
+  return !!at && at.getTime() > now.getTime();
+}
 
 /**
  * The status commands the server would accept now (`updateAppointmentStatus`): confirm a paid waiting booking; complete
@@ -325,7 +368,9 @@ export function appointmentActions(b: DoctorAppointment, now: Date): Appointment
   if (b.status !== 'confirmed') return [];
   const out: AppointmentAction[] = [];
   if (paid || b.settlementSystem !== 'ledger') out.push('complete');
-  out.push('cancel');
+  // Q14: a booking moved after a no-show is never refunded, so it is not cancelled (409 NO_SHOW_NOT_REFUNDABLE; desk rows
+  // paid at the clinic excepted: nothing was taken through Jansetu).
+  if (!noShowMovedOnce(b) || b.settlementSystem === 'clinic') out.push('cancel');
   const at = appointmentInstant(b.bookingDate, b.bookingTime);
   if (paid && at && at.at.getTime() <= now.getTime()) out.push('no_show');
   return out;
@@ -375,6 +420,23 @@ export interface SoloPractice {
 }
 export interface SoloPracticeCreated { partner: SoloPractice['partner']; branch?: SoloPractice['branches'][number]; created: boolean }
 
+/**
+ * Q14 `doctorClinicSchema` (`POST /specialists/me/clinic`): the doctor's own clinic — the practice fields, an optional
+ * contact email, and a request key. The doctor becomes its owner and consults at its first branch; Jansetu verifies it.
+ * A second clinic is 409 DOCTOR_CLINIC_EXISTS; the same key and content answer the clinic already made (`replayed`).
+ */
+export interface DoctorClinicInput extends SoloPracticeInput { contactEmail?: string }
+export interface DoctorClinicCreated extends SoloPracticeCreated { replayed?: boolean }
+/** Q14 `findDoctorClinicByKey`: the clinic a lost create made (404 CLINIC_NOT_FOUND when none). */
+export interface DoctorClinicFound { partner: SoloPractice['partner']; branches: SoloPractice['branches'] }
+
+/** `doctorClinicSchema`: the practice rules plus a valid email when one is given. */
+export function doctorClinicProblems(p: DoctorClinicInput): Partial<Record<PracticeField | 'contactEmail', string>> {
+  const out: Partial<Record<PracticeField | 'contactEmail', string>> = soloPracticeProblems(p);
+  if (p.contactEmail?.trim() && !EMAIL_PATTERN.test(p.contactEmail.trim())) out.contactEmail = 'Enter a valid email address, or leave it empty.';
+  return out;
+}
+
 type PracticeField = 'name' | 'legalName' | 'invoiceSeriesPrefix' | 'gstin' | 'pan' | 'branchName' | 'branchPhone' | 'line1' | 'city' | 'state' | 'stateCode' | 'pincode';
 /** `soloPracticeSchema` (and `addressSchema`), per field. */
 export function soloPracticeProblems(p: SoloPracticeInput): Partial<Record<PracticeField, string>> {
@@ -389,6 +451,11 @@ export function soloPracticeProblems(p: SoloPracticeInput): Partial<Record<Pract
   if (!PARTNER_PHONE_PATTERN.test(p.branch.phone.trim())) out.branchPhone = 'Enter the 10-digit number.';
   for (const k of ['line1', 'city', 'state', 'stateCode', 'pincode'] as const) if (!len(p.branch.address[k])) out[k] = 'Required.';
   return out;
+}
+
+function clinicBody(p: DoctorClinicInput): DoctorClinicInput {
+  const email = p.contactEmail?.trim();
+  return { ...practiceBody(p), ...(email ? { contactEmail: email } : {}) };
 }
 
 function practiceBody(p: SoloPracticeInput): SoloPracticeInput {
@@ -582,6 +649,19 @@ export function doctorToolsApi(c: ApiClient) {
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(yearMonth)) throw new Error('Invalid month');
       return c.get<DoctorAppointment[]>(`${ME}/appointments`, { query: { view: 'month', yearMonth: yearMonth.replace('-', '') } });
     },
+    /** Q14: the doctor's slots of one India-time day (`YYYY-MM-DD`), to pick a new time for a no-show. */
+    slotsOn: (date: string) => c.get<DoctorSlot[]>(`${ME}/slots`, { query: { date: toYmd(date) } }),
+    /**
+     * Q14: moves the doctor's own no-show once to a later slot (same price, no payment, no refund). `expectedUpdatedAt` is
+     * the booking version the move was decided on (409 BOOKING_CHANGED). The same key and slot answer it again (`replayed`).
+     */
+    rescheduleNoShow: (bookingId: string, slotId: string, requestKey: string, expectedUpdatedAt?: string) => {
+      if (!REQUEST_KEY.test(requestKey)) throw new Error('Invalid request key');
+      if (expectedUpdatedAt !== undefined && Number.isNaN(Date.parse(expectedUpdatedAt))) throw new Error('Invalid booking version');
+      return c.post<DoctorAppointment & { replayed?: boolean }>(`${ME}/bookings/${checkId(bookingId, 'booking')}/reschedule-no-show`, {
+        body: { slotId: checkId(slotId, 'slot'), requestKey, ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}) },
+      });
+    },
     setAppointmentStatus: (id: string, status: 'confirmed' | 'completed' | 'cancelled' | 'no_show', reason?: string) =>
       c.patch<DoctorAppointment>(`${ME}/appointments/${checkId(id, 'appointment')}/status`, {
         body: { status, ...(reason && reason.trim() ? { reason: reason.trim().slice(0, 500) } : {}) },
@@ -592,11 +672,18 @@ export function doctorToolsApi(c: ApiClient) {
     acceptInvite: (inviteId: string) => c.post<{ accepted: true; partnerId: string; memberId: string }>(`${ME}/clinic-invites/${checkId(inviteId, 'invitation')}/accept`),
     declineInvite: (inviteId: string) => c.post<{ accepted: false; partnerId: string }>(`${ME}/clinic-invites/${checkId(inviteId, 'invitation')}/decline`),
     leaveClinic: (partnerId: string) => c.post<{ left: true }>(`${ME}/clinics/${checkId(partnerId, 'clinic')}/leave`),
+    /** The doctor's own clinic (solo practice), or null. Q14 `GET /me/clinic` answers the same. */
     practice: () => c.get<SoloPractice | null>(`${ME}/practice`),
-    /** One practice per doctor: a repeat (any content) answers the existing one with `created: false`. */
-    createPractice: (p: SoloPracticeInput) => {
-      if (Object.keys(soloPracticeProblems(p)).length) throw new Error('Invalid practice');
-      return c.post<SoloPracticeCreated>(`${ME}/practice`, { body: practiceBody(p) });
+    /** Q14: creates the doctor's own clinic exactly once per request key (see `DoctorClinicInput`). */
+    createMyClinic: (p: DoctorClinicInput, requestKey: string) => {
+      if (Object.keys(doctorClinicProblems(p)).length) throw new Error('Invalid clinic');
+      if (!REQUEST_KEY.test(requestKey)) throw new Error('Invalid request key');
+      return c.post<DoctorClinicCreated>(`${ME}/clinic`, { body: { ...clinicBody(p), requestKey } });
+    },
+    /** Q14: the clinic a lost create made, by its key (404 CLINIC_NOT_FOUND: nothing made with it, so far). */
+    myClinicByKey: (key: string) => {
+      if (!REQUEST_KEY.test(key)) throw new Error('Invalid request key');
+      return c.get<DoctorClinicFound>(`${ME}/clinic/by-key/${key}`);
     },
 
     // Earnings (Q5)
@@ -625,4 +712,32 @@ export function doctorToolsApi(c: ApiClient) {
 }
 
 export type DoctorToolsApi = ReturnType<typeof doctorToolsApi>;
+
+/** A doctor as the admin directory lists them (`GET /specialists`, admins see every field the record has). */
+export interface DirectoryDoctor {
+  _id: string; name: string; specialization?: string; phone?: string; city?: string; isActive?: boolean; isVerified?: boolean;
+}
+export const MAX_DIRECTORY_SEARCH = 100;
+
+/** Platform admins: finding doctors to link to a clinic, and moving a doctor's no-show (any doctor's booking). */
+export function doctorAdminApi(c: ApiClient) {
+  return {
+    /**
+     * Verified, active doctors matching the text (name or speciality; the server's text search), 20 a page. Whether a
+     * mobile number matches depends on the server's search index (ASSUMED; the rows show each doctor's mobile to check).
+     */
+    search: (text: string, page = 1) => {
+      const t = text.trim();
+      if (!t || t.length > MAX_DIRECTORY_SEARCH) throw new Error('Invalid search');
+      return c.page<DirectoryDoctor>('/specialists', { query: { search: t, isVerified: 'true', isActive: 'true', page, limit: 20 } });
+    },
+    /** Q14 `POST /specialists/admin/bookings/:id/reschedule-no-show`: as the doctor's own move, for any booking. */
+    rescheduleNoShow: (bookingId: string, slotId: string, requestKey: string, expectedUpdatedAt?: string) => {
+      if (!REQUEST_KEY.test(requestKey)) throw new Error('Invalid request key');
+      return c.post<DoctorAppointment & { replayed?: boolean }>(`/specialists/admin/bookings/${checkId(bookingId, 'booking')}/reschedule-no-show`, {
+        body: { slotId: checkId(slotId, 'slot'), requestKey, ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}) },
+      });
+    },
+  };
+}
 

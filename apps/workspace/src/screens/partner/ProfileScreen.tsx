@@ -75,6 +75,7 @@ function Profile({ ctx }: { ctx: ScopeContext }) {
               </p>
             </section>
             {canEditProfile(ctx.actor) && <ContactForm ctx={ctx} partner={p!} />}
+            <CounterPayments key={p!.updatedAt ?? ''} ctx={ctx} partner={p!} />
           </>
         )}
     </>
@@ -153,6 +154,71 @@ function ContactForm({ ctx, partner }: { ctx: ScopeContext; partner: Partner }) 
         {error && <Alert>{error}</Alert>}
         <Button type="submit" busy={busy}>Save</Button>
       </form>
+    </section>
+  );
+}
+
+/**
+ * Q14 `allowPartPayments` (default off): whether an in-house bill may be paid in several payments. Owners (and admins as
+ * owner) change it; the choice is checked against what is saved right before sending (another change meanwhile resets it
+ * for review) and the write names that version (`expectedUpdatedAt`, 409 RECORD_CHANGED).
+ */
+function CounterPayments({ ctx, partner }: { ctx: ScopeContext; partner: Partner }) {
+  const queryClient = useQueryClient();
+  const base = partner.allowPartPayments === true;
+  const [on, setOn] = useState(base);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const canEdit = canEditProfile(ctx.actor);
+  const words = (v: boolean) => (v
+    ? 'Part payments are allowed: a bill can be paid in several payments, any amount up to what is due each time.'
+    : 'Full payment only: each payment settles everything still due (it may be split across methods, such as cash and UPI).');
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setNotice(null); setError(null);
+    if (on === base) { setNotice('Nothing has changed.'); return; }
+    setBusy(true);
+    try {
+      const fresh = await ctx.api.me();
+      if ((fresh.allowPartPayments === true) !== base) {
+        queryClient.setQueryData([...ctx.key, 'me'], fresh);
+        setError('Someone else changed this setting while you were editing. The page now shows what is saved; choose again if needed.');
+        return;
+      }
+      try {
+        const updated = await ctx.api.updateMe({ allowPartPayments: on }, fresh.updatedAt);
+        queryClient.setQueryData([...ctx.key, 'me'], updated);
+      } catch (err) {
+        if (!isRecordChanged(err)) throw err;
+        queryClient.setQueryData([...ctx.key, 'me'], await ctx.api.me());
+        setError(RECORD_CHANGED_MESSAGE);
+      }
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="ws-section" aria-labelledby="pay-policy-h">
+      <h2 id="pay-policy-h">Payments at the counter</h2>
+      <p>{words(base)}</p>
+      {canEdit ? (
+        <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
+          <fieldset className="ws-frozen" disabled={busy}>
+            <label className="ws-check">
+              <input type="checkbox" checked={on} onChange={(e) => setOn(e.target.checked)} /> Allow part payments of bills
+            </label>
+          </fieldset>
+          {on !== base && <p className="ws-muted">After saving: {words(on)}</p>}
+          {notice && <Alert tone="ok">{notice}</Alert>}
+          {error && <Alert tone="warn">{error}</Alert>}
+          <Button type="submit" busy={busy}>Save payment setting</Button>
+        </form>
+      ) : <p className="ws-muted">Only an owner can change this.</p>}
     </section>
   );
 }

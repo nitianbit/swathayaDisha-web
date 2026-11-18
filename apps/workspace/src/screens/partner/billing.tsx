@@ -44,3 +44,27 @@ export function useClinicDoctors(ctx: ScopeContext, kind: PartnerKind | undefine
     enabled: kind === 'clinic' && canReadDoctors(ctx),
   });
 }
+
+/**
+ * Q14: "Create bill" from a clinic appointment hands the new-bill form the patient, doctor, branch and appointment. Kept
+ * in session memory only (never a URL or browser storage), read once by the form.
+ */
+export interface BillPrefill {
+  appointmentId: string;
+  branchId: string;
+  doctorId: string;
+  name: string;
+  phone: string;
+  /** "Dr Mehta, Tue, 17 Nov 2026, 09:30" — what the form shows about the appointment. */
+  label: string;
+}
+export const billPrefillSlot = (identity: string) => `invoice-prefill:${identity}`;
+
+/** Q14 refusals of a bill for an appointment (`admitAppointment`), in words staff can act on. */
+export const APPOINTMENT_BILL_REFUSAL: Record<string, string> = {
+  APPOINTMENT_ALREADY_BILLED: 'This appointment already has a bill. Open it from the front desk; cancel it first to issue a new one.',
+  APPOINTMENT_BRANCH_MISMATCH: 'A bill for an appointment is issued by the branch where the appointment takes place.',
+  APPOINTMENT_DOCTOR_MISMATCH: 'The bill names a different doctor than the appointment.',
+  APPOINTMENT_CANCELLED: 'This appointment was cancelled, so it cannot be billed.',
+  APPOINTMENT_NOT_FOUND: 'This appointment was not found at this clinic (or not at one of your branches).',
+};

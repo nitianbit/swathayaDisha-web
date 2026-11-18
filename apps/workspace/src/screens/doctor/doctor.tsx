@@ -130,7 +130,10 @@ export function useUpcomingAppointments(d: DoctorContext, days: number, refetchI
   const from = today.replace(/-/g, '');
   const to = last.replace(/-/g, '');
   const items = pending || error ? [] : qs.flatMap((q) => q.data ?? []).filter((b) => b.bookingDate >= from && b.bookingDate <= to).sort(byStart);
-  return { items, pending, error, today, refetch: () => Promise.all(qs.map((q) => q.refetch())) };
+  // When every month was last read, and whether one is being read again (Q14: decides a stored no-show move).
+  const readAt = Math.min(...qs.map((q) => q.dataUpdatedAt));
+  const fetching = qs.some((q) => q.isFetching);
+  return { items, pending, error, today, readAt, fetching, refetch: () => Promise.all(qs.map((q) => q.refetch())) };
 }
 
 export const sortAppointments = (list: readonly DoctorAppointment[]) => [...list].sort(byStart);

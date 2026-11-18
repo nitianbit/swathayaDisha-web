@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { Link } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import {
-  DOCUMENT_KIND_LABEL, holdsAny, INVOICE_STATE_LABEL, ISO_DATE_PATTERN, type Invoice, type InvoiceQuery, type InvoiceState,
+  DOCUMENT_KIND_LABEL, dueOf, holdsAny, INVOICE_STATE_LABEL, INVOICE_STATES, ISO_DATE_PATTERN, OBJECT_ID_PATTERN, type Invoice, type InvoiceQuery, type InvoiceState,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
@@ -10,10 +10,16 @@ import { money } from './billing.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
 const PAGE = 50;
-const STATES: InvoiceState[] = ['issued', 'paid', 'cancelled'];
+const STATES = INVOICE_STATES;
 const MAX_SEARCH = 100;
 
 export const stateTone = (s: InvoiceState) => (s === 'paid' ? 'ok' : s === 'cancelled' ? 'danger' : 'warn');
+
+/** Q14: the appointment whose bills are shown, when the list was opened from an appointment or a bill (an id in page state only). */
+export function appointmentFilterOf(state: unknown): string | undefined {
+  const id = (state as { appointmentId?: unknown } | null)?.appointmentId;
+  return typeof id === 'string' && OBJECT_ID_PATTERN.test(id) ? id : undefined;
+}
 
 /** In-house bills of this lab or clinic (`invoices.create`, `invoices.cancel`, `payments.record` or `finance.view`). */
 export function InvoicesScreen() {
@@ -24,7 +30,7 @@ export function InvoicesScreen() {
 }
 
 /** The filters as the server takes them (Q10 `invoiceQuerySchema`), or the problem with the dates. */
-export function billFilter(f: { state: string; branchId: string; from: string; to: string; q: string }):
+export function billFilter(f: { state: string; branchId: string; from: string; to: string; q: string; appointmentId?: string }):
   { query: InvoiceQuery; error: string | null } {
   const from = f.from.trim();
   const to = f.to.trim();
@@ -34,7 +40,7 @@ export function billFilter(f: { state: string; branchId: string; from: string; t
   return {
     query: {
       state: (f.state || undefined) as InvoiceState | undefined, branchId: f.branchId || undefined,
-      from: from || undefined, to: to || undefined, q: q || undefined, limit: PAGE,
+      from: from || undefined, to: to || undefined, q: q || undefined, ...(f.appointmentId ? { appointmentId: f.appointmentId } : {}), limit: PAGE,
     },
     error: null,
   };
@@ -43,9 +49,11 @@ export function billFilter(f: { state: string; branchId: string; from: string; t
 function Invoices({ ctx }: { ctx: ScopeContext }) {
   const partner = useWorkspacePartner(ctx);
   const branches = useBranches(ctx);
+  const location = useLocation();
+  const [appointmentId, setAppointmentId] = useState(() => appointmentFilterOf(location.state));
   const [f, setF] = useState({ state: '', branchId: '', from: '', to: '', q: '' });
   const [search, setSearch] = useState('');
-  const { query, error } = billFilter(f);
+  const { query, error } = billFilter({ ...f, appointmentId });
   const list = useInfiniteQuery({
     queryKey: [...ctx.key, 'invoices', query],
     queryFn: ({ pageParam }) => ctx.billing.invoices({ ...query, cursor: pageParam }),
@@ -59,7 +67,7 @@ function Invoices({ ctx }: { ctx: ScopeContext }) {
   const total = list.data?.pages[0]?.total;
   const canCreate = holdsAny(ctx.actor, ['invoices.create']);
   const readOnly = !holdsAny(ctx.actor, ['invoices.create', 'invoices.cancel', 'payments.record']);
-  const filtered = !!(query.state || query.branchId || query.from || query.to || query.q);
+  const filtered = !!(query.state || query.branchId || query.from || query.to || query.q || query.appointmentId);
 
   function applySearch(e: FormEvent) {
     e.preventDefault();
@@ -72,6 +80,12 @@ function Invoices({ ctx }: { ctx: ScopeContext }) {
         Bills issued at the counter, newest first.{readOnly ? ' You can view bills and their PDFs.' : ''}
       </PartnerPageHeading>
       {canCreate && <div><Link className="j-btn j-btn--primary" to={`${ctx.link('invoices')}/new`}>New bill</Link></div>}
+      {appointmentId && (
+        <div className="ws-actions" role="status">
+          <span>Showing the bills of clinic appointment …{appointmentId.slice(-6)}.</span>
+          <Button variant="secondary" onClick={() => setAppointmentId(undefined)}>Show all bills</Button>
+        </div>
+      )}
       <form className="ws-search" role="search" aria-label="Find bills" onSubmit={applySearch}>
         <TextField label="Bill number, customer name or phone" type="search" maxLength={MAX_SEARCH} value={search} onChange={(e) => setSearch(e.target.value)} />
         <Button type="submit" variant="secondary">Search</Button>
@@ -116,7 +130,10 @@ function Invoices({ ctx }: { ctx: ScopeContext }) {
                       <td>{names.get(inv.branchId) ?? `Branch …${inv.branchId.slice(-6)}`}</td>
                       <td>{DOCUMENT_KIND_LABEL[inv.documentKind] ?? inv.documentKind}</td>
                       <td>{money(inv.totals?.totalMinor)}</td>
-                      <td><Badge tone={stateTone(inv.lifecycleState)}>{INVOICE_STATE_LABEL[inv.lifecycleState] ?? inv.lifecycleState}</Badge></td>
+                      <td>
+                        <Badge tone={stateTone(inv.lifecycleState)}>{INVOICE_STATE_LABEL[inv.lifecycleState] ?? inv.lifecycleState}</Badge>
+                        {inv.lifecycleState === 'partly_paid' && <div className="ws-muted">{money(dueOf(inv))} due</div>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

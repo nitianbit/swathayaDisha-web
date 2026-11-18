@@ -1,6 +1,6 @@
 import { ApiError, createApiClient } from './client.ts';
 import {
-  appointmentActions, doctorStanding, meetingLinkState, doctorToolsApi, fromYmd, instantRefusal, offerSecondsLeft, payoutDetailsProblems, periodProblem,
+  appointmentActions, doctorAdminApi, doctorClinicProblems, doctorNoShowMove, doctorStanding, meetingLinkState, doctorToolsApi, fromYmd, movableSlot, instantRefusal, offerSecondsLeft, payoutDetailsProblems, periodProblem,
   presenceProblems, scheduleProblems, schedulableBranches, scheduleSlotCount, soloPracticeProblems, statementCsvName, toYmd,
   type DoctorAppointment, type SoloPracticeInput,
 } from './doctorTools.ts';
@@ -117,6 +117,56 @@ describe('appointment commands offered (updateAppointmentStatus, markNoShow, can
     expect(appointmentActions(appt({ paymentStatus: 'pending', settlementSystem: 'clinic' }), after)).toEqual(['complete', 'cancel']);
     for (const status of ['completed', 'cancelled', 'no_show'] as const) expect(appointmentActions(appt({ status }), after)).toEqual([]);
     expect(appointmentActions(appt({ status: 'pending', bookingKind: 'instant' }), after)).toEqual([]);
+    // Q14: moved after a no-show: never cancelled for a refund (desk rows paid at the clinic still may be).
+    expect(appointmentActions(appt({ noShowReschedules: 1 }), after)).toEqual(['complete', 'no_show']);
+    expect(appointmentActions(appt({ noShowReschedules: 1, settlementSystem: 'clinic' }), after)).toContain('cancel');
+  });
+});
+
+describe('Q14 no-shows (rescheduleNoShow: once, never instant, no earning)', () => {
+  it('offers the one move on a scheduled no-show, shows it used afterwards, never for instant consultations', () => {
+    expect(doctorNoShowMove(appt({ status: 'no_show' }))).toBe('offer');
+    expect(doctorNoShowMove(appt({ status: 'no_show', noShowReschedules: 1 }))).toBe('used');
+    expect(doctorNoShowMove(appt({ status: 'no_show', noShows: [{ rescheduledAt: '2026-11-16T05:00:00Z' }] }))).toBe('used');
+    expect(doctorNoShowMove(appt({ status: 'no_show', bookingKind: 'instant' }))).toBeNull();
+    expect(doctorNoShowMove(appt({ status: 'confirmed', noShowReschedules: 1 }))).toBeNull();
+  });
+
+  it('a slot to move onto is open, has a free seat and has not started', () => {
+    const now = new Date('2026-11-17T04:30:00.000Z'); // 10:00 IST
+    const slot = { _id: ID, date: '20261117', startTime: '11:00', endTime: '11:15', maxBookings: 1, currentBookings: 0 };
+    expect(movableSlot(slot, now)).toBe(true);
+    expect(movableSlot({ ...slot, startTime: '09:45' }, now)).toBe(false);
+    expect(movableSlot({ ...slot, currentBookings: 1 }, now)).toBe(false);
+    expect(movableSlot({ ...slot, isAvailable: false }, now)).toBe(false);
+    expect(movableSlot({ ...slot, closedReason: 'leave' }, now)).toBe(false);
+    expect(movableSlot({ ...slot, startTime: '9:30 PM' }, now)).toBe(true);
+  });
+
+  it('moves with a key and the version decided on; admins search verified doctors and move any booking', async () => {
+    const { api, calls } = recorder();
+    await api.slotsOn('2026-11-18');
+    await api.rescheduleNoShow(ID, BR, 'n'.repeat(32), '2026-11-17T04:00:00.000Z');
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(['GET /specialists/me/slots?date=20261118', `POST /specialists/me/bookings/${ID}/reschedule-no-show`]);
+    expect(calls[1]!.body).toEqual({ slotId: BR, requestKey: 'n'.repeat(32), expectedUpdatedAt: '2026-11-17T04:00:00.000Z' });
+    expect(() => api.rescheduleNoShow(ID, BR, 'short')).toThrow(/request key/);
+    expect(() => api.rescheduleNoShow(ID, 'x', 'n'.repeat(32))).toThrow(/slot id/);
+    expect(() => api.myClinicByKey('../x')).toThrow(/request key/);
+    const urls: string[] = [];
+    const admin = doctorAdminApi(createApiClient({ baseUrl: 'https://api.example.test', getToken: () => 'tok',
+      fetchImpl: async (u) => { urls.push(String(u).replace('https://api.example.test/api/v1', ''));
+        return new Response(JSON.stringify({ success: true, data: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 1 } }), { status: 200 }); } }));
+    await admin.search(' Mehta ');
+    expect(urls).toEqual(['/specialists?search=Mehta&isVerified=true&isActive=true&page=1&limit=20']);
+    expect(() => admin.search('  ')).toThrow(/search/);
+  });
+
+  it('checks the own clinic like doctorClinicSchema (practice rules and an optional email)', () => {
+    const base = { name: 'Dr Rao Clinic', invoiceSeriesPrefix: 'DRK', branch: { name: 'Main', phone: '9000000001',
+      address: { line1: '1 Main Rd', city: 'Bengaluru', state: 'Karnataka', stateCode: '29', pincode: '560001' } } };
+    expect(doctorClinicProblems(base)).toEqual({});
+    expect(doctorClinicProblems({ ...base, contactEmail: 'rao@clinic.in' })).toEqual({});
+    expect(doctorClinicProblems({ ...base, contactEmail: 'rao@' }).contactEmail).toMatch(/valid email/);
   });
 });
 
@@ -245,10 +295,12 @@ describe('paths and bodies', () => {
 
   it('sends a practice and bank details normalised', async () => {
     const { api, calls } = recorder();
-    await api.createPractice({ name: ' Dr Rao Clinic ', invoiceSeriesPrefix: 'drk', gstin: '', pan: 'abcde1234f', legalName: '  ',
-      branch: { name: 'Main', phone: '9000000001', address: { line1: '1 Main Rd', line2: '', city: 'Bengaluru', state: 'Karnataka', stateCode: '29', pincode: '560001' } } });
+    await api.createMyClinic({ name: ' Dr Rao Clinic ', invoiceSeriesPrefix: 'drk', gstin: '', pan: 'abcde1234f', legalName: '  ', contactEmail: ' ',
+      branch: { name: 'Main', phone: '9000000001', address: { line1: '1 Main Rd', line2: '', city: 'Bengaluru', state: 'Karnataka', stateCode: '29', pincode: '560001' } } }, 'c'.repeat(32));
     await api.setPayoutDetails({ method: 'bank', accountName: ' Dr Rao ', accountNumber: '1234 5678 9012', ifsc: 'hdfc0001234', bankName: ' ', upiId: 'x@y' }, 0);
-    expect(calls[0]!.body).toEqual({ name: 'Dr Rao Clinic', invoiceSeriesPrefix: 'DRK', pan: 'ABCDE1234F',
+    // Q14: the doctor's own clinic is keyed (POST /me/clinic); an empty email is left out.
+    expect(calls[0]!.url).toBe('/specialists/me/clinic');
+    expect(calls[0]!.body).toEqual({ name: 'Dr Rao Clinic', invoiceSeriesPrefix: 'DRK', pan: 'ABCDE1234F', requestKey: 'c'.repeat(32),
       branch: { name: 'Main', phone: '9000000001', address: { line1: '1 Main Rd', city: 'Bengaluru', state: 'Karnataka', stateCode: '29', pincode: '560001' } } });
     expect(calls[1]!.body).toEqual({ method: 'bank', accountName: 'Dr Rao', accountNumber: '123456789012', ifsc: 'HDFC0001234', expectedDetailsVersion: 0 });
   });

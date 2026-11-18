@@ -1,7 +1,7 @@
 import { createApiClient } from './client.ts';
 import {
   appointmentAt, appointmentDay, appointmentRangeProblem, canonicalMobile, clinicBranchesFor, deskActions, deskBookingProblems, doctorsAtBranch,
-  inviteProblems, partnerClinicApi, type ClinicAppointment,
+  familyMemberProblems, linkProblems, partnerClinicApi, type ClinicAppointment,
 } from './clinic.ts';
 import { ADMIN_ACTOR, type Branch } from './partners.ts';
 
@@ -41,16 +41,25 @@ describe('mobile numbers (canonicalMobile, common/utils/phone.ts)', () => {
   });
 });
 
-describe('invitations (inviteDoctorSchema, assertScopeWithin, clinicBranch)', () => {
-  it('needs a mobile or a doctor id, and keeps a restricted manager inside their branches', () => {
-    expect(inviteProblems({ by: 'phone', value: '98765 43210', branchIds: [] }, owner)).toEqual({});
-    expect(inviteProblems({ by: 'phone', value: '12345', branchIds: [] }, owner).value).toMatch(/ten-digit/);
-    expect(inviteProblems({ by: 'doctorId', value: D, branchIds: [B1, B2] }, owner)).toEqual({});
-    expect(inviteProblems({ by: 'doctorId', value: 'abc', branchIds: [] }, owner).value).toMatch(/24 characters/);
-    expect(inviteProblems({ by: 'doctorId', value: D, branchIds: [] }, restricted).branchIds).toMatch(/your own branches/);
-    expect(inviteProblems({ by: 'doctorId', value: D, branchIds: [B2] }, restricted).branchIds).toMatch(/your own branches/);
-    expect(inviteProblems({ by: 'doctorId', value: D, branchIds: [B1] }, restricted)).toEqual({});
-    expect(inviteProblems({ by: 'doctorId', value: D, branchIds: Array.from({ length: 51 }, () => B1) }, owner).branchIds).toMatch(/at most 50/);
+describe('Q14 doctor links (linkDoctorSchema, clinicBranch) and family members at the desk (deskPatientSchema)', () => {
+  it('needs a chosen doctor and branches of this clinic, at most 50', () => {
+    const offered = [{ _id: B1 }, { _id: B2 }];
+    expect(linkProblems({ doctorId: D, branchIds: [] }, offered)).toEqual({});
+    expect(linkProblems({ doctorId: D, branchIds: [B1, B2] }, offered)).toEqual({});
+    expect(linkProblems({ doctorId: '', branchIds: [] }, offered).doctorId).toMatch(/Choose the doctor/);
+    expect(linkProblems({ doctorId: D, branchIds: ['c9'.repeat(12)] }, offered).branchIds).toMatch(/branches of this clinic/);
+    expect(linkProblems({ doctorId: D, branchIds: Array.from({ length: 51 }, () => B1) }, offered).branchIds).toMatch(/at most 50/);
+  });
+
+  it('a new family member needs a name and a known relation; gender and a past real birth date are optional', () => {
+    const ok = { name: 'Meena', relation: 'Mother', gender: '', dateOfBirth: '' };
+    expect(familyMemberProblems(ok, '2026-11-17')).toEqual({});
+    expect(familyMemberProblems({ ...ok, gender: 'Female', dateOfBirth: '1960-02-29' }, '2026-11-17')).toEqual({});
+    expect(familyMemberProblems({ ...ok, name: '  ' }, '2026-11-17').name).toMatch(/name/);
+    expect(familyMemberProblems({ ...ok, relation: 'Me' }, '2026-11-17').relation).toMatch(/related/);
+    expect(familyMemberProblems({ ...ok, gender: 'female' }, '2026-11-17').gender).toMatch(/gender/);
+    expect(familyMemberProblems({ ...ok, dateOfBirth: '1961-02-29' }, '2026-11-17').dateOfBirth).toMatch(/real date/);
+    expect(familyMemberProblems({ ...ok, dateOfBirth: '2026-11-18' }, '2026-11-17').dateOfBirth).toMatch(/not in the future/);
   });
 
   it('offers only active in-clinic branches in scope, and doctors who consult there', () => {
@@ -103,11 +112,17 @@ describe('desk steps (markArrived, closeDeskAppointment, cancel/reschedule)', ()
   });
 
   it('offers nothing on finished, online or view-only appointments', () => {
-    for (const status of ['completed', 'cancelled', 'no_show'] as const) expect(acts(appt({ status }), after)).toEqual([]);
+    for (const status of ['completed', 'cancelled'] as const) expect(acts(appt({ status }), after)).toEqual([]);
     expect(acts(appt({ status: 'pending' }), after)).toEqual(['reschedule', 'cancel']);
     expect(acts(appt({ source: 'online' }), after)).toEqual([]);
     expect(deskActions(appt(), viewer, after)).toEqual([]);
     expect(deskActions(appt(), ADMIN_ACTOR, after).length).toBe(5);
+  });
+
+  it('Q14: a desk no-show may be moved (the server decides whether its one move is used); online ones are the doctor’s', () => {
+    expect(acts(appt({ status: 'no_show' }), after)).toEqual(['reschedule_no_show']);
+    expect(acts(appt({ status: 'no_show', source: 'online' }), after)).toEqual([]);
+    expect(deskActions(appt({ status: 'no_show' }), viewer, after)).toEqual([]);
   });
 });
 
@@ -117,8 +132,8 @@ describe('partnerClinicApi paths (member and admin-as-owner)', () => {
     const api = partnerClinicApi(client, { kind: 'member' });
     await api.doctors();
     await api.invites('pending');
-    await api.invite({ phone: '+91 98765 43210', branchIds: [B1] });
-    await api.invite({ doctorId: D, branchIds: [] });
+    await api.linkDoctor({ doctorId: D.toUpperCase(), branchIds: [B1], requestKey: 'l'.repeat(32) });
+    await api.unlinkDoctor(D);
     await api.revokeInvite(I);
     await api.deskSlots({ doctorId: D, branchId: B1, date: '2026-11-17' });
     await api.appointments({ from: '2026-11-17', to: '2026-11-17', branchId: B1 });
@@ -132,8 +147,8 @@ describe('partnerClinicApi paths (member and admin-as-owner)', () => {
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       'GET /partner-workspace/clinic/doctors',
       'GET /partner-workspace/clinic/doctor-invites?state=pending',
-      'POST /partner-workspace/clinic/doctor-invites',
-      'POST /partner-workspace/clinic/doctor-invites',
+      'POST /partner-workspace/clinic/doctors',
+      `DELETE /partner-workspace/clinic/doctors/${D}`,
       `DELETE /partner-workspace/clinic/doctor-invites/${I}`,
       `GET /partner-workspace/clinic/slots?doctorId=${D}&branchId=${B1}&date=2026-11-17`,
       `GET /partner-workspace/clinic/appointments?from=2026-11-17&to=2026-11-17&branchId=${B1}`,
@@ -145,8 +160,8 @@ describe('partnerClinicApi paths (member and admin-as-owner)', () => {
       `POST /partner-workspace/clinic/appointments/${K}/cancel`,
       `POST /partner-workspace/clinic/appointments/${K}/reschedule`,
     ]);
-    expect(calls[2]!.body).toEqual({ phone: '9876543210', branchIds: [B1] });
-    expect(calls[3]!.body).toEqual({ doctorId: D, branchIds: [] });
+    expect(calls[2]!.body).toEqual({ doctorId: D, branchIds: [B1], requestKey: 'l'.repeat(32) });
+    expect(calls[3]!.body).toBeUndefined();
     // The request key is in the body (the route reads no header); the mobile goes out in its ten-digit form.
     expect(calls[7]!.body).toEqual({ slotId: S, customer: { phone: '9800000001', name: 'Asha' }, notes: 'Walk-in', requestKey: 'k'.repeat(32) });
     expect(calls[7]!.headers['Idempotency-Key']).toBeUndefined();
@@ -167,18 +182,31 @@ describe('partnerClinicApi paths (member and admin-as-owner)', () => {
     await api.reschedule(K, S, v);
     await api.appointmentByKey('k'.repeat(32));
     await api.abandonBookingKey('k'.repeat(32));
+    await api.rescheduleNoShow(K, S, 'n'.repeat(32), v);
     expect(calls.map((c) => c.body)).toEqual([
       { expectedUpdatedAt: v }, { expectedUpdatedAt: v }, { expectedUpdatedAt: v }, { reason: 'Doctor away', expectedUpdatedAt: v },
-      { expectedUpdatedAt: v }, { slotId: S, expectedUpdatedAt: v }, undefined, {},
+      { expectedUpdatedAt: v }, { slotId: S, expectedUpdatedAt: v }, undefined, {}, { slotId: S, requestKey: 'n'.repeat(32), expectedUpdatedAt: v },
     ]);
     expect(calls.slice(6).map((c) => `${c.method} ${c.url}`)).toEqual([
       `GET /partner-workspace/clinic/appointments/by-key/${'k'.repeat(32)}`,
       `POST /partner-workspace/clinic/appointments/by-key/${'k'.repeat(32)}/abandon`,
+      `POST /partner-workspace/clinic/appointments/${K}/reschedule-no-show`,
     ]);
     expect(() => api.arrived(K, 'yesterday')).toThrow(/appointment version/);
     expect(() => api.appointmentByKey('../x')).toThrow(/request key/);
     expect(() => api.abandonBookingKey('short')).toThrow(/request key/);
-    expect(calls).toHaveLength(8);
+    expect(() => api.rescheduleNoShow(K, S, 'short', v)).toThrow(/request key/);
+    expect(calls).toHaveLength(9);
+  });
+
+  it('Q14: desk bookings name who is seen (an existing family member by id, or a new one by name and relation)', async () => {
+    const { client, calls } = recorder();
+    const api = partnerClinicApi(client, { kind: 'member' });
+    await api.book({ slotId: S, customer: { phone: '9800000001' }, patient: { dependentId: I }, requestKey: 'k'.repeat(32) });
+    await api.book({ slotId: S, customer: { phone: '9800000001' }, patient: { name: 'Meena', relation: 'Mother', gender: 'Female' }, requestKey: 'j'.repeat(32) });
+    expect(calls[0]!.body).toMatchObject({ patient: { dependentId: I } });
+    expect(calls[1]!.body).toMatchObject({ patient: { name: 'Meena', relation: 'Mother', gender: 'Female' } });
+    expect(() => api.book({ slotId: S, customer: { phone: '9800000001' }, patient: { dependentId: '../x' }, requestKey: 'k'.repeat(32) })).toThrow(/family member id/);
   });
 
   it('builds admin-as-owner paths', async () => {
@@ -197,8 +225,10 @@ describe('partnerClinicApi paths (member and admin-as-owner)', () => {
     const api = partnerClinicApi(client, { kind: 'member' });
     expect(() => api.revokeInvite('../x')).toThrow(/invitation id/);
     expect(() => api.invites('all' as never)).toThrow(/state/);
-    expect(() => api.invite({ phone: '123', branchIds: [] })).toThrow(/mobile/);
-    expect(() => api.invite({ doctorId: D, branchIds: ['nope'] })).toThrow(/branch id/);
+    expect(() => api.linkDoctor({ doctorId: 'x', branchIds: [], requestKey: 'l'.repeat(32) })).toThrow(/doctor id/);
+    expect(() => api.linkDoctor({ doctorId: D, branchIds: ['nope'], requestKey: 'l'.repeat(32) })).toThrow(/branch id/);
+    expect(() => api.linkDoctor({ doctorId: D, branchIds: [], requestKey: 'short' })).toThrow(/request key/);
+    expect(() => api.unlinkDoctor('../x')).toThrow(/doctor id/);
     expect(() => api.deskSlots({ doctorId: D, branchId: B1, date: '2026-02-30' })).toThrow(/date/);
     expect(() => api.appointments({ from: '2026-11-01', to: '2026-12-15' })).toThrow(/31 days/);
     expect(() => api.appointments({ from: '2026-11-01', to: '2026-11-02', status: 'gone' as never })).toThrow(/status/);

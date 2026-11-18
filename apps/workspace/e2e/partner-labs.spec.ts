@@ -38,6 +38,8 @@ interface Backend {
   fillBeforeReschedule?: string;
   /** The answer to the next request whose path matches waits for `release()` (the server has already acted). */
   hold?: { match: RegExp; gate: Promise<void> };
+  /** Q14: the next no-show move is made, then its answer is lost. */
+  loseNextNoShowMove?: boolean;
   live: boolean;
 }
 
@@ -307,6 +309,26 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       }
       if (!can('bookings.manage')) return deny();
       const now = NOW.toISOString();
+      // Q14: a no-show moved once (same price, no refund), keyed, fenced by the status version.
+      if (cmd === 'reschedule-no-show') {
+        const x = body as { slotId: string; requestKey: string; expectedVersion?: number };
+        const moves = (bk.noShows as Rec[] | undefined) ?? [];
+        const prior = moves.find((n) => n.requestKey === x.requestKey);
+        if (prior) return ok(route, { ...bk, replayed: true });
+        if (moves.length || (bk.noShowReschedules as number | undefined)) return fail(route, 409, 'NO_SHOW_RESCHEDULE_USED', 'This booking was already rescheduled once after a no-show; a second no-show is final');
+        if (bk.status !== 'no_show') return fail(route, 409, 'BOOKING_NOT_NO_SHOW', `A ${bk.status} booking is not a no-show`);
+        if (x.expectedVersion !== undefined && x.expectedVersion !== bk.statusVersion) return fail(route, 409, 'LAB_BOOKING_CHANGED', 'The booking changed meanwhile; reload and try again');
+        const target = b.slots.find((y) => y._id === x.slotId);
+        if (!target || target.closed || target.booked >= target.capacity) return fail(route, 409, 'SLOT_NOT_AVAILABLE', 'That slot is no longer available; pick another');
+        target.booked++;
+        const from = bk.slot as Rec;
+        const to = { slotId: target._id, date: target.date, startTime: target.startTime, endTime: target.endTime, startsAt: target.startsAt };
+        const { noShowAt: _n, ...lifecycle } = bk.lifecycle as Rec;
+        Object.assign(bk, { status: 'confirmed', slot: to, statusVersion: (bk.statusVersion as number) + 1, noShowReschedules: 1, lifecycle,
+          noShows: [{ at: (bk.lifecycle as Rec).noShowAt, rescheduledAt: now, by: actor._id, byKind: 'member', fromSlot: from, toSlot: to, requestKey: x.requestKey, requestHash: 'h' }] });
+        if (b.loseNextNoShowMove) { b.loseNextNoShowMove = false; return route.abort('failed'); }
+        return ok(route, { ...bk, replayed: false });
+      }
       if (cmd === 'assign') { refused = bk.status === 'confirmed' ? null : 'Not allowed'; if (!refused) Object.assign(bk, { collector: body }); }
       else if (cmd === 'collect') refused = (bk.reschedule as Rec).pending ? 'The customer has not answered the new time yet' : step(['confirmed'], 'sample_collected', { lifecycle: { ...(bk.lifecycle as Rec), collectedAt: now } });
       else if (cmd === 'visit') refused = (bk.reschedule as Rec).pending ? 'The customer has not answered the new time yet' : step(['confirmed'], 'visited', { lifecycle: { ...(bk.lifecycle as Rec), visitedAt: now } });
@@ -803,4 +825,67 @@ test('a template save answered after another editor was opened leaves that edito
   await expect(page.getByText(/Slot .*20 Nov.*18:00–18:30 added with 1 seat\./)).toBeVisible();
   await expect(page.getByLabel('Seats per slot')).toHaveValue('4');
   await expect(page.getByRole('heading', { name: /Week of .*23 Nov/ })).toBeVisible();
+});
+
+test('Q14: a lab no-show is not refunded and earns nothing; it is moved once to a new slot after a confirmation, with a key and the version; then never again', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.loseNextNoShowMove = true;
+  await signInPartner(page);
+  await page.goto(`/#/partner/lab-bookings/${BK1}`);
+  await page.getByRole('button', { name: 'Mark no-show' }).click();
+  await expect(page.getByText('The customer is not refunded and the lab earns nothing for it. Afterwards the lab may move it once to a new time')).toBeVisible();
+  await page.getByRole('group', { name: 'Mark no-show' }).getByRole('button', { name: 'Mark no-show' }).click();
+  await expect(page.getByText('Not refunded: the customer missed the slot. The lab earns nothing for a no-show')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Reschedule no-show' }).click();
+  const form = page.getByRole('form', { name: 'Reschedule no-show' });
+  await form.getByRole('button', { name: 'Continue' }).click();
+  await expect(form.getByText('Choose the new time.')).toBeVisible();
+  // Open slots of this branch and visit mode only (the missed one, a closed one and started ones are not offered).
+  await expect(form.getByLabel('New time').locator('option', { hasText: 'Tue, 17 Nov, 2026, 09:00' })).toHaveCount(0);
+  await form.getByLabel('New time').selectOption({ label: 'Wed, 18 Nov, 2026, 10:00–10:30 (2 free)' });
+  await form.getByRole('button', { name: 'Continue' }).click();
+  await expect(form).toContainText('Move Asha Rao’s missed time (Tue, 17 Nov, 2026, 09:00–09:30) to Wed, 18 Nov, 2026, 10:00–10:30? It is booked again at the same price: nothing is paid or refunded.');
+  await expect(form).toContainText('This can be done only once');
+  expect(writes(backend).filter((w) => w.endsWith('/reschedule-no-show'))).toEqual([]);
+  await form.getByRole('button', { name: 'Move to Wed, 18 Nov, 2026, 10:00–10:30' }).click();
+
+  // The move happened but its answer was lost: the same move may be sent again, or the booking checked. A read made
+  // after the attempt settles it (no longer a no-show). The page clock moves on so that read is later than the attempt.
+  const unsure = page.getByRole('group', { name: 'Unconfirmed no-show move' });
+  await expect(unsure).toContainText('The move of Asha Rao’s no-show to Wed, 18 Nov, 2026, 10:00–10:30 has not been confirmed');
+  await page.clock.setFixedTime(new Date(NOW.getTime() + 60_000));
+  await unsure.getByRole('button', { name: 'Check the booking' }).click();
+  await expect(page.getByText('Asha Rao’s no-show has been moved to a new time (it can be moved only once). Nothing more to do.')).toBeVisible();
+  await expect(page.getByRole('list', { name: 'No-show history' })).toContainText('Missed Tue, 17 Nov, 2026, 09:00–09:30');
+  await expect(page.getByRole('list', { name: 'No-show history' })).toContainText('moved to Wed, 18 Nov, 2026, 10:00–10:30');
+  const moves = backend.calls.filter((c) => c.path.endsWith('/reschedule-no-show'));
+  expect(moves).toHaveLength(1);
+  expect(moves[0]!.body).toEqual({ slotId: slotId('home', '2026-11-18', '10:00'), requestKey: expect.stringMatching(/^[0-9a-f]{32}$/), expectedVersion: 2 });
+
+  // A second no-show is final: the step stays visible, disabled.
+  const bk = backend.bookings.find((x) => x._id === BK1)!;
+  Object.assign(bk, { status: 'no_show', statusVersion: (bk.statusVersion as number) + 1 });
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Reschedule no-show' })).toBeDisabled();
+  await expect(page.getByText('Already moved once after a no-show: a second no-show is final.')).toBeVisible();
+  expect(await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }))).not.toMatch(/Asha/);
+});
+
+test('Q14: a no-show move refused because it was already used elsewhere (NO_SHOW_RESCHEDULE_USED) says so and sends nothing more', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const bk = backend.bookings.find((x) => x._id === BK1)!;
+  Object.assign(bk, { status: 'no_show', statusVersion: 2 });
+  await signInPartner(page);
+  await page.goto(`/#/partner/lab-bookings/${BK1}`);
+  await page.getByRole('button', { name: 'Reschedule no-show' }).click();
+  const form = page.getByRole('form', { name: 'Reschedule no-show' });
+  await form.getByLabel('New time').selectOption({ label: 'Wed, 18 Nov, 2026, 10:00–10:30 (2 free)' });
+  await form.getByRole('button', { name: 'Continue' }).click();
+  // Someone else used the one move meanwhile (another tab), and the booking was marked a no-show again.
+  Object.assign(bk, { noShowReschedules: 1, noShows: [{ rescheduledAt: NOW.toISOString(), fromSlot: bk.slot, toSlot: bk.slot, requestKey: 'x'.repeat(32) }] });
+  await form.getByRole('button', { name: /^Move to/ }).click();
+  await expect(page.getByText('This booking was already moved once after a no-show. A second no-show is final, so it cannot be moved again.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reschedule no-show' })).toBeDisabled();
+  expect(backend.calls.filter((c) => c.path.endsWith('/reschedule-no-show'))).toHaveLength(1);
 });

@@ -31,6 +31,9 @@ interface Backend {
   schedule: Rec | null;
   clinics: { clinics: Rec[]; invites: Rec[] };
   practice: Rec | null;
+  /** Q14: the key the doctor's own clinic was created with; the next create is recorded, then its answer lost. */
+  clinicKey?: string;
+  loseNextClinic?: boolean;
   presence: Rec | null;
   offers: Rec[];
   /** requestId → refusal code, 'lost' (recorded, answer lost) or absent (accepted). */
@@ -301,6 +304,30 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
       return ok(route, { bookingId: ib[1], status: a.status, bookingDate: a.bookingDate, bookingTime: a.bookingTime, feeMinor: 45_000, patient: null,
         held: { startTime: NOW.toISOString(), endTime: list.at(-1)?.endTime ?? plusMin(30), isActive: !b.heldEnded, current: !b.heldEnded }, extensions: list });
     }
+    // Q14: the doctor's own slots of a day, and the one move of a no-show.
+    if (p === '/slots') {
+      const date = url.searchParams.get('date');
+      return ok(route, [
+        { _id: '51'.repeat(12), date, startTime: '09:00', endTime: '09:15', maxBookings: 1, currentBookings: 0, isAvailable: true, isActive: true },
+        { _id: '52'.repeat(12), date, startTime: '16:00', endTime: '16:15', maxBookings: 1, currentBookings: 0, isAvailable: true, isActive: true },
+        { _id: '53'.repeat(12), date, startTime: '17:00', endTime: '17:15', maxBookings: 1, currentBookings: 1, isAvailable: false, isActive: true },
+        { _id: '54'.repeat(12), date, startTime: '18:00', endTime: '18:15', maxBookings: 1, currentBookings: 0, isAvailable: true, isActive: true, branchId: BR1 },
+      ]);
+    }
+    const nsm = /^\/bookings\/([0-9a-f]{24})\/reschedule-no-show$/.exec(p);
+    if (nsm) {
+      const a = b.appointments.find((x) => x._id === nsm[1]);
+      if (!a) return fail(route, 404, 'BOOKING_NOT_FOUND', 'Booking not found');
+      const x = body as { slotId: string; requestKey: string; expectedUpdatedAt?: string };
+      const moves = (a.noShows as Rec[] | undefined) ?? [];
+      if (moves.some((m) => m.requestKey === x.requestKey)) return ok(route, { ...a, replayed: true });
+      if (moves.length) return fail(route, 409, 'NO_SHOW_RESCHEDULE_USED', 'This booking was already rescheduled once after a no-show; a second no-show is final');
+      if (a.status !== 'no_show') return fail(route, 409, 'BOOKING_NOT_NO_SHOW', `A ${a.status} booking is not a no-show`);
+      if (x.expectedUpdatedAt !== undefined && x.expectedUpdatedAt !== a.updatedAt) return fail(route, 409, 'BOOKING_CHANGED', 'Booking changed; please retry');
+      Object.assign(a, { status: 'confirmed', bookingDate: '20261118', bookingTime: '16:00', noShowReschedules: 1, updatedAt: '2026-11-17T04:31:00.000Z',
+        noShows: [{ at: NOW.toISOString(), rescheduledAt: NOW.toISOString(), fromDate: a.bookingDate, fromTime: a.bookingTime, toSlotId: x.slotId, requestKey: x.requestKey }] });
+      return ok(route, { ...a, replayed: false });
+    }
     // Appointments
     if (p === '/appointments') {
       if (b.meetReady) {
@@ -330,11 +357,9 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
     if (inv) {
       const i = b.clinics.invites.find((x) => x.inviteId === inv[1]);
       if (!i) return fail(route, 404, 'INVITE_NOT_FOUND', 'Invitation not found');
+      // Q14: invitations can no longer be accepted; declining still closes them.
+      if (inv[2] === 'accept') return fail(route, 409, 'INVITE_NO_LONGER_VALID', 'Clinic invitations are no longer used; the platform team links doctors to clinics');
       b.clinics.invites = b.clinics.invites.filter((x) => x !== i);
-      if (inv[2] === 'accept') {
-        b.clinics.clinics.push({ partnerId: i.partnerId, name: i.clinic, solo: false, verified: true, role: 'staff', branches: i.branches });
-        return ok(route, { accepted: true, partnerId: i.partnerId, memberId: 'bb'.repeat(12) });
-      }
       return ok(route, { accepted: false, partnerId: i.partnerId });
     }
     const lv = /^\/clinics\/([0-9a-f]{24})\/leave$/.exec(p);
@@ -342,7 +367,26 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
       b.clinics.clinics = b.clinics.clinics.filter((c) => c.partnerId !== lv[1]);
       return ok(route, { left: true });
     }
-    if (p === '/practice' && method === 'GET') return ok(route, b.practice);
+    if ((p === '/practice' || p === '/clinic') && method === 'GET') return ok(route, b.practice);
+    // Q14: the doctor's own clinic, keyed; a lost answer is found by its key.
+    const byKey = /^\/clinic\/by-key\/([A-Za-z0-9_-]{8,100})$/.exec(p);
+    if (byKey) {
+      if (!b.practice || b.clinicKey !== byKey[1]) return fail(route, 404, 'CLINIC_NOT_FOUND', 'No clinic was created with this key');
+      return ok(route, b.practice);
+    }
+    if (p === '/clinic' && method === 'POST') {
+      const x = body as { name: string; requestKey: string; branch: { name: string; phone: string; address: Rec } };
+      if (b.practice) {
+        if (b.clinicKey === x.requestKey) return ok(route, { partner: (b.practice as Rec).partner, created: false, replayed: true });
+        return fail(route, 409, 'DOCTOR_CLINIC_EXISTS', 'You already have a clinic; ask the platform team to add another');
+      }
+      b.clinicKey = x.requestKey;
+      b.practice = { partner: { _id: PRACTICE, name: x.name, solo: true, verification: { state: 'pending' } },
+        branches: [{ _id: 'c9'.repeat(12), name: x.branch.name, phone: x.branch.phone, address: x.branch.address, isActive: true }] };
+      b.clinics.clinics.push({ partnerId: PRACTICE, name: x.name, solo: true, verified: false, role: 'owner', branches: [{ branchId: 'c9'.repeat(12), name: x.branch.name }] });
+      if (b.loseNextClinic) { b.loseNextClinic = false; return route.abort('failed'); }
+      return ok(route, { partner: (b.practice as Rec).partner, branch: ((b.practice as Rec).branches as Rec[])[0], created: true }, 201);
+    }
     if (p === '/practice' && method === 'POST') {
       const x = body as { name: string; branch: { name: string; phone: string; address: Rec } };
       if (!b.practice) {
@@ -762,23 +806,23 @@ test('appointments: today, the next two weeks and one day, with the commands the
   expect(backend.calls.some((c) => c.path === '/specialists/me/appointments?view=day&date=20261119')).toBe(true);
 });
 
-test('clinics: accept and decline invitations, leave a clinic, and open a solo practice once', async ({ page }) => {
+test('Q14 clinics: invitations are no longer valid (dismiss only), leave a clinic, and create my clinic once (a lost answer found by its key)', async ({ page }) => {
   const backend = await mockBackend(page);
+  backend.loseNextClinic = true;
   await signIn(page);
   await nav(page).getByRole('link', { name: 'Clinics' }).click();
   const invites = page.getByRole('list', { name: 'Invitations' });
   const lake = invites.getByRole('listitem', { name: 'Invitation from Lake Clinic' });
   await expect(lake).toContainText('Branches: Lakeside, Bengaluru');
+  await expect(lake).toContainText('No longer valid');
+  await expect(lake).toContainText('To consult at Lake Clinic, ask the Jansetu team to link you.');
+  await expect(invites.getByRole('button', { name: 'Accept' })).toHaveCount(0);
   await expect(invites.getByRole('listitem', { name: 'Invitation from Hill Clinic' })).toContainText('all its in-clinic branches');
-  await lake.getByRole('button', { name: 'Accept' }).click();
-  await expect(lake).toContainText('Its front desk can then book patients into your in-person hours');
-  await lake.getByRole('button', { name: 'Join Lake Clinic' }).click();
-  await expect(page.getByText('You now consult at Lake Clinic. Add in-person hours there on your schedule.')).toBeVisible();
   const hill = invites.getByRole('listitem', { name: 'Invitation from Hill Clinic' });
-  await hill.getByRole('button', { name: 'Decline' }).click();
-  await hill.getByRole('button', { name: 'Decline Hill Clinic' }).click();
-  await expect(page.getByText('You declined the invitation from Hill Clinic.')).toBeVisible();
-  await expect(page.getByText('No invitations waiting.')).toBeVisible();
+  await hill.getByRole('button', { name: 'Dismiss' }).click();
+  await hill.getByRole('button', { name: 'Dismiss the invitation from Hill Clinic' }).click();
+  await expect(page.getByText('The invitation from Hill Clinic was dismissed.')).toBeVisible();
+  await expect(invites.getByRole('listitem')).toHaveCount(1);
   const member = page.getByRole('list', { name: 'Clinics you consult at' });
   await expect(member.getByRole('listitem', { name: 'New Clinic' })).toContainText('Waiting for verification');
   const sunrise = member.getByRole('listitem', { name: 'Sunrise Clinic' });
@@ -787,17 +831,17 @@ test('clinics: accept and decline invitations, leave a clinic, and open a solo p
   await sunrise.getByRole('button', { name: 'Leave Sunrise Clinic' }).click();
   await expect(page.getByText('You no longer consult at Sunrise Clinic.')).toBeVisible();
   await expect(member.getByRole('listitem', { name: 'Sunrise Clinic' })).toHaveCount(0);
-  expect(writes(backend)).toEqual([`POST /specialists/me/clinic-invites/${INV1}/accept`, `POST /specialists/me/clinic-invites/${INV2}/decline`, `POST /specialists/me/clinics/${SUNRISE}/leave`]);
+  expect(writes(backend)).toEqual([`POST /specialists/me/clinic-invites/${INV2}/decline`, `POST /specialists/me/clinics/${SUNRISE}/leave`]);
 
-  // Solo practice.
-  await expect(page.getByText('sign in as “Lab or clinic staff” with the same mobile number')).toBeVisible();
-  const form = page.getByRole('form', { name: 'Open your practice' });
-  await form.getByLabel('Practice name').fill('Dr Meera Rao Heart Care');
+  // Create my clinic.
+  const form = page.getByRole('form', { name: 'Create my clinic' });
+  await form.getByLabel('Clinic name').fill('Dr Meera Rao Heart Care');
   await form.getByLabel('Bill number prefix').fill('toolong');
   await form.getByRole('button', { name: 'Review' }).click();
   await expect(form.getByText('1 to 6 letters or digits, e.g. DRK.')).toBeVisible();
   await expect(form.getByText('Required.').first()).toBeVisible();
   await form.getByLabel('Bill number prefix').fill('mrh');
+  await form.getByLabel('Contact email (optional)').fill('meera@');
   await form.getByLabel('Branch name').fill('Indiranagar');
   await form.getByLabel('Branch phone').fill('9000000021');
   await form.getByLabel('Address', { exact: true }).fill('5 CMH Road');
@@ -806,17 +850,58 @@ test('clinics: accept and decline invitations, leave a clinic, and open a solo p
   await form.getByLabel('State code').fill('29');
   await form.getByLabel('PIN code').fill('560038');
   await form.getByRole('button', { name: 'Review' }).click();
-  await expect(form).toContainText('You can open only one practice; it starts unverified and Jansetu verifies it');
-  await form.getByRole('button', { name: 'Open the practice' }).click();
-  await expect(page.getByText('Jansetu has not verified your practice yet.')).toBeVisible();
+  await expect(form.getByText('Enter a valid email address, or leave it empty.')).toBeVisible();
+  await form.getByLabel('Contact email (optional)').fill('meera@heart.in');
+  await form.getByRole('button', { name: 'Review' }).click();
+  await expect(form).toContainText('You can create only one clinic. It starts pending: Jansetu verifies it');
+  await form.getByRole('button', { name: 'Create my clinic' }).click();
+  // The answer is lost: the exact create is found by its key; nothing is sent twice.
+  const unsure = page.getByRole('group', { name: 'Unconfirmed clinic' });
+  await expect(unsure).toContainText('Clinic “Dr Meera Rao Heart Care” with its branch Indiranagar in Bengaluru.');
+  await unsure.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Jansetu has not verified your clinic yet.')).toBeVisible();
   const dl = page.locator('.ws-dl').last();
   await expect(dl).toContainText('Dr Meera Rao Heart Care');
   await expect(dl).toContainText('Waiting for verification');
+  await expect(page.getByText('sign in as “Lab or clinic staff” with your mobile number 9000000020')).toBeVisible();
   await expect(member.getByRole('listitem', { name: 'Dr Meera Rao Heart Care' })).toContainText('As its owner you cannot leave it here.');
-  expect(backend.calls.find((c) => c.method === 'POST' && c.path === '/specialists/me/practice')?.body).toEqual({
-    name: 'Dr Meera Rao Heart Care', invoiceSeriesPrefix: 'MRH',
+  const creates = backend.calls.filter((c) => c.method === 'POST' && c.path === '/specialists/me/clinic');
+  expect(creates).toHaveLength(1);
+  expect(creates[0]!.body).toEqual({
+    name: 'Dr Meera Rao Heart Care', invoiceSeriesPrefix: 'MRH', contactEmail: 'meera@heart.in', requestKey: expect.stringMatching(/^[0-9a-f]{32}$/),
     branch: { name: 'Indiranagar', phone: '9000000021', address: { line1: '5 CMH Road', city: 'Bengaluru', state: 'Karnataka', stateCode: '29', pincode: '560038' } },
   });
+  expect(backend.calls.some((c) => c.path === `/specialists/me/clinic/by-key/${(creates[0]!.body as Rec).requestKey}`)).toBe(true);
+});
+
+test('Q14 clinics: a clinic made elsewhere meanwhile refuses a second (DOCTOR_CLINIC_EXISTS); an unverified doctor cannot create one', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Clinics' }).click();
+  const form = page.getByRole('form', { name: 'Create my clinic' });
+  await form.getByLabel('Clinic name').fill('Second Clinic');
+  await form.getByLabel('Bill number prefix').fill('SC');
+  await form.getByLabel('Branch name').fill('Main');
+  await form.getByLabel('Branch phone').fill('9000000022');
+  await form.getByLabel('Address', { exact: true }).fill('1 Road');
+  await form.getByLabel('City').fill('Mysuru');
+  await form.getByLabel('State', { exact: true }).fill('Karnataka');
+  await form.getByLabel('State code').fill('29');
+  await form.getByLabel('PIN code').fill('570001');
+  await form.getByRole('button', { name: 'Review' }).click();
+  // Another tab created the doctor's clinic in the meantime.
+  backend.practice = { partner: { _id: PRACTICE, name: 'First Clinic', solo: true, verification: { state: 'verified' } }, branches: [] };
+  backend.clinicKey = 'other-tab-key-0001';
+  await form.getByRole('button', { name: 'Create my clinic' }).click();
+  await expect(page.getByText('You already have a clinic, so no new one was made.')).toBeVisible();
+  await expect(page.locator('.ws-dl').last()).toContainText('First Clinic');
+
+  backend.profile = { ...backend.profile, isVerified: false };
+  backend.practice = null;
+  await page.reload();
+  await nav(page).getByRole('link', { name: 'Clinics' }).click();
+  await expect(page.getByText('Only active, verified doctors can create a clinic.')).toBeVisible();
+  await expect(page.getByRole('form', { name: 'Create my clinic' })).toHaveCount(0);
 });
 
 test('earnings: balance, statement with running balance and paging, CSV via blob, payouts, and payout details that need verification', async ({ page }) => {
@@ -1187,4 +1272,39 @@ test('while unconfirmed and the server shows Off, Enter confirms Off like the bu
   await expect(page.getByText('You are not available now. No new offers come to you.')).toBeVisible();
   expect(presencePuts(backend).at(-1)).toEqual({ available: false, modes: ['video'], instantFeeMinor: 60_000, expectedPresenceVersion: 2 });
   expect(backend.presence).toMatchObject({ available: false, presenceVersion: 3 });
+});
+
+test('Q14 doctor no-show: no earning and no refund; moved once to one of the doctor’s later slots after a confirmation; instant ones never', async ({ page }) => {
+  const backend = await mockBackend(page);
+  Object.assign(backend.appointments.find((a) => a._id === bid(2))!, { status: 'no_show', consultationMode: 'video', clinicVisit: undefined, serviceMode: 'online', updatedAt: '2026-11-17T04:00:00.000Z' });
+  Object.assign(backend.appointments.find((a) => a._id === bid(5))!, { status: 'no_show' });
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Appointments' }).click();
+  const table = page.getByRole('table', { name: 'Appointments' });
+  const missed = table.getByRole('row').filter({ hasText: '09:00' });
+  await expect(missed).toContainText('No earning: you are paid only for a consultation that takes place. The patient is not refunded.');
+  // The instant consultation is never moved.
+  await expect(table.getByRole('row').filter({ hasText: '09:50' }).getByRole('button', { name: 'Reschedule no-show' })).toHaveCount(0);
+  await missed.getByRole('button', { name: 'Reschedule no-show' }).click();
+  const form = missed.getByRole('form', { name: 'Reschedule no-show' });
+  await form.getByLabel('New day').fill('2026-11-18');
+  // Open, free, online slots only (a full one and a clinic slot are left out).
+  await expect(form.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '09:00–09:15', '16:00–16:15']);
+  await form.getByLabel('New time').selectOption('16:00–16:15');
+  await form.getByRole('button', { name: 'Continue' }).click();
+  await expect(form).toContainText('Move The patient’s missed time (Tue, 17 Nov, 2026, 09:00) to Wed, 18 Nov, 2026, 16:00? It is booked again at the same price: nothing is paid or refunded.');
+  await expect(form).toContainText('You earn for it only once it is completed.');
+  await form.getByRole('button', { name: 'Move to Wed, 18 Nov, 2026, 16:00' }).click();
+  await expect(page.getByText('The patient’s no-show is moved to Wed, 18 Nov, 2026, 16:00. It is booked again at the same price.')).toBeVisible();
+  const moves = backend.calls.filter((c) => c.path.endsWith('/reschedule-no-show'));
+  expect(moves.map((c) => c.path)).toEqual([`/specialists/me/bookings/${bid(2)}/reschedule-no-show`]);
+  expect(moves[0]!.body).toEqual({ slotId: '52'.repeat(12), requestKey: expect.stringMatching(/^[0-9a-f]{32}$/), expectedUpdatedAt: '2026-11-17T04:00:00.000Z' });
+  // Moved after a no-show: the booking is never refunded, so it offers no cancel.
+  await page.getByLabel('Show').selectOption('upcoming');
+  const moved = table.getByRole('row').filter({ hasText: '18 Nov, 2026, 16:00' });
+  await expect(moved).toContainText('Moved after a no-show (missed Tue, 17 Nov, 2026, 09:00). A second no-show is final.');
+  await expect(moved.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
+  // Earnings say that a no-show earns nothing.
+  await nav(page).getByRole('link', { name: 'Earnings' }).click();
+  await expect(page.getByText('A no-show earns nothing (and the patient is not refunded), so it never appears here.')).toBeVisible();
 });

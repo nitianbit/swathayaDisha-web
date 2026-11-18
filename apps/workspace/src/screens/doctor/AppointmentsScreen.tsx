@@ -1,10 +1,14 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  APPOINTMENT_STATUS_LABEL, appointmentActions, CONSULT_MODE_LABEL, isRealDate, istDateOf, type AppointmentAction, type DoctorAppointment,
+  APPOINTMENT_STATUS_LABEL, appointmentActions, CONSULT_MODE_LABEL, doctorNoShowMove, fromYmd, isRealDate, istDateOf, movableSlot,
+  type AppointmentAction, type DoctorAppointment,
 } from '@jansetu/api';
 import { Alert, Badge, Empty, ErrorState, Loading, TextField, formatRupees } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
+import { NoShowMove, noShowMoveSlot, type NoShowTarget } from '../../components/NoShowMove.tsx';
+import { useSession } from '../../session.tsx';
+import { useOneAtATime } from '../finance/finance.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { formatDay } from '../partner/labs.tsx';
@@ -53,7 +57,8 @@ function UpcomingList({ d, days }: { d: DoctorContext; days: number }) {
   const q = useUpcomingAppointments(d, days, meet.interval);
   if (q.pending) return <Loading label="Loading appointments…" />;
   if (q.error) return <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />;
-  return <AppointmentTable d={d} items={q.items} meet={meet} refresh={q.refetch} empty={days === 1 ? 'No appointments today.' : `No appointments in the next ${days} days.`} />;
+  return <AppointmentTable d={d} items={q.items} meet={meet} refresh={q.refetch} readAt={q.readAt} reading={q.fetching}
+    empty={days === 1 ? 'No appointments today.' : `No appointments in the next ${days} days.`} />;
 }
 
 function DayList({ d, day }: { d: DoctorContext; day: string }) {
@@ -61,23 +66,33 @@ function DayList({ d, day }: { d: DoctorContext; day: string }) {
   const q = useQuery({ queryKey: [...appointmentsKey(d), 'day', day], queryFn: () => d.api.appointmentsOn(day), refetchInterval: (query) => meet.interval(query.state.data) });
   if (q.isPending) return <Loading label="Loading appointments…" />;
   if (q.isError) return <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />;
-  return <AppointmentTable d={d} items={sortAppointments(q.data ?? [])} meet={meet} refresh={q.refetch} empty={`No appointments on ${formatDay(day)}.`} />;
+  return <AppointmentTable d={d} items={sortAppointments(q.data ?? [])} meet={meet} refresh={q.refetch} readAt={q.dataUpdatedAt} reading={q.isFetching}
+    empty={`No appointments on ${formatDay(day)}.`} />;
 }
 
 const statusTone = (s: DoctorAppointment['status']) => (s === 'completed' ? 'ok' : s === 'cancelled' || s === 'no_show' ? 'danger' : s === 'pending' ? 'warn' : undefined);
 export const appointmentLabel = (b: DoctorAppointment) => `${formatYmd(b.bookingDate)}, ${b.bookingTime}`;
 
-function AppointmentTable({ d, items, empty, meet, refresh }: {
-  d: DoctorContext; items: DoctorAppointment[]; empty: string; meet: MeetPoll; refresh: () => Promise<unknown>;
+function AppointmentTable({ d, items, empty, meet, refresh, readAt, reading }: {
+  d: DoctorContext; items: DoctorAppointment[]; empty: string; meet: MeetPoll; refresh: () => Promise<unknown>; readAt: number; reading: boolean;
 }) {
   const queryClient = useQueryClient();
   const now = useTicker(30_000);
   const [notice, setNotice] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  // Q14: one no-show move at a time on this page (the central guard).
+  const guard = useOneAtATime('appointment list');
   if (items.length === 0) return <Empty title="Nothing here">{empty}</Empty>;
-  const changed = (message: string) => { setNotice(message); void queryClient.invalidateQueries({ queryKey: appointmentsKey(d) }); };
+  const changed = (message: string) => { setFailure(null); setNotice(message); void queryClient.invalidateQueries({ queryKey: appointmentsKey(d) }); };
+  const move: MoveProps = {
+    readAt, reading, busy: guard.busy, now, perform: guard.perform,
+    reread: () => void queryClient.invalidateQueries({ queryKey: appointmentsKey(d) }),
+    onNotice: (t) => { setFailure(null); setNotice(t); }, onFailure: (t) => { setNotice(null); setFailure(t); },
+  };
   return (
     <>
       {notice && <Alert tone="ok">{notice}</Alert>}
+      {failure && <Alert>{failure}</Alert>}
       <div className="ws-table-wrap">
         <table className="j-table" aria-label="Appointments">
           <thead>
@@ -86,7 +101,7 @@ function AppointmentTable({ d, items, empty, meet, refresh }: {
           <tbody>
             {items.map((b) => (
               // Keyed by status too: once the booking moves on, an open confirmation for its old state is gone.
-              <Row key={`${b._id}:${b.status}`} d={d} b={b} actions={appointmentActions(b, now)} onChanged={changed}
+              <Row key={`${b._id}:${b.status}:${b.updatedAt ?? ''}`} d={d} b={b} actions={appointmentActions(b, now)} onChanged={changed} move={move}
                 link={<MeetLink b={b} gaveUp={meet.gaveUp(b._id, now)} onRefresh={() => { meet.restart(b._id); return refresh(); }} />}
                 onRefused={() => void queryClient.invalidateQueries({ queryKey: appointmentsKey(d) })} />
             ))}
@@ -97,10 +112,21 @@ function AppointmentTable({ d, items, empty, meet, refresh }: {
   );
 }
 
-function Row({ d, b, actions, link, onChanged, onRefused }: {
-  d: DoctorContext; b: DoctorAppointment; actions: AppointmentAction[]; link: ReactNode; onChanged: (m: string) => void; onRefused: () => void;
+interface MoveProps {
+  readAt: number; reading: boolean; busy: boolean; now: Date; perform: <T>(run: () => Promise<T>) => Promise<T>;
+  reread: () => void; onNotice: (t: string) => void; onFailure: (t: string) => void;
+}
+
+function Row({ d, b, actions, link, onChanged, onRefused, move }: {
+  d: DoctorContext; b: DoctorAppointment; actions: AppointmentAction[]; link: ReactNode; onChanged: (m: string) => void; onRefused: () => void; move: MoveProps;
 }) {
+  const { memory } = useSession();
   const label = appointmentLabel(b);
+  // Q14: the one move of a no-show (never an instant one), also while a move sent earlier is unconfirmed.
+  const moveSlot = noShowMoveSlot(d.identity, b._id);
+  const noShowMove = doctorNoShowMove(b);
+  const showMove = !!noShowMove || (b.bookingKind !== 'instant' && !!memory.get(moveSlot));
+  const movedFrom = b.noShows?.[0];
   const run = async (status: 'confirmed' | 'completed' | 'cancelled' | 'no_show', done: string, reason?: string) => {
     try {
       await d.api.setAppointmentStatus(b._id, status, reason);
@@ -120,10 +146,24 @@ function Row({ d, b, actions, link, onChanged, onRefused }: {
         {link && <div>{link}</div>}
       </td>
       <td>{b.primaryConcern || '—'}</td>
-      <td><Badge tone={statusTone(b.status)}>{APPOINTMENT_STATUS_LABEL[b.status] ?? b.status}</Badge>{b.cancellationReason ? <div className="ws-muted">{b.cancellationReason}</div> : null}</td>
-      <td>{b.paymentStatus === 'paid' ? `Paid${typeof b.price === 'number' ? ` · ${formatRupees(b.price)}` : ''}` : b.paymentStatus === 'refunded' ? 'Refunded' : b.settlementSystem === 'clinic' ? 'At the clinic' : 'Not paid'}</td>
       <td>
-        {actions.length === 0 ? <span className="ws-muted">—</span> : (
+        <Badge tone={statusTone(b.status)}>{APPOINTMENT_STATUS_LABEL[b.status] ?? b.status}</Badge>{b.cancellationReason ? <div className="ws-muted">{b.cancellationReason}</div> : null}
+        {movedFrom && <div className="ws-muted">Moved after a no-show{movedFrom.fromDate ? ` (missed ${formatYmd(movedFrom.fromDate)}${movedFrom.fromTime ? `, ${movedFrom.fromTime}` : ''})` : ''}. A second no-show is final.</div>}
+      </td>
+      <td>
+        {b.paymentStatus === 'paid' ? `Paid${typeof b.price === 'number' ? ` · ${formatRupees(b.price)}` : ''}` : b.paymentStatus === 'refunded' ? 'Refunded' : b.settlementSystem === 'clinic' ? 'At the clinic' : 'Not paid'}
+        {b.status === 'no_show' && <div className="ws-muted">No earning: you are paid only for a consultation that takes place. The patient is not refunded.</div>}
+      </td>
+      <td>
+        {showMove && (
+          <NoShowMove slot={moveSlot} who="The patient" missed={label} state={noShowMove === 'used' ? 'used' : 'offer'} status={b.status}
+            readAt={move.readAt} reading={move.reading} disabled={move.busy || move.reading} version={b.updatedAt}
+            consequence={<>The patient is told the new time. You earn for it only once it is completed.</>}
+            picker={(choose) => <DoctorSlotPicker d={d} b={b} now={move.now} onChoose={choose} />}
+            send={(t: NoShowTarget, requestKey) => move.perform(() => d.api.rescheduleNoShow(b._id, t.slotId, requestKey, typeof t.version === 'string' ? t.version : undefined))}
+            reread={move.reread} onNotice={move.onNotice} onFailure={move.onFailure} />
+        )}
+        {actions.length === 0 ? (!showMove && <span className="ws-muted">—</span>) : (
           <div className="ws-actions">
             {actions.includes('confirm') && (
               <ConfirmAction label="Confirm" confirmLabel={`Confirm ${label}`}
@@ -137,7 +177,7 @@ function Row({ d, b, actions, link, onChanged, onRefused }: {
             )}
             {actions.includes('no_show') && (
               <ConfirmAction label="Patient did not come" confirmLabel={`Mark ${label} as no-show`} danger
-                consequence={<>Mark {label} as a no-show? The patient is not refunded and you are paid for it. This cannot be undone.</>}
+                consequence={<>Mark {label} as a no-show? The patient is not refunded and you are not paid for it (you earn only for a consultation that takes place). You may move it once to a new time afterwards.</>}
                 onConfirm={() => run('no_show', `${label} is marked as a no-show.`)} />
             )}
             {actions.includes('cancel') && (
@@ -149,5 +189,40 @@ function Row({ d, b, actions, link, onChanged, onRefused }: {
         )}
       </td>
     </tr>
+  );
+}
+
+/** Q14: the doctor's own open, not-yet-started slots on a chosen day, for the one move of a no-show. */
+function DoctorSlotPicker({ d, b, now, onChoose }: { d: DoctorContext; b: DoctorAppointment; now: Date; onChoose: (t: NoShowTarget | null) => void }) {
+  const [day, setDay] = useState(() => istDateOf(now));
+  const [slotId, setSlotId] = useState('');
+  const ok = isRealDate(day);
+  const slots = useQuery({ queryKey: [...d.key, 'slots', day], queryFn: () => d.api.slotsOn(day), enabled: ok });
+  // In-person bookings move to in-person (clinic) slots, others to slots without a clinic branch; the server decides finally.
+  const inPerson = b.consultationMode === 'in-person';
+  const choices = (slots.data ?? []).filter((s) => movableSlot(s, now) && (inPerson ? !!s.branchId : !s.branchId));
+  return (
+    <>
+      <TextField label="New day" type="date" value={day} min={istDateOf(now)} error={ok ? undefined : 'Enter a real date.'}
+        onChange={(e) => { setDay(e.target.value); setSlotId(''); onChoose(null); }} />
+      {!ok ? null
+        : slots.isPending ? <Loading label="Loading your slots…" />
+        : slots.isError ? <ErrorState message={messageOf(slots.error)} onRetry={() => void slots.refetch()} />
+        : choices.length === 0 ? <p className="ws-muted">No open slot that day. Choose another day, or add hours on your schedule.</p>
+        : (
+          <div className="j-field">
+            <label htmlFor={`noshow-slot-${b._id}`}>New time</label>
+            <select id={`noshow-slot-${b._id}`} value={slotId} onChange={(e) => {
+              setSlotId(e.target.value);
+              const s = choices.find((x) => x._id === e.target.value);
+              const iso = s ? fromYmd(s.date) : null;
+              onChoose(s ? { slotId: s._id, label: `${iso ? formatDay(iso) : s.date}, ${s.startTime}` } : null);
+            }}>
+              <option value="">Choose a time</option>
+              {choices.map((s) => <option key={s._id} value={s._id}>{s.startTime}–{s.endTime}</option>)}
+            </select>
+          </div>
+        )}
+    </>
   );
 }

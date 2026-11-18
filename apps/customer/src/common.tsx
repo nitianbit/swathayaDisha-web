@@ -36,6 +36,7 @@ export const BOOKING_STATUS: Record<string, { label: string; tone?: 'ok' | 'warn
   report_delivered: { label: 'Report ready', tone: 'ok' },
   cancellation_requested: { label: 'Cancelling', tone: 'warn' },
   cancelled: { label: 'Cancelled', tone: 'danger' },
+  no_show: { label: 'Missed (no refund)', tone: 'danger' },
 };
 
 /**

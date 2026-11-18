@@ -585,3 +585,22 @@ test('a coupon dropped by an automatic re-check does not slip a higher price thr
   expect(last).toMatchObject({ acceptedSubtotalMinor: 60000, acceptedPayableMinor: 60000 });
   expect(last.couponCode).toBeUndefined();
 });
+
+test('Q14: a missed lab slot is not refunded; one the lab moved shows the new time and cannot be cancelled', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const missed = 'c7'.repeat(12);
+  const moved = 'c8'.repeat(12);
+  backend.bookings.set(missed, labBooking(missed, { status: 'no_show', lifecycle: { noShowAt: new Date().toISOString() } }));
+  const was = { slotId: 'a8'.repeat(12), date: istDay(-24 * HOUR), startTime: '08:00', endTime: '08:30', startsAt: new Date(Date.now() - 24 * HOUR).toISOString() };
+  const booking = labBooking(moved);
+  backend.bookings.set(moved, { ...booking, noShows: [{ at: was.startsAt, rescheduledAt: new Date().toISOString(), fromSlot: was, toSlot: booking.slot }] });
+  await signIn(page, `/partner-lab-bookings/${missed}`);
+  await expect(page.getByText('The lab marked you as not present for this time. A missed booking is not refunded.', { exact: false })).toBeVisible();
+  await expect(page.getByText('The lab may offer you one new time; you will be told if they do.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel this booking' })).toHaveCount(0);
+  await page.goto(`/#/partner-lab-bookings/${moved}`);
+  await expect(page.getByText(/You missed .*, so the lab moved the booking to the new time: /)).toBeVisible();
+  await expect(page.getByText('This booking was moved after a missed time, so it is not refunded and cannot be cancelled.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel this booking' })).toHaveCount(0);
+  expect(backend.calls.filter((c) => c.method === 'POST' && c.path.includes('/cancel'))).toHaveLength(0);
+});

@@ -77,6 +77,11 @@ export interface Partner {
   activeOwnerCount: number;
   solo?: boolean;
   isActive: boolean;
+  /**
+   * Q14: the partner's own counter policy (default false): whether an in-house bill may be paid in several payments.
+   * Off: a payment settles everything still due. Owners (and admins as owner) change it with `updateMe`.
+   */
+  allowPartPayments?: boolean;
   createdAt?: string;
   /** Q10: sent back as `expectedUpdatedAt` by an edit (409 RECORD_CHANGED when it moved). */
   updatedAt?: string;
@@ -156,7 +161,11 @@ export interface NewMember {
 }
 
 /** `updateMyPartnerSchema` (a partner's own members, and admins through the workspace routes). */
-export interface MyPartnerUpdate { name?: string; legalName?: string; contactPhone?: string; contactEmail?: string; logo?: string }
+export interface MyPartnerUpdate {
+  name?: string; legalName?: string; contactPhone?: string; contactEmail?: string; logo?: string;
+  /** Q14 `updateMyPartnerSchema.allowPartPayments`. */
+  allowPartPayments?: boolean;
+}
 /** `updatePartnerSchema` (admins only). */
 export interface PartnerUpdate extends MyPartnerUpdate { gstin?: string; pan?: string; taxRegime?: TaxRegime; invoiceSeriesPrefix?: string }
 /** `createPartnerSchema`. */

@@ -37,6 +37,7 @@ function Earnings({ d }: { d: DoctorContext }) {
   return (
     <>
       <PageHeading title="Earnings">What you earned through Jansetu, what was paid out, and where payouts go. Amounts in rupees; dates India time.</PageHeading>
+      <p className="ws-muted">You earn for a consultation once it is completed. A no-show earns nothing (and the patient is not refunded), so it never appears here.</p>
       {finance.isPending ? <Loading label="Loading your earnings…" />
         : finance.isError ? <ErrorState message={messageOf(finance.error)} onRetry={() => void finance.refetch()} />
         : (

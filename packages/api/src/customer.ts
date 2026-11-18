@@ -76,7 +76,8 @@ export interface WalletTransaction {
   createdAt?: string;
 }
 
-export type BookingStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled';
+/** Q4: 'no_show' = the patient did not attend a paid consultation (not refunded). */
+export type BookingStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show';
 
 /** Ordinary bookings (doctor consultations, wellness packages; module `bookings`). */
 export interface Booking {
@@ -106,6 +107,12 @@ export interface Booking {
   createRequestKey?: string;
   cancelledAt?: string;
   createdAt?: string;
+  /**
+   * Q14 (`publicNoShowView`): a missed appointment the doctor or clinic moved once to a new time (`bookingDate`/`bookingTime` are the new
+   * time; `fromDate`/`fromTime` the missed one). Such a booking is never refunded (409 NO_SHOW_NOT_REFUNDABLE on cancel).
+   */
+  noShows?: { at?: string; rescheduledAt?: string; fromSlotId?: string; fromDate?: string; fromTime?: string; toSlotId?: string }[];
+  noShowReschedules?: number;
 }
 
 /** An unpaid priced booking is held this long from its creation, then released (backend D2). */

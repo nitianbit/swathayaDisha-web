@@ -73,7 +73,8 @@ interface Backend {
 
 function partner(id: string, name: string, kind: 'lab' | 'clinic', tax: 'regular' | 'unregistered' = 'regular'): Rec {
   return { _id: id, kind, name, contact: { phone: '9000000000' }, verification: { state: 'verified' }, taxRegime: tax,
-    ...(tax === 'regular' ? { gstin: GSTIN } : {}), invoiceSeries: { prefix: kind === 'lab' ? 'LB' : 'CL' }, activeOwnerCount: 1, isActive: true };
+    ...(tax === 'regular' ? { gstin: GSTIN } : {}), invoiceSeries: { prefix: kind === 'lab' ? 'LB' : 'CL' }, activeOwnerCount: 1, isActive: true,
+    updatedAt: '2026-11-01T00:00:00.000Z' };
 }
 
 const owner = (partnerId = LAB): Me => ({ _id: OWNER, partnerId, name: 'Ravi Owner', role: 'owner', permissions: ALL, branchIds: [] });
@@ -182,6 +183,14 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
     const can = (...perms: string[]) => !!ws[1] || b.me.role === 'owner' || perms.some((x) => b.me.permissions.includes(x));
     const deny = () => fail(route, 403, 'PARTNER_PERMISSION_REQUIRED', 'You do not have permission to do this');
 
+    if (sub === '/me' && method === 'PUT') {
+      // Q14: the counter payment policy (owners and admins as owner), fenced by updatedAt.
+      const x = body as { allowPartPayments?: boolean; expectedUpdatedAt?: string };
+      if (b.me.role !== 'owner' && !ws[1]) return fail(route, 403, 'OWNER_REQUIRED', 'Only an owner can change the partner profile');
+      if (x.expectedUpdatedAt && x.expectedUpdatedAt !== p.updatedAt) return fail(route, 409, 'RECORD_CHANGED', 'This record was changed by someone else');
+      Object.assign(p, { allowPartPayments: x.allowPartPayments, updatedAt: new Date(Date.parse(p.updatedAt as string) + 60_000).toISOString() });
+      return ok(route, p);
+    }
     if (sub === '/me') return ok(route, p);
     if (sub === '/branches') return ok(route, branches);
     if (sub === '/clinic/doctors') return p.kind === 'clinic' ? ok(route, doctors) : fail(route, 409, 'NOT_A_CLINIC', 'Only clinics have doctors');
@@ -363,27 +372,41 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
           await hold;
           if (b.heldPayConflict) { b.heldPayConflict = false; await fail(route, 409, 'INVOICE_STATE_CONFLICT', 'This bill is paid'); b.heldPayAnswered = true; return; }
         }
-        const x = body as Rec;
-        if (b.paidElsewhere === inv._id && inv.lifecycleState === 'issued') transition('paid', { kind: 'payment', mode: 'cash', reference: 'OTHER' });
-        if (inv.lifecycleState === 'paid') {
-          // Q10: the same mode and reference again answers the payment already recorded.
-          const prior = events().find((e) => e.kind === 'payment');
-          if (prior && prior.mode === x.mode && (prior.reference ?? '') === (x.reference ?? '')) {
-            // Q12: `replayed` inside data (kept at the top level too).
-            return json(route, 200, { success: true, data: { invoice: { ...inv }, event: prior, replayed: true }, replayed: true });
-          }
+        // Q14: splits + requestKey + expectedLifecycleVersion; paidMinor/dueMinor; partly_paid where the partner allows it.
+        const x = body as { splits: { mode: string; amountMinor: number; reference?: string }[]; note?: string; requestKey: string; expectedLifecycleVersion: number };
+        const total = (inv.totals as Rec).totalMinor as number;
+        if (b.paidElsewhere === inv._id && inv.lifecycleState === 'issued') {
+          transition('paid', { kind: 'payment', mode: 'cash', reference: 'OTHER', amountMinor: total, splits: [{ mode: 'cash', amountMinor: total, reference: 'OTHER' }] });
+          inv.paidMinor = total; inv.dueMinor = 0;
         }
-        if (inv.lifecycleState !== 'issued') return fail(route, 409, 'INVOICE_STATE_CONFLICT', `This bill is ${inv.lifecycleState}`);
-        const e = transition('paid', { kind: 'payment', ...x });
+        const prior = events().find((e) => e.kind === 'payment' && e.requestKey === x.requestKey);
+        // Q14: the same key answers the payment already recorded (`replayed` inside data).
+        if (prior) return json(route, 200, { success: true, data: { invoice: { ...inv }, event: prior, replayed: true } });
+        if (inv.lifecycleState === 'cancelled') return fail(route, 409, 'ALREADY_CANCELLED', 'This bill is cancelled');
+        if (inv.lifecycleState === 'paid') return fail(route, 409, 'INVOICE_STATE_CONFLICT', 'This bill is paid');
+        if (x.expectedLifecycleVersion !== inv.lifecycleVersion) return fail(route, 409, 'LIFECYCLE_VERSION_CONFLICT', 'The bill changed meanwhile; reload and try again');
+        const paid = (inv.paidMinor as number | undefined) ?? 0;
+        const amount = x.splits.reduce((n, y) => n + y.amountMinor, 0);
+        if (amount > total - paid) return fail(route, 409, 'AMOUNT_EXCEEDS_DUE', `Only ${((total - paid) / 100).toFixed(2)} is due on this bill`);
+        const partner = b.partners.find((y) => y._id === inv.partnerId);
+        if (amount < total - paid && !partner?.allowPartPayments) return fail(route, 409, 'PART_PAYMENTS_NOT_ALLOWED', 'This partner takes full payment only');
+        const one = x.splits.length === 1 ? x.splits[0]! : undefined;
+        const e = transition(paid + amount >= total ? 'paid' : 'partly_paid', { kind: 'payment', ...(one ? { mode: one.mode, reference: one.reference } : {}), note: x.note,
+          amountMinor: amount, splits: x.splits, requestKey: x.requestKey });
+        inv.paidMinor = paid + amount; inv.dueMinor = total - paid - amount;
         if (b.loseNextPayAnswer) { b.loseNextPayAnswer = false; return route.abort('failed'); }
         return ok(route, { invoice: { ...inv }, event: e });
       }
       if (!can('invoices.cancel')) return deny();
       const x = body as Rec;
       if (inv.lifecycleState === 'cancelled') return fail(route, 409, 'ALREADY_CANCELLED', 'This bill is cancelled');
-      if (inv.lifecycleState === 'paid' && !x.refund) return fail(route, 400, 'REFUND_REQUIRED', 'This bill was paid: record how the money was returned');
-      if (inv.lifecycleState !== 'paid' && x.refund) return fail(route, 400, 'NOTHING_TO_REFUND', 'This bill was not paid');
-      const e = transition('cancelled', { kind: 'cancellation', reason: x.reason, ...(x.refund ? { refund: x.refund } : {}) });
+      const paidSoFar = (inv.paidMinor as number | undefined) ?? (inv.lifecycleState === 'paid' ? (inv.totals as Rec).totalMinor as number : 0);
+      if (paidSoFar > 0 && !x.refund) return fail(route, 400, 'REFUND_REQUIRED', 'This bill was paid: record how the money was returned');
+      if (paidSoFar === 0 && x.refund) return fail(route, 400, 'NOTHING_TO_REFUND', 'This bill was not paid');
+      const refund = x.refund as Rec | undefined;
+      if (refund && refund.amountMinor !== undefined && refund.amountMinor !== paidSoFar) return fail(route, 400, 'REFUND_AMOUNT_MISMATCH', `The refund must be the amount paid (${(paidSoFar / 100).toFixed(2)})`);
+      const e = transition('cancelled', { kind: 'cancellation', reason: x.reason, ...(refund ? { refund: { ...refund, amountMinor: paidSoFar } } : {}) });
+      inv.dueMinor = 0;
       return ok(route, { invoice: { ...inv }, event: e });
     }
     return fail(route, 404, 'NOT_FOUND', 'Not found');
@@ -708,7 +731,11 @@ test('a bill: pay after confirming, a refused payment shows the server and the c
   await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
   await expect(page.getByText('Payment recorded.')).toBeVisible();
   await expect(page.getByText('Paid by UPI · reference UTR123')).toBeVisible();
-  expect(backend.calls.filter((c) => c.path.endsWith('/pay')).map((c) => c.body)).toEqual([{ mode: 'cash' }, { mode: 'upi', reference: 'UTR123' }]);
+  // Q14: always as splits, with the server's request key and the bill version the payment was decided on.
+  expect(backend.calls.filter((c) => c.path.endsWith('/pay')).map((c) => c.body)).toEqual([
+    { splits: [{ mode: 'cash', amountMinor: 50000 }], requestKey: expect.stringMatching(/^[0-9a-f]{32}$/), expectedLifecycleVersion: 0 },
+    { splits: [{ mode: 'upi', amountMinor: 100800, reference: 'UTR123' }], requestKey: expect.stringMatching(/^[0-9a-f]{32}$/), expectedLifecycleVersion: 0 },
+  ]);
 
   // Q10: a paid bill is cancelled only with how the money went back.
   await page.getByRole('button', { name: 'Cancel bill' }).click();
@@ -725,7 +752,7 @@ test('a bill: pay after confirming, a refused payment shows the server and the c
   await expect(page.getByText('Paid by UPI · reference UTR123')).toBeVisible(); // the payment event is kept
   await expect(page.getByRole('button', { name: 'Cancel bill' })).toHaveCount(0);
   expect(backend.calls.find((c) => c.path.endsWith('/cancel'))).toMatchObject({ path: `/partner-workspace/invoices/${INV1}/cancel`,
-    body: { reason: 'Billed to the wrong patient', refund: { mode: 'upi', reference: 'RF9' } } });
+    body: { reason: 'Billed to the wrong patient', refund: { mode: 'upi', reference: 'RF9', amountMinor: 100800 } } });
 
   await page.getByRole('button', { name: 'Open PDF (current)' }).click();
   await expect(page.locator('iframe[title="Bill LB/2627/0001 PDF"]')).toHaveAttribute('src', /^blob:/);
@@ -1016,7 +1043,9 @@ test('pay and cancel are one at a time; a lost payment answer is resent unchange
   await expect(unsure).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeEnabled();
   const pays = backend.calls.filter((c) => c.path.endsWith('/pay'));
-  expect(pays.map((c) => c.body)).toEqual([{ mode: 'cash' }, { mode: 'cash' }]);
+  // The same payment twice: the same key, the same content.
+  expect(pays.map((c) => c.body)).toEqual([pays[0]!.body, pays[0]!.body]);
+  expect(pays[0]!.body).toEqual({ splits: [{ mode: 'cash', amountMinor: 100800 }], requestKey: expect.stringMatching(/^[0-9a-f]{32}$/), expectedLifecycleVersion: 0 });
   expect(backend.events.filter((e) => e.kind === 'payment')).toHaveLength(1);
   await expect(page.getByText(/^Paid by Cash/)).toHaveCount(1);
 });
@@ -1185,4 +1214,85 @@ test('admin switching partners: drafts, open forms and an unconfirmed bill stay 
   await expect(page.getByRole('heading', { name: 'Edit CBC' })).toHaveCount(0);
   const creates = backend.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/invoices'));
   expect(creates.map((c) => c.path)).toEqual([`/partner-workspace/admin/${LAB}/workspace/invoices`]);
+});
+
+test('Q14 part payments: the owner allows them (version-fenced); a bill is paid in parts and split methods, never more than is due; cancelling refunds all that was paid', async ({ page }) => {
+  const backend = await mockBackend(page, owner(), { seed: true });
+  await signInPartner(page);
+  await page.goto('/#/partner');
+  const policy = page.getByRole('region', { name: 'Payments at the counter' });
+  await expect(policy).toContainText('Full payment only: each payment settles everything still due');
+  await policy.getByLabel('Allow part payments of bills').check();
+  await expect(policy).toContainText('After saving: Part payments are allowed');
+  await policy.getByRole('button', { name: 'Save payment setting' }).click();
+  await expect(policy.getByText('After saving:', { exact: false })).toHaveCount(0);
+  await expect(policy).toContainText('Part payments are allowed: a bill can be paid in several payments');
+  expect(backend.calls.find((c) => c.method === 'PUT' && c.path === '/partner-workspace/me')?.body).toEqual({ allowPartPayments: true, expectedUpdatedAt: '2026-11-01T00:00:00.000Z' });
+
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await expect(page.getByText('₹1,008.00 is due. Any amount up to that can be recorded; the rest stays due on the bill.')).toBeVisible();
+  await page.getByLabel('Amount (₹)', { exact: true }).fill('300');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByText('Record ₹300.00 as paid by Cash for bill LB/2627/0001? ₹708.00 stays due: the bill will show Partly paid.')).toBeVisible();
+  await page.getByRole('button', { name: 'Record ₹300.00 paid' }).click();
+  await expect(page.getByText('Payment recorded.')).toBeVisible();
+  await expect(page.getByText('Partly paid', { exact: true })).toBeVisible();
+  const paidDue = page.locator('dl[aria-label="Paid and due"]');
+  await expect(paidDue).toContainText('Paid₹300.00 of ₹1,008.00');
+  await expect(paidDue).toContainText('Due₹708.00');
+
+  // The rest, split across two methods; more than is due is caught before sending.
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await expect(page.getByLabel('Amount (₹)', { exact: true })).toHaveValue('708');
+  await page.getByLabel('Amount (₹)', { exact: true }).fill('800');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByText('That is more than is due (₹708.00). A bill is never paid more than what is due.')).toBeVisible();
+  await page.getByLabel('Amount (₹)', { exact: true }).fill('208');
+  await page.getByRole('button', { name: 'Add another method' }).click();
+  await expect(page.getByLabel('Amount (₹) (method 2)')).toHaveValue('500');
+  await page.getByLabel('Reference (optional) (method 2)').fill('UPI77');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByText('Record ₹708.00 as paid by Cash ₹208.00 + UPI ₹500.00 (reference UPI77) for bill LB/2627/0001? The bill will show Paid.')).toBeVisible();
+  await page.getByRole('button', { name: 'Record ₹708.00 paid' }).click();
+  await expect(page.getByText('Paid by Cash ₹208.00 + UPI ₹500.00 (reference UPI77) · ₹708.00 in all')).toBeVisible();
+  await expect(page.getByText('Paid by Cash · ₹300.00')).toBeVisible();
+  await expect(paidDue).toContainText('Due₹0.00');
+  const pays = backend.calls.filter((c) => c.path.endsWith('/pay')).map((c) => c.body as Rec);
+  expect(pays[0]).toEqual({ splits: [{ mode: 'cash', amountMinor: 30000 }], requestKey: expect.stringMatching(/^[0-9a-f]{32}$/), expectedLifecycleVersion: 0 });
+  expect(pays[1]).toEqual({ splits: [{ mode: 'cash', amountMinor: 20800 }, { mode: 'upi', amountMinor: 50000, reference: 'UPI77' }],
+    requestKey: expect.stringMatching(/^[0-9a-f]{32}$/), expectedLifecycleVersion: 1 });
+  expect(pays[1]!.requestKey).not.toBe(pays[0]!.requestKey);
+
+  // Cancelling a bill with payments records a refund of all that was paid.
+  await page.getByRole('button', { name: 'Cancel bill' }).click();
+  await expect(page.getByText('The refund recorded is ₹1,008.00, all that was paid.', { exact: false })).toBeVisible();
+  await page.getByLabel('Why is this bill cancelled?').fill('Wrong patient');
+  await page.getByRole('button', { name: 'Cancel bill LB/2627/0001' }).click();
+  await expect(page.getByText('· ₹1,008.00 returned')).toBeVisible();
+  expect(backend.calls.find((c) => c.path.endsWith('/cancel'))?.body).toEqual({ reason: 'Wrong patient', refund: { mode: 'cash', amountMinor: 100800 } });
+
+  // The bills list filters partly paid bills.
+  await page.goto('/#/partner/invoices');
+  await page.getByLabel('Status').selectOption('partly_paid');
+  await expect.poll(() => backend.calls.some((c) => c.path === '/partner-workspace/invoices?state=partly_paid&limit=50')).toBe(true);
+});
+
+test('Q14 full payment only (the default): a part is refused before sending; a payment the bill moved past is refused (version) and the bill read again', async ({ page }) => {
+  const backend = await mockBackend(page, owner(), { seed: true });
+  await signInPartner(page);
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await expect(page.getByText('Only full payment is taken: the amounts must add up to all that is due.', { exact: false })).toBeVisible();
+  await page.getByLabel('Amount (₹)', { exact: true }).fill('500');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByText('Only full payment is taken here: the amounts must add up to ₹1,008.00.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.path.endsWith('/pay'))).toHaveLength(0);
+  await page.getByLabel('Amount (₹)', { exact: true }).fill('1008');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  // The bill moves on meanwhile (another change in another tab): the payment names version 0 and is refused.
+  backend.invoices.find((i) => i._id === INV1)!.lifecycleVersion = 1;
+  await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
+  await expect(page.getByText('Payment not recorded: The bill changed while you were recording this (another payment or a cancellation), so nothing was recorded.', { exact: false })).toBeVisible();
+  expect(backend.calls.filter((c) => c.path.endsWith('/pay')).map((c) => (c.body as Rec).expectedLifecycleVersion)).toEqual([0]);
 });

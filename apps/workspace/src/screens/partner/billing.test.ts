@@ -2,7 +2,7 @@ import type { CatalogueItem, Invoice, InvoiceEvent } from '@jansetu/api';
 import { money } from './billing.tsx';
 import { rebase } from '../../draft.ts';
 import { draftOf, itemBody } from './CatalogueScreen.tsx';
-import { mergeDetail, paymentOutcome } from './InvoiceScreen.tsx';
+import { mergeDetail, paymentOutcome, paymentText } from './InvoiceScreen.tsx';
 import { billFilter } from './InvoicesScreen.tsx';
 import { buildInvoice, type InvoiceDraft } from './NewInvoiceScreen.tsx';
 
@@ -27,15 +27,28 @@ describe('bill page: answers never go back in time', () => {
   });
 });
 
-describe('an unconfirmed payment is settled only by the bill', () => {
-  const paidWith = (mode: string, reference?: string) => ({
-    invoice: inv(1, 'paid'), events: [{ ...ev(1, 'payment'), mode, ...(reference ? { reference } : {}) } as InvoiceEvent],
+describe('an unconfirmed payment is settled only by the bill (Q14: its key and the version it named)', () => {
+  const K = 'p'.repeat(32);
+  const op = (expectedLifecycleVersion: number) => ({ requestKey: K, body: { splits: [{ mode: 'upi' as const, amountMinor: 100 }], requestKey: K, expectedLifecycleVersion } });
+  const pay = (version: number, o: Partial<InvoiceEvent> = {}) => ({ ...ev(version, 'payment'), ...o } as InvoiceEvent);
+  it('its own receipt settles it as recorded; a bill moved past its version or cancelled as never recorded; otherwise open', () => {
+    expect(paymentOutcome({ invoice: inv(1, 'paid'), events: [pay(1, { requestKey: K })] }, op(0))).toBe('recorded');
+    // Part payments: an earlier payment of someone else does not decide it while the bill is still at the version it named.
+    expect(paymentOutcome({ invoice: inv(1, 'partly_paid'), events: [pay(1, { requestKey: 'x'.repeat(32) })] }, op(1))).toBe('unknown');
+    expect(paymentOutcome({ invoice: inv(1, 'paid'), events: [pay(1, { mode: 'cash', amountMinor: 100800 })] }, op(0)))
+      .toEqual({ refused: 'another payment was recorded first (Paid by Cash · ₹1,008.00).' });
+    expect(paymentOutcome({ invoice: inv(1, 'cancelled'), events: [ev(1, 'cancellation')] }, op(0))).toEqual({ refused: 'the bill was cancelled.' });
+    expect(paymentOutcome({ invoice: inv(0, 'issued'), events: [] }, op(0))).toBe('unknown');
+    // Restored after a reload (no body): only its receipt or a cancellation decide it.
+    expect(paymentOutcome({ invoice: inv(1, 'partly_paid'), events: [pay(1)] }, { requestKey: K, body: undefined as never, restored: true })).toBe('unknown');
+    expect(paymentOutcome({ invoice: inv(2, 'paid'), events: [pay(1), pay(2, { requestKey: K })] }, { requestKey: K, body: undefined as never, restored: true })).toBe('recorded');
   });
-  it('its own receipt settles it as recorded; another payment or a cancellation as not recorded; an unpaid bill leaves it open', () => {
-    expect(paymentOutcome(paidWith('upi', 'UTR9'), { mode: 'upi', reference: 'UTR9' })).toBe('recorded');
-    expect(paymentOutcome(paidWith('cash'), { mode: 'upi', reference: 'UTR9' })).toEqual({ refused: 'another payment was recorded first (Cash).' });
-    expect(paymentOutcome({ invoice: inv(1, 'cancelled'), events: [ev(1, 'cancellation')] }, { mode: 'cash' })).toEqual({ refused: 'the bill was cancelled.' });
-    expect(paymentOutcome({ invoice: inv(0, 'issued'), events: [] }, { mode: 'cash' })).toBe('unknown');
+
+  it('words a payment by its methods and amounts', () => {
+    expect(paymentText({ mode: 'upi', reference: 'UTR1', amountMinor: 100800 })).toBe('Paid by UPI · reference UTR1 · ₹1,008.00');
+    expect(paymentText({ splits: [{ mode: 'cash', amountMinor: 50000 }, { mode: 'upi', amountMinor: 50800, reference: 'U9' }], amountMinor: 100800 }))
+      .toBe('Paid by Cash ₹500.00 + UPI ₹508.00 (reference U9) · ₹1,008.00 in all');
+    expect(paymentText({ mode: 'cash' })).toBe('Paid by Cash');
   });
 });
 
