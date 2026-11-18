@@ -129,6 +129,8 @@ describe('Q14 no-shows (rescheduleNoShow: once, never instant, no earning)', () 
     expect(doctorNoShowMove(appt({ status: 'no_show', noShowReschedules: 1 }))).toBe('used');
     expect(doctorNoShowMove(appt({ status: 'no_show', noShows: [{ rescheduledAt: '2026-11-16T05:00:00Z' }] }))).toBe('used');
     expect(doctorNoShowMove(appt({ status: 'no_show', bookingKind: 'instant' }))).toBeNull();
+    // Q14 review: desk appointments are the clinic's to move.
+    expect(doctorNoShowMove(appt({ status: 'no_show', clinicDesk: { partnerId: ID, branchId: BR } }))).toBe('clinic');
     expect(doctorNoShowMove(appt({ status: 'confirmed', noShowReschedules: 1 }))).toBeNull();
   });
 

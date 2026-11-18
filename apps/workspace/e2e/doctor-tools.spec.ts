@@ -854,6 +854,8 @@ test('Q14 clinics: invitations are no longer valid (dismiss only), leave a clini
   await form.getByLabel('Contact email (optional)').fill('meera@heart.in');
   await form.getByRole('button', { name: 'Review' }).click();
   await expect(form).toContainText('You can create only one clinic. It starts pending: Jansetu verifies it');
+  // Q14 review: the owner-doctor consults at every branch of their clinic.
+  await expect(form).toContainText('You are its owner and consult at every branch of it.');
   await form.getByRole('button', { name: 'Create my clinic' }).click();
   // The answer is lost: the exact create is found by its key; nothing is sent twice.
   const unsure = page.getByRole('group', { name: 'Unconfirmed clinic' });
@@ -1307,4 +1309,32 @@ test('Q14 doctor no-show: no earning and no refund; moved once to one of the doc
   // Earnings say that a no-show earns nothing.
   await nav(page).getByRole('link', { name: 'Earnings' }).click();
   await expect(page.getByText('A no-show earns nothing (and the patient is not refunded), so it never appears here.')).toBeVisible();
+});
+
+test('WQ8 review: a desk no-show is the clinic’s to move; a move that empties the day still says it was moved', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.appointments.push(
+    appt(40, { bookingDate: '20261120', bookingTime: '09:00', status: 'no_show', updatedAt: '2026-11-17T04:00:00.000Z' }),
+    appt(41, { bookingDate: '20261121', bookingTime: '09:00', status: 'no_show', consultationMode: 'in-person', settlementSystem: 'clinic', paymentStatus: 'pending',
+      clinicDesk: { partnerId: SUNRISE, branchId: BR1 } }),
+  );
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Appointments' }).click();
+  await page.getByLabel('Show').selectOption('day');
+  await page.getByLabel('Day', { exact: true }).fill('2026-11-21');
+  const table = page.getByRole('table', { name: 'Appointments' });
+  await expect(table.getByRole('row').filter({ hasText: '09:00' })).toContainText('The clinic can move this appointment: it was booked at its front desk.');
+  await expect(table.getByRole('button', { name: 'Reschedule no-show' })).toHaveCount(0);
+
+  await page.getByLabel('Day', { exact: true }).fill('2026-11-20');
+  await table.getByRole('button', { name: 'Reschedule no-show' }).click();
+  const form = page.getByRole('form', { name: 'Reschedule no-show' });
+  await form.getByLabel('New day').fill('2026-11-18');
+  await form.getByLabel('New time').selectOption('16:00–16:15');
+  await form.getByRole('button', { name: 'Continue' }).click();
+  await form.getByRole('button', { name: /^Move to/ }).click();
+  // The only booking of the day moved away: the list is empty, and the notice is still shown.
+  await expect(page.getByText('No appointments on')).toBeVisible();
+  await expect(page.getByText('The patient’s no-show is moved to Wed, 18 Nov, 2026, 16:00. It is booked again at the same price.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.path.endsWith('/reschedule-no-show')).map((c) => c.path)).toEqual([`/specialists/me/bookings/${bid(40)}/reschedule-no-show`]);
 });

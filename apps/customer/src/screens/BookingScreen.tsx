@@ -65,7 +65,8 @@ function BookingView({ booking: b }: { booking: Booking }) {
       {b.status === 'no_show' && (
         <Alert tone="warn">
           You were marked as not present for this appointment. A missed appointment is not refunded.
-          {movedAfterNoShow ? ' It had already been moved once after a missed time, so it cannot be moved again.' : ' The doctor or clinic may offer you one new time; you will be told if they do.'}
+          {movedAfterNoShow ? ' It had already been moved once after a missed time, so it cannot be moved again.'
+            : b.bookingKind === 'instant' ? '' : ' The doctor or clinic may offer you one new time; you will be told if they do.'}
         </Alert>
       )}
       {movedAfterNoShow && b.status !== 'no_show' && (

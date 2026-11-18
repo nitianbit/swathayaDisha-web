@@ -860,6 +860,30 @@ on a sole first attempt, ends it (nothing was written); a ₹0 bill is marked pa
 booking moved after a no-show offers neither "Propose a new time" nor "Reject"; customer bill events are read without keys or staff ids, and the
 customer bill shows partly paid, each payment's methods and what is due.
 
+Independent review of 915a2db..6b9ce70 (against Q14 d29b72e), fixed:
+1. **Payments and cancellations name what was reviewed.** The payment confirmation captures the bill version, the due and the amounts when it
+   opens, shows and sends exactly those (`expectedLifecycleVersion` = the reviewed version, never the one on screen at the click); a newer
+   version (a background re-read) closes it with "This bill changed — check the amounts again." The cancellation captures the paid amount with
+   its version on opening; the refund names that amount; a newer version closes it and asks again. (Two cashiers each recording ₹300 can no
+   longer make ₹600 out of one reviewed ₹300.)
+2. Doctors are not offered "Reschedule no-show" on desk appointments (`doctorNoShowMove` → 'clinic'): "The clinic can move this appointment";
+   409 CLINIC_APPOINTMENT has the same words.
+3. A desk receipt's "Make a bill for this visit" is prefilled from the appointment row as the server lists it (account holder's mobile and name),
+   never from this device's memory (gone after a reload); until the row is read it points to the row's "Create bill".
+4. The part-payment setting's messages live outside the subtree keyed by the partner version, so "someone else changed this" and RECORD_CHANGED
+   are shown; a save says "Saved."
+5. The bill handover is bound to its navigation: a one-time token in the route state; the form takes the prefill only when its route state names
+   the token, and clears it once read; a modified click (new tab) hands nothing over.
+6. The doctor's appointments show a move's notice even when the moved booking left an otherwise empty list.
+7. Admin doctor search says what it is: whole words of the full name or speciality (no mobile numbers, no partial names).
+8. A payment resend refused for good (503 INVOICE_INDEXES_OUTDATED, 409 PART_PAYMENTS_NOT_ALLOWED / AMOUNT_EXCEEDS_DUE / PAYMENT_METHOD_REQUIRED /
+   REQUEST_KEY_REQUIRED / INVALID_AMOUNT, any 400/403/404/422) settles it as not recorded on ANY attempt and unlocks the bill: the server looks
+   for this key's payment first and these abort. Version and state conflicts, network losses and other 5xx stay unknown.
+9. Copy: "Our admin team adds doctors to your clinic"; a missed instant consultation never mentions a new time; the owner-doctor consults at every
+   branch of their own clinic (Q14 review 4); a family member's date of birth is checked as the server does (its UTC midnight not after now).
+10. Test races fixed (test code only): the lost-UPI journey arms its failures only after the bill is read; the admin partners journey waits for
+   the filtered request before asserting the empty row.
+
 Assumed (not in Q14): nothing on the wire. Not shown because the server does not send it: desk rows' no-show history (`deskView`), so the desk's
 "used" state comes from the 409. Admin search by mobile depends on the server's text index (rows show each doctor's mobile to check). The admin route
 for moving any doctor's no-show is in `doctorAdminApi` but has no screen yet (no admin consultation-bookings page).
@@ -887,6 +911,7 @@ Verification: see the 2026-11-18 WQ8 row below. Playwright ran on ports 5291 (wo
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-18 | WQ8 review fixes (against Q14 d29b72e) | typecheck clean; Vitest 204/204 (+2: refusals settled for good vs left unknown; the bill handover taken only by its navigation; doctor desk no-shows; date of birth read as the server does); Playwright workspace 376/376 (+10 = 5 journeys x 2: two cashiers (a reviewed ₹300 never sent on the newer version; the cancellation asks again), a refused resend unlocks the bill, the setting's conflict message and "Saved.", a modified click hands nothing over, a desk no-show is the clinic's and an emptied day keeps the notice; receipt bill after a reload, search copy and owner-doctor branches added to existing journeys; the two-cashier and refused-resend journeys fail on 6b9ce70); customer 208/208 (+2: a missed instant consultation is final); both release builds OK. |
 | 2026-11-18 | WQ8 Q14 review follow-ups | typecheck clean; Vitest 202/202 (+1: no ordinary new time or rejection after a moved lab no-show; ₹0 bill takes a payment; plain-mode payment checked); Playwright workspace 366/366 (+2 = 1 journey x 2: a ₹0 bill marked paid with a plain method, INVOICE_INDEXES_OUTDATED shown and nothing pending; lab and desk journeys extended: no Propose/Reject after a moved no-show, the bill's customer fixed while linked, no "new family member" claim); customer 206/206 (+2: a partly paid bill with split methods and what is due); both release builds OK. |
 | 2026-11-18 | WQ8 (owner decisions, Q14 85a4ec1) | typecheck clean; Vitest 201/201 (+13: no-show move offers and paths for lab/desk/doctor, doctor slots, paid/due and payment rules, split payment bodies with key and version, appointment filter, link/unlink paths and rules, family member rules, own clinic body, admin doctor search, no cancel after a moved no-show); Playwright workspace 364/364 (+20 = 10 journeys x 2 devices: lab no-show moved once with a lost answer and then final, a used move refused; desk family member, desk no-show moved with a lost answer and a refused second move, bill from an appointment with prefill/appointmentId/second bill refused, admin link with a lost answer resent once, owner removes a doctor; doctor no-show move, own clinic created once found by key, DOCTOR_CLINIC_EXISTS and unverified; part and split payments with the owner setting and the refund, full-payment-only and a version refusal); customer 204/204 (+4: missed and moved consultation, missed and moved lab booking); both release builds OK. |
 | 2026-11-16 | WQ7 (WQ2/WQ5/WQ6 on Q12/Q13) | typecheck clean; Vitest 143/143 (+4: catalogue search/by-key/abandon paths and key checks; finance cursor pages with total and queue account names, payout/adjustment by-key and abandon, `expectedDetailsVersion` and `expectedFinanceVersion` bodies, cursor/version checks before any request; desk step versions in every body and by-key/abandon paths; the look-alike and UTR-match helpers and their tests removed); Playwright workspace 308/308 (+18 = 9 journeys x 2 devices: catalogue item lost before a reload given up by key then a second one found by key; a resend of a given-up item key refused for good; payout lost before a reload checked by key, given up, a new one recorded, and its given-up resend refused; adjustment given up after a check, and one landing after the check answered `used` by the give-up; FINANCE_CHANGED on a stale adjustment and a payout review closed when the account moved; PAYOUT_DETAILS_CHANGED after the re-read closes the review and shows the saved details; queue/account/partner cursor paging with totals and row names; desk booking dropped before a reload given up, then a given-up resend refused; started slots not offered and SLOT_STARTED for a booking and a move; BOOKING_CHANGED on a stale cancel then a step on the new version; existing journeys updated: by-key checks, version bodies, replay text, invitation names, an open confirmation closing when the appointment changes, a move on a cached day refused then retried), no flakes; release build with VITE_API_BASE_URL=https://api.example.test. Port 5271, temporary config, not committed. Not yet run against a real backend or reviewed. |

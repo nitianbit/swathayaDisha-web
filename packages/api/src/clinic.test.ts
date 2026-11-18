@@ -53,13 +53,16 @@ describe('Q14 doctor links (linkDoctorSchema, clinicBranch) and family members a
 
   it('a new family member needs a name and a known relation; gender and a past real birth date are optional', () => {
     const ok = { name: 'Meena', relation: 'Mother', gender: '', dateOfBirth: '' };
-    expect(familyMemberProblems(ok, '2026-11-17')).toEqual({});
-    expect(familyMemberProblems({ ...ok, gender: 'Female', dateOfBirth: '1960-02-29' }, '2026-11-17')).toEqual({});
-    expect(familyMemberProblems({ ...ok, name: '  ' }, '2026-11-17').name).toMatch(/name/);
-    expect(familyMemberProblems({ ...ok, relation: 'Me' }, '2026-11-17').relation).toMatch(/related/);
-    expect(familyMemberProblems({ ...ok, gender: 'female' }, '2026-11-17').gender).toMatch(/gender/);
-    expect(familyMemberProblems({ ...ok, dateOfBirth: '1961-02-29' }, '2026-11-17').dateOfBirth).toMatch(/real date/);
-    expect(familyMemberProblems({ ...ok, dateOfBirth: '2026-11-18' }, '2026-11-17').dateOfBirth).toMatch(/not in the future/);
+    expect(familyMemberProblems(ok, new Date('2026-11-17T12:00:00Z'))).toEqual({});
+    expect(familyMemberProblems({ ...ok, gender: 'Female', dateOfBirth: '1960-02-29' }, new Date('2026-11-17T12:00:00Z'))).toEqual({});
+    expect(familyMemberProblems({ ...ok, name: '  ' }, new Date('2026-11-17T12:00:00Z')).name).toMatch(/name/);
+    expect(familyMemberProblems({ ...ok, relation: 'Me' }, new Date('2026-11-17T12:00:00Z')).relation).toMatch(/related/);
+    expect(familyMemberProblems({ ...ok, gender: 'female' }, new Date('2026-11-17T12:00:00Z')).gender).toMatch(/gender/);
+    expect(familyMemberProblems({ ...ok, dateOfBirth: '1961-02-29' }, new Date('2026-11-17T12:00:00Z')).dateOfBirth).toMatch(/real date/);
+    expect(familyMemberProblems({ ...ok, dateOfBirth: '2026-11-18' }, new Date('2026-11-17T12:00:00Z')).dateOfBirth).toMatch(/not in the future/);
+    // As the server reads it: 02:00 IST on 18 Nov is still 17 Nov in UTC, so "today" (18 Nov) is refused; at 06:00 IST it is not.
+    expect(familyMemberProblems({ ...ok, dateOfBirth: '2026-11-18' }, new Date('2026-11-17T20:30:00Z')).dateOfBirth).toMatch(/not in the future/);
+    expect(familyMemberProblems({ ...ok, dateOfBirth: '2026-11-18' }, new Date('2026-11-18T00:30:00Z'))).toEqual({});
   });
 
   it('offers only active in-clinic branches in scope, and doctors who consult there', () => {

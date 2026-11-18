@@ -324,10 +324,12 @@ export type AppointmentAction = 'confirm' | 'complete' | 'cancel' | 'no_show';
 /**
  * Q14 `rescheduleNoShow` (`bookings/services`): the doctor may move their own no-show once to a later slot (same price,
  * no payment, no refund). Instant consultations are never moved. 'offer' = it can be moved now; 'used' = it was moved
- * once already (a second no-show is final); null = nothing to move.
+ * once already (a second no-show is final); 'clinic' = a desk appointment, which its clinic moves; null = nothing to move.
  */
-export function doctorNoShowMove(b: Pick<DoctorAppointment, 'status' | 'bookingKind' | 'noShows' | 'noShowReschedules'>): 'offer' | 'used' | null {
+export function doctorNoShowMove(b: Pick<DoctorAppointment, 'status' | 'bookingKind' | 'noShows' | 'noShowReschedules' | 'clinicDesk'>): 'offer' | 'used' | 'clinic' | null {
   if (b.status !== 'no_show' || b.bookingKind === 'instant') return null;
+  // Q14 review: a desk appointment is moved by its clinic only (409 CLINIC_APPOINTMENT for the doctor).
+  if (b.clinicDesk) return 'clinic';
   return noShowMovedOnce(b) ? 'used' : 'offer';
 }
 
@@ -723,8 +725,8 @@ export const MAX_DIRECTORY_SEARCH = 100;
 export function doctorAdminApi(c: ApiClient) {
   return {
     /**
-     * Verified, active doctors matching the text (name or speciality; the server's text search), 20 a page. Whether a
-     * mobile number matches depends on the server's search index (ASSUMED; the rows show each doctor's mobile to check).
+     * Verified, active doctors matching the text, 20 a page. The server's text index covers whole words of the name,
+     * speciality and bio only: no mobile numbers, no partial names (the rows show each doctor's mobile to check).
      */
     search: (text: string, page = 1) => {
       const t = text.trim();

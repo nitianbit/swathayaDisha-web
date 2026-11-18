@@ -41,6 +41,7 @@ export function ProfileScreen() {
 
 function Profile({ ctx }: { ctx: ScopeContext }) {
   const me = useWorkspacePartner(ctx);
+  const [policyMessage, setPolicyMessage] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
   const p = me.data;
   return (
     <>
@@ -75,7 +76,12 @@ function Profile({ ctx }: { ctx: ScopeContext }) {
               </p>
             </section>
             {canEditProfile(ctx.actor) && <ContactForm ctx={ctx} partner={p!} />}
-            <CounterPayments key={p!.updatedAt ?? ''} ctx={ctx} partner={p!} />
+            <section className="ws-section" aria-labelledby="pay-policy-h">
+              <h2 id="pay-policy-h">Payments at the counter</h2>
+              {/* The message outlives the form, which starts again from every newer version of the partner. */}
+              {policyMessage && <Alert tone={policyMessage.tone}>{policyMessage.text}</Alert>}
+              <CounterPayments key={p!.updatedAt ?? ''} ctx={ctx} partner={p!} onMessage={setPolicyMessage} />
+            </section>
           </>
         )}
     </>
@@ -163,13 +169,15 @@ function ContactForm({ ctx, partner }: { ctx: ScopeContext; partner: Partner }) 
  * owner) change it; the choice is checked against what is saved right before sending (another change meanwhile resets it
  * for review) and the write names that version (`expectedUpdatedAt`, 409 RECORD_CHANGED).
  */
-function CounterPayments({ ctx, partner }: { ctx: ScopeContext; partner: Partner }) {
+function CounterPayments({ ctx, partner, onMessage }: {
+  ctx: ScopeContext; partner: Partner; onMessage: (m: { tone: 'ok' | 'warn'; text: string } | null) => void;
+}) {
   const queryClient = useQueryClient();
   const base = partner.allowPartPayments === true;
   const [on, setOn] = useState(base);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const setNotice = (text: string) => onMessage({ tone: 'ok', text });
+  const setError = (text: string) => onMessage({ tone: 'warn', text });
   const canEdit = canEditProfile(ctx.actor);
   const words = (v: boolean) => (v
     ? 'Part payments are allowed: a bill can be paid in several payments, any amount up to what is due each time.'
@@ -177,7 +185,7 @@ function CounterPayments({ ctx, partner }: { ctx: ScopeContext; partner: Partner
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    setNotice(null); setError(null);
+    onMessage(null);
     if (on === base) { setNotice('Nothing has changed.'); return; }
     setBusy(true);
     try {
@@ -189,6 +197,7 @@ function CounterPayments({ ctx, partner }: { ctx: ScopeContext; partner: Partner
       }
       try {
         const updated = await ctx.api.updateMe({ allowPartPayments: on }, fresh.updatedAt);
+        setNotice('Saved.');
         queryClient.setQueryData([...ctx.key, 'me'], updated);
       } catch (err) {
         if (!isRecordChanged(err)) throw err;
@@ -203,8 +212,7 @@ function CounterPayments({ ctx, partner }: { ctx: ScopeContext; partner: Partner
   }
 
   return (
-    <section className="ws-section" aria-labelledby="pay-policy-h">
-      <h2 id="pay-policy-h">Payments at the counter</h2>
+    <>
       <p>{words(base)}</p>
       {canEdit ? (
         <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
@@ -214,11 +222,9 @@ function CounterPayments({ ctx, partner }: { ctx: ScopeContext; partner: Partner
             </label>
           </fieldset>
           {on !== base && <p className="ws-muted">After saving: {words(on)}</p>}
-          {notice && <Alert tone="ok">{notice}</Alert>}
-          {error && <Alert tone="warn">{error}</Alert>}
           <Button type="submit" busy={busy}>Save payment setting</Button>
         </form>
       ) : <p className="ws-muted">Only an owner can change this.</p>}
-    </section>
+    </>
   );
 }

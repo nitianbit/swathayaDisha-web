@@ -523,11 +523,12 @@ test('Q14 admin as owner: find a verified doctor, choose branches, confirm the l
   await signInAdmin(page);
   await page.goto(`/#/admin/partners/${CLINIC}/clinic-doctors`);
   const add = page.getByRole('region', { name: 'Add doctor' });
-  await page.getByLabel('Doctor’s name, speciality or mobile number').fill('9811111111');
+  await expect(page.getByText('Search by the doctor’s full name or speciality (whole words).', { exact: false })).toBeVisible();
+  await page.getByLabel('Doctor’s full name or speciality').fill('Dr Iyer');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   const found = page.getByRole('table', { name: /Verified doctors matching/ });
-  await expect(found.getByRole('row').filter({ hasText: 'Dr Iyer' })).toContainText('Cardiologist');
-  expect(backend.calls.some((c) => c.path === '/specialists?search=9811111111&isVerified=true&isActive=true&page=1&limit=20')).toBe(true);
+  await expect(found.getByRole('row').filter({ hasText: 'Dr Iyer' })).toContainText('9811111111');
+  expect(backend.calls.some((c) => c.path === '/specialists?search=Dr+Iyer&isVerified=true&isActive=true&page=1&limit=20')).toBe(true);
   await found.getByRole('button', { name: 'Choose Dr Iyer' }).click();
   const form = page.getByRole('form', { name: 'Add doctor' });
   await form.getByLabel('Every branch, including ones added later').uncheck();
@@ -552,7 +553,7 @@ test('Q14 admin as owner: find a verified doctor, choose branches, confirm the l
   await expect(page.getByRole('table', { name: 'Doctors consulting at this clinic' }).getByRole('row').filter({ hasText: 'Dr Iyer' })).toContainText('Indiranagar');
 
   // A doctor who already consults here is caught before sending.
-  await page.getByLabel('Doctor’s name, speciality or mobile number').fill('Mehta');
+  await page.getByLabel('Doctor’s full name or speciality').fill('Mehta');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await found.getByRole('button', { name: 'Choose Dr Mehta' }).click();
   await form.getByRole('button', { name: 'Continue' }).click();
@@ -691,6 +692,26 @@ test('a lost booking answer locks the form; the key finds it (also after a reloa
   await expect(page.getByRole('heading', { name: 'Appointment: Meena, Tue, 17 Nov, 2026, 10:30' })).toBeVisible();
   expect(books(backend)).toHaveLength(2);
   expect(await storage(page)).not.toMatch(/Meena|9800000010/);
+  // WQ8 review: the receipt's bill is prefilled from the appointment as the server lists it (the details on this device
+  // are gone after the reload): the account holder's mobile is there, so issuing is not refused for the customer.
+  await page.getByText('This booking had already been made', { exact: false }).getByRole('link', { name: 'Make a bill for this visit' }).click();
+  await expect(page.getByLabel('Mobile number (optional)')).toHaveValue('9800000010');
+  await expect(page.getByLabel('Customer name')).toHaveValue('Meena');
+});
+
+test('WQ8 review: a modified click on "Create bill" (a new tab) hands nothing over; the next "New bill" here starts empty', async ({ page, context }) => {
+  await mockBackend(page);
+  await signInPartner(page);
+  await openDesk(page);
+  const row = appointments(page).getByRole('row').filter({ hasText: 'Asha Rao' });
+  const popup = context.waitForEvent('page');
+  await row.getByRole('link', { name: 'Create bill' }).click({ modifiers: ['ControlOrMeta'] });
+  await (await popup).close();
+  await expect(page.getByRole('heading', { name: 'Front desk', level: 1 })).toBeVisible();
+  await page.goto('/#/partner/invoices/new');
+  await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Appointment' })).toHaveCount(0);
+  await expect(page.getByLabel('Customer name')).toHaveValue('');
 });
 
 test('Q13: a booking that never arrived is given up on the server after a check, even after a reload; a resend of a given-up key is refused', async ({ page }) => {

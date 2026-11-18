@@ -32,6 +32,8 @@ export const NO_SHOW_MOVE_REFUSAL: Record<string, string> = {
   SLOT_STARTED: 'That time has already started. Pick a later time.',
   SLOT_NOT_AVAILABLE: 'That time is no longer free. Pick another time.',
   IDEMPOTENCY_KEY_REUSED: 'This request was already used for a different time. Reload the page and start again.',
+  // Q14 review (`rescheduleWithHolds`): a desk appointment is moved by its clinic only.
+  CLINIC_APPOINTMENT: 'The clinic can move this appointment: it was booked at its front desk.',
 };
 
 /** A move refused because of the chosen time (the person picks another; the booking itself is unchanged). */

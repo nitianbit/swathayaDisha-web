@@ -126,8 +126,8 @@ function Practice({ d }: { d: DoctorContext }) {
     <section className="ws-section" aria-labelledby="practice-h">
       <h2 id="practice-h">Your own clinic</h2>
       <p className="ws-muted">
-        Create a clinic of your own with its first branch: you are its owner and consult at that branch. It starts pending: Jansetu verifies it
-        before patients can book you there. Other doctors join it only when the Jansetu team links them.
+        Create a clinic of your own with its first branch: you are its owner and consult at every branch of it (also ones added later). It starts
+        pending: Jansetu verifies it before patients can book you there. Other doctors join it only when the Jansetu team links them.
       </p>
       {settled && <Alert tone={settled.tone === 'ok' ? 'ok' : undefined}>{settled.text}</Alert>}
       {q.isPending || profile.isPending ? <Loading label="Loading your clinic…" />
@@ -279,7 +279,7 @@ function ClinicForm({ d, onSettled }: { d: DoctorContext; onSettled: (s: { tone:
         <div className="confirm" role="group" aria-label="Create my clinic">
           <div className="confirm-text">
             Create “{f.name.trim()}” with its first branch, {f.branchName.trim()} in {f.city.trim()}? You can create only one clinic. It starts pending:
-            Jansetu verifies it (and its tax details) before patients can book you there. You are its owner and consult at this branch.
+            Jansetu verifies it (and its tax details) before patients can book you there. You are its owner and consult at every branch of it.
           </div>
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => void send(startOp(newRequestKey(), inputOf(f)))}>Create my clinic</Button>

@@ -59,6 +59,14 @@ export interface BillPrefill {
   label: string;
 }
 export const billPrefillSlot = (identity: string) => `invoice-prefill:${identity}`;
+/** What is stored: the prefill and the one-time token the navigation to the form carries in its route state. */
+export interface BillHandover { token: string; prefill: BillPrefill }
+
+/** The handover meant for this navigation (its route state names the token), else nothing. */
+export function takeHandover(stored: BillHandover | undefined, routeState: unknown): BillPrefill | undefined {
+  const token = (routeState as { prefillToken?: unknown } | null)?.prefillToken;
+  return stored && typeof token === 'string' && stored.token === token ? stored.prefill : undefined;
+}
 
 /** Q14 refusals of a bill for an appointment (`admitAppointment`), in words staff can act on. */
 export const APPOINTMENT_BILL_REFUSAL: Record<string, string> = {

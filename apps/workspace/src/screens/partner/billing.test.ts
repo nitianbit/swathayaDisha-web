@@ -2,7 +2,9 @@ import type { CatalogueItem, Invoice, InvoiceEvent } from '@jansetu/api';
 import { money } from './billing.tsx';
 import { rebase } from '../../draft.ts';
 import { draftOf, itemBody } from './CatalogueScreen.tsx';
-import { mergeDetail, paymentOutcome, paymentText } from './InvoiceScreen.tsx';
+import { mergeDetail, paymentOutcome, paymentRefusedForGood, paymentText } from './InvoiceScreen.tsx';
+import { takeHandover } from './billing.tsx';
+import { ApiError } from '@jansetu/api';
 import { billFilter } from './InvoicesScreen.tsx';
 import { buildInvoice, type InvoiceDraft } from './NewInvoiceScreen.tsx';
 
@@ -131,5 +133,26 @@ describe('new bill', () => {
     expect(buildInvoice({ ...base, lines: [] }, { taxRegime: 'regular', gstin: '29ABCDE1234F1Z5' }, branch).errors.lines).toBe('Add at least one item.');
     expect(buildInvoice(base, { taxRegime: 'regular', gstin: '29ABCDE1234F1Z5' }, { address: { ...branch.address, stateCode: '' } }).errors.branchId)
       .toBe('Set the branch GST state code before billing (Branches).');
+  });
+});
+
+describe('WQ8 review: a keyed payment refused for good on any attempt; a bill handover bound to its navigation', () => {
+  it('settles definite refusals; version/state conflicts, network losses and other 5xx stay unknown', () => {
+    for (const [status, code] of [[503, 'INVOICE_INDEXES_OUTDATED'], [409, 'PART_PAYMENTS_NOT_ALLOWED'], [409, 'AMOUNT_EXCEEDS_DUE'],
+      [400, 'PAYMENT_METHOD_REQUIRED'], [400, 'VALIDATION_ERROR'], [403, 'PARTNER_PERMISSION_REQUIRED']] as const) {
+      expect(paymentRefusedForGood(new ApiError(status, 'x', code))).toBe(true);
+    }
+    for (const [status, code] of [[409, 'LIFECYCLE_VERSION_CONFLICT'], [409, 'INVOICE_STATE_CONFLICT'], [409, 'ALREADY_CANCELLED'], [503, 'UNAVAILABLE'], [0, undefined]] as const) {
+      expect(paymentRefusedForGood(new ApiError(status, 'x', code))).toBe(false);
+    }
+    expect(paymentRefusedForGood(new Error('offline'))).toBe(false);
+  });
+
+  it('a prefill is taken only by the navigation whose route state names its token', () => {
+    const prefill = { appointmentId: 'a', branchId: 'b', doctorId: 'd', name: 'Asha', phone: '9800000001', label: 'x' };
+    expect(takeHandover({ token: 't1', prefill }, { prefillToken: 't1' })).toEqual(prefill);
+    expect(takeHandover({ token: 't1', prefill }, null)).toBeUndefined();
+    expect(takeHandover({ token: 't1', prefill }, { prefillToken: 't2' })).toBeUndefined();
+    expect(takeHandover(undefined, { prefillToken: 't1' })).toBeUndefined();
   });
 });

@@ -82,17 +82,18 @@ function AppointmentTable({ d, items, empty, meet, refresh, readAt, reading }: {
   const [failure, setFailure] = useState<string | null>(null);
   // Q14: one no-show move at a time on this page (the central guard).
   const guard = useOneAtATime('appointment list');
-  if (items.length === 0) return <Empty title="Nothing here">{empty}</Empty>;
   const changed = (message: string) => { setFailure(null); setNotice(message); void queryClient.invalidateQueries({ queryKey: appointmentsKey(d) }); };
   const move: MoveProps = {
     readAt, reading, busy: guard.busy, now, perform: guard.perform,
     reread: () => void queryClient.invalidateQueries({ queryKey: appointmentsKey(d) }),
     onNotice: (t) => { setFailure(null); setNotice(t); }, onFailure: (t) => { setNotice(null); setFailure(t); },
   };
+  // The notice of a move stays visible even when the moved booking left this list (it may have been the only one).
+  const alerts = <>{notice && <Alert tone="ok">{notice}</Alert>}{failure && <Alert>{failure}</Alert>}</>;
+  if (items.length === 0) return <>{alerts}<Empty title="Nothing here">{empty}</Empty></>;
   return (
     <>
-      {notice && <Alert tone="ok">{notice}</Alert>}
-      {failure && <Alert>{failure}</Alert>}
+      {alerts}
       <div className="ws-table-wrap">
         <table className="j-table" aria-label="Appointments">
           <thead>
@@ -125,7 +126,7 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
   // Q14: the one move of a no-show (never an instant one), also while a move sent earlier is unconfirmed.
   const moveSlot = noShowMoveSlot(d.identity, b._id);
   const noShowMove = doctorNoShowMove(b);
-  const showMove = !!noShowMove || (b.bookingKind !== 'instant' && !!memory.get(moveSlot));
+  const showMove = noShowMove === 'offer' || noShowMove === 'used' || (b.bookingKind !== 'instant' && !b.clinicDesk && !!memory.get(moveSlot));
   const movedFrom = b.noShows?.[0];
   const run = async (status: 'confirmed' | 'completed' | 'cancelled' | 'no_show', done: string, reason?: string) => {
     try {
@@ -155,6 +156,7 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
         {b.status === 'no_show' && <div className="ws-muted">No earning: you are paid only for a consultation that takes place. The patient is not refunded.</div>}
       </td>
       <td>
+        {noShowMove === 'clinic' && <p className="ws-muted">The clinic can move this appointment: it was booked at its front desk.</p>}
         {showMove && (
           <NoShowMove slot={moveSlot} who="The patient" missed={label} state={noShowMove === 'used' ? 'used' : 'offer'} status={b.status}
             readAt={move.readAt} reading={move.reading} disabled={move.busy || move.reading} version={b.updatedAt}
@@ -163,7 +165,7 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
             send={(t: NoShowTarget, requestKey) => move.perform(() => d.api.rescheduleNoShow(b._id, t.slotId, requestKey, typeof t.version === 'string' ? t.version : undefined))}
             reread={move.reread} onNotice={move.onNotice} onFailure={move.onFailure} />
         )}
-        {actions.length === 0 ? (!showMove && <span className="ws-muted">—</span>) : (
+        {actions.length === 0 ? (!showMove && noShowMove !== 'clinic' && <span className="ws-muted">—</span>) : (
           <div className="ws-actions">
             {actions.includes('confirm') && (
               <ConfirmAction label="Confirm" confirmLabel={`Confirm ${label}`}

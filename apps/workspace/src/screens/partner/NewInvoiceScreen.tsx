@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
   allowedGstRates, ApiError, chargesGst, customerGstinProblem, INVOICE_PHONE_PATTERN, MAX_LINE_DESCRIPTION,
@@ -14,7 +14,7 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
-import { APPOINTMENT_BILL_REFUSAL, billPrefillSlot, money, useCatalogue, useClinicDoctors, type BillPrefill } from './billing.tsx';
+import { APPOINTMENT_BILL_REFUSAL, billPrefillSlot, money, takeHandover, useCatalogue, useClinicDoctors, type BillHandover, type BillPrefill } from './billing.tsx';
 import { Totals } from './InvoiceScreen.tsx';
 import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
@@ -168,7 +168,9 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
   const [gaveUp, setGaveUp] = useState(false);
   // Q14: handed over once by "Create bill" on a clinic appointment (session memory only).
   const prefillSlot = billPrefillSlot(scopeIdentity(ctx));
-  const [prefill] = useState(() => memory.get<BillPrefill>(prefillSlot));
+  const location = useLocation();
+  const [prefill] = useState(() => takeHandover(memory.get<BillHandover>(prefillSlot), location.state));
+  // Read once: whatever was handed over (also a handover this navigation does not name) is cleared now.
   useEffect(() => { memory.delete(prefillSlot); }, [memory, prefillSlot]);
 
   /**

@@ -320,7 +320,8 @@ function AddDoctor({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
         : !chosen ? (
           <>
             <form className="ws-search" role="search" aria-label="Find a doctor" onSubmit={(e) => { e.preventDefault(); const t = text.trim(); if (t) setSearch(t.slice(0, MAX_DIRECTORY_SEARCH)); }}>
-              <TextField label="Doctor’s name, speciality or mobile number" type="search" maxLength={MAX_DIRECTORY_SEARCH} value={text} onChange={(e) => setText(e.target.value)} />
+              <TextField label="Doctor’s full name or speciality" type="search" maxLength={MAX_DIRECTORY_SEARCH} value={text} onChange={(e) => setText(e.target.value)}
+                hint="Search by the doctor’s full name or speciality (whole words). Check the mobile number shown before choosing." />
               <Button type="submit" variant="secondary" disabled={!text.trim()}>Search</Button>
             </form>
             {search === null ? <p className="ws-muted">Only active, verified doctors are found.</p>

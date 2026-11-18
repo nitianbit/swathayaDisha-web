@@ -447,8 +447,10 @@ test('admin: partners list with filters, create, verify and suspend with confirm
   await nav(page).getByRole('link', { name: 'Labs and clinics' }).click();
   await expect(page.getByRole('row').filter({ hasText: 'City Lab' })).toContainText('Waiting for verification');
   await page.getByLabel('Type').selectOption('clinic');
+  // The filtered request is awaited (an empty table can also be the list still loading).
+  await expect.poll(() => backend.calls.some((c) => c.method === 'GET' && c.path.startsWith('/partner-workspace/admin?') && c.path.includes('kind=clinic'))).toBe(true);
+  await expect(page.getByRole('row').filter({ hasText: 'Sunrise Clinic' })).toBeVisible();
   await expect(page.getByRole('row').filter({ hasText: 'City Lab' })).toHaveCount(0);
-  expect(backend.calls.some((c) => c.method === 'GET' && c.path.startsWith('/partner-workspace/admin?') && c.path.includes('kind=clinic'))).toBe(true);
   await page.getByLabel('Type').selectOption('');
 
   const lab = page.getByRole('row').filter({ hasText: 'City Lab' });

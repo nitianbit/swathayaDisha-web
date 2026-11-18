@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import {
   addDays, ApiError, appointmentAt, appointmentDay, canonicalMobile, CLINIC_APPOINTMENT_STATUS_LABEL, clinicBranchesFor, DESK_GENDERS, DESK_RELATIONS,
   deskActions, deskBookingProblems, doctorsAtBranch, familyMemberProblems, holdsAny, INVOICE_STATE_LABEL, isRealDate, istDateOf, MAX_APPOINTMENTS,
@@ -15,7 +15,7 @@ import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { messageOf } from '../../errors.ts';
 import { afterFailure, beginAttempt, keyedLookup, newRequestKey, resolveStored, startOp, stillCurrent, wasAbandoned } from '../../requests.ts';
 import { useSession, type SessionMemory } from '../../session.tsx';
-import { billPrefillSlot, type BillPrefill } from './billing.tsx';
+import { billPrefillSlot, type BillHandover, type BillPrefill } from './billing.tsx';
 import {
   appointmentLabel, appointmentTone, ClinicOnly, clinicLink, istTime, useClinicApi, useDoctorList, type ClinicApi,
 } from './clinic.tsx';
@@ -196,8 +196,6 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
   const viewOf = (b: DeskAppointment, op: DeskPending, extra: Pick<ReceiptView, 'replayed' | 'created' | 'family'>): ReceiptView => ({
     booking: b, ...extra,
     who: op.body ? familyOf(op.body) ?? (op.body.request.customer.name?.trim() || canonicalMobile(op.body.request.customer.phone) || op.body.request.customer.phone) : undefined,
-    phone: op.body ? canonicalMobile(op.body.request.customer.phone) ?? undefined : undefined,
-    holder: op.body?.request.customer.name?.trim() || undefined,
     branchName: op.body?.shown.branchName ?? branchNames.get(b.branchId ?? '') ?? 'the clinic',
     doctorName: b.doctorName ?? op.body?.shown.doctorName,
   });
@@ -298,7 +296,7 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
           summary={pending.restored || !pending.body ? null : <PendingBookingSummary body={pending.body} />} />
       )}
       {gaveUp && !pending && <Alert tone="ok">{gaveUp}</Alert>}
-      {receipt && <Receipt ctx={ctx} receipt={receipt} memory={memory} />}
+      {receipt && <Receipt ctx={ctx} receipt={receipt} memory={memory} row={rows.find((r) => r.bookingId === receipt.booking.bookingId)} />}
 
       <div className="ws-search">
         <div className="j-field ws-filter">
@@ -379,7 +377,7 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
       <section className="ws-section" aria-labelledby="desk-slots-h">
         <h2 id="desk-slots-h">Free slots{doctor ? ` of ${doctor.name}` : ''}</h2>
         {manage && locked && <Alert tone="warn">Settle the unconfirmed booking above before booking another.</Alert>}
-        {here.length === 0 ? <Empty title="No doctor here">No active doctor consults at {branch!.name}. Doctors join by accepting an invitation (<Link to={clinicLink(ctx, 'clinic-doctors')}>Doctors</Link>).</Empty>
+        {here.length === 0 ? <Empty title="No doctor here">No active doctor consults at {branch!.name}. Our admin team adds doctors to your clinic (<Link to={clinicLink(ctx, 'clinic-doctors')}>Doctors</Link>).</Empty>
           : !doctor ? <p className="ws-muted">Choose a doctor to see their free in-clinic slots{manage ? ' and book one' : ''}.</p>
           : !dayOk ? null
           : slots.isPending ? <Loading label="Loading free slots…" />
@@ -442,15 +440,18 @@ const familyOf = (body: DeskPendingBody) => (body.request.patient && 'name' in b
 
 /** What a settled booking shows (from its answer, or from a by-key lookup when the details are gone after a reload). */
 interface ReceiptView {
-  booking: DeskAppointment; replayed: boolean; created?: boolean; who?: string; phone?: string; branchName: string; doctorName?: string;
-  /** Q14: the account holder (the bill's customer for this appointment), as typed at the desk. */
-  holder?: string;
+  booking: DeskAppointment; replayed: boolean; created?: boolean; who?: string; branchName: string; doctorName?: string;
   /** Q14: the family member being seen (from the answer). */
   family?: { name: string | null; relationship: string | null };
 }
 
 /** The answer to a booking: what was booked, the fee to collect, and the way to bill it. */
-function Receipt({ ctx, receipt, memory }: { ctx: ScopeContext; receipt: ReceiptView; memory: SessionMemory }) {
+/**
+ * The bill for the visit is prefilled from the appointment as the server lists it (its account holder's mobile and name),
+ * never from what this device remembers: after a reload the details are gone. Until the row is read, the receipt points
+ * to the row's "Create bill".
+ */
+function Receipt({ ctx, receipt, memory, row }: { ctx: ScopeContext; receipt: ReceiptView; memory: SessionMemory; row?: ClinicAppointment }) {
   const b = receipt.booking;
   const who = receipt.family?.name ?? receipt.who;
   return (
@@ -460,8 +461,8 @@ function Receipt({ ctx, receipt, memory }: { ctx: ScopeContext; receipt: Receipt
       {' '}Fee {formatRupees(b.fee ?? 0)}, paid at the clinic.
       {receipt.created ? ' A Jansetu account was created for this mobile number.' : ''}
       {' '}The patient and the doctor are notified.
-      {' '}<BillLink ctx={ctx} memory={memory} prefill={{ appointmentId: b.bookingId, branchId: b.branchId ?? '', doctorId: b.doctorId, name: receipt.holder ?? '', phone: receipt.phone ?? '',
-        label: `${receipt.doctorName ?? b.doctorName ?? 'the doctor'}, ${appointmentLabel(b)}` }} />
+      {' '}{row?.patient?.phone ? <BillLink ctx={ctx} memory={memory} prefill={prefillOf(row)} />
+        : holdsAny(ctx.actor, ['invoices.create']) ? 'Make its bill with “Create bill” on its row in the day list.' : null}
     </Alert>
   );
 }
@@ -481,8 +482,20 @@ function PendingBookingSummary({ body }: { body: DeskPendingBody }) {
  * session memory only, never in the URL), or the bills list for other bill readers.
  */
 function BillLink({ ctx, memory, prefill, label = 'Make a bill for this visit' }: { ctx: ScopeContext; memory: SessionMemory; prefill: BillPrefill; label?: string }) {
+  const navigate = useNavigate();
   if (holdsAny(ctx.actor, ['invoices.create'])) {
-    return <Link to={`${ctx.link('invoices')}/new`} onClick={() => memory.set(billPrefillSlot(scopeIdentity(ctx)), prefill)}>{label}</Link>;
+    const to = `${ctx.link('invoices')}/new`;
+    return (
+      <Link to={to} onClick={(e) => {
+        // A modified click opens another tab (its own session memory): nothing is handed over, the form starts empty.
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        e.preventDefault();
+        // Bound to this navigation: the form takes it only when the route state names this token, once.
+        const token = newRequestKey();
+        memory.set(billPrefillSlot(scopeIdentity(ctx)), { token, prefill } satisfies BillHandover);
+        navigate(to, { state: { prefillToken: token } });
+      }}>{label}</Link>
+    );
   }
   if (holdsAny(ctx.actor, BILL_READERS)) return <Link to={ctx.link('invoices')}>Bills</Link>;
   return null;
@@ -525,7 +538,7 @@ function BookingForm({ chosen, patient, setPatient, sending, refused, onCancel, 
   const [reviewing, setReviewing] = useState(false);
   const today = istDateOf(new Date());
   const family = patient.forFamily
-    ? familyMemberProblems({ name: patient.familyName, relation: patient.relation, gender: patient.gender, dateOfBirth: patient.dateOfBirth }, today) : {};
+    ? familyMemberProblems({ name: patient.familyName, relation: patient.relation, gender: patient.gender, dateOfBirth: patient.dateOfBirth }, new Date()) : {};
   const problems: Record<string, string | undefined> = { ...deskBookingProblems(patient), ...(patient.forFamily ? {
     familyName: family.name, relation: family.relation, gender: family.gender, dateOfBirth: family.dateOfBirth } : {}) };
   for (const k of Object.keys(problems)) if (!problems[k]) delete problems[k];

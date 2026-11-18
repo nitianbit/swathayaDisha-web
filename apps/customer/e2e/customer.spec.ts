@@ -325,3 +325,13 @@ test('Q14: a missed appointment says it is not refunded; one moved after a no-sh
   await expect(page.getByRole('button', { name: /Reschedule/ })).toHaveCount(0);
   expect(backend.calls.filter((c) => c.method !== 'GET' && c.path.startsWith('/bookings'))).toHaveLength(0);
 });
+
+test('WQ8 review: a missed instant consultation is final: no new time is ever offered', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const id = 'b5'.repeat(12);
+  backend.bookings[id] = { _id: id, bookingType: 'consultation', bookingKind: 'instant', doctorName: 'Dr. Now', ...istAt(-3), price: 400, status: 'no_show', paymentStatus: 'paid' };
+  await signIn(page);
+  await page.goto(`/#/bookings/${id}`);
+  await expect(page.getByText('You were marked as not present for this appointment. A missed appointment is not refunded.')).toBeVisible();
+  await expect(page.getByText(/may offer you one new time/)).toHaveCount(0);
+});

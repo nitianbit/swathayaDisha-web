@@ -26,8 +26,24 @@ const PAY_REFUSAL: Record<string, string> = {
   PART_PAYMENTS_NOT_ALLOWED: 'This partner takes full payment only, so nothing was recorded. Record everything that is due.',
 };
 const payRefusal = (err: unknown) => (err instanceof ApiError && err.code && PAY_REFUSAL[err.code]) || messageOf(err);
-/** Q14 review: 503 INVOICE_INDEXES_OUTDATED is answered before anything is written (its message is shown as the server gives it). */
+/** Q14 review: 503 INVOICE_INDEXES_OUTDATED: this payment's insert was refused (its message is shown as the server gives it). */
 const isIndexesOutdated = (err: unknown) => err instanceof ApiError && err.status === 503 && err.code === 'INVOICE_INDEXES_OUTDATED';
+/** 409s the server answers only after finding no payment under this key, for a request that can never pass as it is. */
+const REFUSED_409 = new Set(['PART_PAYMENTS_NOT_ALLOWED', 'AMOUNT_EXCEEDS_DUE', 'PAYMENT_METHOD_REQUIRED', 'REQUEST_KEY_REQUIRED', 'INVALID_AMOUNT']);
+/**
+ * A keyed payment refused for good, on ANY attempt: the server looks for this key's payment first (a recorded one is
+ * answered as a replay) and these refusals abort the transaction, so nothing was recorded under the key. A version
+ * conflict, a state conflict ("paid", "cancelled"), a network loss or another 5xx stays unknown: an earlier attempt of
+ * the same payment may have committed in between.
+ */
+export function paymentRefusedForGood(err: unknown): boolean {
+  if (isIndexesOutdated(err)) return true;
+  if (!(err instanceof ApiError)) return false;
+  if ([400, 403, 404, 422].includes(err.status)) return true;
+  return err.status === 409 && !!err.code && REFUSED_409.has(err.code);
+}
+/** Shown when the bill moved on while a payment or a cancellation was being reviewed. */
+export const BILL_CHANGED = 'This bill changed — check the amounts again.';
 /** What the payment form produces; the key and the version it was decided on are added when it is sent. */
 type PaymentDraft = { note?: string } & ({ splits: PaymentSplit[] } | { mode: InvoicePaymentMode });
 
@@ -134,7 +150,7 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
       void reload().catch(() => undefined);
     } catch (err) {
       if (!owns(attempt)) return;
-      const next = isIndexesOutdated(err) && attempt.attempts === 1 && !attempt.uncertain ? null : afterFailure(attempt, err, messageOf(err));
+      const next = paymentRefusedForGood(err) ? null : afterFailure(attempt, err, messageOf(err));
       storePay(next ?? undefined);
       // Refused outright (e.g. "This bill is paid": someone else recorded another payment): the server's message.
       if (!next) setFailure(`Payment not recorded: ${payRefusal(err)}`);
@@ -210,10 +226,11 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
               <div className="ws-actions">
                 {canPay && takesPayment(inv) && !payOp && (
                   <PaymentForm invoice={inv} allowPartPayments={partner.data?.allowPartPayments === true} locked={inFlight === 'cancel'} busy={inFlight === 'pay'}
-                    onRecord={async (draft) => {
-                      // Q14: the server's request key and the bill version this payment was decided on.
+                    onRecord={async (draft, reviewedVersion) => {
+                      // Q14: the server's request key and the bill version this payment was REVIEWED on (captured when
+                      // its confirmation opened), never the version on screen at the click.
                       const requestKey = newRequestKey();
-                      await sendPayment(startOp(requestKey, { ...draft, requestKey, expectedLifecycleVersion: inv.lifecycleVersion } as PaymentInput));
+                      await sendPayment(startOp(requestKey, { ...draft, requestKey, expectedLifecycleVersion: reviewedVersion } as PaymentInput));
                     }} />
                 )}
                 {inv.lifecycleState !== 'cancelled' && canCancel && (
@@ -379,19 +396,44 @@ const nth = (i: number) => (i === 0 ? '' : ` (method ${i + 1})`);
  * recorded payment cannot be removed. Without part payments (the partner's setting) the amounts must add up to all that
  * is due; with them, to anything up to it. Never more than is due (the server refuses it too: AMOUNT_EXCEEDS_DUE).
  */
+type OnRecord = (body: PaymentDraft, reviewedVersion: number) => Promise<void>;
+
+/**
+ * The bill version a form was reviewed on: when the bill moves on (another payment, a cancellation) while the form is
+ * open, the confirmation closes and the person is told to check the amounts again.
+ */
+function useReviewGuard(version: number, open: boolean, close: () => void) {
+  const [changed, setChanged] = useState(false);
+  const seen = useRef(version);
+  useEffect(() => {
+    if (seen.current === version) return;
+    seen.current = version;
+    if (open) { close(); setChanged(true); }
+  }, [version]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { changed, clear: () => setChanged(false) };
+}
+
 function PaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }: {
   invoice: Invoice; allowPartPayments: boolean; locked: boolean; busy: boolean;
-  onRecord: (body: PaymentDraft) => Promise<void>;
+  onRecord: OnRecord;
 }) {
   if (invoice.totals.totalMinor === 0) return <ZeroBillPayment invoice={invoice} locked={locked} busy={busy} onRecord={onRecord} />;
   return <SplitPaymentForm invoice={invoice} allowPartPayments={allowPartPayments} locked={locked} busy={busy} onRecord={onRecord} />;
 }
 
 /** Q14 review: a bill of ₹0 is marked paid with a plain method (there is no amount to split). */
-function ZeroBillPayment({ invoice, locked, busy, onRecord }: { invoice: Invoice; locked: boolean; busy: boolean; onRecord: (body: PaymentDraft) => Promise<void> }) {
-  const [open, setOpen] = useState(false);
+function ZeroBillPayment({ invoice, locked, busy, onRecord }: { invoice: Invoice; locked: boolean; busy: boolean; onRecord: OnRecord }) {
+  const [open, setOpen] = useState<{ version: number } | null>(null);
   const [mode, setMode] = useState<InvoicePaymentMode>('cash');
-  if (!open) return <Button disabled={locked || busy} onClick={() => setOpen(true)}>Record payment</Button>;
+  const guard = useReviewGuard(invoice.lifecycleVersion, !!open, () => setOpen(null));
+  if (!open) {
+    return (
+      <>
+        {guard.changed && <Alert tone="warn">{BILL_CHANGED}</Alert>}
+        <Button disabled={locked || busy} onClick={() => { guard.clear(); setOpen({ version: invoice.lifecycleVersion }); }}>Record payment</Button>
+      </>
+    );
+  }
   return (
     <div className="confirm" role="group" aria-label="Record payment">
       <div className="j-field">
@@ -402,8 +444,8 @@ function ZeroBillPayment({ invoice, locked, busy, onRecord }: { invoice: Invoice
       </div>
       <div className="confirm-text">Bill {invoice.serial} is for {money(0)}. Mark it as paid? It will show Paid; this cannot be changed or removed.</div>
       <div className="confirm-actions">
-        <Button busy={busy} disabled={locked} onClick={() => { setOpen(false); void onRecord({ mode }); }}>Mark as paid</Button>
-        <Button variant="ghost" disabled={busy} onClick={() => setOpen(false)}>Back</Button>
+        <Button busy={busy} disabled={locked} onClick={() => { const v = open.version; setOpen(null); void onRecord({ mode }, v); }}>Mark as paid</Button>
+        <Button variant="ghost" disabled={busy} onClick={() => setOpen(null)}>Back</Button>
       </div>
     </div>
   );
@@ -411,16 +453,20 @@ function ZeroBillPayment({ invoice, locked, busy, onRecord }: { invoice: Invoice
 
 function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }: {
   invoice: Invoice; allowPartPayments: boolean; locked: boolean; busy: boolean;
-  onRecord: (body: PaymentDraft) => Promise<void>;
+  onRecord: OnRecord;
 }) {
   const due = dueOf(invoice);
   const [open, setOpen] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  /** The version, due and amounts the person reviewed (captured when the confirmation opens): exactly what is sent. */
+  const [reviewed, setReviewed] = useState<{ version: number; due: number; body: { splits: PaymentSplit[]; note?: string } } | null>(null);
+  const confirming = !!reviewed;
+  const setConfirming = (on: false) => { if (!on) setReviewed(null); };
+  const guard = useReviewGuard(invoice.lifecycleVersion, open, () => setReviewed(null));
   const [rows, setRows] = useState<SplitDraft[]>(() => [{ key: ++splitSeq, mode: 'cash', amount: paiseToInput(due), reference: '' }]);
   const [note, setNote] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  if (!open) return <Button disabled={locked || busy} onClick={() => setOpen(true)}>Record payment</Button>;
+  if (!open) return <Button disabled={locked || busy} onClick={() => { guard.clear(); setOpen(true); }}>Record payment</Button>;
 
   const splits = rows.map((r) => ({ mode: r.mode, amountMinor: rupeesToPaise(r.amount), reference: r.reference.trim() }));
   const total = splits.reduce((n, x) => n + (x.amountMinor ?? 0), 0);
@@ -438,17 +484,22 @@ function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }
     const problem = Object.keys(errs).length ? null : paymentProblem(splits, due, allowPartPayments, money);
     if (problem) errs.total = problem;
     setErrors(errs);
-    if (!Object.keys(errs).length) setConfirming(true);
+    guard.clear();
+    if (!Object.keys(errs).length) setReviewed({ version: invoice.lifecycleVersion, due, body });
   }
 
   const body: { splits: PaymentSplit[]; note?: string } = {
     splits: splits.map((x) => ({ mode: x.mode, amountMinor: x.amountMinor!, ...(x.reference ? { reference: x.reference } : {}) })),
     ...(note.trim() ? { note: note.trim() } : {}),
   };
-  const one = rows.length === 1 ? body.splits[0] : undefined;
-  const left = due - total;
+  // The confirmation shows (and sends) what was reviewed.
+  const shown = reviewed?.body ?? body;
+  const one = shown.splits.length === 1 ? shown.splits[0] : undefined;
+  const shownTotal = shown.splits.reduce((n, x) => n + x.amountMinor, 0);
+  const left = (reviewed?.due ?? due) - (reviewed ? shownTotal : total);
   return (
     <form className="confirm" noValidate onSubmit={review} aria-label="Record payment">
+      {guard.changed && <Alert tone="warn">{BILL_CHANGED}</Alert>}
       {!confirming ? (
         <>
           <p className="ws-muted">
@@ -488,12 +539,12 @@ function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }
           <div className="confirm-text">
             {one
               ? <>Record {money(one.amountMinor)} as paid by {MODE_LABEL[one.mode]}{one.reference ? ` (reference ${one.reference})` : ''} for bill {invoice.serial}?</>
-              : <>Record {money(total)} as paid by {body.splits.map((x) => `${MODE_LABEL[x.mode]} ${money(x.amountMinor)}${x.reference ? ` (reference ${x.reference})` : ''}`).join(' + ')} for bill {invoice.serial}?</>}
+              : <>Record {money(shownTotal)} as paid by {shown.splits.map((x) => `${MODE_LABEL[x.mode]} ${money(x.amountMinor)}${x.reference ? ` (reference ${x.reference})` : ''}`).join(' + ')} for bill {invoice.serial}?</>}
             {left > 0 ? ` ${money(left)} stays due: the bill will show Partly paid.` : ' The bill will show Paid.'} A recorded payment cannot be changed or removed.
           </div>
           {locked && <p className="ws-muted">A cancellation of this bill is being sent; wait for its answer.</p>}
           <div className="confirm-actions">
-            <Button busy={busy} disabled={locked} onClick={() => { setConfirming(false); setOpen(false); void onRecord(body); }}>Record {money(total)} paid</Button>
+            <Button busy={busy} disabled={locked} onClick={() => { const r = reviewed!; setReviewed(null); setOpen(false); void onRecord(r.body, r.version); }}>Record {money(shownTotal)} paid</Button>
             <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>Back</Button>
           </div>
         </>
@@ -518,11 +569,21 @@ function CancelForm({ ctx, invoice, locked, onBusy, onDone, onRefused }: {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // Q14: whatever was paid (in full or in parts) goes back, and the refund names exactly that amount.
-  const paidMinor = paidOf(invoice);
+  // Q14: whatever was paid (in full or in parts) goes back, and the refund names exactly that amount — the amount the
+  // person reviewed, captured with the bill version when the form opened. A newer version closes the form to ask again.
+  const [reviewed, setReviewed] = useState<{ version: number; paidMinor: number } | null>(null);
+  const guard = useReviewGuard(invoice.lifecycleVersion, open, () => { setOpen(false); setReviewed(null); });
+  const paidMinor = reviewed?.paidMinor ?? paidOf(invoice);
   const paid = paidMinor > 0;
 
-  if (!open) return <Button variant="secondary" disabled={locked} onClick={() => setOpen(true)}>Cancel bill</Button>;
+  if (!open) {
+    return (
+      <>
+        {guard.changed && <Alert tone="warn">{BILL_CHANGED}</Alert>}
+        <Button variant="secondary" disabled={locked} onClick={() => { guard.clear(); setReviewed({ version: invoice.lifecycleVersion, paidMinor: paidOf(invoice) }); setOpen(true); }}>Cancel bill</Button>
+      </>
+    );
+  }
 
   async function confirm() {
     const errs: Record<string, string> = {};

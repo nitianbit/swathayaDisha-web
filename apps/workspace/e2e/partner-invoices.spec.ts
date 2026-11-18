@@ -52,6 +52,8 @@ interface Backend {
   loseNextPayAnswer: boolean;
   /** Q14 review: the next payment is refused (503 INVOICE_INDEXES_OUTDATED), nothing written. */
   indexesOutdatedOnce?: boolean;
+  /** WQ8 review: the next payment never reaches the server. */
+  dropNextPay?: boolean;
   /** The next payment request (only that one) waits for this promise. */
   holdPay?: Promise<void>;
   /** The held payment then loses the compare-and-set: 409 "This bill is paid". */
@@ -376,6 +378,7 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
         }
         // Q14: splits + requestKey + expectedLifecycleVersion; paidMinor/dueMinor; partly_paid where the partner allows it.
         const raw = body as { mode?: string; splits?: { mode: string; amountMinor: number; reference?: string }[]; note?: string; requestKey: string; expectedLifecycleVersion: number };
+        if (b.dropNextPay) { b.dropNextPay = false; return route.abort('failed'); }
         if (b.indexesOutdatedOnce) { b.indexesOutdatedOnce = false; return fail(route, 503, 'INVOICE_INDEXES_OUTDATED', 'Bills need a database update before payments can be recorded. Ask an admin.'); }
         // A plain method pays all that is due (a ₹0 bill: nothing).
         const x = { ...raw, splits: raw.splits ?? [{ mode: raw.mode!, amountMinor: Math.max(0, ((inv.totals as Rec).totalMinor as number) - ((inv.paidMinor as number | undefined) ?? 0)) }] };
@@ -1059,6 +1062,9 @@ test('a lost UPI payment survives a failed refresh: the exact payment stays, no 
   const backend = await mockBackend(page, owner(), { seed: true });
   await signInPartner(page);
   await page.goto(`/#/partner/invoices/${INV1}`);
+  // Armed only once the bill has been read (otherwise its first read can fail and nothing is shown to pay).
+  await expect(page.getByRole('heading', { name: 'Bill LB/2627/0001' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record payment' })).toBeEnabled();
   backend.loseNextPayAnswer = true;
   backend.failDetailReads = 50;
   await page.getByRole('button', { name: 'Record payment' }).click();
@@ -1320,4 +1326,85 @@ test('Q14 review: a ₹0 bill is marked paid with a plain method; a payment refu
   await expect(page.getByText('Payment recorded.')).toBeVisible();
   const pays = backend.calls.filter((c) => c.path.endsWith('/pay')).map((c) => c.body as Rec);
   expect(pays[1]).toEqual({ mode: 'cash', requestKey: expect.stringMatching(/^[0-9a-f]{32}$/), expectedLifecycleVersion: 0 });
+});
+
+test('WQ8 review: two cashiers — a payment reviewed on an older bill version is never sent with the newer one; the confirmation closes and asks again', async ({ page }) => {
+  await page.clock.install();
+  const backend = await mockBackend(page, owner(), { seed: true });
+  backend.partners.find((p) => p._id === LAB)!.allowPartPayments = true;
+  await signInPartner(page);
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByLabel('Amount (₹)', { exact: true }).fill('300');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByText('Record ₹300.00 as paid by Cash for bill LB/2627/0001? ₹708.00 stays due', { exact: false })).toBeVisible();
+  // Meanwhile the other cashier records ₹300 (version 1), and this page reads the bill again (focus refresh).
+  const inv = backend.invoices.find((i) => i._id === INV1)!;
+  Object.assign(inv, { lifecycleState: 'partly_paid', lifecycleVersion: 1, paidMinor: 30000, dueMinor: 70800 });
+  backend.events.push({ _id: 'evo', invoiceId: INV1, kind: 'payment', mode: 'cash', amountMinor: 30000, splits: [{ mode: 'cash', amountMinor: 30000 }],
+    requestKey: 'o'.repeat(32), version: 1, at: '2026-11-15T06:00:00.000Z', by: OWNER, byKind: 'member' });
+  await page.clock.fastForward('00:30');
+  await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')));
+  await expect(page.getByText('This bill changed — check the amounts again.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record ₹300.00 paid' })).toHaveCount(0);
+  await expect(page.getByText('₹708.00 is due.', { exact: false })).toBeVisible();
+  expect(backend.calls.filter((c) => c.path.endsWith('/pay'))).toHaveLength(0);
+  // Reviewed again on version 1: that is the version sent.
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Record ₹300.00 paid' }).click();
+  await expect(page.getByText('Payment recorded.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.path.endsWith('/pay')).map((c) => (c.body as Rec).expectedLifecycleVersion)).toEqual([1]);
+
+  // A cancellation reviewed on the old paid amount closes too when the bill moves on.
+  await page.getByRole('button', { name: 'Cancel bill' }).click();
+  await expect(page.getByText('It was paid (₹600.00)', { exact: false })).toBeVisible();
+  Object.assign(inv, { lifecycleVersion: 3, paidMinor: 90000, dueMinor: 10800 });
+  backend.events.push({ _id: 'evp', invoiceId: INV1, kind: 'payment', mode: 'upi', amountMinor: 30000, requestKey: 'q'.repeat(32), version: 3, at: '2026-11-15T06:10:00.000Z', by: OWNER, byKind: 'member' });
+  await page.clock.fastForward('00:30');
+  await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')));
+  await expect(page.getByText('This bill changed — check the amounts again.')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Cancel bill' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Cancel bill' }).click();
+  await expect(page.getByText('It was paid (₹900.00)', { exact: false })).toBeVisible();
+  expect(backend.calls.filter((c) => c.path.endsWith('/cancel'))).toHaveLength(0);
+});
+
+test('WQ8 review: a resend refused for good (part payments switched off meanwhile) settles the payment as not recorded and unlocks the bill', async ({ page }) => {
+  const backend = await mockBackend(page, owner(), { seed: true });
+  backend.partners.find((p) => p._id === LAB)!.allowPartPayments = true;
+  await signInPartner(page);
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  backend.dropNextPay = true;
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByLabel('Amount (₹)', { exact: true }).fill('300');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Record ₹300.00 paid' }).click();
+  const unsure = page.getByRole('group', { name: 'Unconfirmed payment' });
+  await expect(unsure).toContainText('We could not confirm the payment of ₹300.00 by Cash');
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
+  backend.partners.find((p) => p._id === LAB)!.allowPartPayments = false;
+  await unsure.getByRole('button', { name: 'Send the same payment again' }).click();
+  await expect(page.getByText('Payment not recorded: This partner takes full payment only, so nothing was recorded.', { exact: false })).toBeVisible();
+  await expect(unsure).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Record payment' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeEnabled();
+  expect(backend.events.filter((e) => e.kind === 'payment')).toHaveLength(0);
+});
+
+test('WQ8 review: the part-payment setting says when someone else changed it meanwhile, and confirms a save', async ({ page }) => {
+  const backend = await mockBackend(page, owner(), { seed: true });
+  await signInPartner(page);
+  await page.goto('/#/partner');
+  const policy = page.getByRole('region', { name: 'Payments at the counter' });
+  await policy.getByLabel('Allow part payments of bills').check();
+  // Another owner switches it on first.
+  Object.assign(backend.partners.find((p) => p._id === LAB)!, { allowPartPayments: true, updatedAt: '2026-11-01T00:05:00.000Z' });
+  await policy.getByRole('button', { name: 'Save payment setting' }).click();
+  await expect(policy.getByText('Someone else changed this setting while you were editing.', { exact: false })).toBeVisible();
+  await expect(policy).toContainText('Part payments are allowed');
+  expect(backend.calls.filter((c) => c.method === 'PUT')).toHaveLength(0);
+  await policy.getByLabel('Allow part payments of bills').uncheck();
+  await policy.getByRole('button', { name: 'Save payment setting' }).click();
+  await expect(policy.getByText('Saved.')).toBeVisible();
+  await expect(policy).toContainText('Full payment only');
 });

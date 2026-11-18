@@ -216,8 +216,11 @@ export type DeskPatientInput =
   | { dependentId: string }
   | { name: string; relation: DeskRelation; gender?: DeskGender; dateOfBirth?: string };
 
-/** `deskPatientSchema` (new family member): a name, a known relation, an optional gender, a real date of birth not in the future. */
-export function familyMemberProblems(p: { name: string; relation: string; gender: string; dateOfBirth: string }, today: string):
+/**
+ * `deskPatientSchema` (new family member): a name, a known relation, an optional gender, a real date of birth not in the
+ * future as the server reads it (`pastRealDate`: the date's UTC midnight is not after now).
+ */
+export function familyMemberProblems(p: { name: string; relation: string; gender: string; dateOfBirth: string }, now: Date):
   Partial<Record<'name' | 'relation' | 'gender' | 'dateOfBirth', string>> {
   const out: Partial<Record<'name' | 'relation' | 'gender' | 'dateOfBirth', string>> = {};
   const name = p.name.trim();
@@ -225,7 +228,7 @@ export function familyMemberProblems(p: { name: string; relation: string; gender
   else if (name.length > MAX_FAMILY_NAME) out.name = `Use at most ${MAX_FAMILY_NAME} characters.`;
   if (!(DESK_RELATIONS as readonly string[]).includes(p.relation)) out.relation = 'Choose how they are related to the account holder.';
   if (p.gender && !(DESK_GENDERS as readonly string[]).includes(p.gender)) out.gender = 'Choose a gender, or leave it empty.';
-  if (p.dateOfBirth && (!isRealDate(p.dateOfBirth) || p.dateOfBirth > today)) out.dateOfBirth = 'Enter a real date that is not in the future.';
+  if (p.dateOfBirth && (!isRealDate(p.dateOfBirth) || Date.parse(`${p.dateOfBirth}T00:00:00Z`) > now.getTime())) out.dateOfBirth = 'Enter a real date that is not in the future.';
   return out;
 }
 
