@@ -427,6 +427,23 @@ test('WQ9: an email no account uses is refused with the way on; new accounts sta
   expect(backend.calls.some((c) => c.path === '/auth/user/verify')).toBe(false);
 });
 
+test('WQ9: an email set elsewhere meanwhile (422 EMAIL_CHANGE_ADMIN_ONLY) re-reads the profile and shows it', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await page.route('**/api/v1/auth/email-verification/send', async (route) => {
+    backend.profile.email = 'asha.other@example.com'; // set on another device a moment ago
+    return route.fulfill({ status: 422, contentType: 'application/json',
+      body: JSON.stringify({ error: 422, code: 'EMAIL_CHANGE_ADMIN_ONLY', message: 'Only an admin can replace an existing email address' }) });
+  });
+  await signIn(page);
+  await page.getByRole('link', { name: 'Complete profile' }).click();
+  const email = page.getByRole('region', { name: 'Email' });
+  await email.getByLabel('Email').fill('asha@example.com');
+  await email.getByRole('button', { name: 'Send code' }).click();
+  await expect(email.getByRole('alert')).toHaveText('Only an admin can replace an existing email address');
+  await expect(email.getByText('asha.other@example.com')).toBeVisible();
+  await expect(email.getByLabel('Email')).toHaveCount(0);
+});
+
 test('WQ9: an internationalised email domain is sent in one (ASCII) form from the profile and from sign-in', async ({ page }) => {
   const backend = await mockBackend(page);
   await signIn(page);

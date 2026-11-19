@@ -969,6 +969,8 @@ test('WQ9: owner adds staff with an email (EMAIL_IN_USE on the field), sees it l
   await expect(sita).toContainText('None');
   await sita.getByRole('button', { name: 'Add email' }).click();
   const editor = page.getByRole('region', { name: 'Email for Sita Staff' });
+  // A first email signs nobody out: no warning yet.
+  await expect(editor.getByText(/signs them out/)).toHaveCount(0);
   await editor.getByLabel('Email').fill(TAKEN);
   await editor.getByRole('button', { name: 'Save email' }).click();
   await expect(editor.getByText('Another member of this workspace already signs in with this email. Use a different email.')).toBeVisible();
@@ -978,6 +980,7 @@ test('WQ9: owner adds staff with an email (EMAIL_IN_USE on the field), sees it l
   await expect(sita).toContainText('sita@lab.in');
 
   await sita.getByRole('button', { name: 'Change email' }).click();
+  await expect(page.getByRole('region', { name: 'Email for Sita Staff' }).getByText(/Changing or removing it signs them out/)).toBeVisible();
   await page.getByRole('region', { name: 'Email for Sita Staff' }).getByLabel('Email').fill('');
   await page.getByRole('region', { name: 'Email for Sita Staff' }).getByRole('button', { name: 'Save email' }).click();
   await expect(page.getByText('The email for Sita Staff was saved.')).toBeVisible();
@@ -1083,7 +1086,7 @@ test('WQ9: a doctor email no account uses is refused on the field with the way o
   const sends: unknown[] = [];
   await page.route('**/api/v1/**', async (route) => {
     const path = new URL(route.request().url()).pathname.replace('/api/v1', '');
-    if (path === '/auth/specialist/send') {
+    if (path === '/auth/specialist/send' || path === '/auth/pharmacy/send') {
       const body = route.request().postDataJSON() as Rec;
       sends.push(body);
       if (body.email === 'new.doctor@clinic.in') {
@@ -1099,8 +1102,15 @@ test('WQ9: a doctor email no account uses is refused on the field with the way o
   await page.getByLabel('Doctor').check();
   await page.getByLabel('Mobile number or email').fill('New.Doctor@Clinic.in');
   await page.getByRole('button', { name: 'Send code' }).click();
-  await expect(page.getByText('No account uses this email. Sign in with your mobile number, then add this email to your profile.')).toBeVisible();
+  // Doctors and pharmacies have no profile email screen: the team adds it.
+  const staffCopy = 'No account uses this email. Sign in with your mobile number. To use email sign-in, ask the SwasthaDisha team to add it to your account.';
+  await expect(page.getByText(staffCopy)).toBeVisible();
+  await expect(page.getByText('then add this email to your profile')).toHaveCount(0);
   await expect(page.getByLabel('Mobile number or email')).toHaveAttribute('aria-invalid', 'true');
+  await page.getByLabel('Pharmacy staff').check();
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByText(staffCopy)).toBeVisible();
+  await page.getByLabel('Doctor').check();
   // A → B → A: the first destination's wait is kept while another is used.
   await page.getByLabel('Mobile number or email').fill('dr@clinic.in');
   await page.getByRole('button', { name: 'Send code' }).click();
@@ -1110,7 +1120,7 @@ test('WQ9: a doctor email no account uses is refused on the field with the way o
   await page.getByRole('button', { name: 'Change number or email' }).click();
   await page.getByLabel('Mobile number or email').fill('dr@clinic.in');
   await expect(page.getByRole('button', { name: /Send code in \d+s/ })).toBeDisabled();
-  expect(sends).toEqual([{ email: 'new.doctor@clinic.in' }, { email: 'dr@clinic.in' }, { phone: '9876543210' }]);
+  expect(sends).toEqual([{ email: 'new.doctor@clinic.in' }, { email: 'new.doctor@clinic.in' }, { email: 'dr@clinic.in' }, { phone: '9876543210' }]);
 });
 
 test('WQ9: admin creates a partner with an optional owner email; EMAIL_IN_USE unlocks the form with the field marked', async ({ page }) => {

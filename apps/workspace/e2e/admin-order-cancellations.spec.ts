@@ -81,7 +81,8 @@ test('admin sees paid orders waiting for a cancellation decision, with the pharm
   const b = await mockBackend(page);
   await signIn(page);
   await expect(page.getByRole('heading', { name: 'Order cancellations' })).toBeVisible();
-  expect(b.listQueries.some((q) => q.includes('status=pending_cancel'))).toBe(true);
+  // The heading can appear before the list request is made: wait for the request rather than check it once.
+  await expect.poll(() => b.listQueries.some((q) => q.includes('status=pending_cancel'))).toBe(true);
   await expect(page.getByText('2 waiting for a decision')).toBeVisible();
   const online = card(page, 'PO-7171');
   await expect(online).toContainText('Asha Medicals');

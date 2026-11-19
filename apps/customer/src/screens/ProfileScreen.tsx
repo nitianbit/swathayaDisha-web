@@ -122,10 +122,18 @@ function EmailSection({ profile }: { profile: CustomerProfile }) {
       <section className="card stack" aria-labelledby="email-h">
         <h2 id="email-h">Email</h2>
         {done && <Alert tone="ok">Email added. You can now also sign in with it.</Alert>}
+        {error && <Alert>{error}</Alert>}
         <div className="field-static"><span>Email</span><strong>{profile.email}</strong>
           <small>You can sign in with it. To change it, contact support.</small></div>
       </section>
     );
+  }
+
+  /** The email was set or changed elsewhere (422 EMAIL_CHANGE_ADMIN_ONLY, 409 CONTACT_CHANGED): show the profile as it is now. */
+  async function profileMoved(err: unknown) {
+    if (err instanceof ApiError && (err.code === 'EMAIL_CHANGE_ADMIN_ONLY' || err.code === 'CONTACT_CHANGED')) {
+      await queryClient.invalidateQueries({ queryKey: ['me'] });
+    }
   }
 
   const current = sentTo ?? normalizeEmail(typed);
@@ -144,6 +152,7 @@ function EmailSection({ profile }: { profile: CustomerProfile }) {
       if (!live.current || seq.current !== mine) return;
       setSentTo(email); setOtp(''); cooldowns.start(targetKey({ email }), RESEND_SECONDS);
     } catch (err) {
+      await profileMoved(err);
       if (!live.current || seq.current !== mine) return;
       setError(messageOf(err));
       if (err instanceof ApiError && err.status === 429 && err.retryAfter) cooldowns.start(targetKey({ email }), Math.min(err.retryAfter, 24 * 3600));
@@ -166,6 +175,7 @@ function EmailSection({ profile }: { profile: CustomerProfile }) {
       await queryClient.invalidateQueries({ queryKey: ['me'] });
       if (live.current && seq.current === mine) setDone(true);
     } catch (err) {
+      await profileMoved(err);
       if (!live.current || seq.current !== mine) return;
       setError(messageOf(err));
       if (err instanceof ApiError && err.code === 'OTP_ATTEMPTS_EXCEEDED') setOtp(''); // this code is spent: send a new one

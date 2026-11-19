@@ -959,6 +959,22 @@ on an add with an email, no doctor email copied to clinic memberships, and a cha
 - **Doctor email.** No web copy or journey assumed the doctor's profile email was copied onto a clinic membership.
   Linked doctors sign in to the clinic with their mobile number unless an owner sets a sign-in email.
 
+### WQ9 re-review fixes (2026-11-19)
+
+- **Doctors and pharmacies:** they have no profile email screen. On the workspace, `EMAIL_NOT_REGISTERED` for these
+  roles says "No account uses this email. Sign in with your mobile number. To use email sign-in, ask the SwasthaDisha
+  team to add it to your account." Other roles get the server's own message; the customer copy is unchanged.
+- **Staff email editor:** it warns that changing or removing the email signs the member out only when the member
+  already has one. A first email ends no session. That backend rule is in the q14-owner-decisions working tree but not
+  yet in a commit (HEAD 14007e8 still ends sessions on any change), so check it again once committed.
+- **Customer profile email:** after 422 `EMAIL_CHANGE_ADMIN_ONLY` or 409 `CONTACT_CHANGED`, the profile is read again
+  (`['me']`), so an email set elsewhere is shown, together with the server's message.
+- **`normalizeEmail`:** also applies Unicode NFC, so composed and decomposed accents give one address. The code step
+  still shows the ASCII (punycode) domain. Decoding punycode for display needs a decoder the browser does not provide,
+  and there is no dependency for it, so the display is left as it is.
+- **Flaky spec:** in `admin-order-cancellations.spec.ts`, the first list request is now awaited with `expect.poll`
+  instead of being checked once. It passed 120/120 with `--repeat-each 10`.
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -979,6 +995,7 @@ on an add with an email, no doctor email copied to clinic memberships, and a cha
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-19 | WQ9 re-review fixes | typecheck clean; Vitest 222/222 (+1: NFC); Playwright workspace 398/398 (journeys extended: doctor and pharmacy copy, no sign-out warning for a first email, warning when changing one; admin-order-cancellations 120/120 with --repeat-each 10); Playwright customer 222/222 (+2 = 1 journey x 2: an email set elsewhere re-reads the profile after 422); both builds OK. Temporary configs on ports 5305/5306, deleted. |
 | 2026-11-19 | WQ9 review fixes | typecheck clean; Vitest 221/221 (+5: normalizeEmail with IDN/punycode and refusals, EMAIL_NOT_REGISTERED, leading 0, short-local masking, cooldownLeft); Playwright workspace 398/398 (+8 = 4 new journeys x 2; one replaced: staff without the email field; OWNER_REQUIRED on add; a save landing after its editor was replaced (fails without the fix); role frozen while sending; doctor EMAIL_NOT_REGISTERED, A → B → A waits and a leading 0); Playwright customer 220/220 (+6 = 3 journeys x 2: EMAIL_NOT_REGISTERED and the new hint; an IDN email from the profile and from sign-in in one ASCII form; A → B → A waits and a leading 0; the profile journey now adds the email through email verification). Both builds OK. Temporary configs on ports 5303/5304 (no server reuse), deleted before commit. |
 | 2026-11-19 | WQ9 (sign in with a mobile number or an email; staff and owner emails) | typecheck clean; Vitest 216/216 (+12: identifier parser (+91, spaces, dashes, lower-cased email, refusals, one key only), masking and destination keys, email send/verify bodies, member email path and fence, optional email normalised, owner-only email edits, EMAIL_IN_USE); Playwright workspace 390/390 (+14 = 7 journeys x 2: partner email sign-in with the workspace choice and nothing stored; +91 number, a 429 on one email only, resend to the same destination; staff add with email and EMAIL_IN_USE, list, change and remove with the version fence; email edit refused as RECORD_CHANGED; staff with staff.manage add an email but change none; admin create with owner email and EMAIL_IN_USE; admin-as-owner email edit on the admin route); Playwright customer 214/214 (+6 = 3 journeys x 2: email sign-in sends only `email`, masked, nothing stored; +91 number then an email; a 429 on one email only and a burnt code). Existing login journeys unchanged (the new label contains "Mobile number"). Both release builds OK with VITE_API_BASE_URL=https://api.example.test. Temporary Playwright configs on ports 5301/5302 (no server reuse), deleted before commit. |
 | 2026-11-18 | WQ8 review fixes (against Q14 d29b72e) | typecheck clean; Vitest 204/204 (+2: refusals settled for good vs left unknown; the bill handover taken only by its navigation; doctor desk no-shows; date of birth read as the server does); Playwright workspace 376/376 (+10 = 5 journeys x 2: two cashiers (a reviewed ₹300 never sent on the newer version; the cancellation asks again), a refused resend unlocks the bill, the setting's conflict message and "Saved.", a modified click hands nothing over, a desk no-show is the clinic's and an emptied day keeps the notice; receipt bill after a reload, search copy and owner-doctor branches added to existing journeys; the two-cashier and refused-resend journeys fail on 6b9ce70); customer 208/208 (+2: a missed instant consultation is final); both release builds OK. |

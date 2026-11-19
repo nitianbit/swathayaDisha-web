@@ -359,7 +359,8 @@ function EditEmail({ ctx, member, onClose, onSaved }:
       <h2 id="email-h">Email for {member.name}</h2>
       <p className="ws-muted">
         They can sign in with this email (a code by email) as well as with their mobile number. Leave it empty to remove it.
-        Changing or removing it signs them out of the workspace on the web and in the phone app{ctx.actor.memberId === member._id ? ' (you too)' : ''}.
+        {/* A first email ends nothing; changing or removing one ends the member's sessions (`updateMemberEmail`). */}
+        {member.email && ` Changing or removing it signs them out of the workspace on the web and in the phone app${ctx.actor.memberId === member._id ? ' (you too)' : ''}.`}
       </p>
       <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
         <fieldset className="ws-frozen" disabled={busy}>

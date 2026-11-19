@@ -81,6 +81,14 @@ describe('WQ9 normalizeEmail', () => {
     expect(normalizeEmail(hindi)).toBe(hindi); // already ASCII: unchanged
   });
 
+  it('composes the part before the @ (Unicode NFC), so the same characters always give the same address', () => {
+    const decomposed = 'jose\u0301@example.com'; // e + combining acute
+    const composed = 'jos\u00e9@example.com';
+    expect(normalizeEmail(decomposed)).toBe(composed);
+    expect(normalizeEmail(composed)).toBe(composed);
+    expect(parseLoginIdentifier(decomposed)).toEqual({ email: composed });
+  });
+
   it('refuses what is not a plain address', () => {
     for (const s of ['asha', 'asha@', '@x.in', 'asha@x', 'asha@x.in:80', 'asha@x.in/a', 'asha@1.2.3.4', 'as ha@x.in', 'asha@x .in', 'asha@[::1]']) {
       expect(normalizeEmail(s)).toBeNull();

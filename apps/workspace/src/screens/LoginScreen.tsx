@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
-  ApiError, EMAIL_NOT_REGISTERED_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, PARTNER_KIND_LABEL, parseLoginIdentifier,
+  ApiError, EMAIL_NOT_REGISTERED_MESSAGE, EMAIL_NOT_REGISTERED_STAFF_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, PARTNER_KIND_LABEL, parseLoginIdentifier,
   targetKey, targetKind, type OtpTarget, type PartnerSelection,
 } from '@jansetu/api';
 import { Alert, Button, TextField, useCooldowns } from '@jansetu/ui';
@@ -59,7 +59,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
       setOtp('');
       cooldowns.start(targetKey(next.target), RESEND_SECONDS);
     } catch (err) {
-      if (isEmailNotRegistered(err)) notRegistered(err);
+      if (isEmailNotRegistered(err)) notRegistered(err, next.role);
       else setError(messageOf(err));
       // O1: a refused resend waits as long as the server says (the button counts down).
       if (err instanceof ApiError && err.status === 429 && err.retryAfter) cooldowns.start(targetKey(next.target), Math.min(err.retryAfter, 24 * 3600));
@@ -85,17 +85,21 @@ export function LoginScreen({ notice }: { notice?: string }) {
         setBusy(false);
       }
     } catch (err) {
-      if (isEmailNotRegistered(err)) notRegistered(err);
+      if (isEmailNotRegistered(err)) notRegistered(err, sent.role);
       else setError(messageOf(err));
       if (err instanceof ApiError && err.code === 'OTP_ATTEMPTS_EXCEEDED') setOtp(''); // this code is spent: send a new one
       setBusy(false);
     }
   }
 
-  /** WQ9: no account starts from an email: said on the field, with the way on (sign in by mobile, add the email). */
-  function notRegistered(err: unknown) {
+  /**
+   * WQ9: no account starts from an email: said on the field, with the way on. Doctors and pharmacies have no profile
+   * email screen (the team adds their email); others get the server's own words.
+   */
+  function notRegistered(err: unknown, forRole: StaffRole) {
     setStep('identify');
-    setFieldError(err instanceof ApiError && err.message ? err.message : EMAIL_NOT_REGISTERED_MESSAGE);
+    setFieldError(forRole === 'specialist' || forRole === 'pharmacy' ? EMAIL_NOT_REGISTERED_STAFF_MESSAGE
+      : err instanceof ApiError && err.message ? err.message : EMAIL_NOT_REGISTERED_MESSAGE);
   }
 
   async function open(e: FormEvent) {

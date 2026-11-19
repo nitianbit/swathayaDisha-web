@@ -96,10 +96,11 @@ const LOGIN_PHONE = /^(?:\+?91|0)?([0-9]{10})$/;
  * stored one way and looked up the other. Null when it is not a usable address.
  */
 export function normalizeEmail(raw: string): string | null {
-  const s = raw.trim().toLowerCase();
+  const s = raw.trim().normalize('NFC').toLowerCase();
   const at = s.lastIndexOf('@');
   if (at <= 0 || at === s.length - 1) return null;
-  const local = s.slice(0, at);
+  // One form for the same characters (composed vs decomposed accents): Unicode NFC.
+  const local = s.slice(0, at).normalize('NFC');
   const domain = s.slice(at + 1);
   // Only a bare host name: anything URL parsing would silently drop or reinterpret (port, path, IP literal) is refused.
   if (/[\s:/?#[\]@\\%]/.test(domain)) return null;
@@ -151,6 +152,9 @@ export function maskTarget(t: OtpTarget): string {
  */
 export const isEmailNotRegistered = (err: unknown) => err instanceof ApiError && err.code === 'EMAIL_NOT_REGISTERED';
 export const EMAIL_NOT_REGISTERED_MESSAGE = 'No account uses this email. Sign in with your mobile number, then add this email to your profile.';
+/** Doctors and pharmacies have no profile email screen: the team adds it. */
+export const EMAIL_NOT_REGISTERED_STAFF_MESSAGE =
+  'No account uses this email. Sign in with your mobile number. To use email sign-in, ask the SwasthaDisha team to add it to your account.';
 
 /** D4: once-only operations whose outcome a reloaded page never saw. */
 export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_create' | 'pharmacy_checkout' | 'lab_booking_create' | 'instant_request_create';

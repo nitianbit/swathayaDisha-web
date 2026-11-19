@@ -1,6 +1,6 @@
 export { ApiError, createApiClient } from './client.ts';
 export type { ApiClient, ApiClientOptions, Page, QueryValue, RequestOptions } from './client.ts';
-export { authApi, EMAIL_NOT_REGISTERED_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, normalizeEmail, OTP_PATTERN, parseLoginIdentifier, partnerSelectionOf, PHONE_PATTERN, requestKeysApi, targetKey, targetKind } from './auth.ts';
+export { authApi, EMAIL_NOT_REGISTERED_MESSAGE, EMAIL_NOT_REGISTERED_STAFF_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, normalizeEmail, OTP_PATTERN, parseLoginIdentifier, partnerSelectionOf, PHONE_PATTERN, requestKeysApi, targetKey, targetKind } from './auth.ts';
 export type { OnceOnlyKind, PartnerChoice, PartnerSelection, SignInMode, VerifyAnswer } from './auth.ts';
 export type { NativeApp, NativeRefreshed, NativeSignedIn, NativeTokens, OtpTarget, Profile, SessionRefreshed, SessionSignedIn, SignedIn, UserType } from './auth.ts';
 export {
