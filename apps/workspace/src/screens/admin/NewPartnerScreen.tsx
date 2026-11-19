@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  EMAIL_PATTERN, GSTIN_PATTERN, INVOICE_PREFIX_PATTERN, MAX_NAME, PAN_PATTERN, PARTNER_PHONE_PATTERN, partnerAdminApi,
+  EMAIL_IN_USE_MESSAGE, EMAIL_PATTERN, GSTIN_PATTERN, INVOICE_PREFIX_PATTERN, isEmailInUse, MAX_EMAIL, MAX_NAME, memberEmail, PAN_PATTERN,
+  PARTNER_PHONE_PATTERN, partnerAdminApi,
   TAX_REGIME_LABEL, type NewPartner, type Partner, type PartnerKind, type TaxRegime,
 } from '@jansetu/api';
 import { Alert, Button, ErrorState, Loading, TextField } from '@jansetu/ui';
@@ -17,6 +18,8 @@ const REGIMES: TaxRegime[] = ['unregistered', 'regular', 'composition'];
 interface Draft {
   kind: PartnerKind; name: string; legalName: string; gstin: string; pan: string; contactPhone: string; contactEmail: string;
   taxRegime: TaxRegime; prefix: string; solo: boolean; ownerName: string; ownerPhone: string;
+  /** WQ9: optional; the owner can then sign in with it. */
+  ownerEmail: string;
 }
 
 /** Checks against `createPartnerSchema` and builds the request (optional fields only when filled in). */
@@ -35,9 +38,11 @@ export function newPartnerBody(d: Draft): { body: NewPartner; errors: Record<str
   if (!t(d.ownerName)) e.ownerName = 'Enter the owner’s name.';
   else if (t(d.ownerName).length > MAX_NAME) e.ownerName = `Use at most ${MAX_NAME} characters.`;
   if (!PARTNER_PHONE_PATTERN.test(d.ownerPhone)) e.ownerPhone = 'Enter the owner’s 10-digit mobile number.';
+  const ownerEmail = memberEmail(d.ownerEmail ?? '');
+  if (ownerEmail === null) e.ownerEmail = 'Enter a valid email address, or leave it empty.';
   const body: NewPartner = {
     kind: d.kind, name: t(d.name), contactPhone: d.contactPhone, taxRegime: d.taxRegime, invoiceSeriesPrefix: up(d.prefix),
-    firstOwner: { name: t(d.ownerName), phone: d.ownerPhone },
+    firstOwner: { name: t(d.ownerName), phone: d.ownerPhone, ...(ownerEmail ? { email: ownerEmail } : {}) },
     ...(t(d.legalName) ? { legalName: t(d.legalName) } : {}),
     ...(t(d.gstin) ? { gstin: up(d.gstin) } : {}),
     ...(t(d.pan) ? { pan: up(d.pan) } : {}),
@@ -53,7 +58,7 @@ type Pending = PendingOp<{ body: NewPartner; draft: Draft }>;
 
 const EMPTY: Draft = {
   kind: 'lab', name: '', legalName: '', gstin: '', pan: '', contactPhone: '', contactEmail: '', taxRegime: 'unregistered', prefix: '',
-  solo: false, ownerName: '', ownerPhone: '',
+  solo: false, ownerName: '', ownerPhone: '', ownerEmail: '',
 };
 
 /**
@@ -135,7 +140,8 @@ export function NewPartnerScreen() {
       if (!stillCurrent(memory.get<Pending>(PENDING_SLOT), attempt)) return;
       const next = afterFailure(attempt, err, messageOf(err));
       setPending(next ?? undefined);
-      if (!next && live.current) setError(messageOf(err)); // refused, nothing created: the form unlocks with what was typed
+      // Refused, nothing created: the form unlocks with what was typed (WQ9: an owner email in use is shown on its field).
+      if (!next && live.current) { if (isEmailInUse(err)) setErrors({ ownerEmail: EMAIL_IN_USE_MESSAGE }); else setError(messageOf(err)); }
     } finally {
       if (live.current) setBusy(false);
     }
@@ -258,6 +264,8 @@ export function NewPartnerScreen() {
         <div className="rx-form-row">
           <TextField label="Owner name" maxLength={MAX_NAME} {...text('ownerName')} />
           <TextField label="Owner mobile number" inputMode="numeric" maxLength={10} {...text('ownerPhone', true)} />
+          <TextField label="Owner email (optional)" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} maxLength={MAX_EMAIL}
+            hint="The owner can sign in with this email too" {...text('ownerEmail')} />
         </div>
         {!pending && error && <Alert>{error}</Alert>}
         {!locked && <div><Button type="submit" busy={busy}>Create</Button></div>}

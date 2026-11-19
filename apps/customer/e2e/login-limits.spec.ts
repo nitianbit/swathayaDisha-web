@@ -57,3 +57,37 @@ test('a refused first send waits on that number only; another number can still b
   await page.getByRole('button', { name: 'Send code' }).click();
   await expect(page.getByLabel('6-digit code')).toBeVisible();
 });
+
+test('WQ9: a refused email send waits on that email only; a mobile number can still be used; a burnt code on email clears the field', async ({ page }) => {
+  const json = (route: Route, status: number, body: unknown) =>
+    route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+  const bodies: unknown[] = [];
+  await page.route('**/api/v1/**', async (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname.replace('/api/v1', '');
+    if (path === '/auth/user/send') {
+      const b = req.postDataJSON() as { phone?: string; email?: string };
+      bodies.push(b);
+      if (b.email === 'busy@example.com') return json(route, 429, { error: 429, code: 'OTP_SEND_LIMIT', message: 'Too many codes requested. Please try again in 50 minutes.', retryAfter: 3000 });
+      return json(route, 200, { success: true });
+    }
+    if (path === '/auth/user/verify') {
+      return json(route, 429, { error: 429, code: 'OTP_ATTEMPTS_EXCEEDED', message: 'Too many incorrect codes. Please request a new code.' });
+    }
+    return json(route, 401, { error: 401, message: 'Please sign in again' });
+  });
+  await page.goto('/');
+  await page.getByLabel('Mobile number or email').fill('Busy@Example.com');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Too many codes requested. Please try again in 50 minutes.');
+  await expect(page.getByRole('button', { name: /Send code in \d+s/ })).toBeDisabled();
+  await page.getByLabel('Mobile number or email').fill('9876543211');
+  await expect(page.getByRole('button', { name: 'Send code' })).toBeEnabled();
+  await page.getByLabel('Mobile number or email').fill('asha@example.com');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await page.getByLabel('6-digit code').fill('111111');
+  await page.getByRole('button', { name: 'Verify and sign in' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Too many incorrect codes. Please request a new code.');
+  await expect(page.getByLabel('6-digit code')).toHaveValue('');
+  expect(bodies).toEqual([{ email: 'busy@example.com' }, { email: 'asha@example.com' }]);
+});

@@ -1,7 +1,7 @@
-import { createApiClient } from './client.ts';
+import { ApiError, createApiClient } from './client.ts';
 import { authApi, partnerSelectionOf } from './auth.ts';
 import {
-  ADMIN_ACTOR, ALL_PARTNER_PERMISSIONS, canAddOwner, canChangeBranches, canEditPermissions, canEditProfile, canReopenBranches, grantablePermissions, holdsAny, partnerAdminApi,
+  ADMIN_ACTOR, ALL_PARTNER_PERMISSIONS, canAddOwner, canChangeBranches, canEditEmail, canEditPermissions, isEmailInUse, memberEmail, canEditProfile, canReopenBranches, grantablePermissions, holdsAny, partnerAdminApi,
   partnerWorkspaceApi, partnerWorkspaceBase, removalBlock, scopeProblem, type PartnerActorView,
 } from './partners.ts';
 
@@ -215,5 +215,40 @@ describe('partner rules mirrored from the backend service', () => {
     expect(scopeProblem(staff, [])).toBe('Choose at least one of your branches.');
     expect(scopeProblem(staff, ['f6'.repeat(12)])).toBe('You can only give access to your own branches.');
     expect(scopeProblem(staff, [B])).toBeNull();
+  });
+});
+
+describe('WQ9 member email', () => {
+  it('sets or removes an email with the version fence', async () => {
+    const { client, calls } = recorder();
+    const member = partnerWorkspaceApi(client, { kind: 'member' });
+    const admin = partnerWorkspaceApi(client, { kind: 'admin', partnerId: P });
+    await member.setEmail(M, 'r@x.in', '2026-11-14T00:00:00.000Z');
+    await admin.setEmail(M, null);
+    expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ['PUT', `/partner-workspace/members/${M}/email`, { email: 'r@x.in', expectedUpdatedAt: '2026-11-14T00:00:00.000Z' }],
+      ['PUT', `/partner-workspace/admin/${P}/workspace/members/${M}/email`, { email: null }],
+    ]);
+  });
+
+  it('normalises an optional email: trimmed, lower-cased, empty allowed, invalid refused', () => {
+    expect(memberEmail('  Ravi@Lab.IN ')).toBe('ravi@lab.in');
+    expect(memberEmail('   ')).toBe('');
+    expect(memberEmail('ravi@lab')).toBeNull();
+    expect(memberEmail(`${'a'.repeat(250)}@x.in`)).toBeNull();
+  });
+
+  it('only owners (and admins as owner) change a member’s email; nobody a removed member’s', () => {
+    const staff: PartnerActorView = { role: 'staff', permissions: ['staff.manage'], branchIds: [] };
+    expect(canEditEmail(staff, { isActive: true })).toBe(false);
+    expect(canEditEmail({ role: 'owner' }, { isActive: true })).toBe(true);
+    expect(canEditEmail(ADMIN_ACTOR, { isActive: true })).toBe(true);
+    expect(canEditEmail(ADMIN_ACTOR, { isActive: false })).toBe(false);
+  });
+
+  it('recognises 409 EMAIL_IN_USE only', () => {
+    expect(isEmailInUse(new ApiError(409, 'in use', 'EMAIL_IN_USE'))).toBe(true);
+    expect(isEmailInUse(new ApiError(409, 'changed', 'RECORD_CHANGED'))).toBe(false);
+    expect(isEmailInUse(new Error('x'))).toBe(false);
   });
 });

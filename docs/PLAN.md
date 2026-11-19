@@ -891,6 +891,39 @@ for moving any doctor's no-show is in `doctorAdminApi` but has no screen yet (no
 Verification: see the 2026-11-18 WQ8 row below. Playwright ran on ports 5291 (workspace) and 5292 (customer) with temporary configs
 (`reuseExistingServer: false`), not committed.
 
+## WQ9 sign in with a mobile number or an email (2026-11-19, taken autonomously at the owner's request)
+
+Owner: "we have email OTP too, why aren't we going for email? make either of both as necessary". Every account type signs in with a mobile number
+or an email. Backend (read-only): `SwasthaDisha-worktrees/q14-owner-decisions` `m0/q14-owner-decisions` 13e40c5 plus the partner-email change
+still uncommitted in that worktree on 19 Nov (field names below checked against it): `auth/validation` (`sendOTPSchema`/`verifyOTPSchema`: `phone`
+or `email`; customers exactly one, `selectCustomerLoginContact`, email lower-cased), `auth/services` (partner sign-in by email: memberships found
+by the lower-cased email; the Q7 selection ticket carries the proven phone or email, so `POST /auth/partner/select` is unchanged),
+`partners/{validation,routes,controller,services}` (member `email`, `PUT /members/:memberId/email`, `EMAIL_IN_USE`).
+
+- **One field on both apps.** "Mobile number or email" (`parseLoginIdentifier` in `packages/api/src/auth.ts`, unit-tested): anything with an `@` is
+  an email, trimmed and lower-cased, checked with the same pragmatic pattern as other email fields (the server's Joi check still decides); anything
+  else must be 10 digits after dropping spaces and dashes and an optional +91 / 91 prefix. Exactly one of `{ phone }` / `{ email }` is sent (the
+  customer xor). The destination the code was sent to is kept in component memory and used for verify, resend and (workspace) the Q7 choice; the
+  choice step says "Your number/email belongs to several workspaces". The code step says "We sent a 6-digit code to your phone/email" with the
+  destination masked (`maskTarget`: last 4 digits; first character and domain of an email). "Change number or email" goes back with what was typed.
+- **Limits and errors unchanged.** The 30-second resend gap and a 429's Retry-After countdown belong to one destination (`targetKey`): another number
+  or email can still be used. A burnt code (`OTP_ATTEMPTS_EXCEEDED`) clears the field; `SELECTION_EXPIRED` asks for a new code. Server messages are
+  shown as before; nothing new is revealed (no "is this email registered" answer).
+- **Privacy.** The phone, email, OTP, ticket and token are never written to localStorage, sessionStorage, logs or URLs (journeys check storage and
+  the address bar after an email sign-in on both apps). The admin create-partner request, owner email included, stays in session memory only; its
+  reload marker holds only the request key (D4).
+- **Staff email (partners).** The staff list has an Email column. Add a staff member takes an optional "Email (optional)" (`addMemberSchema.email`;
+  anyone with `staff.manage`, owners and admins as owner included). Changing or removing an existing member's email ("Add email" / "Change email")
+  is owner-only (admins act as owner), for any active member including owners, matching `updateMemberEmail` (403 `OWNER_REQUIRED` otherwise). The
+  editor uses the member-draft rules of the other member edits: the member is read again right before sending, the save carries its `updatedAt` as
+  `expectedUpdatedAt`, 409 RECORD_CHANGED shows the saved value; empty sends `email: null` (removes it); a late answer settles only while the editor
+  is open and the save is the latest started there. 409 `EMAIL_IN_USE` (another active member of the same partner signs in with that email) is shown
+  on the email field and nothing is added or changed. No request key: neither endpoint takes one (adding twice is refused as MEMBER_ALREADY_EXISTS;
+  the email edit is fenced by version).
+- **Admin create-partner** takes an optional "Owner email (optional)" (`createPartnerSchema.firstOwner.email`), inside the existing Q8 exactly-once
+  request (same key and content on resend). A refused create (`EMAIL_IN_USE` or any other definite refusal of the first attempt) unlocks the form
+  with the field marked; a new submission gets a new key.
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -911,6 +944,7 @@ Verification: see the 2026-11-18 WQ8 row below. Playwright ran on ports 5291 (wo
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-19 | WQ9 (sign in with a mobile number or an email; staff and owner emails) | typecheck clean; Vitest 216/216 (+12: identifier parser (+91, spaces, dashes, lower-cased email, refusals, one key only), masking and destination keys, email send/verify bodies, member email path and fence, optional email normalised, owner-only email edits, EMAIL_IN_USE); Playwright workspace 390/390 (+14 = 7 journeys x 2: partner email sign-in with the workspace choice and nothing stored; +91 number, a 429 on one email only, resend to the same destination; staff add with email and EMAIL_IN_USE, list, change and remove with the version fence; email edit refused as RECORD_CHANGED; staff with staff.manage add an email but change none; admin create with owner email and EMAIL_IN_USE; admin-as-owner email edit on the admin route); Playwright customer 214/214 (+6 = 3 journeys x 2: email sign-in sends only `email`, masked, nothing stored; +91 number then an email; a 429 on one email only and a burnt code). Existing login journeys unchanged (the new label contains "Mobile number"). Both release builds OK with VITE_API_BASE_URL=https://api.example.test. Temporary Playwright configs on ports 5301/5302 (no server reuse), deleted before commit. |
 | 2026-11-18 | WQ8 review fixes (against Q14 d29b72e) | typecheck clean; Vitest 204/204 (+2: refusals settled for good vs left unknown; the bill handover taken only by its navigation; doctor desk no-shows; date of birth read as the server does); Playwright workspace 376/376 (+10 = 5 journeys x 2: two cashiers (a reviewed ₹300 never sent on the newer version; the cancellation asks again), a refused resend unlocks the bill, the setting's conflict message and "Saved.", a modified click hands nothing over, a desk no-show is the clinic's and an emptied day keeps the notice; receipt bill after a reload, search copy and owner-doctor branches added to existing journeys; the two-cashier and refused-resend journeys fail on 6b9ce70); customer 208/208 (+2: a missed instant consultation is final); both release builds OK. |
 | 2026-11-18 | WQ8 Q14 review follow-ups | typecheck clean; Vitest 202/202 (+1: no ordinary new time or rejection after a moved lab no-show; ₹0 bill takes a payment; plain-mode payment checked); Playwright workspace 366/366 (+2 = 1 journey x 2: a ₹0 bill marked paid with a plain method, INVOICE_INDEXES_OUTDATED shown and nothing pending; lab and desk journeys extended: no Propose/Reject after a moved no-show, the bill's customer fixed while linked, no "new family member" claim); customer 206/206 (+2: a partly paid bill with split methods and what is due); both release builds OK. |
 | 2026-11-18 | WQ8 (owner decisions, Q14 85a4ec1) | typecheck clean; Vitest 201/201 (+13: no-show move offers and paths for lab/desk/doctor, doctor slots, paid/due and payment rules, split payment bodies with key and version, appointment filter, link/unlink paths and rules, family member rules, own clinic body, admin doctor search, no cancel after a moved no-show); Playwright workspace 364/364 (+20 = 10 journeys x 2 devices: lab no-show moved once with a lost answer and then final, a used move refused; desk family member, desk no-show moved with a lost answer and a refused second move, bill from an appointment with prefill/appointmentId/second bill refused, admin link with a lost answer resent once, owner removes a doctor; doctor no-show move, own clinic created once found by key, DOCTOR_CLINIC_EXISTS and unverified; part and split payments with the owner setting and the refund, full-payment-only and a version refusal); customer 204/204 (+4: missed and moved consultation, missed and moved lab booking); both release builds OK. |

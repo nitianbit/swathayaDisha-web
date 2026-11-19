@@ -4,7 +4,7 @@ import {
   ApiError, authApi, clearSignOutPending, createApiClient, markSignOutPending, markerStore, nativeSecureStore, nativeSignOut, refreshTokenKey,
   rotateNative, samePrincipal, sessionChannel, signOutState,
   withSessionLock,
-  type ApiClient, type PendingMarker, type Principal,
+  type ApiClient, type OtpTarget, type PendingMarker, type Principal,
 } from '@jansetu/api';
 
 const APP = 'customer';
@@ -32,8 +32,9 @@ interface SessionValue {
   state: SessionState;
   api: ApiClient;
   memory: SessionMemory;
-  requestCode: (phone: string) => Promise<void>;
-  verifyCode: (phone: string, otp: string) => Promise<void>;
+  /** WQ9: exactly one of a phone or an email (backend `selectCustomerLoginContact`). */
+  requestCode: (target: OtpTarget) => Promise<void>;
+  verifyCode: (target: OtpTarget, otp: string) => Promise<void>;
   signOut: (notice?: string) => void;
   /** Ends every session of this account on every device (POST /auth/sessions/revoke), then this one. */
   signOutEverywhere: () => Promise<void>;
@@ -225,16 +226,16 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
 
   useEffect(() => () => { clearTimeout(renewTimer.current); }, []);
 
-  const requestCode = useCallback(async (phone: string) => { await auth.sendOtp('user', { phone }); }, [auth]);
+  const requestCode = useCallback(async (target: OtpTarget) => { await auth.sendOtp('user', target); }, [auth]);
 
-  const verifyCode = useCallback(async (phone: string, otp: string) => {
+  const verifyCode = useCallback(async (target: OtpTarget, otp: string) => {
     await withSessionLock(APP, async () => {
       const gen = generation.current;
       let signedIn;
       if (secure) {
         // The token the phone still holds is ended by this sign-in; the new one is stored before it is used.
         const previous = await secure.get(refreshTokenKey(NATIVE_APP)).catch(() => null);
-        const n = await auth.verifyOtpNative('user', { phone }, otp, NATIVE_APP, previous);
+        const n = await auth.verifyOtpNative('user', target, otp, NATIVE_APP, previous);
         try {
           await secure.set(refreshTokenKey(NATIVE_APP), n.refreshToken);
         } catch {
@@ -246,7 +247,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
         clearSignOutPending(NATIVE_APP); // the new token replaced whatever an unfinished sign-out left behind
         signedIn = n;
       } else {
-        signedIn = cookieMode ? await auth.verifyOtpSession('user', { phone }, otp) : await auth.verifyOtp('user', { phone }, otp);
+        signedIn = cookieMode ? await auth.verifyOtpSession('user', target, otp) : await auth.verifyOtp('user', target, otp);
       }
       if (gen !== generation.current) return;
       if (!signedIn?.token) throw new ApiError(502, 'Sign-in did not return a session. Please try again.');

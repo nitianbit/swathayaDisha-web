@@ -91,6 +91,8 @@ export interface PartnerMember {
   _id: string;
   partnerId: string;
   phone: string;
+  /** WQ9: an optional sign-in email (trimmed and lower-cased by the server; unique among the partner's active members). */
+  email?: string;
   name: string;
   role: MemberRole;
   permissions: PartnerPermission[];
@@ -154,6 +156,8 @@ export interface PartnerAuditEvent {
 /** `addMemberSchema`. An owner's permissions and branches are fixed by the server (all of them). */
 export interface NewMember {
   phone: string;
+  /** WQ9 `addMemberSchema.email`: optional; 409 `EMAIL_IN_USE` when another active member already signs in with it. */
+  email?: string;
   name: string;
   role: MemberRole;
   permissions: PartnerPermission[];
@@ -180,7 +184,8 @@ export interface NewPartner {
   taxRegime?: TaxRegime;
   invoiceSeriesPrefix: string;
   solo?: boolean;
-  firstOwner: { phone: string; name: string };
+  /** WQ9 `createPartnerSchema.firstOwner.email`: optional. */
+  firstOwner: { phone: string; name: string; email?: string };
 }
 /** `partnerQuerySchema` (Q8: name search `q`, `page`, `limit` up to 200). */
 export interface PartnerQuery {
@@ -223,6 +228,13 @@ export function partnerWorkspaceApi(c: ApiClient, scope: PartnerScope) {
     member: (id: string) => c.get<PartnerMember>(`${base()}/members/${checkId(id, 'member')}`),
     addMember: (body: NewMember) => c.post<PartnerMember>(`${base()}/members`, { body }),
     removeMember: (id: string) => c.delete<unknown>(`${base()}/members/${checkId(id, 'member')}`),
+    /**
+     * WQ9 `PUT /members/:memberId/email` (`updateMemberEmailSchema`): sets (or, with null, removes) a member's sign-in
+     * email, fenced like the other member edits (409 RECORD_CHANGED when it moved; 409 `EMAIL_IN_USE` when another active
+     * member of the partner already signs in with it; 403 `OWNER_REQUIRED` for anyone but an owner).
+     */
+    setEmail: (id: string, email: string | null, version?: Version) =>
+      c.put<PartnerMember>(`${base()}/members/${checkId(id, 'member')}/email`, { body: { email, ...fence(version) } }),
     setPermissions: (id: string, permissions: PartnerPermission[], version?: Version) =>
       c.put<PartnerMember>(`${base()}/members/${checkId(id, 'member')}/permissions`, { body: { permissions, ...fence(version) } }),
     /** Q8: every member may read its branches; closed ones too (`includeInactive`) only for branch managers. */
@@ -323,6 +335,21 @@ export const canReopenBranches = (a: Pick<PartnerActorView, 'role' | 'permission
 
 /** Only owners add owners and change a staff member's permissions (owners' permissions are fixed). */
 export const canAddOwner = (a: Pick<PartnerActorView, 'role'>) => a.role === 'owner';
+/**
+ * WQ9 `updateMemberEmail`: a sign-in identity, so like permissions only an owner (or an admin acting as owner) changes
+ * it, for any active member including owners and themselves. Adding a member with an email needs only `staff.manage`.
+ */
+export const canEditEmail = (a: Pick<PartnerActorView, 'role'>, target: Pick<PartnerMember, 'isActive'>) =>
+  a.role === 'owner' && target.isActive !== false;
+/** WQ9: 409 `EMAIL_IN_USE`: another active member of this partner already signs in with this email. */
+export const isEmailInUse = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'EMAIL_IN_USE';
+export const EMAIL_IN_USE_MESSAGE = 'Another member of this workspace already signs in with this email. Use a different email.';
+/** WQ9: an optional email as sent: trimmed and lower-cased; '' when left empty; null when invalid. */
+export function memberEmail(raw: string): string | null {
+  const e = raw.trim().toLowerCase();
+  if (!e) return '';
+  return e.length <= 254 && EMAIL_PATTERN.test(e) ? e : null;
+}
 export const canEditPermissions = (a: Pick<PartnerActorView, 'role'>, target: Pick<PartnerMember, 'role' | 'isActive'>) =>
   a.role === 'owner' && target.role === 'staff' && target.isActive !== false;
 

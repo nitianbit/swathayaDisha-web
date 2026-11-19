@@ -82,6 +82,46 @@ export type SignInMode = { kind: 'bearer' } | { kind: 'cookie' } | { kind: 'nati
 export const PHONE_PATTERN = /^[0-9]{10}$/;
 export const OTP_PATTERN = /^[0-9]{6}$/;
 
+/** RFC 5321 caps an address at 254 characters. */
+export const MAX_EMAIL = 254;
+/** A pragmatic check for Joi `string().email()` (the server's own answer still decides). */
+const LOGIN_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** A 10-digit mobile, optionally written with spaces or dashes and a +91 / 91 country prefix. */
+const LOGIN_PHONE = /^(?:\+?91)?([0-9]{10})$/;
+
+/**
+ * WQ9: one sign-in field takes a mobile number or an email (backend `sendOTPSchema`/`verifyOTPSchema`: `phone` or
+ * `email`; customers exactly one of them, `selectCustomerLoginContact`). Anything with an `@` is an email (trimmed and
+ * lower-cased, as the backend stores it); otherwise spaces and dashes are dropped and a +91 prefix is allowed before
+ * the 10 digits. Null when it is neither. Sends exactly one of the two keys.
+ */
+export function parseLoginIdentifier(raw: string): OtpTarget | null {
+  const s = raw.trim();
+  if (!s) return null;
+  if (s.includes('@')) {
+    const email = s.toLowerCase();
+    return email.length <= MAX_EMAIL && LOGIN_EMAIL.test(email) ? { email } : null;
+  }
+  const m = LOGIN_PHONE.exec(s.replace(/[\s-]/g, ''));
+  return m ? { phone: m[1]! } : null;
+}
+
+/** A stable in-memory key for one destination (the O1 resend limits are per destination). */
+export const targetKey = (t: OtpTarget): string => ('phone' in t ? `phone:${t.phone}` : `email:${t.email}`);
+
+/** Which kind of destination, for copy ("your phone" / "your email"). */
+export const targetKind = (t: OtpTarget): 'phone' | 'email' => ('phone' in t ? 'phone' : 'email');
+
+/**
+ * The destination as shown on the code step: a phone keeps its last 4 digits, an email its first character and its
+ * domain. Never the full identifier (it may be read over a shoulder or captured in a screenshot).
+ */
+export function maskTarget(t: OtpTarget): string {
+  if ('phone' in t) return `••••••${t.phone.slice(-4)}`;
+  const at = t.email.lastIndexOf('@');
+  return `${t.email.slice(0, 1)}•••${t.email.slice(at)}`;
+}
+
 /** D4: once-only operations whose outcome a reloaded page never saw. */
 export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_create' | 'pharmacy_checkout' | 'lab_booking_create' | 'instant_request_create';
 

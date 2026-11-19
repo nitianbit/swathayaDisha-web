@@ -335,3 +335,44 @@ test('WQ8 review: a missed instant consultation is final: no new time is ever of
   await expect(page.getByText('You were marked as not present for this appointment. A missed appointment is not refunded.')).toBeVisible();
   await expect(page.getByText(/may offer you one new time/)).toHaveCount(0);
 });
+
+test('WQ9: sign in with an email: one field, exactly one key sent, the destination masked, nothing stored', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await page.goto('/');
+  await page.getByLabel('Mobile number or email').fill('asha@');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByText('Enter your 10-digit mobile number or your email address.')).toBeVisible();
+  await page.getByLabel('Mobile number or email').fill(' Asha.K@Example.COM ');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByText('We sent a 6-digit code to your email a•••@example.com.')).toBeVisible();
+  await expect(page.getByText('asha.k@example.com')).toHaveCount(0);
+  await page.getByLabel('6-digit code').fill('123456');
+  await page.getByRole('button', { name: 'Verify and sign in' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: /^Hello/ })).toBeVisible();
+  const auth = backend.calls.filter((c) => c.path.startsWith('/auth/user/'));
+  expect(auth[0]).toMatchObject({ path: '/auth/user/send', body: { email: 'asha.k@example.com' } });
+  expect(Object.keys(auth[0]!.body as object)).toEqual(['email']);
+  expect(auth[1]!.path).toBe('/auth/user/verify');
+  expect(auth[1]!.body).toMatchObject({ email: 'asha.k@example.com', otp: '123456' });
+  expect(auth[1]!.body).not.toHaveProperty('phone');
+  const stored = await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }));
+  for (const s of ['asha.k@example.com', '123456', 't-cust']) { expect(stored).not.toContain(s); expect(page.url()).not.toContain(s); }
+});
+
+test('WQ9: a +91 number with spaces is sent as 10 digits and shown masked; the person can go back and use an email', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await page.goto('/');
+  await page.getByLabel('Mobile number or email').fill('+91 98765 43210');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByText('We sent a 6-digit code to your phone ••••••3210.')).toBeVisible();
+  await page.getByRole('button', { name: 'Change number or email' }).click();
+  await page.getByLabel('Mobile number or email').fill('asha@example.com');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await page.getByLabel('6-digit code').fill('123456');
+  await page.getByRole('button', { name: 'Verify and sign in' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: /^Hello/ })).toBeVisible();
+  const auth = backend.calls.filter((c) => c.path.startsWith('/auth/user/'));
+  expect(auth.map((c) => c.body)).toEqual([
+    { phone: '9876543210' }, { email: 'asha@example.com' }, expect.objectContaining({ email: 'asha@example.com', otp: '123456' }),
+  ]);
+});

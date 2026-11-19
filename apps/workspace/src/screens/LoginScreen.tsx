@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ApiError, OTP_PATTERN, PARTNER_KIND_LABEL, PHONE_PATTERN, type PartnerSelection } from '@jansetu/api';
+import {
+  ApiError, maskTarget, MAX_EMAIL, OTP_PATTERN, PARTNER_KIND_LABEL, parseLoginIdentifier, targetKey, targetKind, type OtpTarget, type PartnerSelection,
+} from '@jansetu/api';
 import { Alert, Button, TextField } from '@jansetu/ui';
 import { messageOf } from '../errors.ts';
 import { useSession, type StaffRole } from '../session.tsx';
@@ -15,9 +17,12 @@ const ROLES: { value: StaffRole; label: string }[] = [
 export function LoginScreen({ notice }: { notice?: string }) {
   const { requestCode, verifyCode, choosePartner } = useSession();
   const [role, setRole] = useState<StaffRole>('pharmacy');
-  const [phone, setPhone] = useState('');
+  // WQ9: a mobile number or an email, as typed. Kept in memory only (never stored, logged or put in a URL).
+  const [identifier, setIdentifier] = useState('');
+  // The destination the current code was sent to: verify and resend use exactly this one.
+  const [target, setTarget] = useState<OtpTarget | null>(null);
   const [otp, setOtp] = useState('');
-  const [step, setStep] = useState<'phone' | 'code' | 'choose'>('phone');
+  const [step, setStep] = useState<'identify' | 'code' | 'choose'>('identify');
   // Q7: several lab/clinic workspaces for this number. The one-use ticket lives only here, in memory.
   const [selection, setSelection] = useState<PartnerSelection | null>(null);
   const [chosen, setChosen] = useState('');
@@ -25,9 +30,11 @@ export function LoginScreen({ notice }: { notice?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(0);
-  // The number the countdown belongs to: another number can still be used (O1 limits are per destination).
+  // The destination the countdown belongs to: another one can still be used (O1 limits are per destination).
   const [waitFor, setWaitFor] = useState('');
-  const waiting = cooldown > 0 && waitFor === phone;
+  const typed = parseLoginIdentifier(identifier);
+  const current = step === 'identify' ? typed : target;
+  const waiting = cooldown > 0 && !!current && waitFor === targetKey(current);
   const codeRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -40,21 +47,24 @@ export function LoginScreen({ notice }: { notice?: string }) {
   const chooseRef = useRef<HTMLLegendElement>(null);
   useEffect(() => { if (step === 'choose') chooseRef.current?.focus(); }, [step]);
 
+  /** Sends a code to what was typed (first send) or, on the code step, to the same destination again. */
   async function send(e?: FormEvent) {
     e?.preventDefault();
     setError(null);
-    if (!PHONE_PATTERN.test(phone)) { setFieldError('Enter the 10-digit mobile number.'); return; }
+    const to = step === 'identify' ? typed : target;
+    if (!to) { setFieldError('Enter a 10-digit mobile number or an email address.'); return; }
     setFieldError(null);
     setBusy(true);
     try {
-      await requestCode(role, { phone });
+      await requestCode(role, to);
+      setTarget(to);
       setStep('code');
       setOtp('');
-      setCooldown(RESEND_SECONDS); setWaitFor(phone);
+      setCooldown(RESEND_SECONDS); setWaitFor(targetKey(to));
     } catch (err) {
       setError(messageOf(err));
       // O1: a refused resend waits as long as the server says (the button counts down).
-      if (err instanceof ApiError && err.status === 429 && err.retryAfter) { setCooldown(Math.min(err.retryAfter, 24 * 3600)); setWaitFor(phone); }
+      if (err instanceof ApiError && err.status === 429 && err.retryAfter) { setCooldown(Math.min(err.retryAfter, 24 * 3600)); setWaitFor(targetKey(to)); }
     } finally {
       setBusy(false);
     }
@@ -64,10 +74,11 @@ export function LoginScreen({ notice }: { notice?: string }) {
     e.preventDefault();
     setError(null);
     if (!OTP_PATTERN.test(otp)) { setFieldError('Enter the 6-digit code.'); return; }
+    if (!target) { setStep('identify'); return; }
     setFieldError(null);
     setBusy(true);
     try {
-      const choice = await verifyCode(role, { phone }, otp);
+      const choice = await verifyCode(role, target, otp);
       if (choice) {
         setSelection(choice);
         setChosen(choice.choices.length === 1 ? choice.choices[0]!.partnerId : '');
@@ -112,7 +123,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
         {notice && <Alert tone="warn">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}
 
-        {step === 'phone' ? (
+        {step === 'identify' ? (
           <form onSubmit={send} className="login-form" noValidate>
             <fieldset className="login-roles">
               <legend>I am signing in as</legend>
@@ -124,15 +135,17 @@ export function LoginScreen({ notice }: { notice?: string }) {
                 </label>
               ))}
             </fieldset>
-            <TextField label="Mobile number" inputMode="numeric" autoComplete="tel-national" maxLength={10}
-              value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
-              error={fieldError} hint="We will send a 6-digit code by SMS." />
+            <TextField label="Mobile number or email" type="text" inputMode="email" autoComplete="username" autoCapitalize="none"
+              spellCheck={false} maxLength={MAX_EMAIL} value={identifier} onChange={(e) => setIdentifier(e.target.value)}
+              error={fieldError} hint="We will send a 6-digit code by SMS to a mobile number, or to an email address." />
             <Button type="submit" busy={busy} disabled={waiting}>{waiting ? `Send code in ${cooldown}s` : 'Send code'}</Button>
           </form>
         ) : step === 'choose' && selection ? (
           <form onSubmit={(e) => void open(e)} className="login-form" noValidate>
             <fieldset className="login-roles" aria-describedby={fieldError ? 'choose-error' : undefined}>
-              <legend ref={chooseRef} tabIndex={-1}>Your number belongs to several workspaces. Which one do you want to open?</legend>
+              <legend ref={chooseRef} tabIndex={-1}>
+                Your {target && targetKind(target) === 'email' ? 'email' : 'number'} belongs to several workspaces. Which one do you want to open?
+              </legend>
               {selection.choices.map((c) => (
                 <label key={c.partnerId} className="login-role">
                   <input type="radio" name="workspace" value={c.partnerId} checked={chosen === c.partnerId}
@@ -150,14 +163,14 @@ export function LoginScreen({ notice }: { notice?: string }) {
             <Button type="submit" busy={busy}>Open workspace</Button>
             <div className="login-actions">
               <Button variant="ghost" disabled={busy}
-                onClick={() => { setSelection(null); setStep('phone'); setError(null); setFieldError(null); }}>
+                onClick={() => { setSelection(null); setStep('identify'); setError(null); setFieldError(null); }}>
                 Start again
               </Button>
             </div>
           </form>
         ) : (
           <form onSubmit={verify} className="login-form" noValidate>
-            <p>Enter the code sent to <strong>{phone}</strong>.</p>
+            {target && <p>We sent a 6-digit code to your {targetKind(target)} <strong>{maskTarget(target)}</strong>.</p>}
             <TextField ref={codeRef} label="6-digit code" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
               value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} error={fieldError} />
             <Button type="submit" busy={busy}>Verify and sign in</Button>
@@ -166,8 +179,8 @@ export function LoginScreen({ notice }: { notice?: string }) {
                 {waiting ? `Resend code in ${cooldown}s` : 'Resend code'}
               </Button>
               <Button variant="ghost" disabled={busy}
-                onClick={() => { setStep('phone'); setError(null); setFieldError(null); }}>
-                Change number
+                onClick={() => { setStep('identify'); setError(null); setFieldError(null); }}>
+                Change number or email
               </Button>
             </div>
           </form>

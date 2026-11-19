@@ -65,6 +65,8 @@ function partner(id: string, name: string, kind: 'lab' | 'clinic', state = 'veri
 const ownerMe: Me = { _id: OWNER, partnerId: LAB, name: 'Ravi Owner', role: 'owner', permissions: ALL, branchIds: [] };
 const sitaMe: Me = { _id: STAFF, partnerId: LAB, name: 'Sita Staff', role: 'staff', permissions: ['bookings.view'], branchIds: [BR1] };
 const BR_OLD = 'c9'.repeat(12);
+/** WQ9: an email another account already signs in with (409 EMAIL_IN_USE). */
+const TAKEN = 'taken@lab.in';
 
 async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Backend, 'multi' | 'expired'>> & { many?: boolean } = {}): Promise<Backend> {
   const b: Backend = {
@@ -158,6 +160,7 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
         if (prior.hash !== hash) return json(route, 409, { error: 409, code: 'REQUEST_KEY_REUSED', message: 'This request key was already used for a different partner' });
         return ok(route, { partner: prior.partner, owner: { _id: NEWBIE } }, 200);
       }
+      if ((x.firstOwner as Rec).email === TAKEN) return json(route, 409, { error: 409, code: 'EMAIL_IN_USE', message: 'This email is already in use' });
       const created = { ...partner('a3'.repeat(12), x.name as string, x.kind as 'lab', 'pending'), contact: { phone: x.contactPhone } };
       b.partners.push(created);
       if (requestKey) b.creates.set(String(requestKey), { hash, partner: created });
@@ -209,11 +212,12 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
           b.conflictOnce = false;
           return json(route, 409, { error: 409, code: 'MEMBER_ALREADY_EXISTS', message: 'An active member with this phone already exists for this partner' });
         }
+        if ((body as Rec).email === TAKEN) return json(route, 409, { error: 409, code: 'EMAIL_IN_USE', message: 'This email is already in use' });
         const m = { _id: `${NEWBIE.slice(0, -2)}${String(b.members.length).padStart(2, '0')}`, partnerId: pid, isActive: true, ...(body as Rec), branchIds: (body as Rec).branchIds ?? [] };
         b.members.push(m);
         return ok(route, m, 201);
       }
-      const mm = /^\/members\/([0-9a-f]{24})(\/permissions|\/branches)?$/.exec(sub);
+      const mm = /^\/members\/([0-9a-f]{24})(\/permissions|\/branches|\/email)?$/.exec(sub);
       if (mm && method === 'DELETE') { b.members = b.members.filter((m) => m._id !== mm[1]); return json(route, 200, { success: true, message: 'Member removed' }); }
       if (mm && method === 'GET') {
         if (b.slowMemberRead) await new Promise((r) => setTimeout(r, b.slowMemberRead));
@@ -222,7 +226,12 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
       if (mm && mm[2]) {
         const m = b.members.find((x) => x._id === mm[1])!;
         if (fenced(m)) return changed(route);
-        if (mm[2] === '/permissions') m.permissions = (body as Rec).permissions; else m.branchIds = (body as Rec).branchIds;
+        if (mm[2] === '/email') {
+          // WQ9 (assumed contract): null removes the email; one used by another account is refused.
+          const email = (body as Rec).email;
+          if (email === TAKEN) return json(route, 409, { error: 409, code: 'EMAIL_IN_USE', message: 'This email is already in use' });
+          if (email === null) delete m.email; else m.email = email;
+        } else if (mm[2] === '/permissions') m.permissions = (body as Rec).permissions; else m.branchIds = (body as Rec).branchIds;
         touch(m);
         return ok(route, m);
       }
@@ -860,4 +869,186 @@ test('an obsolete give-up answer from a page that was left never settles a newer
   expect(creates).toHaveLength(2);
   expect(creates[1]!.body).toEqual(creates[0]!.body);
   expect(backend.partners.filter((p) => p.name === 'Metro Diagnostics')).toHaveLength(1);
+});
+
+/** WQ9: nothing that identifies the person is left in browser storage or the address bar. */
+async function expectNothingStored(page: Page, ...secrets: string[]) {
+  const stored = await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }));
+  for (const s of secrets) {
+    expect(stored).not.toContain(s);
+    expect(page.url()).not.toContain(s);
+  }
+}
+
+test('WQ9: a lab member signs in by email and chooses among several workspaces; the email goes only to send and verify', async ({ page }) => {
+  const backend = await mockBackend(page, ownerMe, { multi: true });
+  await page.goto('/');
+  await page.getByLabel('Lab or clinic staff').check();
+  await page.getByLabel('Mobile number or email').fill('ravi@citylab');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByText('Enter a 10-digit mobile number or an email address.')).toBeVisible();
+  expect(backend.calls.some((c) => c.path === '/auth/partner/send')).toBe(false);
+  await page.getByLabel('Mobile number or email').fill('  Ravi.Owner@CityLab.IN ');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByText('We sent a 6-digit code to your email r•••@citylab.in.')).toBeVisible();
+  await expect(page.getByText('ravi.owner@citylab.in')).toHaveCount(0);
+  await page.getByLabel('6-digit code').fill('123456');
+  await page.getByRole('button', { name: 'Verify and sign in' }).click();
+  await expect(page.getByText('Your email belongs to several workspaces. Which one do you want to open?')).toBeVisible();
+  await page.getByLabel(/Sunrise Clinic/).check();
+  await page.getByRole('button', { name: 'Open workspace' }).click();
+  await expect(page.getByText('Clinic · Sunrise Clinic')).toBeVisible();
+  const auth = backend.calls.filter((c) => c.path.startsWith('/auth/partner/'));
+  expect(auth.map((c) => [c.path, c.body])).toEqual([
+    ['/auth/partner/send', { email: 'ravi.owner@citylab.in' }],
+    ['/auth/partner/verify', { email: 'ravi.owner@citylab.in', otp: '123456', session: 'cookie' }],
+    ['/auth/partner/select', { ticket: 'ticket-1', partnerId: CLINIC, session: 'cookie' }],
+  ]);
+  await expectNothingStored(page, 'ravi.owner@citylab.in', '123456', 'ticket-1');
+});
+
+test('WQ9: a +91 number with spaces is sent as 10 digits; a refused email send waits on that email only; resend reuses the destination', async ({ page }) => {
+  const backend = await mockBackend(page);
+  // Registered after the mock, so it is asked first; anything else falls through to the mock.
+  await page.route('**/api/v1/auth/partner/send', async (route) => {
+    if ((route.request().postDataJSON() as Rec).email === 'busy@lab.in') {
+      return route.fulfill({ status: 429, contentType: 'application/json', headers: { 'Retry-After': '3000' },
+        body: JSON.stringify({ error: 429, code: 'OTP_SEND_LIMIT', message: 'Too many codes requested. Please try again in 50 minutes.', retryAfter: 3000 }) });
+    }
+    return route.fallback();
+  });
+  await page.clock.install();
+  await page.goto('/');
+  await page.getByLabel('Lab or clinic staff').check();
+  await page.getByLabel('Mobile number or email').fill('busy@lab.in');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Too many codes requested. Please try again in 50 minutes.');
+  await expect(page.getByRole('button', { name: /Send code in \d+s/ })).toBeDisabled();
+  await page.getByLabel('Mobile number or email').fill('+91 90000 00001');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByText('We sent a 6-digit code to your phone ••••••0001.')).toBeVisible();
+  for (let i = 0; i < 31; i++) await page.clock.runFor(1000);
+  await page.getByRole('button', { name: 'Resend code' }).click();
+  await expect(page.getByRole('button', { name: /Resend code in \d+s/ })).toBeDisabled();
+  expect(backend.calls.filter((c) => c.path === '/auth/partner/send').map((c) => c.body)).toEqual([{ phone: '9000000001' }, { phone: '9000000001' }]);
+  await page.getByRole('button', { name: 'Change number or email' }).click();
+  await expect(page.getByLabel('Mobile number or email')).toHaveValue('+91 90000 00001');
+});
+
+test('WQ9: owner adds staff with an email (EMAIL_IN_USE on the field), sees it listed, and changes or removes it with the version fence', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  await expect(page.getByRole('columnheader', { name: 'Email' })).toBeVisible();
+  await page.getByRole('button', { name: 'Add a staff member' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Kiran');
+  await page.getByLabel('Mobile number').fill('9000000003');
+  await page.getByLabel('Email (optional)').fill('kiran@lab');
+  await page.getByLabel('View bookings').check();
+  await page.getByRole('button', { name: 'Add staff member' }).click();
+  await expect(page.getByText('Enter a valid email address, or leave it empty.')).toBeVisible();
+  await page.getByLabel('Email (optional)').fill(TAKEN);
+  await page.getByRole('button', { name: 'Add staff member' }).click();
+  await expect(page.getByText('Another member of this workspace already signs in with this email. Use a different email.')).toBeVisible();
+  await page.getByLabel('Email (optional)').fill(' Kiran@Lab.IN ');
+  await page.getByRole('button', { name: 'Add staff member' }).click();
+  await expect(page.getByText('Kiran was added.')).toBeVisible();
+  const adds = backend.calls.filter((c) => c.method === 'POST' && c.path === '/partner-workspace/members');
+  expect(adds.map((c) => (c.body as Rec).email)).toEqual([TAKEN, 'kiran@lab.in']);
+  await expect(page.getByRole('row').filter({ hasText: 'Kiran' })).toContainText('kiran@lab.in');
+
+  const sita = page.getByRole('row').filter({ hasText: 'Sita Staff' });
+  await expect(sita).toContainText('None');
+  await sita.getByRole('button', { name: 'Add email' }).click();
+  const editor = page.getByRole('region', { name: 'Email for Sita Staff' });
+  await editor.getByLabel('Email').fill(TAKEN);
+  await editor.getByRole('button', { name: 'Save email' }).click();
+  await expect(editor.getByText('Another member of this workspace already signs in with this email. Use a different email.')).toBeVisible();
+  await editor.getByLabel('Email').fill('Sita@Lab.in');
+  await editor.getByRole('button', { name: 'Save email' }).click();
+  await expect(page.getByText('The email for Sita Staff was saved.')).toBeVisible();
+  await expect(sita).toContainText('sita@lab.in');
+
+  await sita.getByRole('button', { name: 'Change email' }).click();
+  await page.getByRole('region', { name: 'Email for Sita Staff' }).getByLabel('Email').fill('');
+  await page.getByRole('region', { name: 'Email for Sita Staff' }).getByRole('button', { name: 'Save email' }).click();
+  await expect(page.getByText('The email for Sita Staff was saved.')).toBeVisible();
+  await expect(sita).toContainText('None');
+  const puts = backend.calls.filter((c) => c.method === 'PUT').map((c) => [c.path, c.body as Rec] as const);
+  expect(puts.map(([p]) => p)).toEqual(Array(3).fill(`/partner-workspace/members/${STAFF}/email`));
+  expect(puts.map(([, b]) => b.email)).toEqual([TAKEN, 'sita@lab.in', null]);
+  expect(puts[0]![1].expectedUpdatedAt).toBe(V0);
+  expect(puts[1]![1].expectedUpdatedAt).toBe(V0);
+  expect(puts[2]![1].expectedUpdatedAt).not.toBe(V0); // fenced on the version the first save made
+});
+
+test('WQ9: an email edit refused as RECORD_CHANGED shows what is saved and is not sent again unchanged', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  await page.getByRole('row').filter({ hasText: 'Sita Staff' }).getByRole('button', { name: 'Add email' }).click();
+  const editor = page.getByRole('region', { name: 'Email for Sita Staff' });
+  await editor.getByLabel('Email').fill('sita@lab.in');
+  backend.raceOnce = (rec) => { rec.email = 'sita.other@lab.in'; };
+  await editor.getByRole('button', { name: 'Save email' }).click();
+  await expect(editor.getByText(/Someone else changed the email while you were editing/)).toBeVisible();
+  await expect(editor.getByLabel('Email')).toHaveValue('sita.other@lab.in');
+  expect(backend.members.find((m) => m._id === STAFF)!.email).toBe('sita.other@lab.in');
+  await editor.getByRole('button', { name: 'Save email' }).click();
+  await expect(editor.getByText('Nothing has changed.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
+});
+
+test('WQ9: staff with staff.manage can add a member with an email but change nobody’s email (owners only)', async ({ page }) => {
+  const backend = await mockBackend(page, { _id: STAFF, partnerId: LAB, name: 'Sita Staff', role: 'staff', permissions: ['staff.manage', 'bookings.view'], branchIds: [] });
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  await expect(page.getByRole('row').filter({ hasText: 'Sita Staff' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /email/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add a staff member' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Kiran');
+  await page.getByLabel('Mobile number').fill('9000000003');
+  await page.getByLabel('Email (optional)').fill('kiran@lab.in');
+  await page.getByLabel('View bookings').check();
+  await page.getByRole('button', { name: 'Add staff member' }).click();
+  await expect(page.getByText('Kiran was added.')).toBeVisible();
+  expect(backend.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/members')?.body).toMatchObject({ email: 'kiran@lab.in' });
+});
+
+test('WQ9: admin creates a partner with an optional owner email; EMAIL_IN_USE unlocks the form with the field marked', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await fillNewPartner(page);
+  await page.getByLabel('Owner email (optional)').fill('meena@');
+  await page.getByRole('button', { name: 'Create', exact: true }).click();
+  await expect(page.getByText('Enter a valid email address, or leave it empty.')).toBeVisible();
+  expect(createCalls(backend)).toHaveLength(0);
+  await page.getByLabel('Owner email (optional)').fill(TAKEN);
+  await page.getByRole('button', { name: 'Create', exact: true }).click();
+  await expect(page.getByText('Another member of this workspace already signs in with this email. Use a different email.')).toBeVisible();
+  await expect(page.getByLabel('Owner email (optional)')).toBeEnabled();
+  await page.getByLabel('Owner email (optional)').fill(' Meena@Metro.IN ');
+  await page.getByRole('button', { name: 'Create', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Metro Diagnostics' })).toBeVisible();
+  const creates = createCalls(backend).map((c) => c.body as Rec);
+  expect(creates.map((b) => b.firstOwner)).toEqual([
+    { name: 'Meena', phone: '9000000031', email: TAKEN },
+    { name: 'Meena', phone: '9000000031', email: 'meena@metro.in' },
+  ]);
+  expect(creates[0]!.requestKey).not.toBe(creates[1]!.requestKey); // a refused create's key is not reused for new content
+});
+
+test('WQ9: an admin acting as owner edits a member’s email through the admin workspace route', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await page.goto(`/#/admin/partners/${LAB}`);
+  await page.getByRole('link', { name: 'Staff' }).click();
+  await page.getByRole('row').filter({ hasText: 'Ravi Owner' }).getByRole('button', { name: 'Add email' }).click();
+  const editor = page.getByRole('region', { name: 'Email for Ravi Owner' });
+  await editor.getByLabel('Email').fill('ravi@citylab.in');
+  await editor.getByRole('button', { name: 'Save email' }).click();
+  await expect(page.getByText('The email for Ravi Owner was saved.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.method === 'PUT').map((c) => [c.path, c.body])).toEqual([
+    [`/partner-workspace/admin/${LAB}/workspace/members/${OWNER}/email`, { email: 'ravi@citylab.in', expectedUpdatedAt: V0 }],
+  ]);
 });

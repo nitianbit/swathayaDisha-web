@@ -1,8 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ALL_PARTNER_PERMISSIONS, canAddOwner, canChangeBranches, canEditPermissions, grantablePermissions, hasGlobalScope, MAX_NAME,
-  PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN, PERMISSION_LABEL, removalBlock, scopeProblem,
+  ALL_PARTNER_PERMISSIONS, canAddOwner, canChangeBranches, canEditEmail, canEditPermissions, EMAIL_IN_USE_MESSAGE, grantablePermissions,
+  hasGlobalScope, isEmailInUse, MAX_EMAIL, MAX_NAME, memberEmail, PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN, PERMISSION_LABEL, removalBlock, scopeProblem,
   type Branch, type MemberRole, type PartnerMember, type PartnerPermission,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
@@ -28,7 +28,7 @@ export function StaffScreen() {
 /** Permissions in the backend's order (so equal sets compare equal). */
 const ordered = (perms: Iterable<string>) => { const s = new Set(perms); return ALL_PARTNER_PERMISSIONS.filter((p) => s.has(p)); };
 
-type Editing = { kind: 'permissions' | 'branches'; id: string } | null;
+type Editing = { kind: 'permissions' | 'branches' | 'email'; id: string } | null;
 
 function Staff({ ctx }: { ctx: ScopeContext }) {
   const queryClient = useQueryClient();
@@ -64,7 +64,7 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
             <table className="j-table">
               <caption className="j-sr-only">Staff members</caption>
               <thead>
-                <tr><th scope="col">Name</th><th scope="col">Phone</th><th scope="col">Role</th><th scope="col">Permissions</th><th scope="col">Branches</th><th scope="col">Actions</th></tr>
+                <tr><th scope="col">Name</th><th scope="col">Phone</th><th scope="col">Email</th><th scope="col">Role</th><th scope="col">Permissions</th><th scope="col">Branches</th><th scope="col">Actions</th></tr>
               </thead>
               <tbody>
                 {members.data.map((m) => {
@@ -73,6 +73,7 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
                     <tr key={m._id}>
                       <td>{m.name}{ctx.actor.memberId === m._id && <> <Badge>You</Badge></>}</td>
                       <td>{m.phone}</td>
+                      <td>{m.email || <span className="ws-muted">None</span>}</td>
                       <td>{m.role === 'owner' ? 'Owner' : 'Staff'}</td>
                       <td>{m.role === 'owner' ? 'Everything' : m.permissions.length ? m.permissions.map((p) => PERMISSION_LABEL[p] ?? p).join(', ') : 'None'}</td>
                       <td>{m.role === 'owner' ? 'All branches' : branchLabel(names, m.branchIds)}</td>
@@ -80,6 +81,9 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
                         <div className="ws-actions">
                           {canEditPermissions(ctx.actor, m) && (
                             <Button variant="secondary" onClick={() => open({ kind: 'permissions', id: m._id })}>Edit permissions</Button>
+                          )}
+                          {canEditEmail(ctx.actor, m) && (
+                            <Button variant="secondary" onClick={() => open({ kind: 'email', id: m._id })}>{m.email ? 'Change email' : 'Add email'}</Button>
                           )}
                           {canChangeBranches(ctx.actor, m) && (
                             <Button variant="secondary" onClick={() => open({ kind: 'branches', id: m._id })}>Change branch access</Button>
@@ -103,6 +107,10 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
       {editTarget && editing?.kind === 'permissions' && (
         <EditPermissions key={`p:${editTarget._id}`} ctx={ctx} member={editTarget} onClose={() => setEditing(null)}
           onSaved={async () => { setEditing(null); setNotice(`Permissions for ${editTarget.name} were saved.`); await refresh(); }} />
+      )}
+      {editTarget && editing?.kind === 'email' && (
+        <EditEmail key={`e:${editTarget._id}`} ctx={ctx} member={editTarget} onClose={() => setEditing(null)}
+          onSaved={async () => { setEditing(null); setNotice(`The email for ${editTarget.name} was saved.`); await refresh(); }} />
       )}
       {editTarget && editing?.kind === 'branches' && (
         <EditBranches key={`b:${editTarget._id}`} ctx={ctx} member={editTarget} branches={branches.data}
@@ -168,6 +176,7 @@ function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
   const grantable = grantablePermissions(ctx.actor);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
   const [role, setRole] = useState<MemberRole>('staff');
   const [perms, setPerms] = useState<PartnerPermission[]>([]);
   const [scope, setScope] = useState<{ all: boolean; ids: string[] }>({ all: wide, ids: [] });
@@ -181,18 +190,23 @@ function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
     if (!name.trim()) errs.name = 'Enter the person’s name.';
     else if (name.trim().length > MAX_NAME) errs.name = `Use at most ${MAX_NAME} characters.`;
     if (!PARTNER_PHONE_PATTERN.test(phone)) errs.phone = 'Enter the 10-digit mobile number.';
+    const mail = memberEmail(email);
+    if (mail === null) errs.email = 'Enter a valid email address, or leave it empty.';
     if (role === 'staff') { const problem = branchProblem(ctx, scope.all, scope.ids); if (problem) errs.branches = problem; }
     setErrors(errs); setError(null);
     if (Object.keys(errs).length) return;
     setBusy(true);
     try {
       // `ctx` is this partner's for the life of the form (the subtree is keyed by partner).
+      const withEmail = mail ? { email: mail } : {};
       const added = await ctx.api.addMember(role === 'owner'
-        ? { name: name.trim(), phone, role: 'owner', permissions: [] }
-        : { name: name.trim(), phone, role: 'staff', permissions: perms.filter((p) => grantable.includes(p)), branchIds: scope.all ? [] : scope.ids });
+        ? { name: name.trim(), phone, ...withEmail, role: 'owner', permissions: [] }
+        : { name: name.trim(), phone, ...withEmail, role: 'staff', permissions: perms.filter((p) => grantable.includes(p)), branchIds: scope.all ? [] : scope.ids });
       await onAdded(added);
     } catch (err) {
-      setError(messageOf(err));
+      // WQ9: the email belongs to another account: say so on the field (nothing was added).
+      if (isEmailInUse(err)) setErrors({ email: EMAIL_IN_USE_MESSAGE });
+      else setError(messageOf(err));
     } finally {
       setBusy(false);
     }
@@ -201,12 +215,14 @@ function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
   return (
     <section className="ws-section" aria-labelledby="add-h">
       <h2 id="add-h">Add a staff member</h2>
-      <p className="ws-muted">They sign in with this mobile number and a code sent by SMS.</p>
+      <p className="ws-muted">They sign in with this mobile number (a code by SMS), or with the email if you add one (a code by email).</p>
       <form className="rx-form" noValidate onSubmit={(e) => void submit(e)}>
         <div className="rx-form-row">
           <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} error={errors.name} maxLength={MAX_NAME} autoComplete="off" />
           <TextField label="Mobile number" inputMode="numeric" maxLength={10} value={phone}
             onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))} error={errors.phone} autoComplete="off" />
+          <TextField label="Email (optional)" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} maxLength={MAX_EMAIL}
+            value={email} onChange={(e) => setEmail(e.target.value)} error={errors.email} autoComplete="off" />
         </div>
         <fieldset className="ws-checks">
           <legend>Role</legend>
@@ -281,6 +297,72 @@ function useMemberDraft<T extends object>(ctx: ScopeContext, member: PartnerMemb
 }
 
 const permsDraft = (m: PartnerMember) => ({ permissions: ordered(m.permissions) });
+
+const emailDraft = (m: PartnerMember) => ({ email: m.email ?? '' });
+
+/**
+ * WQ9: a member's optional sign-in email, versioned like the other member edits (re-read before sending; 409
+ * RECORD_CHANGED shows the saved value). Empty removes it. A late answer settles only while this editor is still open
+ * and the save is still the latest one started here.
+ */
+function EditEmail({ ctx, member, onClose, onSaved }:
+  { ctx: ScopeContext; member: PartnerMember; onClose: () => void; onSaved: () => Promise<void> }) {
+  const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, emailDraft, 'email');
+  const [error, setError] = useState<string | null>(null);
+  const [fieldError, setFieldError] = useState<string | undefined>();
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  const seq = useRef(0);
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setError(null); setNotice(null);
+    const validated = memberEmail(d.current().draft.email);
+    setFieldError(validated === null ? 'Enter a valid email address, or leave it empty to remove it.' : undefined);
+    if (validated === null) return;
+    if (validated === memberEmail(d.current().base.email)) { setNotice('Nothing has changed.'); return; }
+    const mine = ++seq.current;
+    const owns = () => live.current && seq.current === mine;
+    setBusy(true);
+    try {
+      const fresh = await recheck();
+      if (!owns() || !fresh) return;
+      // Re-read the draft after the wait: anything but exactly the validated email is not sent.
+      if (memberEmail(d.current().draft.email) !== validated) { setNotice('The email changed while saving. Check it and save again.'); return; }
+      if (validated === memberEmail(d.current().base.email)) { setNotice('Nothing has changed.'); return; }
+      const saved = await fenced(() => ctx.api.setEmail(member._id, validated || null, fresh.updatedAt));
+      if (saved && owns()) await onSaved();
+    } catch (err) {
+      if (!owns()) return;
+      if (isEmailInUse(err)) setFieldError(EMAIL_IN_USE_MESSAGE);
+      else setError(messageOf(err));
+    } finally {
+      if (live.current) setBusy(false);
+    }
+  }
+
+  return (
+    <section className="ws-section" aria-labelledby="email-h">
+      <h2 id="email-h">Email for {member.name}</h2>
+      <p className="ws-muted">They can sign in with this email (a code by email) as well as with their mobile number. Leave it empty to remove it.</p>
+      <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
+        <fieldset className="ws-frozen" disabled={busy}>
+          <TextField label="Email" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} maxLength={MAX_EMAIL} autoComplete="off"
+            value={d.draft.email} onChange={(e) => d.set('email', e.target.value)} error={fieldError} />
+        </fieldset>
+        {stale && <Alert tone="warn">{stale}</Alert>}
+        {notice && <Alert tone="ok">{notice}</Alert>}
+        {error && <Alert>{error}</Alert>}
+        <div className="ws-actions">
+          <Button type="submit" busy={busy}>Save email</Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
+        </div>
+      </form>
+    </section>
+  );
+}
 
 function EditPermissions({ ctx, member, onClose, onSaved }:
   { ctx: ScopeContext; member: PartnerMember; onClose: () => void; onSaved: () => Promise<void> }) {
