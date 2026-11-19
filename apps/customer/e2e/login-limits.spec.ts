@@ -91,3 +91,28 @@ test('WQ9: a refused email send waits on that email only; a mobile number can st
   await expect(page.getByLabel('6-digit code')).toHaveValue('');
   expect(bodies).toEqual([{ email: 'busy@example.com' }, { email: 'asha@example.com' }]);
 });
+
+test('WQ9: each destination keeps its own wait: A → B → A still waits for A; a leading 0 is a mobile number', async ({ page }) => {
+  const json = (route: Route, status: number, body: unknown) =>
+    route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+  const bodies: unknown[] = [];
+  await page.route('**/api/v1/**', async (route) => {
+    const path = new URL(route.request().url()).pathname.replace('/api/v1', '');
+    if (path === '/auth/user/send') { bodies.push(route.request().postDataJSON()); return json(route, 200, { success: true }); }
+    return json(route, 401, { error: 401, message: 'Please sign in again' });
+  });
+  await page.clock.install();
+  await page.goto('/');
+  await page.getByLabel('Mobile number or email').fill('asha@example.com');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByRole('button', { name: /Resend code in \d+s/ })).toBeDisabled();
+  await page.getByRole('button', { name: 'Change number or email' }).click();
+  await page.getByLabel('Mobile number or email').fill('098765 43210');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByText('We sent a 6-digit code to your phone ••••••3210.')).toBeVisible();
+  for (let i = 0; i < 5; i++) await page.clock.runFor(1000);
+  await page.getByRole('button', { name: 'Change number or email' }).click();
+  await page.getByLabel('Mobile number or email').fill('asha@example.com');
+  await expect(page.getByRole('button', { name: /Send code in 2[0-9]s/ })).toBeDisabled();
+  expect(bodies).toEqual([{ email: 'asha@example.com' }, { phone: '9876543210' }]);
+});

@@ -28,6 +28,10 @@ interface Backend {
   conflictOnce: boolean;
   /** Add-member answers this many ms late. */
   slowAdd: number;
+  /** WQ9: an add with an email is refused 403 OWNER_REQUIRED (the server no longer sees an owner). */
+  ownerLost: boolean;
+  /** WQ9: an email PUT answers this many ms late. */
+  slowEmail: number;
   /** The next partner create commits but its answer is lost on the network. */
   dropCreate: boolean;
   /** requestKey → { hash, partner } (Q8 exactly-once creation). */
@@ -70,7 +74,7 @@ const TAKEN = 'taken@lab.in';
 
 async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Backend, 'multi' | 'expired'>> & { many?: boolean } = {}): Promise<Backend> {
   const b: Backend = {
-    calls: [], me, multi: false, expired: false, conflictOnce: false, slowAdd: 0, dropCreate: false, creates: new Map(),
+    calls: [], me, multi: false, expired: false, conflictOnce: false, slowAdd: 0, ownerLost: false, slowEmail: 0, dropCreate: false, creates: new Map(),
     abandoned: new Set(), loseCreate: false, slowCreate: 0, slowMemberRead: 0, raceOnce: null, adminLive: false,
     holdAbandon: null, holdCreate: null, abandonAnswers: [], ...opts,
     members: [
@@ -213,6 +217,9 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
           return json(route, 409, { error: 409, code: 'MEMBER_ALREADY_EXISTS', message: 'An active member with this phone already exists for this partner' });
         }
         if ((body as Rec).email === TAKEN) return json(route, 409, { error: 409, code: 'EMAIL_IN_USE', message: 'This email is already in use' });
+        if ((body as Rec).email && (b.ownerLost || (!ws[1] && b.me.role !== 'owner'))) {
+          return json(route, 403, { error: 403, code: 'OWNER_REQUIRED', message: 'Only an owner can give a member a sign-in email' });
+        }
         const m = { _id: `${NEWBIE.slice(0, -2)}${String(b.members.length).padStart(2, '0')}`, partnerId: pid, isActive: true, ...(body as Rec), branchIds: (body as Rec).branchIds ?? [] };
         b.members.push(m);
         return ok(route, m, 201);
@@ -226,6 +233,7 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
       if (mm && mm[2]) {
         const m = b.members.find((x) => x._id === mm[1])!;
         if (fenced(m)) return changed(route);
+        if (mm[2] === '/email' && b.slowEmail) await new Promise((r) => setTimeout(r, b.slowEmail));
         if (mm[2] === '/email') {
           // WQ9 (assumed contract): null removes the email; one used by another account is refused.
           const email = (body as Rec).email;
@@ -999,20 +1007,110 @@ test('WQ9: an email edit refused as RECORD_CHANGED shows what is saved and is no
   expect(backend.calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
 });
 
-test('WQ9: staff with staff.manage can add a member with an email but change nobody’s email (owners only)', async ({ page }) => {
+test('WQ9: staff with staff.manage add members without an email and change nobody’s email (owners only)', async ({ page }) => {
   const backend = await mockBackend(page, { _id: STAFF, partnerId: LAB, name: 'Sita Staff', role: 'staff', permissions: ['staff.manage', 'bookings.view'], branchIds: [] });
   await signInPartner(page);
   await nav(page).getByRole('link', { name: 'Staff' }).click();
   await expect(page.getByRole('row').filter({ hasText: 'Sita Staff' })).toBeVisible();
   await expect(page.getByRole('button', { name: /email/ })).toHaveCount(0);
   await page.getByRole('button', { name: 'Add a staff member' }).click();
+  await expect(page.getByLabel('Email (optional)')).toHaveCount(0);
+  await expect(page.getByText('They sign in with this mobile number (a code by SMS).')).toBeVisible();
+  await page.getByLabel('Name', { exact: true }).fill('Kiran');
+  await page.getByLabel('Mobile number').fill('9000000003');
+  await page.getByLabel('View bookings').check();
+  await page.getByRole('button', { name: 'Add staff member' }).click();
+  await expect(page.getByText('Kiran was added.')).toBeVisible();
+  expect(backend.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/members')?.body).not.toHaveProperty('email');
+});
+
+test('WQ9: an add with an email refused as OWNER_REQUIRED says so on the field; without the email it is added', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.ownerLost = true;
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  await page.getByRole('button', { name: 'Add a staff member' }).click();
   await page.getByLabel('Name', { exact: true }).fill('Kiran');
   await page.getByLabel('Mobile number').fill('9000000003');
   await page.getByLabel('Email (optional)').fill('kiran@lab.in');
   await page.getByLabel('View bookings').check();
   await page.getByRole('button', { name: 'Add staff member' }).click();
+  await expect(page.getByText('Only an owner can give a member a sign-in email. Leave it empty to add them without one.')).toBeVisible();
+  await expect(page.getByLabel('Email (optional)')).toHaveAttribute('aria-invalid', 'true');
+  await page.getByLabel('Email (optional)').fill('');
+  await page.getByRole('button', { name: 'Add staff member' }).click();
   await expect(page.getByText('Kiran was added.')).toBeVisible();
-  expect(backend.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/members')?.body).toMatchObject({ email: 'kiran@lab.in' });
+  expect(backend.calls.filter((c) => c.method === 'POST' && c.path === '/partner-workspace/members').map((c) => (c.body as Rec).email)).toEqual(['kiran@lab.in', undefined]);
+});
+
+test('WQ9: an email save landing after its editor was replaced still shows in the list, and leaves the new editor alone', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  const sita = page.getByRole('row').filter({ hasText: 'Sita Staff' });
+  await sita.getByRole('button', { name: 'Add email' }).click();
+  await page.getByRole('region', { name: 'Email for Sita Staff' }).getByLabel('Email').fill('sita@lab.in');
+  backend.slowEmail = 800;
+  await page.getByRole('region', { name: 'Email for Sita Staff' }).getByRole('button', { name: 'Save email' }).click();
+  await expect.poll(() => backend.calls.some((c) => c.method === 'PUT')).toBe(true);
+  await page.getByRole('row').filter({ hasText: 'Ravi Owner' }).getByRole('button', { name: 'Add email' }).click();
+  const ravi = page.getByRole('region', { name: 'Email for Ravi Owner' });
+  await expect(ravi).toBeVisible();
+  await expect(sita).toContainText('sita@lab.in');
+  await expect(ravi).toBeVisible();
+  await expect(page.getByText('The email for Sita Staff was saved.')).toHaveCount(0);
+});
+
+test('WQ9: the role choice is frozen while a code is being sent; verify uses the role the code was sent for', async ({ page }) => {
+  const backend = await mockBackend(page);
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route('**/api/v1/auth/partner/send', async (route) => { await held; return route.fallback(); });
+  await page.goto('/');
+  await page.getByLabel('Lab or clinic staff').check();
+  await page.getByLabel('Mobile number or email').fill('9000000001');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByLabel('Admin')).toBeDisabled();
+  await expect(page.getByLabel('Lab or clinic staff')).toBeChecked();
+  release();
+  await page.getByLabel('6-digit code').fill('123456');
+  await page.getByRole('button', { name: 'Verify and sign in' }).click();
+  await expect(page.getByText('Lab · City Lab')).toBeVisible();
+  expect(backend.calls.filter((c) => c.path.startsWith('/auth/')).map((c) => c.path)).toEqual(['/auth/partner/send', '/auth/partner/verify', '/auth/profile']);
+});
+
+test('WQ9: a doctor email no account uses is refused on the field with the way on; each destination keeps its own wait', async ({ page }) => {
+  const sends: unknown[] = [];
+  await page.route('**/api/v1/**', async (route) => {
+    const path = new URL(route.request().url()).pathname.replace('/api/v1', '');
+    if (path === '/auth/specialist/send') {
+      const body = route.request().postDataJSON() as Rec;
+      sends.push(body);
+      if (body.email === 'new.doctor@clinic.in') {
+        return route.fulfill({ status: 404, contentType: 'application/json',
+          body: JSON.stringify({ error: 404, code: 'EMAIL_NOT_REGISTERED', message: 'No account uses this email. Sign in with your mobile number, then add this email to your profile.' }) });
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }) });
+    }
+    return route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 401, message: 'Please sign in again' }) });
+  });
+  await page.clock.install();
+  await page.goto('/');
+  await page.getByLabel('Doctor').check();
+  await page.getByLabel('Mobile number or email').fill('New.Doctor@Clinic.in');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByText('No account uses this email. Sign in with your mobile number, then add this email to your profile.')).toBeVisible();
+  await expect(page.getByLabel('Mobile number or email')).toHaveAttribute('aria-invalid', 'true');
+  // A → B → A: the first destination's wait is kept while another is used.
+  await page.getByLabel('Mobile number or email').fill('dr@clinic.in');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await page.getByRole('button', { name: 'Change number or email' }).click();
+  await page.getByLabel('Mobile number or email').fill('09876543210');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await page.getByRole('button', { name: 'Change number or email' }).click();
+  await page.getByLabel('Mobile number or email').fill('dr@clinic.in');
+  await expect(page.getByRole('button', { name: /Send code in \d+s/ })).toBeDisabled();
+  expect(sends).toEqual([{ email: 'new.doctor@clinic.in' }, { email: 'dr@clinic.in' }, { phone: '9876543210' }]);
 });
 
 test('WQ9: admin creates a partner with an optional owner email; EMAIL_IN_USE unlocks the form with the field marked', async ({ page }) => {

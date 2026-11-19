@@ -1,10 +1,10 @@
 export { ApiError, createApiClient } from './client.ts';
 export type { ApiClient, ApiClientOptions, Page, QueryValue, RequestOptions } from './client.ts';
-export { authApi, maskTarget, MAX_EMAIL, OTP_PATTERN, parseLoginIdentifier, partnerSelectionOf, PHONE_PATTERN, requestKeysApi, targetKey, targetKind } from './auth.ts';
+export { authApi, EMAIL_NOT_REGISTERED_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, normalizeEmail, OTP_PATTERN, parseLoginIdentifier, partnerSelectionOf, PHONE_PATTERN, requestKeysApi, targetKey, targetKind } from './auth.ts';
 export type { OnceOnlyKind, PartnerChoice, PartnerSelection, SignInMode, VerifyAnswer } from './auth.ts';
 export type { NativeApp, NativeRefreshed, NativeSignedIn, NativeTokens, OtpTarget, Profile, SessionRefreshed, SessionSignedIn, SignedIn, UserType } from './auth.ts';
 export {
-  ADMIN_ACTOR, ALL_PARTNER_PERMISSIONS, canAddOwner, canChangeBranches, canEditEmail, canEditPermissions, EMAIL_IN_USE_MESSAGE, isEmailInUse, memberEmail, canEditProfile, canReopenBranches, REQUEST_KEY_PATTERN, EMAIL_PATTERN, grantablePermissions, GSTIN_PATTERN,
+  ADMIN_ACTOR, ALL_PARTNER_PERMISSIONS, canAddOwner, canChangeBranches, canEditEmail, canEditPermissions, canGiveEmail, EMAIL_IN_USE_MESSAGE, isEmailInUse, isOwnerRequired, memberEmail, canEditProfile, canReopenBranches, REQUEST_KEY_PATTERN, EMAIL_PATTERN, grantablePermissions, GSTIN_PATTERN,
   hasGlobalScope, HHMM_PATTERN, holdsAny, INVOICE_PREFIX_PATTERN, ISO_DATE_PATTERN, MAX_HOLIDAYS, MAX_NAME, OBJECT_ID_PATTERN,
   PAN_PATTERN, PARTNER_KIND_LABEL, PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN, partnerAdminApi, partnerWorkspaceApi,
   partnerWorkspaceBase, PERMISSION_LABEL, removalBlock, scopeProblem, TAX_REGIME_LABEL, VERIFICATION_LABEL, WEEKDAYS,

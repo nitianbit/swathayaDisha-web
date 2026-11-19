@@ -1,4 +1,5 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
+import { normalizeEmail } from './auth.ts';
 
 /**
  * Q1 partner workspace (labs and clinics): the partner account, its members (staff) and branches, and the activity
@@ -337,18 +338,19 @@ export const canReopenBranches = (a: Pick<PartnerActorView, 'role' | 'permission
 export const canAddOwner = (a: Pick<PartnerActorView, 'role'>) => a.role === 'owner';
 /**
  * WQ9 `updateMemberEmail`: a sign-in identity, so like permissions only an owner (or an admin acting as owner) changes
- * it, for any active member including owners and themselves. Adding a member with an email needs only `staff.manage`.
+ * it, for any active member including owners and themselves (`canGiveEmail` for a new member's).
  */
 export const canEditEmail = (a: Pick<PartnerActorView, 'role'>, target: Pick<PartnerMember, 'isActive'>) =>
   a.role === 'owner' && target.isActive !== false;
+/** WQ9 `addMember`: only an owner (or an admin as owner) gives a new member a sign-in email (403 `OWNER_REQUIRED`). */
+export const canGiveEmail = (a: Pick<PartnerActorView, 'role'>) => a.role === 'owner';
+export const isOwnerRequired = (err: unknown) => err instanceof ApiError && err.status === 403 && err.code === 'OWNER_REQUIRED';
 /** WQ9: 409 `EMAIL_IN_USE`: another active member of this partner already signs in with this email. */
 export const isEmailInUse = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'EMAIL_IN_USE';
 export const EMAIL_IN_USE_MESSAGE = 'Another member of this workspace already signs in with this email. Use a different email.';
-/** WQ9: an optional email as sent: trimmed and lower-cased; '' when left empty; null when invalid. */
+/** WQ9: an optional email as sent (`normalizeEmail`: trimmed, lower-cased, ASCII domain); '' when left empty; null when invalid. */
 export function memberEmail(raw: string): string | null {
-  const e = raw.trim().toLowerCase();
-  if (!e) return '';
-  return e.length <= 254 && EMAIL_PATTERN.test(e) ? e : null;
+  return raw.trim() ? normalizeEmail(raw) : '';
 }
 export const canEditPermissions = (a: Pick<PartnerActorView, 'role'>, target: Pick<PartnerMember, 'role' | 'isActive'>) =>
   a.role === 'owner' && target.role === 'staff' && target.isActive !== false;

@@ -49,13 +49,27 @@ async function mockBackend(page: Page): Promise<Backend> {
     const path = url.pathname.replace('/api/v1', '');
     const body = ['POST', 'PUT'].includes(req.method()) ? req.postDataJSON() : null;
     state.calls.push({ method: req.method(), path, query: url.search, body });
-    if (path === '/auth/user/send') return json(route, 200, { success: true, message: 'OTP sent successfully' });
+    if (path === '/auth/user/send') {
+      // WQ9 owner decision: no account starts from an email.
+      const email = (body as { email?: string }).email;
+      if (email && email !== state.profile.email) {
+        return json(route, 404, { error: 404, code: 'EMAIL_NOT_REGISTERED', message: 'No account uses this email. Sign in with your mobile number, then add this email to your profile.' });
+      }
+      return json(route, 200, { success: true, message: 'OTP sent successfully' });
+    }
     if (path === '/auth/user/verify') {
       if ((body as { otp: string }).otp !== '123456') return json(route, 400, { error: 400, code: 'INVALID_OTP', message: 'Invalid OTP' });
       return json(route, 200, { success: true, data: { token: 't-cust', user: { _id: ME, userType: 'user' } } });
     }
     if (state.revoked || req.headers().authorization !== 'Bearer t-cust') return json(route, 401, { error: 401, code: 'UNAUTHORIZED', message: 'Please sign in again' });
     if (path === '/auth/profile') return json(route, 200, { success: true, data: { user: state.profile, userRole: 'user' } });
+    if (path === '/auth/email-verification/send') return json(route, 200, { success: true, data: { message: 'Email verification OTP sent successfully' } });
+    if (path === '/auth/email-verification/verify') {
+      const b = body as { email: string; otp: string };
+      if (b.otp !== '123456') return json(route, 400, { error: 400, code: 'INVALID_OTP', message: 'Invalid OTP' });
+      state.profile = { ...state.profile, email: b.email, isVerified: true };
+      return json(route, 200, { success: true, data: { message: 'Email verified successfully', user: state.profile, accessToken: 't-long-lived' } });
+    }
     if (path === '/auth/sessions/revoke') { state.revoked = true; return json(route, 200, { success: true, data: { signedOutEverywhere: true } }); }
     if (path === `/users/${ME}` && req.method() === 'PUT') {
       state.profile = { ...state.profile, ...(body as object) };
@@ -109,25 +123,47 @@ async function signIn(page: Page) {
   await expect(page.getByRole('heading', { level: 1, name: /^Hello/ })).toBeVisible();
 }
 
-test('sign in, see the wallet and finish the profile; an email can only be added', async ({ page }) => {
+test('sign in, see the wallet and finish the profile; an email can only be added, by proving it', async ({ page }) => {
   const backend = await mockBackend(page);
   await signIn(page);
   await expect(page.getByText('Complete your profile so we can book for you.')).toBeVisible();
   await expect(page.getByRole('link', { name: /Wallet ₹250/ })).toBeVisible();
   await page.getByRole('link', { name: 'Complete profile' }).click();
   await page.getByLabel('Full name').fill('Asha Rao');
-  await page.getByLabel('Email').fill('asha@example.com');
   await page.getByLabel('Female').check();
   await page.getByLabel('Date of birth').fill('1990-05-17');
-  await page.getByRole('button', { name: 'Save' }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('Saved.')).toBeVisible();
   const put = backend.calls.find((c) => c.method === 'PUT')!;
-  expect(put.body).toEqual({ name: 'Asha Rao', email: 'asha@example.com', gender: 'Female', dateOfBirth: '19900517' });
-  // Now set: shown read-only, never sent again.
-  await expect(page.getByLabel('Email')).toHaveCount(0);
-  await expect(page.getByText('To change it, contact support.')).toBeVisible();
+  expect(put.body).toEqual({ name: 'Asha Rao', gender: 'Female', dateOfBirth: '19900517' });
+  // WQ9: the email is added through the email-verification flow, never saved directly.
+  const email = page.getByRole('region', { name: 'Email' });
+  await email.getByLabel('Email').fill('asha@');
+  await email.getByRole('button', { name: 'Send code' }).click();
+  await expect(email.getByText('Enter a valid email address.')).toBeVisible();
+  await email.getByLabel('Email').fill('Asha@Example.com');
+  await email.getByRole('button', { name: 'Send code' }).click();
+  await expect(email.getByText('We sent a 6-digit code to your email a•••@example.com.')).toBeVisible();
+  await email.getByLabel('6-digit code').fill('000000');
+  await email.getByRole('button', { name: 'Verify and add email' }).click();
+  await expect(email.getByRole('alert')).toHaveText('Invalid OTP');
+  await email.getByLabel('6-digit code').fill('123456');
+  await email.getByRole('button', { name: 'Verify and add email' }).click();
+  await expect(email.getByText('Email added. You can now also sign in with it.')).toBeVisible();
+  await expect(email.getByText('asha@example.com')).toBeVisible();
+  await expect(email.getByLabel('Email')).toHaveCount(0);
+  await expect(email.getByText('To change it, contact support.')).toBeVisible();
+  const verification = backend.calls.filter((c) => c.path.startsWith('/auth/email-verification/')).map((c) => [c.path, c.body]);
+  expect(verification).toEqual([
+    ['/auth/email-verification/send', { email: 'asha@example.com' }],
+    ['/auth/email-verification/verify', { email: 'asha@example.com', otp: '000000' }],
+    ['/auth/email-verification/verify', { email: 'asha@example.com', otp: '123456' }],
+  ]);
+  // The long-lived token in the verify answer is never kept.
+  const stored = await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }));
+  expect(stored).not.toContain('t-long-lived');
   await page.getByLabel('Full name').fill('Asha R. Rao');
-  await page.getByRole('button', { name: 'Save' }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('Saved.')).toBeVisible();
   expect(backend.calls.filter((c) => c.method === 'PUT').at(-1)!.body).toEqual({ name: 'Asha R. Rao' });
   await tab(page, 'Home').click();
@@ -338,6 +374,7 @@ test('WQ8 review: a missed instant consultation is final: no new time is ever of
 
 test('WQ9: sign in with an email: one field, exactly one key sent, the destination masked, nothing stored', async ({ page }) => {
   const backend = await mockBackend(page);
+  backend.profile.email = 'asha.k@example.com';
   await page.goto('/');
   await page.getByLabel('Mobile number or email').fill('asha@');
   await page.getByRole('button', { name: 'Send code' }).click();
@@ -361,6 +398,7 @@ test('WQ9: sign in with an email: one field, exactly one key sent, the destinati
 
 test('WQ9: a +91 number with spaces is sent as 10 digits and shown masked; the person can go back and use an email', async ({ page }) => {
   const backend = await mockBackend(page);
+  backend.profile.email = 'asha@example.com';
   await page.goto('/');
   await page.getByLabel('Mobile number or email').fill('+91 98765 43210');
   await page.getByRole('button', { name: 'Send code' }).click();
@@ -375,4 +413,34 @@ test('WQ9: a +91 number with spaces is sent as 10 digits and shown masked; the p
   expect(auth.map((c) => c.body)).toEqual([
     { phone: '9876543210' }, { email: 'asha@example.com' }, expect.objectContaining({ email: 'asha@example.com', otp: '123456' }),
   ]);
+});
+
+test('WQ9: an email no account uses is refused with the way on; new accounts start with a mobile number', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await page.goto('/');
+  await expect(page.getByText('New here? Start with your mobile number; an email works once you add it to your profile.')).toBeVisible();
+  await page.getByLabel('Mobile number or email').fill('new.person@example.com');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByText('No account uses this email. Sign in with your mobile number, then add this email to your profile.')).toBeVisible();
+  await expect(page.getByLabel('Mobile number or email')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByLabel('6-digit code')).toHaveCount(0);
+  expect(backend.calls.some((c) => c.path === '/auth/user/verify')).toBe(false);
+});
+
+test('WQ9: an internationalised email domain is sent in one (ASCII) form from the profile and from sign-in', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await page.getByRole('link', { name: 'Complete profile' }).click();
+  const email = page.getByRole('region', { name: 'Email' });
+  await email.getByLabel('Email').fill('asha@bücher.de');
+  await email.getByRole('button', { name: 'Send code' }).click();
+  await email.getByLabel('6-digit code').fill('123456');
+  await email.getByRole('button', { name: 'Verify and add email' }).click();
+  await expect(email.getByText('Email added. You can now also sign in with it.')).toBeVisible();
+  expect(backend.profile.email).toBe('asha@xn--bcher-kva.de');
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await page.getByLabel('Mobile number or email').fill('Asha@Bücher.de');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await expect(page.getByText('We sent a 6-digit code to your email a•••@xn--bcher-kva.de.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.path === '/auth/user/send').at(-1)!.body).toEqual({ email: 'asha@xn--bcher-kva.de' });
 });

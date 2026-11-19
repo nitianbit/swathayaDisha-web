@@ -225,6 +225,14 @@ export function customerApi(c: ApiClient) {
     profile: () => c.get<{ user: CustomerProfile }>('/auth/profile').then((d) => d.user),
     updateProfile: (userId: string, body: ProfileUpdate) => c.put<{ user: CustomerProfile }>(`/users/${id(userId, 'user')}`, { body })
       .then((d) => d.user),
+    /**
+     * WQ9: an email is added by proving it (`POST /auth/email-verification/send|verify`, signed in; `normalizeEmail` form).
+     * Only a missing email can be added (422 `EMAIL_CHANGE_ADMIN_ONLY` otherwise). The verify answer also carries a
+     * long-lived bearer token: it is dropped here, never kept (this session goes on as it is).
+     */
+    sendEmailCode: (email: string) => c.post<unknown>('/auth/email-verification/send', { body: { email } }).then(() => undefined),
+    verifyEmailCode: (email: string, otp: string) =>
+      c.post<unknown>('/auth/email-verification/verify', { body: { email, otp } }).then(() => undefined),
 
     /** Active family members only, filtered by the server before paging (archived ones must not use up pages). */
     dependents: (userId: string, page = 1, limit = 50) =>

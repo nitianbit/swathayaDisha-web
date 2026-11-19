@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ALL_PARTNER_PERMISSIONS, canAddOwner, canChangeBranches, canEditEmail, canEditPermissions, EMAIL_IN_USE_MESSAGE, grantablePermissions,
-  hasGlobalScope, isEmailInUse, MAX_EMAIL, MAX_NAME, memberEmail, PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN, PERMISSION_LABEL, removalBlock, scopeProblem,
+  ALL_PARTNER_PERMISSIONS, canAddOwner, canChangeBranches, canEditEmail, canEditPermissions, canGiveEmail, EMAIL_IN_USE_MESSAGE, grantablePermissions,
+  hasGlobalScope, isEmailInUse, isOwnerRequired, MAX_EMAIL, MAX_NAME, memberEmail, PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN, PERMISSION_LABEL, removalBlock, scopeProblem,
   type Branch, type MemberRole, type PartnerMember, type PartnerPermission,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
@@ -177,6 +177,7 @@ function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
+  const withEmailField = canGiveEmail(ctx.actor);
   const [role, setRole] = useState<MemberRole>('staff');
   const [perms, setPerms] = useState<PartnerPermission[]>([]);
   const [scope, setScope] = useState<{ all: boolean; ids: string[] }>({ all: wide, ids: [] });
@@ -190,7 +191,8 @@ function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
     if (!name.trim()) errs.name = 'Enter the person’s name.';
     else if (name.trim().length > MAX_NAME) errs.name = `Use at most ${MAX_NAME} characters.`;
     if (!PARTNER_PHONE_PATTERN.test(phone)) errs.phone = 'Enter the 10-digit mobile number.';
-    const mail = memberEmail(email);
+    // WQ9: only owners (and admins as owner) give a new member a sign-in email; nobody else's form has the field.
+    const mail = withEmailField ? memberEmail(email) : '';
     if (mail === null) errs.email = 'Enter a valid email address, or leave it empty.';
     if (role === 'staff') { const problem = branchProblem(ctx, scope.all, scope.ids); if (problem) errs.branches = problem; }
     setErrors(errs); setError(null);
@@ -206,6 +208,7 @@ function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
     } catch (err) {
       // WQ9: the email belongs to another account: say so on the field (nothing was added).
       if (isEmailInUse(err)) setErrors({ email: EMAIL_IN_USE_MESSAGE });
+      else if (mail && isOwnerRequired(err)) setErrors({ email: 'Only an owner can give a member a sign-in email. Leave it empty to add them without one.' });
       else setError(messageOf(err));
     } finally {
       setBusy(false);
@@ -215,14 +218,18 @@ function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
   return (
     <section className="ws-section" aria-labelledby="add-h">
       <h2 id="add-h">Add a staff member</h2>
-      <p className="ws-muted">They sign in with this mobile number (a code by SMS), or with the email if you add one (a code by email).</p>
+      <p className="ws-muted">
+        They sign in with this mobile number (a code by SMS){withEmailField ? ', or with the email if you add one (a code by email)' : ''}.
+      </p>
       <form className="rx-form" noValidate onSubmit={(e) => void submit(e)}>
         <div className="rx-form-row">
           <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} error={errors.name} maxLength={MAX_NAME} autoComplete="off" />
           <TextField label="Mobile number" inputMode="numeric" maxLength={10} value={phone}
             onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))} error={errors.phone} autoComplete="off" />
-          <TextField label="Email (optional)" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} maxLength={MAX_EMAIL}
-            value={email} onChange={(e) => setEmail(e.target.value)} error={errors.email} autoComplete="off" />
+          {withEmailField && (
+            <TextField label="Email (optional)" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} maxLength={MAX_EMAIL}
+              value={email} onChange={(e) => setEmail(e.target.value)} error={errors.email} autoComplete="off" />
+          )}
         </div>
         <fieldset className="ws-checks">
           <legend>Role</legend>
@@ -307,6 +314,7 @@ const emailDraft = (m: PartnerMember) => ({ email: m.email ?? '' });
  */
 function EditEmail({ ctx, member, onClose, onSaved }:
   { ctx: ScopeContext; member: PartnerMember; onClose: () => void; onSaved: () => Promise<void> }) {
+  const queryClient = useQueryClient();
   const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, emailDraft, 'email');
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | undefined>();
@@ -333,6 +341,9 @@ function EditEmail({ ctx, member, onClose, onSaved }:
       if (memberEmail(d.current().draft.email) !== validated) { setNotice('The email changed while saving. Check it and save again.'); return; }
       if (validated === memberEmail(d.current().base.email)) { setNotice('Nothing has changed.'); return; }
       const saved = await fenced(() => ctx.api.setEmail(member._id, validated || null, fresh.updatedAt));
+      // Saved: the list shows it whatever happened to this editor meanwhile (closed, or replaced by another one);
+      // only the editor's own notice and closing need it to still be the one on screen.
+      if (saved && !owns()) await queryClient.invalidateQueries({ queryKey: [...ctx.key, 'members'] });
       if (saved && owns()) await onSaved();
     } catch (err) {
       if (!owns()) return;
@@ -346,7 +357,10 @@ function EditEmail({ ctx, member, onClose, onSaved }:
   return (
     <section className="ws-section" aria-labelledby="email-h">
       <h2 id="email-h">Email for {member.name}</h2>
-      <p className="ws-muted">They can sign in with this email (a code by email) as well as with their mobile number. Leave it empty to remove it.</p>
+      <p className="ws-muted">
+        They can sign in with this email (a code by email) as well as with their mobile number. Leave it empty to remove it.
+        Changing or removing it signs them out of the workspace on the web and in the phone app{ctx.actor.memberId === member._id ? ' (you too)' : ''}.
+      </p>
       <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
         <fieldset className="ws-frozen" disabled={busy}>
           <TextField label="Email" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} maxLength={MAX_EMAIL} autoComplete="off"

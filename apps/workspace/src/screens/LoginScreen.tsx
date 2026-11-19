@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
-  ApiError, maskTarget, MAX_EMAIL, OTP_PATTERN, PARTNER_KIND_LABEL, parseLoginIdentifier, targetKey, targetKind, type OtpTarget, type PartnerSelection,
+  ApiError, EMAIL_NOT_REGISTERED_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, PARTNER_KIND_LABEL, parseLoginIdentifier,
+  targetKey, targetKind, type OtpTarget, type PartnerSelection,
 } from '@jansetu/api';
-import { Alert, Button, TextField } from '@jansetu/ui';
+import { Alert, Button, TextField, useCooldowns } from '@jansetu/ui';
 import { messageOf } from '../errors.ts';
 import { useSession, type StaffRole } from '../session.tsx';
 
@@ -19,8 +20,9 @@ export function LoginScreen({ notice }: { notice?: string }) {
   const [role, setRole] = useState<StaffRole>('pharmacy');
   // WQ9: a mobile number or an email, as typed. Kept in memory only (never stored, logged or put in a URL).
   const [identifier, setIdentifier] = useState('');
-  // The destination the current code was sent to: verify and resend use exactly this one.
-  const [target, setTarget] = useState<OtpTarget | null>(null);
+  // The role and destination the current code was sent for: verify, resend and the workspace choice use exactly these.
+  const [sent, setSent] = useState<{ role: StaffRole; target: OtpTarget } | null>(null);
+  const target = sent?.target ?? null;
   const [otp, setOtp] = useState('');
   const [step, setStep] = useState<'identify' | 'code' | 'choose'>('identify');
   // Q7: several lab/clinic workspaces for this number. The one-use ticket lives only here, in memory.
@@ -29,19 +31,13 @@ export function LoginScreen({ notice }: { notice?: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
-  const [cooldown, setCooldown] = useState(0);
-  // The destination the countdown belongs to: another one can still be used (O1 limits are per destination).
-  const [waitFor, setWaitFor] = useState('');
+  // O1 limits are per destination: each one keeps its own wait (A → B → A keeps A's), in memory only.
+  const cooldowns = useCooldowns();
   const typed = parseLoginIdentifier(identifier);
   const current = step === 'identify' ? typed : target;
-  const waiting = cooldown > 0 && !!current && waitFor === targetKey(current);
+  const cooldown = cooldowns.remaining(current ? targetKey(current) : null);
+  const waiting = cooldown > 0;
   const codeRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [cooldown]);
 
   useEffect(() => { if (step === 'code') codeRef.current?.focus(); }, [step]);
   const chooseRef = useRef<HTMLLegendElement>(null);
@@ -51,20 +47,22 @@ export function LoginScreen({ notice }: { notice?: string }) {
   async function send(e?: FormEvent) {
     e?.preventDefault();
     setError(null);
-    const to = step === 'identify' ? typed : target;
-    if (!to) { setFieldError('Enter a 10-digit mobile number or an email address.'); return; }
+    // The role is captured with the destination (the role choice is frozen while sending).
+    const next = step === 'identify' ? (typed ? { role, target: typed } : null) : sent;
+    if (!next) { setFieldError('Enter a 10-digit mobile number or an email address.'); return; }
     setFieldError(null);
     setBusy(true);
     try {
-      await requestCode(role, to);
-      setTarget(to);
+      await requestCode(next.role, next.target);
+      setSent(next);
       setStep('code');
       setOtp('');
-      setCooldown(RESEND_SECONDS); setWaitFor(targetKey(to));
+      cooldowns.start(targetKey(next.target), RESEND_SECONDS);
     } catch (err) {
-      setError(messageOf(err));
+      if (isEmailNotRegistered(err)) notRegistered(err);
+      else setError(messageOf(err));
       // O1: a refused resend waits as long as the server says (the button counts down).
-      if (err instanceof ApiError && err.status === 429 && err.retryAfter) { setCooldown(Math.min(err.retryAfter, 24 * 3600)); setWaitFor(targetKey(to)); }
+      if (err instanceof ApiError && err.status === 429 && err.retryAfter) cooldowns.start(targetKey(next.target), Math.min(err.retryAfter, 24 * 3600));
     } finally {
       setBusy(false);
     }
@@ -74,11 +72,11 @@ export function LoginScreen({ notice }: { notice?: string }) {
     e.preventDefault();
     setError(null);
     if (!OTP_PATTERN.test(otp)) { setFieldError('Enter the 6-digit code.'); return; }
-    if (!target) { setStep('identify'); return; }
+    if (!sent) { setStep('identify'); return; }
     setFieldError(null);
     setBusy(true);
     try {
-      const choice = await verifyCode(role, target, otp);
+      const choice = await verifyCode(sent.role, sent.target, otp);
       if (choice) {
         setSelection(choice);
         setChosen(choice.choices.length === 1 ? choice.choices[0]!.partnerId : '');
@@ -87,15 +85,23 @@ export function LoginScreen({ notice }: { notice?: string }) {
         setBusy(false);
       }
     } catch (err) {
-      setError(messageOf(err));
+      if (isEmailNotRegistered(err)) notRegistered(err);
+      else setError(messageOf(err));
       if (err instanceof ApiError && err.code === 'OTP_ATTEMPTS_EXCEEDED') setOtp(''); // this code is spent: send a new one
       setBusy(false);
     }
   }
 
+  /** WQ9: no account starts from an email: said on the field, with the way on (sign in by mobile, add the email). */
+  function notRegistered(err: unknown) {
+    setStep('identify');
+    setFieldError(err instanceof ApiError && err.message ? err.message : EMAIL_NOT_REGISTERED_MESSAGE);
+  }
+
   async function open(e: FormEvent) {
     e.preventDefault();
-    if (!selection) return;
+    // Q7: only a lab/clinic sign-in has a workspace choice, opened for the role the code was sent for.
+    if (!selection || sent?.role !== 'partner') return;
     setError(null);
     if (!selection.choices.some((c) => c.partnerId === chosen)) { setFieldError('Choose the workspace to open.'); return; }
     setFieldError(null);
@@ -125,7 +131,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
 
         {step === 'identify' ? (
           <form onSubmit={send} className="login-form" noValidate>
-            <fieldset className="login-roles">
+            <fieldset className="login-roles" disabled={busy}>
               <legend>I am signing in as</legend>
               {ROLES.map((r) => (
                 <label key={r.value} className="login-role">
@@ -135,7 +141,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
                 </label>
               ))}
             </fieldset>
-            <TextField label="Mobile number or email" type="text" inputMode="email" autoComplete="username" autoCapitalize="none"
+            <TextField label="Mobile number or email" type="text" inputMode="text" autoComplete="username" autoCapitalize="none"
               spellCheck={false} maxLength={MAX_EMAIL} value={identifier} onChange={(e) => setIdentifier(e.target.value)}
               error={fieldError} hint="We will send a 6-digit code by SMS to a mobile number, or to an email address." />
             <Button type="submit" busy={busy} disabled={waiting}>{waiting ? `Send code in ${cooldown}s` : 'Send code'}</Button>

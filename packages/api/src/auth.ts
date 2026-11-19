@@ -1,4 +1,4 @@
-import type { ApiClient } from './client.ts';
+import { ApiError, type ApiClient } from './client.ts';
 
 /** The backend's login kinds (`/auth/:userType/send|verify`). */
 export type UserType = 'user' | 'admin' | 'specialist' | 'hr' | 'pharmacy' | 'partner';
@@ -85,22 +85,44 @@ export const OTP_PATTERN = /^[0-9]{6}$/;
 /** RFC 5321 caps an address at 254 characters. */
 export const MAX_EMAIL = 254;
 /** A pragmatic check for Joi `string().email()` (the server's own answer still decides). */
-const LOGIN_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-/** A 10-digit mobile, optionally written with spaces or dashes and a +91 / 91 country prefix. */
-const LOGIN_PHONE = /^(?:\+?91)?([0-9]{10})$/;
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** A 10-digit mobile, optionally written with spaces or dashes and a +91 / 91 / 0 prefix. */
+const LOGIN_PHONE = /^(?:\+?91|0)?([0-9]{10})$/;
+
+/**
+ * WQ9: the one way an email is sent anywhere (sign-in, staff, owner, profile): trimmed and lower-cased, with the domain
+ * in its ASCII (punycode) form. Browsers disagree: a `type="email"` input in Chromium already answers punycode for an
+ * internationalised domain, a `type="text"` one answers Unicode; without this one form the same address would be
+ * stored one way and looked up the other. Null when it is not a usable address.
+ */
+export function normalizeEmail(raw: string): string | null {
+  const s = raw.trim().toLowerCase();
+  const at = s.lastIndexOf('@');
+  if (at <= 0 || at === s.length - 1) return null;
+  const local = s.slice(0, at);
+  const domain = s.slice(at + 1);
+  // Only a bare host name: anything URL parsing would silently drop or reinterpret (port, path, IP literal) is refused.
+  if (/[\s:/?#[\]@\\%]/.test(domain)) return null;
+  let ascii: string;
+  try { ascii = new URL(`http://${domain}`).hostname; } catch { return null; }
+  // The last label must hold a letter (an IPv4-looking domain is not an email domain).
+  if (!/[a-z]/.test(ascii.slice(ascii.lastIndexOf('.') + 1))) return null;
+  const email = `${local}@${ascii}`;
+  return email.length <= MAX_EMAIL && EMAIL_SHAPE.test(email) ? email : null;
+}
 
 /**
  * WQ9: one sign-in field takes a mobile number or an email (backend `sendOTPSchema`/`verifyOTPSchema`: `phone` or
- * `email`; customers exactly one of them, `selectCustomerLoginContact`). Anything with an `@` is an email (trimmed and
- * lower-cased, as the backend stores it); otherwise spaces and dashes are dropped and a +91 prefix is allowed before
- * the 10 digits. Null when it is neither. Sends exactly one of the two keys.
+ * `email`; customers exactly one of them, `selectCustomerLoginContact`). Anything with an `@` is an email
+ * (`normalizeEmail`); otherwise spaces and dashes are dropped and a +91, 91 or 0 prefix is allowed before the 10
+ * digits. Null when it is neither. Sends exactly one of the two keys.
  */
 export function parseLoginIdentifier(raw: string): OtpTarget | null {
   const s = raw.trim();
   if (!s) return null;
   if (s.includes('@')) {
-    const email = s.toLowerCase();
-    return email.length <= MAX_EMAIL && LOGIN_EMAIL.test(email) ? { email } : null;
+    const email = normalizeEmail(s);
+    return email ? { email } : null;
   }
   const m = LOGIN_PHONE.exec(s.replace(/[\s-]/g, ''));
   return m ? { phone: m[1]! } : null;
@@ -113,14 +135,22 @@ export const targetKey = (t: OtpTarget): string => ('phone' in t ? `phone:${t.ph
 export const targetKind = (t: OtpTarget): 'phone' | 'email' => ('phone' in t ? 'phone' : 'email');
 
 /**
- * The destination as shown on the code step: a phone keeps its last 4 digits, an email its first character and its
- * domain. Never the full identifier (it may be read over a shoulder or captured in a screenshot).
+ * The destination as shown on the code step: a phone keeps its last 4 digits, an email its domain and (when the part
+ * before the @ is longer than 2 characters) its first character. Never the full identifier (it may be read over a
+ * shoulder or captured in a screenshot).
  */
 export function maskTarget(t: OtpTarget): string {
   if ('phone' in t) return `••••••${t.phone.slice(-4)}`;
   const at = t.email.lastIndexOf('@');
-  return `${t.email.slice(0, 1)}•••${t.email.slice(at)}`;
+  return `${at > 2 ? t.email.slice(0, 1) : ''}•••${t.email.slice(at)}`;
 }
+
+/**
+ * WQ9 owner decision: no new account starts from an email. A customer, doctor or pharmacy sign-in with an email no
+ * account uses answers 404 `EMAIL_NOT_REGISTERED`.
+ */
+export const isEmailNotRegistered = (err: unknown) => err instanceof ApiError && err.code === 'EMAIL_NOT_REGISTERED';
+export const EMAIL_NOT_REGISTERED_MESSAGE = 'No account uses this email. Sign in with your mobile number, then add this email to your profile.';
 
 /** D4: once-only operations whose outcome a reloaded page never saw. */
 export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_create' | 'pharmacy_checkout' | 'lab_booking_create' | 'instant_request_create';

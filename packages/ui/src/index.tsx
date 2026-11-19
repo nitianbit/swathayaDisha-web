@@ -1,4 +1,4 @@
-import { useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
+import { useCallback, useEffect, useId, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
 
@@ -89,4 +89,29 @@ export function formatDateTime(value: string | undefined | null): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return '—';
   return new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }).format(d);
+}
+
+/** Whole seconds left until `until` (epoch ms) at `now`; 0 when none or passed. */
+export const cooldownLeft = (until: number | undefined, now: number) => (until && until > now ? Math.ceil((until - now) / 1000) : 0);
+
+/**
+ * WQ9: code-resend waits kept per destination (O1 limits are per destination), in memory only: switching from A to B
+ * and back to A keeps A's wait. `start` (re)arms one destination; `remaining` reads one.
+ */
+export function useCooldowns() {
+  const [until, setUntil] = useState<Record<string, number>>({});
+  const [now, setNow] = useState(() => Date.now());
+  const active = Object.values(until).some((t) => t > now);
+  useEffect(() => {
+    if (!active) return;
+    const t = setTimeout(() => setNow(Date.now()), 1000);
+    return () => clearTimeout(t);
+  }, [active, now]);
+  const start = useCallback((key: string, seconds: number) => {
+    const t = Date.now();
+    setNow(t);
+    setUntil((u) => ({ ...u, [key]: t + seconds * 1000 }));
+  }, []);
+  const remaining = (key: string | null | undefined) => (key ? cooldownLeft(until[key], now) : 0);
+  return { start, remaining };
 }

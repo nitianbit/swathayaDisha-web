@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ApiError, maskTarget, MAX_EMAIL, OTP_PATTERN, parseLoginIdentifier, targetKey, targetKind, type OtpTarget } from '@jansetu/api';
-import { Alert, Button, TextField } from '@jansetu/ui';
+import {
+  ApiError, EMAIL_NOT_REGISTERED_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, parseLoginIdentifier, targetKey, targetKind, type OtpTarget,
+} from '@jansetu/api';
+import { Alert, Button, TextField, useCooldowns } from '@jansetu/ui';
 import { messageOf } from '../common.tsx';
 import { useSession } from '../session.tsx';
 
@@ -17,19 +19,14 @@ export function LoginScreen({ notice }: { notice?: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
-  const [cooldown, setCooldown] = useState(0);
-  // The destination the countdown belongs to: another one can still be used (O1 limits are per destination).
-  const [waitFor, setWaitFor] = useState('');
+  // O1 limits are per destination: each one keeps its own wait (A → B → A keeps A's), in memory only.
+  const cooldowns = useCooldowns();
   const typed = parseLoginIdentifier(identifier);
   const current = step === 'identify' ? typed : target;
-  const waiting = cooldown > 0 && !!current && waitFor === targetKey(current);
+  const cooldown = cooldowns.remaining(current ? targetKey(current) : null);
+  const waiting = cooldown > 0;
   const codeRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [cooldown]);
   useEffect(() => { if (step === 'code') codeRef.current?.focus(); }, [step]);
 
   /** Sends a code to what was typed (first send) or, on the code step, to the same destination again. */
@@ -42,11 +39,12 @@ export function LoginScreen({ notice }: { notice?: string }) {
     setBusy(true);
     try {
       await requestCode(to);
-      setTarget(to); setStep('code'); setOtp(''); setCooldown(RESEND_SECONDS); setWaitFor(targetKey(to));
+      setTarget(to); setStep('code'); setOtp(''); cooldowns.start(targetKey(to), RESEND_SECONDS);
     } catch (err) {
-      setError(messageOf(err));
+      if (isEmailNotRegistered(err)) notRegistered(err);
+      else setError(messageOf(err));
       // O1: a refused resend waits as long as the server says (the button counts down).
-      if (err instanceof ApiError && err.status === 429 && err.retryAfter) { setCooldown(Math.min(err.retryAfter, 24 * 3600)); setWaitFor(targetKey(to)); }
+      if (err instanceof ApiError && err.status === 429 && err.retryAfter) cooldowns.start(targetKey(to), Math.min(err.retryAfter, 24 * 3600));
     } finally { setBusy(false); }
   }
 
@@ -58,9 +56,16 @@ export function LoginScreen({ notice }: { notice?: string }) {
     setFieldError(null);
     setBusy(true);
     try { await verifyCode(target, otp); } catch (err) {
-      setError(messageOf(err)); setBusy(false);
+      if (isEmailNotRegistered(err)) notRegistered(err); else setError(messageOf(err));
+      setBusy(false);
       if (err instanceof ApiError && err.code === 'OTP_ATTEMPTS_EXCEEDED') setOtp(''); // this code is spent: send a new one
     }
+  }
+
+  /** WQ9: no account starts from an email: said on the field, with the way on (sign in by mobile, add the email). */
+  function notRegistered(err: unknown) {
+    setStep('identify');
+    setFieldError(err instanceof ApiError && err.message ? err.message : EMAIL_NOT_REGISTERED_MESSAGE);
   }
 
   return (
@@ -73,9 +78,9 @@ export function LoginScreen({ notice }: { notice?: string }) {
         {error && <Alert>{error}</Alert>}
         {step === 'identify' ? (
           <form onSubmit={send} className="stack" noValidate>
-            <TextField label="Mobile number or email" type="text" inputMode="email" autoComplete="username" autoCapitalize="none"
+            <TextField label="Mobile number or email" type="text" inputMode="text" autoComplete="username" autoCapitalize="none"
               spellCheck={false} maxLength={MAX_EMAIL} value={identifier} onChange={(e) => setIdentifier(e.target.value)} error={fieldError}
-              hint="We will send a 6-digit code by SMS or email. New here? Your account is created when you sign in." />
+              hint="We will send a 6-digit code by SMS or email. New here? Start with your mobile number; an email works once you add it to your profile." />
             <Button type="submit" busy={busy} disabled={waiting}>{waiting ? `Send code in ${cooldown}s` : 'Send code'}</Button>
           </form>
         ) : (

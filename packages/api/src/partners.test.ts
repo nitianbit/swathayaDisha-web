@@ -236,6 +236,7 @@ describe('WQ9 member email', () => {
     expect(memberEmail('   ')).toBe('');
     expect(memberEmail('ravi@lab')).toBeNull();
     expect(memberEmail(`${'a'.repeat(250)}@x.in`)).toBeNull();
+    expect(memberEmail('ravi@bücher.de')).toBe('ravi@xn--bcher-kva.de');
   });
 
   it('only owners (and admins as owner) change a member’s email; nobody a removed member’s', () => {
