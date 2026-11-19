@@ -962,7 +962,7 @@ on an add with an email, no doctor email copied to clinic memberships, and a cha
 ### WQ9 re-review fixes (2026-11-19)
 
 - **Doctors and pharmacies:** they have no profile email screen. On the workspace, `EMAIL_NOT_REGISTERED` for these
-  roles says "No account uses this email. Sign in with your mobile number. To use email sign-in, ask the SwasthaDisha
+  roles says "No account uses this email. Sign in with your mobile number. To use email sign-in, ask the Jansetu
   team to add it to your account." Other roles get the server's own message; the customer copy is unchanged.
 - **Staff email editor:** it warns that changing or removing the email signs the member out only when the member
   already has one. A first email ends no session. That backend rule is in the q14-owner-decisions working tree but not
