@@ -21,13 +21,12 @@ export interface CustomerProfile {
 }
 
 /**
- * PUT /users/:id (self). A customer may only ADD a missing phone or email; the backend silently ignores a change to
- * an existing one (A1), so the app never sends one.
+ * PUT /users/:id (self): profile details only. Contacts are never sent here: an email is added by proving it
+ * (`sendEmailCode`/`verifyEmailCode`), and the backend ignores an unproven phone or email from a customer's own update
+ * (it saves the rest and names them in `ignoredContacts`).
  */
 export interface ProfileUpdate {
   name?: string;
-  email?: string;
-  phone?: string;
   dateOfBirth?: string;
   gender?: Gender;
   bloodGroup?: string;

@@ -1103,7 +1103,7 @@ test('WQ9: a doctor email no account uses is refused on the field with the way o
   await page.getByLabel('Mobile number or email').fill('New.Doctor@Clinic.in');
   await page.getByRole('button', { name: 'Send code' }).click();
   // Doctors and pharmacies have no profile email screen: the team adds it.
-  const staffCopy = 'No account uses this email. Sign in with your mobile number. To use email sign-in, ask the SwasthaDisha team to add it to your account.';
+  const staffCopy = 'No account uses this email. Sign in with your mobile number. To use email sign-in, ask the Jansetu team to add it to your account.';
   await expect(page.getByText(staffCopy)).toBeVisible();
   await expect(page.getByText('then add this email to your profile')).toHaveCount(0);
   await expect(page.getByLabel('Mobile number or email')).toHaveAttribute('aria-invalid', 'true');

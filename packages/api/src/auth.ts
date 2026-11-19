@@ -154,7 +154,7 @@ export const isEmailNotRegistered = (err: unknown) => err instanceof ApiError &&
 export const EMAIL_NOT_REGISTERED_MESSAGE = 'No account uses this email. Sign in with your mobile number, then add this email to your profile.';
 /** Doctors and pharmacies have no profile email screen: the team adds it. */
 export const EMAIL_NOT_REGISTERED_STAFF_MESSAGE =
-  'No account uses this email. Sign in with your mobile number. To use email sign-in, ask the SwasthaDisha team to add it to your account.';
+  'No account uses this email. Sign in with your mobile number. To use email sign-in, ask the Jansetu team to add it to your account.';
 
 /** D4: once-only operations whose outcome a reloaded page never saw. */
 export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_create' | 'pharmacy_checkout' | 'lab_booking_create' | 'instant_request_create';
