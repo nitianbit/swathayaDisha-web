@@ -3,12 +3,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  isPharmacyEmailTaken, isPharmacyPhoneTaken, normalizeEmail, OBJECT_ID_PATTERN, pharmacyAdminApi, pharmacyBody, pharmacyForm, pharmacyState,
-  type PharmacyAccount, type PharmacyForm, type PharmacyUpdate,
+  ApiError, isPharmacyEmailTaken, isPharmacyPhoneTaken, normalizeEmail, OBJECT_ID_PATTERN, pharmacyAdminApi, pharmacyBody, pharmacyForm,
+  pharmacyHolds, pharmacyState, signsPharmacyOut, type PharmacyAccount, type PharmacyForm, type PharmacyUpdate,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
-import { changedFields, staleMessage, useDraft } from '../../draft.ts';
+import { changedFields, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded } from '../../requests.ts';
@@ -19,7 +19,11 @@ import { EMAIL_TAKEN, PHONE_TAKEN } from './NewPharmacyScreen.tsx';
 import { PharmacyBadges } from './PharmaciesScreen.tsx';
 import { DetailFields, SignInFields } from './pharmacyFields.tsx';
 
-/** Admin: one pharmacy. Verify it, activate or deactivate it, edit its details and how it signs in (WQ10b). */
+/**
+ * Admin: one pharmacy. Verify it, activate or deactivate it, edit its details and how it signs in (WQ10b). Q15: every save
+ * names the `updatedAt` it was decided on (`expectedUpdatedAt`); 409 RECORD_CHANGED means someone else saved first, so
+ * nothing was saved: the pharmacy is read again and shown.
+ */
 export function PharmacyScreen() {
   const { pharmacyId = '' } = useParams();
   const scope = useAdminScope('pharmacies');
@@ -45,9 +49,6 @@ const DETAIL_LABEL: Record<keyof Details, string> = {
   name: 'name', nickname: 'short name', ownerName: 'owner’s name', address: 'address', city: 'city', state: 'state', pincode: 'PIN code',
   gstNumber: 'GST number', drugLicenseNumber: 'drug licence number', pickupAvailable: 'pickup', deliveryAvailable: 'delivery',
 };
-/** Whether the record holds every value in `body` (a lost answer is settled by reading the pharmacy again). */
-const holds = (p: PharmacyAccount, body: PharmacyUpdate) =>
-  Object.entries(body).every(([k, v]) => (p as unknown as Record<string, unknown>)[k] === v || (k === 'pickupAvailable' || k === 'deliveryAvailable' ? (p[k] === true) === v : false));
 
 function PharmacyDetail({ pharmacyId, scopeKey }: { pharmacyId: string; scopeKey: readonly string[] }) {
   const { api } = useSession();
@@ -75,11 +76,11 @@ function PharmacyDetail({ pharmacyId, scopeKey }: { pharmacyId: string; scopeKey
         : (
           <>
             <StateSection p={q.data} perform={guard.perform} busy={guard.busy} reread={reread}
-              update={(body) => admin.update(pharmacyId, body)} />
+              update={(body, version) => admin.update(pharmacyId, body, version)} />
             <SignInSection p={q.data} perform={guard.perform} busy={guard.busy} reread={reread} readNow={readNow}
-              update={(body) => admin.update(pharmacyId, body)} />
+              update={(body, version) => admin.update(pharmacyId, body, version)} />
             <DetailsSection p={q.data} perform={guard.perform} busy={guard.busy} reread={reread} readNow={readNow}
-              update={(body) => admin.update(pharmacyId, body)} />
+              update={(body, version) => admin.update(pharmacyId, body, version)} />
           </>
         )}
     </>
@@ -91,13 +92,26 @@ interface SectionProps {
   perform: Perform;
   busy: boolean;
   reread: () => Promise<void>;
-  update: (body: PharmacyUpdate) => Promise<PharmacyAccount>;
+  /** `version`: the `updatedAt` the change was decided on (409 RECORD_CHANGED when the pharmacy moved since). */
+  update: (body: PharmacyUpdate, version: string | undefined) => Promise<PharmacyAccount>;
 }
 
-/** Verify (customers can find it), activate or deactivate (whether it can sign in and be seen). Confirmed first. */
+/**
+ * Verify (customers can find it), activate or deactivate (whether it can sign in and be seen). Confirmed first, and sent
+ * with the version the confirmation showed: if the pharmacy changed meanwhile, nothing changes and it is read again.
+ */
 function StateSection({ p, perform, busy, reread, update }: SectionProps) {
   const s = pharmacyState(p);
-  const act = (body: PharmacyUpdate) => perform(async () => { try { await update(body); } finally { await reread(); } });
+  const act = (body: PharmacyUpdate) => perform(async () => {
+    try {
+      await update(body, p.updatedAt);
+    } catch (err) {
+      if (isRecordChanged(err)) throw new ApiError(409, `${p.name} was changed by someone else meanwhile, so nothing was changed. Check what is shown now and try again.`, 'RECORD_CHANGED');
+      throw err;
+    } finally {
+      await reread();
+    }
+  });
   return (
     <section className="ws-section" aria-labelledby="ph-state-h">
       <h2 id="ph-state-h">Status</h2>
@@ -129,9 +143,10 @@ function StateSection({ p, perform, busy, reread, update }: SectionProps) {
 
 /**
  * The sign-in mobile number and email: the support path for changing them (the pharmacy's own profile edit leaves them
- * out). Reviewed and confirmed first, because it changes how the pharmacy signs in. Right before sending, the pharmacy is
- * read again: if its contacts changed since the form opened, nothing is sent and the form shows them. An email cannot be
- * removed (`updatePharmacySchema`).
+ * out). Reviewed and confirmed first, because it changes how the pharmacy signs in, and (Q15) a changed number, or a
+ * changed or removed email, signs the pharmacy out. Right before sending, the pharmacy is read again: if its contacts
+ * changed since the form opened, nothing is sent and the form shows them; the save names that read's version. The email
+ * can be removed (sent as null); the mobile number cannot.
  */
 function SignInSection({ p, perform, busy, reread, readNow, update }: SectionProps & { readNow: () => Promise<PharmacyAccount> }) {
   const [open, setOpen] = useState<{ phone: string; email: string } | null>(null);
@@ -168,23 +183,30 @@ function SignInSection({ p, perform, busy, reread, readNow, update }: SectionPro
         setError(`Someone else changed how ${fresh.name} signs in while you were editing, so nothing was changed. The form now shows what is saved; check it again.`);
         return;
       }
+      const signedOut = signsPharmacyOut(fresh, body);
       let saved: PharmacyAccount;
       try {
-        saved = await update(body);
+        saved = await update(body, fresh.updatedAt);
       } catch (err) {
         if (definitelyNotRecorded(err)) throw err;
-        // The answer was lost: the pharmacy as read now tells whether the change went through.
+        // The answer was lost: the pharmacy as read now tells whether the change went through (the version fence makes a
+        // late copy of it refused rather than saved over a newer change).
         const now = await readNow();
-        if (!holds(now, body)) throw err;
+        if (!pharmacyHolds(now, body)) throw err;
         saved = now;
       }
       if (!live.current) return;
       setOpen(null); setReview(null);
-      setNotice(`${saved.name} now signs in with ${saved.phone}${saved.email ? ` or ${saved.email}` : ''}.`);
+      setNotice(`${saved.name} now signs in with ${saved.phone}${saved.email ? ` or ${saved.email}` : ' only'}.${signedOut ? ' It was signed out and signs in again with these.' : ''}`);
     } catch (err) {
       if (!live.current) return;
       setReview(null);
-      if (isPharmacyPhoneTaken(err)) setErrors({ phone: PHONE_TAKEN });
+      if (isRecordChanged(err)) {
+        const now = await readNow().catch(() => null);
+        if (!live.current) return;
+        if (now) { setForm(pharmacyForm(now)); setOpen({ phone: now.phone, email: now.email ?? '' }); }
+        setError(`Someone else changed ${p.name} while you were saving, so nothing was changed. The form now shows what is saved; check it again.`);
+      } else if (isPharmacyPhoneTaken(err)) setErrors({ phone: PHONE_TAKEN });
       else if (isPharmacyEmailTaken(err)) setErrors({ email: EMAIL_TAKEN });
       else setError(definitelyNotRecorded(err) ? messageOf(err) : `Not confirmed: ${messageOf(err)} Check the details shown and try again.`);
     } finally {
@@ -219,7 +241,14 @@ function SignInSection({ p, perform, busy, reread, readNow, update }: SectionPro
               <div className="confirm-text">
                 {review.phone && <p>From now on {p.name} signs in with mobile number {review.phone}; {p.phone} no longer works for signing in.</p>}
                 {review.email && <p>{p.email ? `Its sign-in email changes from ${p.email} to ${review.email}; the old one no longer works.` : `It can also sign in with ${review.email}.`}</p>}
-                <p>Anyone already signed in stays signed in. Tell the pharmacy before you change it.</p>
+                {review.email === null && p.email && <p>Its sign-in email {p.email} is removed: it signs in with its mobile number only.</p>}
+                {signsPharmacyOut(p, review) ? (
+                  <p>
+                    <strong>This signs {p.name} out</strong> on every computer and phone where it is signed in now. It signs in again with the
+                    new details. An app signed in long ago may stay signed in; to stop all access at once, deactivate the pharmacy.
+                  </p>
+                ) : <p>Anyone already signed in stays signed in.</p>}
+                <p>Tell the pharmacy before you change it.</p>
               </div>
               <div className="confirm-actions">
                 <Button busy={busy} onClick={() => void confirm(review, open).catch((err: unknown) => setError(messageOf(err)))}>Change sign-in</Button>
@@ -235,8 +264,9 @@ function SignInSection({ p, perform, busy, reread, readNow, update }: SectionPro
 
 /**
  * Name, owner, address, licences and pickup/delivery. Only fields changed from the baseline are sent, after reading the
- * pharmacy again: a field someone else changed meanwhile is shown for review, never overwritten. The server has no version
- * fence on this edit, so a change landing between that read and the save can still be overwritten (fields sent only).
+ * pharmacy again: a field someone else changed meanwhile is shown for review, never overwritten. Q15: the save names that
+ * read's `updatedAt`, so a change landing in between is refused (409 RECORD_CHANGED) and shown for review too. An
+ * emptied optional field is cleared (sent as null); the name cannot be emptied.
  */
 function DetailsSection({ p, perform, busy, reread, readNow, update }: SectionProps & { readNow: () => Promise<PharmacyAccount> }) {
   const d = useDraft(() => detailsOf(p));
@@ -276,10 +306,17 @@ function DetailsSection({ p, perform, busy, reread, readNow, update }: SectionPr
         if (Object.keys(errs).length) return;
         if (Object.keys(body).length === 0) { setNotice('Nothing has changed.'); return; }
         try {
-          await update(body);
+          await update(body, fresh.updatedAt);
         } catch (err) {
+          if (isRecordChanged(err)) {
+            const now = await readNow();
+            if (!live.current) return;
+            const c = rebaseTo(detailsOf(now));
+            setStale(c.length ? staleMessage(c.map((k) => DETAIL_LABEL[k])) : RECORD_CHANGED_MESSAGE);
+            return;
+          }
           if (definitelyNotRecorded(err)) throw err;
-          if (!holds(await readNow(), body)) throw err; // the answer was lost: saved only if the record holds it
+          if (!pharmacyHolds(await readNow(), body)) throw err; // the answer was lost: saved only if the record holds it
         }
         if (live.current) setNotice('Saved.');
       } catch (err) {
@@ -294,6 +331,7 @@ function DetailsSection({ p, perform, busy, reread, readNow, update }: SectionPr
     <section className="ws-section" aria-labelledby="ph-details-h">
       <h2 id="ph-details-h">Details</h2>
       <form className="rx-form" noValidate onSubmit={save}>
+        <p className="ws-muted">To remove an optional detail, empty its field and save. The name cannot be removed.</p>
         <fieldset className="ws-frozen" disabled={busy}>
           <DetailFields form={{ ...pharmacyForm(p), ...d.draft }} errors={errors} set={(k, v) => d.set(k as keyof Details, v as never)} />
         </fieldset>

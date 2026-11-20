@@ -1,6 +1,10 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 
-/** WQ10b: admin consultation bookings and the one move of a no-show, against a mocked backend (Q14 rules mirrored). */
+/**
+ * WQ10b: admin consultation bookings and the one move of a no-show, against a mocked backend (Q14 rules mirrored). WQ10c
+ * (Q15): `status=no_show` is a filter, admin rows carry `patientName`, and a move onto another doctor's slot is refused
+ * 409 SLOT_NOT_THIS_DOCTOR.
+ */
 const ADMIN = 'ad'.repeat(12);
 const DOC1 = 'd1'.repeat(12);
 const DOC2 = 'd2'.repeat(12);
@@ -30,7 +34,15 @@ interface Backend {
   loseBefore?: boolean;
   /** The next move finds its slot just taken. */
   takeNext?: boolean;
+  /** Free-slot reads also list another doctor's slot without saying whose it is (as a misbehaving server might). */
+  stray?: boolean;
 }
+
+/** Q15 `withPatientNames`: the family member's name when the booking has a dependentId, else the account holder's. */
+const USERS: Record<string, string> = { ['u1'.repeat(12)]: 'Ravi Kumar' };
+const DEPENDENTS: Record<string, string> = { ['f1'.repeat(12)]: 'Meena Kumar' };
+const patientName = (x: Rec) => (x.dependentId ? DEPENDENTS[String(x.dependentId)] : USERS[String(x.userId)]) ?? null;
+const S_OTHER = '57'.repeat(12);
 
 function booking(id: string, o: Rec): Rec {
   return { _id: id, bookingType: 'consultation', bookingKind: 'scheduled', userId: 'u1'.repeat(12), specialistId: DOC1, doctorName: 'Dr Asha Mehta',
@@ -45,13 +57,13 @@ async function mockBackend(page: Page): Promise<Backend> {
   const b: Backend = {
     calls: [],
     bookings: [
-      booking(BK1, { status: 'no_show', noShow: { at: '2026-11-19T05:15:00.000Z' } }),
+      booking(BK1, { status: 'no_show', dependentId: 'f1'.repeat(12), noShow: { at: '2026-11-19T05:15:00.000Z' } }),
       booking(BK2, { status: 'no_show', bookingKind: 'instant', bookingDate: '20261118', noShow: { at: '2026-11-18T05:15:00.000Z' } }),
       booking(BK3, { status: 'no_show', specialistId: DOC2, doctorName: 'Dr Kiran Rao', consultationMode: 'in-person', settlementSystem: 'clinic', paymentStatus: 'pending',
         clinicDesk: { partnerId: 'a2'.repeat(12), branchId: 'c1'.repeat(12) }, bookingDate: '20261117' }),
       booking(BK4, { bookingDate: '20261121', noShowReschedules: 1,
         noShows: [{ at: '2026-11-16T05:15:00.000Z', rescheduledAt: '2026-11-16T06:00:00.000Z', fromDate: '20261116', fromTime: '10:00', toSlotId: S3 }] }),
-      booking(BK5, { status: 'completed', specialistId: DOC2, doctorName: 'Dr Kiran Rao', bookingDate: '20261110' }),
+      booking(BK5, { status: 'completed', specialistId: DOC2, doctorName: 'Dr Kiran Rao', bookingDate: '20261110', userId: 'u9'.repeat(12) }),
       booking(BK6, { status: 'no_show', bookingDate: '20261114', noShow: { at: '2026-11-14T05:15:00.000Z' }, noShowReschedules: 1,
         noShows: [{ at: '2026-11-12T05:15:00.000Z', rescheduledAt: '2026-11-12T06:00:00.000Z', fromDate: '20261112', fromTime: '09:00', toSlotId: '56'.repeat(12) }] }),
     ],
@@ -61,6 +73,7 @@ async function mockBackend(page: Page): Promise<Backend> {
       slot(S2, '20261120', '11:30', '12:00'),
       slot(S_CLINIC, '20261120', '12:00', '12:30', { branchId: 'c1'.repeat(12), serviceModes: [] }),
       slot(S3, '20261121', '10:00', '10:30'),
+      slot(S_OTHER, '20261120', '13:00', '13:30', { specialistId: DOC2 }),
     ],
   };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -82,14 +95,14 @@ async function mockBackend(page: Page): Promise<Backend> {
     if (path === '/bookings' && method === 'GET') {
       const q = url.searchParams;
       const status = q.get('status');
-      if (status && !['pending', 'confirmed', 'completed', 'cancelled'].includes(status)) return fail(route, 400, 'VALIDATION_ERROR', 'Status must be one of: pending, confirmed, completed, cancelled');
+      if (status && !['pending', 'confirmed', 'completed', 'cancelled', 'no_show'].includes(status)) return fail(route, 400, 'VALIDATION_ERROR', 'Status must be one of: pending, confirmed, completed, cancelled, no_show');
       const all = b.bookings.filter((x) => (!q.get('bookingType') || x.bookingType === q.get('bookingType')) && (!status || x.status === status)
         && (!q.get('specialistId') || x.specialistId === q.get('specialistId'))
         && (!q.get('bookingDateFrom') || String(x.bookingDate) >= q.get('bookingDateFrom')!) && (!q.get('bookingDateTo') || String(x.bookingDate) <= q.get('bookingDateTo')!))
         .sort((x, y) => String(y.bookingDate).localeCompare(String(x.bookingDate)));
       const limit = Number(q.get('limit') ?? 10);
       const pg = Number(q.get('page') ?? 1);
-      return json(route, 200, { success: true, data: all.slice((pg - 1) * limit, pg * limit), pagination: { page: pg, limit, total: all.length, totalPages: Math.ceil(all.length / limit) } });
+      return json(route, 200, { success: true, data: all.slice((pg - 1) * limit, pg * limit).map((x) => ({ ...x, patientName: patientName(x) })), pagination: { page: pg, limit, total: all.length, totalPages: Math.ceil(all.length / limit) } });
     }
     const one = /^\/bookings\/([0-9a-f]{24})$/.exec(path);
     if (one && method === 'GET') {
@@ -105,8 +118,12 @@ async function mockBackend(page: Page): Promise<Backend> {
     if (path === '/slots/available') {
       const q = url.searchParams;
       const mode = q.get('mode');
-      return ok(route, b.slots.filter((s) => s.specialistId === q.get('specialistId') && s.date === q.get('date') && (s.currentBookings as number) < (s.maxBookings as number)
-        && (!mode || !(s.serviceModes as string[]).length || (s.serviceModes as string[]).includes(mode))));
+      const free = b.slots.filter((s) => s.date === q.get('date') && (s.currentBookings as number) < (s.maxBookings as number)
+        && (!mode || !(s.serviceModes as string[]).length || (s.serviceModes as string[]).includes(mode)));
+      return ok(route, [
+        ...free.filter((s) => s.specialistId === q.get('specialistId')),
+        ...(b.stray ? free.filter((s) => s.specialistId !== q.get('specialistId')).map(({ specialistId: _d, ...rest }) => rest) : []),
+      ]);
     }
     const mv = /^\/specialists\/admin\/bookings\/([0-9a-f]{24})\/reschedule-no-show$/.exec(path);
     if (mv && method === 'POST') {
@@ -122,6 +139,8 @@ async function mockBackend(page: Page): Promise<Backend> {
       if (bk.status !== 'no_show') return fail(route, 409, 'BOOKING_NOT_NO_SHOW', `A ${bk.status} booking is not a no-show`);
       if (x.expectedUpdatedAt && x.expectedUpdatedAt !== bk.updatedAt) return fail(route, 409, 'BOOKING_CHANGED', 'This booking changed; read it again');
       const s = b.slots.find((y) => y._id === x.slotId);
+      // Q15 (`rescheduleWithHolds`): every move stays with the booking's doctor.
+      if (s && s.specialistId !== bk.specialistId) return fail(route, 409, 'SLOT_NOT_THIS_DOCTOR', 'This slot belongs to another doctor; pick one of this doctor\'s slots');
       if (b.takeNext && s) { b.takeNext = false; s.currentBookings = 1; }
       if (!s || (s.currentBookings as number) >= (s.maxBookings as number)) return fail(route, 409, 'SLOT_NOT_AVAILABLE', 'Slot is not available for booking');
       s.currentBookings = 1;
@@ -157,7 +176,7 @@ async function chooseTime(page: Page, time: string) {
   return form;
 }
 
-test('consultations: filtered by status, doctor and appointment dates as the server takes them; no-shows are marked', async ({ page }) => {
+test('consultations: filtered by status (no-shows too), doctor and appointment dates as the server takes them; patients are named', async ({ page }) => {
   const backend = await mockBackend(page);
   await signInAdmin(page);
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Consultations' }).click();
@@ -165,8 +184,16 @@ test('consultations: filtered by status, doctor and appointment dates as the ser
   await expect(page.getByRole('row').filter({ hasText: 'Thu, 19 Nov' })).toContainText('No-show');
   await expect(page.getByRole('row').filter({ hasText: 'Sat, 21 Nov' })).toContainText('Moved after a no-show');
   await expect(page.getByRole('row').filter({ hasText: 'Tue, 17 Nov' })).toContainText('Clinic front desk');
-  // The server's status filter does not take no-shows: none is offered.
-  await expect(page.getByLabel('Status').locator('option')).toHaveText(['Any status (no-shows included)', 'Waiting', 'Confirmed', 'Completed', 'Cancelled']);
+  // Q15: each row names the patient (the family member for BK1); an unknown name is a dash.
+  await expect(page.getByRole('columnheader', { name: 'Patient' })).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'Thu, 19 Nov' })).toContainText('Meena Kumar');
+  await expect(page.getByRole('row').filter({ hasText: 'Sat, 21 Nov' })).toContainText('Ravi Kumar');
+  await expect(page.getByRole('row').filter({ hasText: 'Tue, 10 Nov' }).getByRole('cell').nth(1)).toHaveText('—');
+  await expect(page.getByText('No-shows cannot be listed on their own', { exact: false })).toHaveCount(0);
+  await expect(page.getByLabel('Status').locator('option')).toHaveText(['Any status', 'Waiting', 'Confirmed', 'Completed', 'Cancelled', 'No-show']);
+  await page.getByLabel('Status').selectOption('no_show');
+  await expect(page.getByText('4 consultations')).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'Sat, 21 Nov' })).toHaveCount(0);
   await page.getByLabel('Status').selectOption('confirmed');
   await expect(page.getByText('1 consultation')).toBeVisible();
   await page.getByLabel('Status').selectOption('');
@@ -183,6 +210,7 @@ test('consultations: filtered by status, doctor and appointment dates as the ser
   await expect(page.getByText('4 consultations')).toBeVisible();
   expect(lists(backend)).toEqual([
     '/bookings?bookingType=consultation&page=1&limit=20',
+    '/bookings?bookingType=consultation&status=no_show&page=1&limit=20',
     '/bookings?bookingType=consultation&status=confirmed&page=1&limit=20',
     `/bookings?bookingType=consultation&specialistId=${DOC2}&page=1&limit=20`,
     `/bookings?bookingType=consultation&specialistId=${DOC2}&bookingDateFrom=20261115&page=1&limit=20`,
@@ -287,4 +315,38 @@ test('a time taken meanwhile is refused: the doctor’s free times are read agai
   const sent = moves(backend);
   expect(sent.map((c) => (c.body as Rec).slotId)).toEqual([S1, S2]);
   expect((sent[1]!.body as Rec).requestKey).not.toBe((sent[0]!.body as Rec).requestKey); // a refused first attempt: a new request
+});
+
+test('WQ10c: the booking page names the patient from the doctor’s day list; nothing about them in storage or the address', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await page.goto(`/#/admin/consultations/${BK1}`);
+  await expect(page.getByRole('heading', { name: 'Consultation on Thu, 19 Nov, 2026, 10:00' })).toBeVisible();
+  await expect(page.getByText('Meena Kumar (a family member of the account holder)')).toBeVisible();
+  expect(lists(backend)).toContain(`/bookings?bookingType=consultation&specialistId=${DOC1}&bookingDateFrom=20261119&bookingDateTo=20261119&page=1&limit=100`);
+  await page.goto(`/#/admin/consultations/${BK5}`);
+  await expect(page.getByRole('heading', { name: /Consultation on Tue, 10 Nov/ })).toBeVisible();
+  await expect(page.getByText('The account holder', { exact: true })).toBeVisible(); // name unknown: the old words
+  const stored = await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }) + location.href);
+  expect(stored).not.toContain('Meena');
+});
+
+test('WQ10c: a time that belongs to another doctor is refused SLOT_NOT_THIS_DOCTOR in words; the free times are read again', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  backend.stray = true;
+  await page.goto(`/#/admin/consultations/${BK1}`);
+  // The stray slot carries no doctor, so the picker cannot tell it apart: the server decides.
+  const form = await chooseTime(page, '13:00–13:30');
+  backend.stray = false; // the free times read after the refusal are the doctor's own
+  await form.getByRole('button', { name: /^Move to/ }).click();
+  await expect(page.getByText('Not moved: That time belongs to another doctor. Pick one of this doctor’s times.')).toBeVisible();
+  const again = page.getByRole('form', { name: 'Reschedule no-show' });
+  await expect(again.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '11:00–11:30', '11:30–12:00']);
+  await again.getByLabel('New time').selectOption({ label: '11:00–11:30' });
+  await again.getByRole('button', { name: 'Continue' }).click();
+  await again.getByRole('button', { name: /^Move to/ }).click();
+  await expect(page.getByText(/no-show is moved to .*11:00/)).toBeVisible();
+  expect(moves(backend).map((c) => (c.body as Rec).slotId)).toEqual([S_OTHER, S1]);
+  expect(backend.bookings.find((x) => x._id === BK1)!.specialistId).toBe(DOC1);
 });

@@ -39,9 +39,9 @@ export function consultationKind(b: Pick<AdminConsultation, 'bookingKind' | 'cli
 }
 
 /**
- * Admin: doctor consultation bookings (WQ10b), latest appointment first, filtered by status, doctor and appointment dates.
- * Open one to see its no-show history and move a no-show once. The server cannot filter no-shows on their own (its status
- * filter takes waiting, confirmed, completed and cancelled), so they are found in the unfiltered list, marked.
+ * Admin: doctor consultation bookings (WQ10b), latest appointment first, filtered by status (Q15: no-shows too), doctor and
+ * appointment dates, each with the patient's name (Q15 `patientName`). Open one to see its no-show history and move a
+ * no-show once. The patient's name is shown only on screen: never in the address, storage or logs.
  */
 export function ConsultationsScreen() {
   const scope = useAdminScope('consultations');
@@ -67,14 +67,13 @@ function Consultations({ scopeKey }: { scopeKey: readonly string[] }) {
         <div className="j-field ws-filter">
           <label htmlFor="cs-status">Status</label>
           <select id="cs-status" value={q.status ?? ''} onChange={(e) => setFilter('status', e.target.value)}>
-            <option value="">Any status (no-shows included)</option>
+            <option value="">Any status</option>
             {CONSULTATION_STATUS_FILTERS.map((s) => <option key={s} value={s}>{CONSULTATION_STATUS_LABEL[s]}</option>)}
           </select>
         </div>
         <TextField label="Appointments from" type="date" value={q.from ?? ''} onChange={(e) => setFilter('from', e.target.value)} />
         <TextField label="Appointments to" type="date" value={q.to ?? ''} onChange={(e) => setFilter('to', e.target.value)} />
       </div>
-      <p className="ws-muted">No-shows cannot be listed on their own yet: leave the status on “Any status” and narrow by doctor and dates.</p>
       {q.specialistId ? (
         <p>
           Doctor: <strong>{shownDoctor}</strong>{' '}
@@ -95,12 +94,13 @@ function Consultations({ scopeKey }: { scopeKey: readonly string[] }) {
               <table className="j-table">
                 <caption className="j-sr-only">Consultations</caption>
                 <thead>
-                  <tr><th scope="col">Appointment</th><th scope="col">Doctor</th><th scope="col">Kind</th><th scope="col">Status</th><th scope="col">Payment</th></tr>
+                  <tr><th scope="col">Appointment</th><th scope="col">Patient</th><th scope="col">Doctor</th><th scope="col">Kind</th><th scope="col">Status</th><th scope="col">Payment</th></tr>
                 </thead>
                 <tbody>
                   {list.data.items.map((b) => (
                     <tr key={b._id}>
                       <td><Link to={`/admin/consultations/${b._id}`}>{formatYmd(b.bookingDate)}, {b.bookingTime}</Link></td>
+                      <td>{patientLabel(b)}</td>
                       <td>{b.doctorName || '—'}</td>
                       <td>{consultationKind(b)}</td>
                       <td>
@@ -125,6 +125,9 @@ function Consultations({ scopeKey }: { scopeKey: readonly string[] }) {
     </>
   );
 }
+
+/** The patient's name (Q15, admin rows), or a dash when the server does not know it. */
+export const patientLabel = (b: Pick<AdminConsultation, 'patientName'>) => (b.patientName?.trim() ? b.patientName.trim() : '—');
 
 export const paymentLabel = (b: Pick<AdminConsultation, 'paymentStatus' | 'settlementSystem'>) =>
   b.paymentStatus === 'paid' ? 'Paid' : b.paymentStatus === 'refunded' ? 'Refunded' : b.settlementSystem === 'clinic' ? 'At the clinic' : b.paymentStatus === 'failed' ? 'Payment failed' : 'Not paid';

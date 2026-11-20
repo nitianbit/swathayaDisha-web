@@ -1,4 +1,5 @@
-import { createApiClient } from './client.ts';
+import { ApiError, createApiClient } from './client.ts';
+import { isSlotRefusal, NO_SHOW_MOVE_REFUSAL } from './noShows.ts';
 import { adminNoShowMove, consultationAdminApi, consultationQueryProblem, type AdminConsultation } from './adminConsultations.ts';
 import { professionalInput, canEditProfessional, partnerWorkspaceApi } from './partners.ts';
 
@@ -37,6 +38,32 @@ describe('admin consultations (bookings getAll as admin, slots/available)', () =
       'GET /specialists?name=Mehta&page=1&limit=20',
       `GET /slots/available?specialistId=${DOC}&date=20261121&mode=video`,
     ]);
+  });
+
+  it('Q15: filters no-shows on their own; finds one booking’s patient name in its doctor’s day list', async () => {
+    const calls: string[] = [];
+    const rows = [booking({ _id: 'e5'.repeat(12), patientName: 'Other' }), booking({ patientName: ' Asha Rao ' })];
+    const client = createApiClient({ baseUrl: 'https://api.example.test', getToken: () => 'tok',
+      fetchImpl: async (u) => {
+        calls.push(String(u).replace('https://api.example.test/api/v1', ''));
+        return new Response(JSON.stringify({ success: true, data: rows, pagination: { page: 1, limit: 100, total: 2, totalPages: 1 } }), { status: 200 });
+      } });
+    const api = consultationAdminApi(client);
+    await api.list({ status: 'no_show' });
+    expect(await api.patientName(booking({ specialistId: DOC }))).toBe('Asha Rao');
+    rows[1]!.patientName = null;
+    expect(await api.patientName(booking({}))).toBeNull();
+    expect(calls).toEqual([
+      '/bookings?bookingType=consultation&status=no_show&page=1&limit=20',
+      `/bookings?bookingType=consultation&specialistId=${DOC}&bookingDateFrom=20261117&bookingDateTo=20261117&page=1&limit=100`,
+      '/bookings?bookingType=consultation&bookingDateFrom=20261117&bookingDateTo=20261117&page=1&limit=100',
+    ]);
+  });
+
+  it('Q15: another doctor’s time is a slot refusal, in words', () => {
+    const err = new ApiError(409, 'This slot belongs to another doctor', 'SLOT_NOT_THIS_DOCTOR');
+    expect(isSlotRefusal(err)).toBe(true);
+    expect(NO_SHOW_MOVE_REFUSAL.SLOT_NOT_THIS_DOCTOR).toMatch(/another doctor/);
   });
 
   it('refuses ids, dates and periods the server would refuse, before any request', () => {

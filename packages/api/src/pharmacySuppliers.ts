@@ -5,6 +5,8 @@ import { EMAIL_PATTERN } from './partners.ts';
  * WQ10a: a pharmacy's suppliers. Mirrors src1/modules/pharmacySuppliers (types SupplierDto/SUPPLIER_TEXT_LIMITS,
  * validation normalizeSupplierCommand/fieldsSchema, repository create/update/archive/list), mounted at
  * /api/v1/pharmacy-suppliers for operational pharmacies (`requireOperationalPharmacy`).
+ * Q15: the create takes a `requestKey` (exactly once per pharmacy and key; the same key and fields again answer 200
+ * `replayed: true`), and `GET /by-key/:key` returns the supplier a key made (404 SUPPLIER_NOT_FOUND = nothing so far).
  */
 export const SUPPLIER_FIELDS = ['displayName', 'contactName', 'phone', 'email', 'address'] as const;
 export type SupplierField = (typeof SUPPLIER_FIELDS)[number];
@@ -14,6 +16,8 @@ export const SUPPLIER_PHONE_PATTERN = /^[+0-9(). -]+$/;
 export const SUPPLIER_FIELD_LABEL: Readonly<Record<SupplierField, string>> = {
   displayName: 'Supplier name', contactName: 'Contact person', phone: 'Phone', email: 'Email', address: 'Address',
 };
+/** Q15 `PHARMACY_REQUEST_KEY`. */
+export const SUPPLIER_REQUEST_KEY_PATTERN = /^[A-Za-z0-9_-]{8,100}$/;
 /** listQuery `limit` maximum. */
 export const SUPPLIERS_PAGE_MAX = 50;
 
@@ -104,8 +108,22 @@ export function pharmacySuppliersApi(c: ApiClient) {
     /** Oldest first (`_id` ascending); default state `active`. */
     list: (q: { state?: SupplierState | 'all'; page?: number; limit?: number } = {}): Promise<Page<PharmacySupplier>> =>
       c.page<PharmacySupplier>('/pharmacy-suppliers', { query: { ...q } }),
-    /** No request key: a lost answer is settled by looking the supplier up in the list. */
-    create: (fields: SupplierFields) => c.post<PharmacySupplier>('/pharmacy-suppliers', { body: fields }),
+    /** Exactly once per `requestKey` (Q15): a repeat answers the supplier the key made (`replayed`), never a second one. */
+    create: async (fields: SupplierFields, requestKey: string): Promise<{ supplier: PharmacySupplier; replayed: boolean }> => {
+      if (!SUPPLIER_REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
+      const r = await c.postKeyed<PharmacySupplier>('/pharmacy-suppliers', { body: { ...fields, requestKey } });
+      return { supplier: r.data, replayed: r.replayed };
+    },
+    /** Q15 `GET /pharmacy-suppliers/by-key/:key`: the supplier a key made (as it is now); null on 404 (nothing so far). */
+    createdByKey: async (requestKey: string): Promise<PharmacySupplier | null> => {
+      if (!SUPPLIER_REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
+      try {
+        return await c.get<PharmacySupplier>(`/pharmacy-suppliers/by-key/${requestKey}`);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
     /** 409 SUPPLIER_CONFLICT when the supplier is archived or its revision is no longer `expectedRevision`. */
     update: (id: string, fields: Partial<SupplierFields>, expectedRevision: number) =>
       c.patch<PharmacySupplier>(supplierPath(id), { body: { ...fields, expectedRevision: checkRevision(expectedRevision) } }),

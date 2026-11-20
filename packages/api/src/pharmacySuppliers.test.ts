@@ -5,6 +5,7 @@ import {
 } from './pharmacySuppliers.ts';
 
 const S = 'ab'.repeat(12);
+const KEY = 'k'.repeat(32);
 
 function recorder(answer: (url: string) => Response) {
   const calls: { method: string; url: string; body: unknown }[] = [];
@@ -49,11 +50,11 @@ describe('suppliers (pharmacySuppliers validation)', () => {
       ? { success: true, data: [supplier()], pagination: { page: Number(new URL(`http://x${url}`).searchParams.get('page')), limit: 50, total: 2, totalPages: 2 } }
       : { success: true, data: supplier() }), { status: 200 }));
     const api = pharmacySuppliersApi(client);
-    await api.create({ displayName: 'Sun' });
+    expect(await api.create({ displayName: 'Sun' }, KEY)).toEqual({ supplier: supplier(), replayed: false });
     await api.update(S, { phone: null }, 3);
     await api.archive(S, 4);
     expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
-      ['POST', '/pharmacy-suppliers', { displayName: 'Sun' }],
+      ['POST', '/pharmacy-suppliers', { displayName: 'Sun', requestKey: KEY }],
       ['PATCH', `/pharmacy-suppliers/${S}`, { phone: null, expectedRevision: 3 }],
       ['POST', `/pharmacy-suppliers/${S}/archive`, { expectedRevision: 4 }],
     ]);
@@ -63,5 +64,21 @@ describe('suppliers (pharmacySuppliers validation)', () => {
     expect(calls.slice(3).map((c) => c.url)).toEqual(['/pharmacy-suppliers?state=all&page=1&limit=50', '/pharmacy-suppliers?state=all&page=2&limit=50']);
     expect(isSupplierConflict(new ApiError(409, 'Supplier changed', 'SUPPLIER_CONFLICT'))).toBe(true);
     expect(isSupplierConflict(new ApiError(409, 'x', 'OTHER'))).toBe(false);
+  });
+
+  it('Q15: a keyed create answers a repeat with the same supplier (`replayed`); by-key finds it, or null on 404', async () => {
+    const answers = [
+      new Response(JSON.stringify({ success: true, data: supplier(), replayed: true }), { status: 200 }),
+      new Response(JSON.stringify({ success: true, data: supplier() }), { status: 200 }),
+      new Response(JSON.stringify({ error: 404, code: 'SUPPLIER_NOT_FOUND', message: 'No supplier was created with this key' }), { status: 404 }),
+    ];
+    const { client, calls } = recorder(() => answers.shift()!);
+    const api = pharmacySuppliersApi(client);
+    expect(await api.create({ displayName: 'Sun' }, KEY)).toEqual({ supplier: supplier(), replayed: true });
+    expect(await api.createdByKey(KEY)).toEqual(supplier());
+    expect(await api.createdByKey(KEY)).toBeNull();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(['POST /pharmacy-suppliers', `GET /pharmacy-suppliers/by-key/${KEY}`, `GET /pharmacy-suppliers/by-key/${KEY}`]);
+    await expect(api.create({ displayName: 'Sun' }, 'x')).rejects.toThrow('Invalid request key');
+    await expect(api.createdByKey('a/b')).rejects.toThrow('Invalid request key');
   });
 });

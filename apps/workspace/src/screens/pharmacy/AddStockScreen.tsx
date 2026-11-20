@@ -3,18 +3,22 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  ADD_STOCK_REASONS, findStockEntryOf, formatExpiry, MAX_STOCK_NOTE, medicineName, pharmacyStockApi, STOCK_LIMITS, stockEntryBody,
-  stockEntryProblems, type AddStockReason, type Medicine, type StockEntry, type StockEntryDraft,
+  ADD_STOCK_REASONS, formatExpiry, MAX_STOCK_NOTE, medicineName, pharmacyStockApi, STOCK_LIMITS, stockEntryBody,
+  stockEntryProblems, type AddStockReason, type InventoryItem, type Medicine, type StockEntry, type StockEntryDraft,
 } from '@jansetu/api';
-import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
-import { newRequestKey, startOp } from '../../requests.ts';
+import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 
-/** What is kept (in session memory only) for an entry being sent: the request and the words to describe it. */
+/**
+ * What is kept (in session memory only) for an entry being sent: the request and the words to describe it. Q15: it is
+ * sent with its request key, so the same entry can be sent again safely (the server answers the key with what it saved,
+ * `replayed`, and never adds the units twice) and a lost answer is looked up by key.
+ */
 interface PendingEntry { entry: StockEntry; medicineName: string }
 
 type Fields = Omit<StockEntryDraft, 'medicineId'>;
@@ -23,7 +27,7 @@ const EMPTY: Fields = {
   reason: 'purchase', note: '',
 };
 
-/** WQ10a: add units of one batch of a medicine (`POST /pharmacy-inventory`). */
+/** WQ10a: add units of one batch of a medicine (`POST /pharmacy-inventory`, keyed since Q15). */
 export function AddStockScreen() {
   const pharmacyId = usePharmacyId();
   return (
@@ -42,6 +46,12 @@ const describe = (e: StockEntry, name: string) =>
 
 const searchText = (m: Medicine) => m.name ?? m.brandName ?? m.genericName ?? '';
 
+/** The medicine's name in a saved item (populated) for the Stock link, or ''. */
+const itemSearch = (items: InventoryItem[]) => {
+  const m = items[0]?.medicineId;
+  return typeof m === 'object' && m ? m.name ?? m.brandName ?? m.genericName ?? '' : '';
+};
+
 function AddStock({ pharmacyId }: { pharmacyId: string }) {
   const { api } = useSession();
   const queryClient = useQueryClient();
@@ -49,6 +59,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
   const [params, setParams] = useSearchParams();
   const { op, send, settle } = useOwnedOp<PendingEntry>(`stock-add:${pharmacyId}`);
   const { perform, busy } = useOneAtATime('stock entry');
+  const [resendError, setResendError] = useState<string | null>(null);
   const [picked, setPicked] = useState<Medicine | null>(null);
   const [draft, setDraft] = useState<Fields>(EMPTY);
   const [errors, setErrors] = useState<Partial<Record<keyof StockEntryDraft, string>>>({});
@@ -76,27 +87,33 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
     const problems = stockEntryProblems(full);
     setErrors(problems);
     if (Object.keys(problems).length || !chosen) return;
-    const requestKey = newRequestKey();
-    setReview({ requestKey, entry: stockEntryBody(full, requestKey), medicineName: medicineName(chosen) });
+    setReview({ requestKey: newRequestKey(), entry: stockEntryBody(full), medicineName: medicineName(chosen) });
+  }
+
+  /** Sends `p` (its key, its entry) under the one-at-a-time guard; an unknown outcome stays stored for the panel below. */
+  async function sendEntry(p: PendingOp<PendingEntry>, search: string) {
+    const r = await perform(() => send(p, (b) => stock.addStock(b.entry, p.requestKey)));
+    if (r.kind === 'stale') return;
+    setReview(null);
+    if (r.kind === 'ok') {
+      const what = p.body ? describe(p.body.entry, p.body.medicineName) : 'the units';
+      setDone({
+        text: r.value.replayed ? `Already added: ${what}. Nothing was added twice.` : `Added ${what}.`,
+        search: search || itemSearch(r.value.items),
+      });
+      setDraft(EMPTY);
+      setErrors({});
+      void refresh();
+    } else if (r.kind === 'refused') {
+      setRefused(messageOf(r.error));
+    }
   }
 
   async function add() {
     if (!review) return;
     const { requestKey, ...pending } = review;
     try {
-      await perform(async () => {
-        const r = await send(startOp(requestKey, pending), (b) => stock.addStock(b.entry));
-        if (r.kind === 'stale') return;
-        setReview(null);
-        if (r.kind === 'ok') {
-          setDone({ text: `Added ${describe(pending.entry, pending.medicineName)}.`, search: chosen ? searchText(chosen) : '' });
-          setDraft(EMPTY);
-          setErrors({});
-          void refresh();
-        } else if (r.kind === 'refused') {
-          setRefused(messageOf(r.error));
-        }
-      });
+      await sendEntry(startOp(requestKey, pending), chosen ? searchText(chosen) : '');
     } catch (err) {
       setRefused(messageOf(err)); // refused by the one-at-a-time guard: nothing was sent
     }
@@ -111,31 +128,43 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
   if (op && !busy) {
     const restored = !!op.restored || !op.body;
     return (
-      <CheckPanel label="Unconfirmed stock entry"
-        onCheck={async () => {
-          const hit = await findStockEntryOf((page, limit) => stock.adjustments(page, limit), op.requestKey, op.firstAttemptAt);
-          if (!hit) return 'Not in the stock history yet. It may still be on its way, or it never arrived: this cannot be told apart from here.';
-          settle(op.requestKey);
-          setDone({
-            text: `Recorded: ${hit.quantity} units of batch ${hit.batchNumber ?? ''} were added ${formatDateTime(hit.createdAt)}.`,
-            search: typeof hit.medicineId === 'object' ? hit.medicineId.name ?? '' : '',
-          });
-          void refresh();
-          return null;
-        }}
-        forget={{
-          label: 'Forget it and add again', confirmLabel: 'Forget it',
-          consequence: 'Only do this if the batch in Stock does not show these units. If the first entry arrives after all, the units are counted twice and you would have to ask the Jansetu team to correct it.',
-          onForget: () => settle(op.requestKey),
-        }}>
-        <Alert tone="warn">
-          {restored
-            ? 'A stock entry made earlier on this device (before the page was reloaded, or before you signed out) was not confirmed. Its details are not kept here.'
-            : `The answer to this stock entry did not arrive${op.error ? ` (${op.error})` : ''}. The units may already be in stock.`}
-          {' '}Sending it again could count them twice, so check first.
-        </Alert>
-        {!restored && op.body && <div>{describe(op.body.entry, op.body.medicineName)}</div>}
-      </CheckPanel>
+      <>
+        {resendError && <Alert>{resendError}</Alert>}
+        <CheckPanel label="Unconfirmed stock entry"
+          onCheck={async () => {
+            const items = await stock.savedByKey(op.requestKey);
+            if (!items) {
+              return restored
+                ? 'Not recorded so far. It may still be on its way: this cannot be told apart from here.'
+                : 'Not recorded so far. It may still be on its way. Sending the same entry again is safe: it is never added twice.';
+            }
+            settle(op.requestKey);
+            setDone({
+              text: `Recorded: ${op.body ? describe(op.body.entry, op.body.medicineName) : 'the stock entry'} was added. Nothing was added twice.`,
+              search: itemSearch(items),
+            });
+            void refresh();
+            return null;
+          }}
+          resend={restored ? undefined : {
+            label: 'Send the same entry again', busy,
+            onClick: () => { setResendError(null); void sendEntry(op, '').catch((err: unknown) => setResendError(messageOf(err))); },
+          }}
+          forget={{
+            label: 'Forget it and add again', confirmLabel: 'Forget it',
+            consequence: restored
+              ? 'Only do this if the batch in Stock does not show these units. If the earlier entry still arrives, its units are added then and would be counted twice; you would have to ask the Jansetu team to correct it.'
+              : 'Sending the same entry again is the safe choice. If you forget it and the earlier entry still arrives, its units are added then and would be counted twice; you would have to ask the Jansetu team to correct it.',
+            onForget: () => settle(op.requestKey),
+          }}>
+          <Alert tone="warn">
+            {restored
+              ? 'A stock entry made earlier on this device (before the page was reloaded, or before you signed out) was not confirmed. Its details are not kept here.'
+              : `This stock entry was not confirmed${op.error ? ` (${op.error})` : ''}. The units may already be in stock. Sending the same entry again is safe: it is never added twice.`}
+          </Alert>
+          {!restored && op.body && <div>{describe(op.body.entry, op.body.medicineName)}</div>}
+        </CheckPanel>
+      </>
     );
   }
 

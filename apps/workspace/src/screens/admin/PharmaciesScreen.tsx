@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { pharmacyAdminApi, pharmacyState, type PharmacyAccount, type PharmacyQuery } from '@jansetu/api';
-import { Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
+import { PHARMACY_PHONE_PATTERN, pharmacyAdminApi, pharmacyState, type PharmacyAccount, type PharmacyQuery } from '@jansetu/api';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
@@ -60,6 +60,7 @@ function Pharmacies({ scopeKey }: { scopeKey: readonly string[] }) {
         <TextField label="Search by name" value={search} maxLength={100} onChange={(e) => setSearch(e.target.value)} />
         <Button type="submit" variant="secondary">Search</Button>
       </form>
+      <PhoneLookup scopeKey={scopeKey} />
       <div className="ws-search" role="group" aria-label="Filters">
         <div className="j-field ws-filter">
           <label htmlFor="ph-verified">Verification</label>
@@ -115,5 +116,44 @@ function Pharmacies({ scopeKey }: { scopeKey: readonly string[] }) {
           </>
         )}
     </>
+  );
+}
+
+/**
+ * Q15: which pharmacy signs in with a mobile number (`GET /pharmacies?phone=`, exact). The number is kept in this page's
+ * memory only, never in the address.
+ */
+function PhoneLookup({ scopeKey }: { scopeKey: readonly string[] }) {
+  const { api } = useSession();
+  const [text, setText] = useState('');
+  const [phone, setPhone] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const found = useQuery({
+    queryKey: [...scopeKey, 'by-phone', phone],
+    queryFn: () => pharmacyAdminApi(api).findByPhone(phone!),
+    enabled: !!phone,
+  });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!PHARMACY_PHONE_PATTERN.test(text)) { setError('Enter the 10-digit mobile number.'); return; }
+    setError(null);
+    setPhone(text);
+  };
+  return (
+    <section aria-label="Find by mobile number">
+      <form className="ws-search" role="search" onSubmit={submit}>
+        <TextField label="Find by mobile number" inputMode="numeric" maxLength={10} autoComplete="off" value={text} error={error ?? undefined}
+          onChange={(e) => setText(e.target.value.replace(/\D/g, ''))} />
+        <Button type="submit" variant="secondary">Find</Button>
+      </form>
+      {!phone ? null
+        : found.isPending ? <Loading label="Finding the pharmacy…" />
+        : found.isError ? <ErrorState message={messageOf(found.error)} onRetry={() => void found.refetch()} />
+        : found.data ? (
+          <Alert tone="ok">
+            <Link to={`/admin/pharmacies/${found.data._id}`}>{found.data.name}</Link> signs in with {phone}. <PharmacyBadges p={found.data} />
+          </Alert>
+        ) : <p className="ws-muted">No pharmacy signs in with {phone}.</p>}
+    </section>
   );
 }

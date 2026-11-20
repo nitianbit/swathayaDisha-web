@@ -177,6 +177,14 @@ export function createApiClient(options: ApiClientOptions) {
   return {
     get: <T>(path: string, o?: RequestOptions) => json<T>('GET', path, o),
     post: <T>(path: string, o?: RequestOptions) => json<T>('POST', path, o),
+    /**
+     * Q15 keyed creates that answer a repeat of the same request key with 200 and a top-level `replayed: true` next to
+     * `data` (pharmacies, inventory saves, suppliers): the record(s) and whether this was such a repeat.
+     */
+    postKeyed: <T>(path: string, o?: RequestOptions) => request('POST', path, o ?? {}, async (res) => {
+      const body = parseJson(await res.text()) as { data?: T; replayed?: unknown } | null;
+      return { data: body?.data as T, replayed: body?.replayed === true };
+    }),
     put: <T>(path: string, o?: RequestOptions) => json<T>('PUT', path, o),
     patch: <T>(path: string, o?: RequestOptions) => json<T>('PATCH', path, o),
     delete: <T>(path: string, o?: RequestOptions) => json<T>('DELETE', path, o),

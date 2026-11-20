@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
 import { ArrowLeft, Download } from 'lucide-react';
 import {
-  IMPORT_ACCEPT, IMPORT_COLUMNS, IMPORT_MODES, IMPORT_STATUS_LABEL, importFileProblem, importTemplateCsv, pharmacyStockApi,
+  IMPORT_ACCEPT, IMPORT_COLUMNS, IMPORT_EXPIRY_FORMS, IMPORT_MODES, IMPORT_STATUS_LABEL, importFileProblem, importTemplateCsv, pharmacyStockApi,
   type ImportMode, type ImportStatus, type InventoryImport,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
@@ -62,7 +62,7 @@ function Columns() {
       <h2 id="cols-h">1. Prepare the file</h2>
       <p>
         Use an Excel (.xlsx, .xls) or CSV file of up to 10 MB. Only the first sheet is read. The first row holds the column
-        names, written exactly as below in small letters; other columns are ignored. One row per batch.
+        names below, in capitals or small letters; other columns are ignored. One row per batch.
       </p>
       <div className="ws-actions">
         <Button variant="secondary" onClick={template}><Download size={16} aria-hidden="true" /> Download a blank template (CSV)</Button>
@@ -79,10 +79,12 @@ function Columns() {
           </tbody>
         </table>
       </div>
-      <Alert tone="warn">
-        Write the expiry date as text (for example 20271231 or 2027-12-31). If your spreadsheet turns it into a date, set
-        that column’s format to Text first, or the row is refused.
-      </Alert>
+      <h3 id="expiry-h">Expiry date</h3>
+      <p>Write it in one of these ways:</p>
+      <ul className="ws-list" aria-labelledby="expiry-h">
+        {IMPORT_EXPIRY_FORMS.map((f) => <li key={f}>{f}</li>)}
+      </ul>
+      <p className="ws-muted">A row with an expiry in any other form is shown with a problem and is not added.</p>
     </section>
   );
 }

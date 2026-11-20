@@ -14,7 +14,10 @@ import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 
-/** One change to the supplier list, kept in session memory until its answer is known (one at a time). */
+/**
+ * One change to the supplier list, kept in session memory until its answer is known (one at a time). Q15: an add is sent
+ * with its request key, so resending it is safe and a lost add is looked up by key (`GET /pharmacy-suppliers/by-key/:key`).
+ */
 type SupplierChange =
   | { kind: 'create'; fields: SupplierFields }
   | { kind: 'update'; supplierId: string; name: string; fields: Partial<SupplierFields>; expectedRevision: number }
@@ -59,7 +62,7 @@ function Suppliers({ pharmacyId }: { pharmacyId: string }) {
   /** Sends one change. Resolves with the saved supplier, or throws what to show; an unknown outcome leaves `op` stored. */
   async function apply(p: PendingOp<SupplierChange>): Promise<PharmacySupplier | null> {
     return perform(async () => {
-      const r = await send(p, (c) => (c.kind === 'create' ? suppliers.create(c.fields)
+      const r = await send(p, async (c): Promise<PharmacySupplier> => (c.kind === 'create' ? (await suppliers.create(c.fields, p.requestKey)).supplier
         : c.kind === 'update' ? suppliers.update(c.supplierId, c.fields, c.expectedRevision)
         : suppliers.archive(c.supplierId, c.expectedRevision)));
       if (r.kind === 'ok') { void refresh(); return r.value; }
@@ -71,17 +74,19 @@ function Suppliers({ pharmacyId }: { pharmacyId: string }) {
 
   /** Settles the stored change from the list as the server has it now; answers what is still unknown. */
   async function check(p: PendingOp<SupplierChange>): Promise<string | null> {
+    const c = p.body;
+    if (!c || c.kind === 'create') {
+      // Q15: an add is found by its key. A restored marker without details may also be an edit or archive: then the key
+      // finds nothing, and the list (read below for those) is the check.
+      const hit = await suppliers.createdByKey(p.requestKey);
+      void refresh();
+      if (hit) { settle(p.requestKey); setNotice(`${hit.displayName} was added. Nothing was added twice.`); return null; }
+      return c
+        ? 'Not added so far. It may still be on its way. Sending the same add again is safe: it is never added twice.'
+        : 'Nothing was added with it so far. It may still be on its way, or it was an edit: check the list below.';
+    }
     const all = await allSuppliers(api, 'all');
     void refresh();
-    const c = p.body;
-    const since = p.firstAttemptAt - 5 * 60_000;
-    if (!c || c.kind === 'create') {
-      const added = all.filter((s) => Date.parse(s.createdAt) >= since);
-      const hit = c ? added.find((s) => s.displayName.toLowerCase() === c.fields.displayName.toLowerCase()) : undefined;
-      if (hit) { settle(p.requestKey); setNotice(`${hit.displayName} was added.`); return null; }
-      if (!c && added.length) return `Added since then: ${added.map((s) => s.displayName).join(', ')}. If one of them is it, forget this one.`;
-      return 'It is not in the list. It may still be on its way, or it never arrived: this cannot be told apart from here.';
-    }
     const now = all.find((s) => s.supplierId === c.supplierId);
     if (!now) { settle(p.requestKey); setNotice(`${c.name} is no longer in your list.`); return null; }
     if (now.revision === c.expectedRevision && now.state === 'active') {
@@ -103,18 +108,26 @@ function Suppliers({ pharmacyId }: { pharmacyId: string }) {
       {op && resendError && <Alert>{resendError}</Alert>}
       {op && !busy && (
         <CheckPanel label="Unconfirmed supplier change" onCheck={() => check(op)}
-          resend={op.body && op.body.kind !== 'create' && !op.restored
-            ? { label: 'Send the same change again', busy, onClick: () => { setResendError(null); void apply(op).catch((err) => setResendError(messageOf(err))); } }
+          resend={op.body && !op.restored
+            ? { label: 'Send the same change again', busy, onClick: () => {
+              setResendError(null);
+              const kind = op.body!.kind;
+              void apply(op).then((saved) => {
+                if (saved) setNotice(kind === 'create' ? `${saved.displayName} was added.` : kind === 'update' ? `${saved.displayName} was saved.` : `${saved.displayName} is archived.`);
+              }).catch((err) => setResendError(messageOf(err)));
+            } }
             : undefined}
           forget={!op.body || op.body.kind === 'create' ? {
             label: 'Forget it', confirmLabel: 'Forget it',
-            consequence: 'If the supplier was added after all, it will be listed twice. Archive the extra one.',
+            consequence: op.body
+              ? 'Sending the same add again is the safe choice. If you forget it and the earlier add still arrives, the supplier is listed twice: archive the extra one.'
+              : 'If it was an add and it still arrives, the supplier is listed twice: archive the extra one.',
             onForget: () => settle(op.requestKey),
           } : undefined}>
           <Alert tone="warn">
             {op.restored || !op.body
               ? 'A supplier change made earlier on this device (before the page was reloaded, or before you signed out) was not confirmed. Its details are not kept here.'
-              : `${describeChange(op.body)}: the answer did not arrive${op.error ? ` (${op.error})` : ''}. It may already be saved.`}
+              : `${describeChange(op.body)}: not confirmed${op.error ? ` (${op.error})` : ''}. It may already be saved.`}
             {' '}Other supplier changes wait until this one is checked.
           </Alert>
         </CheckPanel>

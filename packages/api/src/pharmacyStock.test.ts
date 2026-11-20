@@ -1,7 +1,7 @@
 import { ApiError, createApiClient } from './client.ts';
 import {
-  findStockEntryOf, importCommittable, importFileProblem, importRetryable, importTemplateCsv, isImportClaimed, isRealYyyymmdd,
-  pharmacyStockApi, stockEntryBody, stockEntryKey, stockEntryProblems, type StockAdjustment, type StockEntryDraft,
+  IMPORT_COLUMNS, importCommittable, importFileProblem, importRetryable, importTemplateCsv, isImportClaimed, isRealYyyymmdd,
+  pharmacyStockApi, stockEntryBody, stockEntryProblems, type StockEntryDraft,
 } from './pharmacyStock.ts';
 import { cancelRefusal, orderStatusLabel, paymentStatusLabel } from './pharmacyOrders.ts';
 
@@ -43,36 +43,39 @@ describe('add stock (createInventoryItemSchema / saveItem)', () => {
     expect(isRealYyyymmdd('20270229')).toBe(false);
   });
 
-  it('sends one item that only adds units, the request key in its notes, prices only when given', async () => {
-    const { client, calls } = recorder(() => new Response(JSON.stringify({ success: true, data: [] }), { status: 201 }));
-    const body = stockEntryBody(draft({ mrp: '42.50', rackLocation: ' B2 ', reorderThreshold: '20', note: 'Bill 77' }), KEY);
+  it('sends one item that only adds units with the request key beside it (Q15), the note as typed, prices only when given', async () => {
+    const answers = [
+      new Response(JSON.stringify({ success: true, data: [{ _id: 'i1' }] }), { status: 201 }),
+      new Response(JSON.stringify({ success: true, data: [{ _id: 'i1' }], replayed: true }), { status: 200 }),
+    ];
+    const { client, calls } = recorder(() => answers.shift()!);
+    const body = stockEntryBody(draft({ mrp: '42.50', rackLocation: ' B2 ', reorderThreshold: '20', note: ' Bill 77 ' }));
     expect(body).toEqual({
       medicineId: MED, quantity: 100, batchNumber: 'pcm-24a', expiryDate: '20270630', reason: 'purchase',
-      notes: `Bill 77 · Ref ${KEY}`, mrp: 42.5, rackLocation: 'B2', reorderThreshold: 20,
+      notes: 'Bill 77', mrp: 42.5, rackLocation: 'B2', reorderThreshold: 20,
     });
-    expect(stockEntryBody(draft(), KEY).notes).toBe(`Ref ${KEY}`);
-    await pharmacyStockApi(client).addStock(body);
-    expect(calls[0]).toMatchObject({ method: 'POST', url: '/pharmacy-inventory', body: { items: [body] } });
-    expect(() => stockEntryBody(draft(), 'bad key!')).toThrow();
+    expect('notes' in stockEntryBody(draft())).toBe(false);
+    const api = pharmacyStockApi(client);
+    expect(await api.addStock(body, KEY)).toEqual({ items: [{ _id: 'i1' }], replayed: false });
+    expect(await api.addStock(body, KEY)).toEqual({ items: [{ _id: 'i1' }], replayed: true });
+    expect(calls[0]).toMatchObject({ method: 'POST', url: '/pharmacy-inventory', body: { items: [body], requestKey: KEY } });
+    expect(calls[1]!.body).toEqual(calls[0]!.body); // a resend is the same request
+    await expect(api.addStock(body, 'bad key!')).rejects.toThrow('Invalid request key');
   });
 
-  it('finds a lost entry by the key in its notes, never an import row or another entry', async () => {
-    expect(stockEntryKey(`Bill 77 · Ref ${KEY}`)).toBe(KEY);
-    expect(stockEntryKey(`Ref ${KEY}`)).toBe(KEY);
-    expect(stockEntryKey('Bill Ref 77')).toBeUndefined();
-    const t0 = Date.parse('2026-11-20T10:00:00Z');
-    const row = (o: Partial<StockAdjustment>): StockAdjustment => ({ _id: 'x', medicineId: MED, adjustmentType: 'add', quantity: 5, createdAt: '2026-11-20T10:00:01Z', ...o });
-    const pages = [
-      [row({ _id: 'a', notes: `Ref ${'z'.repeat(32)}` }), row({ _id: 'b', sourceType: 'inventory_import', notes: `Ref ${KEY}` })],
-      [row({ _id: 'c', notes: `Ref ${KEY}` })],
+  it('looks a lost entry up by its key: the items it saved, or null on 404 (nothing so far)', async () => {
+    const answers = [
+      new Response(JSON.stringify({ success: true, data: [{ _id: 'i1', availableQty: 100 }] }), { status: 200 }),
+      new Response(JSON.stringify({ error: 404, code: 'REQUEST_KEY_NOT_FOUND', message: 'Nothing was saved with this key' }), { status: 404 }),
+      new Response(JSON.stringify({ error: 500, message: 'boom' }), { status: 500 }),
     ];
-    const fetchPage = async (page: number) => ({ items: pages[page - 1] ?? [], page, limit: 100, total: 3, totalPages: 2 });
-    expect((await findStockEntryOf(fetchPage, KEY, t0))?._id).toBe('c');
-    // Not found proves nothing; the search stops at entries clearly older than the first attempt.
-    const old = async (page: number) => ({ items: [row({ createdAt: '2026-11-19T00:00:00Z' })], page, limit: 100, total: 900, totalPages: 9 });
-    let reads = 0;
-    expect(await findStockEntryOf(async (p) => { reads++; return old(p); }, KEY, t0)).toBeNull();
-    expect(reads).toBe(1);
+    const { client, calls } = recorder(() => answers.shift()!);
+    const api = pharmacyStockApi(client);
+    expect(await api.savedByKey(KEY)).toEqual([{ _id: 'i1', availableQty: 100 }]);
+    expect(await api.savedByKey(KEY)).toBeNull();
+    await expect(api.savedByKey(KEY)).rejects.toThrow('boom');
+    expect(calls.map((c) => c.url)).toEqual(Array(3).fill(`/pharmacy-inventory/by-key/${KEY}`));
+    await expect(api.savedByKey('../x')).rejects.toThrow('Invalid request key');
   });
 
   it('searches active medicines with pagination and reads the stock history', async () => {
@@ -96,11 +99,12 @@ describe('stock imports (pharmacyInventoryImports)', () => {
     expect(importFileProblem({ name: 'stock.csv', size: 0 })).toMatch(/empty/);
   });
 
-  it('offers a template with the exact lower-case headers the server reads', () => {
+  it('offers a template with the headers the server reads (any case since Q15), and expiry as a date or text', () => {
     const header = importTemplateCsv().trim().split(',');
     expect(header.slice(0, 4)).toEqual(['medicine name', 'quantity to add', 'batch number', 'expiry date']);
     expect(header).toEqual(expect.arrayContaining(['mrp', 'retail price', 'purchase price', 'rack location']));
     expect(header.every((h) => h === h.toLowerCase())).toBe(true);
+    expect(IMPORT_COLUMNS.find((c) => c.header === 'expiry date')?.format).not.toMatch(/Text/);
   });
 
   it('uploads the file as multipart `file` with the mode, commits by id, retries and lists', async () => {

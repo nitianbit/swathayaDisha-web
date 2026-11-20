@@ -43,6 +43,12 @@ function Consultation({ bookingId, identity, scopeKey }: { bookingId: string; id
   const queryClient = useQueryClient();
   const key = [...scopeKey, 'one', bookingId];
   const q = useQuery({ queryKey: key, queryFn: () => consultationAdminApi(api).get(bookingId) });
+  // Q15: the patient's name comes only with the admin list rows: read the booking's doctor and day once it is known.
+  const nameQ = useQuery({
+    queryKey: [...key, 'patient', q.data?.specialistId ?? '', q.data?.bookingDate ?? ''],
+    queryFn: () => consultationAdminApi(api).patientName(q.data!),
+    enabled: !!q.data,
+  });
   // One move at a time on this page (the central guard): a confirmation already open is refused while another runs.
   const guard = useOneAtATime('consultation');
   const now = useTicker(30_000);
@@ -71,7 +77,12 @@ function Consultation({ bookingId, identity, scopeKey }: { bookingId: string; id
                 <dt>Appointment</dt><dd>{when(q.data)}</dd>
                 <dt>Doctor</dt><dd>{q.data.doctorName || '—'}</dd>
                 <dt>Kind</dt><dd>{consultationKind(q.data)}</dd>
-                <dt>For</dt><dd>{q.data.dependentId ? 'A family member of the account holder' : 'The account holder'}</dd>
+                <dt>Patient</dt>
+                <dd>
+                  {nameQ.data ? <>{nameQ.data} <span className="ws-muted">({q.data.dependentId ? 'a family member of the account holder' : 'the account holder'})</span></>
+                    : nameQ.isPending ? <span className="ws-muted">Loading…</span>
+                    : q.data.dependentId ? 'A family member of the account holder' : 'The account holder'}
+                </dd>
                 <dt>Payment</dt><dd>{paymentLabel(q.data)}{typeof q.data.price === 'number' && q.data.paymentStatus === 'paid' ? ` · ${formatRupees(q.data.price)}` : ''}</dd>
                 {q.data.cancellationReason && <><dt>Cancellation reason</dt><dd>{q.data.cancellationReason}</dd></>}
                 {q.data.createdAt && <><dt>Booked</dt><dd>{formatDateTime(q.data.createdAt)}</dd></>}
@@ -88,7 +99,7 @@ function Consultation({ bookingId, identity, scopeKey }: { bookingId: string; id
               {showMove && (
                 <NoShowMove slot={slot} who="The patient" missed={when(q.data)} state={move === 'used' ? 'used' : 'offer'} status={q.data.status}
                   readAt={q.dataUpdatedAt} reading={q.isFetching} disabled={guard.busy || q.isFetching} version={q.data.updatedAt}
-                  consequence={<>The patient is told the new time, and the doctor sees it in their appointments. The doctor earns for it only once it is completed.</>}
+                  consequence={<>The patient and the doctor are told the new time. The doctor earns for it only once it is completed.</>}
                   picker={(choose) => <AdminSlotPicker b={q.data} now={now} scopeKey={scopeKey} onChoose={choose} />}
                   send={(t: NoShowTarget, requestKey) => guard.perform(() =>
                     doctorAdminApi(api).rescheduleNoShow(bookingId, t.slotId, requestKey, typeof t.version === 'string' ? t.version : undefined))}
@@ -123,7 +134,8 @@ function NoShowHistory({ b }: { b: AdminConsultation }) {
 /**
  * The booking's own doctor's open, not-yet-started slots on a chosen day, offered for its consultation type
  * (`GET /slots/available`), for the one move of a no-show. In-person bookings move to clinic slots, others to slots without
- * a clinic branch; the server decides finally (SLOT_NOT_AVAILABLE, SLOT_STARTED, SAME_SLOT).
+ * a clinic branch; the server decides finally (SLOT_NOT_AVAILABLE, SLOT_STARTED, SAME_SLOT, and Q15 SLOT_NOT_THIS_DOCTOR
+ * when the time belongs to another doctor).
  */
 function AdminSlotPicker({ b, now, scopeKey, onChoose }: { b: AdminConsultation; now: Date; scopeKey: readonly string[]; onChoose: (t: NoShowTarget | null) => void }) {
   const { api } = useSession();

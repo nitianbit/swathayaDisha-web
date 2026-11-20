@@ -23,7 +23,7 @@ export const noShowMovedOnce = (b: NoShowHistory) => (b.noShowReschedules ?? 0) 
 
 /**
  * The words for the server's refusals of a no-show move (the server's own message is the fallback). `SAME_SLOT`,
- * `SLOT_STARTED` and `SLOT_NOT_AVAILABLE` mean: choose another time.
+ * `SLOT_STARTED`, `SLOT_NOT_AVAILABLE` and `SLOT_NOT_THIS_DOCTOR` mean: choose another time.
  */
 export const NO_SHOW_MOVE_REFUSAL: Record<string, string> = {
   NO_SHOW_RESCHEDULE_USED: 'This booking was already moved once after a no-show. A second no-show is final, so it cannot be moved again.',
@@ -31,6 +31,8 @@ export const NO_SHOW_MOVE_REFUSAL: Record<string, string> = {
   SAME_SLOT: 'That is the time that was missed. Pick a later time.',
   SLOT_STARTED: 'That time has already started. Pick a later time.',
   SLOT_NOT_AVAILABLE: 'That time is no longer free. Pick another time.',
+  // Q15 (`rescheduleWithHolds`): every move stays with the booking's doctor.
+  SLOT_NOT_THIS_DOCTOR: 'That time belongs to another doctor. Pick one of this doctor’s times.',
   IDEMPOTENCY_KEY_REUSED: 'This request was already used for a different time. Reload the page and start again.',
   // Q14 review (`rescheduleWithHolds`): a desk appointment is moved by its clinic only.
   CLINIC_APPOINTMENT: 'The clinic can move this appointment: it was booked at its front desk.',
@@ -38,4 +40,4 @@ export const NO_SHOW_MOVE_REFUSAL: Record<string, string> = {
 
 /** A move refused because of the chosen time (the person picks another; the booking itself is unchanged). */
 export const isSlotRefusal = (err: unknown) =>
-  err instanceof ApiError && !!err.code && ['SAME_SLOT', 'SLOT_STARTED', 'SLOT_NOT_AVAILABLE'].includes(err.code);
+  err instanceof ApiError && !!err.code && ['SAME_SLOT', 'SLOT_STARTED', 'SLOT_NOT_AVAILABLE', 'SLOT_NOT_THIS_DOCTOR'].includes(err.code);

@@ -1,25 +1,21 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
   EMPTY_PHARMACY_FORM, isPharmacyEmailTaken, isPharmacyPhoneTaken, PHARMACY_FIELDS, pharmacyAdminApi, pharmacyBody,
   type NewPharmacy, type PharmacyAccount, type PharmacyForm,
 } from '@jansetu/api';
-import { Alert, Button } from '@jansetu/ui';
-import { ConfirmAction } from '../../components/ConfirmAction.tsx';
+import { Alert, Button, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
-import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
+import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { useAdminScope } from './adminScope.ts';
 import { DetailFields, SignInFields } from './pharmacyFields.tsx';
 
-/**
- * An unconfirmed pharmacy creation. The server takes no request key, so `requestKey` here is only this device's name for
- * the operation (never sent): it owns the stored state, and its body-less reload marker says one was unconfirmed.
- */
+/** An unconfirmed pharmacy creation: the request key it is sent with (Q15) and what was typed. */
 type Pending = PendingOp<{ body: NewPharmacy; draft: PharmacyForm }>;
 const slotOf = (identity: string) => `pharmacy-create:${identity}`;
 
@@ -27,18 +23,18 @@ export const PHONE_TAKEN = 'Another pharmacy already signs in with this mobile n
 export const EMAIL_TAKEN = 'Another pharmacy already uses this email. Use a different email.';
 
 /**
- * Admin: add a pharmacy (owner decision, 19 Nov 2026: only admins create pharmacies). `POST /pharmacies` takes no request
- * key, so exactly-once is built on what the backend does guarantee: the mobile number is unique among pharmacies (a unique
- * index), so no request, resent or late, can ever make a second pharmacy with the same number.
+ * Admin: add a pharmacy (owner decision, 19 Nov 2026: only admins create pharmacies). Q15: `POST /pharmacies` is exactly
+ * once per (admin, request key), the same owned-PendingOp / by-key pattern as adding a lab or clinic:
  *
- * - The submission is stored (session memory, with a body-less reload marker) BEFORE it is sent, and sent under the page's
- *   one-at-a-time guard, so a double click or a second submit sends nothing more.
- * - A definite refusal of the only attempt unlocks the form (PHONE/EMAIL_ALREADY_EXISTS on their fields).
- * - A lost answer locks the form. The admin first checks by mobile number (the list read newest first); found with this
- *   name = it was created (open it); found under another name = the number is taken (the form unlocks with that said).
- *   Only after a check that found nothing is "Send again" offered (the same request); a resend refused as
- *   PHONE_ALREADY_EXISTS is checked the same way. "Start again" forgets it after a confirmation: safe for the same reason.
- * - After a reload nothing about it is kept on this device (no number, no name): the admin is told to look in the list.
+ * - A key is made per submitted form and stored with the exact request (session memory, plus a body-less reload marker)
+ *   BEFORE it is sent, under the page's one-at-a-time guard, so a double click or a second submit sends nothing more.
+ * - A definite refusal of the only attempt unlocks the form (PHONE/EMAIL_ALREADY_EXISTS on their fields; the pharmacy
+ *   holding the number is named, found with the exact `phone` filter).
+ * - A lost answer locks the form: "Send again" resends the same key and details (the server answers with the pharmacy it
+ *   already made, `replayed`), or "Give up this create" abandons the key on the server (then it can never create one;
+ *   if it already had, that pharmacy is opened).
+ * - After a reload only the key is known: it is looked up (`GET /pharmacies/by-key/:key`), never guessed from the list.
+ * - An answer settles the stored creation only while this page is on screen and the attempt still owns it.
  */
 export function NewPharmacyScreen() {
   const scope = useAdminScope('pharmacies');
@@ -58,8 +54,8 @@ function NewPharmacy({ identity, scopeKey }: { identity: string; scopeKey: reado
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [found, setFound] = useState<PharmacyAccount | null>(null);
-  /** The attempt count a check by mobile number was made after, and found nothing: only then may it be sent again. */
-  const [checkedAfter, setCheckedAfter] = useState<number | null>(null);
+  /** The pharmacy that already signs in with the number typed (after a PHONE_ALREADY_EXISTS refusal). */
+  const [holder, setHolder] = useState<PharmacyAccount | null>(null);
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const locked = !!pending;
@@ -69,81 +65,89 @@ function NewPharmacy({ identity, scopeKey }: { identity: string; scopeKey: reado
     if (p) memory.set(slot, p); else memory.delete(slot);
     if (live.current) setPendingState(p);
   };
-  /** The stored creation is still exactly `p` (same operation, same attempt) and this page is on screen. */
+  /** The stored creation is still exactly `p` (same key, same attempt) and this page is on screen. */
   const owns = (p: Pending) => live.current && stillCurrent(memory.get<Pending>(slot), p);
   /** Ends the stored creation `requestKey`, and only it. */
   const settle = (requestKey: string) => {
     resolveStored(memory, slot, requestKey);
-    if (live.current) { setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined)); setCheckedAfter(null); }
+    if (live.current) setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
   };
-  const refreshList = () => queryClient.invalidateQueries({ queryKey: scopeKey });
+  const open = async (id: string) => {
+    await queryClient.invalidateQueries({ queryKey: scopeKey });
+    if (live.current) void navigate(`/admin/pharmacies/${id}`); // only while this page is still the one on screen
+  };
 
-  /**
-   * What the mobile number tells about `p`: its pharmacy (created), another pharmacy (the number is taken: nothing of
-   * ours can be created), or nothing yet. Acts only while `p` still owns the stored state.
-   */
-  async function lookUp(p: Pending): Promise<'created' | 'taken' | 'absent' | 'stale'> {
-    const hit = await admin.findByPhone(p.body!.body.phone, p.firstAttemptAt);
-    if (!owns(p)) return 'stale';
-    if (hit && hit.name.trim() === p.body!.body.name.trim()) {
-      settle(p.requestKey);
-      setFound(hit);
-      await refreshList();
-      return 'created';
+  // After a reload: what did the stored key make? (A body-less marker: nothing can be resent.)
+  const restoredKey = pending?.restored ? pending.requestKey : null;
+  const lookup = useQuery({
+    queryKey: [...scopeKey, 'by-key', restoredKey],
+    queryFn: () => admin.createdByKey(restoredKey!),
+    enabled: !!restoredKey,
+  });
+  useEffect(() => {
+    // Only for the restored creation this page shows (a cached answer for another key or a newer state is ignored).
+    if (restoredKey && lookup.data && pending?.requestKey === restoredKey && owns(pending)) {
+      setFound(lookup.data);
+      settle(restoredKey);
     }
-    if (hit) {
-      settle(p.requestKey);
-      setErrors({ phone: `${hit.name} already signs in with this mobile number. Use a different number.` });
-      return 'taken';
-    }
-    return 'absent';
+  }, [restoredKey, lookup.data, pending]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Names the pharmacy holding `phone` (exact lookup), for the refusal on the field. Best effort. */
+  async function nameHolder(phone: string) {
+    try {
+      const h = await admin.findByPhone(phone);
+      if (!live.current) return;
+      setHolder(h);
+      if (h) setErrors({ phone: `${h.name} already signs in with this mobile number. Use a different number.` });
+    } catch { /* the general refusal stays */ }
   }
 
-  /** Sends exactly `p` (same content). Only success, or a definite refusal of its first and only attempt, ends it. */
+  /** Sends exactly `p` (same key, same content). Only success, or a definite refusal of its first attempt, ends it. */
   const send = (p: Pending) => guard.perform(async () => {
     const attempt = beginAttempt(p); // stored before sending: leaving and coming back sees it as possibly running
     store(attempt);
-    setError(null); setNotice(null); setCheckedAfter(null);
+    setError(null); setNotice(null); setHolder(null);
     try {
-      const created = await admin.create(attempt.body!.body);
+      const { pharmacy } = await admin.create(attempt.body.body, attempt.requestKey);
+      // A newer attempt (or a give-up) owns the outcome now; this older answer changes nothing.
       if (!stillCurrent(memory.get<Pending>(slot), attempt)) return;
       settle(attempt.requestKey);
-      await refreshList();
-      if (live.current) void navigate(`/admin/pharmacies/${created._id}`); // only while this page is still on screen
+      await open(pharmacy._id);
     } catch (err) {
       if (!stillCurrent(memory.get<Pending>(slot), attempt)) return;
-      // A resend refused because the number now exists: an earlier attempt may have made it. The number decides.
-      if (isPharmacyPhoneTaken(err) && (attempt.attempts > 1 || attempt.uncertain)) {
-        const u: Pending = { ...attempt, uncertain: true, error: messageOf(err) };
-        store(u);
-        try {
-          // Not among the pharmacies made since the first attempt: an older one holds the number, so ours was never made.
-          if (await lookUp(u) === 'absent' && owns(u)) { settle(u.requestKey); setErrors({ phone: PHONE_TAKEN }); }
-        } catch (e) {
-          if (owns(u)) setError(`Could not check: ${messageOf(e)}`);
-        }
+      // The key was given up (e.g. in another tab): nothing was or can ever be created with it.
+      if (wasAbandoned(err)) {
+        settle(attempt.requestKey);
+        if (live.current) setError('This request was given up earlier, so nothing was created with it. Check the form and add the pharmacy again.');
         return;
       }
       const next = afterFailure(attempt, err, messageOf(err));
       store(next ?? undefined);
       if (next || !live.current) return;
       // Refused, nothing created: the form unlocks with what was typed.
-      if (isPharmacyPhoneTaken(err)) setErrors({ phone: PHONE_TAKEN });
+      if (isPharmacyPhoneTaken(err)) { setErrors({ phone: PHONE_TAKEN }); void nameHolder(attempt.body.body.phone); }
       else if (isPharmacyEmailTaken(err)) setErrors({ email: EMAIL_TAKEN });
       else setError(messageOf(err));
     }
   });
 
-  const check = (p: Pending) => guard.perform(async () => {
+  /** Q15: makes sure the key can never create a pharmacy ('abandoned'), or learns that it did ('used'). */
+  const giveUp = (p: Pending) => guard.perform(async () => {
     setError(null); setNotice(null);
     try {
-      const r = await lookUp(p);
-      if (r === 'absent' && owns(p)) {
-        setCheckedAfter(p.attempts);
-        setNotice('No pharmacy has this mobile number yet. You can send the same request again: it can never create a second pharmacy with this number.');
+      const r = await admin.abandonCreate(p.requestKey);
+      // Left page, or a newer resend of the same key started meanwhile: this answer settles and opens nothing.
+      if (!owns(p)) return;
+      settle(p.requestKey);
+      if (r.state === 'used') {
+        if (r.pharmacy) { await open(r.pharmacy._id); return; }
+        setNotice('It had already been created. Find it in the pharmacy list.');
+        return;
       }
+      if (p.restored) setForm(EMPTY_PHARMACY_FORM);
+      setNotice('Given up: nothing was created, and that request can never create a pharmacy. You can change the form and add it again.');
     } catch (err) {
-      if (owns(p)) setError(`Could not check: ${messageOf(err)}`);
+      if (owns(p)) setError(messageOf(err));
     }
   });
 
@@ -151,7 +155,7 @@ function NewPharmacy({ identity, scopeKey }: { identity: string; scopeKey: reado
     e.preventDefault();
     if (pending || guard.running()) return; // the unconfirmed one first; one submission at a time
     const { body, errors: errs } = pharmacyBody(form, PHARMACY_FIELDS);
-    setErrors(errs); setError(null); setNotice(null); setFound(null);
+    setErrors(errs); setError(null); setNotice(null); setFound(null); setHolder(null);
     if (Object.keys(errs).length) return;
     void send(startOp(newRequestKey(), { body: body as NewPharmacy, draft: form })).catch((err: unknown) => setError(messageOf(err)));
   }
@@ -176,43 +180,43 @@ function NewPharmacy({ identity, scopeKey }: { identity: string; scopeKey: reado
       {p?.restored ? (
         <section className="ws-section" aria-labelledby="unconfirmed-h">
           <h2 id="unconfirmed-h">An unconfirmed pharmacy</h2>
-          <Alert tone="warn">
-            Before the page reloaded, a pharmacy was being added and its answer never arrived. Its details are not kept on this device,
-            so it cannot be checked or sent again from here. Look for it in the pharmacy list. Starting again is safe: a second pharmacy
-            with the same mobile number is always refused.
-          </Alert>
-          <div className="ws-actions">
-            <Link className="j-btn j-btn--secondary" to="/admin/pharmacies">Open the pharmacy list</Link>
-            <Button variant="secondary" onClick={() => settle(p.requestKey)}>Start again</Button>
-          </div>
+          {lookup.isPending ? <Loading label="Checking whether it was created…" />
+            : lookup.isError ? <ErrorState message={messageOf(lookup.error)} onRetry={() => void lookup.refetch()} />
+            : (
+              <>
+                <Alert tone="warn">
+                  Before the page reloaded, a pharmacy was being added and its answer never arrived. Nothing has been created with it so
+                  far, but the request could still arrive. Give it up so it never can, then add the pharmacy again. Its details are not
+                  kept on this device.
+                </Alert>
+                {error && <Alert>{error}</Alert>}
+                <div className="ws-actions">
+                  <Button busy={guard.busy} onClick={() => void giveUp(p).catch((err: unknown) => setError(messageOf(err)))}>Give up this create</Button>
+                  <Button variant="secondary" disabled={guard.busy || lookup.isFetching} onClick={() => void lookup.refetch()}>Check again</Button>
+                </div>
+              </>
+            )}
         </section>
       ) : !found && (
         <form className="rx-form ws-section" noValidate onSubmit={submit}>
           {p && !firstOnItsWay && (
             <div className="confirm" role="group" aria-label="Unconfirmed pharmacy">
               <Alert tone="warn">
-                {`We could not confirm whether ${p.body!.body.name} was created${p.error ? ` (${p.error})` : ''}. `}
-                Check by its mobile number first: if it was created, you can open it. If not, you can send the same request again; a
-                second pharmacy with the same mobile number can never be created. The form stays locked until this is settled.
+                {`We could not confirm whether ${p.body.body.name} was created${p.error ? ` (${p.error})` : ''}. `}
+                Send again to find out: it sends the same request, so it can never create a second pharmacy. Or give it up: then it can
+                never be created, and you can change the form. The form stays locked until one of these is done.
               </Alert>
               {error && <Alert>{error}</Alert>}
               <div className="confirm-actions">
-                <Button busy={guard.busy && checkedAfter === null} disabled={guard.busy} onClick={() => void check(p).catch(() => undefined)}>
-                  Check by mobile number
+                <Button busy={guard.busy} onClick={() => void send(p).catch((err: unknown) => setError(messageOf(err)))}>Send again</Button>
+                <Button variant="secondary" disabled={guard.busy} onClick={() => void giveUp(p).catch((err: unknown) => setError(messageOf(err)))}>
+                  Give up this create
                 </Button>
-                <Button variant="secondary" busy={guard.busy && checkedAfter !== null} disabled={guard.busy || checkedAfter !== p.attempts}
-                  onClick={() => void send(p).catch(() => undefined)}>
-                  Send again
-                </Button>
-                {checkedAfter === p.attempts && (
-                  <ConfirmAction label="Start again" confirmLabel="Forget it and edit the form" disabled={guard.busy}
-                    consequence={`If the earlier request still arrives, ${p.body!.body.name} is created and appears in the list. A new pharmacy with mobile number ${p.body!.body.phone} is then refused, so two can never be made.`}
-                    onConfirm={async () => { if (owns(p)) settle(p.requestKey); }} />
-                )}
               </div>
             </div>
           )}
           <SignInFields form={form} errors={errors} set={set} disabled={locked} />
+          {holder && <p><Link to={`/admin/pharmacies/${holder._id}`}>Open {holder.name}</Link></p>}
           <DetailFields form={form} errors={errors} set={set} disabled={locked} />
           {!p && error && <Alert>{error}</Alert>}
           <div className="ws-actions">

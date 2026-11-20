@@ -8,6 +8,9 @@ import type { InventoryItem, MedicineRef } from './inventory.ts';
  * InventoryService.saveItem → `adjustBatchStock`): a positive `quantity` needs `batchNumber` and a real, unexpired
  * `expiryDate` (YYYYMMDD); the batch is matched on its upper-cased number and expiry, prices are rupees. Every saved
  * change writes an adjustment (`GET /pharmacy-inventory/adjustments`, newest first) carrying the request's `notes`.
+ * Q15: the save takes a `requestKey` (exactly once per pharmacy and key; the same key and items again answer 200
+ * `replayed: true` without adding stock again), and `GET /pharmacy-inventory/by-key/:key` returns what a key saved (404
+ * REQUEST_KEY_NOT_FOUND = nothing so far). Stock rows have no supplier field.
  *
  * Imports mirror src1/modules/pharmacyInventoryImports: `POST /preview` (multipart `file` + `importMode`), `POST /commit`
  * (`importId`), `POST /:id/retry`, `GET /`, `GET /:id`, `GET /:id/failed-rows/download`.
@@ -32,10 +35,10 @@ export type AddStockReason = (typeof ADD_STOCK_REASONS)[number]['value'];
 
 /** createInventoryItemBodySchema limits. */
 export const STOCK_LIMITS = { batchNumber: 100, rackLocation: 100, notes: 500 } as const;
-/** The part of `notes` this app adds so a lost answer can be found again in the adjustment history. */
-export const STOCK_ENTRY_REF = 'Ref ';
-/** Room left for the person's own note next to the reference (`notes` max 500). */
-export const MAX_STOCK_NOTE = STOCK_LIMITS.notes - 80;
+/** The note's limit (`notes` max 500). */
+export const MAX_STOCK_NOTE = STOCK_LIMITS.notes;
+/** Q15 `PHARMACY_REQUEST_KEY`: the keys inventory saves and supplier creates take. */
+export const PHARMACY_REQUEST_KEY_PATTERN = /^[A-Za-z0-9_-]{8,100}$/;
 
 export interface StockEntryDraft {
   medicineId: string;
@@ -59,7 +62,7 @@ export interface StockEntry {
   batchNumber: string;
   expiryDate: string;
   reason: AddStockReason;
-  notes: string;
+  notes?: string;
   mrp?: number;
   retailPrice?: number;
   purchasePrice?: number;
@@ -121,13 +124,8 @@ export function stockEntryProblems(d: StockEntryDraft, today = serverToday()): P
   return e;
 }
 
-/**
- * The request for a checked draft. The endpoint takes no request key, so the key travels in `notes` ("Ref <key>"); the
- * adjustment it writes then names it, which is how a lost answer is recognised (`stockEntryKey`). Sending it twice
- * would add the units twice, so it is never resent.
- */
-export function stockEntryBody(d: StockEntryDraft, requestKey: string): StockEntry {
-  if (!/^[A-Za-z0-9_-]{8,64}$/.test(requestKey)) throw new Error('Invalid request key');
+/** The request for a checked draft (one item that only adds units; prices only when given). */
+export function stockEntryBody(d: StockEntryDraft): StockEntry {
   const money = (v: string) => (v.trim() ? Number(v.trim()) : undefined);
   const note = d.note.trim();
   const body: StockEntry = {
@@ -136,8 +134,8 @@ export function stockEntryBody(d: StockEntryDraft, requestKey: string): StockEnt
     batchNumber: d.batchNumber.trim(),
     expiryDate: d.expiry.replace(/-/g, ''),
     reason: d.reason,
-    notes: `${note ? `${note} · ` : ''}${STOCK_ENTRY_REF}${requestKey}`,
   };
+  if (note) body.notes = note;
   const mrp = money(d.mrp); if (mrp !== undefined) body.mrp = mrp;
   const retail = money(d.retailPrice); if (retail !== undefined) body.retailPrice = retail;
   const purchase = money(d.purchasePrice); if (purchase !== undefined) body.purchasePrice = purchase;
@@ -146,29 +144,10 @@ export function stockEntryBody(d: StockEntryDraft, requestKey: string): StockEnt
   return body;
 }
 
-/** The request key this app put in an adjustment's notes, if any. */
-export function stockEntryKey(notes: string | undefined): string | undefined {
-  const m = /(?:^| · )Ref ([A-Za-z0-9_-]{8,64})$/.exec(notes ?? '');
-  return m?.[1];
-}
-
-/**
- * The adjustment an entry sent with `requestKey` wrote, looked up in the newest-first history; null = not found (which
- * proves nothing: it may still be on its way). Stops at entries clearly older than the first attempt, or after `maxPages`.
- */
-export async function findStockEntryOf(
-  fetchPage: (page: number, limit: number) => Promise<Page<StockAdjustment>>, requestKey: string, firstAttemptAt: number, maxPages = 10,
-): Promise<StockAdjustment | null> {
-  const before = firstAttemptAt - 60 * 60_000;
-  for (let page = 1; page <= maxPages; page++) {
-    const p = await fetchPage(page, 100);
-    const hit = p.items.find((a) => a.sourceType !== 'inventory_import' && stockEntryKey(a.notes) === requestKey);
-    if (hit) return hit;
-    const oldest = p.items[p.items.length - 1];
-    if (page >= p.totalPages || p.items.length === 0 || (oldest?.createdAt && Date.parse(oldest.createdAt) < before)) break;
-  }
-  return null;
-}
+const checkKey = (key: string) => {
+  if (!PHARMACY_REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
+  return key;
+};
 
 // ── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -191,7 +170,7 @@ export interface ImportRow {
 
 export interface ImportCommitError { rowIndex: number; medicineName?: string; error: string; code?: string; retryable?: boolean }
 
-/** IInventoryImport (the server's file path is never shown). */
+/** IInventoryImport (Q15: the answers no longer carry the server's file path). */
 export interface InventoryImport {
   _id: string;
   fileName: string;
@@ -229,14 +208,14 @@ export const IMPORT_MODES: readonly { value: ImportMode; label: string; hint: st
 ];
 
 /**
- * The columns `validateRow` reads. Headers are matched exactly, in lower case, on the first sheet; any other column is
- * ignored. Expiry must be text (20271231 or 2027-12-31): a spreadsheet date cell reaches the server as a number.
+ * The columns `validateRow` reads, on the first sheet; any other column is ignored. Q15: headers match in any case and
+ * without surrounding spaces, and the expiry may be any of `IMPORT_EXPIRY_FORMS`.
  */
 export const IMPORT_COLUMNS: readonly { header: string; need: string; format: string }[] = [
   { header: 'medicine name', need: 'Required', format: 'As in the medicine list. A name not in the list adds a new medicine.' },
   { header: 'quantity to add', need: 'Required to add units', format: 'Whole number, 0 or more. 0 only updates prices and rack.' },
   { header: 'batch number', need: 'When adding units', format: 'As printed on the pack.' },
-  { header: 'expiry date', need: 'When adding units', format: 'Text: 20271231 or 2027-12-31. Not in the past.' },
+  { header: 'expiry date', need: 'When adding units', format: 'A date (see below). Not in the past.' },
   { header: 'mrp', need: 'Optional', format: 'Rupees, e.g. 42.50.' },
   { header: 'retail price', need: 'Optional', format: 'Your selling price in rupees.' },
   { header: 'purchase price', need: 'Optional', format: 'Rupees.' },
@@ -248,6 +227,18 @@ export const IMPORT_COLUMNS: readonly { header: string; need: string; format: st
   { header: 'gst percent', need: 'Optional', format: '0 to 100. Used only for a new medicine.' },
   { header: 'prescription required', need: 'Optional', format: '“yes” for a new prescription medicine.' },
   { header: 'active status', need: 'Optional', format: '“no” to keep a new medicine inactive.' },
+];
+
+/**
+ * The expiry date forms the import reads (Q15 review, `expiryOf` / `EXPIRY_FORMS`), as shown to staff. Anything else is
+ * refused on its row with the server's words ("expiry date must be a valid date: …").
+ */
+export const IMPORT_EXPIRY_FORMS: readonly string[] = [
+  'YYYYMMDD, for example 20271231 (as text or a number)',
+  'YYYY-MM-DD, for example 2027-12-31',
+  'DD-MM-YYYY or DD/MM/YYYY, day first, for example 31-12-2027 or 31/12/2027',
+  'MM/YYYY or MM-YYYY, as printed on packs, for example 12/2027: the last day of that month',
+  'a date cell in Excel',
 ];
 
 /** The upload route's multer limits. */
@@ -291,10 +282,25 @@ export function pharmacyStockApi(c: ApiClient) {
       if (!OBJECT_ID.test(id)) throw new Error('Invalid medicine id');
       return c.get<Medicine>(`/pharmacy-medicines/${id}`);
     },
-    /** One batch; the answer is the saved inventory item(s). */
-    addStock: (entry: StockEntry) => c.post<InventoryItem[]>('/pharmacy-inventory', { body: { items: [entry] } }),
+    /**
+     * One batch, exactly once per `requestKey` (Q15): the same key and entry again answer 200 with the items as they are
+     * now and `replayed: true` (no units added again); another entry under the key is 409 REQUEST_KEY_REUSED.
+     */
+    addStock: async (entry: StockEntry, requestKey: string): Promise<{ items: InventoryItem[]; replayed: boolean }> => {
+      const r = await c.postKeyed<InventoryItem[]>('/pharmacy-inventory', { body: { items: [entry], requestKey: checkKey(requestKey) } });
+      return { items: Array.isArray(r.data) ? r.data : [], replayed: r.replayed };
+    },
+    /** Q15 `GET /pharmacy-inventory/by-key/:key`: the items a key saved (as they are now); null on 404 (nothing so far). */
+    savedByKey: async (requestKey: string): Promise<InventoryItem[] | null> => {
+      try {
+        return await c.get<InventoryItem[]>(`/pharmacy-inventory/by-key/${checkKey(requestKey)}`);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
     adjustments: (page = 1, limit = 100) => c.page<StockAdjustment>('/pharmacy-inventory/adjustments', { query: { page, limit } }),
-    /** Reads the file and checks every row; nothing changes in stock until `commitImport`. */
+    /** Reads the file and checks every row; nothing changes in stock until `commitImport`. Q15: another mode is a 400. */
     previewImport: (file: Blob, fileName: string, importMode: ImportMode) => {
       const form = new FormData();
       form.append('importMode', importMode);

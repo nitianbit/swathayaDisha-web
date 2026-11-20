@@ -1,7 +1,8 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 
 // WQ10a: add stock, import a stock file, suppliers, and return to a supplier — against a mock of the backend's rules
-// (pharmacyInventory, pharmacyInventoryImports, pharmacySuppliers).
+// (pharmacyInventory, pharmacyInventoryImports, pharmacySuppliers). WQ10c (Q15): stock saves and supplier adds are keyed
+// (`requestKey`; a repeat answers 200 `replayed: true`; `by-key` lookups), and a keyed write can meet 503 INDEXES_OUTDATED.
 const ME = 'b'.repeat(24);
 const ITEM = '2'.repeat(24);
 const MED = '3'.repeat(24);
@@ -25,18 +26,28 @@ interface Backend {
   supplierCalls: { method: string; path: string; body: Json | null }[];
   /** Create the supplier, then drop the answer. */ loseNextSupplierAnswer: boolean;
   returns: Json[];
+  /** Q15 keys: what each stock save and supplier add made, bound to its content. */
+  stockKeys: Record<string, { hash: string; ids: string[] }>;
+  supplierKeys: Record<string, { hash: string; id: string }>;
+  /** The next keyed write is refused 503 INDEXES_OUTDATED (the database's indexes are not synced yet). */
+  indexesOutdated: boolean;
 }
 
+const INDEXES_OUTDATED = 'The database needs an update (sync-indexes) before this can be used';
+
+/** Q15 review: the server's row error for an expiry in no accepted form. */
+const EXPIRY_ERROR = 'expiry date must be a valid date: YYYYMMDD, YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY, or MM/YYYY / MM-YYYY (the last day of that month)';
 const PREVIEW_ROWS = [
   { rowIndex: 2, medicineName: 'Paracetamol', status: 'valid', data: { name: 'Paracetamol', quantityToAdd: 50, batchNumber: 'PCM-77', expiryDate: '20280131', mrp: 25, retailPrice: 22, medicineId: MED, medicineMatchStatus: 'matched', matchedMedicineName: 'Paracetamol' } },
   { rowIndex: 3, medicineName: 'Zincovit', status: 'valid', data: { name: 'Zincovit', quantityToAdd: 20, batchNumber: 'ZV-1', expiryDate: '20271231', mrp: 110, retailPrice: 105, medicineMatchStatus: 'not_found' } },
-  { rowIndex: 4, medicineName: 'Cetirizine', status: 'error', errors: ['expiry date must be a valid YYYYMMDD date'] },
+  { rowIndex: 4, medicineName: 'Cetirizine', status: 'error', errors: [EXPIRY_ERROR] },
 ];
 
 async function mockBackend(page: Page, init: { suppliers?: Supplier[] } = {}): Promise<Backend> {
   const state: Backend = {
     stockPosts: [], adjustments: [], loseNextStockAnswer: false, refuseNextStock: false, previews: [], commits: 0, imports: [],
     loseNextCommitAnswer: false, suppliers: init.suppliers ?? [], supplierCalls: [], loseNextSupplierAnswer: false, returns: [],
+    stockKeys: {}, supplierKeys: {}, indexesOutdated: false,
   };
   const batches: Json[] = [{ _id: BATCH, batchNumber: 'PCM-A', expiryDate: '20990101', availableQty: 10, reservedQty: 0, status: 'active' }];
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -69,15 +80,29 @@ async function mockBackend(page: Page, init: { suppliers?: Supplier[] } = {}): P
     }
     const med = /^\/pharmacy-medicines\/(\w{24})$/.exec(path);
     if (med) return json(route, 200, { success: true, data: medicines.find((m) => m._id === med[1]) });
+    const stockByKey = /^\/pharmacy-inventory\/by-key\/([A-Za-z0-9_-]{8,100})$/.exec(path);
+    if (stockByKey && method === 'GET') {
+      const k = state.stockKeys[stockByKey[1]!];
+      return k ? json(route, 200, { success: true, data: [{ _id: ITEM, medicineId: medicines[0], availableQty: 110, reservedQty: 0 }] })
+        : refuse(route, 404, 'REQUEST_KEY_NOT_FOUND', 'Nothing was saved with this key');
+    }
     if (path === '/pharmacy-inventory' && method === 'POST') {
       state.stockPosts.push(body!);
+      const key = body!.requestKey as string | undefined;
+      const hash = JSON.stringify(body!.items);
+      if (key && state.stockKeys[key]) {
+        if (state.stockKeys[key]!.hash !== hash) return refuse(route, 409, 'REQUEST_KEY_REUSED', 'This request key was already used for different inventory items');
+        return json(route, 200, { success: true, message: 'Inventory items saved', data: [{ _id: ITEM, medicineId: medicines[0], availableQty: 110 }], replayed: true });
+      }
+      if (key && state.indexesOutdated) { state.indexesOutdated = false; return refuse(route, 503, 'INDEXES_OUTDATED', INDEXES_OUTDATED); }
       if (state.refuseNextStock) { state.refuseNextStock = false; return refuse(route, 404, 'MEDICINE_NOT_FOUND', 'Medicine not found'); }
       const it = (body!.items as Json[])[0]!;
+      if (key) state.stockKeys[key] = { hash, ids: [ITEM] };
       state.adjustments.unshift({ _id: String(state.adjustments.length + 1).padStart(24, '7'), medicineId: { _id: it.medicineId, name: 'Paracetamol' },
         adjustmentType: 'add', quantity: it.quantity, batchNumber: String(it.batchNumber).toUpperCase(), expiryDate: it.expiryDate,
         sourceType: 'manual', reason: it.reason, notes: it.notes, createdAt: new Date().toISOString() });
       if (state.loseNextStockAnswer) { state.loseNextStockAnswer = false; return route.abort('connectionreset'); }
-      return json(route, 201, { success: true, data: [{ _id: ITEM }] });
+      return json(route, 201, { success: true, data: [{ _id: ITEM, medicineId: medicines[0], availableQty: 110 }] });
     }
     if (path === '/pharmacy-inventory/adjustments') return pageOf(route, state.adjustments, pg, lim);
 
@@ -120,11 +145,25 @@ async function mockBackend(page: Page, init: { suppliers?: Supplier[] } = {}): P
         const st = url.searchParams.get('state') ?? 'active';
         return pageOf(route, state.suppliers.filter((s) => st === 'all' || s.state === st), pg, lim);
       }
+      const supByKey = /^\/pharmacy-suppliers\/by-key\/([A-Za-z0-9_-]{8,100})$/.exec(path);
+      if (supByKey && method === 'GET') {
+        const k = state.supplierKeys[supByKey[1]!];
+        const made = k && state.suppliers.find((x) => x.supplierId === k.id);
+        return made ? json(route, 200, { success: true, data: made }) : refuse(route, 404, 'SUPPLIER_NOT_FOUND', 'No supplier was created with this key');
+      }
       if (path === '/pharmacy-suppliers' && method === 'POST') {
+        const { requestKey: key, ...fields } = body! as Json & { requestKey?: string };
+        const hash = JSON.stringify(fields);
+        if (key && state.supplierKeys[key]) {
+          if (state.supplierKeys[key]!.hash !== hash) return refuse(route, 409, 'REQUEST_KEY_REUSED', 'This request key was already used for a different supplier');
+          return json(route, 200, { success: true, data: state.suppliers.find((x) => x.supplierId === state.supplierKeys[key]!.id), replayed: true });
+        }
+        if (key && state.indexesOutdated) { state.indexesOutdated = false; return refuse(route, 503, 'INDEXES_OUTDATED', INDEXES_OUTDATED); }
         const s: Supplier = { supplierId: String(state.suppliers.length + 1).padStart(24, 'e'), displayName: String(body!.displayName),
           contactName: body!.contactName ?? null, phone: body!.phone ?? null, email: body!.email ?? null, address: body!.address ?? null,
           state: 'active', revision: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), archivedAt: null };
         state.suppliers.push(s);
+        if (key) state.supplierKeys[key] = { hash, id: s.supplierId };
         if (state.loseNextSupplierAnswer) { state.loseNextSupplierAnswer = false; return route.abort('connectionreset'); }
         return json(route, 201, { success: true, data: s });
       }
@@ -177,7 +216,7 @@ const supplier = (o: Partial<Supplier>): Supplier => ({
   revision: 1, createdAt: '2026-11-01T10:00:00.000Z', updatedAt: '2026-11-01T10:00:00.000Z', archivedAt: null, ...o,
 });
 
-test('add stock: find the medicine, fill in the batch, check and confirm; one item is sent with its reference', async ({ page }) => {
+test('add stock: find the medicine, fill in the batch, check and confirm; one item is sent with its request key', async ({ page }) => {
   const backend = await mockBackend(page);
   await signIn(page, 'Stock');
   await page.getByRole('link', { name: 'Add stock' }).click();
@@ -203,7 +242,9 @@ test('add stock: find the medicine, fill in the batch, check and confirm; one it
   expect(backend.stockPosts).toHaveLength(1);
   const item = (backend.stockPosts[0]!.items as Json[])[0]!;
   expect(item).toMatchObject({ medicineId: MED, quantity: 100, batchNumber: 'pcm-24b', expiryDate: '20280630', reason: 'purchase', mrp: 25.5 });
-  expect(String(item.notes)).toMatch(/^Bill 7781 · Ref [0-9a-f]{32}$/);
+  expect(item.notes).toBe('Bill 7781'); // Q15: the key travels beside the item, not in the note
+  expect(backend.stockPosts[0]!.requestKey).toMatch(/^[A-Za-z0-9_-]{8,100}$/);
+  expect(Object.keys(backend.stockPosts[0]!).sort()).toEqual(['items', 'requestKey']); // no supplier on stock rows
   await expect(page.getByLabel('Batch number')).toHaveValue(''); // ready for the next batch
   // Nothing about the entry is left in browser storage.
   expect(await page.evaluate(() => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }))).not.toContain('7781');
@@ -221,15 +262,14 @@ test('add stock from a medicine on the Stock page; a refusal records nothing and
   await expect(page.getByText('Not added: Medicine not found')).toBeVisible();
   await expect(page.getByLabel('Units received')).toHaveValue('12');
   await expect(page.getByRole('group', { name: 'Unconfirmed stock entry' })).toHaveCount(0);
-  // The next try is a new request with a new reference.
+  // The next try is a new request with a new key.
   await page.getByRole('button', { name: 'Check and add' }).click();
   await page.getByRole('button', { name: 'Yes, add to stock' }).click();
   await expect(page.getByText(/^Added 12 units/)).toBeVisible();
-  const refs = backend.stockPosts.map((p) => String((p.items as Json[])[0]!.notes));
-  expect(new Set(refs).size).toBe(2);
+  expect(new Set(backend.stockPosts.map((p) => p.requestKey)).size).toBe(2);
 });
 
-test('add stock whose answer is lost is never resent: it is found in the stock history by its reference', async ({ page }) => {
+test('WQ10c: add stock whose answer is lost is found by its key after leaving and coming back; nothing is added twice', async ({ page }) => {
   const backend = await mockBackend(page);
   await signIn(page, 'Stock');
   await page.getByRole('link', { name: 'Add stock' }).click();
@@ -241,20 +281,42 @@ test('add stock whose answer is lost is never resent: it is found in the stock h
   await page.getByRole('button', { name: 'Check and add' }).click();
   await page.getByRole('button', { name: 'Yes, add to stock' }).click();
   const panel = page.getByRole('group', { name: 'Unconfirmed stock entry' });
-  await expect(panel).toContainText('The units may already be in stock. Sending it again could count them twice, so check first.');
+  await expect(panel).toContainText('The units may already be in stock. Sending the same entry again is safe: it is never added twice.');
   await expect(panel).toContainText('100 units of Paracetamol 650mg, batch PCM-24B');
-  await expect(panel.getByRole('button', { name: /again/i })).toHaveCount(0); // no resend
   // Leaving and coming back keeps it unresolved.
   await page.getByRole('link', { name: 'Stock', exact: true }).first().click();
   await page.getByRole('link', { name: 'Add stock' }).click();
   await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
-  await expect(page.getByText(/^Recorded: 100 units of batch PCM-24B were added/)).toBeVisible();
+  await expect(page.getByText('Recorded: 100 units of Paracetamol 650mg, batch PCM-24B (expires 30 Jun 2028) was added. Nothing was added twice.')).toBeVisible();
+  await expect(panel).toHaveCount(0);
   expect(backend.stockPosts).toHaveLength(1);
+  expect(backend.adjustments).toHaveLength(1);
+  const key = String(backend.stockPosts[0]!.requestKey);
+  expect(await page.evaluate(() => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }))).not.toContain('7781');
+  expect(key).toMatch(/^[0-9a-f]{32}$/);
 });
 
-test('add stock lost before it reached the server: not found, and forgetting needs a second step', async ({ page }) => {
+test('WQ10c: add stock whose answer is lost is sent again with the same key: answered replayed, the units added once', async ({ page }) => {
   const backend = await mockBackend(page);
-  await page.route('**/api/v1/pharmacy-inventory', (route) => (route.request().method() === 'POST' ? route.abort('connectionreset') : route.fallback()));
+  await signIn(page, 'Stock');
+  await page.getByRole('link', { name: 'Add a batch of Paracetamol 650mg' }).click();
+  await fillBatch(page);
+  backend.loseNextStockAnswer = true;
+  await page.getByRole('button', { name: 'Check and add' }).click();
+  await page.getByRole('button', { name: 'Yes, add to stock' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed stock entry' });
+  await panel.getByRole('button', { name: 'Send the same entry again' }).click();
+  await expect(page.getByText('Already added: 100 units of Paracetamol 650mg, batch PCM-24B (expires 30 Jun 2028). Nothing was added twice.')).toBeVisible();
+  await expect(panel).toHaveCount(0);
+  expect(backend.stockPosts).toHaveLength(2);
+  expect(backend.stockPosts[1]).toEqual(backend.stockPosts[0]); // the same key and item
+  expect(backend.adjustments).toHaveLength(1);
+});
+
+test('add stock lost before it reached the server: not recorded by its key, sent again safely, and forgetting needs a second step', async ({ page }) => {
+  const backend = await mockBackend(page);
+  let abort = 2;
+  await page.route('**/api/v1/pharmacy-inventory', (route) => (route.request().method() === 'POST' && abort-- > 0 ? route.abort('connectionreset') : route.fallback()));
   await signIn(page, 'Stock');
   await page.getByRole('link', { name: 'Add a batch of Paracetamol 650mg' }).click();
   await fillBatch(page);
@@ -263,12 +325,33 @@ test('add stock lost before it reached the server: not found, and forgetting nee
   const panel = page.getByRole('group', { name: 'Unconfirmed stock entry' });
   await expect(panel.getByRole('button', { name: 'Forget it and add again' })).toHaveCount(0); // look first
   await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
-  await expect(panel).toContainText('Not in the stock history yet.');
+  await expect(panel).toContainText('Not recorded so far. It may still be on its way. Sending the same entry again is safe');
+  await panel.getByRole('button', { name: 'Send the same entry again' }).click(); // lost again
+  await expect(panel).toContainText('This stock entry was not confirmed');
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
   await panel.getByRole('button', { name: 'Forget it and add again' }).click();
-  await expect(panel).toContainText('the units are counted twice');
+  await expect(panel).toContainText('Sending the same entry again is the safe choice.');
+  await expect(panel).toContainText('would be counted twice');
   await panel.getByRole('button', { name: 'Forget it', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Check and add' })).toBeVisible();
   expect(backend.stockPosts).toHaveLength(0);
+});
+
+test('WQ10c: a stock entry refused 503 INDEXES_OUTDATED keeps the entry, says so in the server’s words, and is sent again later with the same key', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page, 'Stock');
+  await page.getByRole('link', { name: 'Add a batch of Paracetamol 650mg' }).click();
+  await fillBatch(page, '7');
+  backend.indexesOutdated = true;
+  await page.getByRole('button', { name: 'Check and add' }).click();
+  await page.getByRole('button', { name: 'Yes, add to stock' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed stock entry' });
+  await expect(panel).toContainText(`This stock entry was not confirmed (${INDEXES_OUTDATED}: ask the Jansetu team).`);
+  await panel.getByRole('button', { name: 'Send the same entry again' }).click();
+  await expect(page.getByText('Added 7 units of Paracetamol 650mg, batch PCM-24B (expires 30 Jun 2028).')).toBeVisible();
+  expect(backend.stockPosts).toHaveLength(2);
+  expect(backend.stockPosts[1]).toEqual(backend.stockPosts[0]);
+  expect(backend.adjustments).toHaveLength(1);
 });
 
 test('import: the columns and a template, the file is checked, problems first, confirm adds the ready rows; history lists it', async ({ page }) => {
@@ -278,6 +361,12 @@ test('import: the columns and a template, the file is checked, problems first, c
   await expect(page.getByRole('heading', { name: 'Import stock from a file' })).toBeVisible();
   await expect(page.getByRole('cell', { name: 'medicine name', exact: true })).toBeVisible();
   await expect(page.getByRole('cell', { name: 'expiry date', exact: true })).toBeVisible();
+  // Q15: headers in any case; the expiry forms the import reads, and no "type it as text" advice.
+  await expect(page.getByText('in capitals or small letters', { exact: false })).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Expiry date' }).getByRole('listitem')).toHaveCount(5);
+  await expect(page.getByRole('list', { name: 'Expiry date' })).toContainText('MM/YYYY or MM-YYYY, as printed on packs');
+  await expect(page.getByRole('list', { name: 'Expiry date' })).toContainText('a date cell in Excel');
+  await expect(page.getByText(/expiry date as text|format to Text|exactly as below in small letters/)).toHaveCount(0);
   await expect(page.getByText('No imports yet')).toBeVisible();
   const template = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download a blank template (CSV)' }).click();
@@ -299,7 +388,7 @@ test('import: the columns and a template, the file is checked, problems first, c
   // Problems first.
   const rows = page.getByRole('table', { name: 'Rows of the file, problems first' }).getByRole('row');
   await expect(rows.nth(1)).toContainText('Cetirizine');
-  await expect(rows.nth(1)).toContainText('expiry date must be a valid YYYYMMDD date');
+  await expect(rows.nth(1)).toContainText(EXPIRY_ERROR);
   await expect(page.getByRole('row').filter({ hasText: 'Zincovit' })).toContainText('New: will be added to the list');
   const problems = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download the rows with problems' }).click();
@@ -353,7 +442,7 @@ test('suppliers: add, edit naming the revision, an edit that met another change 
   await page.getByLabel('Email (optional)').fill('orders@sun.in');
   await page.getByRole('button', { name: 'Add supplier' }).click();
   await expect(page.getByText('Sun Distributors was added.')).toBeVisible();
-  expect(backend.supplierCalls[0]!.body).toEqual({ displayName: 'Sun Distributors', phone: '+91 98765 43210', email: 'orders@sun.in' });
+  expect(backend.supplierCalls[0]!.body).toEqual({ displayName: 'Sun Distributors', phone: '+91 98765 43210', email: 'orders@sun.in', requestKey: expect.stringMatching(/^[0-9a-f]{32}$/) });
   const row = page.getByRole('row').filter({ hasText: 'Sun Distributors' });
   await expect(row).toContainText('orders@sun.in');
 
@@ -388,7 +477,7 @@ test('suppliers: add, edit naming the revision, an edit that met another change 
   await expect(page.getByRole('row').filter({ hasText: 'Sun Distributors' })).toContainText('Archived');
 });
 
-test('suppliers: an add whose answer is lost is found in the list by its name, never added twice', async ({ page }) => {
+test('WQ10c: suppliers: an add whose answer is lost is found by its key, never added twice', async ({ page }) => {
   const backend = await mockBackend(page);
   await signIn(page, 'Suppliers');
   backend.loseNextSupplierAnswer = true;
@@ -396,12 +485,37 @@ test('suppliers: an add whose answer is lost is found in the list by its name, n
   await page.getByLabel('Supplier name').fill('Moon Pharma');
   await page.getByRole('button', { name: 'Add supplier' }).click();
   const panel = page.getByRole('group', { name: 'Unconfirmed supplier change' });
-  await expect(panel).toContainText('Add Moon Pharma: the answer did not arrive');
+  await expect(panel).toContainText('Add Moon Pharma: not confirmed');
   await expect(page.getByRole('button', { name: 'Add a supplier' })).toBeDisabled();
   await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
-  await expect(page.getByText('Moon Pharma was added.')).toBeVisible();
+  await expect(page.getByText('Moon Pharma was added. Nothing was added twice.')).toBeVisible();
   await expect(panel).toHaveCount(0);
+  const key = (backend.supplierCalls[0]!.body as Json).requestKey;
   expect(backend.supplierCalls.filter((c) => c.method === 'POST')).toHaveLength(1);
+  expect(await page.evaluate(() => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }))).not.toContain('Moon');
+  expect(key).toMatch(/^[0-9a-f]{32}$/);
+});
+
+test('WQ10c: suppliers: a lost add sent again with the same key is answered replayed (one supplier); 503 INDEXES_OUTDATED keeps it for later', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page, 'Suppliers');
+  backend.indexesOutdated = true;
+  await page.getByRole('button', { name: 'Add a supplier' }).click();
+  await page.getByLabel('Supplier name').fill('Star Pharma');
+  await page.getByRole('button', { name: 'Add supplier' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed supplier change' });
+  await expect(panel).toContainText(`Add Star Pharma: not confirmed (${INDEXES_OUTDATED}: ask the Jansetu team).`);
+  backend.loseNextSupplierAnswer = true; // the resend is made, but its answer is lost too
+  await panel.getByRole('button', { name: 'Send the same change again' }).click();
+  await expect(panel).toContainText('Add Star Pharma: not confirmed');
+  await panel.getByRole('button', { name: 'Send the same change again' }).click();
+  await expect(page.getByText('Star Pharma was added.')).toBeVisible();
+  await expect(panel).toHaveCount(0);
+  const posts = backend.supplierCalls.filter((c) => c.method === 'POST');
+  expect(posts).toHaveLength(3);
+  expect(new Set(posts.map((c) => JSON.stringify(c.body))).size).toBe(1); // the same key and fields every time
+  expect(backend.suppliers.filter((x) => x.displayName === 'Star Pharma')).toHaveLength(1);
+  await expect(page.getByRole('row').filter({ hasText: 'Star Pharma' })).toHaveCount(1);
 });
 
 test('return to supplier: with no supplier it links to Suppliers; once one is added it is offered and used', async ({ page }) => {
