@@ -975,6 +975,60 @@ on an add with an email, no doctor email copied to clinic memberships, and a cha
 - **Flaky spec:** in `admin-order-cancellations.spec.ts`, the first list request is now awaited with `expect.poll`
   instead of being checked once. It passed 120/120 with `--repeat-each 10`.
 
+## WQ10a pharmacy: add and import stock, suppliers, order cancel, status words (2026-11-20, taken autonomously at the owner's request)
+
+Backend (read-only): Q14 `SwasthaDisha-worktrees/q14-owner-decisions` `m0/q14-owner-decisions` 5ecd4ad: `src1/modules/pharmacyInventory`
+(routes, validation `createInventoryItemSchema`, services `saveItems`/`saveItem`, repository `adjustBatchStock` and adjustments),
+`pharmacyInventoryImports` (routes, controller, services `validateRow`/`preview`/`commit`/`retry`), `pharmacySuppliers` (routes,
+validation, repository) and `pharmacyOrders` (services `updateStatus`, `requestCancel`), `pharmacyMedicines` (routes, validation). Every
+endpoint is in `packages/api` (`pharmacyStock.ts`, `pharmacySuppliers.ts`, `pharmacyOrders.ts`). Built alongside WQ10b; shared files
+(`packages/api/src/index.ts`, `apps/workspace/src/modules.tsx`) only gained lines in the pharmacy area.
+
+- **Add stock** (`/pharmacy/stock/add`; "Add stock" on Stock, "Add a batch" on each medicine): medicine from `GET /pharmacy-medicines`
+  (search, active, page 1 of 20), batch number, expiry (date input → YYYYMMDD, a real date, not before the server's UTC today), units
+  (whole, at least 1), optional MRP / selling / purchase price (rupees), rack, reorder level, reason (`purchase`, `return`, `transfer`,
+  `correction`, `other`) and note. Checked as `createInventoryItemSchema` and `saveItem` do, then a second step names exactly what is
+  added; sent as `POST /pharmacy-inventory {items:[one item]}`. The route takes no supplier and no request key. The entry is stored
+  (session memory + body-less marker) before sending; its key travels in `notes` ("<note> · Ref <key>"), which the adjustment it writes
+  keeps, so a lost answer is found exactly in `GET /pharmacy-inventory/adjustments`. It is never resent (that would add the units
+  twice): "Check whether it was recorded", and after a miss "Forget it and add again" behind a second step. A sole first attempt refused
+  (4xx) records nothing and keeps the form.
+- **Import stock from a file** (`/pharmacy/stock/import`, `/pharmacy/stock/imports/:id`): the columns `validateRow` reads (exact lower-case
+  headers on the first sheet; expiry as text), a blank CSV template made in the browser, the mode (`upsert`, `update_only`,
+  `create_only`), and the file (.xlsx/.xls/.csv, at most 10 MB) sent as multipart `file` + `importMode` to `POST /preview` from a Blob.
+  The import page shows the counts and every row, problems first, with the medicine match (in the list / new: will be added / several
+  match), "Download the rows with problems" (`GET /:id/failed-rows/download`, a Blob), and the confirmation (units, new medicines, rows
+  left out) that sends `POST /commit {importId}`. The commit is stored first (key = the import id); a lost answer is settled from
+  `GET /:id` (added / partly / not added; "being added" polls every 5 s), and sending again is safe because the server claims an import
+  once (409 IMPORT_NOT_RETRYABLE / IMPORT_ALREADY_PROCESSING → the import as saved). "Try the failed rows again" (`POST /:id/retry`;
+  one adjustment per row, so never twice) is offered when rows failed while being added. History: `GET /`, newest first. A lost file
+  check only says so (a check adds nothing) and is found again in the history by file name.
+- **Suppliers** (`/pharmacy/suppliers`, Pharmacy nav "Suppliers"): Active / Archived / All, add (name required; contact, phone
+  `^[+0-9(). -]+$`, email, address optional, the server's limits), edit (`PATCH /:id`, only changed fields, emptied ones as null,
+  `expectedRevision` = the revision the edit was opened on) and archive (`POST /:id/archive {expectedRevision}`, second step: it cannot be
+  undone here). 409 SUPPLIER_CONFLICT keeps what was typed, takes the other person's change in fields not touched here and names fields
+  changed in both. One change at a time, stored first; a lost add is found in the list by name (no request key exists), a lost edit or
+  archive is resent safely (fenced by revision) or settled from the list. "Return to supplier" says when there is no active supplier and
+  links to Suppliers; the list it offers refreshes after any supplier change.
+- **Order cancel.** The order page showed "Cancel order" next to "Cancelling or rejecting an order is not available here yet… ask an
+  admin". The backend's D3 `requestCancel` cancels Placed / Accepted / Packed orders (unpaid at once; paid, authorised or partly paid as
+  a request), and the generic status update now refuses to close an order holding money (ORDER_PAID_USE_CANCEL_REQUEST, checked in the
+  write), so the MONEY item above is closed by D3. The stale warning is gone; `cancelRefusal` (`packages/api`) mirrors `requestCancel`:
+  Cancel order is shown exactly when it can work; a cancellable-state order whose payment is Refunded (refused by the server) shows one
+  message instead and no button.
+- **Status words.** `ORDER_STATUS_LABEL` / `PAYMENT_STATUS_LABEL` moved to `packages/api` (`orderStatusLabel`, `paymentStatusLabel`);
+  Orders, the order page, Quality and the recall trace use them, and so do the prescription queue and review (they showed "pending").
+- **Identity.** Each new screen is keyed by the pharmacy's id, which is also in its query keys and memory slots. Every change goes
+  through the screen's one-at-a-time guard (`useOneAtATime`) and the shared `useOwnedOp` (stored before sending; an answer settles only
+  while the page is on screen and owns the attempt).
+
+Backend gaps (reported, not faked): `POST /pharmacy-inventory` takes no request key (the web finds a lost entry by the reference in
+`notes`, but cannot make a resend safe) and no supplier; `POST /pharmacy-suppliers` takes no request key (a lost add is matched by name
+and time); there is no un-archive. The import reads headers case-sensitively and reads a spreadsheet date cell as a number, so the
+expiry must be typed as text; it accepts any `importMode` string unchecked (the web sends only the three); the preview answer includes
+the server's file path (never shown). A medicine not yet in the list can only be added by import (the medicine create route is not used
+here).
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -995,6 +1049,7 @@ on an add with an email, no doctor email copied to clinic memberships, and a cha
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-20 | WQ10a (add and import stock, suppliers, order cancel consistency, status words) | typecheck clean; Vitest 235/235 (+13: stock entry checks and body with its reference, lookup by reference, medicine search and history queries, import file checks, template headers, multipart preview / commit / retry paths, committable / retryable / claimed, supplier checks, create / patch bodies with null clears, revision on edit and archive, all pages, conflict code, cancel rule, status words); Playwright workspace 422/422 (+24 = 12 journeys x 2: add stock with confirmation and reference, from a stock row with a refusal, a lost entry found by reference and never resent, a lost entry forgotten after a second step; import with columns, template, problems first, problem rows download, confirm and history; a lost import confirmation settled from the import; suppliers add / edit with a conflicting change / archive with a version conflict; a lost supplier add found by name; return to supplier with none, then with one; Cancel order on Placed/Accepted/Packed without the stale warning; refunded order: no button, one message; ready for pickup: neither; prescription queue and review in words. One journey replaced (the stale-warning check); stock recall trace now reads “Accepted”); Playwright customer 222/222; both builds OK with VITE_API_BASE_URL=https://api.example.test. Temporary configs on ports 5401/5402 (no server reuse), deleted before commit. |
 | 2026-11-19 | WQ9 re-review fixes | typecheck clean; Vitest 222/222 (+1: NFC); Playwright workspace 398/398 (journeys extended: doctor and pharmacy copy, no sign-out warning for a first email, warning when changing one; admin-order-cancellations 120/120 with --repeat-each 10); Playwright customer 222/222 (+2 = 1 journey x 2: an email set elsewhere re-reads the profile after 422); both builds OK. Temporary configs on ports 5305/5306, deleted. |
 | 2026-11-19 | WQ9 review fixes | typecheck clean; Vitest 221/221 (+5: normalizeEmail with IDN/punycode and refusals, EMAIL_NOT_REGISTERED, leading 0, short-local masking, cooldownLeft); Playwright workspace 398/398 (+8 = 4 new journeys x 2; one replaced: staff without the email field; OWNER_REQUIRED on add; a save landing after its editor was replaced (fails without the fix); role frozen while sending; doctor EMAIL_NOT_REGISTERED, A → B → A waits and a leading 0); Playwright customer 220/220 (+6 = 3 journeys x 2: EMAIL_NOT_REGISTERED and the new hint; an IDN email from the profile and from sign-in in one ASCII form; A → B → A waits and a leading 0; the profile journey now adds the email through email verification). Both builds OK. Temporary configs on ports 5303/5304 (no server reuse), deleted before commit. |
 | 2026-11-19 | WQ9 (sign in with a mobile number or an email; staff and owner emails) | typecheck clean; Vitest 216/216 (+12: identifier parser (+91, spaces, dashes, lower-cased email, refusals, one key only), masking and destination keys, email send/verify bodies, member email path and fence, optional email normalised, owner-only email edits, EMAIL_IN_USE); Playwright workspace 390/390 (+14 = 7 journeys x 2: partner email sign-in with the workspace choice and nothing stored; +91 number, a 429 on one email only, resend to the same destination; staff add with email and EMAIL_IN_USE, list, change and remove with the version fence; email edit refused as RECORD_CHANGED; staff with staff.manage add an email but change none; admin create with owner email and EMAIL_IN_USE; admin-as-owner email edit on the admin route); Playwright customer 214/214 (+6 = 3 journeys x 2: email sign-in sends only `email`, masked, nothing stored; +91 number then an email; a 429 on one email only and a burnt code). Existing login journeys unchanged (the new label contains "Mobile number"). Both release builds OK with VITE_API_BASE_URL=https://api.example.test. Temporary Playwright configs on ports 5301/5302 (no server reuse), deleted before commit. |

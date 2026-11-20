@@ -1,6 +1,6 @@
 # Jansetu Workspace: Pharmacy Guide
 
-**What you can do here:** handle medicine orders, check prescriptions, look after your stock batches, see what is running low, deal with held or recalled stock, and set your pharmacist.
+**What you can do here:** handle medicine orders, check prescriptions, add and import stock, look after your stock batches and suppliers, see what is running low, deal with held or recalled stock, and set your pharmacist.
 
 Website: **https://staff.swasthadisha.etryx.in**
 
@@ -16,7 +16,7 @@ Website: **https://staff.swasthadisha.etryx.in**
 
 No code? Wait for the timer, then tap **Resend code**. Typed the wrong number? Tap **Change number or email**.
 
-The menu is on the left, under **Pharmacy**: **Orders**, **Prescription review**, **Stock**, **Low stock**, **Quality** and **Settings**. To leave, tap **Sign out** at the bottom of the menu.
+The menu is on the left, under **Pharmacy**: **Orders**, **Prescription review**, **Stock**, **Suppliers**, **Low stock**, **Quality** and **Settings**. To leave, tap **Sign out** at the bottom of the menu.
 
 ---
 
@@ -97,6 +97,8 @@ You can cancel while the order is **Placed**, **Accepted** or **Packed**:
 
 Customers can also ask to cancel paid orders. You decide them the same way. A Jansetu admin can decide them too.
 
+From **Ready for pickup** or **Out for delivery** there is no **Cancel order**. Use a delivery problem option instead. If an open order's payment shows as **Refunded**, it cannot be cancelled here; the order says so. Ask the Jansetu team to close it.
+
 ### Customer returns
 
 On a **Completed** order you will see **Customer return**:
@@ -142,21 +144,55 @@ What you can do with a batch (only the buttons that fit its status appear):
 
 - **Quarantine**: stop selling the batch for now. Give a reason.
 - **Release…**: put a quarantined batch back on sale. You can write off damaged units.
-- **Return to supplier…**: send unreserved units back. Choose the **Supplier**, **Units** and **Reason**, then tap **Record supplier return**.
+- **Return to supplier…**: send unreserved units back. Choose the **Supplier**, **Units** and **Reason**, then tap **Record supplier return**. If you have no supplier yet, tap **Add a supplier** first (see section 6).
 - **Recall…**: stop the batch for good. This cannot be undone. You then see which open orders hold it and which customers received it.
 - **Recall trace**: see that list again for a recalled batch.
 
-**Adding new stock and importing a stock file are not in the workspace yet.** Ask the Jansetu team how to add stock for now.
+### Add stock (one batch)
+
+1. Open **Stock** and tap **Add stock**. Or tap **Add a batch** next to a medicine you already stock.
+2. Under **Find the medicine**, type its name and tap **Search**. Tap **Choose** next to the right one.
+3. Fill in **Batch number**, **Expiry date** and **Units received**. MRP, selling price, purchase price, rack and reorder level are optional. You can add a **Note**, for example the supplier's bill number.
+4. Tap **Check and add**. Read the summary, then tap **Yes, add to stock**.
+
+The units go on sale at once. The workspace cannot take them out again, so check the number first. Expired stock cannot be added.
+
+If you see "The answer to this stock entry did not arrive", do not add it again straight away. Tap **Check whether it was recorded**. If it is not found and the batch in **Stock** does not show the units, tap **Forget it and add again**.
+
+A medicine that is not in the medicine list yet cannot be added here. Add it with a file (below): a new name adds it to the list.
+
+### Import stock from a file
+
+1. Open **Stock** and tap **Import stock from a file**.
+2. Make the file. Tap **Download a blank template (CSV)**, or use your own Excel or CSV file (up to 10 MB). The first row must have the column names exactly as listed on the screen, in small letters. One row per batch. Write the expiry date as text, for example 20271231.
+3. Choose **Which rows to add**: every row, only medicines already in your stock, or only new ones.
+4. Choose the file under **Stock file** and tap **Check the file**. Nothing is added yet.
+5. The import page lists every row. Rows with a problem come first and say what is wrong. Tap **Download the rows with problems** to fix them in a new file.
+6. Tap **Add … ready rows to stock…**, read what will happen, and tap **Yes, add them**.
+
+**Recent imports** on the import page lists every file you uploaded and what happened to it. If some rows failed while being added, open the import and tap **Try the failed rows again…**. A row is never added twice.
 
 ---
 
-## 6. Low stock
+## 6. Suppliers
+
+**Suppliers** lists the distributors you buy from. Returns to a supplier go to one of these.
+
+- **Add a supplier**: fill in **Supplier name** (the rest is optional) and tap **Add supplier**.
+- **Edit**: change the details and tap **Save changes**. If someone else changed the same supplier meanwhile, the screen shows their change; check it and save again.
+- **Archive**: the supplier is no longer offered for returns. Returns already recorded keep it. An archived supplier cannot be brought back; add it again if you need it.
+
+Use **Show** to see **Active**, **Archived** or **All** suppliers.
+
+---
+
+## 7. Low stock
 
 **Low stock** lists medicines at or below their reorder level. Expired and held batches do not count. The **Refills due in 14 days** column helps you plan for regular customers.
 
 ---
 
-## 7. Quality
+## 8. Quality
 
 **Quality** brings together stock problems:
 
@@ -173,8 +209,7 @@ What you can do with a batch (only the buttons that fit its status appear):
 - You cannot pack or send out a prescription order until the prescription is approved.
 - Completing an order takes its stock out of inventory. It cannot be undone.
 - A paid order cannot be cancelled straight away. It waits for **Approve cancellation** or **Keep the order**.
-- On an open order you may also see the note "Cancelling or rejecting an order is not available here yet". Use **Cancel order**, a delivery problem option, or ask an admin.
-- If you see "The outcome of this request is not known yet", tap **Send the same request again**. It is never recorded twice.
+- If you see "The outcome of this request is not known yet", tap **Send the same request again**. It is never recorded twice. (For **Add stock**, check first instead: see section 5.)
 - Lists refresh on their own about every minute.
 
 ---
@@ -200,7 +235,7 @@ Tap **Record payment** first, then **Mark completed**.
 Find it in **Stock** and tap **Release…**.
 
 **How do I add a new supplier or new stock?**
-That is not in the workspace yet. Ask the Jansetu team.
+Suppliers: open **Suppliers** and tap **Add a supplier**. Stock: open **Stock** and tap **Add stock**, or **Import stock from a file** for many medicines at once.
 
 **I was signed out suddenly.**
 Your session ended. You may have been idle a long time, or someone else signed in on this browser. Just sign in again.
