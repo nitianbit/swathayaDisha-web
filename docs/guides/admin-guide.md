@@ -163,7 +163,7 @@ This lists every recorded payout, newest first. Filter by **Status** (**Recorded
 
 ## 9. Pharmacies
 
-Only admins add pharmacies. This lists every pharmacy, newest first. Search by name, or filter by **Verification** and **Active**.
+Only admins add pharmacies. This lists every pharmacy, newest first. Search by name, or filter by **Verification** and **Active**. To see which pharmacy signs in with a number, type it in **Find by mobile number** and tap **Find**.
 
 ### Add a pharmacy
 
@@ -171,15 +171,14 @@ Only admins add pharmacies. This lists every pharmacy, newest first. Search by n
 2. Fill in **Mobile number** (the pharmacy signs in with it) and **Pharmacy name**. Add **Email (optional)**, the owner's name, address, GST number and drug licence number if you have them. Tick **Pick up at the pharmacy** and **Get a delivery** if it offers them.
 3. Tap **Add pharmacy**. Its page opens.
 
-A new pharmacy is **Not verified**. Customers see it only once you verify it. Two pharmacies can never have the same mobile number.
+A new pharmacy is **Not verified**. Customers see it only once you verify it. Two pharmacies can never have the same mobile number. If the number is taken, the form names the pharmacy that has it.
 
-If the answer does not arrive, the form locks and says it could not confirm. Tap **Check by mobile number**:
+If the answer does not arrive, the form locks and says it could not confirm. Then:
 
-- If it was created, tap **Open …**.
-- If not, tap **Send again**. It sends the same details. It can never create a second pharmacy with that number.
-- Or tap **Start again** to change the form.
+- Tap **Send again**. It sends the same request, so it can never create a second pharmacy. If it was created, its page opens.
+- Or tap **Give up this create**. Then it can never be created, and you can change the form. If it had already been created, its page opens instead.
 
-If the page reloads before you know, look for the pharmacy in the list before adding it again.
+If the page reloads before you know, the page checks for you. If it was created, tap **Open …**. If not, tap **Give up this create**, then add it again.
 
 ### Open a pharmacy
 
@@ -187,8 +186,9 @@ Tap its name.
 
 - **Verify**: customers can find it and order from it.
 - **Deactivate**: it can no longer sign in, and customers no longer see it. Its orders and stock stay. **Activate** turns it back on.
-- **Sign-in**: to change the mobile number or email it signs in with, tap **Change mobile number or email**, make the change, and tap **Continue**. Read what will change, then tap **Change sign-in**. The old number or email stops working for sign-in. Do this only when the pharmacy asks and you have checked it is them. An email cannot be removed, only changed.
-- **Details**: change the name, owner, address, licences, pickup and delivery, then tap **Save details**. A field cannot be emptied once it is filled in.
+- **Sign-in**: to change the mobile number or email it signs in with, tap **Change mobile number or email**, make the change, and tap **Continue**. Read what will change, then tap **Change sign-in**. The old number or email stops working for sign-in. To remove the email, empty its field. The mobile number cannot be removed. Do this only when the pharmacy asks and you have checked it is them.
+- Changing the mobile number, or changing or removing the email, **signs the pharmacy out** everywhere. Tell them first. Adding a first email does not sign them out.
+- **Details**: change the name, owner, address, licences, pickup and delivery, then tap **Save details**. To remove an optional detail, empty its field and save. The name cannot be removed.
 
 If someone else changed the same thing while you were typing, nothing is saved and the form shows what is saved now. Check it and save again.
 
@@ -198,7 +198,7 @@ If someone else changed the same thing while you were typing, nothing is saved a
 
 This lists doctor consultation bookings, latest appointment first. Filter by **Status**, by doctor (type part of the name, tap **Find doctor**, then choose them), and by **Appointments from** and **Appointments to**.
 
-No-shows cannot be filtered on their own yet. Leave **Status** on **Any status**, narrow by doctor and dates, and look for **No-show**.
+Each row shows the **Patient**: the family member's name if the booking is for one, otherwise the account holder's. The booking page shows it too. To see only missed appointments, set **Status** to **No-show**.
 
 ### Move a doctor's no-show
 
@@ -206,10 +206,10 @@ A no-show is not refunded and the doctor earns nothing for it. It can be moved o
 
 1. Open the booking. **No-show** shows when it was missed, and any earlier move.
 2. Tap **Reschedule no-show**.
-3. Choose a **New day**, then a **New time**. Only that doctor's free times for the same kind of consultation are shown.
+3. Choose a **New day**, then a **New time**. Only that doctor's free times for the same kind of consultation are shown. If you see "That time belongs to another doctor", choose another time from the list.
 4. Tap **Continue**, read the message, then tap **Move to …**.
 
-The patient is told the new time. If the new time is missed too, that no-show is final.
+The patient and the doctor are told the new time. If the new time is missed too, that no-show is final.
 
 You cannot move:
 
@@ -261,7 +261,7 @@ Open the lab, go to **Staff**, and add or change the owner's email so they can s
 Open **Pharmacies** and tap **Add a pharmacy** (section 9).
 
 **A pharmacy has a new mobile number.**
-Open it in **Pharmacies**, then under **Sign-in** tap **Change mobile number or email**.
+Open it in **Pharmacies**, then under **Sign-in** tap **Change mobile number or email**. This signs the pharmacy out; it signs in again with the new number.
 
 **A report cannot be released: "Nobody can sign this report."**
 No staff member at that branch has a professional registration number on their record. Tap the **Staff** link in the message and add one (section 3).

@@ -1088,6 +1088,56 @@ Backend gaps found (reported, not worked around on the wire):
    accept another doctor's slot). The picker only offers the booking's own doctor's slots.
 5. The admin no-show move notifies the customer only (not the doctor); the copy says the doctor sees it in their appointments.
 
+## WQ10c merged WQ10 screens on the backend Q15 features (2026-11-20, taken autonomously at the owner's request)
+
+Backend (read-only): `SwasthaDisha-worktrees/q14-owner-decisions` 1f1f995 (Q15) and 41e19f4 (Q15 review). Every field and code
+below was read in its route, validation, controller and service. Built on `wq10/integration` (the merge of WQ10a and WQ10b).
+
+- **Admin consultations.** "Status" now offers **No-show** (`GET /bookings?status=no_show`); the "cannot be listed" note is gone.
+  Rows show **Patient** (`patientName`, admin rows only: the family member's or the account holder's name, null → "—").
+  `GET /bookings/:id` does not carry the name, so the booking page reads the list for that doctor and day (`specialistId`,
+  `bookingDateFrom/To` = the booking's day, 100 a page, at most 3 pages) and takes the row with its id; unknown → the earlier
+  "The account holder" / "A family member…" words. The name is shown only on screen (never in storage, logs or the address).
+  409 `SLOT_NOT_THIS_DOCTOR` is a slot refusal in `NO_SHOW_MOVE_REFUSAL` ("That time belongs to another doctor. Pick one of this
+  doctor's times."): the picker reopens with the doctor's free times read again (doctor, admin and desk no-show moves share it).
+  The move's confirmation now says the doctor is told too (Q15 notifies the doctor of an admin's move).
+- **Admin pharmacies, create.** The phone-search lost-answer workaround is replaced by the owned-PendingOp / by-key pattern of
+  the lab and clinic create: a `requestKey` per submitted form, stored with the request before sending, under the page's
+  one-at-a-time guard. A lost answer locks the form with **Send again** (same key and details; a repeat answers 200
+  `replayed: true` with the pharmacy) or **Give up this create** (`POST /pharmacies/by-key/:key/abandon`: `abandoned` = can
+  never be created, the form unlocks; `used` = its page opens). After a reload only the key is kept: `GET
+  /pharmacies/by-key/:key` (404 PHARMACY_NOT_FOUND = nothing so far) shows it, else Give up first. 409 REQUEST_ABANDONED ends it.
+  A taken number (400 PHONE_ALREADY_EXISTS) names the pharmacy holding it, found with `GET /pharmacies?phone=` (exact).
+- **Admin pharmacies, list.** "Find by mobile number" (`GET /pharmacies?phone=`, 10 digits) shows which pharmacy signs in with a
+  number; the number stays in the page's memory, never in the address.
+- **Admin pharmacies, edit (`PUT /pharmacies/:id`).** Every save (verify, activate/deactivate, sign-in, details) sends
+  `expectedUpdatedAt` (the version shown, or the re-read right before the save). 409 RECORD_CHANGED → nothing saved, the
+  pharmacy is read again: details rebase and name the conflicting fields (or `RECORD_CHANGED_MESSAGE`), sign-in shows what is
+  saved, status steps say it changed meanwhile. An emptied optional field is sent as null (clears it); the name and mobile number
+  cannot be cleared (said on the field). The email can now be removed. The sign-in confirmation says when the change **signs the
+  pharmacy out** (a changed number, or a changed or removed email it had; a first email does not), and that an app signed in long
+  ago may stay signed in until the pharmacy is deactivated (Q15: legacy 30-day bearer tokens). EMAIL_ALREADY_EXISTS (400, or 409
+  after a race) is shown on the email field. Latitude and longitude are not edited here (the backend clears them together).
+- **Pharmacy add stock.** The "Ref <key>" in notes and the adjustment-history search are gone: `POST /pharmacy-inventory
+  {items:[one], requestKey}`; the note is sent as typed (up to 500). A lost answer is resent safely with the same key ("Send the
+  same entry again"; a repeat answers 200 `replayed: true`, "Already added: … Nothing was added twice.") or checked with `GET
+  /pharmacy-inventory/by-key/:key` (404 REQUEST_KEY_NOT_FOUND = not recorded so far). "Forget it and add again" stays behind a
+  second step (no abandon exists for this key). No supplier is sent (stock rows have none).
+- **Suppliers create.** `POST /pharmacy-suppliers` with `requestKey`; a lost add is resent with the same key or found with `GET
+  /pharmacy-suppliers/by-key/:key` (404 SUPPLIER_NOT_FOUND). The name-and-time matching is gone.
+- **503 INDEXES_OUTDATED** (keyed pharmacy create, stock save, supplier create, before `sync-indexes` has run): shown in the
+  server's words plus "ask the Jansetu team" (`messageOf`); the PendingOp is kept, so the same request is sent again later.
+- **Imports.** Guidance: column names in capitals or small letters; the expiry forms the server reads (YYYYMMDD as text or a
+  number, YYYY-MM-DD, DD-MM-YYYY or DD/MM/YYYY day first, MM/YYYY or MM-YYYY = the last day of that month, a real date cell);
+  the "type the date as text" advice is gone. The rows show the server's own error ("expiry date must be a valid date: …").
+  The screen only sends the three modes; nothing reads `filePath` (Q15 removed it from the answers).
+- **Lab staff registration.** The route now refuses non-owners 403 OWNER_REQUIRED; the editor is already owner-only and shows the
+  server's words (`messageOf` for 403), as the WQ10b journeys mock.
+- `packages/api` gains `client.postKeyed` (returns `{ data, replayed }` from the top-level `replayed` flag).
+
+Backend gaps left: no abandon for inventory or supplier keys (a forgotten lost entry could still land; the UI says so behind a
+second step); `GET /bookings/:id` has no `patientName` (the page reads the doctor's day list).
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -1108,6 +1158,7 @@ Backend gaps found (reported, not worked around on the wire):
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-20 | WQ10c (WQ10 screens on Q15: no-show filter and patient names, SLOT_NOT_THIS_DOCTOR, keyed pharmacy create with by-key/abandon and phone lookup, fenced pharmacy edit with clearing and sign-out warning, keyed stock save and supplier create, INDEXES_OUTDATED, import date guidance) | typecheck clean; Vitest 250/250 (246 → 250: keyed stock save and by-key, keyed supplier create and by-key, pharmacy create key / by-key / abandon / phone filter / fenced update with nulls, sign-out and re-read rules, no-show filter and patient-name lookup, SLOT_NOT_THIS_DOCTOR words; the notes-reference tests removed); Playwright workspace 476/476 (436 + 24 = 460 on the merge; +16 = 8 new journeys x 2: consultations — patient name on the booking page, SLOT_NOT_THIS_DOCTOR refused in words and another time chosen; pharmacies — give up a lost create (abandoned / used), version fence RECORD_CHANGED between re-read and save, a first email does not sign out, 503 INDEXES_OUTDATED kept and resent; stock — lost entry resent with the same key and answered replayed, 503 kept and resent; suppliers — lost add resent replayed after a 503. One journey removed (a resend refused PHONE_ALREADY_EXISTS checked by number). Rewritten to the new contracts: no-show filter and patient names in rows, pharmacy list with the phone lookup, create with key and the holder of a taken number named, lost create resent replayed, lost before made resent once, reload looked up by key or given up, status and details saves with versions and a cleared city, sign-in with email removal, sign-out warning and a 409 email, stock entry with its key, lost entry found by key, lost-before resend and forget, import guidance and the server's expiry error, supplier add with key and a lost add found by key)); Playwright customer 222/222; both builds OK (workspace and customer with VITE_API_SAME_ORIGIN=true). Temporary configs on ports 5421/5422 (no server reuse), deleted before commit. |
 | 2026-11-20 | WQ10a (add and import stock, suppliers, order cancel consistency, status words) | typecheck clean; Vitest 235/235 (+13: stock entry checks and body with its reference, lookup by reference, medicine search and history queries, import file checks, template headers, multipart preview / commit / retry paths, committable / retryable / claimed, supplier checks, create / patch bodies with null clears, revision on edit and archive, all pages, conflict code, cancel rule, status words); Playwright workspace 422/422 (+24 = 12 journeys x 2: add stock with confirmation and reference, from a stock row with a refusal, a lost entry found by reference and never resent, a lost entry forgotten after a second step; import with columns, template, problems first, problem rows download, confirm and history; a lost import confirmation settled from the import; suppliers add / edit with a conflicting change / archive with a version conflict; a lost supplier add found by name; return to supplier with none, then with one; Cancel order on Placed/Accepted/Packed without the stale warning; refunded order: no button, one message; ready for pickup: neither; prescription queue and review in words. One journey replaced (the stale-warning check); stock recall trace now reads “Accepted”); Playwright customer 222/222; both builds OK with VITE_API_BASE_URL=https://api.example.test. Temporary configs on ports 5401/5402 (no server reuse), deleted before commit. |
 | 2026-11-20 | WQ10b (admin pharmacies, admin consultations and no-show moves, lab report signer registrations) | typecheck clean; Vitest 233/233 (+11: pharmacy list/get/create/update paths and bodies, ids and numbers refused before any request, the lost-create lookup by mobile number newest first with its time bound, create/update checks as the schemas (required name and number, normalised email, PIN, lengths, no clearing a held field), duplicate refusals; consultation list query (status, doctor, YYYYMMDD dates, paging), doctor search, free slots by doctor/day/mode, date and period refusals, the admin no-show offer (offer/used/instant/clinic); registration path and body on both scopes with the fence, kind and 3-60 number checks, owner-only edit); Playwright workspace 436/436 (+38 = 19 journeys x 2: owner adds, changes and removes a registration with the version fence; RECORD_CHANGED and a lost answer settled by a read; staff with staff.manage read-only; admin as owner on the admin route; nobody can sign a report -> Staff link -> registration added -> released under it; pharmacies list search, filters and paging (two quick changes both count); create with field checks, a taken number, one request however often clicked; a lost answer found by number (one POST); lost before the server: check, then the same request once more (one pharmacy); a resend refused PHONE_ALREADY_EXISTS found as created; reload leaves only a body-less marker; verify/deactivate/activate confirmed and only changed details sent; a details field changed elsewhere shown for review; sign-in change confirmed, a taken number on its field, a change made elsewhere stops it; consultations filters as the server takes them; a no-show moved once with key and version from the doctor's own free times; lost answers settled by a read or resent with the same key; instant, front-desk and already-moved bookings offer no move and NO_SHOW_RESCHEDULE_USED is said; a taken time re-reads the times); Playwright customer 222/222; both release builds OK with VITE_API_BASE_URL=https://api.example.test. Temporary configs on ports 5411/5412 (`reuseExistingServer: false`), deleted before commit. |
 | 2026-11-19 | WQ9 re-review fixes | typecheck clean; Vitest 222/222 (+1: NFC); Playwright workspace 398/398 (journeys extended: doctor and pharmacy copy, no sign-out warning for a first email, warning when changing one; admin-order-cancellations 120/120 with --repeat-each 10); Playwright customer 222/222 (+2 = 1 journey x 2: an email set elsewhere re-reads the profile after 422); both builds OK. Temporary configs on ports 5305/5306, deleted. |

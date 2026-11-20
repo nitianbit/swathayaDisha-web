@@ -157,14 +157,21 @@ What you can do with a batch (only the buttons that fit its status appear):
 
 The units go on sale at once. The workspace cannot take them out again, so check the number first. Expired stock cannot be added.
 
-If you see "The answer to this stock entry did not arrive", do not add it again straight away. Tap **Check whether it was recorded**. If it is not found and the batch in **Stock** does not show the units, tap **Forget it and add again**.
+If you see "This stock entry was not confirmed", do not type it in again. Tap **Send the same entry again**: the units are never added twice. Or tap **Check whether it was recorded** first. Use **Forget it and add again** only if you are sure it never arrived.
 
 A medicine that is not in the medicine list yet cannot be added here. Add it with a file (below): a new name adds it to the list.
 
 ### Import stock from a file
 
 1. Open **Stock** and tap **Import stock from a file**.
-2. Make the file. Tap **Download a blank template (CSV)**, or use your own Excel or CSV file (up to 10 MB). The first row must have the column names exactly as listed on the screen, in small letters. One row per batch. Write the expiry date as text, for example 20271231.
+2. Make the file. Tap **Download a blank template (CSV)**, or use your own Excel or CSV file (up to 10 MB). The first row must have the column names listed on the screen, in capitals or small letters. One row per batch. Write the expiry date in one of these ways:
+   - 20271231 (year, month, day);
+   - 2027-12-31;
+   - 31-12-2027 or 31/12/2027 (day first);
+   - 12/2027 or 12-2027, as printed on packs (the last day of that month);
+   - a date cell in Excel.
+
+   A row with any other date shows a problem and is not added.
 3. Choose **Which rows to add**: every row, only medicines already in your stock, or only new ones.
 4. Choose the file under **Stock file** and tap **Check the file**. Nothing is added yet.
 5. The import page lists every row. Rows with a problem come first and say what is wrong. Tap **Download the rows with problems** to fix them in a new file.
@@ -178,7 +185,7 @@ A medicine that is not in the medicine list yet cannot be added here. Add it wit
 
 **Suppliers** lists the distributors you buy from. Returns to a supplier go to one of these.
 
-- **Add a supplier**: fill in **Supplier name** (the rest is optional) and tap **Add supplier**.
+- **Add a supplier**: fill in **Supplier name** (the rest is optional) and tap **Add supplier**. If it says "not confirmed", tap **Send the same change again**: the supplier is never added twice.
 - **Edit**: change the details and tap **Save changes**. If someone else changed the same supplier meanwhile, the screen shows their change; check it and save again.
 - **Archive**: the supplier is no longer offered for returns. Returns already recorded keep it. An archived supplier cannot be brought back; add it again if you need it.
 
