@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ALL_PARTNER_PERMISSIONS, canAddOwner, canChangeBranches, canEditEmail, canEditPermissions, canGiveEmail, EMAIL_IN_USE_MESSAGE, grantablePermissions,
+  ALL_PARTNER_PERMISSIONS, canAddOwner, canEditProfessional, PROFESSIONAL_KIND_LABEL, PROFESSIONAL_KINDS, professionalInput, type MemberProfessional, canChangeBranches, canEditEmail, canEditPermissions, canGiveEmail, EMAIL_IN_USE_MESSAGE, grantablePermissions,
   hasGlobalScope, isEmailInUse, isOwnerRequired, MAX_EMAIL, MAX_NAME, memberEmail, PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN, PERMISSION_LABEL, removalBlock, scopeProblem,
   type Branch, type MemberRole, type PartnerMember, type PartnerPermission,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
+import { definitelyNotRecorded } from '../../requests.ts';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { changedFields, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
@@ -28,7 +29,7 @@ export function StaffScreen() {
 /** Permissions in the backend's order (so equal sets compare equal). */
 const ordered = (perms: Iterable<string>) => { const s = new Set(perms); return ALL_PARTNER_PERMISSIONS.filter((p) => s.has(p)); };
 
-type Editing = { kind: 'permissions' | 'branches' | 'email'; id: string } | null;
+type Editing = { kind: 'permissions' | 'branches' | 'email' | 'professional'; id: string } | null;
 
 function Staff({ ctx }: { ctx: ScopeContext }) {
   const queryClient = useQueryClient();
@@ -49,6 +50,9 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
   return (
     <>
       <PartnerPageHeading ctx={ctx} title="Staff" partnerName={partner.data?.name}>Who can use this workspace, and what each person may do.</PartnerPageHeading>
+      {ctx.actor.role !== 'owner' && (
+        <p className="ws-muted">Only an owner adds or changes a professional registration (the number reports are released under).</p>
+      )}
       {notice && <Alert tone="ok">{notice}</Alert>}
       {!adding && <div><Button onClick={() => { setAdding(true); setNotice(null); }}>Add a staff member</Button></div>}
       {adding && (
@@ -64,7 +68,7 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
             <table className="j-table">
               <caption className="j-sr-only">Staff members</caption>
               <thead>
-                <tr><th scope="col">Name</th><th scope="col">Phone</th><th scope="col">Email</th><th scope="col">Role</th><th scope="col">Permissions</th><th scope="col">Branches</th><th scope="col">Actions</th></tr>
+                <tr><th scope="col">Name</th><th scope="col">Phone</th><th scope="col">Email</th><th scope="col">Role</th><th scope="col">Registration</th><th scope="col">Permissions</th><th scope="col">Branches</th><th scope="col">Actions</th></tr>
               </thead>
               <tbody>
                 {members.data.map((m) => {
@@ -75,6 +79,7 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
                       <td>{m.phone}</td>
                       <td>{m.email || <span className="ws-muted">None</span>}</td>
                       <td>{m.role === 'owner' ? 'Owner' : 'Staff'}</td>
+                      <td>{m.professional?.registrationNumber ? professionalLabel(m.professional) : <span className="ws-muted">Not added</span>}</td>
                       <td>{m.role === 'owner' ? 'Everything' : m.permissions.length ? m.permissions.map((p) => PERMISSION_LABEL[p] ?? p).join(', ') : 'None'}</td>
                       <td>{m.role === 'owner' ? 'All branches' : branchLabel(names, m.branchIds)}</td>
                       <td>
@@ -84,6 +89,11 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
                           )}
                           {canEditEmail(ctx.actor, m) && (
                             <Button variant="secondary" onClick={() => open({ kind: 'email', id: m._id })}>{m.email ? 'Change email' : 'Add email'}</Button>
+                          )}
+                          {canEditProfessional(ctx.actor, m) && (
+                            <Button variant="secondary" onClick={() => open({ kind: 'professional', id: m._id })}>
+                              {m.professional?.registrationNumber ? 'Change registration' : 'Add registration'}
+                            </Button>
                           )}
                           {canChangeBranches(ctx.actor, m) && (
                             <Button variant="secondary" onClick={() => open({ kind: 'branches', id: m._id })}>Change branch access</Button>
@@ -111,6 +121,14 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
       {editTarget && editing?.kind === 'email' && (
         <EditEmail key={`e:${editTarget._id}`} ctx={ctx} member={editTarget} onClose={() => setEditing(null)}
           onSaved={async () => { setEditing(null); setNotice(`The email for ${editTarget.name} was saved.`); await refresh(); }} />
+      )}
+      {editTarget && editing?.kind === 'professional' && (
+        <EditProfessional key={`r:${editTarget._id}`} ctx={ctx} member={editTarget} onClose={() => setEditing(null)}
+          onSaved={async (removed) => {
+            setEditing(null);
+            setNotice(removed ? `The registration of ${editTarget.name} was removed.` : `The registration of ${editTarget.name} was saved.`);
+            await refresh();
+          }} />
       )}
       {editTarget && editing?.kind === 'branches' && (
         <EditBranches key={`b:${editTarget._id}`} ctx={ctx} member={editTarget} branches={branches.data}
@@ -484,3 +502,126 @@ function EditBranches({ ctx, member, branches, branchesError, onClose, onSaved }
     </section>
   );
 }
+
+/** "Pathologist · KMC-11". */
+export const professionalLabel = (p: MemberProfessional) => `${PROFESSIONAL_KIND_LABEL[p.kind] ?? p.kind} · ${p.registrationNumber}`;
+
+/** One value: the registration is replaced whole (or removed). */
+const professionalDraft = (m: PartnerMember) => ({
+  professional: { kind: m.professional?.kind ?? '', registrationNumber: m.professional?.registrationNumber ?? '' },
+});
+const sameProfessional = (a: MemberProfessional | null | undefined, b: MemberProfessional | null | undefined) =>
+  (a?.kind ?? '') === (b?.kind ?? '') && (a?.registrationNumber ?? '') === (b?.registrationNumber ?? '');
+
+/**
+ * Q11: the professional registration a member signs reports under (`setMemberProfessional`). Owners only, admins acting as
+ * owner included (403 OWNER_REQUIRED otherwise). Versioned like the other member edits: the member is read again right
+ * before sending and the save names its `updatedAt` (409 RECORD_CHANGED shows the saved value). Removing it is confirmed
+ * first. An answer settles only while this editor is open and the save is the latest started here; an answer that never
+ * arrived is settled by reading the member again (saved = the member now holds exactly what was sent).
+ */
+function EditProfessional({ ctx, member, onClose, onSaved }:
+  { ctx: ScopeContext; member: PartnerMember; onClose: () => void; onSaved: (removed: boolean) => Promise<void> }) {
+  const queryClient = useQueryClient();
+  const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, professionalDraft, 'registration');
+  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ kind?: string; registrationNumber?: string }>({});
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  const seq = useRef(0);
+  const base = () => { const b = d.current().base.professional; return b.registrationNumber ? (b as MemberProfessional) : null; };
+
+  /** Sends `next` (null removes) on the member as read right before. True when this editor may close. */
+  async function send(next: MemberProfessional | null, typed: () => MemberProfessional | null): Promise<void> {
+    setError(null); setNotice(null);
+    if (sameProfessional(next, base())) { setNotice('Nothing has changed.'); return; }
+    const mine = ++seq.current;
+    const owns = () => live.current && seq.current === mine;
+    setBusy(true);
+    try {
+      const fresh = await recheck();
+      if (!owns() || !fresh) return;
+      // Re-read the draft after the wait: anything but exactly the checked value is not sent.
+      if (!sameProfessional(typed(), next)) { setNotice('The registration changed while saving. Check it and save again.'); return; }
+      if (sameProfessional(next, base())) { setNotice('Nothing has changed.'); return; }
+      const saved = await fenced(() => ctx.api.setProfessional(member._id, next, fresh.updatedAt));
+      if (saved && !owns()) await queryClient.invalidateQueries({ queryKey: [...ctx.key, 'members'] });
+      if (saved && owns()) await onSaved(next === null);
+    } catch (err) {
+      if (!owns()) return;
+      if (!definitelyNotRecorded(err)) {
+        // The answer was lost: the member as saved now tells whether it went through.
+        try {
+          const now = await ctx.api.member(member._id);
+          queryClient.setQueryData<PartnerMember[]>([...ctx.key, 'members'], (list) => list?.map((m) => (m._id === now._id ? now : m)));
+          if (!owns()) return;
+          if (sameProfessional(now.professional ?? null, next)) { await onSaved(next === null); return; }
+        } catch { /* still unknown: say so below */ }
+        if (owns()) setError(`Not confirmed: ${messageOf(err)} The registration shown is what is saved as far as we know; save again if it is still needed.`);
+        return;
+      }
+      setError(messageOf(err));
+    } finally {
+      if (live.current) setBusy(false);
+    }
+  }
+
+  function save(e: FormEvent) {
+    e.preventDefault();
+    const p = d.current().draft.professional;
+    const checked = professionalInput(p.kind, p.registrationNumber);
+    if ('problem' in checked) { setFieldErrors(checked.problem); return; }
+    setFieldErrors({});
+    void send(checked.value, () => {
+      const now = professionalInput(d.current().draft.professional.kind, d.current().draft.professional.registrationNumber);
+      return 'value' in now ? now.value : null;
+    });
+  }
+
+  const p = d.draft.professional;
+  const held = member.professional?.registrationNumber ? member.professional : null;
+  return (
+    <section className="ws-section" aria-labelledby="prof-h">
+      <h2 id="prof-h">Professional registration of {member.name}</h2>
+      <p className="ws-muted">
+        Lab reports are released under a registered professional: their name, what they are registered as and the number are
+        printed on the report the customer gets. To release reports they also need “Release reports” (owners hold it).
+      </p>
+      <form className="rx-form" noValidate onSubmit={save}>
+        <fieldset className="ws-frozen" disabled={busy}>
+          <div className="rx-form-row">
+            <div className="j-field">
+              <label htmlFor="prof-kind">Registered as</label>
+              <select id="prof-kind" value={p.kind} aria-describedby={fieldErrors.kind ? 'prof-kind-err' : undefined}
+                onChange={(e) => d.set('professional', { ...d.current().draft.professional, kind: e.target.value as MemberProfessional['kind'] })}>
+                <option value="">Choose</option>
+                {PROFESSIONAL_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+              </select>
+              {fieldErrors.kind && <span id="prof-kind-err" className="j-field__error">{fieldErrors.kind}</span>}
+            </div>
+            <TextField label="Registration number" value={p.registrationNumber} maxLength={MAX_REGISTRATION_INPUT} autoComplete="off" spellCheck={false}
+              error={fieldErrors.registrationNumber}
+              onChange={(e) => d.set('professional', { ...d.current().draft.professional, registrationNumber: e.target.value })} />
+          </div>
+        </fieldset>
+        {stale && <Alert tone="warn">{stale}</Alert>}
+        {notice && <Alert tone="ok">{notice}</Alert>}
+        {error && <Alert>{error}</Alert>}
+        <div className="ws-actions">
+          <Button type="submit" busy={busy}>Save registration</Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
+        </div>
+      </form>
+      {held && (
+        <ConfirmAction label="Remove registration" danger disabled={busy} confirmLabel={`Remove the registration of ${member.name}`}
+          consequence={`${member.name} can no longer release reports until a registration is added again. Reports already released keep the registration they were released under.`}
+          onConfirm={() => send(null, () => null)} />
+      )}
+    </section>
+  );
+}
+
+/** A little room over the server's 60 so a pasted number with spaces around it is trimmed, not cut. */
+const MAX_REGISTRATION_INPUT = 64;
