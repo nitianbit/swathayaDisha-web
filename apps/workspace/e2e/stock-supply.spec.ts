@@ -41,6 +41,12 @@ interface Backend {
   retries: number;
   /** The next supplier edit is refused 400 (a definite refusal that is not a version conflict). */
   refuseNextSupplierEdit: boolean;
+  /** The first stock save is held this long before the server decides it (still in flight). */
+  holdFirstStockMs: number;
+  /** Abandon answers this many ms late. */
+  slowAbandonMs: number;
+  /** The next supplier add is refused 403 (says nothing about an earlier copy). */
+  forbidNextSupplierAdd: boolean;
 }
 
 const INDEXES_OUTDATED = 'The database needs an update (sync-indexes) before this can be used';
@@ -58,7 +64,7 @@ async function mockBackend(page: Page, init: { suppliers?: Supplier[]; imports?:
     stockPosts: [], adjustments: [], loseNextStockAnswer: false, refuseNextStock: false, previews: [], commits: 0, imports: [],
     loseNextCommitAnswer: false, suppliers: init.suppliers ?? [], supplierCalls: [], loseNextSupplierAnswer: false, returns: [],
     stockKeys: {}, supplierKeys: {}, indexesOutdated: false, abandoned: new Set(), slowReplayMs: 0, loseNextPreview: false, loseNextRetry: false,
-    retries: 0, refuseNextSupplierEdit: false,
+    retries: 0, refuseNextSupplierEdit: false, holdFirstStockMs: 0, slowAbandonMs: 0, forbidNextSupplierAdd: false,
   };
   state.imports = init.imports ?? [];
   let live = false;
@@ -102,6 +108,7 @@ async function mockBackend(page: Page, init: { suppliers?: Supplier[]; imports?:
     const stockByKey = /^\/pharmacy-inventory\/by-key\/([A-Za-z0-9_-]{8,100})$/.exec(path);
     const stockAbandon = /^\/pharmacy-inventory\/by-key\/([A-Za-z0-9_-]{8,100})\/abandon$/.exec(path);
     if (stockAbandon && method === 'POST') {
+      if (state.slowAbandonMs) await new Promise((r) => setTimeout(r, state.slowAbandonMs));
       const key = stockAbandon[1]!;
       if (state.stockKeys[key]) return json(route, 200, { success: true, data: { state: 'used', items: [{ _id: ITEM, medicineId: medicines[0], availableQty: 110, reservedQty: 0 }] } });
       state.abandoned.add(key);
@@ -114,6 +121,7 @@ async function mockBackend(page: Page, init: { suppliers?: Supplier[]; imports?:
     }
     if (path === '/pharmacy-inventory' && method === 'POST') {
       state.stockPosts.push(body!);
+      if (state.stockPosts.length === 1 && state.holdFirstStockMs) await new Promise((r) => setTimeout(r, state.holdFirstStockMs));
       const key = body!.requestKey as string | undefined;
       const hash = JSON.stringify(body!.items);
       if (key && state.abandoned.has(key)) return refuse(route, 409, 'REQUEST_ABANDONED', 'This request was cancelled before it was recorded; make a new one');
@@ -205,6 +213,7 @@ async function mockBackend(page: Page, init: { suppliers?: Supplier[]; imports?:
         return made ? json(route, 200, { success: true, data: made }) : refuse(route, 404, 'SUPPLIER_NOT_FOUND', 'No supplier was created with this key');
       }
       if (path === '/pharmacy-suppliers' && method === 'POST') {
+        if (state.forbidNextSupplierAdd) { state.forbidNextSupplierAdd = false; return refuse(route, 403, 'PHARMACY_NOT_OPERATIONAL', 'This pharmacy is not active'); }
         const { requestKey: key, ...fields } = body! as Json & { requestKey?: string };
         const hash = JSON.stringify(fields);
         if (key && state.abandoned.has(key)) return refuse(route, 409, 'REQUEST_ABANDONED', 'This request was cancelled before it was recorded; make a new one');
@@ -786,3 +795,45 @@ test('WQ10c: a lost retry is not settled by an outcome written before it was sen
   await expect(page.getByText('Done: 2 rows were added to stock.')).toBeVisible();
   expect(backend.retries).toBe(1);
 });
+
+test('WQ10c (review N1): giving up an entry whose first send is still in flight keeps the panel (busy) on screen; the late send is refused', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.holdFirstStockMs = 4000;
+  backend.slowAbandonMs = 1500;
+  await signIn(page, 'Stock');
+  await page.getByRole('link', { name: 'Add a batch of Paracetamol 650mg' }).click();
+  await fillBatch(page);
+  await page.getByRole('button', { name: 'Check and add' }).click();
+  await page.getByRole('button', { name: 'Yes, add to stock' }).click(); // held at the server
+  await page.getByRole('link', { name: 'Stock', exact: true }).first().click();
+  await page.getByRole('link', { name: 'Add a batch of Paracetamol 650mg' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed stock entry' });
+  await panel.getByRole('button', { name: 'Give this up' }).click();
+  await expect(panel).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Check and add' })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Check whether it was recorded' })).toBeDisabled();
+  await expect(page.getByText('Given up: nothing was added with that entry, and it can never be added now.', { exact: false })).toBeVisible();
+  await expect.poll(() => backend.stockPosts.length).toBe(1);
+  await page.waitForTimeout(3000); // the held send is now decided: refused, the key was given up
+  expect(backend.adjustments).toHaveLength(0);
+  expect(backend.abandoned.size).toBe(1);
+});
+
+test('WQ10c (review N2): a supplier add resent into a 403 stays unconfirmed (it may have been added); the check then finds it', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page, 'Suppliers');
+  backend.loseNextSupplierAnswer = true;
+  await page.getByRole('button', { name: 'Add a supplier' }).click();
+  await page.getByLabel('Supplier name').fill('Sun Distributors');
+  await page.getByRole('button', { name: 'Add supplier' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed supplier change' });
+  backend.forbidNextSupplierAdd = true;
+  await panel.getByRole('button', { name: 'Send the same change again' }).click();
+  await expect(panel).toContainText('Add Sun Distributors: not confirmed (This pharmacy is not active)');
+  await expect(page.getByText(/Not added: /)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Add a supplier' })).toBeDisabled();
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Sun Distributors was added. Nothing was added twice.')).toBeVisible();
+  expect(backend.suppliers).toHaveLength(1);
+});
+

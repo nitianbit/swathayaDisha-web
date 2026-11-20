@@ -166,8 +166,9 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
     if (preset) setParams({}, { replace: true });
   }
 
-  // The unconfirmed entry stays on screen while it is resent or given up; only its first attempt shows the review busy.
-  if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
+  // The unconfirmed entry stays on screen while it is resent or given up; only its first attempt (sent from this page, not
+  // a give-up of it) shows the review busy.
+  if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
     const restored = !!op.restored || !op.body;
     return (
       <>

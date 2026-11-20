@@ -9,7 +9,7 @@ import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextA
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
-import { definitelyNotRecorded, newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
+import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
@@ -37,6 +37,9 @@ export function SuppliersScreen() {
     </>
   );
 }
+
+/** A refusal of the request's content (400/422): the same request is refused the same way every time. */
+const isContentRefusal = (err: unknown) => err instanceof ApiError && (err.status === 400 || err.status === 422);
 
 const describeChange = (c: SupplierChange) =>
   c.kind === 'create' ? `Add ${c.fields.displayName}` : c.kind === 'update' ? `Save changes to ${c.name}` : `Archive ${c.name}`;
@@ -69,9 +72,10 @@ function Suppliers({ pharmacyId }: { pharmacyId: string }) {
       if (r.kind === 'ok') { void refresh(); return r.value; }
       if (r.kind === 'refused') { void refresh(); throw r.error; }
       if (r.kind === 'unknown' && isSupplierConflict(r.error)) { await check(p); return null; } // a resend met its own (or someone's) change
-      if (r.kind === 'unknown' && definitelyNotRecorded(r.error)) {
-        // The server refused this very request (same key, same content, same revision) for a reason other than a newer
-        // version: an earlier copy of it would have been refused the same way, or (a given-up add) can never be recorded.
+      if (r.kind === 'unknown' && (wasAbandoned(r.error) || isContentRefusal(r.error))) {
+        // The server refused this very request for its content (400/422: same key, same content, same revision, so an
+        // earlier copy was refused the same way), or its key was given up (it can never be recorded). Anything else on a
+        // resend (401, 403, 404, 409 …) says nothing about the earlier copy: it stays unconfirmed.
         settle(p.requestKey);
         void refresh();
         const what = p.body?.kind === 'create' ? 'Not added' : 'Not saved';
@@ -140,7 +144,7 @@ function Suppliers({ pharmacyId }: { pharmacyId: string }) {
     <>
       {notice && <Alert tone="ok">{notice}</Alert>}
       {resendError && <Alert>{resendError}</Alert>}
-      {op && !(busy && op.attempts === 1 && !op.uncertain) && (
+      {op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain) && (
         <CheckPanel label="Unconfirmed supplier change" onCheck={() => check(op)}
           resend={op.body && !op.restored
             ? { label: 'Send the same change again', busy: busy && !givingUp, onClick: () => {
