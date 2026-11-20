@@ -1,6 +1,6 @@
 import { ApiError, createApiClient } from './client.ts';
 import {
-  IMPORT_COLUMNS, importCommittable, importFileProblem, importRetryable, importTemplateCsv, isImportClaimed, isRealYyyymmdd,
+  IMPORT_COLUMNS, importCommittable, importStuck, importFileProblem, importRetryable, importTemplateCsv, isImportClaimed, isRealYyyymmdd,
   pharmacyStockApi, stockEntryBody, stockEntryProblems, type StockEntryDraft,
 } from './pharmacyStock.ts';
 import { cancelRefusal, orderStatusLabel, paymentStatusLabel } from './pharmacyOrders.ts';
@@ -78,6 +78,21 @@ describe('add stock (createInventoryItemSchema / saveItem)', () => {
     await expect(api.savedByKey('../x')).rejects.toThrow('Invalid request key');
   });
 
+  it('review: only REQUEST_KEY_NOT_FOUND means "nothing so far"; another 404 stays unknown. Q15 abandon: abandoned or used', async () => {
+    const answers = [
+      new Response(JSON.stringify({ error: 404, code: 'NOT_FOUND', message: 'Not found' }), { status: 404 }),
+      new Response(JSON.stringify({ success: true, data: { state: 'abandoned' } }), { status: 200 }),
+      new Response(JSON.stringify({ success: true, data: { state: 'used', items: [{ _id: 'i1' }] } }), { status: 200 }),
+    ];
+    const { client, calls } = recorder(() => answers.shift()!);
+    const api = pharmacyStockApi(client);
+    await expect(api.savedByKey(KEY)).rejects.toThrow('Not found');
+    expect(await api.abandonStock(KEY)).toEqual({ state: 'abandoned' });
+    expect(await api.abandonStock(KEY)).toEqual({ state: 'used', items: [{ _id: 'i1' }] });
+    expect(calls.slice(1).map((c) => `${c.method} ${c.url}`)).toEqual(Array(2).fill(`POST /pharmacy-inventory/by-key/${KEY}/abandon`));
+    expect(() => api.abandonStock('x')).toThrow('Invalid request key');
+  });
+
   it('searches active medicines with pagination and reads the stock history', async () => {
     const { client, calls } = recorder(() => new Response(JSON.stringify({ success: true, data: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } }), { status: 200 }));
     const api = pharmacyStockApi(client);
@@ -137,6 +152,17 @@ describe('stock imports (pharmacyInventoryImports)', () => {
     expect(isImportClaimed(new ApiError(409, 'x', 'IMPORT_NOT_RETRYABLE'))).toBe(true);
     expect(isImportClaimed(new ApiError(409, 'x', 'IMPORT_ALREADY_PROCESSING'))).toBe(true);
     expect(isImportClaimed(new ApiError(409, 'x', 'OTHER'))).toBe(false);
+  });
+
+  it('review: an import stuck in committing for over 15 minutes can be retried (staleCommitting); a fresh one cannot', () => {
+    const now = Date.parse('2026-11-20T12:00:00Z');
+    const at = (minAgo: number) => new Date(now - minAgo * 60_000).toISOString();
+    expect(importStuck({ status: 'committing', updatedAt: at(16) }, now)).toBe(true);
+    expect(importStuck({ status: 'committing', updatedAt: at(14) }, now)).toBe(false);
+    expect(importStuck({ status: 'committing' }, now)).toBe(false);
+    expect(importStuck({ status: 'previewed', updatedAt: at(60) }, now)).toBe(false);
+    expect(importRetryable({ status: 'committing', updatedAt: at(16), previewRows: [] }, now)).toBe(true);
+    expect(importRetryable({ status: 'committing', updatedAt: at(1), previewRows: [] }, now)).toBe(false);
   });
 });
 

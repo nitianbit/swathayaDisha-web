@@ -9,7 +9,7 @@ import {
 import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
-import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
+import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
@@ -60,6 +60,8 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
   const { op, send, settle } = useOwnedOp<PendingEntry>(`stock-add:${pharmacyId}`);
   const { perform, busy } = useOneAtATime('stock entry');
   const [resendError, setResendError] = useState<string | null>(null);
+  const [givingUp, setGivingUp] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [picked, setPicked] = useState<Medicine | null>(null);
   const [draft, setDraft] = useState<Fields>(EMPTY);
   const [errors, setErrors] = useState<Partial<Record<keyof StockEntryDraft, string>>>({});
@@ -83,6 +85,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
     e.preventDefault();
     setDone(null);
     setRefused(null);
+    setNotice(null);
     const full: StockEntryDraft = { ...draft, medicineId: chosen?._id ?? '' };
     const problems = stockEntryProblems(full);
     setErrors(problems);
@@ -95,6 +98,12 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
     const r = await perform(() => send(p, (b) => stock.addStock(b.entry, p.requestKey)));
     if (r.kind === 'stale') return;
     setReview(null);
+    if (r.kind === 'unknown' && wasAbandoned(r.error)) {
+      // Given up meanwhile (e.g. in another tab): the server says this key can never add anything.
+      settle(p.requestKey);
+      setNotice('This entry was given up earlier, so nothing was added with it. Add the units again if they are still to be added.');
+      return;
+    }
     if (r.kind === 'ok') {
       const what = p.body ? describe(p.body.entry, p.body.medicineName) : 'the units';
       setDone({
@@ -106,6 +115,38 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
       void refresh();
     } else if (r.kind === 'refused') {
       setRefused(messageOf(r.error));
+    }
+  }
+
+  /** The recorded entry was found (by key or by giving up): show it and clear the form, so it is not added again. */
+  function recorded(p: PendingOp<PendingEntry>, items: InventoryItem[]) {
+    settle(p.requestKey);
+    setDone({
+      text: `Recorded: ${p.body ? describe(p.body.entry, p.body.medicineName) : 'the stock entry'} was added. Nothing was added twice.`,
+      search: itemSearch(items),
+    });
+    setDraft(EMPTY);
+    setErrors({});
+    setReview(null);
+    void refresh();
+  }
+
+  /**
+   * Q15: gives the entry up on the server. 'abandoned' = its key can never add anything now: the form is free again (with
+   * what was typed, when it is still here); 'used' = it was added, and that is shown.
+   */
+  async function giveUp(p: PendingOp<PendingEntry>) {
+    setResendError(null);
+    setGivingUp(true);
+    try {
+      const r = await perform(() => stock.abandonStock(p.requestKey));
+      if (r.state === 'used') { recorded(p, r.items); return; }
+      settle(p.requestKey);
+      setNotice('Given up: nothing was added with that entry, and it can never be added now. Check the details and add the units again.');
+    } catch (err) {
+      setResendError(messageOf(err));
+    } finally {
+      setGivingUp(false);
     }
   }
 
@@ -125,7 +166,8 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
     if (preset) setParams({}, { replace: true });
   }
 
-  if (op && !busy) {
+  // The unconfirmed entry stays on screen while it is resent or given up; only its first attempt shows the review busy.
+  if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
     const restored = !!op.restored || !op.body;
     return (
       <>
@@ -135,32 +177,21 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
             const items = await stock.savedByKey(op.requestKey);
             if (!items) {
               return restored
-                ? 'Not recorded so far. It may still be on its way: this cannot be told apart from here.'
+                ? 'Not recorded so far. It may still be on its way. Give it up to make sure it never is, then add the units again.'
                 : 'Not recorded so far. It may still be on its way. Sending the same entry again is safe: it is never added twice.';
             }
-            settle(op.requestKey);
-            setDone({
-              text: `Recorded: ${op.body ? describe(op.body.entry, op.body.medicineName) : 'the stock entry'} was added. Nothing was added twice.`,
-              search: itemSearch(items),
-            });
-            void refresh();
+            recorded(op, items);
             return null;
           }}
           resend={restored ? undefined : {
-            label: 'Send the same entry again', busy,
+            label: 'Send the same entry again', busy: busy && !givingUp,
             onClick: () => { setResendError(null); void sendEntry(op, '').catch((err: unknown) => setResendError(messageOf(err))); },
           }}
-          forget={{
-            label: 'Forget it and add again', confirmLabel: 'Forget it',
-            consequence: restored
-              ? 'Only do this if the batch in Stock does not show these units. If the earlier entry still arrives, its units are added then and would be counted twice; you would have to ask the Jansetu team to correct it.'
-              : 'Sending the same entry again is the safe choice. If you forget it and the earlier entry still arrives, its units are added then and would be counted twice; you would have to ask the Jansetu team to correct it.',
-            onForget: () => settle(op.requestKey),
-          }}>
+          giveUp={{ label: 'Give this up', busy: givingUp, onClick: () => void giveUp(op) }}>
           <Alert tone="warn">
             {restored
-              ? 'A stock entry made earlier on this device (before the page was reloaded, or before you signed out) was not confirmed. Its details are not kept here.'
-              : `This stock entry was not confirmed${op.error ? ` (${op.error})` : ''}. The units may already be in stock. Sending the same entry again is safe: it is never added twice.`}
+              ? 'A stock entry made earlier on this device (before the page was reloaded, or before you signed out) was not confirmed. Its details are not kept here. Check it, or give it up: then it can never be added.'
+              : `This stock entry was not confirmed${op.error ? ` (${op.error})` : ''}. The units may already be in stock. Sending the same entry again is safe: it is never added twice. Or give it up: then it can never be added.`}
           </Alert>
           {!restored && op.body && <div>{describe(op.body.entry, op.body.medicineName)}</div>}
         </CheckPanel>
@@ -170,6 +201,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
 
   return (
     <>
+      {notice && <Alert tone="ok">{notice}</Alert>}
       {done && (
         <Alert tone="ok">
           {done.text}{' '}

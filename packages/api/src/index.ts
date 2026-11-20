@@ -52,7 +52,7 @@ export {
 } from './pharmacySuppliers.ts';
 export type { PharmacySupplier, SupplierDraft, SupplierField, SupplierFields, SupplierState } from './pharmacySuppliers.ts';
 export {
-  ADD_STOCK_REASONS, IMPORT_ACCEPT, IMPORT_COLUMNS, IMPORT_EXPIRY_FORMS, IMPORT_MAX_BYTES, IMPORT_MODES, IMPORT_ROW_STATUS_LABEL, IMPORT_STATUS_LABEL, importCommittable,
+  ADD_STOCK_REASONS, IMPORT_ACCEPT, IMPORT_COLUMNS, IMPORT_EXPIRY_FORMS, IMPORT_NUMBER_NOTE, IMPORT_STUCK_AFTER_MS, importStuck, IMPORT_MAX_BYTES, IMPORT_MODES, IMPORT_ROW_STATUS_LABEL, IMPORT_STATUS_LABEL, importCommittable,
   importFileProblem, importRetryable, importSettled, importTemplateCsv, isImportClaimed, isRealYyyymmdd, MAX_STOCK_NOTE, pharmacyStockApi,
   serverToday, STOCK_LIMITS, stockEntryBody, stockEntryProblems,
 } from './pharmacyStock.ts';

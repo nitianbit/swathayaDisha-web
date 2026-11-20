@@ -81,4 +81,17 @@ describe('suppliers (pharmacySuppliers validation)', () => {
     await expect(api.create({ displayName: 'Sun' }, 'x')).rejects.toThrow('Invalid request key');
     await expect(api.createdByKey('a/b')).rejects.toThrow('Invalid request key');
   });
+
+  it('review: another 404 on by-key stays unknown; Q15 abandon answers abandoned or used with the supplier', async () => {
+    const answers = [
+      new Response(JSON.stringify({ error: 404, code: 'NOT_FOUND', message: 'Not found' }), { status: 404 }),
+      new Response(JSON.stringify({ success: true, data: { state: 'used', supplier: supplier() } }), { status: 200 }),
+    ];
+    const { client, calls } = recorder(() => answers.shift()!);
+    const api = pharmacySuppliersApi(client);
+    await expect(api.createdByKey(KEY)).rejects.toThrow('Not found');
+    expect(await api.abandonCreate(KEY)).toEqual({ state: 'used', supplier: supplier() });
+    expect(calls[1]).toMatchObject({ method: 'POST', url: `/pharmacy-suppliers/by-key/${KEY}/abandon` });
+    expect(() => api.abandonCreate('../x')).toThrow('Invalid request key');
+  });
 });

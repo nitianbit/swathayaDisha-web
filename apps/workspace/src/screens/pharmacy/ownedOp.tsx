@@ -67,11 +67,13 @@ export function useOwnedOp<B>(slot: string) {
  * An unconfirmed change: what it was, a way to find out whether it was recorded, and (only where repeating it is safe)
  * sending it again. `onCheck` answers null once it settled the change, or a sentence saying what is still unknown.
  */
-export function CheckPanel({ label, children, onCheck, resend, forget }: {
+export function CheckPanel({ label, children, onCheck, resend, giveUp, forget }: {
   label: string;
   children: ReactNode;
   onCheck: () => Promise<string | null>;
   resend?: { label: string; busy: boolean; onClick: () => void };
+  /** Q15: give the request up on the server (its key can then never be recorded), or learn that it was recorded. */
+  giveUp?: { label: string; busy: boolean; onClick: () => void };
   /** Offered after a check found nothing, behind a second step that says what forgetting risks. */
   forget?: { label: string; confirmLabel: string; consequence: ReactNode; onForget: () => void };
 }) {
@@ -100,8 +102,11 @@ export function CheckPanel({ label, children, onCheck, resend, forget }: {
       {children}
       {note && <Alert tone={note.tone}>{note.text}</Alert>}
       <div className="confirm-actions">
-        <Button variant={resend ? 'secondary' : 'primary'} busy={checking} disabled={resend?.busy} onClick={() => void check()}>Check whether it was recorded</Button>
-        {resend && <Button busy={resend.busy} disabled={checking} onClick={resend.onClick}>{resend.label}</Button>}
+        <Button variant={resend ? 'secondary' : 'primary'} busy={checking} disabled={resend?.busy || giveUp?.busy} onClick={() => void check()}>Check whether it was recorded</Button>
+        {resend && <Button busy={resend.busy} disabled={checking || giveUp?.busy} onClick={resend.onClick}>{resend.label}</Button>}
+        {giveUp && (
+          <Button variant="secondary" busy={giveUp.busy} disabled={checking || resend?.busy} onClick={giveUp.onClick}>{giveUp.label}</Button>
+        )}
         {forget && checked && !resend?.busy && (
           <ConfirmAction label={forget.label} danger confirmLabel={forget.confirmLabel} consequence={forget.consequence}
             onConfirm={async () => forget.onForget()} />

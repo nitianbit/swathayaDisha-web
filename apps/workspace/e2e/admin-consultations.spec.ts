@@ -107,7 +107,7 @@ async function mockBackend(page: Page): Promise<Backend> {
     const one = /^\/bookings\/([0-9a-f]{24})$/.exec(path);
     if (one && method === 'GET') {
       const bk = b.bookings.find((x) => x._id === one[1]);
-      return bk ? ok(route, bk) : fail(route, 404, 'BOOKING_NOT_FOUND', 'Booking not found');
+      return bk ? ok(route, { ...bk, patientName: patientName(bk) }) : fail(route, 404, 'BOOKING_NOT_FOUND', 'Booking not found'); // Q15: admin reads name the patient
     }
     if (path === '/specialists' && method === 'GET') {
       const name = (url.searchParams.get('name') ?? '').toLowerCase();
@@ -317,13 +317,13 @@ test('a time taken meanwhile is refused: the doctor’s free times are read agai
   expect((sent[1]!.body as Rec).requestKey).not.toBe((sent[0]!.body as Rec).requestKey); // a refused first attempt: a new request
 });
 
-test('WQ10c: the booking page names the patient from the doctor’s day list; nothing about them in storage or the address', async ({ page }) => {
+test('WQ10c: the booking page names the patient from the booking itself (no list walk); nothing about them in storage or the address', async ({ page }) => {
   const backend = await mockBackend(page);
   await signInAdmin(page);
   await page.goto(`/#/admin/consultations/${BK1}`);
   await expect(page.getByRole('heading', { name: 'Consultation on Thu, 19 Nov, 2026, 10:00' })).toBeVisible();
   await expect(page.getByText('Meena Kumar (a family member of the account holder)')).toBeVisible();
-  expect(lists(backend)).toContain(`/bookings?bookingType=consultation&specialistId=${DOC1}&bookingDateFrom=20261119&bookingDateTo=20261119&page=1&limit=100`);
+  expect(lists(backend)).toEqual([]); // one read of the booking, no list pages
   await page.goto(`/#/admin/consultations/${BK5}`);
   await expect(page.getByRole('heading', { name: /Consultation on Tue, 10 Nov/ })).toBeVisible();
   await expect(page.getByText('The account holder', { exact: true })).toBeVisible(); // name unknown: the old words

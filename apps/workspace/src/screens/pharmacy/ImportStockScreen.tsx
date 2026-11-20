@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
 import { ArrowLeft, Download } from 'lucide-react';
 import {
-  IMPORT_ACCEPT, IMPORT_COLUMNS, IMPORT_EXPIRY_FORMS, IMPORT_MODES, IMPORT_STATUS_LABEL, importFileProblem, importTemplateCsv, pharmacyStockApi,
+  IMPORT_ACCEPT, IMPORT_COLUMNS, IMPORT_EXPIRY_FORMS, IMPORT_NUMBER_NOTE, IMPORT_MODES, IMPORT_STATUS_LABEL, importFileProblem, importTemplateCsv, pharmacyStockApi,
   type ImportMode, type ImportStatus, type InventoryImport,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
@@ -85,6 +85,8 @@ function Columns() {
         {IMPORT_EXPIRY_FORMS.map((f) => <li key={f}>{f}</li>)}
       </ul>
       <p className="ws-muted">A row with an expiry in any other form is shown with a problem and is not added.</p>
+      <h3>Numbers and prices</h3>
+      <p>{IMPORT_NUMBER_NOTE}</p>
     </section>
   );
 }
@@ -100,6 +102,8 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
+  /** A recent import with this file's name, found by "Check": the person decides whether it is this upload. */
+  const [candidate, setCandidate] = useState<InventoryImport | null>(null);
 
   const open = (r: InventoryImport) => {
     if (/^[0-9a-fA-F]{24}$/.test(r._id)) navigate(`/pharmacy/stock/imports/${r._id}`);
@@ -129,14 +133,17 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
       {op && !busy ? (
         <CheckPanel label="Unconfirmed file check"
           onCheck={async () => {
-            const recent = await stock.imports(1, 20);
-            const since = op.firstAttemptAt - 5 * 60_000;
-            const hit = recent.items.find((r) => (!op.body || r.fileName === op.body.fileName)
-              && r.createdAt && Date.parse(r.createdAt) >= since);
+            setCandidate(null);
             void queryClient.invalidateQueries({ queryKey: ['pharmacy-inventory', pharmacyId, 'imports'] });
+            // A marker restored after a reload keeps no file name: nothing is matched for it (the list below shows every import).
+            if (!op.body) return 'Its file name is not kept on this device. Look for it under Recent imports below, or upload the file again.';
+            const recent = await stock.imports(1, 20);
+            // Only an import of this file name started after this check was first sent (30 s allowed for clocks). It is
+            // never opened on its own: an older or another upload of the same name could look the same.
+            const since = op.firstAttemptAt - 30_000;
+            const hit = recent.items.find((r) => r.fileName === op.body!.fileName && !!r.createdAt && Date.parse(r.createdAt) >= since);
             if (!hit) return 'It is not in your imports yet. It may still be on its way, or it never arrived.';
-            settle(op.requestKey);
-            open(hit);
+            setCandidate(hit);
             return null;
           }}
           forget={{
@@ -148,6 +155,17 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
             The answer to the file check did not arrive{op.error ? ` (${op.error})` : ''}. Nothing was added to stock: a checked
             file waits for you to confirm it.{op.body ? ` File: ${op.body.fileName}.` : ''}
           </Alert>
+          {candidate && (
+            <div className="confirm" role="group" aria-label="Is this the import?">
+              <div className="confirm-text">
+                An import of {candidate.fileName} started at {formatTime(candidate.createdAt)}. Is this it?
+              </div>
+              <div className="confirm-actions">
+                <Button onClick={() => { settle(op.requestKey); open(candidate); }}>Open it</Button>
+                <Button variant="secondary" onClick={() => { setCandidate(null); settle(op.requestKey); }}>Upload again</Button>
+              </div>
+            </div>
+          )}
         </CheckPanel>
       ) : (
         <form className="rx-form" noValidate onSubmit={(e) => void submit(e)}>
@@ -175,6 +193,10 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
     </section>
   );
 }
+
+/** HH:MM in India time (24-hour). */
+const formatTime = (value: string | undefined) =>
+  (value ? new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Kolkata' }).format(new Date(value)) : '—');
 
 const PAGE_SIZE = 20;
 

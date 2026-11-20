@@ -40,24 +40,20 @@ describe('admin consultations (bookings getAll as admin, slots/available)', () =
     ]);
   });
 
-  it('Q15: filters no-shows on their own; finds one booking’s patient name in its doctor’s day list', async () => {
+  it('Q15: filters no-shows on their own; one booking is read once (it carries patientName itself)', async () => {
     const calls: string[] = [];
-    const rows = [booking({ _id: 'e5'.repeat(12), patientName: 'Other' }), booking({ patientName: ' Asha Rao ' })];
     const client = createApiClient({ baseUrl: 'https://api.example.test', getToken: () => 'tok',
       fetchImpl: async (u) => {
-        calls.push(String(u).replace('https://api.example.test/api/v1', ''));
-        return new Response(JSON.stringify({ success: true, data: rows, pagination: { page: 1, limit: 100, total: 2, totalPages: 1 } }), { status: 200 });
+        const url = String(u).replace('https://api.example.test/api/v1', '');
+        calls.push(url);
+        return new Response(JSON.stringify(url.startsWith('/bookings?')
+          ? { success: true, data: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } }
+          : { success: true, data: booking({ patientName: 'Asha Rao' }) }), { status: 200 });
       } });
     const api = consultationAdminApi(client);
     await api.list({ status: 'no_show' });
-    expect(await api.patientName(booking({ specialistId: DOC }))).toBe('Asha Rao');
-    rows[1]!.patientName = null;
-    expect(await api.patientName(booking({}))).toBeNull();
-    expect(calls).toEqual([
-      '/bookings?bookingType=consultation&status=no_show&page=1&limit=20',
-      `/bookings?bookingType=consultation&specialistId=${DOC}&bookingDateFrom=20261117&bookingDateTo=20261117&page=1&limit=100`,
-      '/bookings?bookingType=consultation&bookingDateFrom=20261117&bookingDateTo=20261117&page=1&limit=100',
-    ]);
+    expect((await api.get(ID)).patientName).toBe('Asha Rao');
+    expect(calls).toEqual(['/bookings?bookingType=consultation&status=no_show&page=1&limit=20', `/bookings/${ID}`]);
   });
 
   it('Q15: another doctor’s time is a slot refusal, in words', () => {

@@ -43,12 +43,6 @@ function Consultation({ bookingId, identity, scopeKey }: { bookingId: string; id
   const queryClient = useQueryClient();
   const key = [...scopeKey, 'one', bookingId];
   const q = useQuery({ queryKey: key, queryFn: () => consultationAdminApi(api).get(bookingId) });
-  // Q15: the patient's name comes only with the admin list rows: read the booking's doctor and day once it is known.
-  const nameQ = useQuery({
-    queryKey: [...key, 'patient', q.data?.specialistId ?? '', q.data?.bookingDate ?? ''],
-    queryFn: () => consultationAdminApi(api).patientName(q.data!),
-    enabled: !!q.data,
-  });
   // One move at a time on this page (the central guard): a confirmation already open is refused while another runs.
   const guard = useOneAtATime('consultation');
   const now = useTicker(30_000);
@@ -79,8 +73,8 @@ function Consultation({ bookingId, identity, scopeKey }: { bookingId: string; id
                 <dt>Kind</dt><dd>{consultationKind(q.data)}</dd>
                 <dt>Patient</dt>
                 <dd>
-                  {nameQ.data ? <>{nameQ.data} <span className="ws-muted">({q.data.dependentId ? 'a family member of the account holder' : 'the account holder'})</span></>
-                    : nameQ.isPending ? <span className="ws-muted">Loading…</span>
+                  {q.data.patientName?.trim()
+                    ? <>{q.data.patientName.trim()} <span className="ws-muted">({q.data.dependentId ? 'a family member of the account holder' : 'the account holder'})</span></>
                     : q.data.dependentId ? 'A family member of the account holder' : 'The account holder'}
                 </dd>
                 <dt>Payment</dt><dd>{paymentLabel(q.data)}{typeof q.data.price === 'number' && q.data.paymentStatus === 'paid' ? ` · ${formatRupees(q.data.price)}` : ''}</dd>

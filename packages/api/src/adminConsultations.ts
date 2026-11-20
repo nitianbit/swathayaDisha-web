@@ -11,8 +11,9 @@ import { noShowMovedOnce } from './noShows.ts';
  * `doctorAdminApi`). The generic booking routes answer the scrubbed no-show view (`publicNoShowView`): when it was
  * missed and moved, never who marked or moved it.
  *
- * Q15: `bookingQuerySchema.status` also takes `no_show`, and each row an admin reads carries `patientName` (the family
- * member's name when the booking is for one, else the account holder's; null when unknown). Every move stays with the
+ * Q15: `bookingQuerySchema.status` also takes `no_show`, and each booking an admin reads (list rows and `GET /bookings/:id`)
+ * carries `patientName` (the family member's name when the booking is for one, else the account holder's; null when
+ * unknown). Every move stays with the
  * booking's doctor: another doctor's slot is refused 409 `SLOT_NOT_THIS_DOCTOR`.
  */
 
@@ -33,7 +34,7 @@ export interface AdminConsultation {
   dependentId?: string;
   specialistId?: string;
   doctorName?: string;
-  /** Q15, admin reads of the list: the family member's or the account holder's name; null when unknown. */
+  /** Q15, admin reads (list and one booking): the family member's or the account holder's name; null when unknown. */
   patientName?: string | null;
   primaryConcern?: string;
   consultationMode?: ConsultMode;
@@ -112,26 +113,6 @@ export function consultationAdminApi(c: ApiClient) {
       } });
     },
     get: (id: string) => c.get<AdminConsultation>(`/bookings/${checkId(id, 'booking')}`),
-    /**
-     * Q15: the patient's name for one booking. `GET /bookings/:id` does not carry it (only the admin list rows do), so the
-     * list is read for the booking's doctor and day (at most 3 pages of 100) and the row with its id is taken. null =
-     * the server does not know the name, or the row was not found.
-     */
-    patientName: async (b: Pick<AdminConsultation, '_id' | 'specialistId' | 'bookingDate'>): Promise<string | null> => {
-      checkId(b._id, 'booking');
-      if (!/^\d{8}$/.test(b.bookingDate)) return null;
-      for (let page = 1; page <= 3; page++) {
-        const p = await c.page<AdminConsultation>('/bookings', { query: {
-          bookingType: 'consultation',
-          specialistId: b.specialistId && OBJECT_ID.test(b.specialistId) ? b.specialistId : undefined,
-          bookingDateFrom: b.bookingDate, bookingDateTo: b.bookingDate, page, limit: 100,
-        } });
-        const hit = p.items.find((x) => x._id === b._id);
-        if (hit) return hit.patientName?.trim() || null;
-        if (page >= p.totalPages || p.items.length === 0) break;
-      }
-      return null;
-    },
     /** Doctors whose name contains the text (any status), 20 at most. */
     doctors: (name: string) => {
       const t = name.trim();

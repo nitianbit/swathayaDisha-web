@@ -12,7 +12,7 @@ import { normalizeEmail } from './auth.ts';
  * `GET /by-key/:key` and `POST /by-key/:key/abandon`; the admin list filters by exact mobile number (`phone`); the edit
  * takes `expectedUpdatedAt` (409 RECORD_CHANGED) and clears an optional field sent as null (`phone` and `name` cannot be
  * cleared); a changed sign-in mobile number, or a changed or removed email, signs the pharmacy out (its sessions end).
- * Q15 review: EMAIL_ALREADY_EXISTS may be 400 or 409 (a race on the unique email index); latitude and longitude are
+ * Q15 review: EMAIL_ALREADY_EXISTS is 409 (older servers answered 400; both are handled); latitude and longitude are
  * cleared together (the workspace does not edit them); a keyed create can be 503 INDEXES_OUTDATED (kept, sent later).
  */
 
@@ -160,7 +160,7 @@ export const PHARMACY_FIELDS: readonly (keyof PharmacyForm)[] = Object.keys(EMPT
 
 /** 400 PHONE_ALREADY_EXISTS (create or update): another pharmacy signs in with this mobile number. */
 export const isPharmacyPhoneTaken = (err: unknown) => err instanceof ApiError && err.code === 'PHONE_ALREADY_EXISTS';
-/** EMAIL_ALREADY_EXISTS (400, or 409 after a race; create or update): another pharmacy uses this email. */
+/** EMAIL_ALREADY_EXISTS (409 since the Q15 re-review; 400 before it, still accepted): another pharmacy uses this email. */
 export const isPharmacyEmailTaken = (err: unknown) => err instanceof ApiError && err.code === 'EMAIL_ALREADY_EXISTS';
 
 /**
@@ -223,7 +223,7 @@ export function pharmacyAdminApi(c: ApiClient) {
       try {
         return await c.get<PharmacyAccount>(`/pharmacies/by-key/${checkKey(key)}`);
       } catch (err) {
-        if (err instanceof ApiError && err.status === 404) return null;
+        if (err instanceof ApiError && err.status === 404 && err.code === 'PHARMACY_NOT_FOUND') return null;
         throw err;
       }
     },

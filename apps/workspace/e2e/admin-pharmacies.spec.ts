@@ -104,7 +104,7 @@ async function mockBackend(page: Page, opts: { many?: boolean } = {}): Promise<B
       }
       if (k?.state === 'abandoned') return fail(route, 409, 'REQUEST_ABANDONED', 'This request was cancelled before it was recorded; make a new one');
       if (b.pharmacies.some((p) => p.phone === x.phone)) return fail(route, 400, 'PHONE_ALREADY_EXISTS', 'A pharmacy with this phone number already exists');
-      if (x.email && b.pharmacies.some((p) => p.email === x.email)) return fail(route, 400, 'EMAIL_ALREADY_EXISTS', 'A pharmacy with this email already exists');
+      if (x.email && b.pharmacies.some((p) => p.email === x.email)) return fail(route, 409, 'EMAIL_ALREADY_EXISTS', 'A pharmacy with this email already exists');
       const made = { _id: `a${String(b.pharmacies.length).padStart(2, '0')}`.repeat(8), isVerified: false, isActive: true, pickupAvailable: false, deliveryAvailable: false,
         createdAt: new Date().toISOString(), updatedAt: stamp(), ...x };
       b.pharmacies.push(made);
@@ -203,6 +203,14 @@ test('pharmacies: listed newest first, searched by name, filtered by status and 
   ]);
   // A search cleared and a filter changed straight after: both count (the second starts from the first).
   expect(lists(backend).at(-1)).toBe('/pharmacies?isVerified=true&isActive=false&page=1&limit=20');
+  // Review: the name typed is kept in the page, never in the address or the history.
+  await page.getByLabel('Search by name').fill('care');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await expect(page.getByText('No pharmacies match')).toBeVisible();
+  await expect(page).not.toHaveURL(/care|name=/);
+  expect(await page.evaluate(() => JSON.stringify(history.state) + location.href)).not.toContain('care');
+  await page.getByLabel('Search by name').fill('');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
 
   // Q15: the exact mobile number lookup.
   const lookup = page.getByRole('region', { name: 'Find by mobile number' });
@@ -244,6 +252,12 @@ test('add a pharmacy: fields checked as the server does, a taken number names it
   await expect(page.getByRole('link', { name: 'Open Apollo Pharmacy' })).toBeVisible();
   expect(lists(backend)).toContain('/pharmacies?phone=9000000001&page=1&limit=1');
   await expect(page.getByLabel('Pharmacy name')).toBeEnabled(); // a refused first attempt unlocks the form
+  // A taken email is a 409 (Q15 re-review), shown on its field.
+  await page.getByLabel('Mobile number').fill('9000000005');
+  await page.getByLabel('Email (optional)').fill('old@meds.in');
+  await page.getByRole('button', { name: 'Add pharmacy' }).click();
+  await expect(page.getByText('Another pharmacy already uses this email. Use a different email.')).toBeVisible();
+  await page.getByLabel('Email (optional)').fill(' Desk@NewLife.IN ');
 
   backend.slowCreate = 400;
   await page.getByLabel('Mobile number').fill('9000000005');
@@ -254,8 +268,8 @@ test('add a pharmacy: fields checked as the server does, a taken number names it
   await add.click({ force: true }).catch(() => undefined);
   await page.getByLabel('Pharmacy name').press('Enter').catch(() => undefined);
   await expect(page.getByRole('heading', { name: 'New Life Pharmacy' })).toBeVisible();
-  expect(posts(backend)).toHaveLength(2); // the refused one, then exactly one more
-  const sent = posts(backend)[1]!.body as Rec;
+  expect(posts(backend)).toHaveLength(3); // the two refused ones, then exactly one more
+  const sent = posts(backend)[2]!.body as Rec;
   expect(sent).toEqual({ name: 'New Life Pharmacy', phone: '9000000005', email: 'desk@newlife.in', ownerName: 'Meena', pincode: '411001',
     pickupAvailable: false, deliveryAvailable: true, requestKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,100}$/) });
   expect(sent.requestKey).not.toBe((posts(backend)[0]!.body as Rec).requestKey); // a refused request is over: a new key

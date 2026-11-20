@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router';
 import { ArrowLeft, Download } from 'lucide-react';
 import {
   formatExpiry, IMPORT_MODES, IMPORT_ROW_STATUS_LABEL, IMPORT_STATUS_LABEL, importCommittable, importRetryable, importSettled,
-  isImportClaimed, pharmacyStockApi, type ImportRow, type InventoryImport,
+  importStuck, isImportClaimed, pharmacyStockApi, type ImportRow, type InventoryImport,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
@@ -13,6 +13,7 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
+import { useTicker } from '../doctor/doctor.tsx';
 import { importTone } from './ImportStockScreen.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 
@@ -52,6 +53,8 @@ function ImportView({ pharmacyId, record, reread }: {
   const { op, send, settle } = useOwnedOp<PendingStep>(`stock-import:${pharmacyId}:${record._id}`);
   const { perform, busy } = useOneAtATime('import');
   const [notice, setNotice] = useState<string | null>(null);
+  const now = useTicker(30_000);
+  const stuck = importStuck(record, now.getTime());
   const rows = record.previewRows ?? [];
   const newMedicines = rows.filter((r) => r.status === 'valid' && r.data?.medicineMatchStatus === 'not_found').length;
   const units = rows.filter((r) => r.status === 'valid').reduce((a, r) => a + Number(r.data?.quantityToAdd ?? 0), 0);
@@ -72,7 +75,9 @@ function ImportView({ pharmacyId, record, reread }: {
     const fresh = await reread();
     if (!fresh) return 'Could not read the import.';
     const retry = p.body?.kind === 'retry';
-    const since = p.firstAttemptAt - 5 * 60_000;
+    // A retry is settled only by an outcome written after it was first sent (30 s allowed for clocks), never by the
+    // outcome of an earlier commit or retry of the same import.
+    const since = p.firstAttemptAt - 30_000;
     if (importSettled(fresh.status) && (!retry || (fresh.updatedAt && Date.parse(fresh.updatedAt) >= since))) {
       settle(p.requestKey);
       setNotice(outcome(fresh));
@@ -125,7 +130,7 @@ function ImportView({ pharmacyId, record, reread }: {
         {problemRows > 0 && <ProblemFile importId={record._id} fileName={record.fileName} />}
       </section>
 
-      {op && !busy ? (
+      {op && !(busy && op.attempts === 1 && !op.uncertain) ? (
         <CheckPanel label="Unconfirmed import step" onCheck={() => checkStep(op)}
           resend={op.restored || !op.body ? undefined : { label: 'Send it again', busy, onClick: () => void run(op).catch(() => undefined) }}>
           <Alert tone="warn">
@@ -152,8 +157,20 @@ function ImportView({ pharmacyId, record, reread }: {
               ) : <Alert tone="warn">No row is ready to add. Fix the file and upload it again.</Alert>}
             </section>
           )}
-          {record.status === 'committing' && <Alert tone="warn">The rows are being added. This page updates on its own.</Alert>}
-          {importRetryable(record) && (
+          {record.status === 'committing' && !stuck && <Alert tone="warn">The rows are being added. This page updates on its own.</Alert>}
+          {stuck && (
+            <section className="ws-section" aria-labelledby="stuck-h">
+              <h2 id="stuck-h">Adding stopped</h2>
+              <Alert tone="warn">
+                Adding these rows started but has not finished since {formatDateTime(record.updatedAt)}. You can try again: rows
+                already added are never added twice.
+              </Alert>
+              <ConfirmAction label="Try again…" confirmLabel="Yes, try again"
+                consequence="The rows not added yet are added now. A row already added is never added twice. Rows with problems in the file are not tried."
+                onConfirm={() => run(startOp(newRequestKey(), { kind: 'retry', importId: record._id }))} />
+            </section>
+          )}
+          {importRetryable(record, now.getTime()) && !stuck && (
             <section className="ws-section" aria-labelledby="retry-h">
               <h2 id="retry-h">Rows that failed</h2>
               <ConfirmAction label="Try the failed rows again…" confirmLabel="Yes, try again"

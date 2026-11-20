@@ -61,6 +61,7 @@ describe('admin pharmacies: paths and bodies (pharmacies/routes)', () => {
       { success: true, data: account({}), replayed: true },
       { success: true, data: account({}) },
       { error: 404, code: 'PHARMACY_NOT_FOUND', message: 'No pharmacy was created with this key' },
+      { error: 404, code: 'NOT_FOUND', message: 'Not found' },
       { success: true, data: { state: 'abandoned' } },
       { success: true, data: [account({})], pagination: { page: 1, limit: 1, total: 1, totalPages: 1 } },
       { success: true, data: [], pagination: { page: 1, limit: 1, total: 0, totalPages: 0 } },
@@ -76,11 +77,12 @@ describe('admin pharmacies: paths and bodies (pharmacies/routes)', () => {
     expect(await api.create({ name: 'Apollo', phone: '9000000001' }, KEY)).toEqual({ pharmacy: account({}), replayed: true });
     expect(await api.createdByKey(KEY)).toEqual(account({}));
     expect(await api.createdByKey(KEY)).toBeNull();
+    await expect(api.createdByKey(KEY)).rejects.toThrow('Not found'); // review: any other 404 stays unknown
     expect(await api.abandonCreate(KEY)).toEqual({ state: 'abandoned' });
     expect(await api.findByPhone('9000000001')).toEqual(account({}));
     expect(await api.findByPhone('9000000002')).toBeNull();
     expect(calls).toEqual([
-      'POST /pharmacies', `GET /pharmacies/by-key/${KEY}`, `GET /pharmacies/by-key/${KEY}`, `POST /pharmacies/by-key/${KEY}/abandon`,
+      'POST /pharmacies', `GET /pharmacies/by-key/${KEY}`, `GET /pharmacies/by-key/${KEY}`, `GET /pharmacies/by-key/${KEY}`, `POST /pharmacies/by-key/${KEY}/abandon`,
       'GET /pharmacies?phone=9000000001&page=1&limit=1', 'GET /pharmacies?phone=9000000002&page=1&limit=1',
     ]);
   });

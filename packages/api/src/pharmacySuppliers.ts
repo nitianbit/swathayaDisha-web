@@ -120,9 +120,17 @@ export function pharmacySuppliersApi(c: ApiClient) {
       try {
         return await c.get<PharmacySupplier>(`/pharmacy-suppliers/by-key/${requestKey}`);
       } catch (err) {
-        if (err instanceof ApiError && err.status === 404) return null;
+        if (err instanceof ApiError && err.status === 404 && err.code === 'SUPPLIER_NOT_FOUND') return null;
         throw err;
       }
+    },
+    /**
+     * Q15 `POST /pharmacy-suppliers/by-key/:key/abandon`: 'abandoned' = this key can never create a supplier now (a later
+     * send is 409 REQUEST_ABANDONED); 'used' = it created this one.
+     */
+    abandonCreate: (requestKey: string) => {
+      if (!SUPPLIER_REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
+      return c.post<{ state: 'abandoned' } | { state: 'used'; supplier: PharmacySupplier | null }>(`/pharmacy-suppliers/by-key/${requestKey}/abandon`, { body: {} });
     },
     /** 409 SUPPLIER_CONFLICT when the supplier is archived or its revision is no longer `expectedRevision`. */
     update: (id: string, fields: Partial<SupplierFields>, expectedRevision: number) =>

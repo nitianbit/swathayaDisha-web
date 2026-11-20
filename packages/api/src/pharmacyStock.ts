@@ -213,10 +213,10 @@ export const IMPORT_MODES: readonly { value: ImportMode; label: string; hint: st
  */
 export const IMPORT_COLUMNS: readonly { header: string; need: string; format: string }[] = [
   { header: 'medicine name', need: 'Required', format: 'As in the medicine list. A name not in the list adds a new medicine.' },
-  { header: 'quantity to add', need: 'Required to add units', format: 'Whole number, 0 or more. 0 only updates prices and rack.' },
+  { header: 'quantity to add', need: 'Required to add units', format: 'Whole number, 0 or more (1,000 is fine). 0 only updates prices and rack.' },
   { header: 'batch number', need: 'When adding units', format: 'As printed on the pack.' },
   { header: 'expiry date', need: 'When adding units', format: 'A date (see below). Not in the past.' },
-  { header: 'mrp', need: 'Optional', format: 'Rupees, e.g. 42.50.' },
+  { header: 'mrp', need: 'Optional', format: 'Rupees, e.g. 42.50 or 1,250.00. Use a point for paise: 1,5 is refused.' },
   { header: 'retail price', need: 'Optional', format: 'Your selling price in rupees.' },
   { header: 'purchase price', need: 'Optional', format: 'Rupees.' },
   { header: 'wholesale price', need: 'Optional', format: 'Rupees.' },
@@ -241,6 +241,12 @@ export const IMPORT_EXPIRY_FORMS: readonly string[] = [
   'a date cell in Excel',
 ];
 
+/**
+ * Q15 re-review: how the import reads numbers. Grouping commas are fine ("1,000", "10,00,000"); a price with a decimal
+ * comma ("1,5") or extra text ("12 rs") is refused on its row.
+ */
+export const IMPORT_NUMBER_NOTE = 'Numbers may use commas between thousands, such as 1,000 or 10,00,000. Write paise with a point (12.50): a price such as 1,5 or 12 rs is refused on its row.';
+
 /** The upload route's multer limits. */
 export const IMPORT_ACCEPT = '.xlsx,.xls,.csv';
 export const IMPORT_MAX_BYTES = 10 * 1024 * 1024;
@@ -259,9 +265,18 @@ export const importTemplateCsv = () => `${IMPORT_COLUMNS.map((c) => c.header).jo
 
 /** commit: only a checked import with at least one ready row. */
 export const importCommittable = (r: Pick<InventoryImport, 'status' | 'validRows'>) => r.status === 'previewed' && r.validRows > 0;
-/** retry (`commit(…, true)`): failed or partly added imports with rows that failed while being added. */
-export const importRetryable = (r: Pick<InventoryImport, 'status' | 'previewRows'>) =>
-  (r.status === 'failed' || r.status === 'partially_committed') && (r.previewRows ?? []).some((x) => x.status === 'failed');
+/** The backend lets a retry resume an import stuck in `committing` once it has not moved for 15 minutes. */
+export const IMPORT_STUCK_AFTER_MS = 15 * 60_000;
+/** An import stuck while being added (`committing`, unchanged for more than 15 minutes): `POST /:id/retry` resumes it. */
+export const importStuck = (r: Pick<InventoryImport, 'status' | 'updatedAt'>, now = Date.now()) =>
+  r.status === 'committing' && !!r.updatedAt && Date.parse(r.updatedAt) < now - IMPORT_STUCK_AFTER_MS;
+/**
+ * retry (`commit(…, true)`): failed or partly added imports with rows that failed while being added; or (`staleCommitting`)
+ * one stuck while being added: then its ready rows are added (a row already added is never added twice).
+ */
+export const importRetryable = (r: Pick<InventoryImport, 'status' | 'previewRows' | 'updatedAt'>, now = Date.now()) =>
+  ((r.status === 'failed' || r.status === 'partially_committed') && (r.previewRows ?? []).some((x) => x.status === 'failed'))
+  || importStuck(r, now);
 /** An import whose adding has finished, one way or the other. */
 export const importSettled = (s: ImportStatus) => s === 'committed' || s === 'partially_committed' || s === 'failed';
 /** 409 IMPORT_NOT_RETRYABLE / IMPORT_ALREADY_PROCESSING: another commit or retry of this import already started. */
@@ -295,10 +310,17 @@ export function pharmacyStockApi(c: ApiClient) {
       try {
         return await c.get<InventoryItem[]>(`/pharmacy-inventory/by-key/${checkKey(requestKey)}`);
       } catch (err) {
-        if (err instanceof ApiError && err.status === 404) return null;
+        // Only the route's own "nothing saved with this key"; any other 404 (e.g. a route missing) stays unknown.
+        if (err instanceof ApiError && err.status === 404 && err.code === 'REQUEST_KEY_NOT_FOUND') return null;
         throw err;
       }
     },
+    /**
+     * Q15 `POST /pharmacy-inventory/by-key/:key/abandon`: 'abandoned' = this key can never save now (a later send is 409
+     * REQUEST_ABANDONED); 'used' = it saved these items.
+     */
+    abandonStock: (requestKey: string) =>
+      c.post<{ state: 'abandoned' } | { state: 'used'; items: InventoryItem[] }>(`/pharmacy-inventory/by-key/${checkKey(requestKey)}/abandon`, { body: {} }),
     adjustments: (page = 1, limit = 100) => c.page<StockAdjustment>('/pharmacy-inventory/adjustments', { query: { page, limit } }),
     /** Reads the file and checks every row; nothing changes in stock until `commitImport`. Q15: another mode is a 400. */
     previewImport: (file: Blob, fileName: string, importMode: ImportMode) => {

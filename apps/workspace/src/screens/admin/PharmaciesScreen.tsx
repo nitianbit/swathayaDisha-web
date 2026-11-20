@@ -8,11 +8,13 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { useAdminScope, useListParams } from './adminScope.ts';
 
-/** Filters from the URL, kept only when they are values `pharmacyQuerySchema` accepts (no mobile numbers or emails). */
-function queryOf(params: URLSearchParams): PharmacyQuery {
+/**
+ * Filters from the URL, kept only when they are values `pharmacyQuerySchema` accepts. Typed text (a name searched, a
+ * mobile number) is never put in the address or the history: it is kept in the page's memory.
+ */
+function queryOf(params: URLSearchParams, name: string): PharmacyQuery {
   const verified = params.get('isVerified');
   const active = params.get('isActive');
-  const name = (params.get('name') ?? '').trim().slice(0, 100);
   const page = Number.parseInt(params.get('page') ?? '1', 10);
   return {
     ...(name ? { name } : {}),
@@ -42,14 +44,25 @@ export function PharmaciesScreen() {
 function Pharmacies({ scopeKey }: { scopeKey: readonly string[] }) {
   const { api } = useSession();
   const { params, setFilter } = useListParams();
-  const q = queryOf(params);
+  /** The name searched (page memory only). */
+  const [name, setName] = useState('');
+  /** A new name was searched on a later page: nothing is read until the address is back on page 1. */
+  const [resetting, setResetting] = useState(false);
+  const urlPage = params.get('page');
+  useEffect(() => { if (!urlPage) setResetting(false); }, [urlPage]);
+  const q = queryOf(params, name);
   const page = q.page ?? 1;
-  const list = useQuery({ queryKey: [...scopeKey, 'list', q], queryFn: () => pharmacyAdminApi(api).list(q) });
-  const [search, setSearch] = useState(q.name ?? '');
-  useEffect(() => { setSearch(q.name ?? ''); }, [q.name]);
+  const list = useQuery({ queryKey: [...scopeKey, 'list', q], queryFn: () => pharmacyAdminApi(api).list(q), enabled: !resetting });
+  const [search, setSearch] = useState('');
   /** A filter or search change starts again at page 1. */
   const lastPage = Math.max(1, list.data?.totalPages ?? 1);
-  const submitSearch = (e: FormEvent) => { e.preventDefault(); setFilter('name', search.trim()); };
+  const submitSearch = (e: FormEvent) => {
+    e.preventDefault();
+    const next = search.trim().slice(0, 100);
+    if (next === name) return;
+    if (urlPage) { setResetting(true); setFilter('page', ''); }
+    setName(next);
+  };
   const filtered = !!(q.name || q.isVerified || q.isActive);
 
   return (

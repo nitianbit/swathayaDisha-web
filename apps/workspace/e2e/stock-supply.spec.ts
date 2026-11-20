@@ -31,6 +31,16 @@ interface Backend {
   supplierKeys: Record<string, { hash: string; id: string }>;
   /** The next keyed write is refused 503 INDEXES_OUTDATED (the database's indexes are not synced yet). */
   indexesOutdated: boolean;
+  /** Q15 abandoned keys (stock saves and supplier adds): a later send with one is 409 REQUEST_ABANDONED. */
+  abandoned: Set<string>;
+  /** The replay of a stock save answers this many ms late (a resend in flight). */
+  slowReplayMs: number;
+  /** The next file check / retry is lost before it reaches the server. */
+  loseNextPreview: boolean;
+  loseNextRetry: boolean;
+  retries: number;
+  /** The next supplier edit is refused 400 (a definite refusal that is not a version conflict). */
+  refuseNextSupplierEdit: boolean;
 }
 
 const INDEXES_OUTDATED = 'The database needs an update (sync-indexes) before this can be used';
@@ -43,12 +53,15 @@ const PREVIEW_ROWS = [
   { rowIndex: 4, medicineName: 'Cetirizine', status: 'error', errors: [EXPIRY_ERROR] },
 ];
 
-async function mockBackend(page: Page, init: { suppliers?: Supplier[] } = {}): Promise<Backend> {
+async function mockBackend(page: Page, init: { suppliers?: Supplier[]; imports?: Json[] } = {}): Promise<Backend> {
   const state: Backend = {
     stockPosts: [], adjustments: [], loseNextStockAnswer: false, refuseNextStock: false, previews: [], commits: 0, imports: [],
     loseNextCommitAnswer: false, suppliers: init.suppliers ?? [], supplierCalls: [], loseNextSupplierAnswer: false, returns: [],
-    stockKeys: {}, supplierKeys: {}, indexesOutdated: false,
+    stockKeys: {}, supplierKeys: {}, indexesOutdated: false, abandoned: new Set(), slowReplayMs: 0, loseNextPreview: false, loseNextRetry: false,
+    retries: 0, refuseNextSupplierEdit: false,
   };
+  state.imports = init.imports ?? [];
+  let live = false;
   const batches: Json[] = [{ _id: BATCH, batchNumber: 'PCM-A', expiryDate: '20990101', availableQty: 10, reservedQty: 0, status: 'active' }];
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const refuse = (route: Route, status: number, code: string, message: string) => json(route, status, { error: status, code, message });
@@ -63,7 +76,13 @@ async function mockBackend(page: Page, init: { suppliers?: Supplier[] } = {}): P
     const method = req.method();
     const body = (method === 'POST' || method === 'PATCH') && !path.endsWith('/preview') ? (req.postDataJSON() as Json | null) : null;
     if (path === '/auth/pharmacy/send') return json(route, 200, { success: true });
-    if (path === '/auth/pharmacy/verify') return json(route, 200, { success: true, data: { token: 't1', user: {} } });
+    if (path === '/auth/pharmacy/verify') { live = true; return json(route, 200, { success: true, data: { token: 't1', expiresIn: 900, user: {} } }); }
+    // A reload renews the web session (D4), so a stored body-less marker comes back for the same pharmacy.
+    if (path === '/auth/session/refresh') {
+      return live ? json(route, 200, { success: true, data: { token: 't1', expiresIn: 900, principal: { userId: ME, userType: 'pharmacy', sid: 's1' } } })
+        : refuse(route, 401, 'SESSION_ENDED', 'Please sign in again');
+    }
+    if (path.startsWith('/auth/session')) return json(route, 200, { success: true, data: {} });
     if (req.headers().authorization !== 'Bearer t1') return refuse(route, 401, 'UNAUTHORIZED', 'Authentication is required');
     if (path === '/auth/profile') return json(route, 200, { success: true, data: { user: { _id: ME, name: 'Asha Medicals' }, userRole: 'pharmacy' } });
     const pg = Number(url.searchParams.get('page') ?? 1);
@@ -81,6 +100,13 @@ async function mockBackend(page: Page, init: { suppliers?: Supplier[] } = {}): P
     const med = /^\/pharmacy-medicines\/(\w{24})$/.exec(path);
     if (med) return json(route, 200, { success: true, data: medicines.find((m) => m._id === med[1]) });
     const stockByKey = /^\/pharmacy-inventory\/by-key\/([A-Za-z0-9_-]{8,100})$/.exec(path);
+    const stockAbandon = /^\/pharmacy-inventory\/by-key\/([A-Za-z0-9_-]{8,100})\/abandon$/.exec(path);
+    if (stockAbandon && method === 'POST') {
+      const key = stockAbandon[1]!;
+      if (state.stockKeys[key]) return json(route, 200, { success: true, data: { state: 'used', items: [{ _id: ITEM, medicineId: medicines[0], availableQty: 110, reservedQty: 0 }] } });
+      state.abandoned.add(key);
+      return json(route, 200, { success: true, data: { state: 'abandoned' } });
+    }
     if (stockByKey && method === 'GET') {
       const k = state.stockKeys[stockByKey[1]!];
       return k ? json(route, 200, { success: true, data: [{ _id: ITEM, medicineId: medicines[0], availableQty: 110, reservedQty: 0 }] })
@@ -90,8 +116,10 @@ async function mockBackend(page: Page, init: { suppliers?: Supplier[] } = {}): P
       state.stockPosts.push(body!);
       const key = body!.requestKey as string | undefined;
       const hash = JSON.stringify(body!.items);
+      if (key && state.abandoned.has(key)) return refuse(route, 409, 'REQUEST_ABANDONED', 'This request was cancelled before it was recorded; make a new one');
       if (key && state.stockKeys[key]) {
         if (state.stockKeys[key]!.hash !== hash) return refuse(route, 409, 'REQUEST_KEY_REUSED', 'This request key was already used for different inventory items');
+        if (state.slowReplayMs) await new Promise((r) => setTimeout(r, state.slowReplayMs));
         return json(route, 200, { success: true, message: 'Inventory items saved', data: [{ _id: ITEM, medicineId: medicines[0], availableQty: 110 }], replayed: true });
       }
       if (key && state.indexesOutdated) { state.indexesOutdated = false; return refuse(route, 503, 'INDEXES_OUTDATED', INDEXES_OUTDATED); }
@@ -108,13 +136,14 @@ async function mockBackend(page: Page, init: { suppliers?: Supplier[] } = {}): P
 
     // ── Imports ──
     if (path === '/pharmacy-inventory-imports/preview') {
+      if (state.loseNextPreview) { state.loseNextPreview = false; return route.abort('connectionreset'); }
       const raw = req.postDataBuffer()?.toString('latin1') ?? '';
       const mode = /name="importMode"\r\n\r\n([a-z_]+)/.exec(raw)?.[1] ?? '';
       const fileName = /name="file"; filename="([^"]+)"/.exec(raw)?.[1] ?? '';
       state.previews.push({ mode, fileName });
       const rec = { _id: IMP, fileName, importMode: mode, status: 'previewed', totalRows: 3, validRows: 2, errorRows: 1, previewRows: PREVIEW_ROWS,
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-      state.imports = [rec];
+      state.imports = [rec, ...state.imports.filter((r) => r._id !== IMP)];
       return json(route, 200, { success: true, data: rec });
     }
     if (path === '/pharmacy-inventory-imports/commit') {
@@ -133,8 +162,25 @@ async function mockBackend(page: Page, init: { suppliers?: Supplier[] } = {}): P
     if (path === `/pharmacy-inventory-imports/${IMP}/failed-rows/download`) {
       return route.fulfill({ status: 200, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', body: Buffer.from('PK\u0003\u0004fake') });
     }
-    if (path === `/pharmacy-inventory-imports/${IMP}`) {
-      const rec = state.imports.find((r) => r._id === IMP);
+    const retry = /^\/pharmacy-inventory-imports\/(\w{24})\/retry$/.exec(path);
+    if (retry && method === 'POST') {
+      if (state.loseNextRetry) { state.loseNextRetry = false; return route.abort('connectionreset'); }
+      state.retries += 1;
+      const rec = state.imports.find((r) => r._id === retry[1]);
+      if (!rec) return refuse(route, 404, 'IMPORT_NOT_FOUND', 'Import record not found');
+      // commit(…, true): failed / partly added, or (staleCommitting) stuck in committing for over 15 minutes.
+      const stale = rec.status === 'committing' && Date.parse(String(rec.updatedAt)) < Date.now() - 15 * 60_000;
+      if (!stale && !['failed', 'partially_committed'].includes(String(rec.status))) return refuse(route, 409, 'IMPORT_NOT_RETRYABLE', 'Only failed or partially committed imports can be retried');
+      const rows = (rec.previewRows as Json[]).map((r) => (r.status === 'failed' || (stale && r.status === 'valid') ? { ...r, status: 'committed', errors: undefined } : r));
+      const committedRows = rows.filter((r) => r.status === 'committed').length;
+      const unresolved = rows.filter((r) => r.status === 'error' || r.status === 'failed').length;
+      Object.assign(rec, { previewRows: rows, committedRows, failedRows: unresolved, status: unresolved ? 'partially_committed' : 'committed',
+        committedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      return json(route, 200, { success: true, data: rec });
+    }
+    const oneImport = /^\/pharmacy-inventory-imports\/(\w{24})$/.exec(path);
+    if (oneImport) {
+      const rec = state.imports.find((r) => r._id === oneImport[1]);
       return rec ? json(route, 200, { success: true, data: rec }) : refuse(route, 404, 'IMPORT_NOT_FOUND', 'Import record not found');
     }
 
@@ -145,6 +191,13 @@ async function mockBackend(page: Page, init: { suppliers?: Supplier[] } = {}): P
         const st = url.searchParams.get('state') ?? 'active';
         return pageOf(route, state.suppliers.filter((s) => st === 'all' || s.state === st), pg, lim);
       }
+      const supAbandon = /^\/pharmacy-suppliers\/by-key\/([A-Za-z0-9_-]{8,100})\/abandon$/.exec(path);
+      if (supAbandon && method === 'POST') {
+        const k = state.supplierKeys[supAbandon[1]!];
+        if (k) return json(route, 200, { success: true, data: { state: 'used', supplier: state.suppliers.find((x) => x.supplierId === k.id) } });
+        state.abandoned.add(supAbandon[1]!);
+        return json(route, 200, { success: true, data: { state: 'abandoned' } });
+      }
       const supByKey = /^\/pharmacy-suppliers\/by-key\/([A-Za-z0-9_-]{8,100})$/.exec(path);
       if (supByKey && method === 'GET') {
         const k = state.supplierKeys[supByKey[1]!];
@@ -154,6 +207,7 @@ async function mockBackend(page: Page, init: { suppliers?: Supplier[] } = {}): P
       if (path === '/pharmacy-suppliers' && method === 'POST') {
         const { requestKey: key, ...fields } = body! as Json & { requestKey?: string };
         const hash = JSON.stringify(fields);
+        if (key && state.abandoned.has(key)) return refuse(route, 409, 'REQUEST_ABANDONED', 'This request was cancelled before it was recorded; make a new one');
         if (key && state.supplierKeys[key]) {
           if (state.supplierKeys[key]!.hash !== hash) return refuse(route, 409, 'REQUEST_KEY_REUSED', 'This request key was already used for a different supplier');
           return json(route, 200, { success: true, data: state.suppliers.find((x) => x.supplierId === state.supplierKeys[key]!.id), replayed: true });
@@ -177,6 +231,7 @@ async function mockBackend(page: Page, init: { suppliers?: Supplier[] } = {}): P
         return json(route, 200, { success: true, data: s });
       }
       if (s.state === 'archived' || s.revision !== body!.expectedRevision) return refuse(route, 409, 'SUPPLIER_CONFLICT', 'Supplier changed');
+      if (state.refuseNextSupplierEdit) { state.refuseNextSupplierEdit = false; return refuse(route, 400, 'VALIDATION_ERROR', 'Invalid supplier request'); }
       const { expectedRevision: _r, ...fields } = body!;
       Object.assign(s, fields, { revision: s.revision + 1 });
       return json(route, 200, { success: true, data: s });
@@ -289,6 +344,9 @@ test('WQ10c: add stock whose answer is lost is found by its key after leaving an
   await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
   await expect(page.getByText('Recorded: 100 units of Paracetamol 650mg, batch PCM-24B (expires 30 Jun 2028) was added. Nothing was added twice.')).toBeVisible();
   await expect(panel).toHaveCount(0);
+  // Review P1: the form is cleared as after a plain success, so the same batch is not added again under a new key.
+  await expect(page.getByLabel('Batch number')).toHaveValue('');
+  await expect(page.getByLabel('Units received')).toHaveValue('');
   expect(backend.stockPosts).toHaveLength(1);
   expect(backend.adjustments).toHaveLength(1);
   const key = String(backend.stockPosts[0]!.requestKey);
@@ -313,7 +371,7 @@ test('WQ10c: add stock whose answer is lost is sent again with the same key: ans
   expect(backend.adjustments).toHaveLength(1);
 });
 
-test('add stock lost before it reached the server: not recorded by its key, sent again safely, and forgetting needs a second step', async ({ page }) => {
+test('add stock lost before it reached the server: not recorded by its key; given up on the server, the form is free again and that key can never add', async ({ page }) => {
   const backend = await mockBackend(page);
   let abort = 2;
   await page.route('**/api/v1/pharmacy-inventory', (route) => (route.request().method() === 'POST' && abort-- > 0 ? route.abort('connectionreset') : route.fallback()));
@@ -323,18 +381,68 @@ test('add stock lost before it reached the server: not recorded by its key, sent
   await page.getByRole('button', { name: 'Check and add' }).click();
   await page.getByRole('button', { name: 'Yes, add to stock' }).click();
   const panel = page.getByRole('group', { name: 'Unconfirmed stock entry' });
-  await expect(panel.getByRole('button', { name: 'Forget it and add again' })).toHaveCount(0); // look first
   await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
   await expect(panel).toContainText('Not recorded so far. It may still be on its way. Sending the same entry again is safe');
   await panel.getByRole('button', { name: 'Send the same entry again' }).click(); // lost again
   await expect(panel).toContainText('This stock entry was not confirmed');
-  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
-  await panel.getByRole('button', { name: 'Forget it and add again' }).click();
-  await expect(panel).toContainText('Sending the same entry again is the safe choice.');
-  await expect(panel).toContainText('would be counted twice');
-  await panel.getByRole('button', { name: 'Forget it', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Check and add' })).toBeVisible();
+  await expect(panel.getByRole('button', { name: /Forget/ })).toHaveCount(0); // no forgetting with a double-count risk any more
+  await panel.getByRole('button', { name: 'Give this up' }).click();
+  await expect(page.getByText('Given up: nothing was added with that entry, and it can never be added now.', { exact: false })).toBeVisible();
+  await expect(page.getByLabel('Batch number')).toHaveValue('pcm-24b'); // what was typed is kept
+  expect(backend.abandoned.size).toBe(1);
   expect(backend.stockPosts).toHaveLength(0);
+  expect(backend.adjustments).toHaveLength(0);
+});
+
+test('WQ10c: giving up an entry that was in fact added shows it as recorded and clears the form; nothing is added twice', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page, 'Stock');
+  await page.getByRole('link', { name: 'Add a batch of Paracetamol 650mg' }).click();
+  await fillBatch(page);
+  backend.loseNextStockAnswer = true;
+  await page.getByRole('button', { name: 'Check and add' }).click();
+  await page.getByRole('button', { name: 'Yes, add to stock' }).click();
+  await page.getByRole('group', { name: 'Unconfirmed stock entry' }).getByRole('button', { name: 'Give this up' }).click();
+  await expect(page.getByText('Recorded: 100 units of Paracetamol 650mg, batch PCM-24B (expires 30 Jun 2028) was added. Nothing was added twice.')).toBeVisible();
+  await expect(page.getByLabel('Batch number')).toHaveValue('');
+  expect(backend.abandoned.size).toBe(0);
+  expect(backend.adjustments).toHaveLength(1);
+});
+
+test('WQ10c (review P1): a lost entry found by its key clears the form, so the same batch is not added again under a new key', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page, 'Stock');
+  await page.getByRole('link', { name: 'Add a batch of Paracetamol 650mg' }).click();
+  await fillBatch(page);
+  backend.loseNextStockAnswer = true;
+  await page.getByRole('button', { name: 'Check and add' }).click();
+  await page.getByRole('button', { name: 'Yes, add to stock' }).click();
+  await page.getByRole('group', { name: 'Unconfirmed stock entry' }).getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText(/^Recorded: 100 units/)).toBeVisible();
+  await expect(page.getByLabel('Batch number')).toHaveValue('');
+  await expect(page.getByLabel('Units received')).toHaveValue('');
+  await expect(page.getByLabel('Note (optional)')).toHaveValue('');
+  expect(backend.adjustments).toHaveLength(1);
+});
+
+test('WQ10c (review P2): while the same entry is sent again, the unconfirmed panel stays (busy); no second review can open', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page, 'Stock');
+  await page.getByRole('link', { name: 'Add a batch of Paracetamol 650mg' }).click();
+  await fillBatch(page);
+  backend.loseNextStockAnswer = true;
+  backend.slowReplayMs = 1500;
+  await page.getByRole('button', { name: 'Check and add' }).click();
+  await page.getByRole('button', { name: 'Yes, add to stock' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed stock entry' });
+  await panel.getByRole('button', { name: 'Send the same entry again' }).click();
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Check whether it was recorded' })).toBeDisabled();
+  await expect(panel.getByRole('button', { name: 'Give this up' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Check and add' })).toHaveCount(0);
+  await expect(page.getByRole('group', { name: 'Add this stock' })).toHaveCount(0);
+  await expect(page.getByText(/^Already added: 100 units/)).toBeVisible({ timeout: 8000 });
+  expect(backend.adjustments).toHaveLength(1);
 });
 
 test('WQ10c: a stock entry refused 503 INDEXES_OUTDATED keeps the entry, says so in the server’s words, and is sent again later with the same key', async ({ page }) => {
@@ -537,4 +645,144 @@ test('return to supplier: with no supplier it links to Suppliers; once one is ad
   await page.getByRole('button', { name: 'Record supplier return' }).click();
   await expect(page.getByText('Recorded: 3 units of batch PCM-A returned', { exact: false })).toBeVisible();
   expect(backend.returns[0]).toMatchObject({ supplierId: backend.suppliers[0]!.supplierId, quantity: 3 });
+});
+
+test('WQ10c: suppliers: a lost add is given up on the server (abandoned: a late copy is refused); one that was made is shown instead', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await page.route('**/api/v1/pharmacy-suppliers', (route) => (route.request().method() === 'POST' && !backend.abandoned.size ? route.abort('connectionreset') : route.fallback()));
+  await signIn(page, 'Suppliers');
+  await page.getByRole('button', { name: 'Add a supplier' }).click();
+  await page.getByLabel('Supplier name').fill('Lost Pharma');
+  await page.getByRole('button', { name: 'Add supplier' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed supplier change' });
+  await expect(panel.getByRole('button', { name: /Forget/ })).toHaveCount(0);
+  await panel.getByRole('button', { name: 'Give this up' }).click();
+  await expect(page.getByText('Given up: nothing was added with it, and it can never be added now.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add a supplier' })).toBeEnabled();
+  expect(backend.abandoned.size).toBe(1);
+  expect(backend.suppliers).toHaveLength(0);
+
+  // Made, answer lost, then given up: the server says it was used.
+  backend.loseNextSupplierAnswer = true;
+  await page.getByRole('button', { name: 'Add a supplier' }).click();
+  await page.getByLabel('Supplier name').fill('Made Pharma');
+  await page.getByRole('button', { name: 'Add supplier' }).click();
+  await page.getByRole('group', { name: 'Unconfirmed supplier change' }).getByRole('button', { name: 'Give this up' }).click();
+  await expect(page.getByText('Made Pharma was added. Nothing was added twice.')).toBeVisible();
+  expect(backend.suppliers.map((x) => x.displayName)).toEqual(['Made Pharma']);
+});
+
+test('WQ10c: suppliers: a lost edit whose resend is refused outright is settled as not saved; another lost edit can be forgotten after a second step', async ({ page }) => {
+  const backend = await mockBackend(page, { suppliers: [supplier({})] });
+  let abort = 1;
+  await page.route('**/api/v1/pharmacy-suppliers/*', (route) => (route.request().method() === 'PATCH' && abort-- > 0 ? route.abort('connectionreset') : route.fallback()));
+  await signIn(page, 'Suppliers');
+  const row = page.getByRole('row').filter({ hasText: 'Sun Distributors' });
+  await row.getByRole('button', { name: 'Edit Sun Distributors' }).click();
+  await page.getByLabel('Contact person (optional)').fill('Asha');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed supplier change' });
+  await expect(panel).toContainText('Save changes to Sun Distributors: not confirmed');
+  backend.refuseNextSupplierEdit = true;
+  await panel.getByRole('button', { name: 'Send the same change again' }).click();
+  await expect(page.getByText('Not saved: Invalid supplier request')).toBeVisible();
+  await expect(panel).toHaveCount(0); // the list is free again
+  await expect(row.getByRole('button', { name: 'Edit Sun Distributors' })).toBeEnabled();
+
+  abort = 1;
+  await row.getByRole('button', { name: 'Edit Sun Distributors' }).click();
+  await page.getByLabel('Contact person (optional)').fill('Meena');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panel).toContainText('Not saved yet.');
+  await panel.getByRole('button', { name: 'Forget it' }).click();
+  await expect(panel).toContainText('it takes effect only if nobody changed Sun Distributors since');
+  await panel.getByRole('button', { name: 'Forget it' }).last().click();
+  await expect(panel).toHaveCount(0);
+  expect(backend.suppliers[0]!.contactName).toBe('Ravi');
+});
+
+test('WQ10c (review P3): a lost file check never opens an older import of the same name; a new one is offered as a question', async ({ page }) => {
+  const old: Json = { _id: 'e1'.repeat(12), fileName: 'stock.csv', importMode: 'upsert', status: 'previewed', totalRows: 1, validRows: 1, errorRows: 0,
+    previewRows: [{ rowIndex: 2, medicineName: 'Old row', status: 'valid', data: { quantityToAdd: 5 } }],
+    createdAt: new Date(Date.now() - 3 * 60_000).toISOString(), updatedAt: new Date(Date.now() - 3 * 60_000).toISOString() };
+  const backend = await mockBackend(page, { imports: [old] });
+  await signIn(page, 'Stock');
+  await page.getByRole('link', { name: 'Import stock from a file' }).click();
+  await page.getByLabel('Stock file').setInputFiles({ name: 'stock.csv', mimeType: 'text/csv', buffer: Buffer.from('medicine name,quantity to add\r\nNew row,9\r\n') });
+  backend.loseNextPreview = true;
+  await page.getByRole('button', { name: 'Check the file' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed file check' });
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panel).toContainText('It is not in your imports yet.');
+  await expect(page).not.toHaveURL(/imports\/e1e1/);
+  // An import of this name made after the check was sent: asked, never opened on its own.
+  backend.imports.unshift({ ...old, _id: IMP, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), previewRows: PREVIEW_ROWS });
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  const ask = page.getByRole('group', { name: 'Is this the import?' });
+  await expect(ask).toContainText(/An import of stock\.csv started at \d{2}:\d{2}\. Is this it\?/);
+  await expect(page).not.toHaveURL(new RegExp(`imports/${IMP}`));
+  await ask.getByRole('button', { name: 'Open it' }).click();
+  await expect(page).toHaveURL(new RegExp(`imports/${IMP}`));
+});
+
+test('WQ10c (review P3): after a reload the body-less file check is never matched to an import', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page, 'Stock');
+  await page.getByRole('link', { name: 'Import stock from a file' }).click();
+  await page.getByLabel('Stock file').setInputFiles({ name: 'stock.csv', mimeType: 'text/csv', buffer: Buffer.from('medicine name\r\nX\r\n') });
+  backend.loseNextPreview = true;
+  await page.getByRole('button', { name: 'Check the file' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed file check' })).toBeVisible();
+  backend.imports.unshift({ _id: IMP, fileName: 'stock.csv', importMode: 'upsert', status: 'previewed', totalRows: 3, validRows: 2, errorRows: 1, previewRows: PREVIEW_ROWS,
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  await page.reload();
+  const panel = page.getByRole('group', { name: 'Unconfirmed file check' });
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panel).toContainText('Its file name is not kept on this device.');
+  await expect(page.getByRole('group', { name: 'Is this the import?' })).toHaveCount(0);
+  await expect(page).not.toHaveURL(new RegExp(`imports/${IMP}`));
+});
+
+test('WQ10c (review P4): an import stuck while being added for over 15 minutes offers Try again, which resumes it once', async ({ page }) => {
+  const hourAgo = new Date(Date.now() - 3600_000).toISOString();
+  const stuck: Json = { _id: IMP, fileName: 'stock.csv', importMode: 'upsert', status: 'committing', totalRows: 2, validRows: 2, errorRows: 0,
+    previewRows: [{ rowIndex: 2, medicineName: 'A', status: 'valid', data: { quantityToAdd: 5 } }, { rowIndex: 3, medicineName: 'B', status: 'valid', data: { quantityToAdd: 5 } }],
+    createdAt: hourAgo, updatedAt: hourAgo };
+  const backend = await mockBackend(page, { imports: [stuck] });
+  await signIn(page, 'Stock');
+  await page.goto(`/#/pharmacy/stock/imports/${IMP}`);
+  await expect(page.getByRole('heading', { name: 'Adding stopped' })).toBeVisible();
+  await expect(page.getByText('The rows are being added. This page updates on its own.')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Try again…' }).click();
+  await expect(page.getByText('rows not added yet are added now', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Yes, try again' }).click();
+  await expect(page.getByText('Done: 2 rows were added to stock.')).toBeVisible();
+  expect(backend.retries).toBe(1);
+
+  // A fresh "being added" import (under 15 minutes) offers nothing.
+  Object.assign(stuck, { status: 'committing', updatedAt: new Date().toISOString() });
+  await page.reload();
+  await expect(page.getByText('The rows are being added. This page updates on its own.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Try again…' })).toHaveCount(0);
+});
+
+test('WQ10c: a lost retry is not settled by an outcome written before it was sent', async ({ page }) => {
+  const twoMinAgo = new Date(Date.now() - 2 * 60_000).toISOString();
+  const partly: Json = { _id: IMP, fileName: 'stock.csv', importMode: 'upsert', status: 'partially_committed', totalRows: 2, validRows: 2, errorRows: 0,
+    committedRows: 1, failedRows: 1, committedAt: twoMinAgo,
+    previewRows: [{ rowIndex: 2, medicineName: 'A', status: 'committed', data: { quantityToAdd: 5 } }, { rowIndex: 3, medicineName: 'B', status: 'failed', errors: ['timeout'], data: { quantityToAdd: 5 } }],
+    createdAt: twoMinAgo, updatedAt: twoMinAgo };
+  const backend = await mockBackend(page, { imports: [partly] });
+  await signIn(page, 'Stock');
+  await page.goto(`/#/pharmacy/stock/imports/${IMP}`);
+  backend.loseNextRetry = true;
+  await page.getByRole('button', { name: 'Try the failed rows again…' }).click();
+  await page.getByRole('button', { name: 'Yes, try again' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed import step' });
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panel).toContainText('It has not started yet.');
+  await panel.getByRole('button', { name: 'Send it again' }).click();
+  await expect(page.getByText('Done: 2 rows were added to stock.')).toBeVisible();
+  expect(backend.retries).toBe(1);
 });

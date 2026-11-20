@@ -9,7 +9,7 @@ import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextA
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
-import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
+import { definitelyNotRecorded, newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
@@ -50,6 +50,7 @@ function Suppliers({ pharmacyId }: { pharmacyId: string }) {
   const [editing, setEditing] = useState<'new' | PharmacySupplier | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [resendError, setResendError] = useState<string | null>(null);
+  const [givingUp, setGivingUp] = useState(false);
   const { op, send, settle } = useOwnedOp<SupplierChange>(`supplier-change:${pharmacyId}`);
   const { perform, busy } = useOneAtATime('supplier list');
   const q = useQuery({
@@ -67,9 +68,42 @@ function Suppliers({ pharmacyId }: { pharmacyId: string }) {
         : suppliers.archive(c.supplierId, c.expectedRevision)));
       if (r.kind === 'ok') { void refresh(); return r.value; }
       if (r.kind === 'refused') { void refresh(); throw r.error; }
-      if (r.kind === 'unknown' && isSupplierConflict(r.error)) await check(p); // a resend met its own (or someone's) change
+      if (r.kind === 'unknown' && isSupplierConflict(r.error)) { await check(p); return null; } // a resend met its own (or someone's) change
+      if (r.kind === 'unknown' && definitelyNotRecorded(r.error)) {
+        // The server refused this very request (same key, same content, same revision) for a reason other than a newer
+        // version: an earlier copy of it would have been refused the same way, or (a given-up add) can never be recorded.
+        settle(p.requestKey);
+        void refresh();
+        const what = p.body?.kind === 'create' ? 'Not added' : 'Not saved';
+        throw new ApiError(400, wasAbandoned(r.error)
+          ? 'This add was given up earlier, so nothing was added with it. Add the supplier again if you need it.'
+          : `${what}: ${messageOf(r.error)}`, 'SETTLED_NOT_RECORDED');
+      }
       return null;
     });
+  }
+
+  /**
+   * Q15: gives an unconfirmed add up on the server (`by-key/:key/abandon`): 'abandoned' = that key can never add a
+   * supplier now; 'used' = it added this one. A body-less marker after a reload may also have been an edit or archive:
+   * then giving it up only frees the list, and the list shows what is saved.
+   */
+  async function giveUp(p: PendingOp<SupplierChange>) {
+    setResendError(null);
+    setGivingUp(true);
+    try {
+      const r = await perform(() => suppliers.abandonCreate(p.requestKey));
+      settle(p.requestKey);
+      void refresh();
+      if (r.state === 'used') { setNotice(r.supplier ? `${r.supplier.displayName} was added. Nothing was added twice.` : 'It was added. See the list below.'); return; }
+      setNotice(p.body
+        ? 'Given up: nothing was added with it, and it can never be added now. Add the supplier again if you need it.'
+        : 'Given up: if it was an add, nothing was added and it can never be added now. If it was a change to a supplier, check the list below.');
+    } catch (err) {
+      setResendError(messageOf(err));
+    } finally {
+      setGivingUp(false);
+    }
   }
 
   /** Settles the stored change from the list as the server has it now; answers what is still unknown. */
@@ -105,11 +139,11 @@ function Suppliers({ pharmacyId }: { pharmacyId: string }) {
   return (
     <>
       {notice && <Alert tone="ok">{notice}</Alert>}
-      {op && resendError && <Alert>{resendError}</Alert>}
-      {op && !busy && (
+      {resendError && <Alert>{resendError}</Alert>}
+      {op && !(busy && op.attempts === 1 && !op.uncertain) && (
         <CheckPanel label="Unconfirmed supplier change" onCheck={() => check(op)}
           resend={op.body && !op.restored
-            ? { label: 'Send the same change again', busy, onClick: () => {
+            ? { label: 'Send the same change again', busy: busy && !givingUp, onClick: () => {
               setResendError(null);
               const kind = op.body!.kind;
               void apply(op).then((saved) => {
@@ -117,12 +151,11 @@ function Suppliers({ pharmacyId }: { pharmacyId: string }) {
               }).catch((err) => setResendError(messageOf(err)));
             } }
             : undefined}
-          forget={!op.body || op.body.kind === 'create' ? {
+          giveUp={!op.body || op.body.kind === 'create' ? { label: 'Give this up', busy: givingUp, onClick: () => void giveUp(op) } : undefined}
+          forget={op.body && op.body.kind !== 'create' ? {
             label: 'Forget it', confirmLabel: 'Forget it',
-            consequence: op.body
-              ? 'Sending the same add again is the safe choice. If you forget it and the earlier add still arrives, the supplier is listed twice: archive the extra one.'
-              : 'If it was an add and it still arrives, the supplier is listed twice: archive the extra one.',
-            onForget: () => settle(op.requestKey),
+            consequence: `If the earlier ${op.body.kind === 'archive' ? 'archive' : 'change'} still arrives, it takes effect only if nobody changed ${op.body.name} since: it names the version it was made on. Check the list below afterwards.`,
+            onForget: () => { settle(op.requestKey); setResendError(null); },
           } : undefined}>
           <Alert tone="warn">
             {op.restored || !op.body
@@ -134,12 +167,13 @@ function Suppliers({ pharmacyId }: { pharmacyId: string }) {
       )}
 
       {editing === null && (
-        <div><Button disabled={locked} onClick={() => { setEditing('new'); setNotice(null); }}>Add a supplier</Button></div>
+        <div><Button disabled={locked} onClick={() => { setEditing('new'); setNotice(null); setResendError(null); }}>Add a supplier</Button></div>
       )}
       {editing !== null && (
         <SupplierForm key={editing === 'new' ? 'new' : editing.supplierId} base={editing === 'new' ? undefined : editing} busy={busy} locked={locked}
           onCancel={() => setEditing(null)}
           onSave={async (draft, base) => {
+            setResendError(null);
             const p = base
               ? startOp<SupplierChange>(newRequestKey(), { kind: 'update', supplierId: base.supplierId, name: base.displayName, fields: supplierPatchBody(draft, base), expectedRevision: base.revision })
               : startOp<SupplierChange>(newRequestKey(), { kind: 'create', fields: supplierCreateBody(draft) });
