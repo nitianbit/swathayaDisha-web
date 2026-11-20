@@ -157,7 +157,7 @@ What you can do with a batch (only the buttons that fit its status appear):
 
 The units go on sale at once. The workspace cannot take them out again, so check the number first. Expired stock cannot be added.
 
-If you see "This stock entry was not confirmed", do not type it in again. Tap **Send the same entry again**: the units are never added twice. Or tap **Check whether it was recorded** first. Use **Forget it and add again** only if you are sure it never arrived.
+If you see "This stock entry was not confirmed", do not type it in again. Tap **Send the same entry again**: the units are never added twice. Or tap **Check whether it was recorded** first. To stop it instead, tap **Give this up**: if it was not added, it can never be added now and you can add the units again; if it was added, the screen says so.
 
 A medicine that is not in the medicine list yet cannot be added here. Add it with a file (below): a new name adds it to the list.
 
@@ -172,12 +172,16 @@ A medicine that is not in the medicine list yet cannot be added here. Add it wit
    - a date cell in Excel.
 
    A row with any other date shows a problem and is not added.
+
+   Numbers may have commas between thousands, such as 1,000 or 10,00,000. Write paise with a point, such as 12.50. A price written as 1,5 or 12 rs shows a problem and is not added.
 3. Choose **Which rows to add**: every row, only medicines already in your stock, or only new ones.
 4. Choose the file under **Stock file** and tap **Check the file**. Nothing is added yet.
 5. The import page lists every row. Rows with a problem come first and say what is wrong. Tap **Download the rows with problems** to fix them in a new file.
 6. Tap **Add … ready rows to stock…**, read what will happen, and tap **Yes, add them**.
 
-**Recent imports** on the import page lists every file you uploaded and what happened to it. If some rows failed while being added, open the import and tap **Try the failed rows again…**. A row is never added twice.
+**Recent imports** on the import page lists every file you uploaded and what happened to it. If some rows failed while being added, open the import and tap **Try the failed rows again…**. If an import says **Adding stopped** (it has not finished for more than 15 minutes), tap **Try again…**. A row is never added twice.
+
+If the answer to **Check the file** does not arrive, tap **Check whether it was recorded**. If an import of the same file name started just then, the screen asks "Is this it?": tap **Open it**, or **Upload again**.
 
 ---
 
@@ -185,7 +189,7 @@ A medicine that is not in the medicine list yet cannot be added here. Add it wit
 
 **Suppliers** lists the distributors you buy from. Returns to a supplier go to one of these.
 
-- **Add a supplier**: fill in **Supplier name** (the rest is optional) and tap **Add supplier**. If it says "not confirmed", tap **Send the same change again**: the supplier is never added twice.
+- **Add a supplier**: fill in **Supplier name** (the rest is optional) and tap **Add supplier**. If it says "not confirmed", tap **Send the same change again**: the supplier is never added twice. Or tap **Give this up**: then it can never be added (if it already was, the screen says so).
 - **Edit**: change the details and tap **Save changes**. If someone else changed the same supplier meanwhile, the screen shows their change; check it and save again.
 - **Archive**: the supplier is no longer offered for returns. Returns already recorded keep it. An archived supplier cannot be brought back; add it again if you need it.
 
