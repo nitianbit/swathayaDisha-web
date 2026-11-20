@@ -1,6 +1,6 @@
 # Jansetu Workspace: Admin Guide
 
-**What you can do here:** add and verify labs and clinics, manage any of them with owner rights, link doctors to clinics, watch lab bookings, decide pharmacy order cancellations, fix stuck refunds and provider cancellations, and pay out labs, clinics and doctors.
+**What you can do here:** add and verify labs and clinics, manage any of them with owner rights, link doctors to clinics, watch lab bookings, add and manage pharmacies, move a doctor's no-show, decide pharmacy order cancellations, fix stuck refunds and provider cancellations, and pay out labs, clinics and doctors.
 
 Website: **https://staff.swasthadisha.etryx.in**
 
@@ -17,6 +17,8 @@ Your menu is on the left, under **Admin**:
 
 - **Labs and clinics**
 - **Lab bookings**
+- **Pharmacies**
+- **Consultations**
 - **Order cancellations**
 - **Refunds needing attention**
 - **External cancellations**
@@ -58,7 +60,7 @@ Tap a partner's name. You see its **Status**, contact details and owners, then:
 - **Tax and invoicing**: change **GSTIN**, **PAN**, **Tax** and **Invoice prefix**, then tap **Save tax details**. Partners cannot change these themselves.
 - **Manage as owner**: you can do everything an owner can. Your changes show as "Jansetu admin" in its activity log. The links are:
   - **Profile**: contact details, and **Payments at the counter** (part payments on or off).
-  - **Staff**: add owners and staff, permissions, branch access and sign-in emails.
+  - **Staff**: add owners and staff, permissions, professional registrations (report signers), branch access and sign-in emails.
   - **Branches**: add, edit, deactivate and reopen branches.
   - **Activity log**: the latest 100 changes.
   - **Tests and prices** or **Services and prices**: you can also **Disable** an item. It then shows **Disabled by Jansetu**, and the partner cannot undo it. **Enable** brings it back.
@@ -88,6 +90,8 @@ The doctor can consult there at once (there is no acceptance step) and is told. 
 This lists online bookings at every partner lab, newest first. Filter by **Lab** and **Status**. Open a booking to act on it as the lab's owner: collect, process, upload and release reports, propose a new time, reject with a refund, mark a no-show or reschedule a no-show (once).
 
 When you release a report, choose who signs it under **Signed by**. The signer must be an owner or hold "Release reports", work at that branch, and have a professional registration number on their staff record.
+
+If it says **Nobody can sign this report**, tap the **Staff** link in that message. On the signer's row tap **Add registration**, choose **Registered as**, type the **Registration number** and tap **Save registration**. Then go back to the booking and release the report.
 
 ---
 
@@ -157,11 +161,69 @@ This lists every recorded payout, newest first. Filter by **Status** (**Recorded
 
 ---
 
-## 9. Not in this workspace
+## 9. Pharmacies
 
-- **Creating pharmacies:** only admins can create a pharmacy, but there is no screen for it here. Use the admin panel or ask the tech team.
-- **Doctor accounts** (adding and verifying doctors), pharmacy details, coupons and other older sections: use the admin panel or ask the tech team.
-- **Reschedule a doctor's no-show:** no screen here. The doctor does it from their own workspace.
+Only admins add pharmacies. This lists every pharmacy, newest first. Search by name, or filter by **Verification** and **Active**.
+
+### Add a pharmacy
+
+1. Tap **Add a pharmacy**.
+2. Fill in **Mobile number** (the pharmacy signs in with it) and **Pharmacy name**. Add **Email (optional)**, the owner's name, address, GST number and drug licence number if you have them. Tick **Pick up at the pharmacy** and **Get a delivery** if it offers them.
+3. Tap **Add pharmacy**. Its page opens.
+
+A new pharmacy is **Not verified**. Customers see it only once you verify it. Two pharmacies can never have the same mobile number.
+
+If the answer does not arrive, the form locks and says it could not confirm. Tap **Check by mobile number**:
+
+- If it was created, tap **Open …**.
+- If not, tap **Send again**. It sends the same details. It can never create a second pharmacy with that number.
+- Or tap **Start again** to change the form.
+
+If the page reloads before you know, look for the pharmacy in the list before adding it again.
+
+### Open a pharmacy
+
+Tap its name.
+
+- **Verify**: customers can find it and order from it.
+- **Deactivate**: it can no longer sign in, and customers no longer see it. Its orders and stock stay. **Activate** turns it back on.
+- **Sign-in**: to change the mobile number or email it signs in with, tap **Change mobile number or email**, make the change, and tap **Continue**. Read what will change, then tap **Change sign-in**. The old number or email stops working for sign-in. Do this only when the pharmacy asks and you have checked it is them. An email cannot be removed, only changed.
+- **Details**: change the name, owner, address, licences, pickup and delivery, then tap **Save details**. A field cannot be emptied once it is filled in.
+
+If someone else changed the same thing while you were typing, nothing is saved and the form shows what is saved now. Check it and save again.
+
+---
+
+## 10. Consultations
+
+This lists doctor consultation bookings, latest appointment first. Filter by **Status**, by doctor (type part of the name, tap **Find doctor**, then choose them), and by **Appointments from** and **Appointments to**.
+
+No-shows cannot be filtered on their own yet. Leave **Status** on **Any status**, narrow by doctor and dates, and look for **No-show**.
+
+### Move a doctor's no-show
+
+A no-show is not refunded and the doctor earns nothing for it. It can be moved once to a later time, at the same price.
+
+1. Open the booking. **No-show** shows when it was missed, and any earlier move.
+2. Tap **Reschedule no-show**.
+3. Choose a **New day**, then a **New time**. Only that doctor's free times for the same kind of consultation are shown.
+4. Tap **Continue**, read the message, then tap **Move to …**.
+
+The patient is told the new time. If the new time is missed too, that no-show is final.
+
+You cannot move:
+
+- an instant consultation;
+- an appointment booked at a clinic's front desk (the clinic moves it);
+- a booking that was already moved once.
+
+If the answer does not arrive, tap **Send the same move again** or **Check the booking**. A booking is never moved twice. If the time was just taken, choose another.
+
+---
+
+## 11. Not in this workspace
+
+- **Doctor accounts** (adding and verifying doctors), coupons and other older sections: use the admin panel or ask the tech team.
 
 ---
 
@@ -169,7 +231,7 @@ This lists every recorded payout, newest first. Filter by **Status** (**Recorded
 
 - No-shows are never refunded and earn nobody anything. A no-show can be rescheduled only once.
 - Part payments of bills happen only if the partner switches them on.
-- Only admins create pharmacies and link doctors to clinics.
+- Only admins create pharmacies and link doctors to clinics. Pharmacies cannot change their own sign-in mobile number or email: you do it on their page.
 - A doctor can create one clinic of their own. It stays waiting until you verify it.
 - Staff can sign in by email only after an owner (or you, as owner) adds it. A new account is never created from an email.
 - Every change you make as owner is recorded as "Jansetu admin".
@@ -196,10 +258,16 @@ Read the message there. Usually the payout details are not verified yet, or noth
 Open the lab, go to **Staff**, and add or change the owner's email so they can sign in by email.
 
 **How do I add a pharmacy?**
-Use the admin panel, or ask the tech team.
+Open **Pharmacies** and tap **Add a pharmacy** (section 9).
+
+**A pharmacy has a new mobile number.**
+Open it in **Pharmacies**, then under **Sign-in** tap **Change mobile number or email**.
 
 **A report cannot be released: "Nobody can sign this report."**
-No staff member at that branch has a professional registration number on their record. Ask the tech team to add one.
+No staff member at that branch has a professional registration number on their record. Tap the **Staff** link in the message and add one (section 3).
+
+**A patient missed a doctor's appointment and wants a new time.**
+Open it in **Consultations** and tap **Reschedule no-show** (section 10). It works only once.
 
 ---
 
