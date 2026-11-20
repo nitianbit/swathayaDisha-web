@@ -100,11 +100,37 @@ export interface PartnerMember {
   /** Empty = every branch of the partner. */
   branchIds: string[];
   doctorId?: string;
-  professional?: { kind: 'pathologist' | 'pharmacist' | 'doctor'; registrationNumber: string };
+  professional?: MemberProfessional;
   isActive: boolean;
   invitedBy?: string;
   createdAt?: string;
   updatedAt?: string;
+}
+
+/**
+ * Q11 `IMemberProfessional`: the registration a member signs reports under (`releaseReport` needs one on the signer,
+ * else 409 SIGNER_REGISTRATION_MISSING).
+ */
+export type ProfessionalKind = 'pathologist' | 'pharmacist' | 'doctor';
+export interface MemberProfessional { kind: ProfessionalKind; registrationNumber: string }
+export const PROFESSIONAL_KINDS: readonly { value: ProfessionalKind; label: string }[] = [
+  { value: 'pathologist', label: 'Pathologist' },
+  { value: 'doctor', label: 'Doctor' },
+  { value: 'pharmacist', label: 'Pharmacist' },
+];
+export const PROFESSIONAL_KIND_LABEL: Record<ProfessionalKind, string> =
+  Object.fromEntries(PROFESSIONAL_KINDS.map((k) => [k.value, k.label])) as Record<ProfessionalKind, string>;
+/** `memberProfessionalSchema.registrationNumber`: trimmed, 3 to 60 characters. */
+export const MIN_REGISTRATION = 3;
+export const MAX_REGISTRATION = 60;
+
+/** Checks a registration as `memberProfessionalSchema` does; returns what is sent, or the problem in words. */
+export function professionalInput(kind: string, registrationNumber: string): { value: MemberProfessional } | { problem: { kind?: string; registrationNumber?: string } } {
+  const problem: { kind?: string; registrationNumber?: string } = {};
+  const reg = registrationNumber.trim();
+  if (!PROFESSIONAL_KINDS.some((k) => k.value === kind)) problem.kind = 'Choose what they are registered as.';
+  if (reg.length < MIN_REGISTRATION || reg.length > MAX_REGISTRATION) problem.registrationNumber = `Enter the registration number (${MIN_REGISTRATION} to ${MAX_REGISTRATION} characters).`;
+  return Object.keys(problem).length ? { problem } : { value: { kind: kind as ProfessionalKind, registrationNumber: reg } };
 }
 
 export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
@@ -236,6 +262,13 @@ export function partnerWorkspaceApi(c: ApiClient, scope: PartnerScope) {
      */
     setEmail: (id: string, email: string | null, version?: Version) =>
       c.put<PartnerMember>(`${base()}/members/${checkId(id, 'member')}/email`, { body: { email, ...fence(version) } }),
+    /**
+     * Q11 `PUT /members/:memberId/professional` (`memberProfessionalSchema`): sets (or, with null, removes) the registration
+     * a member signs reports under. Owners only (403 `OWNER_REQUIRED`; admins act as owner); fenced like the other member
+     * edits (409 RECORD_CHANGED). The route admits `staff.manage`, but `setMemberProfessional` refuses anyone but an owner.
+     */
+    setProfessional: (id: string, professional: MemberProfessional | null, version?: Version) =>
+      c.put<PartnerMember>(`${base()}/members/${checkId(id, 'member')}/professional`, { body: { professional, ...fence(version) } }),
     setPermissions: (id: string, permissions: PartnerPermission[], version?: Version) =>
       c.put<PartnerMember>(`${base()}/members/${checkId(id, 'member')}/permissions`, { body: { permissions, ...fence(version) } }),
     /** Q8: every member may read its branches; closed ones too (`includeInactive`) only for branch managers. */
@@ -341,6 +374,9 @@ export const canAddOwner = (a: Pick<PartnerActorView, 'role'>) => a.role === 'ow
  * it, for any active member including owners and themselves (`canGiveEmail` for a new member's).
  */
 export const canEditEmail = (a: Pick<PartnerActorView, 'role'>, target: Pick<PartnerMember, 'isActive'>) =>
+  a.role === 'owner' && target.isActive !== false;
+/** Q11 `setMemberProfessional`: owners only (admins act as owner), for any active member including owners and themselves. */
+export const canEditProfessional = (a: Pick<PartnerActorView, 'role'>, target: Pick<PartnerMember, 'isActive'>) =>
   a.role === 'owner' && target.isActive !== false;
 /** WQ9 `addMember`: only an owner (or an admin as owner) gives a new member a sign-in email (403 `OWNER_REQUIRED`). */
 export const canGiveEmail = (a: Pick<PartnerActorView, 'role'>) => a.role === 'owner';

@@ -41,6 +41,8 @@ interface Backend {
   /** Q14: the next no-show move is made, then its answer is lost. */
   loseNextNoShowMove?: boolean;
   live: boolean;
+  /** WQ10b: every partner's members (a test may change them). */
+  members?: Record<string, Rec[]>;
 }
 
 const istInstant = (date: string, hhmm: string) => new Date(Date.parse(`${date}T${hhmm}:00+05:30`)).toISOString();
@@ -141,6 +143,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       { _id: 'b5'.repeat(12), partnerId: LAB2, name: 'Lake Owner', phone: '9000000005', role: 'owner', permissions: ALL, branchIds: [], isActive: true },
     ],
   };
+  b.members = members;
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const ok = (route: Route, data: unknown, status = 200) => json(route, status, { success: true, data });
   const fail = (route: Route, status: number, code: string, message: string) => json(route, status, { error: status, code, message });
@@ -212,6 +215,20 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
     if (sub === '/me') return ok(route, p);
     if (sub === '/branches') return ok(route, branches[pid] ?? []);
     if (sub === '/members') return can('staff.manage') ? ok(route, members[pid] ?? []) : deny();
+    // WQ10b (Q11): one member, and the registration owners record on it.
+    const mm = /^\/members\/([0-9a-f]{24})(\/professional)?$/.exec(sub);
+    if (mm) {
+      if (!can('staff.manage')) return deny();
+      const m = (members[pid] ?? []).find((y) => y._id === mm[1]);
+      if (!m) return fail(route, 404, 'MEMBER_NOT_FOUND', 'Member not found');
+      if (!mm[2] && method === 'GET') return ok(route, m);
+      if (mm[2] && method === 'PUT') {
+        if (actor.role !== 'owner') return fail(route, 403, 'OWNER_REQUIRED', 'Only an owner can record professional registrations');
+        const prof = (body as Rec).professional as Rec | null;
+        if (prof) m.professional = { kind: prof.kind, registrationNumber: prof.registrationNumber }; else delete m.professional;
+        return ok(route, m);
+      }
+    }
 
     // ── slots ──
     if (sub === '/slots' && method === 'GET') {
@@ -891,4 +908,34 @@ test('Q14: a no-show move refused because it was already used elsewhere (NO_SHOW
   await expect(page.getByText('This booking was already moved once after a no-show. A second no-show is final, so it cannot be moved again.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Reschedule no-show' })).toBeDisabled();
   expect(backend.calls.filter((c) => c.path.endsWith('/reschedule-no-show'))).toHaveLength(1);
+});
+
+test('WQ10b: nobody can sign a report: the release points to Staff, where an admin adds a registration, then releases under it', async ({ page }) => {
+  const backend = await mockBackend(page);
+  delete (backend.members![LAB2]!.find((m) => m._id === PATH) as Rec).professional;
+  await signInAdmin(page);
+  await page.goto(`/#/admin/partners/${LAB2}/lab-bookings/${BK5}`);
+  await page.getByRole('list', { name: 'Draft reports' }).getByRole('button', { name: 'Release lipid.pdf' }).click();
+  const group = page.getByRole('group', { name: 'Release lipid.pdf' });
+  await expect(group).toContainText('Nobody can sign this report.');
+  await expect(group).not.toContainText('cannot be added');
+  await group.getByRole('link', { name: 'Staff' }).click();
+  await expect(page.getByRole('heading', { name: 'Staff' })).toBeVisible();
+  await page.getByRole('row').filter({ hasText: 'Dr Path' }).getByRole('button', { name: 'Add registration' }).click();
+  const editor = page.getByRole('region', { name: 'Professional registration of Dr Path' });
+  await editor.getByLabel('Registered as').selectOption('pathologist');
+  await editor.getByLabel('Registration number').fill('KMC-88');
+  await editor.getByRole('button', { name: 'Save registration' }).click();
+  await expect(page.getByRole('row').filter({ hasText: 'Dr Path' })).toContainText('Pathologist · KMC-88');
+  expect(backend.calls.filter((c) => c.method === 'PUT').map((c) => [c.path, c.body])).toEqual([
+    [`/partner-workspace/admin/${LAB2}/workspace/members/${PATH}/professional`, { professional: { kind: 'pathologist', registrationNumber: 'KMC-88' } }],
+  ]);
+
+  await page.goto(`/#/admin/partners/${LAB2}/lab-bookings/${BK5}`);
+  await page.getByRole('list', { name: 'Draft reports' }).getByRole('button', { name: 'Release lipid.pdf' }).click();
+  const again = page.getByRole('group', { name: 'Release lipid.pdf' });
+  await expect(again.getByLabel('Signed by').locator('option')).toHaveText(['Choose the professional', 'Dr Path · KMC-88']);
+  await again.getByLabel('Signed by').selectOption(PATH);
+  await again.getByRole('button', { name: 'Release lipid.pdf' }).click();
+  await expect(page.getByText('lipid.pdf was released to the customer.')).toBeVisible();
 });

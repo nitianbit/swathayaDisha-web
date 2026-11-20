@@ -64,11 +64,26 @@ This decides how bills can be paid:
 4. For staff, tick their permissions and their branches. Tick **All branches, including new ones**, or pick branches. You can give only permissions you hold yourself.
 5. Tap **Add staff member** (or **Add owner**).
 
-**Change someone:** on their row, use **Edit permissions**, **Change branch access**, **Add email** / **Change email**, or **Remove**.
+**Change someone:** on their row, use **Edit permissions**, **Add registration** / **Change registration**, **Change branch access**, **Add email** / **Change email**, or **Remove**.
 
-- Only owners change permissions and emails.
+- Only owners change permissions, registrations and emails.
 - Changing or removing someone's email signs them out of the workspace.
 - You cannot remove yourself or the last owner.
+
+### Add a report signer's registration (owners only)
+
+A report is released under a registered professional. Their name, what they are registered as and the number are on the report the customer gets. The **Registration** column shows who has one.
+
+1. On the person's row, tap **Add registration** (or **Change registration**).
+2. Choose **Registered as**: **Pathologist**, **Doctor** or **Pharmacist**.
+3. Type the **Registration number** (3 to 60 characters).
+4. Tap **Save registration**.
+
+To release reports, the person also needs **Release reports** (owners have it) and must work at the booking's branch.
+
+To take a registration off, tap **Change registration**, then **Remove registration**, and confirm. Reports already released keep the registration they were released under.
+
+If someone else changed it while you were typing, nothing is saved and the form shows what is saved now. Check it and save again.
 
 ---
 
@@ -215,7 +230,7 @@ This shows money Jansetu collected online for you and pays out to you. Bills pai
 - No-shows are never refunded and earn the lab nothing. You can reschedule a no-show only once.
 - You earn for a booking only when you tap **Complete booking**.
 - Rejecting a booking always refunds the customer in full.
-- To release a report, your staff record needs a professional registration number. It cannot be added in the workspace yet: ask the Jansetu team.
+- To release a report, your staff record needs a professional registration number. An owner adds it in **Staff** (section 3).
 - Part payments happen only if an owner switches them on in **Profile**.
 - If you see "The outcome of this request is not known yet", tap the button to send the same request again. It is never recorded twice.
 
@@ -239,7 +254,7 @@ Add the date under **Holidays** on the branch. Its slots close by themselves.
 When you cancel a paid bill, the refund recorded is everything that was paid.
 
 **Release says I cannot sign the report.**
-Your staff record needs a professional registration number. Ask the Jansetu team to add it.
+Your staff record needs a professional registration number. Ask an owner to open **Staff** and tap **Add registration** on your row.
 
 **How do I give a staff member email sign-in?**
 An owner opens **Staff** and taps **Add email** on their row.

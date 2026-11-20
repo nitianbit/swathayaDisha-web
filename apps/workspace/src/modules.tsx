@@ -5,9 +5,15 @@ import {
   House, MapPin, Package, PackageX, Receipt, Settings, ShieldAlert, Stethoscope, TrendingDown, Undo2, Users, Video,
 } from 'lucide-react';
 import { Banknote, Landmark, Wallet } from 'lucide-react';
+import { CalendarSearch, Store } from 'lucide-react';
 import { hasGlobalScope, holdsAny, type PartnerKind, type PartnerPermission } from '@jansetu/api';
 import type { StaffRole, StaffUser } from './session.tsx';
 import { AdminLabBookingsScreen } from './screens/admin/AdminLabBookingsScreen.tsx';
+import { ConsultationScreen } from './screens/admin/ConsultationScreen.tsx';
+import { ConsultationsScreen } from './screens/admin/ConsultationsScreen.tsx';
+import { NewPharmacyScreen } from './screens/admin/NewPharmacyScreen.tsx';
+import { PharmaciesScreen } from './screens/admin/PharmaciesScreen.tsx';
+import { PharmacyScreen } from './screens/admin/PharmacyScreen.tsx';
 import { NewPartnerScreen } from './screens/admin/NewPartnerScreen.tsx';
 import { PartnerScreen } from './screens/admin/PartnerScreen.tsx';
 import { PartnersScreen } from './screens/admin/PartnersScreen.tsx';
@@ -207,6 +213,18 @@ export const PAGES: readonly WorkspacePage[] = [
     path: '/admin/lab-bookings', roles: ['admin'], element: <AdminLabBookingsScreen />,
     nav: { label: 'Lab bookings', icon: FlaskConical, section: 'Admin' },
   },
+  // WQ10b: pharmacy accounts (only admins create pharmacies) and doctor consultations (the one move of a no-show).
+  {
+    path: '/admin/pharmacies', roles: ['admin'], element: <PharmaciesScreen />,
+    nav: { label: 'Pharmacies', icon: Store, section: 'Admin' },
+  },
+  { path: '/admin/pharmacies/new', roles: ['admin'], element: <NewPharmacyScreen /> },
+  { path: '/admin/pharmacies/:pharmacyId', roles: ['admin'], element: <PharmacyScreen /> },
+  {
+    path: '/admin/consultations', roles: ['admin'], element: <ConsultationsScreen />,
+    nav: { label: 'Consultations', icon: CalendarSearch, section: 'Admin' },
+  },
+  { path: '/admin/consultations/:bookingId', roles: ['admin'], element: <ConsultationScreen /> },
   {
     path: '/admin/order-cancellations', roles: ['admin'], element: <OrderCancellationsScreen />,
     nav: { label: 'Order cancellations', icon: PackageX, section: 'Admin' },

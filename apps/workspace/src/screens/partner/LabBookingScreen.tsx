@@ -592,7 +592,7 @@ function ReleaseDraft({ ctx, booking, file, disabled, perform }: { ctx: ScopeCon
         : signers.length === 0 ? (
           <Alert tone="warn">
             Nobody can sign this report. A signer must be an owner or hold “Release reports”, work at this branch, and have a professional
-            registration number on their staff record; registration numbers cannot be added in the workspace yet.
+            registration number on their staff record. Add one on <Link to={ctx.link('staff')}>Staff</Link> (“Add registration”).
           </Alert>
         ) : (
           <div className="j-field">
@@ -610,7 +610,7 @@ function ReleaseDraft({ ctx, booking, file, disabled, perform }: { ctx: ScopeCon
         </div>
       )}
       <ConfirmLess
-        label={`Release ${name}`} ready={!!who} blocked={disabled}
+        label={`Release ${name}`} ready={!!who} blocked={disabled} staffLink={ctx.link('staff')}
         onConfirm={() => perform('release', () => ctx.labs.releaseReport(booking._id, file, admin ? signer?._id : undefined),
           `${name} was released to the customer.`)}
         onBack={() => setOpen(false)} />
@@ -619,17 +619,20 @@ function ReleaseDraft({ ctx, booking, file, disabled, perform }: { ctx: ScopeCon
 }
 
 /** The final buttons of an already explained step; shows the server's refusal in place. */
-function ConfirmLess({ label, ready, blocked, onConfirm, onBack }: {
-  label: string; ready: boolean; blocked: boolean; onConfirm: () => Promise<void>; onBack: () => void;
+function ConfirmLess({ label, ready, blocked, staffLink, onConfirm, onBack }: {
+  label: string; ready: boolean; blocked: boolean; staffLink: string; onConfirm: () => Promise<void>; onBack: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ReactNode>(null);
   async function go() {
     setBusy(true);
     setError(null);
     try { await onConfirm(); } catch (err) {
       // Releasing the same file again is safe (an already released file is left as it is).
-      setError(`Not released: ${messageOf(err)}`);
+      // Q11: the signer's staff record has no registration (409 SIGNER_REGISTRATION_MISSING): an owner adds it on Staff.
+      if (err instanceof ApiError && err.code === 'SIGNER_REGISTRATION_MISSING') {
+        setError(<>Not released: the signer’s staff record has no professional registration number. An owner adds it on <Link to={staffLink}>Staff</Link> (“Add registration”).</>);
+      } else setError(`Not released: ${messageOf(err)}`);
     } finally { setBusy(false); }
   }
   return (

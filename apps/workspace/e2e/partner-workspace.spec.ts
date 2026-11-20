@@ -48,6 +48,8 @@ interface Backend {
   raceOnce: ((rec: Rec) => void) | null;
   /** An admin cookie session exists (a reload restores it). */
   adminLive: boolean;
+  /** WQ10b: the next registration PUT is saved but its answer is lost on the network. */
+  dropProfessional?: boolean;
   /** Test-controlled: the abandon answer waits for this (its outcome is decided when it is released). */
   holdAbandon: Promise<void> | null;
   /** Test-controlled: a create commits at once but its answer waits for this. */
@@ -224,7 +226,7 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
         b.members.push(m);
         return ok(route, m, 201);
       }
-      const mm = /^\/members\/([0-9a-f]{24})(\/permissions|\/branches|\/email)?$/.exec(sub);
+      const mm = /^\/members\/([0-9a-f]{24})(\/permissions|\/branches|\/email|\/professional)?$/.exec(sub);
       if (mm && method === 'DELETE') { b.members = b.members.filter((m) => m._id !== mm[1]); return json(route, 200, { success: true, message: 'Member removed' }); }
       if (mm && method === 'GET') {
         if (b.slowMemberRead) await new Promise((r) => setTimeout(r, b.slowMemberRead));
@@ -234,6 +236,15 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
         const m = b.members.find((x) => x._id === mm[1])!;
         if (fenced(m)) return changed(route);
         if (mm[2] === '/email' && b.slowEmail) await new Promise((r) => setTimeout(r, b.slowEmail));
+        if (mm[2] === '/professional') {
+          // Q11 setMemberProfessional: owners only (admins act as owner); null removes it.
+          if (!ws[1] && b.me.role !== 'owner') return json(route, 403, { error: 403, code: 'OWNER_REQUIRED', message: 'Only an owner can record professional registrations' });
+          const prof = (body as Rec).professional as Rec | null;
+          if (prof) m.professional = { kind: prof.kind, registrationNumber: String(prof.registrationNumber).trim() }; else delete m.professional;
+          touch(m);
+          if (b.dropProfessional) { b.dropProfessional = false; return route.abort('failed'); }
+          return ok(route, m);
+        }
         if (mm[2] === '/email') {
           // WQ9 (assumed contract): null removes the email; one used by another account is refused.
           const email = (body as Rec).email;
@@ -1158,5 +1169,99 @@ test('WQ9: an admin acting as owner edits a member’s email through the admin w
   await expect(page.getByText('The email for Ravi Owner was saved.')).toBeVisible();
   expect(backend.calls.filter((c) => c.method === 'PUT').map((c) => [c.path, c.body])).toEqual([
     [`/partner-workspace/admin/${LAB}/workspace/members/${OWNER}/email`, { email: 'ravi@citylab.in', expectedUpdatedAt: V0 }],
+  ]);
+});
+
+test('WQ10b: an owner adds, changes and removes a staff member’s registration with the version fence; the list shows it', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  await expect(page.getByRole('columnheader', { name: 'Registration' })).toBeVisible();
+  const sita = page.getByRole('row').filter({ hasText: 'Sita Staff' });
+  await expect(sita).toContainText('Not added');
+  await sita.getByRole('button', { name: 'Add registration' }).click();
+  const editor = page.getByRole('region', { name: 'Professional registration of Sita Staff' });
+  await editor.getByRole('button', { name: 'Save registration' }).click();
+  await expect(editor.getByText('Choose what they are registered as.')).toBeVisible();
+  await expect(editor.getByText('Enter the registration number (3 to 60 characters).')).toBeVisible();
+  await expect(editor.getByRole('button', { name: 'Remove registration' })).toHaveCount(0);
+  await editor.getByLabel('Registered as').selectOption('pathologist');
+  await editor.getByLabel('Registration number').fill('  KMC-55 ');
+  await editor.getByRole('button', { name: 'Save registration' }).click();
+  await expect(page.getByText('The registration of Sita Staff was saved.')).toBeVisible();
+  await expect(sita).toContainText('Pathologist · KMC-55');
+
+  await sita.getByRole('button', { name: 'Change registration' }).click();
+  await expect(editor.getByLabel('Registration number')).toHaveValue('KMC-55');
+  await editor.getByLabel('Registered as').selectOption('doctor');
+  await editor.getByLabel('Registration number').fill('KMC-56');
+  await editor.getByRole('button', { name: 'Save registration' }).click();
+  await expect(sita).toContainText('Doctor · KMC-56');
+
+  await sita.getByRole('button', { name: 'Change registration' }).click();
+  await editor.getByRole('button', { name: 'Remove registration' }).click();
+  await expect(editor.getByText('Sita Staff can no longer release reports until a registration is added again.', { exact: false })).toBeVisible();
+  await editor.getByRole('button', { name: 'Remove the registration of Sita Staff' }).click();
+  await expect(page.getByText('The registration of Sita Staff was removed.')).toBeVisible();
+  await expect(sita).toContainText('Not added');
+
+  const puts = backend.calls.filter((c) => c.method === 'PUT').map((c) => [c.path, c.body as Rec] as const);
+  expect(puts.map(([p]) => p)).toEqual(Array(3).fill(`/partner-workspace/members/${STAFF}/professional`));
+  expect(puts[0]![1]).toEqual({ professional: { kind: 'pathologist', registrationNumber: 'KMC-55' }, expectedUpdatedAt: V0 });
+  expect(puts[1]![1].professional).toEqual({ kind: 'doctor', registrationNumber: 'KMC-56' });
+  expect(puts[1]![1].expectedUpdatedAt).not.toBe(V0); // fenced on the version the first save made
+  expect(puts[2]![1].professional).toBeNull();
+  expect(puts[2]![1].expectedUpdatedAt).not.toBe(puts[1]![1].expectedUpdatedAt);
+  // Each save read the member again right before sending.
+  expect(backend.calls.filter((c) => c.method === 'GET' && c.path === `/partner-workspace/members/${STAFF}`).length).toBeGreaterThanOrEqual(3);
+});
+
+test('WQ10b: a registration edit refused as RECORD_CHANGED shows the saved one; a lost answer is settled by reading the member', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  const sita = page.getByRole('row').filter({ hasText: 'Sita Staff' });
+  await sita.getByRole('button', { name: 'Add registration' }).click();
+  const editor = page.getByRole('region', { name: 'Professional registration of Sita Staff' });
+  await editor.getByLabel('Registered as').selectOption('pathologist');
+  await editor.getByLabel('Registration number').fill('KMC-55');
+  backend.raceOnce = (rec) => { rec.professional = { kind: 'pathologist', registrationNumber: 'OTHER-1' }; };
+  await editor.getByRole('button', { name: 'Save registration' }).click();
+  await expect(editor.getByText(/Someone else changed the registration while you were editing/)).toBeVisible();
+  await expect(editor.getByLabel('Registration number')).toHaveValue('OTHER-1');
+  expect(backend.calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
+
+  // Saved on the server, answer lost: the member read again shows it went through.
+  backend.dropProfessional = true;
+  await editor.getByLabel('Registration number').fill('KMC-77');
+  await editor.getByRole('button', { name: 'Save registration' }).click();
+  await expect(page.getByText('The registration of Sita Staff was saved.')).toBeVisible();
+  await expect(sita).toContainText('Pathologist · KMC-77');
+  expect(backend.calls.filter((c) => c.method === 'PUT')).toHaveLength(2);
+});
+
+test('WQ10b: staff with staff.manage see registrations; only an owner changes them', async ({ page }) => {
+  const backend = await mockBackend(page, { _id: STAFF, partnerId: LAB, name: 'Sita Staff', role: 'staff', permissions: ['staff.manage', 'bookings.view'], branchIds: [] });
+  backend.members[0]!.professional = { kind: 'pathologist', registrationNumber: 'KMC-11' };
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  await expect(page.getByRole('row').filter({ hasText: 'Ravi Owner' })).toContainText('Pathologist · KMC-11');
+  await expect(page.getByRole('button', { name: /registration/ })).toHaveCount(0);
+  await expect(page.getByText('Only an owner adds or changes a professional registration', { exact: false })).toBeVisible();
+});
+
+test('WQ10b: an admin acting as owner adds a registration through the admin workspace route', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await page.goto(`/#/admin/partners/${LAB}`);
+  await page.getByRole('link', { name: 'Staff' }).click();
+  await page.getByRole('row').filter({ hasText: 'Ravi Owner' }).getByRole('button', { name: 'Add registration' }).click();
+  const editor = page.getByRole('region', { name: 'Professional registration of Ravi Owner' });
+  await editor.getByLabel('Registered as').selectOption('pathologist');
+  await editor.getByLabel('Registration number').fill('KMC-11');
+  await editor.getByRole('button', { name: 'Save registration' }).click();
+  await expect(page.getByText('The registration of Ravi Owner was saved.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.method === 'PUT').map((c) => [c.path, c.body])).toEqual([
+    [`/partner-workspace/admin/${LAB}/workspace/members/${OWNER}/professional`, { professional: { kind: 'pathologist', registrationNumber: 'KMC-11' }, expectedUpdatedAt: V0 }],
   ]);
 });

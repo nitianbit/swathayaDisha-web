@@ -14,6 +14,18 @@ export type {
   PartnerActorView, PartnerAuditEvent, PartnerKind, PartnerMember, PartnerPermission, PartnerQuery, PartnerScope,
   PartnerUpdate, TaxRegime, VerificationState, Version, Weekday, WeeklyHours,
 } from './partners.ts';
+// WQ10b: professional registrations (report signers), admin pharmacies and admin consultations.
+export { canEditProfessional, MAX_REGISTRATION, MIN_REGISTRATION, PROFESSIONAL_KIND_LABEL, PROFESSIONAL_KINDS, professionalInput } from './partners.ts';
+export type { MemberProfessional, ProfessionalKind } from './partners.ts';
+export {
+  EMPTY_PHARMACY_FORM, isPharmacyEmailTaken, isPharmacyPhoneTaken, MAX_DRUG_LICENSE, MAX_GST_NUMBER, MAX_PHARMACY_NAME, MAX_PHARMACY_NICKNAME,
+  MAX_PHARMACY_OWNER, PHARMACY_FIELDS, PHARMACY_PAGE_SIZE, PHARMACY_PHONE_PATTERN, PHARMACY_PINCODE_PATTERN, pharmacyAdminApi, pharmacyBody, pharmacyForm, pharmacyState,
+} from './adminPharmacies.ts';
+export type { NewPharmacy, PharmacyAccount, PharmacyDetails, PharmacyForm, PharmacyQuery, PharmacyUpdate } from './adminPharmacies.ts';
+export {
+  adminNoShowMove, consultationAdminApi, consultationQueryProblem, CONSULTATION_STATUS_FILTERS, CONSULTATION_STATUS_LABEL, CONSULTATIONS_PAGE_SIZE,
+} from './adminConsultations.ts';
+export type { AdminConsultation, ConsultationQuery, ConsultationStatus, DoctorRef } from './adminConsultations.ts';
 export { clearSignOutPending, markSignOutPending, nativeSecureStore, nativeSignOut, refreshTokenKey, rotateNative, signOutState } from './nativeSession.ts';
 export type { SecureStore, SignOutState } from './nativeSession.ts';
 export {

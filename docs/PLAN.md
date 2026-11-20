@@ -1028,6 +1028,65 @@ and time); there is no un-archive. The import reads headers case-sensitively and
 expiry must be typed as text; it accepts any `importMode` string unchecked (the web sends only the three); the preview answer includes
 the server's file path (never shown). A medicine not yet in the list can only be added by import (the medicine create route is not used
 here).
+## WQ10b admin pharmacies, doctor no-show moves and lab report signers (2026-11-20, taken autonomously at the owner's request)
+
+Backend (read-only): `SwasthaDisha-worktrees/q14-owner-decisions` `m0/q14-owner-decisions` 5ecd4ad ("only admins create pharmacies"). Every
+endpoint below was read in its route, validation and service; field names, permissions and error codes are the backend's.
+
+- **Report signer registrations (Q11).** `PUT /partner-workspace[/admin/:id/workspace]/members/:memberId/professional`
+  (`memberProfessionalSchema`: `{ professional: { kind: pathologist|pharmacist|doctor, registrationNumber (trimmed, 3-60) } | null,
+  expectedUpdatedAt? }`) in `partnerWorkspaceApi.setProfessional`. The route admits `staff.manage`, but `setMemberProfessional` refuses
+  anyone but an owner (403 `OWNER_REQUIRED`), so the UI offers it to owners and admins acting as owner (`canEditProfessional`); staff
+  with `staff.manage` see the new **Registration** column read-only and are told only an owner changes it. "Add registration" / "Change
+  registration" opens an editor (kind and number, checked as the schema does) that follows the WQ9 member-edit rules: the member is read
+  again right before sending, the save names that `updatedAt`, 409 RECORD_CHANGED shows the saved value, and an answer settles only while
+  the editor is open and the save is the latest started there. A lost answer is settled by reading the member (it holds exactly what was
+  sent = saved). "Remove registration" is confirmed first (they can no longer release reports; released reports keep theirs). The lab
+  booking's signer picker no longer says registrations "cannot be added in the workspace yet": it links to Staff, and a 409
+  `SIGNER_REGISTRATION_MISSING` on release says the same.
+- **Admin pharmacies** (`/admin/pharmacies`, `packages/api/src/adminPharmacies.ts`). List (`GET /pharmacies` as admin: full records,
+  newest first, `name` = part of the name, `isVerified`, `isActive`, 20 a page); "Add a pharmacy" (`POST /pharmacies`, admin only:
+  `createPharmacySchema`, name and mobile required, optional email, owner, short name, address, city, state, PIN, GST, drug licence,
+  pickup/delivery); a pharmacy page (`GET /pharmacies/:id`, `PUT /pharmacies/:id` with `updatePharmacySchema`): **Verify**
+  (`isVerified: true`), **Deactivate** / **Activate** (`isActive`), each confirmed and under the page's one-at-a-time guard; **Sign-in**
+  (mobile number and email: reviewed, then confirmed with what changes: "signs in with …; … no longer works"; PHONE/EMAIL_ALREADY_EXISTS
+  on their fields); **Details** (only changed fields, after a re-read: a field someone else changed meanwhile is shown for review, never
+  overwritten). `DELETE /pharmacies/:id` (archive) is not offered: deactivating does the same and can be undone.
+  - **Exactly once without a request key.** The create takes no key, but the mobile number is unique among pharmacies (unique index on
+    `phone`), so no request, resent or late, can make a second pharmacy with the same number. The submission is stored (session memory,
+    body-less reload marker) before it is sent and sent under the central guard (`useOneAtATime`): a double click or a second submit
+    sends nothing. A definite refusal of the only attempt unlocks the form. A lost answer locks it: "Check by mobile number" reads the
+    list newest first (100 a page, back to an hour before the first attempt; there is no filter by number). Found with this name =
+    created (open it); found under another name = the number is taken (the form unlocks, said on the field); not found = only now "Send
+    again" (the same request) or "Start again" (confirmed: if the earlier request still lands it appears in the list and a new one with
+    the number is refused). A resend refused PHONE_ALREADY_EXISTS is checked the same way. After a reload nothing about it is on this
+    device (no number, no name): the admin is sent to the list.
+- **Admin consultations** (`/admin/consultations`, `packages/api/src/adminConsultations.ts`). `GET /bookings?bookingType=consultation`
+  as admin with `status`, `specialistId` (a doctor found with `GET /specialists?name=`, any status), `bookingDateFrom/To` and paging;
+  `GET /bookings/:id` (the scrubbed no-show view: when, never who). The booking page shows the no-show history (missed, moved once, a
+  final second no-show) and "Reschedule no-show" through the shared `NoShowMove` (request key and `expectedUpdatedAt` stored before
+  sending, settled only while live and still current, a read after the last attempt settles a lost answer, NO_SHOW_RESCHEDULE_USED /
+  SLOT_* refusals in words) with `doctorAdminApi.rescheduleNoShow` (WQ8, `POST /specialists/admin/bookings/:id/reschedule-no-show`).
+  The slot picker reads `GET /slots/available?specialistId=<the booking's doctor>&date&mode=<its consultation type>` (the only route
+  that lists a doctor's free slots for an admin) and offers not-started slots with a seat, in-person to clinic slots only. Not offered:
+  instant consultations ("never moved"), front-desk appointments ("The clinic moves this appointment"; 409 CLINIC_APPOINTMENT), a booking
+  already moved once (disabled, "a second no-show is final").
+- Admin pages keep their queries under `['admin', <admin id>, area]` and render under `key="admin:<id>"` (`useAdminScope`); list filters
+  live in the address and two quick changes both count (`useListParams`). No number, email or patient detail is put in storage or URLs.
+
+Backend gaps found (reported, not worked around on the wire):
+1. `PUT /members/:memberId/professional` is guarded by `staff.manage` but the service is owner-only (OWNER_REQUIRED): the route guard and
+   the rule disagree; the UI follows the service.
+2. Pharmacies: no request key or by-key lookup on create (the unique mobile number stands in); no filter by mobile number (the check reads
+   the list); no version fence on `PUT /pharmacies/:id` (a change landing between the re-read and the save can be overwritten, fields sent
+   only); an optional field (email included) can never be cleared (the schema refuses empty strings); changing the sign-in number or email
+   does not end the pharmacy's existing sessions; `update` does not lower-case a changed email itself (the model's `lowercase` and the
+   client do).
+3. Bookings: `bookingQuerySchema.status` refuses `no_show`, so no-shows cannot be listed on their own (the screen says so; they are marked
+   in the unfiltered list). Booking rows carry no patient name.
+4. `rescheduleNoShow` / `reserveSlot` do not check that the target slot belongs to the booking's doctor (the doctor and admin routes would
+   accept another doctor's slot). The picker only offers the booking's own doctor's slots.
+5. The admin no-show move notifies the customer only (not the doctor); the copy says the doctor sees it in their appointments.
 
 ## Follow-ups
 
@@ -1050,6 +1109,7 @@ here).
 | Date | Packet | Checks |
 |---|---|---|
 | 2026-11-20 | WQ10a (add and import stock, suppliers, order cancel consistency, status words) | typecheck clean; Vitest 235/235 (+13: stock entry checks and body with its reference, lookup by reference, medicine search and history queries, import file checks, template headers, multipart preview / commit / retry paths, committable / retryable / claimed, supplier checks, create / patch bodies with null clears, revision on edit and archive, all pages, conflict code, cancel rule, status words); Playwright workspace 422/422 (+24 = 12 journeys x 2: add stock with confirmation and reference, from a stock row with a refusal, a lost entry found by reference and never resent, a lost entry forgotten after a second step; import with columns, template, problems first, problem rows download, confirm and history; a lost import confirmation settled from the import; suppliers add / edit with a conflicting change / archive with a version conflict; a lost supplier add found by name; return to supplier with none, then with one; Cancel order on Placed/Accepted/Packed without the stale warning; refunded order: no button, one message; ready for pickup: neither; prescription queue and review in words. One journey replaced (the stale-warning check); stock recall trace now reads “Accepted”); Playwright customer 222/222; both builds OK with VITE_API_BASE_URL=https://api.example.test. Temporary configs on ports 5401/5402 (no server reuse), deleted before commit. |
+| 2026-11-20 | WQ10b (admin pharmacies, admin consultations and no-show moves, lab report signer registrations) | typecheck clean; Vitest 233/233 (+11: pharmacy list/get/create/update paths and bodies, ids and numbers refused before any request, the lost-create lookup by mobile number newest first with its time bound, create/update checks as the schemas (required name and number, normalised email, PIN, lengths, no clearing a held field), duplicate refusals; consultation list query (status, doctor, YYYYMMDD dates, paging), doctor search, free slots by doctor/day/mode, date and period refusals, the admin no-show offer (offer/used/instant/clinic); registration path and body on both scopes with the fence, kind and 3-60 number checks, owner-only edit); Playwright workspace 436/436 (+38 = 19 journeys x 2: owner adds, changes and removes a registration with the version fence; RECORD_CHANGED and a lost answer settled by a read; staff with staff.manage read-only; admin as owner on the admin route; nobody can sign a report -> Staff link -> registration added -> released under it; pharmacies list search, filters and paging (two quick changes both count); create with field checks, a taken number, one request however often clicked; a lost answer found by number (one POST); lost before the server: check, then the same request once more (one pharmacy); a resend refused PHONE_ALREADY_EXISTS found as created; reload leaves only a body-less marker; verify/deactivate/activate confirmed and only changed details sent; a details field changed elsewhere shown for review; sign-in change confirmed, a taken number on its field, a change made elsewhere stops it; consultations filters as the server takes them; a no-show moved once with key and version from the doctor's own free times; lost answers settled by a read or resent with the same key; instant, front-desk and already-moved bookings offer no move and NO_SHOW_RESCHEDULE_USED is said; a taken time re-reads the times); Playwright customer 222/222; both release builds OK with VITE_API_BASE_URL=https://api.example.test. Temporary configs on ports 5411/5412 (`reuseExistingServer: false`), deleted before commit. |
 | 2026-11-19 | WQ9 re-review fixes | typecheck clean; Vitest 222/222 (+1: NFC); Playwright workspace 398/398 (journeys extended: doctor and pharmacy copy, no sign-out warning for a first email, warning when changing one; admin-order-cancellations 120/120 with --repeat-each 10); Playwright customer 222/222 (+2 = 1 journey x 2: an email set elsewhere re-reads the profile after 422); both builds OK. Temporary configs on ports 5305/5306, deleted. |
 | 2026-11-19 | WQ9 review fixes | typecheck clean; Vitest 221/221 (+5: normalizeEmail with IDN/punycode and refusals, EMAIL_NOT_REGISTERED, leading 0, short-local masking, cooldownLeft); Playwright workspace 398/398 (+8 = 4 new journeys x 2; one replaced: staff without the email field; OWNER_REQUIRED on add; a save landing after its editor was replaced (fails without the fix); role frozen while sending; doctor EMAIL_NOT_REGISTERED, A → B → A waits and a leading 0); Playwright customer 220/220 (+6 = 3 journeys x 2: EMAIL_NOT_REGISTERED and the new hint; an IDN email from the profile and from sign-in in one ASCII form; A → B → A waits and a leading 0; the profile journey now adds the email through email verification). Both builds OK. Temporary configs on ports 5303/5304 (no server reuse), deleted before commit. |
 | 2026-11-19 | WQ9 (sign in with a mobile number or an email; staff and owner emails) | typecheck clean; Vitest 216/216 (+12: identifier parser (+91, spaces, dashes, lower-cased email, refusals, one key only), masking and destination keys, email send/verify bodies, member email path and fence, optional email normalised, owner-only email edits, EMAIL_IN_USE); Playwright workspace 390/390 (+14 = 7 journeys x 2: partner email sign-in with the workspace choice and nothing stored; +91 number, a 429 on one email only, resend to the same destination; staff add with email and EMAIL_IN_USE, list, change and remove with the version fence; email edit refused as RECORD_CHANGED; staff with staff.manage add an email but change none; admin create with owner email and EMAIL_IN_USE; admin-as-owner email edit on the admin route); Playwright customer 214/214 (+6 = 3 journeys x 2: email sign-in sends only `email`, masked, nothing stored; +91 number then an email; a 429 on one email only and a burnt code). Existing login journeys unchanged (the new label contains "Mobile number"). Both release builds OK with VITE_API_BASE_URL=https://api.example.test. Temporary Playwright configs on ports 5301/5302 (no server reuse), deleted before commit. |
