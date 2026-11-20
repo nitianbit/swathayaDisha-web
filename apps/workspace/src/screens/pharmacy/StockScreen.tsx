@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { formatExpiry, inventoryApi, medicineName, sellableQty, type Batch, type InventoryItem } from '@jansetu/api';
 import { Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
@@ -33,13 +33,21 @@ export function StockScreen() {
   return (
     <>
       <PageHeading title="Stock">Find a medicine to see its batches, quarantine or release them, return them to a supplier or recall them.</PageHeading>
+      <div className="ws-actions">
+        <Link className="j-btn j-btn--primary" to="/pharmacy/stock/add">Add stock</Link>
+        <Link className="j-btn j-btn--secondary" to="/pharmacy/stock/import">Import stock from a file</Link>
+      </div>
       <form className="ws-search" role="search" onSubmit={(e: FormEvent) => { e.preventDefault(); setParams(text.trim() ? { q: text.trim() } : {}); }}>
         <TextField label="Medicine" value={text} onChange={(e) => setText(e.target.value)} placeholder="Name, brand or generic name" />
         <Button type="submit">Search</Button>
       </form>
       {q.isPending ? <Loading label="Loading stock…" />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : q.data.items.length === 0 ? <Empty title={search ? `Nothing in stock matches “${search}”` : 'No stock yet'} />
+        : q.data.items.length === 0 ? (
+          <Empty title={search ? `Nothing in stock matches “${search}”` : 'No stock yet'}>
+            Add stock for one batch, or import a file of everything you received.
+          </Empty>
+        )
         : (
           <>
             <ul className="stock-list">
@@ -70,6 +78,9 @@ function StockItem({ item, onChanged }: { item: InventoryItem; onChanged: () => 
         <h2>{name}</h2>
         <span>{sellable} sellable · {item.reservedQty} reserved{item.rackLocation ? ` · rack ${item.rackLocation}` : ''}</span>
         {low && <Badge tone="warn">Low: reorder at {item.reorderThreshold}</Badge>}
+        {typeof item.medicineId === 'object' && /^[0-9a-fA-F]{24}$/.test(item.medicineId._id) && (
+          <Link to={`/pharmacy/stock/add?medicine=${item.medicineId._id}`} aria-label={`Add a batch of ${name}`}>Add a batch</Link>
+        )}
       </div>
       {(item.batches ?? []).length === 0 ? <span className="ws-muted">No batches recorded for this medicine.</span> : (
         <div className="ws-table-wrap">

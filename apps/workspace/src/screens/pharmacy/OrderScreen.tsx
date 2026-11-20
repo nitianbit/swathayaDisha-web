@@ -2,8 +2,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  CANCELLABLE_STATUSES, DELIVERY_EXCEPTION_FROM, ORDER_TRANSITIONS, pharmacyOrdersApi, refId,
-  type DeliveryExceptionType, type OrderStatus, type PharmacyOrder,
+  cancelRefusal, DELIVERY_EXCEPTION_FROM, ORDER_TRANSITIONS, pharmacyOrdersApi, refId,
+  type DeliveryExceptionType, type PharmacyOrder,
 } from '@jansetu/api';
 import { Alert, Badge, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { CancelRequestPanel } from '../../components/CancelRequestPanel.tsx';
@@ -56,13 +56,15 @@ function OrderView({ order }: { order: PharmacyOrder }) {
   };
 
   const forward = ORDER_TRANSITIONS[order.status].filter((s) => FORWARD_LABEL[s]);
-  const canEnd = (s: OrderStatus) => ORDER_TRANSITIONS[order.status].includes(s);
   const exceptions = (Object.keys(DELIVERY_EXCEPTION_FROM) as DeliveryExceptionType[])
     .filter((t) => DELIVERY_EXCEPTION_FROM[t].includes(order.status));
   const canMarkPaid = (order.paymentMode === 'in_store_payment' || order.paymentMode === 'cash_on_delivery')
     && order.paymentStatus !== 'paid' && !terminal && order.status !== 'pending_cancel';
   const unpaid = !order.paymentStatus || order.paymentStatus === 'pending' || order.paymentStatus === 'failed';
-  const canRequestCancel = CANCELLABLE_STATUSES.includes(order.status);
+  // D3 (`requestCancel`): Placed, Accepted or Packed; unpaid → cancelled at once, money held → waits for a decision.
+  // The generic status update refuses to close a paid order (ORDER_PAID_USE_CANCEL_REQUEST), so this is the only way.
+  const cancelBlock = cancelRefusal(order);
+  const canRequestCancel = cancelBlock === null;
 
   return (
     <>
@@ -146,10 +148,10 @@ function OrderView({ order }: { order: PharmacyOrder }) {
               <ConfirmAction label="Cancel order" confirmLabel={unpaid ? 'Yes, cancel it' : 'Yes, request cancellation'} danger reason
                 consequence={unpaid
                   ? 'The order is cancelled now and its stock goes back to inventory. No payment is involved.'
-                  : 'The order is paid, so it waits for a decision (it cannot move meanwhile). Approving it cancels the order, returns its stock and refunds the customer.'}
+                  : 'The order holds a payment, so it waits for a decision (it cannot move meanwhile). Approving it cancels the order, returns its stock and refunds the customer.'}
                 onConfirm={(reason) => act(() => orders.requestCancel(order._id, reason))} />
             )}
-            {forward.length === 0 && exceptions.length === 0 && !canMarkPaid && !canRequestCancel && (
+            {forward.length === 0 && exceptions.length === 0 && !canMarkPaid && !canRequestCancel && cancelBlock !== 'payment' && (
               <span className="ws-muted">Nothing to do from “{ORDER_STATUS_LABEL[order.status]}” here.</span>
             )}
           </div>
@@ -168,20 +170,11 @@ function OrderView({ order }: { order: PharmacyOrder }) {
             </>
           )}
 
-          {(canEnd('rejected') || canEnd('cancelled')) && (
-            <>
-              <h3>End the order</h3>
-              {/*
-                Not offered: the backend's generic cancel/reject releases stock but never refunds, and it does not check
-                payment atomically, so a payment landing while staff confirm would be kept. Needs a fenced, refund-aware
-                backend cancellation first (docs/PLAN.md, MONEY item).
-              */}
-              <Alert tone="warn">
-                Cancelling or rejecting an order is not available here yet, because the system cannot yet guarantee the
-                customer’s refund if a payment arrives at the same moment. For a delivery problem use the options above;
-                otherwise ask an admin.
-              </Alert>
-            </>
+          {cancelBlock === 'payment' && (
+            <Alert tone="warn">
+              This order cannot be cancelled: its payment shows as {PAYMENT_STATUS_LABEL[order.paymentStatus ?? 'pending']?.toLowerCase()}.
+              Ask the Jansetu team to close it.
+            </Alert>
           )}
         </section>
       )}

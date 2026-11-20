@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft, FileText } from 'lucide-react';
 import {
-  ApiError, pharmacyOrdersApi, pharmacyProfileApi, PRESCRIPTION_REVIEWABLE_STATUSES, refId,
+  ApiError, orderStatusLabel, paymentStatusLabel, pharmacyOrdersApi, pharmacyProfileApi, PRESCRIPTION_REVIEWABLE_STATUSES, refId,
   type PharmacyOrder, type PrescriptionReviewRequest,
 } from '@jansetu/api';
 import {
@@ -16,8 +16,6 @@ import { sniffDocument, type DocumentKind } from './documents.ts';
 
 /** P9: the pharmacy's registered pharmacist (Settings), recorded on every decision. */
 export const PHARMACY_PROFILE_KEY = ['pharmacy', 'me'] as const;
-
-const statusLabel = (s: string) => s.replace(/_/g, ' ');
 
 export function RxReviewScreen() {
   const { orderId = '' } = useParams();
@@ -61,8 +59,8 @@ function OrderReview({ order, onChanged, onStale }:
     <>
       <PageHeading title={title}>
         Placed {formatDateTime(order.createdAt)} · {formatRupees(order.grandTotal)} · Order{' '}
-        <Badge>{statusLabel(order.status)}</Badge> · Payment{' '}
-        <Badge tone={order.paymentStatus === 'paid' ? 'ok' : undefined}>{statusLabel(order.paymentStatus ?? 'pending')}</Badge>
+        <Badge>{orderStatusLabel(order.status)}</Badge> · Payment{' '}
+        <Badge tone={order.paymentStatus === 'paid' ? 'ok' : undefined}>{paymentStatusLabel(order.paymentStatus)}</Badge>
       </PageHeading>
       <section className="ws-section" aria-labelledby="items-h">
         <h2 id="items-h">Medicines</h2>
@@ -81,7 +79,7 @@ function OrderReview({ order, onChanged, onStale }:
         </Alert>
       ) : pending && !reviewableState ? (
         <Alert tone="warn">
-          This order is {statusLabel(order.status)}, so its prescription can no longer be reviewed.
+          This order is {orderStatusLabel(order.status).toLowerCase()}, so its prescription can no longer be reviewed.
         </Alert>
       ) : pending ? (
         // A changed document list starts the review again: what was read no longer covers it.

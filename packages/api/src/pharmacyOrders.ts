@@ -135,6 +135,47 @@ export const ORDER_TRANSITIONS: Readonly<Record<OrderStatus, readonly OrderStatu
 /** D3: statuses from which a cancellation can be requested (later ones go through delivery exceptions). */
 export const CANCELLABLE_STATUSES: readonly OrderStatus[] = ['placed', 'accepted', 'packed'];
 
+/** The words staff see for each order status (Orders, order page, prescription review, Quality). */
+export const ORDER_STATUS_LABEL: Readonly<Record<OrderStatus, string>> = {
+  placed: 'Placed',
+  accepted: 'Accepted',
+  packed: 'Packed',
+  ready_for_pickup: 'Ready for pickup',
+  out_for_delivery: 'Out for delivery',
+  delivery_failed: 'Delivery failed',
+  completed: 'Completed',
+  abandoned: 'Abandoned',
+  cancelled: 'Cancelled',
+  rejected: 'Rejected',
+  pending_cancel: 'Cancellation requested',
+};
+
+/** The words staff see for each payment status; an order without one is unpaid (`pending`). */
+export const PAYMENT_STATUS_LABEL: Readonly<Record<PaymentStatus, string>> = {
+  pending: 'Unpaid',
+  authorized: 'Authorised',
+  paid: 'Paid',
+  failed: 'Payment failed',
+  refunded: 'Refunded',
+  partially_paid: 'Partly paid',
+};
+
+export const orderStatusLabel = (s: OrderStatus | undefined) => (s ? ORDER_STATUS_LABEL[s] ?? s : '—');
+export const paymentStatusLabel = (s: PaymentStatus | undefined) => PAYMENT_STATUS_LABEL[s ?? 'pending'] ?? s;
+
+/**
+ * D3 (`requestCancel` in pharmacyOrders services): who may ask is checked by the server; the order must be in
+ * CANCELLABLE_STATUSES and its payment either unpaid (none, pending, failed: cancelled at once) or holding money (paid,
+ * authorized, partially_paid: waits for a decision). Any other payment state (refunded) is refused. Null = allowed.
+ */
+export function cancelRefusal(o: Pick<PharmacyOrder, 'status' | 'paymentStatus'>): 'state' | 'payment' | null {
+  if (!CANCELLABLE_STATUSES.includes(o.status)) return 'state';
+  const p = o.paymentStatus;
+  const unpaid = p === undefined || p === 'pending' || p === 'failed';
+  const paid = p === 'paid' || p === 'authorized' || p === 'partially_paid';
+  return unpaid || paid ? null : 'payment';
+}
+
 /** D3: the current (or last) cancellation request of an order. Decisions name `requestId`. */
 export interface CancelRequest {
   requestId: string;

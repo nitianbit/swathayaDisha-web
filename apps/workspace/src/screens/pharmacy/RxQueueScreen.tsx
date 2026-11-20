@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
-import { pharmacyOrdersApi, type PharmacyOrder } from '@jansetu/api';
+import { paymentStatusLabel, pharmacyOrdersApi, type PharmacyOrder } from '@jansetu/api';
 import { Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -57,7 +57,7 @@ export function RxQueueScreen() {
                       <td>{customerName(o.customerId)}</td>
                       <td>{o.items?.length ?? 0}</td>
                       <td>{formatRupees(o.grandTotal)}</td>
-                      <td><Badge tone={o.paymentStatus === 'paid' ? 'ok' : undefined}>{o.paymentStatus ?? 'pending'}</Badge></td>
+                      <td><Badge tone={o.paymentStatus === 'paid' ? 'ok' : undefined}>{paymentStatusLabel(o.paymentStatus)}</Badge></td>
                       <td>{o.prescriptionUrls?.length ?? 0}</td>
                     </tr>
                   ))}

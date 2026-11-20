@@ -229,7 +229,7 @@ test('a recall is confirmed and immediately shows who is affected; a recalled ba
   await row(page, 'PCM-A').getByLabel('Notice reference (optional)').fill('CDSCO-88');
   await row(page, 'PCM-A').getByRole('button', { name: 'Recall batch' }).click();
   await expect(page.getByText('Batch PCM-A is recalled.')).toBeVisible();
-  await expect(page.getByText(/PO-3001 · accepted · 1 units/)).toBeVisible();
+  await expect(page.getByText(/PO-3001 · Accepted · 1 units/)).toBeVisible(); // WQ10a: status in words
   expect(backend.calls).toEqual([{ path: `${A}/recall`, body: { reason: 'Manufacturer recall', reference: 'CDSCO-88' } }]);
 
   await row(page, 'PCM-R').getByRole('button', { name: 'Recall trace' }).click();

@@ -1,27 +1,7 @@
-import type { DeliveryExceptionType, OrderStatus, PaymentStatus, PharmacyOrder, PrescriptionRefundStatus } from '@jansetu/api';
+import type { DeliveryExceptionType, OrderStatus, PharmacyOrder, PrescriptionRefundStatus } from '@jansetu/api';
 
-export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
-  placed: 'Placed',
-  accepted: 'Accepted',
-  packed: 'Packed',
-  ready_for_pickup: 'Ready for pickup',
-  out_for_delivery: 'Out for delivery',
-  delivery_failed: 'Delivery failed',
-  completed: 'Completed',
-  abandoned: 'Abandoned',
-  cancelled: 'Cancelled',
-  rejected: 'Rejected',
-  pending_cancel: 'Cancellation requested',
-};
-
-export const PAYMENT_STATUS_LABEL: Record<PaymentStatus, string> = {
-  pending: 'Unpaid',
-  authorized: 'Authorised',
-  paid: 'Paid',
-  failed: 'Payment failed',
-  refunded: 'Refunded',
-  partially_paid: 'Partly paid',
-};
+// The status words live in @jansetu/api so every screen (orders, prescription review, quality) uses the same ones.
+export { ORDER_STATUS_LABEL, PAYMENT_STATUS_LABEL } from '@jansetu/api';
 
 export const REFUND_STATUS_LABEL: Record<PrescriptionRefundStatus, string> = {
   wallet_pending: 'Waiting to credit the wallet',

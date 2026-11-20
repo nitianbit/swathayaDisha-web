@@ -32,6 +32,22 @@ export type {
   Batch, BatchStatus, Dispensed, HeldUnit, ImpactedOrder, InventoryItem, MedicineRef, QualityHoldRow, RecallTrace, Supplier,
   SupplierReturn, SupplierReturnReason, SupplierReturnRequest,
 } from './inventory.ts';
+// WQ10a pharmacy: shared order/payment words, cancel rule, suppliers, add stock and stock imports.
+export { cancelRefusal, ORDER_STATUS_LABEL, orderStatusLabel, PAYMENT_STATUS_LABEL, paymentStatusLabel } from './pharmacyOrders.ts';
+export {
+  allSuppliers, draftOfSupplier, isSupplierConflict, pharmacySuppliersApi, SUPPLIER_FIELD_LABEL, SUPPLIER_FIELDS, SUPPLIER_LIMITS,
+  SUPPLIER_PHONE_PATTERN, supplierCreateBody, supplierHas, supplierPatchBody, supplierProblems, SUPPLIERS_PAGE_MAX,
+} from './pharmacySuppliers.ts';
+export type { PharmacySupplier, SupplierDraft, SupplierField, SupplierFields, SupplierState } from './pharmacySuppliers.ts';
+export {
+  ADD_STOCK_REASONS, IMPORT_ACCEPT, IMPORT_COLUMNS, IMPORT_MAX_BYTES, IMPORT_MODES, IMPORT_ROW_STATUS_LABEL, IMPORT_STATUS_LABEL, importCommittable,
+  findStockEntryOf, importFileProblem, importRetryable, importSettled, importTemplateCsv, isImportClaimed, isRealYyyymmdd, MAX_STOCK_NOTE, pharmacyStockApi,
+  serverToday, STOCK_ENTRY_REF, STOCK_LIMITS, stockEntryBody, stockEntryKey, stockEntryProblems,
+} from './pharmacyStock.ts';
+export type {
+  AddStockReason, ImportCommitError, ImportMode, ImportRow, ImportRowStatus, ImportStatus, InventoryImport, Medicine, StockAdjustment, StockEntry,
+  StockEntryDraft,
+} from './pharmacyStock.ts';
 export { adminQueuesApi } from './adminQueues.ts';
 export type { CancelState, OpenCancellation, ProviderOutcome, RefundAttentionRow } from './adminQueues.ts';
 export { appointmentInstant, canCancelNow } from './cancellationWindow.ts';

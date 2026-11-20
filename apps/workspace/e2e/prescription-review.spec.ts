@@ -171,6 +171,26 @@ test('approval needs every document displayed and confirmed; stored URLs are sen
   await expect(page.getByText('No prescriptions waiting')).toBeVisible();
 });
 
+test('WQ10a: the queue and the review show order and payment status in words, as the Orders screens do', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.order = order({ paymentStatus: 'pending', status: 'accepted' });
+  await signIn(page);
+  await page.getByRole('link', { name: 'Prescription review' }).first().click();
+  const row = page.getByRole('row').filter({ hasText: 'PO-1001' });
+  await expect(row.getByText('Unpaid', { exact: true })).toBeVisible();
+  await expect(row.getByText('pending', { exact: true })).toHaveCount(0);
+  await page.getByRole('link', { name: 'PO-1001' }).click();
+  const head = page.locator('.ws-page-head');
+  await expect(head.getByText('Accepted', { exact: true })).toBeVisible();
+  await expect(head.getByText('Unpaid', { exact: true })).toBeVisible();
+  await expect(head.getByText(/^(pending|accepted)$/)).toHaveCount(0);
+  backend.order = order({ status: 'cancelled', paymentStatus: 'partially_paid' });
+  await page.reload();
+  await signIn(page);
+  await expect(page.getByText('This order is cancelled, so its prescription can no longer be reviewed.')).toBeVisible();
+  await expect(page.locator('.ws-page-head').getByText('Partly paid', { exact: true })).toBeVisible();
+});
+
 test('a corrupt image cannot be confirmed, so approval stays locked; rejection is still possible', async ({ page }) => {
   const backend = await mockBackend(page);
   backend.files[served(DOCS[0]!)] = { type: 'image/png', body: BROKEN_PNG };

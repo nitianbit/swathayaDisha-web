@@ -1,14 +1,15 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router';
 import {
-  BATCH_ACTION_FROM, inventoryApi, type Batch, type RecallTrace, type SupplierReturn, type SupplierReturnReason,
+  BATCH_ACTION_FROM, inventoryApi, orderStatusLabel, type Batch, type RecallTrace, type SupplierReturn, type SupplierReturnReason,
   type SupplierReturnRequest, requestKeysApi } from '@jansetu/api';
 import { Alert, Button, formatDateTime, Loading, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
-import { useSession } from '../../session.tsx';
+import { useSession, useStaff } from '../../session.tsx';
 
 type Panel = null | 'release' | 'supplier' | 'recall' | 'trace';
 
@@ -129,7 +130,8 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
 }) {
   const { api, memory } = useSession();
   const key = supplierPendingKey(batch._id);
-  const suppliers = useQuery({ queryKey: ['pharmacy-suppliers', 'active'], queryFn: () => inventoryApi(api).suppliers() });
+  const pharmacyId = useStaff().id;
+  const suppliers = useQuery({ queryKey: ['pharmacy-suppliers', pharmacyId, 'for-returns'], queryFn: () => inventoryApi(api).suppliers() });
   const [pending, setPendingState] = useState<PendingSupplierReturn | undefined>(() => memory.get<PendingSupplierReturn>(key));
   const [supplierId, setSupplierId] = useState('');
   const [qty, setQty] = useState('');
@@ -193,7 +195,13 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
   if (suppliers.isPending) return <Loading label="Loading suppliers…" />;
   if (suppliers.isError) return <Alert>{messageOf(suppliers.error)}</Alert>;
   const active = suppliers.data.items.filter((s) => s.state === 'active');
-  if (active.length === 0) return <Alert tone="warn">Add a supplier first; returns go to one of your active suppliers.</Alert>;
+  if (active.length === 0) {
+    return (
+      <Alert tone="warn">
+        Returns go to one of your active suppliers, and you have none yet. <Link to="/pharmacy/suppliers">Add a supplier</Link>, then come back to this batch.
+      </Alert>
+    );
+  }
 
   return (
     <FormShell name={`Return batch ${batch.batchNumber}`} title={`Send unreserved units of batch ${batch.batchNumber} back to a supplier. They leave your stock.`}
@@ -279,7 +287,7 @@ function TraceView({ trace, justRecalled = false }: { trace: RecallTrace; justRe
       {trace.openOrders.length === 0 ? <span className="ws-muted">None.</span> : (
         <ul className="ws-list">
           {trace.openOrders.map((o) => (
-            <li key={o.orderId}>{o.orderNumber ?? o.orderId.slice(-8)} · {o.status.replace(/_/g, ' ')} ·{' '}
+            <li key={o.orderId}>{o.orderNumber ?? o.orderId.slice(-8)} · {orderStatusLabel(o.status)} ·{' '}
               {o.heldUnits.reduce((a, u) => a + u.quantity, 0)} units — swap or cancel it under Quality</li>
           ))}
         </ul>

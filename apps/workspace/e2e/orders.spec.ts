@@ -198,17 +198,35 @@ test('an unpaid online order cannot be packed, and says why', async ({ page }) =
   await expect(page.getByText('Waiting for payment.')).toBeVisible();
 });
 
-test('no order offers a generic cancel or reject: it could keep a payment that lands meanwhile', async ({ page }) => {
-  for (const paymentStatus of ['paid', 'pending']) {
-    const backend = await mockBackend(page, order({ paymentStatus }));
+test('WQ10a: Placed, Accepted and Packed orders offer Cancel order and no stale "not available" warning; no generic reject', async ({ page }) => {
+  for (const [status, paymentStatus] of [['placed', 'paid'], ['accepted', 'pending'], ['packed', 'authorized']] as const) {
+    const backend = await mockBackend(page, order({ status, paymentStatus }));
     await openOrder(page);
-    await expect(page.getByText(/Cancelling or rejecting an order is not available here yet/)).toBeVisible();
-    // D3: "Cancel order" exists, but only as a cancellation request (refund-aware); no generic cancel or reject.
-    await expect(page.getByRole('button', { name: /Reject order|^Cancelled$|^Rejected$/ })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Cancel order' })).toHaveCount(1);
+    await expect(page.getByText(/not available here yet|ask an admin/i)).toHaveCount(0);
+    // The generic status update never closes an order (refund-aware cancellation only).
+    await expect(page.getByRole('button', { name: /Reject order|^Cancelled$|^Rejected$/ })).toHaveCount(0);
     expect(backend.calls).toHaveLength(0);
     await page.unrouteAll({ behavior: 'ignoreErrors' });
   }
+});
+
+test('WQ10a: a refunded order the server will not cancel shows no Cancel order, only one clear message', async ({ page }) => {
+  const backend = await mockBackend(page, order({ status: 'accepted', paymentStatus: 'refunded' }));
+  await openOrder(page);
+  await expect(page.getByRole('button', { name: 'Cancel order' })).toHaveCount(0);
+  await expect(page.getByText('This order cannot be cancelled: its payment shows as refunded. Ask the Jansetu team to close it.')).toBeVisible();
+  await expect(page.getByText(/not available here yet/)).toHaveCount(0);
+  await expect(page.getByText(/Nothing to do from/)).toHaveCount(0);
+  expect(backend.calls).toHaveLength(0);
+});
+
+test('WQ10a: a later order (ready for pickup) offers neither Cancel order nor a cancel message', async ({ page }) => {
+  await mockBackend(page, order({ status: 'ready_for_pickup' }));
+  await openOrder(page);
+  await expect(page.getByRole('button', { name: 'Mark completed' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel order' })).toHaveCount(0);
+  await expect(page.getByText(/cannot be cancelled|not available here yet/)).toHaveCount(0);
 });
 
 test('cash on delivery: the order can go out unpaid, the payment is recorded, then it completes', async ({ page }) => {

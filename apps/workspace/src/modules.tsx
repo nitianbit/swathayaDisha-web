@@ -36,6 +36,11 @@ import { QualityScreen } from './screens/pharmacy/QualityScreen.tsx';
 import { RxReviewScreen } from './screens/pharmacy/RxReviewScreen.tsx';
 import { StockScreen } from './screens/pharmacy/StockScreen.tsx';
 import { SettingsScreen } from './screens/pharmacy/SettingsScreen.tsx';
+import { AddStockScreen } from './screens/pharmacy/AddStockScreen.tsx';
+import { ImportScreen } from './screens/pharmacy/ImportScreen.tsx';
+import { ImportStockScreen } from './screens/pharmacy/ImportStockScreen.tsx';
+import { SuppliersScreen } from './screens/pharmacy/SuppliersScreen.tsx';
+import { Truck } from 'lucide-react';
 import { PartnerFinanceScreen } from './screens/finance/PartnerFinanceScreen.tsx';
 import { PayoutsQueueScreen } from './screens/finance/PayoutsQueueScreen.tsx';
 import { SettlementAccountScreen } from './screens/finance/SettlementAccountScreen.tsx';
@@ -109,6 +114,14 @@ export const PAGES: readonly WorkspacePage[] = [
   },
   { path: '/pharmacy/prescriptions/:orderId', roles: ['pharmacy'], element: <RxReviewScreen /> },
   { path: '/pharmacy/stock', roles: ['pharmacy'], element: <StockScreen />, nav: { label: 'Stock', icon: Boxes, section: 'Pharmacy' } },
+  // WQ10a: add stock, stock imports (`/pharmacy-inventory-imports`) and suppliers (`/pharmacy-suppliers`).
+  { path: '/pharmacy/stock/add', roles: ['pharmacy'], element: <AddStockScreen /> },
+  { path: '/pharmacy/stock/import', roles: ['pharmacy'], element: <ImportStockScreen /> },
+  { path: '/pharmacy/stock/imports/:importId', roles: ['pharmacy'], element: <ImportScreen /> },
+  {
+    path: '/pharmacy/suppliers', roles: ['pharmacy'], element: <SuppliersScreen />,
+    nav: { label: 'Suppliers', icon: Truck, section: 'Pharmacy' },
+  },
   {
     path: '/pharmacy/low-stock', roles: ['pharmacy'], element: <LowStockScreen />,
     nav: { label: 'Low stock', icon: TrendingDown, section: 'Pharmacy' },
