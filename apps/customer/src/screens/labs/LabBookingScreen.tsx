@@ -86,7 +86,7 @@ function LabBookingView({ booking: b }: { booking: LabBooking }) {
       )}
       {paymentError && b.paymentStatus === 'pending' && <Alert>The payment page could not open: {paymentError} You can pay below.</Alert>}
       {b.status === 'pending_payment' && b.paymentStatus === 'pending' && (
-        <PayAgainPanel key={`${b._id}:${b.paymentTransactionId ?? ''}`} what="booking" deadline={b.paymentDeadline} paymentTransactionId={b.paymentTransactionId}
+        <PayAgainPanel key={`${b._id}:${b.paymentTransactionId ?? ''}`} what="booking" amountDue={fromPaise(b.pricing.payableMinor)} deadline={b.paymentDeadline} paymentTransactionId={b.paymentTransactionId}
           expiredCode="LAB_BOOKING_PAYMENT_EXPIRED" description={`Lab tests${lab ? ` at ${lab.name}` : ''}`}
           pay={() => customerLabsApi(api).payAgain(b._id)} onSettled={refresh} />
       )}
@@ -135,10 +135,13 @@ function LabBookingView({ booking: b }: { booking: LabBooking }) {
 function CancelledNote({ booking: b }: { booking: LabBooking }) {
   const c = b.cancellation;
   if (c?.reason === 'timeout') {
+    // WQ11a: the server's own words for an expired booking (its notification): a payment the gateway captured after the
+    // window, too, is returned to the wallet, never applied to the released time.
     return (
       <Alert tone="warn">
-        This booking expired because it was not paid within {LAB_PAYMENT_WINDOW_MIN} minutes, so the time was released. Any
-        wallet money used for it is back in your wallet. You can book again.
+        Payment was not completed in time, so the booking was released (the time to pay is {LAB_PAYMENT_WINDOW_MIN} minutes).
+        Any amount taken is back in your Jansetu wallet, including a payment that went through after the time ran out.
+        You can book again.
       </Alert>
     );
   }

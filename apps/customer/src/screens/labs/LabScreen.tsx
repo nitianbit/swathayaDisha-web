@@ -42,7 +42,8 @@ function LabView({ lab }: { lab: PartnerLab }) {
   const { api } = useSession();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const profile = useQuery({ queryKey: ['me'], queryFn: () => customerApi(api).profile() });
+  const me = useCustomer();
+  const profile = useQuery({ queryKey: ['me', me.id], queryFn: () => customerApi(api).profile() });
   const payer = { name: profile.data?.name, contact: profile.data?.phone, email: profile.data?.email };
   // Q9: a refused price (409 PRICE_CHANGED) re-reads the prices and re-checks the coupon; the form then asks the
   // customer to accept the new price before anything can be sent again.
@@ -70,7 +71,7 @@ function LabView({ lab }: { lab: PartnerLab }) {
         void queryClient.invalidateQueries({ queryKey: ['partner-lab-catalogue', lab.partnerId] });
         setPriceRefusals((n) => n + 1);
       }
-    });
+    }, { kind: 'lab_booking_create', onFound: (id) => navigate(`/partner-lab-bookings/${id}`) });
 
   const modes = (['home', 'lab'] as VisitMode[]).filter((m) => lab.branches.some((b) => (m === 'home' ? b.homeCollection : b.inLab)));
   const [mode, setMode] = useState<VisitMode>(modes[0] ?? 'lab');
@@ -207,7 +208,7 @@ function BookForm({ lab, branchId, mode, items, slot, dayLabel, once, priceRefus
   const { api } = useSession();
   const me = useCustomer();
   const c = customerApi(api);
-  const profile = useQuery({ queryKey: ['me'], queryFn: () => c.profile() });
+  const profile = useQuery({ queryKey: ['me', me.id], queryFn: () => c.profile() });
   const family = useQuery({ queryKey: ['dependents', me.id, 'all-first'], queryFn: () => c.dependents(me.id, 1, 50) });
   const wallet = useQuery({ queryKey: ['wallet', me.id], queryFn: () => c.wallet(me.id) });
   const [forWhom, setForWhom] = useState('');
@@ -303,7 +304,8 @@ function BookForm({ lab, branchId, mode, items, slot, dayLabel, once, priceRefus
       <h2 id="book-h">Book {clock(slot.startTime)}, {dayLabel}</h2>
       <div className="j-field">
         <label htmlFor="who">For</label>
-        <select id="who" value={forWhom} onChange={(e) => { setForWhom(e.target.value); setCoupon(null); }}>
+        {/* WQ11a: the applied coupon is checked again for the new patient (never left half-applied, which kept Book off). */}
+        <select id="who" value={forWhom} onChange={(e) => { setForWhom(e.target.value); if (applied) { setCoupon(null); void checkCoupon(applied, ctx, items); } }}>
           <option value="">Myself</option>
           {(family.data?.items ?? []).filter((x) => x.relationship !== 'Me').map((x) => (
             <option key={x._id} value={x._id}>{x.name} ({x.relationship})</option>

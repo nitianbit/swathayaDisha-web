@@ -65,8 +65,16 @@ describe('WQ9 target helpers', () => {
     });
     const auth = authApi(client);
     await auth.sendOtp('partner', { email: 'r@x.in' });
-    await auth.verifyOtp('partner', { email: 'r@x.in' }, '123456');
-    expect(bodies).toEqual([{ email: 'r@x.in' }, { email: 'r@x.in', otp: '123456' }]);
+    await auth.verifyOtpSession('partner', { email: 'r@x.in' }, '123456');
+    await auth.verifyOtp('pharmacy', { email: 'r@x.in' }, '123456');
+    expect(bodies).toEqual([{ email: 'r@x.in' }, { email: 'r@x.in', otp: '123456', session: 'cookie' }, { email: 'r@x.in', otp: '123456' }]);
+  });
+
+  it('Q16b: a partner bearer sign-in is refused before anything is sent (the server answers 400 SESSION_REQUIRED)', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }));
+    const auth = authApi(createApiClient({ baseUrl: '', getToken: () => null, fetchImpl }));
+    await expect(auth.verifyOtp('partner', { phone: '9876543210' }, '123456')).rejects.toMatchObject({ status: 400, code: 'SESSION_REQUIRED' });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 
@@ -102,5 +110,24 @@ describe('WQ9 normalizeEmail', () => {
   it('recognises EMAIL_NOT_REGISTERED', () => {
     expect(isEmailNotRegistered(new ApiError(404, 'No account uses this email', 'EMAIL_NOT_REGISTERED'))).toBe(true);
     expect(isEmailNotRegistered(new ApiError(404, 'Not found', 'USER_NOT_FOUND'))).toBe(false);
+  });
+});
+
+describe('WQ11a logout requests', () => {
+  it('logouts never renew on a 401 (they run under the session lock) and the web one is sent with keepalive', async () => {
+    const inits: RequestInit[] = [];
+    const renew = vi.fn(async () => 'new');
+    const client = createApiClient({
+      baseUrl: '', getToken: () => 'cur', renew, onUnauthorized: () => undefined,
+      fetchImpl: async (_input, init) => { inits.push(init!); return new Response(JSON.stringify({ error: 401 }), { status: 401 }); },
+    });
+    const auth = authApi(client);
+    await expect(auth.logoutSession('tab')).rejects.toMatchObject({ status: 401 });
+    await expect(auth.logoutNative('customer', 'rt', 'tab')).rejects.toMatchObject({ status: 401 });
+    expect(renew).not.toHaveBeenCalled();
+    expect(inits).toHaveLength(2);
+    expect(inits[0]).toMatchObject({ keepalive: true, credentials: 'same-origin' });
+    expect((inits[0]!.headers as Record<string, string>).Authorization).toBe('Bearer tab');
+    expect(inits[1]!.keepalive).toBeUndefined();
   });
 });

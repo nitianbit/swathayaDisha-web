@@ -1,12 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  ALL_PARTNER_PERMISSIONS, ApiError, authApi, clearSignOutPending, createApiClient, markSignOutPending, markerStore, nativeSecureStore, nativeSignOut,
-  OBJECT_ID_PATTERN, PARTNER_KIND_LABEL, partnerSelectionOf, refreshTokenKey, rotateNative, samePrincipal, sessionChannel, signOutState,
-  withSessionLock,
+  ALL_PARTNER_PERMISSIONS, ApiError, authApi, clearSignOutPending, clearWebSignOutPending, createApiClient, isTransientSessionError, markSignOutPending,
+  markWebSignOutPending, markerStore, nativeSecureStore, nativeSignOut, OBJECT_ID_PATTERN, PARTNER_KIND_LABEL, partnerSelectionOf, refreshTokenKey,
+  rotateNative, isSignedOutAnswer, samePrincipal, sessionChannel, signOutState, webSignOutState, withSessionLock,
   type ApiClient, type NativeSignedIn, type OtpTarget, type PartnerKind, type PartnerPermission, type PartnerSelection, type PendingMarker,
   type Principal, type SignedIn, type UserType, type VerificationState,
 } from '@jansetu/api';
+import { Reconnecting, ReconnectingStart } from '@jansetu/ui';
 
 /** Who may sign in to the workspace today (WQ4: doctors as `specialist`). HR joins when its module exists. */
 export type StaffRole = Extract<UserType, 'admin' | 'pharmacy' | 'partner' | 'specialist'>;
@@ -58,6 +59,8 @@ interface SessionValue {
   state: SessionState;
   api: ApiClient;
   memory: SessionMemory;
+  /** WQ11a: a session renewal failed without a definite answer and is being retried (the person stays signed in). */
+  reconnecting: boolean;
   requestCode: (role: StaffRole, target: OtpTarget) => Promise<void>;
   /** Signs in, or (Q7, partners with several workspaces) answers the workspaces to choose from: nothing is signed in yet. */
   verifyCode: (role: StaffRole, target: OtpTarget, otp: string) => Promise<PartnerSelection | null>;
@@ -108,6 +111,14 @@ function partnerSessionOf(member: Record<string, unknown>, partner: Record<strin
 
 const ROLE_LABEL: Record<Exclude<StaffRole, 'partner'>, string> = { admin: 'Admin', pharmacy: 'Pharmacy', specialist: 'Doctor' };
 
+/** Q16b: a lab or clinic sign-in in a build whose API is on another origin (no first-party cookie session there). */
+export const PARTNER_NEEDS_SAME_ORIGIN = 'Lab and clinic sign-in needs the workspace served from the Jansetu site itself (the same-origin build). Ask your administrator for the right address.';
+
+/** WQ11a: said while a sign-out has not reached the server yet (this browser never resumes that session meanwhile). */
+export const SIGNED_OUT_HERE = 'You are signed out on this device. The server has not confirmed it yet: the workspace keeps trying, and nobody is signed back in here until it does.';
+const withNote = (notice: string | undefined, note: string) => (notice ? `${notice} ${note}` : note);
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const isPending = (v: unknown): v is PendingMarker =>
   !!v && typeof v === 'object' && typeof (v as PendingMarker).requestKey === 'string' && typeof (v as PendingMarker).attempts === 'number';
 
@@ -141,6 +152,14 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
   }), [store]);
   const [state, setState] = useState<SessionState>({ status: 'restoring' });
   const authRef = useRef<ReturnType<typeof authApi> | null>(null);
+  // WQ11a: renewal retries after a failure without a definite answer (network, timeout, 5xx): backoff 2 s … 60 s.
+  const [reconnecting, setReconnecting] = useState(false);
+  const retry = useRef<{ n: number; timer?: ReturnType<typeof setTimeout> }>({ n: 0 });
+  const stopRetry = useCallback(() => { clearTimeout(retry.current.timer); retry.current = { n: 0 }; setReconnecting(false); }, []);
+  // N3: the start-up refresh is retried the same way while the app is still restoring.
+  const [startReconnecting, setStartReconnecting] = useState(false);
+  const startRetry = useRef<{ n: number; timer?: ReturnType<typeof setTimeout> }>({ n: 0 });
+  const starting = useRef(true);
 
   /** Ends this tab's session locally: token, requests, queries and memory (reload markers stay, per person). */
   const endLocally = useCallback((notice?: string) => {
@@ -149,12 +168,13 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     principal.current = null;
     markers.current = null;
     clearTimeout(renewTimer.current);
+    stopRetry();
     sessionAbort.current.abort();
     sessionAbort.current = new AbortController();
     setStore(new Map());
     queryClient.clear();
     setState({ status: 'signed_out', notice });
-  }, [queryClient]);
+  }, [queryClient, stopRetry]);
 
   // D4: cookie sessions only when the API is on this app's own host (it forwards /api). A build that talks to a
   // separate API origin keeps the memory-only bearer session: a reload signs out (documented in README).
@@ -167,41 +187,87 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     ? rotateNative(secure, NATIVE_APP, (rt) => authRef.current!.refreshNative(NATIVE_APP, rt))
     : authRef.current!.refreshSession());
 
-  /** N1: a sign-out clean-up still retrying in this app (null when none, or once a new sign-in replaced it). */
+  /** N1/WQ11a: a sign-out clean-up still retrying in this app (null when none, or once a new sign-in replaced it). */
   const cleanup = useRef<object | null>(null);
 
+  /** N1: clears the phone's stored token and tells the server (the intent must already be recorded). */
+  const finishNativeSignOut = useCallback((tabToken: string | null, marked: boolean) => {
+    if (!secure) return;
+    const mine = {};
+    cleanup.current = mine;
+    const attempt = async (): Promise<boolean> => withSessionLock(APP, async () => {
+      if (cleanup.current !== mine) return true; // a new sign-in replaced the stored token: nothing to clean
+      return nativeSignOut(secure, NATIVE_APP, (rt) => authRef.current!.logoutNative(NATIVE_APP, rt, tabToken));
+    }).catch(() => false);
+    void (async () => {
+      let clean = await attempt();
+      if (clean || cleanup.current !== mine) { if (cleanup.current === mine) cleanup.current = null; return; }
+      setState((s) => (s.status === 'signed_out' ? { status: 'signed_out', notice: `${s.notice ? `${s.notice} ` : ''}${marked
+        ? 'This phone could not clear its saved sign-in yet; it will be cleared when the app next opens.'
+        : 'This phone could not finish signing out yet. Keep the app open for a moment while it tries again.'}` } : s));
+      // Not recorded durably either: keep trying while the app is open (stops when a new sign-in replaces it).
+      while (!clean && !marked && cleanup.current === mine) {
+        await pause(5000);
+        clean = await attempt();
+      }
+      if (cleanup.current === mine) cleanup.current = null;
+      if (clean && !marked) setState((s) => (s.status === 'signed_out' ? { status: 'signed_out' } : s));
+    })();
+  }, [secure]);
+
+  /**
+   * WQ11a: ends the browser's cookie session on the server (the intent must already be recorded). The logout is sent
+   * with `keepalive` (it survives the tab closing) and retried with backoff while the page is open; until the server
+   * answers, the sign-in screen says so and no start resumes the session (`restore` finishes the logout first). Stops
+   * when the server answered, another tab finished it, or a new sign-in replaced the session.
+   */
+  const finishWebSignOut = useCallback((tabToken: string | null, marked: boolean, notice?: string) => {
+    const mine = {};
+    cleanup.current = mine;
+    const attempt = async (): Promise<boolean> => withSessionLock(APP, async () => {
+      if (cleanup.current !== mine) return true; // a sign-in in this tab replaced the session
+      if (marked && webSignOutState(APP) === 'none') return true; // finished in another tab, or replaced by a sign-in there
+      // N4: only the backend's own answer (`data.signedOut: true`) proves the session ended; anything else (no answer, a
+      // refusal, a 200 page from something in front of the backend) is tried again.
+      const answer = await authRef.current!.logoutSession(tabToken).catch(() => null);
+      if (!isSignedOutAnswer(answer)) return false;
+      clearWebSignOutPending(APP);
+      return true;
+    }).catch(() => false);
+    const noted = withNote(notice, SIGNED_OUT_HERE);
+    void (async () => {
+      let clean = await attempt();
+      if (!clean && cleanup.current === mine) {
+        setState((s) => (s.status === 'signed_out' && s.notice === notice ? { status: 'signed_out', notice: noted } : s));
+      }
+      for (let wait = 1000; !clean && cleanup.current === mine; wait = Math.min(wait * 2, 30_000)) {
+        await pause(wait);
+        clean = await attempt();
+      }
+      if (cleanup.current === mine) cleanup.current = null;
+      if (clean) setState((s) => (s.status === 'signed_out' && s.notice === noted ? { status: 'signed_out', ...(notice ? { notice } : {}) } : s));
+    })();
+  }, []);
+
+  /**
+   * Ends the session here and on the server. The intent is recorded first, synchronously, before anything else (a
+   * refresh may hold the lock right now and the app may close before the clean-up runs): until it is cleaned up, no
+   * start resumes the session.
+   */
   const signOut = useCallback((notice?: string) => {
     const tabToken = token.current; // the family this tab was using ends too, not only the cookie's
-    // N1: the intent is recorded first, synchronously, before anything else (a refresh may hold the lock right now and
-    // the app may close before the clean-up runs): until it is cleaned up, no start resumes the session.
-    const marked = secure ? markSignOutPending(NATIVE_APP) : true;
+    const marked = secure ? markSignOutPending(NATIVE_APP) : cookieMode ? markWebSignOutPending(APP) : true;
     endLocally(notice);
     channel?.post({ type: 'signed-out' });
-    if (secure) {
-      const mine = {};
-      cleanup.current = mine;
-      const attempt = async (): Promise<boolean> => withSessionLock(APP, async () => {
-        if (cleanup.current !== mine) return true; // a new sign-in replaced the stored token: nothing to clean
-        return nativeSignOut(secure, NATIVE_APP, (rt) => authRef.current!.logoutNative(NATIVE_APP, rt, tabToken));
-      }).catch(() => false);
-      void (async () => {
-        let clean = await attempt();
-        if (clean || cleanup.current !== mine) { if (cleanup.current === mine) cleanup.current = null; return; }
-        setState((s) => (s.status === 'signed_out' ? { status: 'signed_out', notice: `${s.notice ? `${s.notice} ` : ''}${marked
-          ? 'This phone could not clear its saved sign-in yet; it will be cleared when the app next opens.'
-          : 'This phone could not finish signing out yet. Keep the app open for a moment while it tries again.'}` } : s));
-        // Not recorded durably either: keep trying while the app is open (stops when a new sign-in replaces it).
-        while (!clean && !marked && cleanup.current === mine) {
-          await new Promise((r) => setTimeout(r, 5000));
-          clean = await attempt();
-        }
-        if (cleanup.current === mine) cleanup.current = null;
-        if (clean && !marked) setState((s) => (s.status === 'signed_out' ? { status: 'signed_out' } : s));
-      })();
-    } else if (cookieMode) {
-      void withSessionLock(APP, async () => { await authRef.current?.logoutSession(tabToken); }).catch(() => undefined);
-    }
-  }, [endLocally, channel, cookieMode, secure]);
+    if (secure) finishNativeSignOut(tabToken, marked);
+    else if (cookieMode) finishWebSignOut(tabToken, marked, notice);
+  }, [endLocally, channel, cookieMode, secure, finishNativeSignOut, finishWebSignOut]);
+
+  /** WQ11a: a session made by a sign-in that then failed (profile or role check): ended on the server, never left behind. */
+  const discardNew = useCallback((newToken: string) => {
+    if (secure) finishNativeSignOut(newToken, markSignOutPending(NATIVE_APP));
+    else if (cookieMode) finishWebSignOut(newToken, markWebSignOutPending(APP));
+  }, [cookieMode, secure, finishNativeSignOut, finishWebSignOut]);
 
   const schedule = useCallback((expiresIn: number | undefined, renewFn: () => void) => {
     clearTimeout(renewTimer.current);
@@ -209,27 +275,45 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     renewTimer.current = setTimeout(renewFn, Math.max(5, expiresIn - 60) * 1000);
   }, []);
 
-  /** A renewed token for the same person, or null (then the session is over). Serialised across tabs. */
+  /**
+   * A renewed token for the same person, or null (then the session is over). Serialised across tabs. WQ11a: only a
+   * definite answer ends the session; a failure without one (network, timeout, 5xx) keeps it, shows "Reconnecting…" and
+   * retries with backoff, and the request that needed the renewal fails with that error (it can be tried again).
+   */
   const renewRef = useRef<(sent: string | null) => Promise<string | null>>(async () => null);
+  const renewLater = () => void renewRef.current(token.current).catch(() => undefined);
   renewRef.current = async (sent) => withSessionLock(APP, async () => {
     const gen = generation.current;
     if (!principal.current) return null;
     if (token.current && sent !== null && token.current !== sent) return token.current; // already renewed here
+    let r;
     try {
-      const r = await rotate();
+      r = await rotate();
+    } catch (err) {
       if (gen !== generation.current) return null;
-      if (!samePrincipal(r.principal, principal.current)) {
-        endLocally('Someone else signed in to the workspace in this browser. Please sign in again.');
-        return null;
-      }
-      token.current = r.token;
-      schedule(r.expiresIn, () => void renewRef.current(token.current));
-      return r.token;
-    } catch {
-      if (gen === generation.current) endLocally('Your session has ended. Please sign in again.');
+      if (!isTransientSessionError(err)) { endLocally('Your session has ended. Please sign in again.'); return null; }
+      setReconnecting(true);
+      clearTimeout(retry.current.timer);
+      const n = retry.current.n + 1;
+      retry.current = { n, timer: setTimeout(() => { if (gen === generation.current) void renewRef.current(null).catch(() => undefined); }, Math.min(60, 2 ** n) * 1000) };
+      throw err instanceof ApiError ? err : new ApiError(0, 'Could not reach the server. Check your connection and try again.', 'NETWORK');
+    }
+    if (gen !== generation.current) return null;
+    if (!samePrincipal(r.principal, principal.current)) {
+      endLocally('Someone else signed in to the workspace in this browser. Please sign in again.');
       return null;
     }
+    token.current = r.token;
+    stopRetry();
+    schedule(r.expiresIn, renewLater);
+    return r.token;
   });
+  // Back online while reconnecting: try at once instead of waiting for the next retry.
+  useEffect(() => {
+    const online = () => { if (retry.current.n > 0) void renewRef.current(null).catch(() => undefined); };
+    window.addEventListener('online', online);
+    return () => window.removeEventListener('online', online);
+  }, []);
 
   const api = useMemo(() => createApiClient({
     baseUrl,
@@ -274,7 +358,9 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     const restored = new Map<string, unknown>();
     for (const [slot, m] of Object.entries(markers.current.all())) restored.set(slot, { ...m, uncertain: true, restored: true });
     setStore(restored);
-    schedule(expiresIn, () => void renewRef.current(token.current));
+    // WQ11a: nothing cached before this sign-in (another tab's person, a request that slipped through) is shown.
+    queryClient.clear();
+    schedule(expiresIn, renewLater);
     const staffRole = role as StaffRole;
     setState({ status: 'signed_in', user: {
       role: staffRole, id, raw,
@@ -287,12 +373,13 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       } } : {}),
     } });
     return true;
-  }, [auth, schedule]);
+  }, [auth, schedule, queryClient]);
 
   /** After a reload (or another tab's sign-in): resume from the cookie session, if there is one. */
   const restore = useCallback(async () => {
     const gen = generation.current;
     if (mode === 'memory') { setState((s) => (s.status === 'restoring' ? { status: 'signed_out' } : s)); return; }
+    let unfinished = false;
     try {
       await withSessionLock(APP, async () => {
         // Another restore (or a sign-in) finished while this one waited for the lock: nothing to resume.
@@ -303,32 +390,86 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
           await nativeSignOut(secure, NATIVE_APP, (rt) => auth.logoutNative(NATIVE_APP, rt, null));
           throw new ApiError(401, 'Signed out', 'SESSION_ENDED');
         }
+        // WQ11a: a sign-out in this browser has not reached the server yet: finish it BEFORE any refresh, never resume.
+        // An unreadable record counts as pending, as on the phone.
+        if (!secure && webSignOutState(APP) !== 'none') {
+          if (isSignedOutAnswer(await auth.logoutSession(null).catch(() => null))) clearWebSignOutPending(APP);
+          else unfinished = true;
+          throw new ApiError(401, 'Signed out', 'SESSION_ENDED');
+        }
         const r = await rotate();
         if (gen !== generation.current) return;
         await establish(gen, r.token, r.expiresIn);
       });
-    } catch {
-      if (gen === generation.current) { token.current = null; setState((s) => (s.status === 'restoring' ? { status: 'signed_out' } : s)); }
+      startRetry.current.n = 0;
+    } catch (err) {
+      if (gen === generation.current) {
+        token.current = null;
+        // N3: the first refresh got no definite answer (network, timeout, 5xx): the session may well be there. Keep
+        // trying with backoff and say so; only a definite answer (401 / session ended) shows the sign-in screen.
+        if (!unfinished && starting.current && isTransientSessionError(err)) {
+          const n = startRetry.current.n + 1;
+          clearTimeout(startRetry.current.timer);
+          startRetry.current = { n, timer: setTimeout(() => { if (gen === generation.current) void restoreRef.current(); }, Math.min(60, 2 ** n) * 1000) };
+          setStartReconnecting(true);
+          return;
+        }
+        setState((s) => (s.status === 'restoring' ? { status: 'signed_out', ...(unfinished ? { notice: SIGNED_OUT_HERE } : {}) } : s));
+      }
+      if (unfinished) finishWebSignOut(null, true);
     }
-  }, [auth, establish, mode]);
+  }, [auth, establish, mode, finishWebSignOut]);
+  const restoreRef = useRef(restore);
+  restoreRef.current = restore;
+  /** N3: the manual way out of a start-up that cannot reach the server: stop retrying and show the sign-in screen. */
+  const signInAgain = useCallback(() => {
+    generation.current += 1;
+    clearTimeout(startRetry.current.timer);
+    startRetry.current = { n: 0 };
+    setState((s) => (s.status === 'restoring' ? { status: 'signed_out' } : s));
+  }, []);
+  useEffect(() => {
+    starting.current = state.status === 'restoring';
+    if (state.status !== 'restoring') { clearTimeout(startRetry.current.timer); setStartReconnecting(false); }
+  }, [state.status]);
+  // Back online while the start-up is reconnecting: try at once.
+  useEffect(() => {
+    const online = () => { if (starting.current && startRetry.current.n > 0) { clearTimeout(startRetry.current.timer); void restoreRef.current(); } };
+    window.addEventListener('online', online);
+    return () => window.removeEventListener('online', online);
+  }, []);
 
   useEffect(() => { void restore(); }, [restore]);
 
   useEffect(() => channel?.listen((m) => {
     if (m.type === 'signed-out') {
       if (principal.current) endLocally('You signed out in another tab.');
-    } else if (principal.current && !samePrincipal(principal.current, m)) {
+      return;
+    }
+    // WQ11a: another tab signed in, so the browser's session is new: a clean-up still retrying here must not end it.
+    if (!secure) cleanup.current = null;
+    if (principal.current && !samePrincipal(principal.current, m)) {
       endLocally('Someone else signed in to the workspace in this browser. Please sign in again.');
     } else if (!principal.current) {
       void restore();
     }
-  }), [channel, endLocally, restore]);
+  }), [channel, endLocally, restore, secure]);
 
-  useEffect(() => () => { clearTimeout(renewTimer.current); }, []);
+  useEffect(() => () => { clearTimeout(renewTimer.current); clearTimeout(retry.current.timer); clearTimeout(startRetry.current.timer); }, []);
+
+  /**
+   * Q16b: partner sign-ins (verify and select) must open a server session (`session: 'cookie'` or `'native'`; a bearer
+   * sign-in is refused 400 SESSION_REQUIRED). A build whose API is on another origin has no first-party cookie, so a
+   * lab or clinic sign-in is refused here, before any code is sent. Stage and production use the same-origin build.
+   */
+  const partnerRefused = useCallback((role: StaffRole) => {
+    if (role === 'partner' && !secure && !cookieMode) throw new ApiError(0, PARTNER_NEEDS_SAME_ORIGIN, 'PARTNER_NEEDS_SAME_ORIGIN');
+  }, [secure, cookieMode]);
 
   const requestCode = useCallback(async (role: StaffRole, target: OtpTarget) => {
+    partnerRefused(role);
     await auth.sendOtp(role, target);
-  }, [auth]);
+  }, [auth, partnerRefused]);
 
   /** N1: the new refresh token is stored before its session is used; not stored = not usable (ended on the server). */
   const keepNative = useCallback(async (n: NativeSignedIn) => {
@@ -346,10 +487,24 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
   const admit = useCallback(async (gen: number, signedIn: SignedIn | undefined, role: StaffRole) => {
     if (gen !== generation.current) return;
     if (!signedIn?.token) throw new ApiError(502, 'Sign-in did not return a session. Please try again.');
-    if (await establish(gen, signedIn.token, signedIn.expiresIn, role) && principal.current) {
-      channel?.post({ type: 'signed-in', ...principal.current });
+    let admitted;
+    try {
+      admitted = await establish(gen, signedIn.token, signedIn.expiresIn, role);
+    } catch (err) {
+      // WQ11a: the code was accepted but the account could not be confirmed: the new session is ended, not left live.
+      if (gen === generation.current) discardNew(signedIn.token);
+      throw err;
     }
-  }, [establish, channel]);
+    if (admitted && principal.current) channel?.post({ type: 'signed-in', ...principal.current });
+  }, [establish, channel, discardNew]);
+
+  /** WQ11a: the browser's new cookie session replaced the previous one on the server: an unfinished sign-out is moot. */
+  const replacedWebSession = useCallback(() => {
+    if (secure || !cookieMode) return;
+    cleanup.current = null;
+    clearWebSignOutPending(APP);
+  }, [cookieMode, secure]);
+
 
   const verifyCode = useCallback(async (role: StaffRole, target: OtpTarget, otp: string) => withSessionLock(APP, async () => {
     const gen = generation.current;
@@ -362,6 +517,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       if (!partnerSelectionOf(n)) await keepNative(n as NativeSignedIn);
       answer = n;
     } else {
+      partnerRefused(role);
       answer = cookieMode ? await auth.verifyOtpSession(role, target, otp) : await auth.verifyOtp(role, target, otp);
     }
     const selection = role === 'partner' ? partnerSelectionOf(answer) : null;
@@ -370,9 +526,10 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       if (selection.choices.length === 0) throw new ApiError(403, 'None of your lab or clinic workspaces is available.');
       return selection;
     }
+    replacedWebSession();
     await admit(gen, answer as SignedIn, role);
     return null;
-  }), [auth, admit, keepNative, cookieMode, secure]);
+  }), [auth, admit, keepNative, cookieMode, secure, replacedWebSession, partnerRefused]);
 
   const choosePartner = useCallback(async (ticket: string, partnerId: string) => withSessionLock(APP, async () => {
     const gen = generation.current;
@@ -383,16 +540,22 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       await keepNative(n);
       signedIn = n;
     } else {
-      signedIn = cookieMode
-        ? await auth.selectPartner(ticket, partnerId, { kind: 'cookie' })
-        : await auth.selectPartner(ticket, partnerId, { kind: 'bearer' });
+      // Q16b: always a web session (the server refuses a partner select without one: 400 SESSION_REQUIRED).
+      partnerRefused('partner');
+      signedIn = await auth.selectPartner(ticket, partnerId, { kind: 'cookie' });
+      replacedWebSession();
     }
     await admit(gen, signedIn, 'partner');
-  }), [auth, admit, keepNative, cookieMode, secure]);
+  }), [auth, admit, keepNative, secure, replacedWebSession, partnerRefused]);
 
-  const value = useMemo(() => ({ state, api, memory, requestCode, verifyCode, choosePartner, signOut }),
-    [state, api, memory, requestCode, verifyCode, choosePartner, signOut]);
-  return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
+  const value = useMemo(() => ({ state, api, memory, reconnecting, requestCode, verifyCode, choosePartner, signOut }),
+    [state, api, memory, reconnecting, requestCode, verifyCode, choosePartner, signOut]);
+  return (
+    <SessionContext.Provider value={value}>
+      {reconnecting && state.status === 'signed_in' && <Reconnecting />}
+      {startReconnecting && state.status === 'restoring' ? <ReconnectingStart onSignIn={signInAgain} /> : children}
+    </SessionContext.Provider>
+  );
 }
 
 export function useSession(): SessionValue {

@@ -19,7 +19,8 @@ export function ConsultScreen() {
   const { api } = useSession();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const profile = useQuery({ queryKey: ['me'], queryFn: () => customerApi(api).profile() });
+  const me = useCustomer();
+  const profile = useQuery({ queryKey: ['me', me.id], queryFn: () => customerApi(api).profile() });
   const payer = { name: profile.data?.name, contact: profile.data?.phone, email: profile.data?.email };
   // Q9: a refused price (409 QUOTE_CHANGED) re-reads the quote and re-checks the coupon; the form then asks the
   // customer to accept the new price before anything can be sent again.
@@ -45,7 +46,7 @@ export function ConsultScreen() {
       void queryClient.invalidateQueries({ queryKey: ['instant-doctors'] });
       setQuoteRefusals((n) => n + 1);
     }
-  });
+  }, { kind: 'instant_request_create', onFound: (id) => navigate(`/consult/requests/${id}`) });
 
   const [mode, setMode] = useState<InstantMode>('video');
   const [speciality, setSpeciality] = useState('');

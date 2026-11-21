@@ -43,6 +43,8 @@ export interface RequestOptions {
   native?: boolean;
   /** P9: a multipart upload (the browser sets the boundary); not combined with `body`. */
   form?: FormData;
+  /** WQ11a: the request outlives the page (sign-out: a tab closed right after still tells the server). */
+  keepalive?: boolean;
 }
 
 export interface Page<T> {
@@ -139,6 +141,7 @@ export function createApiClient(options: ApiClientOptions) {
           cache: 'no-store',
           redirect: 'error',
           signal,
+          ...(o.keepalive ? { keepalive: true } : {}),
         });
       } catch (err) {
         throw translate(err);

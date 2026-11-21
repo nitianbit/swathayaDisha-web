@@ -32,6 +32,15 @@ export function afterFailure<B>(attempt: PendingOp<B>, err: unknown, message: st
   return { ...attempt, uncertain: true, error: message };
 }
 
+/**
+ * WQ11a N5: a resend (or any attempt after an unanswered one) refused for good. The refusal alone proves nothing: the
+ * server checks the request key first, but an earlier attempt may still be on its way (and doctor bookings answer
+ * 400 SLOT_NOT_AVAILABLE / SLOT_FULL after the key lookup). The server's abandon settles it: `abandoned` = it can never
+ * be made (then the form opens), `used` = it was made (its record opens). Until then the request stays unconfirmed.
+ */
+export const settleByAbandon = <B,>(attempt: PendingOp<B>, err: unknown) =>
+  !(attempt.attempts === 1 && !attempt.uncertain) && definitelyNotDone(err);
+
 /** Whether `attempt` still owns the stored state (no newer attempt, no other operation). */
 export const stillCurrent = <B,>(stored: PendingOp<B> | undefined, attempt: PendingOp<B>) =>
   !!stored && stored.requestKey === attempt.requestKey && stored.attempts === attempt.attempts;

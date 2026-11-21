@@ -1,13 +1,14 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
   COUPON_PATTERN, customerApi, type ConsultationMode, type CouponCheck, type NewConsultation, type Slot, type Specialist, requestKeysApi } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
-import { messageOf, PageHeading } from '../common.tsx';
+import { Confirm, messageOf, PageHeading } from '../common.tsx';
+import { useAlive } from '../onceOnly.tsx';
 import { payOrder } from '../payments.ts';
-import { afterFailure, beginAttempt, startOp, stillCurrent, type PendingOp } from '../pending.ts';
+import { afterFailure, beginAttempt, settleByAbandon, startOp, stillCurrent, type PendingOp } from '../pending.ts';
 import { useCustomer, useSession } from '../session.tsx';
 
 /** The next `n` days as IST calendar dates (YYYYMMDD) with a short label. */
@@ -54,7 +55,9 @@ type PendingCreate = PendingOp<NewConsultation> & { label: string };
 /**
  * Creating a booking happens once per intent. The request is stored (session memory, per doctor) with its key before
  * it is sent; after an unanswered attempt the form is replaced by "send it again" (same key and details; the server
- * returns the first booking for a known key), also after choosing another slot or leaving the page.
+ * returns the first booking for a known key) or "give it up", also after choosing another slot or leaving the page.
+ * WQ11a (as `useOnceOnly`): an answer counts only for the newest attempt of the request that still owns the slot, on
+ * a page still on screen; payment and navigation never start for a page the customer left.
  */
 function useCreateBooking(doctor: Specialist) {
   const { api, memory } = useSession();
@@ -65,9 +68,13 @@ function useCreateBooking(doctor: Specialist) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const setPending = (p: PendingCreate | undefined) => { if (p) memory.set(slotKey, p); else memory.delete(slotKey); setPendingState(p); };
+  const alive = useAlive();
+  const seq = useRef(0);
 
   async function send(p: PendingCreate, payer: { name?: string; contact?: string; email?: string }) {
     const attempt: PendingCreate = { ...beginAttempt(p), label: p.label };
+    const mine = ++seq.current;
+    const done = () => { if (seq.current === mine && alive.current) setBusy(false); };
     setBusy(true);
     setError(null);
     setPending(attempt);
@@ -75,31 +82,52 @@ function useCreateBooking(doctor: Specialist) {
     try {
       created = await customerApi(api).bookConsultation(attempt.body, attempt.requestKey);
     } catch (err) {
-      setBusy(false);
-      if (!stillCurrent(memory.get<PendingCreate>(slotKey), attempt)) return; // a newer attempt owns it
+      const owns = () => stillCurrent(memory.get<PendingCreate>(slotKey), attempt);
+      if (!owns()) { done(); return; } // a newer attempt, or nothing, owns it
       const next = afterFailure(attempt, err, messageOf(err));
-      if (next) { setPending({ ...next, label: attempt.label }); return; }
-      setPending(undefined);
-      setError(messageOf(err)); // the first attempt was refused: nothing was booked; the form stays as typed
-      return;
-    }
-    // Recorded: end this request (only this one).
-    if (memory.get<PendingCreate>(slotKey)?.requestKey === attempt.requestKey) memory.delete(slotKey);
-    setPendingState(undefined);
-    await queryClient.invalidateQueries({ queryKey: ['bookings'] });
-    await queryClient.invalidateQueries({ queryKey: ['wallet'] });
-    const bookingPath = `/bookings/${created.booking._id}`;
-    // A resent create that finished an interrupted creation also returns its payment order: pay it now.
-    if (created.paymentRequired && created.payment) {
-      try {
-        await payOrder(api, created.payment, payer, `Consultation with ${doctor.name}`);
-      } catch (err) {
-        // The booking exists; the payment page could not open. The booking page offers to pay or check.
-        navigate(bookingPath, { state: { paymentError: messageOf(err) } });
+      if (next && settleByAbandon(attempt, err)) {
+        // N5: refused for good after an unanswered attempt (bookings answer 400 SLOT_NOT_AVAILABLE / SLOT_FULL after
+        // the key lookup): only the server's abandon says whether it was booked.
+        setPending({ ...next, label: attempt.label });
+        try {
+          const r = await requestKeysApi(api).abandon('booking_create', attempt.requestKey);
+          if (!owns() || !alive.current) return;
+          if (r.state === 'abandoned') { setPending(undefined); setError(messageOf(err)); }
+          else if (r.record?._id) { setPending(undefined); navigate(`/bookings/${r.record._id}`); }
+          else setPending({ ...next, label: attempt.label, error: 'It was booked, but the booking could not be shown. Open My bookings' });
+        } catch { /* not settled: it stays unconfirmed (send again or give it up) */ } finally { done(); }
         return;
       }
+      done();
+      if (next) { setPending({ ...next, label: attempt.label }); return; }
+      setPending(undefined);
+      setError(messageOf(err)); // refused for good: nothing was booked; the form stays as typed
+      return;
     }
-    navigate(bookingPath);
+    // Only the newest attempt, on a page still on screen, finishes the booking (an older or abandoned page's answer
+    // leaves the stored request alone: sending it again, or a check after a reload, gets the same booking).
+    if (!alive.current || !stillCurrent(memory.get<PendingCreate>(slotKey), attempt)) { done(); return; }
+    memory.delete(slotKey);
+    setPendingState(undefined);
+    try {
+      await queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      await queryClient.invalidateQueries({ queryKey: ['wallet'] });
+      if (!alive.current) return; // the customer left: the booking is in My bookings, nothing opens on its own
+      const bookingPath = `/bookings/${created.booking._id}`;
+      // A resent create that finished an interrupted creation also returns its payment order: pay it now.
+      if (created.paymentRequired && created.payment) {
+        try {
+          await payOrder(api, created.payment, payer, `Consultation with ${doctor.name}`);
+        } catch (err) {
+          // The booking exists; the payment page could not open. The booking page offers to pay or check.
+          if (alive.current) navigate(bookingPath, { state: { paymentError: messageOf(err) } });
+          return;
+        }
+      }
+      if (alive.current) navigate(bookingPath);
+    } finally {
+      done();
+    }
   }
 
   /** D4: a restored request whose booking was found: end it and open the booking. */
@@ -114,8 +142,16 @@ function useCreateBooking(doctor: Specialist) {
   const found = (requestKey: string, bookingId: string) => { if (endIfCurrent(requestKey)) navigate(`/bookings/${bookingId}`); };
   /** D4: a restored request abandoned on the server: forget it, the form is usable again. */
   const discard = (requestKey: string) => { endIfCurrent(requestKey); };
+  /** WQ11a: gives up an unanswered request on the server (abandon): then it can never be booked. */
+  const giveUp = async (requestKey: string) => {
+    const r = await requestKeysApi(api).abandon('booking_create', requestKey);
+    if (!alive.current) return null;
+    if (r.state === 'abandoned') { discard(requestKey); return null; }
+    if (r.record?._id) { found(requestKey, r.record._id); return null; } // it was booked: the server names the booking
+    return 'It was booked after all, but the booking could not be shown. Open My bookings.';
+  };
 
-  return { pending, busy, error, send, found, discard, start: (body: NewConsultation, label: string) => ({ ...startOp(body), label }) };
+  return { pending, busy, error, send, found, discard, giveUp, start: (body: NewConsultation, label: string) => ({ ...startOp(body), label }) };
 }
 
 /**
@@ -184,7 +220,9 @@ function RestoredRequest({ pending, onFound, onDiscard }: {
 function DoctorView({ doctor: d }: { doctor: Specialist }) {
   const { api } = useSession();
   const create = useCreateBooking(d);
-  const profile = useQuery({ queryKey: ['me'], queryFn: () => customerApi(api).profile() });
+  const [giveUpNote, setGiveUpNote] = useState<string | null>(null);
+  const me = useCustomer();
+  const profile = useQuery({ queryKey: ['me', me.id], queryFn: () => customerApi(api).profile() });
   const payer = { name: profile.data?.name, contact: profile.data?.phone, email: profile.data?.email };
   const days = nextDays(14);
   const [date, setDate] = useState(days[0]!.date);
@@ -214,10 +252,14 @@ function DoctorView({ doctor: d }: { doctor: Specialist }) {
             Your booking request for {create.pending.label} did not get an answer{create.pending.error ? ` (${create.pending.error})` : ''}.
             It may already be booked. Send it again to find out: it will not be booked twice.
           </Alert>
+          {giveUpNote && <Alert>{giveUpNote}</Alert>}
           <div className="row">
             <Button busy={create.busy} onClick={() => void create.send(create.pending!, payer)}>Send it again</Button>
             <Link to="/bookings">My bookings</Link>
           </div>
+          <Confirm label="Give it up and book again" confirmLabel="Yes, give it up" disabled={create.busy}
+            consequence="The booking request is cancelled for good: it can never be booked later, even if it is still on its way. Then you can book again."
+            onConfirm={async () => setGiveUpNote(await create.giveUp(create.pending!.requestKey))} />
         </section>
       ) : (
       <>
@@ -299,7 +341,12 @@ function BookForm({ doctor: d, slot, fee, dayLabel, create, payer }: {
       <h2 id="book-h">Book {slot.startTime}</h2>
       <div className="j-field">
         <label htmlFor="who">For</label>
-        <select id="who" value={forWhom} onChange={(e) => { setForWhom(e.target.value); setCoupon(null); }}>
+        {/* A coupon is checked for one patient: a new patient drops it, and says so (WQ11a). */}
+        <select id="who" value={forWhom} onChange={(e) => {
+          setForWhom(e.target.value);
+          if (coupon?.isValid) setCouponError(`Coupon ${coupon.code} was removed because the patient changed. Apply it again to check it for them.`);
+          setCoupon(null);
+        }}>
           <option value="">Myself</option>
           {(family.data?.items ?? []).filter((x) => x.relationship !== 'Me').map((x) => (
             <option key={x._id} value={x._id}>{x.name} ({x.relationship})</option>
