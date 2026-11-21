@@ -45,13 +45,44 @@ function storage(): Storage | null {
   try { return typeof sessionStorage === 'undefined' ? null : sessionStorage; } catch { return null; }
 }
 
+/**
+ * WQ11d: session-memory slots that may survive a reload as a list of record ids only (nothing else: no names, no
+ * patient data), e.g. the import previews discarded on this device.
+ */
+export const ID_LIST_SLOTS = ['stock-import-discarded:'] as const;
+export const isIdListSlot = (slot: string) => ID_LIST_SLOTS.some((p) => slot.startsWith(p));
+const IDS_PREFIX = 'sd:ids:';
+const OBJECT_ID = /^[0-9a-fA-F]{24}$/;
+
 export function markerStore(app: string, userId: string) {
   const base = `${PREFIX}${app}:${userId}:`;
+  const idsBase = `${IDS_PREFIX}${app}:${userId}:`;
   return {
+    /** WQ11d: an id list of an `ID_LIST_SLOTS` slot (anything that is not a record id is dropped). */
+    saveIds(slot: string, ids: readonly unknown[]) {
+      if (!isIdListSlot(slot)) return;
+      const clean = ids.filter((x): x is string => typeof x === 'string' && OBJECT_ID.test(x));
+      try {
+        if (clean.length) storage()?.setItem(idsBase + slot, JSON.stringify(clean)); else storage()?.removeItem(idsBase + slot);
+      } catch { /* storage full or blocked: memory still holds it */ }
+    },
+    allIds(): Record<string, string[]> {
+      const s = storage(); const out: Record<string, string[]> = {};
+      if (!s) return out;
+      for (let i = 0; i < s.length; i++) {
+        const k = s.key(i);
+        if (!k?.startsWith(idsBase) || !isIdListSlot(k.slice(idsBase.length))) continue;
+        try {
+          const v = JSON.parse(s.getItem(k) ?? 'null') as unknown;
+          if (Array.isArray(v)) out[k.slice(idsBase.length)] = v.filter((x): x is string => typeof x === 'string' && OBJECT_ID.test(x));
+        } catch { /* ignore a damaged entry */ }
+      }
+      return out;
+    },
     save(slot: string, m: PendingMarker) {
       try { storage()?.setItem(base + slot, JSON.stringify({ requestKey: m.requestKey, attempts: m.attempts, firstAttemptAt: m.firstAttemptAt, lastAttemptAt: m.lastAttemptAt })); } catch { /* storage full or blocked: memory still holds it */ }
     },
-    remove(slot: string) { try { storage()?.removeItem(base + slot); } catch { /* ignore */ } },
+    remove(slot: string) { try { storage()?.removeItem(base + slot); storage()?.removeItem(idsBase + slot); } catch { /* ignore */ } },
     all(): Record<string, PendingMarker> {
       const s = storage(); const out: Record<string, PendingMarker> = {};
       if (!s) return out;

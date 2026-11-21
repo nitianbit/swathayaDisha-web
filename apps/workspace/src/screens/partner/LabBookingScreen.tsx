@@ -29,7 +29,7 @@ const LIFECYCLE: readonly [LabLifecycleKey, string][] = [
 ];
 const CANCEL_REASON: Record<string, string> = {
   timeout: 'Not paid in time', customer: 'Cancelled by the customer', lab_reject: 'Rejected by the lab',
-  // Q16a (backend work in progress): an admin cancels a booking moved after a no-show, with or without a refund.
+  // Q16a: an admin cancels a booking moved after a no-show, with or without a refund (`cancellation.refund`).
   admin_no_show: 'Cancelled by the Jansetu team after a no-show move',
 };
 
@@ -154,7 +154,12 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
           </Alert>
         )}
         {b.cancellation && (
-          <p>{CANCEL_REASON[b.cancellation.reason] ?? b.cancellation.reason}{b.cancellation.note ? `: “${b.cancellation.note}”` : ''} · {formatDateTime(b.cancellation.at)}</p>
+          <p>{CANCEL_REASON[b.cancellation.reason] ?? b.cancellation.reason}{b.cancellation.note ? `: “${b.cancellation.note}”` : ''} · {formatDateTime(b.cancellation.at)}
+            {/* WQ11d: an admin's cancel of a moved no-show says whether the patient was refunded. */}
+            {b.cancellation.reason === 'admin_no_show' && (b.cancellation.refund === true
+              ? <> · The patient’s payment of {money(b.pricing.payableMinor)} went back to their Jansetu wallet.</>
+              : b.cancellation.refund === false ? <> · The patient was not refunded: the payment is kept, as for a no-show, and nobody earns it.</> : null)}
+          </p>
         )}
         {b.status === 'no_show' && (
           <p className="ws-muted">
@@ -356,7 +361,7 @@ function AdminCancelNoShow({ booking: b, disabled, run }: { booking: LabBooking;
           <div className="confirm-actions">
             {!confirming ? <Button type="submit" disabled={disabled}>Continue</Button>
               : <Button variant="danger" busy={busy} disabled={disabled && !busy} onClick={() => void go()}>{refund === 'yes' ? 'Cancel and refund' : 'Cancel without a refund'}</Button>}
-            <Button variant="ghost" disabled={busy} onClick={() => (confirming ? setConfirming(false) : close())}>Back</Button>
+            <Button variant="ghost" data-focus-back disabled={busy} onClick={() => (confirming ? setConfirming(false) : close())}>Back</Button>
           </div>
         </form>
       )}
@@ -499,7 +504,7 @@ function AssignCollector({ ctx, booking, disabled, perform }: { ctx: ScopeContex
       {error && <Alert>{error}</Alert>}
       <div className="confirm-actions">
         <Button type="submit" busy={busy}>Save collector</Button>
-        <Button variant="ghost" disabled={busy} onClick={() => setOpen(false)}>Back</Button>
+        <Button variant="ghost" data-focus-back disabled={busy} onClick={() => setOpen(false)}>Back</Button>
       </div>
     </form>
   );
@@ -602,7 +607,7 @@ function ProposeTime({ ctx, booking, disabled, now, perform }: { ctx: ScopeConte
       <div className="confirm-actions">
         {!confirming ? <Button type="submit" disabled={choices.length === 0}>Continue</Button>
           : <Button busy={busy} onClick={() => void propose()}>Propose the new time</Button>}
-        <Button variant="ghost" disabled={busy} onClick={() => (confirming ? setConfirming(false) : setOpen(false))}>Back</Button>
+        <Button variant="ghost" data-focus-back disabled={busy} onClick={() => (confirming ? setConfirming(false) : setOpen(false))}>Back</Button>
       </div>
     </form>
   );
@@ -663,7 +668,7 @@ function Reports({ ctx, booking, offers, disabled, perform }: {
 }
 
 /** A chosen report file and the request key it is sent with (the same key on every resend: never attached twice). */
-interface UploadItem { file: File; key: string; done: boolean }
+interface UploadItem { file: File; key: string; done: boolean; /** WQ11d: its last send got no answer (it may be attached). */ uncertain?: boolean }
 
 /**
  * WQ11b: report files are sent ONE PER REQUEST (the server's upload limit of 10 MB is for a whole request, so two 6 MB
@@ -689,6 +694,32 @@ function UploadReports({ ctx, booking, disabled, perform }: { ctx: ScopeContext;
   const [busy, setBusy] = useState(false);
   const problems = items.map((i) => reportFileProblem(i.file)).filter((p): p is string => !!p);
   const left = items.filter((i) => !i.done);
+  /**
+   * WQ11d: while a send is unanswered the same files and keys are kept: choosing files again would give that file a new
+   * key and could attach a second copy. It is settled by "Upload the rest" (same keys: answered, never copied) or by a
+   * check that finds it among the booking's reports.
+   */
+  const locked = left.some((i) => i.uncertain);
+  const [checking, setChecking] = useState(false);
+
+  async function check() {
+    setChecking(true);
+    try {
+      const now = await queryClient.fetchQuery({ queryKey: [...ctx.key, 'lab-booking', booking._id], queryFn: () => ctx.labs.booking(booking._id), staleTime: 0 });
+      const there = new Set([...now.report.draftFiles, ...now.report.releasedFiles].map((f) => reportFileName(f)));
+      const found = left.filter((i) => there.has(i.file.name));
+      const next = items.map((x) => (found.some((f) => f.key === x.key) ? { ...x, done: true, uncertain: false } : x));
+      setItems(next.every((x) => x.done) ? [] : next);
+      const still = next.filter((x) => !x.done);
+      setError(still.length === 0 ? null
+        : `${found.length ? `Found: ${found.map((f) => f.file.name).join(', ')}. ` : ''}Not found among the reports yet: ${still.map((x) => x.file.name).join(', ')}. Tap “Upload the rest” to send ${still.length === 1 ? 'it' : 'them'} again (never added twice).`);
+      if (still.length === 0 && input.current) input.current.value = '';
+    } catch (err) {
+      setError(`Could not check: ${messageOf(err)}`);
+    } finally {
+      setChecking(false);
+    }
+  }
 
   async function upload(e: FormEvent) {
     e.preventDefault();
@@ -706,6 +737,7 @@ function UploadReports({ ctx, booking, disabled, perform }: { ctx: ScopeContext;
             : `${it.file.name} was added as a draft; sending the next file…`);
         } catch (err) {
           const why = uploadFailureMessage(it.file.name, err);
+          setItems((cur) => cur.map((x) => (x.key === it.key ? { ...x, uncertain: !why.certain } : x)));
           setError(`${added ? `${added} of ${items.length} added. ` : ''}${why.text}`);
           if (!why.certain) void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'lab-booking', booking._id] });
           return;
@@ -726,14 +758,24 @@ function UploadReports({ ctx, booking, disabled, perform }: { ctx: ScopeContext;
       <div className="j-field">
         <label htmlFor="lb-files">Report files (PDF, JPEG, PNG or WebP; up to 10 MB each, sent one by one)</label>
         <input id="lb-files" ref={input} type="file" multiple accept={REPORT_ACCEPT} aria-describedby={error ? 'lb-files-err' : undefined}
-          onChange={(e) => { setItems([...(e.target.files ?? [])].map((file) => ({ file, key: newRequestKey(), done: false }))); setError(null); }} />
+          disabled={locked || busy}
+          onChange={(e) => { if (locked) return; setItems([...(e.target.files ?? [])].map((file) => ({ file, key: newRequestKey(), done: false }))); setError(null); }} />
+        {locked && (
+          <span className="j-field__hint">
+            An upload got no answer, so these files are kept with their keys: tap “Upload the rest” (a file already added is never
+            added twice) or check the reports. Other files can be chosen once this is settled.
+          </span>
+        )}
         {problems.length > 0 && <span className="j-field__error">{problems.join(' ')}</span>}
         {items.length > 1 && left.length < items.length && left.length > 0 && (
           <span className="j-field__hint">Still to send: {left.map((i) => i.file.name).join(', ')}.</span>
         )}
       </div>
       {error && <div id="lb-files-err"><Alert>{error}</Alert></div>}
-      <div><Button type="submit" busy={busy} disabled={disabled && !busy}>{left.length < items.length && left.length > 0 ? 'Upload the rest' : 'Upload as drafts'}</Button></div>
+      <div className="ws-actions">
+        <Button type="submit" busy={busy} disabled={(disabled && !busy) || checking}>{locked || (left.length < items.length && left.length > 0) ? 'Upload the rest' : 'Upload as drafts'}</Button>
+        {locked && <Button variant="secondary" busy={checking} disabled={busy || disabled} onClick={() => void check()}>Check the reports</Button>}
+      </div>
     </form>
   );
 }
@@ -829,7 +871,7 @@ function ConfirmLess({ label, ready, blocked, staffLink, onConfirm, onChanged, o
       {error && <Alert>{error}</Alert>}
       <div className="confirm-actions">
         <Button busy={busy} disabled={!ready || (blocked && !busy)} onClick={() => void go()}>{label}</Button>
-        <Button variant="ghost" disabled={busy} onClick={onBack}>Back</Button>
+        <Button variant="ghost" data-focus-back disabled={busy} onClick={onBack}>Back</Button>
       </div>
     </>
   );

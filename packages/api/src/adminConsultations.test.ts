@@ -1,6 +1,6 @@
 import { ApiError, createApiClient } from './client.ts';
 import { isSlotRefusal, NO_SHOW_MOVE_REFUSAL } from './noShows.ts';
-import { adminNoShowMove, canAdminCancelMovedNoShow, consultationAdminApi, consultationQueryProblem, type AdminConsultation } from './adminConsultations.ts';
+import { ADMIN_CANCEL_REFUSAL, adminNoShowMove, canAdminCancelMovedNoShow, consultationAdminApi, consultationQueryProblem, type AdminConsultation } from './adminConsultations.ts';
 import { professionalInput, canEditProfessional, partnerWorkspaceApi } from './partners.ts';
 
 const ID = 'a1'.repeat(12);
@@ -115,6 +115,9 @@ describe('Q16a admin cancel of a moved no-show (adminCancelNoShowSchema)', () =>
     expect(canAdminCancelMovedNoShow(booking({ status: 'cancelled', ...moved }))).toBe(false);
     expect(canAdminCancelMovedNoShow(booking({ status: 'confirmed', bookingKind: 'instant', ...moved }))).toBe(false);
     expect(canAdminCancelMovedNoShow(booking({ status: 'confirmed', clinicDesk: { partnerId: P, branchId: M }, ...moved }))).toBe(false);
+    // Q16d (F5): paid at the clinic = the clinic's cancellation (409 USE_CLINIC_CANCEL), said in words.
+    expect(canAdminCancelMovedNoShow(booking({ status: 'confirmed', settlementSystem: 'clinic', ...moved }))).toBe(false);
+    expect(ADMIN_CANCEL_REFUSAL.USE_CLINIC_CANCEL).toMatch(/front desk/);
   });
 });
 

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
@@ -132,6 +132,25 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
     setReview({ requestKey: newRequestKey(), entry: stockEntryBody(full), medicineName: medicineName(chosen), ...(supplier ? { supplierName: supplier.displayName } : {}) });
   }
 
+  /**
+   * WQ11d: the confirmation is shown at once from the save's answer (the form is cleared in the same step, so nothing can
+   * be entered again under a new key meanwhile); a supplier is named only once the recorded delivery says so, the line
+   * saying "checking the supplier…" until then.
+   */
+  const shown = useRef(0);
+  function showAdded(p: PendingOp<PendingEntry>, words: (what: string) => string, search: string) {
+    const mine = ++shown.current;
+    const b = p.body;
+    const base = b ? describe(b.entry, b.medicineName) : 'the units';
+    const checking = !!b?.entry.supplierId;
+    setDone({ text: words(checking ? `${base} (checking the supplier…)` : base), search });
+    if (checking) {
+      void savedWords(readAdjustments, p).then((what) => {
+        if (shown.current === mine) setDone((d) => (d ? { ...d, text: words(what) } : d));
+      });
+    }
+  }
+
   /** Sends `p` (its key, its entry) under the one-at-a-time guard; an unknown outcome stays stored for the panel below. */
   async function sendEntry(p: PendingOp<PendingEntry>, search: string) {
     const r = await perform(() => send(p, (b) => stock.addStock(b.entry, p.requestKey)));
@@ -147,11 +166,8 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
       setDraft(EMPTY);
       setErrors({});
       void refresh();
-      const what = p.body ? await savedWords(readAdjustments, p) : 'the units';
-      setDone({
-        text: r.value.replayed ? `Already added: ${what}. Nothing was added twice.` : `Added ${what}.`,
-        search: search || itemSearch(r.value.items),
-      });
+      const replayed = !!r.value.replayed;
+      showAdded(p, (what) => (replayed ? `Already added: ${what}. Nothing was added twice.` : `Added ${what}.`), search || itemSearch(r.value.items));
     } else if (r.kind === 'refused') {
       // Q16c: the supplier is no longer one of the pharmacy's active ones: read them again and ask for another.
       if (isSupplierRefusal(r.error)) {
@@ -170,8 +186,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
     setErrors({});
     setReview(null);
     void refresh();
-    const what = await savedWords(readAdjustments, p);
-    setDone({ text: `Recorded: ${what} was added. Nothing was added twice.`, search: itemSearch(items) });
+    showAdded(p, (what) => `Recorded: ${what} was added. Nothing was added twice.`, itemSearch(items));
   }
 
   /**

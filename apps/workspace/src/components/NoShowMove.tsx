@@ -203,7 +203,7 @@ export function NoShowMove<R extends { replayed?: boolean }>({
         {!confirming ? <Button type="submit">Continue</Button>
           : <Button busy={sending} disabled={disabled && !sending} onClick={() => { const t = { ...chosen!, version }; setOpen(false); void go(startOp(newRequestKey(), t)); }}>Move to {chosen?.label}</Button>}
         {/* Back from the confirmation shows the picker again with nothing chosen (it starts empty), so the choice starts again too. */}
-        <Button variant="ghost" disabled={sending} onClick={() => { setChosen(null); setFieldError(null); if (confirming) setConfirming(false); else setOpen(false); }}>Back</Button>
+        <Button variant="ghost" data-focus-back disabled={sending} onClick={() => { setChosen(null); setFieldError(null); if (confirming) setConfirming(false); else setOpen(false); }}>Back</Button>
       </div>
     </form>
   );

@@ -1,7 +1,8 @@
+import { vi } from 'vitest';
 import { createApiClient } from './client.ts';
 import {
   addDays, capacityProblem, eligibleSigners, isBookable, isLabBookingChanged, isRealDate, isReportTooLarge, istDateOf, isTemplateChanged, isUploadFailed,
-  labActions, labBookingsAdminApi, labSlotEnd, labNoShowMove, manualSlotProblems, mondayOf, partnerLabsApi, reopenable, reportFileBooking, reportFileName,
+  labActions, labBookingsAdminApi, labSlotEnd, REPORT_UPLOAD_TIMEOUT_MS, labNoShowMove, manualSlotProblems, mondayOf, partnerLabsApi, reopenable, reportFileBooking, reportFileName,
   reportFileProblem, slotTimesFor, templateInput, templateProblems, weekdayOf, type LabBooking, type LabSlot,
 } from './partnerLabs.ts';
 import { ApiError } from './client.ts';
@@ -266,6 +267,23 @@ describe('partnerLabsApi paths', () => {
     expect(form.getAll('files').map((f) => (f as File).name)).toEqual(['cbc.pdf']);
     expect(calls[0]!.headers['Content-Type']).toBeUndefined();
     expect(() => partnerLabsApi(client, { kind: 'member' }).uploadReport(K, a, 'bad key')).toThrow('Invalid request key');
+  });
+
+  it('WQ11d: a report upload waits up to 2 minutes for its answer (not the 20 s default)', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = createApiClient({ baseUrl: 'https://api.example.test', getToken: () => 'tok',
+        fetchImpl: (_u, init) => new Promise<Response>((_r, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))) });
+      let outcome: unknown = 'pending';
+      const sent = partnerLabsApi(client, { kind: 'member' }).uploadReport(K, new File(['%PDF'], 'cbc.pdf'), 'u'.repeat(32)).catch((e: unknown) => { outcome = e; });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(outcome).toBe('pending');
+      await vi.advanceTimersByTimeAsync(REPORT_UPLOAD_TIMEOUT_MS - 60_000 + 1);
+      await sent;
+      expect(outcome).toMatchObject({ code: 'TIMEOUT' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('Q16a: an admin cancels a moved no-show with a reason and an explicit refund choice', async () => {

@@ -381,6 +381,9 @@ export function labSlotEnd(slot: Pick<LabBookingSlot, 'startsAt' | 'startTime' |
   return new Date(start + len * 60_000);
 }
 
+/** WQ11d: how long a report upload's answer is awaited (the client's default is 20 s). */
+export const REPORT_UPLOAD_TIMEOUT_MS = 120_000;
+
 export type LabAction = 'assign' | 'collect' | 'visit' | 'no_show' | 'process' | 'complete' | 'reject' | 'reschedule' | 'upload' | 'release';
 /** An action this person may take on this booking now; `blocked` says why it cannot be taken yet (offered, disabled). */
 export interface LabActionOffer { action: LabAction; blocked?: string }
@@ -539,7 +542,8 @@ export function partnerLabsApi(c: ApiClient, scope: PartnerScope) {
       if (!REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
       const form = new FormData();
       form.append('files', file, file.name);
-      return c.post<LabBooking>(`${booking(id)}/reports`, { form, query: { requestKey } });
+      // WQ11d: a report of up to 10 MB on a slow connection takes long: the answer is awaited up to 2 minutes, not 20 s.
+      return c.post<LabBooking>(`${booking(id)}/reports`, { form, query: { requestKey }, timeoutMs: REPORT_UPLOAD_TIMEOUT_MS });
     },
     /**
      * Releases one draft to the customer under a professional (`releaseReport`): members always sign as themselves (omit

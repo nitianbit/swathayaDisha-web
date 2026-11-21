@@ -114,7 +114,10 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
                           )}
                           {m.doctorId && ctx.actor.memberId !== m._id ? (
                             // Q16b: a clinic doctor's membership ends on Doctors (owner or admin), never as staff (409 USE_DOCTOR_UNLINK).
-                            <span className="ws-muted">A doctor of this clinic: removed on <Link to={doctorsLink}>Doctors</Link> (owner only).</span>
+                            m.role === 'owner'
+                              // Q16b N1: an owner who is also the doctor loses the doctor link on Doctors (another owner or an admin).
+                              ? <span className="ws-muted">Also a doctor of this clinic: the doctor link is removed on <Link to={doctorsLink}>Doctors</Link> by another owner or the Jansetu team.</span>
+                              : <span className="ws-muted">A doctor of this clinic: removed on <Link to={doctorsLink}>Doctors</Link> (owner only).</span>
                           ) : block ? <span className="ws-muted">{block}</span> : (
                             <ConfirmAction label="Remove" danger confirmLabel={`Remove ${m.name}`}
                               consequence={`${m.name} loses access to this workspace at once. To give access again, add them again.`}

@@ -514,6 +514,34 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
     say('warn', text);
   }
 
+  /**
+   * WQ11d: a refused resend says nothing about the FIRST send, which may still have been added. Before a new key is
+   * allowed the booking is read again: a recorded extension settles it; otherwise the field is freed with the time held
+   * now, and the words say the earlier one may still have been added.
+   */
+  async function chooseAnother() {
+    const current = memory.get<PendingOp<ExtendBody>>(slot);
+    if (!current) return;
+    setChecking(true);
+    try {
+      const b = await d.api.instantBooking(booking._id);
+      if (!alive.current || !stillCurrent(memory.get<PendingOp<ExtendBody>>(slot), current)) return;
+      const done = b.extensions.find((x) => x.requestKey === current.requestKey);
+      if (done) {
+        memory.delete(slot);
+        sync();
+        setRefusedKey(null);
+        say('ok', `Extended by ${done.minutes} minutes after all: your time is held until ${formatDateTime(done.endTime)}.`);
+        return;
+      }
+      release(`Choose the minutes and extend again: this is a new extension. The one sent before may still have been added: check the consultation's end time${b.held?.endTime ? ` (held until ${formatDateTime(b.held.endTime)} now)` : ''} before extending.`);
+    } catch (err) {
+      say('warn', `Could not read the consultation again (${messageOf(err)}), so no new extension can be chosen yet. Try again in a moment.`);
+    } finally {
+      if (alive.current) setChecking(false);
+    }
+  }
+
   const locked = !!op;
   const refused = !!op && refusedKey === op.requestKey;
   const forgettable = !!op && !busy && !checking && (refused || notFoundKey === op.requestKey);
@@ -530,7 +558,7 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
             {!op.restored && op.body && <Button type="submit" variant="secondary" busy={busy} disabled={checking}>Send the same extension again</Button>}
             <Button variant="ghost" busy={checking} disabled={busy} onClick={() => void reconcile()}>Check whether it was recorded</Button>
             {refused && !busy && !checking && (
-              <Button variant="secondary" onClick={() => release('Choose the minutes and extend again: this is a new extension. The one refused was not added.')}>
+              <Button variant="secondary" onClick={() => void chooseAnother()}>
                 Choose another extension
               </Button>
             )}

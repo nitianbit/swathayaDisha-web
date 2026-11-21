@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useQueryClient } from '@tanstack/react-query';
 import {
   ALL_PARTNER_PERMISSIONS, ApiError, authApi, clearSignOutPending, clearWebSignOutPending, createApiClient, isTransientSessionError, markSignOutPending,
-  markWebSignOutPending, markerStore, nativeSecureStore, nativeSignOut, OBJECT_ID_PATTERN, PARTNER_KIND_LABEL, partnerSelectionOf, refreshTokenKey,
+  isIdListSlot, markWebSignOutPending, markerStore, nativeSecureStore, nativeSignOut, OBJECT_ID_PATTERN, PARTNER_KIND_LABEL, partnerSelectionOf, refreshTokenKey,
   rotateNative, isSignedOutAnswer, samePrincipal, sessionChannel, signOutState, webSignOutState, withSessionLock,
   type ApiClient, type NativeSignedIn, type OtpTarget, type PartnerKind, type PartnerPermission, type PartnerSelection, type PendingMarker,
   type Principal, type SignedIn, type UserType, type VerificationState,
@@ -147,6 +147,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     set: (key, value) => {
       store.set(key, value);
       if (isPending(value)) markers.current?.save(key, value);
+      else if (Array.isArray(value) && isIdListSlot(key)) markers.current?.saveIds(key, value);
     },
     delete: (key) => { store.delete(key); markers.current?.remove(key); },
   }), [store]);
@@ -357,6 +358,8 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     markers.current = markerStore(APP, id);
     const restored = new Map<string, unknown>();
     for (const [slot, m] of Object.entries(markers.current.all())) restored.set(slot, { ...m, uncertain: true, restored: true });
+    // WQ11d: id lists (e.g. previews discarded on this device) come back as they were.
+    for (const [slot, ids] of Object.entries(markers.current.allIds())) restored.set(slot, ids);
     setStore(restored);
     // WQ11a: nothing cached before this sign-in (another tab's person, a request that slipped through) is shown.
     queryClient.clear();

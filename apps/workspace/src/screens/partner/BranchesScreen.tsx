@@ -239,13 +239,15 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
   const stillDropped = () => { const dirty = new Set(dirtyKeys(draft.current())); return [...dropped.current].filter((k) => !dirty.has(k)); };
 
   /** Sends a new branch; a lost answer is settled by reading the list (a branch of this name made since is the one sent). */
-  async function create(body: BranchInput, requestKey: string, before: string[]) {
+  async function create(body: BranchInput, requestKey: string, before: string[], resend = false) {
     try {
       const made = await ctx.api.createBranch(body, requestKey);
       if (live.current) setLost(null);
       await onSaved({ branch: made, dropped: [] });
     } catch (err) {
-      if (definitelyNotRecorded(err)) { if (live.current) { setLost(null); setError(messageOf(err)); } return; }
+      // Only the FIRST send's definite refusal frees the form. WQ11d: a refused resend says nothing about the earlier
+      // send, which may still arrive: it stays locked and is settled only by the branch list (below) or "Send again".
+      if (definitelyNotRecorded(err) && !resend) { if (live.current) { setLost(null); setError(messageOf(err)); } return; }
       if (live.current) setLost({ body, requestKey, before });
       try {
         const now = await ctx.api.branches();
@@ -253,7 +255,11 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
         const found = now.find((b) => b.isActive !== false && !before.includes(b._id) && sameName(b.name, body.name));
         if (found) { if (live.current) setLost(null); await onSaved({ branch: found, dropped: [], found: true }); return; }
       } catch { /* still unknown: said below */ }
-      if (live.current) setError(`Not confirmed: ${messageOf(err)} ${body.name} is not in the branch list yet, but the request may still arrive.`);
+      if (live.current) {
+        setError(resend && definitelyNotRecorded(err)
+          ? `Not sent again: ${messageOf(err)} ${body.name} is not in the branch list yet, but the first request may still arrive, so the form stays as it was sent.`
+          : `Not confirmed: ${messageOf(err)} ${body.name} is not in the branch list yet, but the request may still arrive.`);
+      }
     }
   }
 
@@ -406,7 +412,7 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
               adds a second branch. The form stays locked until it is settled.
             </div>
             <div className="confirm-actions">
-              <Button busy={busy} onClick={() => { setError(null); void once(() => create(lost.body, lost.requestKey, lost.before)); }}>Send again</Button>
+              <Button busy={busy} onClick={() => { setError(null); void once(() => create(lost.body, lost.requestKey, lost.before, true)); }}>Send again</Button>
               <ConfirmAction label="Start again" danger disabled={busy} confirmLabel="Unlock the form"
                 consequence={`Change the form and add it as a new request. If the first ${lost.body.name} still arrives, there will be two branches of that name; deactivate one of them.`}
                 onConfirm={async () => { setLost(null); setError(null); }} />

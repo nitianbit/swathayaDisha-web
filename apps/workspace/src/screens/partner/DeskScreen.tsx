@@ -6,7 +6,7 @@ import {
   deskActions, deskBookingProblems, doctorsAtBranch, familyMemberProblems, holdsAny, INVOICE_STATE_LABEL, isRealDate, istDateOf, MAX_APPOINTMENTS,
   MAX_DESK_CANCEL_REASON, MAX_DESK_NAME, MAX_DESK_NOTES, MAX_FAMILY_NAME, noShowMovedOnce,
   type Branch, type ClinicAppointment, type ClinicDoctorRow, type DeskAction, type DeskActionOffer, type DeskAppointment, type DeskBookingResult,
-  type DeskGender, type DeskPatientInput, type DeskRelation, type DeskSlot,
+  type DeskGender, type DeskPatientInput, type DeskRelation, type DeskSlot, type DeskSlotKnown,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
@@ -32,10 +32,13 @@ const BILL_READERS = ['invoices.create', 'invoices.cancel', 'payments.record', '
 const NO_MONEY = 'Nothing is charged or refunded through Jansetu: desk appointments are paid at the clinic.';
 /** Q13 409 BOOKING_CHANGED: the step named the version the person saw, and the appointment had changed since. */
 const isChanged = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'BOOKING_CHANGED';
-/** WQ11b (Q16a `closeDeskAppointment`): 409 NOT_STARTED_YET — a visit is marked as seen only once it has started. */
-const NOT_STARTED = 'The appointment has not started yet, so it was not marked as seen. Mark it once the appointment time has come.';
+/** Q16d (`closeDeskAppointment`): 409 NOT_STARTED_YET — a visit is marked as seen on the appointment's own day or later. */
+const NOT_STARTED = 'It is not the day of this appointment yet, so it was not marked as seen. Mark it on the day of the appointment.';
+/** Q16d: 409 APPOINTMENT_NOT_STARTED — a no-show 15 minutes after the time; in a session with several patients, after its end. */
+const NO_SHOW_TOO_EARLY = 'It is too early to mark a no-show: wait until 15 minutes after the appointment time (in a session with several patients, 15 minutes after the session ends).';
 const readable = (err: unknown) => (err instanceof ApiError && err.status === 409 && err.code === 'NOT_STARTED_YET'
-  ? new ApiError(409, NOT_STARTED, 'NOT_STARTED_YET') : err);
+  ? new ApiError(409, NOT_STARTED, 'NOT_STARTED_YET')
+  : err instanceof ApiError && err.status === 409 && err.code === 'APPOINTMENT_NOT_STARTED' ? new ApiError(409, NO_SHOW_TOO_EARLY, 'APPOINTMENT_NOT_STARTED') : err);
 const CHANGED = 'The appointment changed since you opened it (someone else updated it), so nothing was done. It has been read again: check it and try again.';
 /** Q13: the slot is taken (SLOT_NOT_AVAILABLE) or has started meanwhile (SLOT_STARTED): choose another; the details stay. */
 const slotGoneCodes = new Set(['SLOT_NOT_AVAILABLE', 'SLOT_STARTED']);
@@ -381,7 +384,7 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
           perform={perform} guard={guard} click={click} onClose={() => setSelected(null)} readAt={list.dataUpdatedAt} memory={memory}
           onMoveNotice={(text) => { if (mounted.current && selectedRef.current === current.bookingId) { setStepFailure(null); setStepNotice({ id: current.bookingId, text }); } }}
           onMoveFailure={(text) => { if (mounted.current && selectedRef.current === current.bookingId) { setStepNotice(null); setStepFailure({ id: current.bookingId, text }); } }}
-          onMoved={moved} />
+          onMoved={moved} slotKnown={sessionOf(current, slots.data)} />
       )}
 
       <section className="ws-section" aria-labelledby="desk-slots-h">
@@ -644,16 +647,26 @@ function BookingForm({ chosen, patient, setPatient, sending, refused, onCancel, 
 
 // ── One appointment ──
 
+/**
+ * Q16d: the desk rows do not say how many seats their slot has. When the appointment's own slot is still listed with a
+ * free seat while it holds one, it is a session with several patients (its no-show waits for the session's end).
+ */
+function sessionOf(appt: ClinicAppointment, free: readonly DeskSlot[] | undefined): DeskSlotKnown | undefined {
+  const s = appt.slotId ? free?.find((x) => x.slotId.toLowerCase() === appt.slotId!.toLowerCase()) : undefined;
+  return s && s.seatsLeft > 0 ? { seats: s.seatsLeft + 1, endTime: s.endTime } : undefined;
+}
+
 function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, now, busy, reading, failure, perform, guard, click, onClose, readAt, memory,
-  onMoveNotice, onMoveFailure, onMoved }: {
+  onMoveNotice, onMoveFailure, onMoved, slotKnown }: {
   ctx: ScopeContext; clinic: ClinicApi; appt: ClinicAppointment; doctors: ClinicDoctorRow[]; branches: Branch[]; branchName: string; now: Date;
   busy: DeskAction | undefined; reading: boolean; failure: string | null; perform: Perform; guard: Guard;
   click: (a: ClinicAppointment, action: DeskAction, what: string, run: () => Promise<DeskAppointment>, done: (n: DeskAppointment) => string) => Promise<void>;
   onClose: () => void; readAt: number; memory: SessionMemory;
   onMoveNotice: (text: string) => void; onMoveFailure: (text: string) => void; onMoved: (id: string, next: DeskAppointment) => void;
+  slotKnown?: DeskSlotKnown;
 }) {
   const queryClient = useQueryClient();
-  const offers = deskActions(appt, ctx.actor, now);
+  const offers = deskActions(appt, ctx.actor, now, slotKnown);
   // Q14: the one move of a desk no-show (also while a move sent earlier is unconfirmed, whatever the status is now).
   const moveSlot = noShowMoveSlot(scopeIdentity(ctx), appt.bookingId);
   const showMove = !!offers.find((o) => o.action === 'reschedule_no_show') || (holdsAny(ctx.actor, ['bookings.manage']) && !!memory.get(moveSlot));
@@ -774,7 +787,8 @@ function NoShow({ appt, offer, who, when, disabled, perform, clinic, movedOnce }
           : movedOnce === false ? 'Afterwards the desk may move it once to a new time. '
           : 'Afterwards the desk may move it once to a new time, unless it was already moved after an earlier no-show: then this second no-show is final. '}
         This cannot be undone.</>}
-      onConfirm={() => perform(appt, 'no_show', () => clinic.noShow(appt.bookingId, appt.updatedAt), () => `${who} is marked as not come.`)} />
+      onConfirm={() => perform(appt, 'no_show', () => clinic.noShow(appt.bookingId, appt.updatedAt), () => `${who} is marked as not come.`)
+        .catch((err: unknown) => { throw readable(err); })} />
   );
 }
 

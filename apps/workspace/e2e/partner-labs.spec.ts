@@ -49,6 +49,8 @@ interface Backend {
   dropNextMove?: boolean;
   /** WQ11b: someone else saves the template right before the next template save is decided. */
   templateSavedElsewhere?: Rec;
+  /** WQ11d: the next report upload is attached, then its answer is lost. */
+  loseNextUpload?: boolean;
   /** WQ11b: someone else acts on this booking right before the next step on it is decided (its status version moves). */
   bumpBeforeStep?: string;
 }
@@ -381,6 +383,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
         }
         rep.draftFiles.push(...(files ?? []).map((f) => file(bk._id as string, f)));
         if (key) (rep as Rec).uploadKeys = [...keys, key];
+        if (b.loseNextUpload) { b.loseNextUpload = false; return route.abort('failed'); } // attached, the answer lost
         await held();
         return ok(route, bk, 201);
       }
@@ -932,6 +935,38 @@ test('a template save answered after another editor was opened leaves that edito
   await expect(page.getByRole('heading', { name: /Week of .*23 Nov/ })).toBeVisible();
 });
 
+test('WQ11d: reopening the template editor after a save shows the template as saved, read again (never an older cached copy), and a late read never resets typing', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Slots' }).click();
+  await page.getByRole('button', { name: 'Edit the weekly template' }).click();
+  await page.getByLabel('Seats per slot').fill('3');
+  await page.getByRole('button', { name: 'Review the template' }).click();
+  const save = hold(backend, /\/slot-templates\//);
+  await page.getByRole('group', { name: 'Save the weekly template' }).getByRole('button', { name: 'Save the template' }).click();
+  await page.getByRole('button', { name: 'Add a one-off slot' }).click(); // the editor closes while the save is held
+  save();
+  await expect(page.getByText(/Weekly template saved for home collection at Indiranagar/)).toBeVisible();
+  // From now on the template read answers slowly (a weak connection).
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((r) => { release = r; });
+  await page.route(/\/api\/v1\/partner-workspace\/branches\/[0-9a-f]{24}\/slot-templates\/home$/, async (route) => {
+    if (route.request().method() === 'GET') await gate;
+    await route.fallback();
+  });
+  await page.getByRole('button', { name: 'Edit the weekly template' }).click();
+  await expect(page.getByText('Reading the saved template…')).toBeVisible();
+  await expect(page.getByLabel('Seats per slot')).toHaveCount(0); // nothing older than the save is shown
+  release();
+  const seats = page.getByLabel('Seats per slot');
+  await expect(seats).toHaveValue('3');
+  await expect(page.getByText('This is the saved weekly template.')).toBeVisible();
+  await seats.fill('4');
+  await page.waitForTimeout(300);
+  await expect(seats).toHaveValue('4');
+  await expect(page.getByText(/Someone else (changed|saved)/)).toHaveCount(0);
+});
+
 test('Q14: a lab no-show is not refunded and earns nothing; it is moved once to a new slot after a confirmation, with a key and the version; then never again', async ({ page }) => {
   const backend = await mockBackend(page);
   backend.loseNextNoShowMove = true;
@@ -1204,6 +1239,36 @@ test('WQ11b: reports go one file per request (each up to 10 MB), under a key; a 
   await expect(page.getByText(/may have been uploaded/)).toHaveCount(0);
 });
 
+test('WQ11d: after an unanswered upload the same files and keys are kept: no other files until it is settled, and never a second copy', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await page.goto(`/#/partner/lab-bookings/${BK3}`);
+  const input = page.getByLabel(/^Report files/);
+  await input.setInputFiles([{ name: 'cbc.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 cbc') }]);
+  backend.loseNextUpload = true;
+  await page.getByRole('button', { name: 'Upload as drafts' }).click();
+  await expect(page.getByText(/cbc\.pdf: .*It may have been uploaded/)).toBeVisible();
+  // Choosing again is blocked (it would be a new key, so a second copy): only "Upload the rest" or a check.
+  await expect(input).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Upload the rest' })).toBeVisible();
+  await page.getByRole('button', { name: 'Check the reports' }).click();
+  await expect(input).toBeEnabled(); // found among the drafts: settled
+  await expect(page.getByRole('list', { name: 'Draft reports' })).toContainText('cbc.pdf');
+  // The same again, settled by sending the rest with the same key: answered, not copied.
+  await input.setInputFiles([{ name: 'lipid.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 lipid') }]);
+  backend.loseNextUpload = true;
+  await page.getByRole('button', { name: 'Upload as drafts' }).click();
+  await expect(input).toBeDisabled();
+  await page.getByRole('button', { name: 'Upload the rest' }).click();
+  await expect(page.getByText('1 file was added as drafts. Release each one when it is checked.')).toBeVisible();
+  await expect(input).toBeEnabled();
+  const bk = backend.bookings.find((x) => x._id === BK3)!;
+  expect((bk.report as { draftFiles: string[] }).draftFiles.filter((f) => f.endsWith('/lipid.pdf'))).toHaveLength(1);
+  const sent = backend.calls.filter(isUpload).map((c) => c.path);
+  expect(sent).toHaveLength(3);
+  expect(sent[2]).toBe(sent[1]); // the resend used the same key
+});
+
 test('WQ11b: keyboard focus moves into a confirmation or panel when it opens and back to its button on Back', async ({ page }) => {
   await mockBackend(page);
   await signInPartner(page);
@@ -1236,6 +1301,24 @@ test('WQ11b: keyboard focus moves into a confirmation or panel when it opens and
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'Propose a new time' })).toBeFocused();
   expect(await active()).toMatch(/^BUTTON:/);
+});
+
+test('WQ11d: Enter twice on "Mark no-show" does nothing: the confirmation opens on Back, never on the irreversible step', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await page.goto(`/#/partner/lab-bookings/${BK1}`);
+  const trigger = page.getByRole('button', { name: 'Mark no-show' });
+  await trigger.focus();
+  await page.keyboard.press('Enter');
+  const group = page.getByRole('group', { name: 'Mark no-show' });
+  await expect(group.getByRole('button', { name: 'Back' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(trigger).toBeFocused();
+  expect(writes(backend)).toEqual([]);
+  // The time picker of a new time keeps its field focus; its confirmation step opens on Back.
+  await page.getByRole('button', { name: 'Propose a new time' }).click();
+  const propose = page.getByRole('form', { name: 'Propose a new time' });
+  await expect(propose.getByLabel('New time')).toBeFocused();
 });
 
 test('WQ11b: marking a booking moved once after a no-show as a no-show again says it is final (no move is promised)', async ({ page }) => {
@@ -1324,6 +1407,8 @@ test('WQ11b (Q16a): an admin cancels a booking moved after a no-show, choosing w
   await form.getByRole('button', { name: 'Cancel without a refund' }).click();
   await expect(page.getByText('Cancelled by the Jansetu team; the patient was not refunded.')).toBeVisible();
   await expect(page.getByText('Cancelled by the Jansetu team after a no-show move', { exact: false })).toBeVisible();
+  // WQ11d: the booking itself says whether the patient was refunded.
+  await expect(page.getByText('The patient was not refunded: the payment is kept, as for a no-show, and nobody earns it.', { exact: false })).toBeVisible();
   expect(backend.calls.filter((c) => c.path.endsWith('/cancel-no-show')).map((c) => [c.path, c.body])).toEqual([
     [`/partner-workspace/admin/lab-bookings/${BK1}/cancel-no-show`, { reason: 'The lab cannot attend the new time', refund: false }],
   ]);
@@ -1352,6 +1437,7 @@ test('WQ11 (Q16a final): an admin cancel of a moved no-show that another admin a
   await expect(page.getByText('This booking was already cancelled (by another admin, or by an earlier try whose answer was lost): nothing more was done. It is shown as it is now.')).toBeVisible();
   await expect(page.getByText(/^Not cancelled/)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel (admin)' })).toHaveCount(0);
+  await expect(page.getByText('The patient’s payment of ₹450.00 went back to their Jansetu wallet.', { exact: false })).toBeVisible();
   expect(backend.calls.filter((c) => c.path.endsWith('/cancel-no-show'))).toHaveLength(1);
   expect((bk.cancellation as Rec).refund).toBe(true); // the refused repeat changed nothing
 });

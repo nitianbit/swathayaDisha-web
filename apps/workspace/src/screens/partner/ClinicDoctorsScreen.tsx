@@ -61,7 +61,13 @@ function DoctorList({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const remove = (doctorId: string, name: string) => perform(async () => {
     try {
-      const r = await clinic.unlinkDoctor(doctorId);
+      const r = await clinic.unlinkDoctor(doctorId).catch((err: unknown) => {
+        // Q16b N1: a doctor's own practice keeps its doctor; an owner never unlinks themselves.
+        if (err instanceof ApiError && err.status === 409 && err.code === 'DOCTOR_IS_OWNER') {
+          throw new ApiError(409, `${name} was not removed: ${err.message.includes('own practice') ? `this clinic is ${name}’s own practice, so its doctor stays.` : 'another owner or the Jansetu team removes an owner’s own doctor link.'}`, 'DOCTOR_IS_OWNER');
+        }
+        throw err;
+      });
       if (mounted.current) {
         setNotice(r.membershipEnded ? `${name} no longer consults here.` : `${name} no longer consults here; their staff access is kept.`);
       }
@@ -99,7 +105,14 @@ function DoctorList({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
                     </td>
                     {canRemove && (
                       <td>
-                        {d.role === 'owner' ? <span className="ws-muted">Owns the clinic</span> : (
+                        {d.role === 'owner' && ctx.actor.memberId === d.memberId ? (
+                          <span className="ws-muted">Your own doctor link: another owner or the Jansetu team removes it.</span>
+                        ) : d.role === 'owner' ? (
+                          // Q16b N1: another owner (or an admin) ends an owner's doctor link; they stay an owner.
+                          <ConfirmAction label={`Remove ${d.name} as a doctor`} danger confirmLabel="Remove the doctor link"
+                            consequence={<>{d.name} stays an owner of this clinic; only their doctor link here ends. New bookings with them here stop at once and their in-clinic slots here close. Appointments already booked are kept. Only the Jansetu team can link them again.</>}
+                            onConfirm={() => remove(d.doctorId, d.name)} />
+                        ) : (
                           <ConfirmAction label={`Remove ${d.name}`} danger confirmLabel="Remove from this clinic"
                             consequence={<>Remove {d.name} from this clinic? New bookings with them here stop at once and their in-clinic slots here close. Appointments already booked are kept. Only the Jansetu team can link them again.</>}
                             onConfirm={() => remove(d.doctorId, d.name)} />

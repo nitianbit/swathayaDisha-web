@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
   ADMIN_CANCEL_REFUSAL, adminNoShowMove, ApiError, canAdminCancelMovedNoShow, consultationAdminApi, CONSULTATION_STATUS_LABEL, doctorAdminApi, fromYmd,
-  isRealDate, istDateOf, MAX_ADMIN_CANCEL_REASON, MIN_ADMIN_CANCEL_REASON, movableSlot, OBJECT_ID_PATTERN, type AdminConsultation,
+  CONSULT_MODE_LABEL, isRealDate, istDateOf, MAX_ADMIN_CANCEL_REASON, MIN_ADMIN_CANCEL_REASON, movableSlot, noShowSlotFits, OBJECT_ID_PATTERN, type AdminConsultation,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { FOCUS_HOST_STYLE, usePanelFocus } from '../../components/focus.ts';
@@ -160,10 +160,16 @@ function AdminSlotPicker({ b, now, scopeKey, onChoose }: { b: AdminConsultation;
   });
   if (!doctor) return <p className="ws-muted">This booking names no doctor, so it cannot be moved here.</p>;
   const inPerson = b.consultationMode === 'in-person';
-  const choices = (slots.data ?? []).filter((s) => s._id !== b.slotId && movableSlot(s, now) && (inPerson ? !!s.branchId : !s.branchId)
+  // WQ11d: as the doctor's own picker (`noShowSlotFits`): the booking's consultation type and place; each time names it.
+  const choices = (slots.data ?? []).filter((s) => s._id !== b.slotId && movableSlot(s, now) && noShowSlotFits(s, b)
     && (!s.specialistId || s.specialistId === doctor));
+  const where = (s: { branchId?: string }) => (!s.branchId ? (inPerson ? 'the doctor’s own place' : 'online') : 'the clinic it was booked at');
+  const mode = b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode : null;
   return (
     <>
+      <p className="ws-muted">
+        Times {mode ? `for ${mode.toLowerCase()} consultations ` : ''}at {inPerson ? (b.clinicVisit?.branchId ? 'the clinic it was booked at' : 'the doctor’s own place') : 'no clinic (online)'}, as booked.
+      </p>
       <TextField label="New day" type="date" value={day} min={istDateOf(now)} error={ok ? undefined : 'Enter a real date.'}
         onChange={(e) => { setDay(e.target.value); setSlotId(''); onChoose(null); }} />
       {!ok ? null
@@ -177,10 +183,10 @@ function AdminSlotPicker({ b, now, scopeKey, onChoose }: { b: AdminConsultation;
               setSlotId(e.target.value);
               const s = choices.find((x) => x._id === e.target.value);
               const iso = s ? fromYmd(s.date) : null;
-              onChoose(s ? { slotId: s._id, label: `${iso ? formatDay(iso) : s.date}, ${s.startTime}` } : null);
+              onChoose(s ? { slotId: s._id, label: `${iso ? formatDay(iso) : s.date}, ${s.startTime} (${where(s)})` } : null);
             }}>
               <option value="">Choose a time</option>
-              {choices.map((s) => <option key={s._id} value={s._id}>{s.startTime}–{s.endTime}</option>)}
+              {choices.map((s) => <option key={s._id} value={s._id}>{s.startTime}–{s.endTime} · {where(s)}</option>)}
             </select>
           </div>
         )}
@@ -294,7 +300,7 @@ function AdminCancel({ b, perform, busy, cancel, readNow, reread, onNotice, onFa
           {error && <Alert>{error}</Alert>}
           <div className="confirm-actions">
             <Button variant="danger" busy={sending} disabled={busy && !sending} onClick={() => void submit()}>Cancel the appointment</Button>
-            <Button variant="ghost" disabled={sending} onClick={() => { setOpen(false); setError(null); }}>Back</Button>
+            <Button variant="ghost" data-focus-back disabled={sending} onClick={() => { setOpen(false); setError(null); }}>Back</Button>
           </div>
         </div>
       )}

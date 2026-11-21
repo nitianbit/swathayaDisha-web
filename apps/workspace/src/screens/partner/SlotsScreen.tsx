@@ -356,13 +356,22 @@ function TemplateEditor({ ctx, branch, mode, where, onClose, onSaved }: {
 }) {
   const key = [...ctx.key, 'slot-template', branch._id, mode];
   const read = () => ctx.labs.template(branch._id, mode);
-  const saved = useQuery({ queryKey: key, queryFn: read });
+  // WQ11d: every opening reads the template again, and the form is shown only from a read made since it opened: a
+  // cached copy (older than a save made meanwhile, possibly from another editor) is never shown as "the saved template",
+  // and a late read can never reset what was typed.
+  const queryClient = useQueryClient();
+  const readsSoFar = () => queryClient.getQueryState(key)?.dataUpdateCount ?? 0;
+  const [openedAt] = useState(readsSoFar);
+  const saved = useQuery({ queryKey: key, queryFn: read, refetchOnMount: 'always' });
+  const [fresh, setFresh] = useState(false);
+  if (!fresh && saved.isSuccess && !saved.isFetching && readsSoFar() > openedAt) setFresh(true);
   return (
     <section className="ws-section" aria-labelledby="tpl-h">
       <h2 id="tpl-h">Weekly template: {where}</h2>
-      {saved.isPending ? <Loading label="Reading the saved template…" />
+      {!fresh && saved.isError ? <ErrorState message={messageOf(saved.error)} onRetry={() => void saved.refetch()} />
+        : !fresh ? <Loading label="Reading the saved template…" />
         : saved.isError ? <ErrorState message={messageOf(saved.error)} onRetry={() => void saved.refetch()} />
-        : <TemplateForm ctx={ctx} branch={branch} mode={mode} where={where} saved={saved.data} reread={read} templateKey={key} onClose={onClose} onSaved={onSaved} />}
+        : <TemplateForm ctx={ctx} branch={branch} mode={mode} where={where} saved={saved.data ?? null} reread={read} templateKey={key} onClose={onClose} onSaved={onSaved} />}
     </section>
   );
 }
@@ -427,6 +436,8 @@ function TemplateForm({ ctx, branch, mode, where, saved, reread, templateKey, on
       sent = fromDraft(d.current().draft);
       // Q11: named by the version just read; another save in between is refused (409 TEMPLATE_CHANGED), never overwritten.
       const r = await ctx.labs.saveTemplate(branch._id, mode, sent, baseVersion.current);
+      // WQ11d: the saved template is the cache from now on (also when this editor was closed meanwhile).
+      if (r.template) queryClient.setQueryData(templateKey, r.template);
       const x = r.expansion;
       onSaved(`Weekly template saved for ${where}. Next ${ROLLING_DAYS} days: ${x.inserted} slots added, ${x.updated} changed, ${x.closed} closed, ${x.reopened} reopened.`);
     } catch (err) {
@@ -452,7 +463,8 @@ function TemplateForm({ ctx, branch, mode, where, saved, reread, templateKey, on
     } finally {
       setBusy(false);
       void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'slots'] });
-      void queryClient.invalidateQueries({ queryKey: templateKey });
+      // Read again whether or not an editor is open now (WQ11d: a closed one left no observer, so the cache stayed old).
+      void queryClient.invalidateQueries({ queryKey: templateKey, refetchType: 'all' });
     }
   }
 

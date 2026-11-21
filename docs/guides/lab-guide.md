@@ -158,7 +158,7 @@ A paid booking is **Confirmed** automatically. There is no separate confirm step
 1. **Home collection:** tap **Assign collector**. Choose a staff member, or type a name and mobile. The customer sees them. Then tap **Mark sample collected**.
    **At the lab:** tap **Mark visited** when the patient arrives.
 2. Tap **Start processing**.
-3. Under **Upload reports**, choose files (PDF, JPEG, PNG or WebP, up to 10 MB each). Tap **Upload as drafts**. Customers cannot see drafts.
+3. Under **Upload reports**, choose files (PDF, JPEG, PNG or WebP, up to 10 MB each). Tap **Upload as drafts**. Customers cannot see drafts. If an upload gets no answer, the same files stay chosen: tap **Upload the rest** (a file already added is never added twice) or **Check the reports** before choosing other files.
 4. Next to each draft, tap **Release**, then confirm. The customer can open it in the app at once. A released report cannot be withdrawn here.
 5. When all reports are out, tap **Complete booking**. No more reports can be added after this.
 

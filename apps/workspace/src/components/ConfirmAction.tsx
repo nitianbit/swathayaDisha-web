@@ -106,7 +106,7 @@ export function ConfirmAction({
           <div className="confirm-actions">
             {/* A step that started after this was opened blocks it too (screens with one-step-at-a-time guards refuse it anyway). */}
             <Button variant={danger ? 'danger' : 'primary'} busy={busy} disabled={disabled && !busy} onClick={() => void confirm()}>{confirmLabel}</Button>
-            <Button variant="ghost" disabled={busy} onClick={reset}>Back</Button>
+            <Button variant="ghost" data-focus-back disabled={busy} onClick={reset}>Back</Button>
           </div>
         </div>
       )}

@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ApiError, APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentRefusal, CONSULT_MODE_LABEL, doctorNoShowMove, fromYmd, isRealDate, istDateOf,
-  movableSlot, noShowSlotFits, schedulableBranches, type AppointmentAction, type DoctorAppointment, type DoctorSlot,
+  ApiError, APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentInstant, appointmentRefusal, CONSULT_MODE_LABEL, doctorNoShowMove, fromYmd, isRealDate, istDateOf,
+  movableSlot, NO_SHOW_GRACE_MS, noShowSlotFits, schedulableBranches, sessionEndOf, type AppointmentAction, type DoctorAppointment, type DoctorSlot,
 } from '@jansetu/api';
 import { Alert, Badge, Empty, ErrorState, Loading, TextField, formatRupees } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
@@ -99,6 +99,22 @@ function AppointmentTable({ d, items, empty, meet, refresh, readAt, reading }: {
     reread: () => void queryClient.invalidateQueries({ queryKey: appointmentsKey(d) }),
     onNotice: (t) => { setFailure(null); setNotice(t); }, onFailure: (t) => { setNotice(null); setFailure(t); },
   };
+  // Q16d: a booking whose no-show time has come by its start is checked against its slot (the doctor's slots of that day):
+  // in a session with several seats the no-show waits for the session's end. Until that read answers the no-show is not
+  // offered; if it fails, the start rule is used and the server decides.
+  const needsSlot = (b: DoctorAppointment) => {
+    const at = appointmentInstant(b.bookingDate, b.bookingTime)?.at;
+    return b.status === 'confirmed' && b.paymentStatus === 'paid' && b.bookingKind !== 'instant' && !!b.slotId && !!at && at.getTime() + NO_SHOW_GRACE_MS <= now.getTime();
+  };
+  const slotDays = [...new Set(items.filter(needsSlot).map((b) => fromYmd(b.bookingDate)).filter((x): x is string => !!x))];
+  const daySlots = useQueries({ queries: slotDays.map((day) => ({ queryKey: [...d.key, 'slots', day], queryFn: () => d.api.slotsOn(day) })) });
+  const slotsOf = new Map(slotDays.map((day, i) => [day, daySlots[i]!]));
+  const actionsOf = (b: DoctorAppointment): AppointmentAction[] => {
+    if (!needsSlot(b)) return appointmentActions(b, now);
+    const q = slotsOf.get(fromYmd(b.bookingDate) ?? '');
+    if (q?.isPending) return appointmentActions(b, now).filter((a) => a !== 'no_show');
+    return appointmentActions(b, now, sessionEndOf(b, q?.data));
+  };
   // The notice of a move stays visible even when the moved booking left this list (it may have been the only one).
   const alerts = <>{notice && <Alert tone="ok">{notice}</Alert>}{failure && <Alert>{failure}</Alert>}</>;
   if (items.length === 0) return <>{alerts}<Empty title="Nothing here">{empty}</Empty></>;
@@ -113,7 +129,7 @@ function AppointmentTable({ d, items, empty, meet, refresh, readAt, reading }: {
           <tbody>
             {items.map((b) => (
               // Keyed by status too: once the booking moves on, an open confirmation for its old state is gone.
-              <Row key={`${b._id}:${b.status}:${b.updatedAt ?? ''}`} d={d} b={b} actions={appointmentActions(b, now)} onChanged={changed} move={move}
+              <Row key={`${b._id}:${b.status}:${b.updatedAt ?? ''}`} d={d} b={b} actions={actionsOf(b)} onChanged={changed} move={move}
                 link={<MeetLink b={b} gaveUp={meet.gaveUp(b._id, now)} onRefresh={() => { meet.restart(b._id); return refresh(); }} />}
                 onRefused={() => void queryClient.invalidateQueries({ queryKey: appointmentsKey(d) })} />
             ))}

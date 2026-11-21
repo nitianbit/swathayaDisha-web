@@ -276,7 +276,7 @@ describe('WQ11c: prices, prescriptions, suppliers and long imports', () => {
 });
 
 describe('WQ11c re-review: what a blank price leaves, and the template example', () => {
-  const row = (data: ImportRow['data'], medicineName = 'X', stock: Pick<ImportRow, 'inMyStock' | 'currentPrices'> = {}): ImportRow =>
+  const row = (data: ImportRow['data'], medicineName = 'X', stock: Pick<ImportRow, 'inMyStock' | 'batchInStock' | 'currentPrices'> = {}): ImportRow =>
     ({ rowIndex: 2, medicineName, status: 'valid', data, ...stock });
   const prices = (p: Partial<ImportCurrentPrices>): ImportCurrentPrices => ({ mrp: null, retailPrice: null, wholesalePrice: null, purchasePrice: null, ...p });
   it('a blank cell keeps a current price only when there is one (Q16c inMyStock / currentPrices)', () => {
@@ -286,6 +286,12 @@ describe('WQ11c re-review: what a blank price leaves, and the template example',
     expect(importPriceView(row({ medicineMatchStatus: 'matched' }, 'X', { inMyStock: true, currentPrices: prices({ retailPrice: 22 }) }), 'retailPrice')).toEqual({ kind: 'kept', value: 22 });
     expect(importPriceView(row({ medicineMatchStatus: 'matched' }, 'X', { inMyStock: true, currentPrices: prices({ mrp: 30 }) }), 'retailPrice')).toEqual({ kind: 'none' });
     expect(importPriceView(row({ medicineMatchStatus: 'matched' }), 'retailPrice')).toEqual({ kind: 'unknown' });
+    // Q16d: MRP is the batch's own; a new batch (batchInStock false, mrp null) has none, the selling price is still kept.
+    const newBatch = { inMyStock: true, batchInStock: false, currentPrices: prices({ retailPrice: 22 }) };
+    expect(importPriceView(row({ medicineMatchStatus: 'matched' }, 'X', newBatch), 'mrp')).toEqual({ kind: 'none' });
+    expect(importPriceView(row({ medicineMatchStatus: 'matched' }, 'X', newBatch), 'retailPrice')).toEqual({ kind: 'kept', value: 22 });
+    expect(importPriceView(row({ medicineMatchStatus: 'matched' }, 'X', { inMyStock: true, batchInStock: true, currentPrices: prices({ mrp: 30 }) }), 'mrp'))
+      .toEqual({ kind: 'kept', value: 30 });
     const plan = importPlan({ importMode: 'upsert', previewRows: [
       row({ medicineMatchStatus: 'matched', quantityToAdd: 1 }, 'X', { inMyStock: false, currentPrices: null }),
       row({ medicineMatchStatus: 'matched', quantityToAdd: 1 }, 'X', { inMyStock: true, currentPrices: prices({ retailPrice: 9 }) }),

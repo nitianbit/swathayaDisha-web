@@ -1,6 +1,6 @@
 import { ApiError, createApiClient } from './client.ts';
 import {
-  appointmentActions, appointmentRefusal, doctorAdminApi, noShowModeRefusal, noShowSlotFits, doctorClinicProblems, doctorNoShowMove, doctorStanding, meetingLinkState, doctorToolsApi, fromYmd, movableSlot, instantRefusal, offerSecondsLeft, payoutDetailsProblems, periodProblem,
+  appointmentActions, appointmentRefusal, doctorAdminApi, noShowModeRefusal, noShowSlotFits, doctorClinicProblems, doctorNoShowMove, doctorStanding, meetingLinkState, doctorToolsApi, fromYmd, movableSlot, sessionEndOf, instantRefusal, offerSecondsLeft, payoutDetailsProblems, periodProblem,
   presenceProblems, scheduleProblems, schedulableBranches, scheduleSlotCount, soloPracticeProblems, statementCsvName, toYmd,
   type DoctorAppointment, type SoloPracticeInput,
 } from './doctorTools.ts';
@@ -115,6 +115,16 @@ describe('appointment commands offered (updateAppointmentStatus, markNoShow, can
     // Q16a: a no-show 15 minutes after the start, not before; an unreadable time still offers completing (the server decides).
     expect(appointmentActions(appt({}), new Date('2026-11-17T04:44:00.000Z'))).toEqual(['complete', 'cancel']);
     expect(appointmentActions(appt({}), new Date('2026-11-17T04:45:00.000Z'))).toContain('no_show');
+    // Q16d: in a session with several seats (10:00–11:00), the no-show waits for 15 minutes after its END (11:15).
+    const S2 = 'f'.repeat(24);
+    const session = [{ _id: S2, date: '20261117', startTime: '10:00', endTime: '11:00', maxBookings: 6 }];
+    const end = sessionEndOf(appt({ slotId: S2 }), session);
+    expect(end?.toISOString()).toBe('2026-11-17T05:30:00.000Z');
+    expect(appointmentActions(appt({ slotId: S2 }), new Date('2026-11-17T05:44:00.000Z'), end)).not.toContain('no_show');
+    expect(appointmentActions(appt({ slotId: S2 }), new Date('2026-11-17T05:45:00.000Z'), end)).toContain('no_show');
+    expect(sessionEndOf(appt({ slotId: S2 }), [{ ...session[0]!, maxBookings: 1 }])).toBeNull(); // one patient: the start rule
+    expect(sessionEndOf(appt({ slotId: S2, bookingKind: 'instant' }), session)).toBeNull();
+    expect(sessionEndOf(appt({ slotId: S2 }), undefined)).toBeNull();
     expect(appointmentActions(appt({ bookingTime: 'soon' }), before)).toEqual(['complete', 'cancel']);
     expect(appointmentActions(appt({ status: 'pending', paymentStatus: 'pending' }), after)).toEqual(['cancel']);
     expect(appointmentActions(appt({ status: 'pending' }), after)).toEqual(['confirm', 'cancel']);

@@ -600,7 +600,13 @@ test('new bill: live totals as the server computes them; a lost answer is resent
   await fee.getByLabel('Description').fill('Home collection fee');
   await fee.getByLabel('Unit price (₹)').fill('100');
   await fee.getByLabel('GST rate').selectOption('18');
-  await expect(fee).toContainText('+ GST ₹18.00');
+  await expect(fee).toContainText('+ GST ₹18.00 (CGST ₹9.00 + SGST ₹9.00)');
+  // WQ11d: each half is rounded on its own, as the server charges it (₹3.33 at 5%: ₹0.08 + ₹0.08, not ₹0.17).
+  await fee.getByLabel('Unit price (₹)').fill('3.33');
+  await fee.getByLabel('GST rate').selectOption('5');
+  await expect(fee).toContainText('+ GST ₹0.16 (CGST ₹0.08 + SGST ₹0.08)');
+  await fee.getByLabel('Unit price (₹)').fill('100');
+  await fee.getByLabel('GST rate').selectOption('18');
   const totals = page.locator('dl[aria-label="Expected totals"]');
   await expect(totals).toContainText('₹1,000.00');
   await expect(totals).toContainText('− ₹10.00');

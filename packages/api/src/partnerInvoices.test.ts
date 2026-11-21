@@ -67,6 +67,8 @@ describe('tax rules mirrored from services/invoice.ts', () => {
     expect(p.documentKind).toBe('tax_invoice');
     expect(p.sameState).toBe(true);
     expect(p.lines.map((l) => [l.amountMinor, l.taxMinor])).toEqual([[333, 17], [29900, 5382], [101, 12]]);
+    // WQ11d: each line also carries the half charged (CGST = SGST), as the totals add it up.
+    expect(p.lines.map((l) => l.halfMinor)).toEqual([8, 2691, 6]);
     expect(p.totals).toEqual({
       subtotalMinor: 333 + 29997 + 101, discountMinor: 97, taxableMinor: 30334,
       cgstMinor: 8 + 2691 + 6, sgstMinor: 8 + 2691 + 6, igstMinor: 0, totalMinor: 30334 + 16 + 5382 + 12, currency: 'INR',
@@ -84,6 +86,7 @@ describe('tax rules mirrored from services/invoice.ts', () => {
     const p = previewInvoice(regular, '29', '27', [line({ unitPriceMinor: 333, gstRate: 5 })]);
     expect(p.sameState).toBe(false);
     expect(p.totals).toMatchObject({ cgstMinor: 0, sgstMinor: 0, igstMinor: 17, totalMinor: 350 });
+    expect(p.lines[0]!.halfMinor).toBeUndefined();
   });
 
   it('flags what the server refuses: GST for a supplier without GST, discounts above the line, oversized bills, another state', () => {

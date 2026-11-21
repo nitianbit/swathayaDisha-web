@@ -72,3 +72,16 @@ test('keyboard focus goes to the first control when it opens, and back to the tr
   await user.keyboard('{Enter}');
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel appointment' })));
 });
+test('WQ11d: without a reason field, opening focuses Back (never the action), so Enter twice does nothing (review proof "Enter twice")', async () => {
+  const user = userEvent.setup();
+  const sent: string[] = [];
+  render(<ConfirmAction label="Mark no-show" danger confirmLabel="Mark no-show" consequence="Not refunded. Cannot be undone." onConfirm={async () => { sent.push('x'); }} />);
+  screen.getByRole('button', { name: 'Mark no-show' }).focus();
+  await user.keyboard('{Enter}');
+  const group = screen.getByRole('group', { name: 'Mark no-show' });
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Back' })));
+  expect(group.contains(document.activeElement)).toBe(true);
+  await user.keyboard('{Enter}'); // Back
+  expect(sent).toEqual([]);
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Mark no-show' })));
+});

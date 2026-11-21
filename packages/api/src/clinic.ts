@@ -306,7 +306,9 @@ const MOVABLE: readonly ClinicAppointmentStatus[] = ['pending', 'confirmed'];
  * The desk steps of `services/clinic.ts` for this actor (`bookings.manage`), on the clinic's own DESK appointments only
  * (online bookings at the clinic are view-only for it, Q6 §11):
  * - `markArrived`: confirmed and not yet arrived;
- * - `closeDeskAppointment`: confirmed → completed (any time) or no_show (only once the appointment time has passed);
+ * - `closeDeskAppointment`: confirmed → completed (Q16d: any time on the appointment's own India day, or later) or
+ *   no_show (Q16d `noShowAllowedFromSlot`: 15 minutes after the start; in a session with several seats, 15 minutes after
+ *   the session ENDS);
  * - `cancelDeskAppointment` / `rescheduleDeskAppointment`: while pending or confirmed (`CANCELLABLE_BOOKING_STATUSES`);
  * - Q14 `rescheduleDeskNoShow`: a no-show, once. Desk rows do not say whether the one move was used (`deskView` carries
  *   no history), so the step is offered and the server decides (409 NO_SHOW_RESCHEDULE_USED: a second no-show is final).
@@ -314,19 +316,32 @@ const MOVABLE: readonly ClinicAppointmentStatus[] = ['pending', 'confirmed'];
 /** Q16a `NO_SHOW_GRACE_MS`: a no-show can be marked only this long after the appointment starts. */
 export const NO_SHOW_GRACE_MS = 15 * 60_000;
 
+/**
+ * What the page knows of the appointment's slot (the desk rows do not carry it): `seats` > 1 for a session with several
+ * patients, with its `endTime` as stored. Unknown: the one-patient rule is applied and the server has the last word.
+ */
+export interface DeskSlotKnown { seats: number; endTime?: string }
+
+/** Q16d: the India date (YYYYMMDD) of an instant. */
+const istYmd = (at: Date) => new Date(at.getTime() + 330 * 60_000).toISOString().slice(0, 10).replace(/-/g, '');
+
 export function deskActions(a: Pick<ClinicAppointment, 'source' | 'status' | 'arrivedAt' | 'bookingDate' | 'bookingTime'>,
-  actor: Pick<PartnerActorView, 'role' | 'permissions'>, now: Date): DeskActionOffer[] {
+  actor: Pick<PartnerActorView, 'role' | 'permissions'>, now: Date, slot?: DeskSlotKnown): DeskActionOffer[] {
   if (a.source !== 'desk' || !holdsAny(actor, ['bookings.manage'])) return [];
   const out: DeskActionOffer[] = [];
   if (a.status === 'confirmed') {
     if (!a.arrivedAt) out.push({ action: 'arrived' });
     const at = appointmentAt(a);
-    const started = !!at && at.getTime() <= now.getTime();
-    // WQ11b (Q16a `closeDeskAppointment`: 409 NOT_STARTED_YET): a visit is marked as seen only once it has started.
-    out.push({ action: 'complete', blocked: started ? undefined : 'A visit can be marked as seen only once the appointment has started.' });
-    // Q16a (`noShowAllowedFrom`, 409 APPOINTMENT_NOT_STARTED): a no-show only 15 minutes after the appointment time.
-    const noShowFrom = at ? at.getTime() + NO_SHOW_GRACE_MS : null;
-    out.push({ action: 'no_show', blocked: noShowFrom !== null && noShowFrom <= now.getTime() ? undefined : 'A no-show can be marked 15 minutes after the appointment time.' });
+    // Q16d (`closeDeskAppointment`, 409 NOT_STARTED_YET only on an earlier day): seen any time on the appointment's day.
+    const dayCame = /^\d{8}$/.test(a.bookingDate) && istYmd(now) >= a.bookingDate;
+    out.push({ action: 'complete', blocked: dayCame ? undefined : 'A visit can be marked as seen from the day of the appointment.' });
+    // Q16d (`noShowAllowedFromSlot`, 409 APPOINTMENT_NOT_STARTED): 15 minutes after the time; a session: after its end.
+    const end = slot && slot.seats > 1 && slot.endTime ? appointmentInstant(a.bookingDate, slot.endTime)?.at : undefined;
+    const from = end && at && end.getTime() > at.getTime() ? end : at;
+    const noShowFrom = from ? from.getTime() + NO_SHOW_GRACE_MS : null;
+    out.push({ action: 'no_show', blocked: noShowFrom !== null && noShowFrom <= now.getTime() ? undefined
+      : from === end && end ? 'In a session with several patients, a no-show can be marked 15 minutes after the session ends.'
+      : 'A no-show can be marked 15 minutes after the appointment time.' });
   }
   if (MOVABLE.includes(a.status)) out.push({ action: 'reschedule' }, { action: 'cancel' });
   if (a.status === 'no_show') out.push({ action: 'reschedule_no_show' });

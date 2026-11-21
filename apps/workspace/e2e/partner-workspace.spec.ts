@@ -58,6 +58,8 @@ interface Backend {
   abandonAnswers: string[];
   /** WQ11b: the next branch create is lost before it is made ('before') or made and its answer lost ('after'). */
   dropBranch?: 'before' | 'after' | null;
+  /** WQ11d: the next branch create is refused 403 (e.g. a permission just removed). */
+  refuseNextBranch?: boolean;
 }
 
 let clock = 0;
@@ -267,6 +269,7 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
         const prior = requestKey ? b.branches.find((x) => x.createRequestKey === requestKey) : undefined;
         if (prior) return json(route, 200, { success: true, data: prior, replayed: true });
         if (b.dropBranch === 'before') { b.dropBranch = null; return route.abort('failed'); }
+        if (b.refuseNextBranch) { b.refuseNextBranch = false; return json(route, 403, { error: 403, code: 'PERMISSION_DENIED', message: 'You may not add branches' }); }
         const id = b.branches.some((x) => x._id === BR2) ? `d${b.branches.length % 10}`.repeat(12) : BR2;
         const br = { _id: id, partnerId: pid, isActive: true, updatedAt: V0, ...content, ...(requestKey ? { createRequestKey: requestKey } : {}) };
         b.branches.push(br);
@@ -1498,6 +1501,30 @@ test('WQ11b: a branch add whose answer is lost is found in the list (made once);
   expect(posts).toHaveLength(2);
   expect(posts[1]!.body).toEqual(posts[0]!.body);
   expect(backend.branches.filter((x) => x.name === 'Basavanagudi')).toHaveLength(1);
+});
+
+test('WQ11d: a resend of a lost branch create that is refused keeps the form locked: the first request may still arrive', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Branches' }).click();
+  await page.getByRole('button', { name: 'Add a branch' }).click();
+  await page.getByLabel('Branch name').fill('Basavanagudi');
+  await page.getByLabel('Phone', { exact: true }).fill('9000000020');
+  await page.getByLabel('Address line 1').fill('4th Block');
+  await page.getByLabel('City').fill('Bengaluru');
+  await page.getByLabel('State', { exact: true }).fill('Karnataka');
+  await page.getByLabel('State code').fill('29');
+  await page.getByLabel('PIN code').fill('560011');
+  backend.dropBranch = 'before';
+  await page.getByRole('button', { name: 'Add branch', exact: true }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed branch' });
+  await expect(panel).toBeVisible();
+  backend.refuseNextBranch = true;
+  await panel.getByRole('button', { name: 'Send again' }).click();
+  await expect(page.getByText(/Not sent again: .*the first request may still arrive, so the form stays as it was sent\./)).toBeVisible();
+  await expect(panel).toBeVisible();
+  await expect(page.getByLabel('Branch name')).toBeDisabled();
+  await expect(panel.getByRole('button', { name: 'Send again' })).toBeVisible();
 });
 
 test('WQ11b: the partner name an admin searches for stays out of the address', async ({ page }) => {

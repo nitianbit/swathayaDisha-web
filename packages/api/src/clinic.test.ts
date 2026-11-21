@@ -109,13 +109,27 @@ describe('desk steps (markArrived, closeDeskAppointment, cancel/reschedule)', ()
   const acts = (a: ClinicAppointment, now: Date, actor = owner) => deskActions(a, actor, now).map((o) => (o.blocked ? `${o.action}!` : o.action));
 
   it('offers check-in, seen, no-show after the time, move and cancel on a booked desk appointment', () => {
-    // WQ11b: "seen" only once the appointment has started (Q16a 409 NOT_STARTED_YET), like the no-show.
-    expect(acts(appt(), before)).toEqual(['arrived', 'complete!', 'no_show!', 'reschedule', 'cancel']);
+    // Q16d: "seen" any time on the appointment's own India day (409 NOT_STARTED_YET only on an earlier day).
+    expect(acts(appt(), before)).toEqual(['arrived', 'complete', 'no_show!', 'reschedule', 'cancel']);
+    expect(acts(appt({ bookingDate: '20261118' }), late)).toEqual(['arrived', 'complete!', 'no_show!', 'reschedule', 'cancel']);
+    expect(deskActions(appt({ bookingDate: '20261118' }), owner, late).find((o) => o.action === 'complete')?.blocked)
+      .toBe('A visit can be marked as seen from the day of the appointment.');
+    expect(acts(appt({ bookingDate: '20261116' }), late)).toContain('complete');
     // Q16a: a no-show only 15 minutes after the time (10:30 → from 10:45).
     expect(acts(appt(), after)).toEqual(['arrived', 'complete', 'no_show!', 'reschedule', 'cancel']);
     expect(acts(appt(), late)).toEqual(['arrived', 'complete', 'no_show', 'reschedule', 'cancel']);
     expect(acts(appt({ arrivedAt: '2026-11-17T04:50:00Z' }), late)).toEqual(['complete', 'no_show', 'reschedule', 'cancel']);
-    expect(acts(appt({ bookingTime: 'unreadable' }), after)).toEqual(['arrived', 'complete!', 'no_show!', 'reschedule', 'cancel']);
+    expect(acts(appt({ bookingTime: 'unreadable' }), after)).toEqual(['arrived', 'complete', 'no_show!', 'reschedule', 'cancel']);
+  });
+
+  it('Q16d: in a session with several seats a no-show waits for 15 minutes after the session ends', () => {
+    const session = { seats: 4, endTime: '11:00' }; // 10:30–11:00: a no-show from 11:15
+    const at = (iso: string) => deskActions(appt(), owner, new Date(iso), session).find((o) => o.action === 'no_show')!;
+    expect(at('2026-11-17T05:15:00Z').blocked).toBe('In a session with several patients, a no-show can be marked 15 minutes after the session ends.'); // 10:45
+    expect(at('2026-11-17T05:44:00Z').blocked).toBeDefined(); // 11:14
+    expect(at('2026-11-17T05:45:00Z').blocked).toBeUndefined(); // 11:15
+    // One seat (or not known): 15 minutes after the start.
+    expect(deskActions(appt(), owner, late, { seats: 1, endTime: '11:00' }).find((o) => o.action === 'no_show')!.blocked).toBeUndefined();
   });
 
   it('offers nothing on finished, online or view-only appointments', () => {

@@ -1,5 +1,5 @@
 import { ApiError } from './client.ts';
-import { clearWebSignOutPending, isSignedOutAnswer, isTransientSessionError, markWebSignOutPending, webSignOutState } from './webSession.ts';
+import { clearWebSignOutPending, isIdListSlot, isSignedOutAnswer, isTransientSessionError, markerStore, markWebSignOutPending, webSignOutState } from './webSession.ts';
 
 describe('WQ11a web sign-out record', () => {
   afterEach(() => { localStorage.clear(); sessionStorage.clear(); vi.restoreAllMocks(); });
@@ -46,5 +46,21 @@ describe('WQ11a N4 logout answer', () => {
   it('only the backend\'s { signedOut: true } proves the session ended', () => {
     expect(isSignedOutAnswer({ signedOut: true })).toBe(true);
     for (const a of [null, undefined, '', '<html></html>', {}, { signedOut: 'true' }, { success: true }]) expect(isSignedOutAnswer(a)).toBe(false);
+  });
+});
+
+describe('WQ11d id lists in the reload marker store', () => {
+  afterEach(() => { sessionStorage.clear(); });
+  it('keeps only record ids, only for the listed slots, per person; remove clears them', () => {
+    const m = markerStore('workspace', 'u'.repeat(24));
+    const slot = `stock-import-discarded:${'p'.repeat(24)}`;
+    expect(isIdListSlot(slot)).toBe(true);
+    m.saveIds(slot, ['a'.repeat(24), 'Asha Rao', 42, 'b'.repeat(24)]);
+    m.saveIds('patient-notes:x', ['c'.repeat(24)]); // not an id-list slot: nothing stored
+    expect(m.allIds()).toEqual({ [slot]: ['a'.repeat(24), 'b'.repeat(24)] });
+    expect(JSON.stringify({ ...sessionStorage })).not.toContain('Asha');
+    expect(markerStore('workspace', 'v'.repeat(24)).allIds()).toEqual({});
+    m.remove(slot);
+    expect(m.allIds()).toEqual({});
   });
 });

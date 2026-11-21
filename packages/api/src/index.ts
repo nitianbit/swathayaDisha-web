@@ -77,7 +77,7 @@ export type {
   Booking, BookingPayment, BookingStatus, ConsultationMode, CouponCheck, CustomerProfile, NewConsultation, PaymentOrder, Slot, Specialist, Dependent, ExternalBooking, ExternalIntegration, Gender, NewDependent,
   ProfileUpdate, Relationship, Wallet, WalletTransaction,
 } from './customer.ts';
-export { clearWebSignOutPending, isSignedOutAnswer, isTransientSessionError, markerStore, markWebSignOutPending, samePrincipal, sessionChannel, webSignOutState, withSessionLock } from './webSession.ts';
+export { clearWebSignOutPending, isSignedOutAnswer, isIdListSlot, isTransientSessionError, markerStore, markWebSignOutPending, samePrincipal, sessionChannel, webSignOutState, withSessionLock } from './webSession.ts';
 export type { PendingMarker, Principal, SessionAnnouncement } from './webSession.ts';
 export { customerPharmacyApi, normalizeCart, PHARMACY_PAYMENT_WINDOW_MIN, shelfOf } from './customerPharmacy.ts';
 export type { Cart, CartItem, Checkout, CheckoutResult, PharmacyStore, ShelfItem, StockRow } from './customerPharmacy.ts';
@@ -96,7 +96,7 @@ export type {
 export {
   addDays, ADMIN_LAB_BOOKINGS_PAGE_MAX, canReadDrafts, capacityProblem, COLLECTOR_PHONE_PATTERN, eligibleSigners, isBookable, isLabBookingChanged,
   isRealDate, isReportTooLarge, isTemplateChanged, isUploadFailed, istDateOf,
-  LAB_BOOKING_STATUS_LABEL, LAB_BOOKING_STATUSES, LAB_BOOKINGS_PAGE_MAX, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, LAB_VISIT_MODES, labActions, labSlotEnd,
+  LAB_BOOKING_STATUS_LABEL, LAB_BOOKING_STATUSES, LAB_BOOKINGS_PAGE_MAX, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, LAB_VISIT_MODES, labActions, labSlotEnd, REPORT_UPLOAD_TIMEOUT_MS,
   labBookingsAdminApi, labNoShowMove, manualSlotProblems, MAX_COLLECTOR_NAME, MAX_LAB_REASON,
   MAX_WINDOWS_PER_DAY, MIN_LAB_REASON, mondayOf, partnerLabsApi, releaseOf, reopenable, REPORT_ACCEPT, REPORT_MAX_BYTES,
   reportFileBooking, reportFileName, reportFileProblem, ROLLING_DAYS, SLOT_CAPACITY_MIN, SLOT_CLOSURE_LABEL, SLOT_MINUTES_MAX,
@@ -126,7 +126,7 @@ export {
   partnerClinicApi,
 } from './clinic.ts';
 export type {
-  AppointmentBill, AppointmentQuery, BookingNoShowMove, ClinicAppointment, ClinicAppointmentStatus, ClinicDoctorRow, DeskAction, DeskActionOffer, DeskAppointment,
+  AppointmentBill, AppointmentQuery, BookingNoShowMove, ClinicAppointment, ClinicAppointmentStatus, ClinicDoctorRow, DeskAction, DeskActionOffer, DeskAppointment, DeskSlotKnown,
   DeskBookingInput, DeskGender, DeskKeyAbandon, DeskPatientInput, DeskRelation, DeskBookingResult, DeskSlot, DoctorInvite,
   DoctorInviteState, DoctorLinkResult, DoctorUnlinkResult, LinkDoctorInput,
 } from './clinic.ts';
@@ -135,7 +135,7 @@ export type { NoShowHistory } from './noShows.ts';
 // WQ4 doctor tools: names shared with finance.ts are exported with a Doctor prefix.
 export {
   APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentStart, CONSULT_MINUTES, CONSULT_MODE_LABEL, CONSULT_MODES, doctorAdminApi, doctorClinicProblems,
-  doctorNoShowMove, doctorStanding, doctorToolsApi, MAX_DIRECTORY_SEARCH, movableSlot, noShowModeRefusal, noShowSlotFits, NO_SHOW_GRACE_MS, APPOINTMENT_REFUSAL, appointmentRefusal,
+  doctorNoShowMove, doctorStanding, doctorToolsApi, MAX_DIRECTORY_SEARCH, movableSlot, sessionEndOf, noShowModeRefusal, noShowSlotFits, NO_SHOW_GRACE_MS, APPOINTMENT_REFUSAL, appointmentRefusal,
   DOCTOR_ROLLING_DAYS, EXTEND_MINUTES_MAX, fromYmd, HEARTBEAT_MS, INSTANT_FEE_MAX_MINOR, INSTANT_MODES, INSTANT_REFUSAL, instantRefusal,
   FINANCE_PAGE, LEDGER_KIND_LABEL as DOCTOR_LEDGER_KIND_LABEL, meetingLinkState, OFFER_MS, offerSecondsLeft, payoutDetailsProblems as doctorPayoutDetailsProblems, periodProblem, presenceProblems, PRESENCE_TTL_MS, SCHEDULE_MINUTES_MAX,
   SCHEDULE_MINUTES_MIN, SCHEDULE_WEEKDAYS, SCHEDULE_WINDOWS_MAX, scheduleProblems, schedulableBranches, scheduleSlotCount, soloPracticeProblems,

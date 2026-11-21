@@ -92,3 +92,14 @@ test('WQ11b: Back from the confirmation starts the choice again (review proof 3:
   expect(screen.getByRole('form', { name: 'Reschedule no-show' })).toHaveTextContent('Choose the new time.');
   expect(screen.getByRole('form', { name: 'Reschedule no-show' })).not.toHaveTextContent('to Wed, 18 Nov 2026, 11:00?');
 });
+test('WQ11d: the confirmation focuses Back, never the move button, so Enter twice does not move the booking', async () => {
+  const user = userEvent.setup();
+  const { send } = mount();
+  await user.click(screen.getByRole('button', { name: 'Reschedule no-show' }));
+  await user.click(screen.getByRole('button', { name: 'pick 11:00' }));
+  screen.getByRole('button', { name: 'Continue' }).focus();
+  await user.keyboard('{Enter}');
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Back' })));
+  await user.keyboard('{Enter}');
+  expect(send).not.toHaveBeenCalled();
+});

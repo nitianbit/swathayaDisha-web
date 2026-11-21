@@ -319,6 +319,8 @@ export interface DoctorAppointment {
   createdAt?: string;
   /** The version a no-show move names (`expectedUpdatedAt`, 409 BOOKING_CHANGED when it moved). */
   updatedAt?: string;
+  /** The slot it holds (Q16d: a session with several seats has its no-show only after the session ends). */
+  slotId?: string;
 }
 
 export type AppointmentAction = 'confirm' | 'complete' | 'cancel' | 'no_show';
@@ -408,7 +410,22 @@ export function movableSlot(s: DoctorSlot, now: Date): boolean {
  * `cancelByDoctor` / `cancelAccepted` for instant ones, which must be confirmed); no-show only for a paid, confirmed
  * booking whose time has come (`markNoShow`). Terminal states offer nothing.
  */
-export function appointmentActions(b: DoctorAppointment, now: Date): AppointmentAction[] {
+/**
+ * Q16d `noShowAllowedFromSlot`: whether a no-show must wait for the booking's slot to END (a session with several seats)
+ * and until when; null when it is a one-patient slot (or its slot is not known: the start rule, the server decides).
+ */
+export function sessionEndOf(b: Pick<DoctorAppointment, 'bookingKind' | 'slotId'>, slots: readonly DoctorSlot[] | undefined): Date | null {
+  if (b.bookingKind === 'instant' || !b.slotId || !slots) return null;
+  const s = slots.find((x) => x._id.toLowerCase() === b.slotId!.toLowerCase());
+  if (!s || (s.maxBookings ?? 1) <= 1) return null;
+  const at = appointmentInstant(s.date, s.startTime)?.at;
+  if (!at) return null;
+  const endAt = s.endTime ? appointmentInstant(s.date, s.endTime)?.at : undefined;
+  return endAt && endAt.getTime() > at.getTime() ? endAt : new Date(at.getTime() + (Number(s.duration) > 0 ? Number(s.duration) : 30) * 60_000);
+}
+
+/** `sessionEnd`: the end of the booking's session when it is in one (`sessionEndOf`); its no-show waits for it. */
+export function appointmentActions(b: DoctorAppointment, now: Date, sessionEnd: Date | null = null): AppointmentAction[] {
   const paid = b.paymentStatus === 'paid';
   if (b.status === 'pending') return b.bookingKind === 'instant' ? [] : paid ? ['confirm', 'cancel'] : ['cancel'];
   if (b.status !== 'confirmed') return [];
@@ -422,8 +439,9 @@ export function appointmentActions(b: DoctorAppointment, now: Date): Appointment
   // paid at the clinic excepted: nothing was taken through Jansetu).
   if (!noShowMovedOnce(b) || b.settlementSystem === 'clinic') out.push('cancel');
   // Q16a: a no-show is marked only 15 minutes after the start (409 APPOINTMENT_NOT_STARTED before; an instant
-  // consultation's time is its acceptance).
-  if (paid && at && at.at.getTime() + NO_SHOW_GRACE_MS <= now.getTime()) out.push('no_show');
+  // consultation's time is its acceptance). Q16d: in a session with several seats, 15 minutes after the session ENDS.
+  const from = sessionEnd && at && sessionEnd.getTime() > at.at.getTime() ? sessionEnd.getTime() : at?.at.getTime();
+  if (paid && from !== undefined && from + NO_SHOW_GRACE_MS <= now.getTime()) out.push('no_show');
   return out;
 }
 
@@ -433,8 +451,8 @@ export const NO_SHOW_GRACE_MS = 15 * 60_000;
 /** The words for refusals of an appointment status change (the server's own message is the fallback). */
 export const APPOINTMENT_REFUSAL: Readonly<Record<string, string>> = {
   NOT_STARTED_YET: 'This appointment has not started yet. Mark it completed once its time has come.',
-  // Q16a (in progress): a no-show is marked only a while after the start time.
-  APPOINTMENT_NOT_STARTED: 'It is too early to mark this appointment a no-show. Try again a little after its start time.',
+  // Q16a/Q16d: a no-show is marked 15 minutes after the start; in a session with several seats, after the session ends.
+  APPOINTMENT_NOT_STARTED: 'It is too early to mark this appointment a no-show: wait until 15 minutes after its time (in a session with several patients, 15 minutes after the session ends).',
   BOOKING_NOT_PAID: 'This appointment is not paid yet, so it cannot be completed.',
 };
 export const appointmentRefusal = (err: unknown): string | null =>

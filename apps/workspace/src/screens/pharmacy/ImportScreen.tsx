@@ -226,7 +226,13 @@ function ImportView({ pharmacyId, record, reread }: {
             {' '}Each row is added only once, so checking or sending again is safe. This page checks again on its own every few seconds.
           </Alert>
         </CheckPanel>
-      ) : (
+      ) : null}
+      {op && !(busy && op.attempts === 1 && !op.uncertain) && stuck && (
+        // WQ11d: a tab holding an unconfirmed step for a stuck import may still try again (the server's retry of a stale
+        // `committing` import): it replaces that step here; rows already added are never added twice.
+        <StuckRetry record={record} disabled={busy} onRetry={() => run(startOp(newRequestKey(), { kind: 'retry', importId: record._id, since: record.updatedAt ?? record.committedAt }))} />
+      )}
+      {op && !(busy && op.attempts === 1 && !op.uncertain) ? null : (
         <>
           {record.status === 'previewed' && isDiscarded && (
             <section className="ws-section" aria-labelledby="go-h">
@@ -288,16 +294,7 @@ function ImportView({ pharmacyId, record, reread }: {
           )}
           {record.status === 'committing' && !stuck && <Alert tone="warn">The rows are being added. This page updates on its own.</Alert>}
           {stuck && (
-            <section className="ws-section" aria-labelledby="stuck-h">
-              <h2 id="stuck-h">Adding stopped</h2>
-              <Alert tone="warn">
-                Adding these rows started but has not finished since {formatDateTime(record.updatedAt)}. You can try again: rows
-                already added are never added twice.
-              </Alert>
-              <ConfirmAction label="Try again…" confirmLabel="Yes, try again"
-                consequence="The rows not added yet are added now. A row already added is never added twice. Rows with problems in the file are not tried."
-                onConfirm={() => run(startOp(newRequestKey(), { kind: 'retry', importId: record._id, since: record.updatedAt ?? record.committedAt }))} />
-            </section>
+            <StuckRetry record={record} disabled={busy} onRetry={() => run(startOp(newRequestKey(), { kind: 'retry', importId: record._id, since: record.updatedAt ?? record.committedAt }))} />
           )}
           {importRetryable(record, now.getTime()) && !stuck && (
             <section className="ws-section" aria-labelledby="retry-h">
@@ -312,6 +309,22 @@ function ImportView({ pharmacyId, record, reread }: {
 
       <Rows rows={rows} />
     </>
+  );
+}
+
+/** An import whose adding stopped (`importStuck`): the server's retry adds the rows not added yet. */
+function StuckRetry({ record, disabled, onRetry }: { record: InventoryImport; disabled: boolean; onRetry: () => Promise<unknown> }) {
+  return (
+    <section className="ws-section" aria-labelledby="stuck-h">
+      <h2 id="stuck-h">Adding stopped</h2>
+      <Alert tone="warn">
+        Adding these rows started but has not finished since {formatDateTime(record.updatedAt)}. You can try again: rows
+        already added are never added twice.
+      </Alert>
+      <ConfirmAction label="Try again…" confirmLabel="Yes, try again" disabled={disabled}
+        consequence="The rows not added yet are added now. A row already added is never added twice. Rows with problems in the file are not tried."
+        onConfirm={onRetry} />
+    </section>
   );
 }
 
@@ -367,11 +380,12 @@ const STEP = 100;
  * named when the preview says it (Q16c `currentPrices`), or none when there is none (a new medicine, or one not yet in
  * this pharmacy's stock: `inMyStock`).
  */
-function Price({ view, ready }: { view: ImportPriceView; ready: boolean }) {
+function Price({ view, ready, mrp = false }: { view: ImportPriceView; ready: boolean; mrp?: boolean }) {
   if (!ready) return <>—</>;
   if (view.kind === 'set') return <>{formatRupees(view.value)}</>;
   if (view.kind === 'kept') return <span className="ws-muted">Kept: {formatRupees(view.value)}</span>;
-  if (view.kind === 'none') return <span className="ws-muted">No price yet</span>;
+  // Q16d: MRP is per batch; a new batch (`batchInStock` false) with a blank cell has none.
+  if (view.kind === 'none') return <span className="ws-muted">{mrp ? 'No MRP yet' : 'No price yet'}</span>;
   return <span className="ws-muted">Current price kept</span>;
 }
 
@@ -416,7 +430,7 @@ function Rows({ rows }: { rows: ImportRow[] }) {
                   <td>{r.data?.batchNumber || '—'}</td>
                   <td>{r.data?.expiryDate ? formatExpiry(r.data.expiryDate) : '—'}</td>
                   <td>{r.data?.quantityToAdd ?? '—'}</td>
-                  <td><Price ready={ready} view={importPriceView(r, 'mrp')} /></td>
+                  <td><Price ready={ready} mrp view={importPriceView(r, 'mrp')} /></td>
                   <td>
                     <Price ready={ready} view={importPriceView(r, 'retailPrice')} />
                     {ready && importLeavesUnpriced(r) && <div className="ws-muted">Not on sale until priced</div>}

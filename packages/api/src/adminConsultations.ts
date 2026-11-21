@@ -95,8 +95,8 @@ export const MAX_ADMIN_CANCEL_REASON = 500;
  * BOOKING_NOT_MOVED_NO_SHOW); never an instant consultation (INSTANT_CONSULT_COMMAND_REQUIRED) nor a front-desk
  * appointment (paid at the clinic: the clinic cancels it, or an admin as its owner).
  */
-export const canAdminCancelMovedNoShow = (b: Pick<AdminConsultation, 'status' | 'bookingKind' | 'clinicDesk' | 'noShows' | 'noShowReschedules'>) =>
-  (b.status === 'confirmed' || b.status === 'pending') && b.bookingKind !== 'instant' && !b.clinicDesk && noShowMovedOnce(b);
+export const canAdminCancelMovedNoShow = (b: Pick<AdminConsultation, 'status' | 'bookingKind' | 'clinicDesk' | 'settlementSystem' | 'noShows' | 'noShowReschedules'>) =>
+  (b.status === 'confirmed' || b.status === 'pending') && b.bookingKind !== 'instant' && !b.clinicDesk && b.settlementSystem !== 'clinic' && noShowMovedOnce(b);
 
 /** The refusals of an admin cancel of a moved no-show, in words (the server's message is the fallback). */
 export const ADMIN_CANCEL_REFUSAL: Record<string, string> = {
@@ -107,6 +107,8 @@ export const ADMIN_CANCEL_REFUSAL: Record<string, string> = {
   BOOKING_NOT_FOUND: 'This booking no longer exists.',
   // Q16a final: a repeat of the admin cancel (the screen reads the booking and says how it was cancelled).
   ALREADY_CANCELLED: 'This booking is already cancelled: nothing more was done.',
+  // Q16d (F5): a clinic desk appointment (paid at the clinic) is cancelled with the clinic's own cancellation.
+  USE_CLINIC_CANCEL: 'This is a clinic front-desk appointment, paid at the clinic: cancel it from that clinic’s front desk (as its owner), not here.',
 };
 
 /** Why the filters cannot be sent (as `bookingQuerySchema` would refuse them), or null. */

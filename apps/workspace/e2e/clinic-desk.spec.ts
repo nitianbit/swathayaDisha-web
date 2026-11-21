@@ -58,6 +58,8 @@ interface Backend {
   loseNextNoShowMove?: boolean;
   /** WQ11b (Q16a): the next "seen" is refused 409 NOT_STARTED_YET (the server's clock says it has not started). */
   notStartedOnce?: boolean;
+  /** Q16d: the next no-show is refused 409 APPOINTMENT_NOT_STARTED (a session that has not ended + 15 minutes). */
+  noShowTooEarlyOnce?: boolean;
   /** Q14: the next admin link is recorded, then its answer is lost. */
   loseNextLink?: boolean;
   /** The next desk booking is recorded, then its answer is lost on the network. */
@@ -152,6 +154,9 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       { memberId: '71'.repeat(12), doctorId: D1, role: 'staff', branchIds: [], name: 'Dr Mehta', specialization: 'General physician', consultationFee: 500, active: true },
       { memberId: '72'.repeat(12), doctorId: D2, role: 'staff', branchIds: [BR2], name: 'Dr Rao', specialization: 'Dermatologist', consultationFee: 800, active: true },
       { memberId: '73'.repeat(12), doctorId: D3, role: 'staff', branchIds: [], name: 'Dr Absent', specialization: 'ENT', consultationFee: 400, active: false },
+      // WQ11d: owners who are also doctors here (at a branch of their own, so the desk lists stay as they are).
+      { memberId: OWNER, doctorId: 'd5'.repeat(12), role: 'owner', branchIds: ['c8'.repeat(12)], name: 'Dr Ravi', specialization: 'ENT', active: true },
+      { memberId: '75'.repeat(12), doctorId: 'd6'.repeat(12), role: 'owner', branchIds: ['c8'.repeat(12)], name: 'Dr Lata', specialization: 'ENT', active: true },
     ],
     [CLINIC2]: [{ memberId: '74'.repeat(12), doctorId: D1, role: 'staff', branchIds: [], name: 'Dr Mehta', specialization: 'General physician', consultationFee: 600, active: true }],
   };
@@ -305,6 +310,8 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       const list = doctors[pid] ?? [];
       const i = list.findIndex((d) => d.doctorId === unlink[1]);
       if (i < 0) return fail(route, 404, 'DOCTOR_NOT_AT_CLINIC', 'This doctor does not consult here');
+      // Q16b N1: an owner's doctor link is removed by another owner or an admin; never by themselves.
+      if (list[i]!.role === 'owner' && list[i]!.memberId === actor._id) return fail(route, 409, 'DOCTOR_IS_OWNER', 'Another owner or the platform team removes your doctor link');
       list.splice(i, 1);
       return ok(route, { unlinked: true, membershipEnded: true });
     }
@@ -323,7 +330,8 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
     if (sub === '/clinic/slots') {
       const q = Object.fromEntries(url.searchParams);
       if (!(branches[pid] ?? []).some((x) => x._id === q.branchId && (x.services as Rec).inClinic)) return fail(route, 409, 'BRANCH_NOT_IN_CLINIC', 'This branch does not take in-clinic consultations');
-      const notStarted = (s: Slot) => !s.started && Date.parse(istInstant(s.date, s.startTime)) > NOW.getTime();
+      // Q16d (`bookableUntilOf`): a one-patient slot until it starts; a session with several seats until it ends.
+      const notStarted = (s: Slot) => !s.started && Date.parse(istInstant(s.date, s.max > 1 ? s.endTime : s.startTime)) > NOW.getTime();
       return ok(route, b.slots.filter((s) => s.partnerId === pid && s.doctorId === q.doctorId && s.branchId === q.branchId && s.date === q.date && s.current < s.max && notStarted(s))
         .map((s) => ({ slotId: s.slotId, date: s.date, startTime: s.startTime, endTime: s.endTime, startsAt: istInstant(s.date, s.startTime), seatsLeft: s.max - s.current })));
     }
@@ -420,6 +428,10 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
           return fail(route, 409, 'NOT_STARTED_YET', 'An appointment can be completed only after it has started');
         }
         if (a.status !== 'confirmed') return fail(route, 409, 'BOOKING_STATE_CONFLICT', `A ${a.status} appointment cannot be closed`);
+        if (cmd === 'no-show' && b.noShowTooEarlyOnce) {
+          b.noShowTooEarlyOnce = false;
+          return fail(route, 409, 'APPOINTMENT_NOT_STARTED', 'A no-show can be marked 15 minutes after the appointment time (a session: after it ends)');
+        }
         if (cmd === 'no-show' && Date.parse(istInstant(`${a.bookingDate.slice(0, 4)}-${a.bookingDate.slice(4, 6)}-${a.bookingDate.slice(6)}`, a.bookingTime)) > NOW.getTime()) {
           return fail(route, 409, 'APPOINTMENT_NOT_STARTED', 'A no-show can be marked only after the appointment time');
         }
@@ -534,6 +546,20 @@ test('Q14 doctors: the list; clinics no longer invite; the owner removes a docto
   await expect(page.getByText('The invitation to Dr Pillai was revoked. They can no longer accept it.')).toBeVisible();
   await expect(invites).toHaveCount(0);
   expect(backend.calls.filter((c) => c.method === 'POST' && c.path.includes('doctor')).length).toBe(0);
+});
+
+test('WQ11d (Q16b N1): another owner who is also the clinic’s doctor can lose the doctor link here (staying an owner); your own link is not offered', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Doctors' }).click();
+  const list = page.getByRole('table', { name: 'Doctors consulting at this clinic' });
+  await expect(list.getByRole('row').filter({ hasText: 'Dr Ravi' })).toContainText('Your own doctor link: another owner or the Jansetu team removes it.');
+  await expect(list.getByRole('row').filter({ hasText: 'Dr Ravi' }).getByRole('button')).toHaveCount(0);
+  await list.getByRole('button', { name: 'Remove Dr Lata as a doctor' }).click();
+  await expect(page.getByRole('group', { name: 'Remove Dr Lata as a doctor' })).toContainText('Dr Lata stays an owner of this clinic; only their doctor link here ends.');
+  await page.getByRole('button', { name: 'Remove the doctor link' }).click();
+  await expect(page.getByText('Dr Lata no longer consults here.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.method === 'DELETE').map((c) => c.path)).toEqual([`/partner-workspace/clinic/doctors/${'d6'.repeat(12)}`]);
 });
 
 test('Q14 admin as owner: find a verified doctor, choose branches, confirm the link; a lost answer is resent with the same key and linked once', async ({ page }) => {
@@ -651,9 +677,9 @@ test('desk booking: details checked, reviewed, booked once with a key; then arri
   await expect(page.getByText('Kiran Shah is marked as arrived.')).toBeVisible();
   await expect(appointments(page).getByRole('row').filter({ hasText: '9800000009' })).toContainText('Arrived 10:00');
   await expect(page.getByRole('button', { name: 'Mark arrived' })).toHaveCount(0);
-  // WQ11b: "seen" waits for the appointment time (10:15; it is 10:00).
-  await expect(page.getByRole('button', { name: 'Mark as seen' })).toBeDisabled();
-  await expect(page.getByText('A visit can be marked as seen only once the appointment has started.')).toBeVisible();
+  // Q16d: "seen" any time on the appointment's own day, before its time too (10:15; it is 10:00).
+  await expect(page.getByRole('button', { name: 'Mark as seen' })).toBeEnabled();
+  await expect(page.getByText(/can be marked as seen (only once|from the day)/)).toHaveCount(0);
   await page.clock.setFixedTime(new Date('2026-11-17T04:46:00.000Z')); // 10:16 India time
   await nav(page).getByRole('link', { name: 'Doctors' }).click();
   await openDesk(page);
@@ -931,6 +957,25 @@ test('reschedule: another day’s free slot after a confirmation; a slot taken m
   ]);
   await page.getByRole('button', { name: 'Next day' }).click();
   await expect(appointments(page).getByRole('row').filter({ hasText: 'Chitra N' })).toContainText('11:15');
+});
+
+test('WQ11d (Q16d): in a session with several seats, "did not come" waits for 15 minutes after the session ends; a refusal is said in words', async ({ page }) => {
+  const backend = await mockBackend(page);
+  // Asha's slot is a 09:30–10:30 session with 4 seats (1 taken); it is 10:00: running, a late patient may still come.
+  Object.assign(backend.slots.find((x) => x.slotId === slotIdOf(D1, BR1, '2026-11-17', '09:30'))!, { endTime: '10:30', max: 4, current: 1 });
+  await signInPartner(page);
+  await openDesk(page, 'Dr Mehta (General physician)');
+  await page.getByRole('button', { name: 'Open Asha Rao at 09:30' }).click();
+  await expect(page.getByRole('button', { name: 'Mark did not come' })).toBeDisabled();
+  await expect(page.getByText('In a session with several patients, a no-show can be marked 15 minutes after the session ends.')).toBeVisible();
+  // Not known on the page (all doctors shown): the one-patient rule is offered and the server's refusal is said in words.
+  await page.getByLabel('Doctor', { exact: true }).selectOption({ index: 0 });
+  await page.getByRole('button', { name: 'Open Asha Rao at 09:30' }).click();
+  backend.noShowTooEarlyOnce = true;
+  await page.getByRole('button', { name: 'Mark did not come' }).click();
+  await page.getByRole('group', { name: 'Mark did not come' }).getByRole('button', { name: 'Mark did not come' }).click();
+  await expect(page.getByRole('group', { name: 'Mark did not come' })).toContainText('It is too early to mark a no-show: wait until 15 minutes after the appointment time (in a session with several patients, 15 minutes after the session ends).');
+  expect(backend.appts.find((a) => a.bookingId === AP1)!.status).toBe('confirmed');
 });
 
 test('WQ11 (Q16a final): a desk appointment whose time has passed (a late patient) can still be moved to another time', async ({ page }) => {
@@ -1264,7 +1309,7 @@ test('WQ11b: "seen" refused NOT_STARTED_YET is said in plain words; a no-show of
   await page.getByRole('button', { name: 'Mark as seen' }).click();
   const seen = page.getByRole('group', { name: 'Mark as seen' });
   await seen.getByRole('button', { name: 'Mark as seen' }).click();
-  await expect(seen).toContainText('The appointment has not started yet, so it was not marked as seen. Mark it once the appointment time has come.');
+  await expect(seen).toContainText('It is not the day of this appointment yet, so it was not marked as seen. Mark it on the day of the appointment.');
   await seen.getByRole('button', { name: 'Back' }).click();
   await page.getByRole('button', { name: 'Mark did not come' }).click();
   const noShow = page.getByRole('group', { name: 'Mark did not come' });

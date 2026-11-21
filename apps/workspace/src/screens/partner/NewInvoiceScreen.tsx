@@ -5,7 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 import {
   allowedGstRates, ApiError, chargesGst, customerGstinProblem, INVOICE_PHONE_PATTERN, MAX_LINE_DESCRIPTION,
   MAX_LINES, MAX_NAME, MAX_PRICE_MINOR, MAX_QTY, MAX_SAC, paiseToInput, previewInvoice, rupeesToPaise, STATE_CODE_PATTERN,
-  type Branch, type CatalogueItem, type ClinicDoctor, type GstRate, type Invoice, type InvoiceGender, type InvoicePreview,
+  type Branch, type CatalogueItem, type ClinicDoctor, type GstRate, type Invoice, type InvoiceGender, type InvoicePreview, type LinePreview,
   type NewInvoice, type NewInvoiceLine, type Page, type Partner,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
@@ -37,6 +37,16 @@ export interface InvoiceDraft {
 }
 
 /** The bill type in a sentence. */
+/**
+ * WQ11d: a line's GST as the server charges it: within a state CGST and SGST each at half the rate, each rounded on its
+ * own (so 333 paise at 5% is ₹0.08 + ₹0.08 = ₹0.16, not ₹0.17); another state, IGST rounded once.
+ */
+function lineGst(lp: LinePreview | undefined): string {
+  if (!lp || !lp.taxMinor) return '';
+  if (lp.halfMinor === undefined) return ` + IGST ${money(lp.taxMinor)}`;
+  return ` + GST ${money(lp.halfMinor * 2)} (CGST ${money(lp.halfMinor)} + SGST ${money(lp.halfMinor)})`;
+}
+
 const KIND_TEXT = { tax_invoice: 'a tax invoice', bill_of_supply: 'a bill of supply', commercial_invoice: 'an invoice without GST' } as const;
 
 const EMPTY: InvoiceDraft = { branchId: '', name: '', phone: '', age: '', gender: '', gstin: '', placeOfSupply: '', doctorId: '', lines: [] };
@@ -472,7 +482,7 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
               </div>
               {shown(`${l.key}.amount`) && <Alert>{shown(`${l.key}.amount`)}</Alert>}
               <div className="ws-actions">
-                <span>Line amount: <strong>{lp ? money(lp.amountMinor) : '—'}</strong>{lp && lp.taxMinor ? ` + GST ${money(lp.taxMinor)}` : ''}</span>
+                <span>Line amount: <strong>{lp ? money(lp.amountMinor) : '—'}</strong>{lineGst(lp)}</span>
                 <Button variant="ghost" aria-label={`Remove line ${i + 1}`} onClick={() => set({ lines: d.lines.filter((x) => x.key !== l.key) })}>Remove</Button>
               </div>
             </fieldset>

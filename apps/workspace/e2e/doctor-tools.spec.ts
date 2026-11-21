@@ -822,6 +822,26 @@ test('appointments: today, the next two weeks and one day, with the commands the
   expect(backend.calls.some((c) => c.path === '/specialists/me/appointments?view=day&date=20261119')).toBe(true);
 });
 
+test('WQ11d (Q16d): in a session with several seats, "Patient did not come" waits for 15 minutes after the session ends', async ({ page }) => {
+  const backend = await mockBackend(page);
+  // 09:00 in a 09:00–10:30 session with 5 seats; it is 10:00, so the session is still running.
+  Object.assign(backend.appointments.find((a) => a._id === bid(2))!, { slotId: '5f'.repeat(12) });
+  await page.route('**/api/v1/specialists/me/slots**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: [
+    { _id: '5f'.repeat(12), date: '20261117', startTime: '09:00', endTime: '10:30', maxBookings: 5, currentBookings: 3, isAvailable: true, isActive: true, branchId: BR1 },
+  ] }) }));
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Appointments' }).click();
+  const table = page.getByRole('table', { name: 'Appointments' });
+  const clinicRow = table.getByRole('row').filter({ hasText: '09:00' });
+  await expect(clinicRow.getByRole('button', { name: 'Mark completed' })).toBeVisible();
+  await expect(clinicRow.getByRole('button', { name: 'Patient did not come' })).toHaveCount(0);
+  // 10:45: 15 minutes after the session ended.
+  await page.clock.setFixedTime(new Date('2026-11-17T05:15:00.000Z'));
+  await page.getByLabel('Show').selectOption('day');
+  await page.getByLabel('Day', { exact: true }).fill('2026-11-17');
+  await expect(table.getByRole('row').filter({ hasText: '09:00' }).getByRole('button', { name: 'Patient did not come' })).toBeVisible();
+});
+
 test('Q14 clinics: invitations are no longer valid (dismiss only), leave a clinic, and create my clinic once (a lost answer found by its key)', async ({ page }) => {
   const backend = await mockBackend(page);
   backend.loseNextClinic = true;
@@ -1372,7 +1392,12 @@ test('WQ11c (review D1): a lost extension refused outright on its resend can be 
   await expect(row()).toContainText('Not extended this time: You already have a consultation at this time.');
   await expect(row().getByLabel('Extend by (minutes)')).toBeDisabled();
   backend.extendRefusal = undefined;
+  const reads = backend.calls.filter((c) => c.method === 'GET' && c.path.startsWith(`/specialists/me/instant/bookings/${bid(5)}`)).length;
   await row().getByRole('button', { name: 'Choose another extension' }).click();
+  // WQ11d: the booking is read again first, and the words never say the first one was not added.
+  await expect(row()).toContainText('The one sent before may still have been added: check the consultation\'s end time');
+  await expect(row()).not.toContainText('was not added');
+  expect(backend.calls.filter((c) => c.method === 'GET' && c.path.startsWith(`/specialists/me/instant/bookings/${bid(5)}`)).length).toBeGreaterThan(reads);
   await expect(row().getByLabel('Extend by (minutes)')).toBeEnabled();
   await expect(row().getByLabel('Extend by (minutes)')).toHaveValue('30');
   await row().getByLabel('Extend by (minutes)').fill('10');

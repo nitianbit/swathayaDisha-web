@@ -250,16 +250,16 @@ test('a no-show is moved once to a free time of its own doctor after a confirmat
   await page.getByRole('button', { name: 'Reschedule no-show' }).click();
   const form = page.getByRole('form', { name: 'Reschedule no-show' });
   // Started, clinic and full times are not offered.
-  await expect(form.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '11:00–11:30', '11:30–12:00']);
+  await expect(form.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '11:00–11:30 · online', '11:30–12:00 · online']);
   await form.getByRole('button', { name: 'Continue' }).click();
   await expect(form.getByText('Choose the new time.')).toBeVisible();
-  await form.getByLabel('New time').selectOption({ label: '11:00–11:30' });
+  await form.getByLabel('New time').selectOption({ label: '11:00–11:30 · online' });
   await form.getByRole('button', { name: 'Continue' }).click();
   await expect(form).toContainText('Move The patient’s missed time (Thu, 19 Nov, 2026, 10:00) to');
   await expect(form).toContainText('nothing is paid or refunded');
   await expect(form).toContainText('This can be done only once');
   await form.getByRole('button', { name: /^Move to/ }).click();
-  await expect(page.getByText(/The patient’s no-show is moved to .*11:00\. It is booked again at the same price\./)).toBeVisible();
+  await expect(page.getByText(/The patient’s no-show is moved to .*11:00 \(online\)\. It is booked again at the same price\./)).toBeVisible();
   await expect(page.getByRole('list', { name: 'No-show history' })).toContainText('Moved once to a new time (now Fri, 20 Nov, 2026, 11:00)');
   await expect(page.getByRole('button', { name: 'Reschedule no-show' })).toHaveCount(0);
   const sent = moves(backend);
@@ -283,11 +283,11 @@ test('WQ11 (Q16a): a doctor session with several seats that has started is still
   await page.goto(`/#/admin/consultations/${BK1}`);
   await page.getByRole('button', { name: 'Reschedule no-show' }).click();
   const form = page.getByRole('form', { name: 'Reschedule no-show' });
-  await expect(form.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '09:30–10:30', '11:00–11:30', '11:30–12:00']);
-  await form.getByLabel('New time').selectOption({ label: '09:30–10:30' });
+  await expect(form.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '09:30–10:30 · online', '11:00–11:30 · online', '11:30–12:00 · online']);
+  await form.getByLabel('New time').selectOption({ label: '09:30–10:30 · online' });
   await form.getByRole('button', { name: 'Continue' }).click();
   await form.getByRole('button', { name: /^Move to/ }).click();
-  await expect(page.getByText(/The patient’s no-show is moved to .*09:30\. It is booked again at the same price\./)).toBeVisible();
+  await expect(page.getByText(/The patient’s no-show is moved to .*09:30 \(online\)\. It is booked again at the same price\./)).toBeVisible();
   expect(moves(backend).map((c) => (c.body as Rec).slotId)).toEqual([SESSION]);
 });
 
@@ -296,7 +296,7 @@ test('a lost move answer: the booking read again settles it; one lost before the
   await signInAdmin(page);
   await page.goto(`/#/admin/consultations/${BK1}`);
   backend.loseBefore = true;
-  const form = await chooseTime(page, '11:30–12:00');
+  const form = await chooseTime(page, '11:30–12:00 · online');
   await form.getByRole('button', { name: /^Move to/ }).click();
   const panel = page.getByRole('group', { name: 'Unconfirmed no-show move' });
   await expect(panel).toContainText('has not been confirmed');
@@ -311,7 +311,7 @@ test('a lost move answer: the booking read again settles it; one lost before the
   backend.bookings.push(booking('e7'.repeat(12), { status: 'no_show', noShow: { at: '2026-11-19T05:15:00.000Z' }, bookingTime: '09:00' }));
   backend.loseAfter = true;
   await page.goto(`/#/admin/consultations/${'e7'.repeat(12)}`);
-  const f2 = await chooseTime(page, '11:00–11:30');
+  const f2 = await chooseTime(page, '11:00–11:30 · online');
   await f2.getByRole('button', { name: /^Move to/ }).click();
   await expect(page.getByText('The patient’s no-show has been moved to a new time (it can be moved only once). Nothing more to do.')).toBeVisible();
   expect(moves(backend)).toHaveLength(3);
@@ -332,7 +332,7 @@ test('no move for an instant consultation or a front-desk appointment; a second 
   await expect(page.getByRole('list', { name: 'No-show history' })).toContainText('final, it was already moved once');
 
   await page.goto(`/#/admin/consultations/${BK1}`);
-  const form = await chooseTime(page, '11:00–11:30');
+  const form = await chooseTime(page, '11:00–11:30 · online');
   backend.bookings.find((x) => x._id === BK1)!.noShowReschedules = 1; // the doctor moved it meanwhile
   await form.getByRole('button', { name: /^Move to/ }).click();
   await expect(page.getByText('This booking was already moved once after a no-show. A second no-show is final, so it cannot be moved again.')).toBeVisible();
@@ -344,12 +344,12 @@ test('a time taken meanwhile is refused: the doctor’s free times are read agai
   await signInAdmin(page);
   await page.goto(`/#/admin/consultations/${BK1}`);
   backend.takeNext = true;
-  const form = await chooseTime(page, '11:00–11:30');
+  const form = await chooseTime(page, '11:00–11:30 · online');
   await form.getByRole('button', { name: /^Move to/ }).click();
   await expect(page.getByText('Not moved: That time is no longer free. Pick another time.')).toBeVisible();
   const again = page.getByRole('form', { name: 'Reschedule no-show' });
-  await expect(again.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '11:30–12:00']);
-  await again.getByLabel('New time').selectOption({ label: '11:30–12:00' });
+  await expect(again.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '11:30–12:00 · online']);
+  await again.getByLabel('New time').selectOption({ label: '11:30–12:00 · online' });
   await again.getByRole('button', { name: 'Continue' }).click();
   await again.getByRole('button', { name: /^Move to/ }).click();
   await expect(page.getByText(/no-show is moved to .*11:30/)).toBeVisible();
@@ -378,13 +378,13 @@ test('WQ10c: a time that belongs to another doctor is refused SLOT_NOT_THIS_DOCT
   backend.stray = true;
   await page.goto(`/#/admin/consultations/${BK1}`);
   // The stray slot carries no doctor, so the picker cannot tell it apart: the server decides.
-  const form = await chooseTime(page, '13:00–13:30');
+  const form = await chooseTime(page, '13:00–13:30 · online');
   backend.stray = false; // the free times read after the refusal are the doctor's own
   await form.getByRole('button', { name: /^Move to/ }).click();
   await expect(page.getByText('Not moved: That time belongs to another doctor. Pick one of this doctor’s times.')).toBeVisible();
   const again = page.getByRole('form', { name: 'Reschedule no-show' });
-  await expect(again.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '11:00–11:30', '11:30–12:00']);
-  await again.getByLabel('New time').selectOption({ label: '11:00–11:30' });
+  await expect(again.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '11:00–11:30 · online', '11:30–12:00 · online']);
+  await again.getByLabel('New time').selectOption({ label: '11:00–11:30 · online' });
   await again.getByRole('button', { name: 'Continue' }).click();
   await again.getByRole('button', { name: /^Move to/ }).click();
   await expect(page.getByText(/no-show is moved to .*11:00/)).toBeVisible();
@@ -396,7 +396,7 @@ test('WQ11b: a move lost before the server whose time is then taken: after the r
   const backend = await mockBackend(page);
   await signInAdmin(page);
   await page.goto(`/#/admin/consultations/${BK1}`);
-  const form = await chooseTime(page, '11:00–11:30');
+  const form = await chooseTime(page, '11:00–11:30 · online');
   backend.loseBefore = true; // the request never reaches the server
   await form.getByRole('button', { name: /^Move to/ }).click();
   const panel = page.getByRole('group', { name: 'Unconfirmed no-show move' });
@@ -411,7 +411,7 @@ test('WQ11b: a move lost before the server whose time is then taken: after the r
   await expect(panel).toContainText('A new time is sent as a new move.');
   await panel.getByRole('button', { name: 'Forget it and choose again' }).click();
   const again = page.getByRole('form', { name: 'Reschedule no-show' });
-  await again.getByLabel('New time').selectOption({ label: '11:30–12:00' });
+  await again.getByLabel('New time').selectOption({ label: '11:30–12:00 · online' });
   await again.getByRole('button', { name: 'Continue' }).click();
   await again.getByRole('button', { name: /^Move to/ }).click();
   await expect(page.getByText(/no-show is moved to .*11:30/)).toBeVisible();

@@ -825,6 +825,33 @@ test('WQ10c (review P4): an import stuck while being added for over 15 minutes o
   await expect(page.getByRole('button', { name: 'Try again…' })).toHaveCount(0);
 });
 
+test('WQ11d: a tab holding an unconfirmed step for an import that then got stuck can still try again', async ({ page }) => {
+  const now = new Date().toISOString();
+  const rec: Json = { _id: IMP, fileName: 'stock.csv', importMode: 'upsert', status: 'previewed', totalRows: 2, validRows: 2, errorRows: 0,
+    previewRows: [{ rowIndex: 2, medicineName: 'A', status: 'valid', data: { quantityToAdd: 5 } }, { rowIndex: 3, medicineName: 'B', status: 'valid', data: { quantityToAdd: 5 } }],
+    createdAt: now, updatedAt: now };
+  const backend = await mockBackend(page, { imports: [rec] });
+  let drop = true;
+  await page.route('**/api/v1/pharmacy-inventory-imports/commit', (route) => {
+    if (!drop) return route.fallback();
+    drop = false;
+    // The server took the commit and stopped half way (committing since an hour), and the answer was lost.
+    Object.assign(rec, { status: 'committing', updatedAt: new Date(Date.now() - 3600_000).toISOString() });
+    return route.abort('connectionreset');
+  });
+  await signIn(page, 'Stock');
+  await page.goto(`/#/pharmacy/stock/imports/${IMP}`);
+  await page.getByRole('button', { name: /Add 2 ready rows to stock/ }).click();
+  await page.getByRole('button', { name: 'Yes, add them' }).click();
+  await expect(page.getByRole('group', { name: 'Unconfirmed import step' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Adding stopped' })).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('button', { name: 'Try again…' }).click();
+  await page.getByRole('button', { name: 'Yes, try again' }).click();
+  await expect(page.getByText('Done: 2 rows were added to stock.')).toBeVisible();
+  expect(backend.retries).toBe(1);
+  await expect(page.getByRole('group', { name: 'Unconfirmed import step' })).toHaveCount(0);
+});
+
 test('WQ10c: a lost retry is not settled by an outcome written before it was sent', async ({ page }) => {
   const twoMinAgo = new Date(Date.now() - 2 * 60_000).toISOString();
   const partly: Json = { _id: IMP, fileName: 'stock.csv', importMode: 'upsert', status: 'partially_committed', totalRows: 2, validRows: 2, errorRows: 0,
@@ -985,6 +1012,12 @@ test('WQ11c (review S3): a preview can be discarded (on this device: no server r
   await page.getByRole('link', { name: 'Import stock' }).click();
   const listed = page.getByRole('row').filter({ hasText: 'restock.csv' });
   await expect(listed.filter({ hasText: 'Discarded on this device' })).toHaveCount(1);
+  // WQ11d: it survives a reload (only the import's id is kept on the device).
+  await page.reload();
+  await expect(listed.filter({ hasText: 'Discarded on this device' })).toHaveCount(1);
+  const kept = await page.evaluate(() => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }));
+  expect(kept).toContain(IMP);
+  expect(kept).not.toContain('restock.csv');
   await listed.filter({ hasText: 'Discarded on this device' }).getByRole('link').click();
   await page.getByRole('button', { name: 'Use this preview after all' }).click();
   await expect(page.getByRole('button', { name: 'Add 2 ready rows to stock…' })).toBeVisible();
@@ -1155,6 +1188,26 @@ test('WQ11c (re-review N2): Add stock names the supplier only when the recorded 
   await expect(page.getByText('Added 20 units of Paracetamol 650mg, batch PCM-24B (expires 30 Jun 2028) from Sun Distributors.')).toBeVisible();
 });
 
+test('WQ11d: "Added …" shows at once from the save, the supplier line "checking" until the history read answers; the form is cleared meanwhile', async ({ page }) => {
+  const backend = await mockBackend(page, { suppliers: [supplier({})] });
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((r) => { release = r; });
+  await page.route('**/api/v1/pharmacy-inventory/adjustments**', async (route) => { await gate; await route.fallback(); });
+  await signIn(page, 'Stock');
+  await page.getByRole('link', { name: 'Add a batch of Paracetamol 650mg' }).click();
+  await fillBatch(page);
+  await page.getByLabel('Supplier (optional)').selectOption({ label: 'Sun Distributors' });
+  await page.getByRole('button', { name: 'Check and add' }).click();
+  await page.getByRole('button', { name: 'Yes, add to stock' }).click();
+  // The history read is held: the entry is confirmed anyway, and the form no longer holds it.
+  await expect(page.getByText('Added 100 units of Paracetamol 650mg, batch PCM-24B (expires 30 Jun 2028) (checking the supplier…).')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Yes, add to stock' })).toHaveCount(0);
+  await expect(page.getByLabel('Batch number')).toHaveValue('');
+  release();
+  await expect(page.getByText('Added 100 units of Paracetamol 650mg, batch PCM-24B (expires 30 Jun 2028) from Sun Distributors.')).toBeVisible();
+  expect(backend.adjustments).toHaveLength(1);
+});
+
 test('WQ11c (re-review N2): a file supplier the server did not keep is said, and none is shown', async ({ page }) => {
   const backend = await mockBackend(page, { suppliers: [supplier({})] });
   // A preview that ignores the `supplierId` form field.
@@ -1194,10 +1247,12 @@ test('WQ11c (re-review N3): a preview cannot be discarded while its confirmation
 test('WQ11c (re-review N4): a listed medicine not yet in my stock with a blank price is not on sale until priced; a known current price is named', async ({ page }) => {
   const rows = [
     { rowIndex: 2, medicineName: 'Cetirizine', status: 'valid', data: { name: 'Cetirizine', quantityToAdd: 10, batchNumber: 'CT-1', expiryDate: '20280131', medicineId: MED2, medicineMatchStatus: 'matched', matchedMedicineName: 'Cetirizine' }, inMyStock: false, currentPrices: null },
-    { rowIndex: 3, medicineName: 'Paracetamol', status: 'valid', data: { name: 'Paracetamol', quantityToAdd: 5, batchNumber: 'P-1', expiryDate: '20280131', medicineId: MED, medicineMatchStatus: 'matched', matchedMedicineName: 'Paracetamol', wholesalePrice: 18 }, inMyStock: true, currentPrices: { mrp: 25, retailPrice: 22, wholesalePrice: 16, purchasePrice: null } },
+    { rowIndex: 3, medicineName: 'Paracetamol', status: 'valid', data: { name: 'Paracetamol', quantityToAdd: 5, batchNumber: 'P-1', expiryDate: '20280131', medicineId: MED, medicineMatchStatus: 'matched', matchedMedicineName: 'Paracetamol', wholesalePrice: 18 }, inMyStock: true, batchInStock: true, currentPrices: { mrp: 25, retailPrice: 22, wholesalePrice: 16, purchasePrice: null } },
+    // Q16d: a new batch of a medicine in stock: its MRP is not kept from another batch (null), the selling price is.
+    { rowIndex: 4, medicineName: 'Ibuprofen', status: 'valid', data: { name: 'Ibuprofen', quantityToAdd: 3, batchNumber: 'IB-NEW', expiryDate: '20280131', medicineId: MED, medicineMatchStatus: 'matched', matchedMedicineName: 'Ibuprofen' }, inMyStock: true, batchInStock: false, currentPrices: { mrp: null, retailPrice: 40, wholesalePrice: null, purchasePrice: null } },
   ];
   const now = new Date().toISOString();
-  await mockBackend(page, { imports: [{ _id: IMP, fileName: 'first-stock.csv', importMode: 'upsert', status: 'previewed', totalRows: 2, validRows: 2, errorRows: 0, previewRows: rows, createdAt: now, updatedAt: now }] });
+  await mockBackend(page, { imports: [{ _id: IMP, fileName: 'first-stock.csv', importMode: 'upsert', status: 'previewed', totalRows: 3, validRows: 3, errorRows: 0, previewRows: rows, createdAt: now, updatedAt: now }] });
   await signIn(page, 'Stock');
   await page.goto(`/#/pharmacy/stock/imports/${IMP}`);
   const table = page.getByRole('table', { name: 'Rows of the file, problems first' });
@@ -1211,8 +1266,12 @@ test('WQ11c (re-review N4): a listed medicine not yet in my stock with a blank p
   await expect(table.getByRole('columnheader', { name: 'Wholesale price' })).toBeVisible();
   await expect(table.getByRole('columnheader', { name: 'Purchase price' })).toHaveCount(0);
   await expect(para).toContainText('₹18.00');
-  await page.getByRole('button', { name: 'Add 2 ready rows to stock…' }).click();
-  await expect(page.getByRole('group', { name: 'Add 2 ready rows to stock…' })).toContainText('1 row leaves its medicine without a selling price: not on sale until priced (row 2 (Cetirizine)).');
+  // Q16d: the new batch shows no MRP (another batch's is never offered as kept); its selling price is kept.
+  const ibu = table.getByRole('row').filter({ hasText: 'Ibuprofen' });
+  await expect(ibu).toContainText('No MRP yet');
+  await expect(ibu).toContainText('Kept: ₹40.00');
+  await page.getByRole('button', { name: 'Add 3 ready rows to stock…' }).click();
+  await expect(page.getByRole('group', { name: 'Add 3 ready rows to stock…' })).toContainText('1 row leaves its medicine without a selling price: not on sale until priced (row 2 (Cetirizine)).');
 });
 
 test('WQ11c (re-review N5): one failed read again keeps the import page, with a quiet note', async ({ page }) => {

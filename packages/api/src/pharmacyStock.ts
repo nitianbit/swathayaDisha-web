@@ -202,6 +202,11 @@ export interface ImportRow {
    * (an import previewed before Q16c) that is not known.
    */
   inMyStock?: boolean;
+  /**
+   * Q16d: this exact batch (number and expiry) is already in stock. Only then is `currentPrices.mrp` that batch's MRP; a
+   * new batch has no MRP to keep (null), so a blank MRP cell leaves it without one.
+   */
+  batchInStock?: boolean;
   currentPrices?: ImportCurrentPrices | null;
 }
 
@@ -374,6 +379,8 @@ export function importPriceView(r: ImportRow, key: PriceKey): ImportPriceView {
   const own = importPriceOf(r.data?.[key]);
   if (own !== 'keep') return { kind: 'set', value: own };
   if (r.data?.medicineMatchStatus === 'not_found' || r.inMyStock === false) return { kind: 'none' };
+  // Q16d: MRP belongs to the batch: a batch not in stock yet keeps none (whatever another batch has).
+  if (key === 'mrp' && r.batchInStock === false) return { kind: 'none' };
   const current = r.currentPrices?.[key];
   if (typeof current === 'number' && Number.isFinite(current) && current > 0) return { kind: 'kept', value: current };
   if (r.currentPrices && key in r.currentPrices) return { kind: 'none' };

@@ -365,7 +365,11 @@ export function registrationProblem(kind: DocumentKind, gstin: string | undefine
   return `The partner's GST registration (state ${gstin.slice(0, 2)}) does not cover this branch (state ${branchStateCode}); this branch cannot issue GST bills yet`;
 }
 
-export interface LinePreview { amountMinor: number; taxMinor: number; problem: string | null }
+/**
+ * `taxMinor`: the line's tax rounded once (`computeLines`); `halfMinor`: within a state, CGST and SGST each (Q16a
+ * `computeTotals`: each half rounded on its own — what is charged, so the line shows 2 × half).
+ */
+export interface LinePreview { amountMinor: number; taxMinor: number; halfMinor?: number; problem: string | null }
 export interface InvoicePreview {
   lines: LinePreview[];
   totals: InvoiceTotals;
@@ -404,17 +408,17 @@ export function previewInvoice(
     t.subtotalMinor += problem && problem !== rateProblem ? 0 : gross;
     t.discountMinor += problem && problem !== rateProblem ? 0 : discount;
     t.taxableMinor += amountMinor;
-    if (sameState) {
-      // Q16a `computeTotals`: CGST and SGST are each charged at half the rate and rounded on their own (always equal;
-      // their sum can differ by a paisa from the line's tax rounded once).
-      const half = Math.round((amountMinor * item.gstRate) / 200);
+    // Q16a `computeTotals`: CGST and SGST are each charged at half the rate and rounded on their own (always equal;
+    // their sum can differ by a paisa from the line's tax rounded once).
+    const half = sameState ? Math.round((amountMinor * item.gstRate) / 200) : undefined;
+    if (half !== undefined) {
       t.cgstMinor += half;
       t.sgstMinor += half;
     } else {
       t.igstMinor += taxMinor;
     }
     if (problem && !problems.includes(problem)) problems.push(problem);
-    return { amountMinor, taxMinor, problem };
+    return { amountMinor, taxMinor, ...(half !== undefined ? { halfMinor: half } : {}), problem };
   });
   const totals: InvoiceTotals = { ...t, totalMinor: t.taxableMinor + t.cgstMinor + t.sgstMinor + t.igstMinor, currency: 'INR' };
   if (totals.totalMinor > MAX_BILL_MINOR || totals.subtotalMinor > MAX_BILL_MINOR) problems.push('This bill is larger than a single bill can be');
