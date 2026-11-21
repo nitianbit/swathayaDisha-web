@@ -1168,6 +1168,94 @@ Backend now q14-owner-decisions 36bc35a (4343d10: booking patient name, abandon 
   unconfirmed panel on screen, busy (add stock and suppliers); a supplier resend is settled as not saved only on
   REQUEST_ABANDONED or a content refusal (400/422): 401, 403 and other answers leave it unconfirmed, as add stock does.
 
+## WQ11c pre-production review: doctor, pharmacy and finance screens (2026-11-22, taken autonomously at the owner's request)
+
+Branch `wq11c-doctor-pharmacy` from stage `317f21e`. Backend (read only): stage line `q14-owner-decisions` a1735c5; **Q16c
+pharmacy committed** (`q16c-pharmacy` 5499417 + 788d268, design table row "Q16c") and adopted; **Q16a bookings not
+committed yet** (`q16a-bookings-money` working tree read only), so its doctor codes are handled generically. The
+reviewer's proofs (`/tmp/wq10-review-5471/proofs`, PROOF-D1–D3, S1–S2) are journeys now, each failing without its fix.
+Parallel packets: WQ11a (customer app, sign-in), WQ11b (partner/admin, `NoShowMove`, `ConfirmAction`): this packet only
+uses those two components; `noShows.ts`, `requests.ts`, `client.ts` and `styles.css` get strictly additive changes.
+
+Owner decisions (22 Nov): dates stay day first, said plainly, with a template; a medicine created by an import needs a
+prescription unless the file says no; an optional supplier per delivery (Add stock, import).
+
+- **1 HIGH: blank import prices.** Q16c: a blank price cell is "not given" (left out of the row) and keeps the stored
+  price; a typed 0 sets 0. The column guide says "Optional — blank keeps the current price"; the preview shows the price
+  that will apply: a number (₹0.00 for 0, never "—") or "Current price kept"; a row that sets a price to ₹0 says so
+  ("Sets the MRP, selling price to ₹0") and a warning above the confirmation names those rows. The confirmation names the
+  rows whose prices change (and how many go to ₹0), and a new medicine without a retail price is "not on sale until
+  priced" (Q16c: unpriced items are off the customer shelf); "on sale at once" is no longer said. `importPlan`,
+  `importPriceOf`, `importZeroPrices` (api).
+- **2 MEDIUM: Mark completed.** `appointmentActions` offers `complete` only once the start time has passed (as no-show).
+  Q16a's 409 `NOT_STARTED_YET` (and its no-show grace 409 `APPOINTMENT_NOT_STARTED`) are said in words
+  (`APPOINTMENT_REFUSAL`), and the list is read again.
+- **3 MEDIUM: no-show slot picker.** `GET /specialists/me/slots` returns the stored slots with `serviceModes` and
+  `branchId` (confirmed in `findManagedBySpecialistId`). `noShowSlotFits`: a slot with types takes only those
+  (`assertSlotMode`); an in-person visit stays at its clinic branch (or, without one, at a slot with no branch: the doctor's
+  own place); an online one moves to a slot without a branch. Options and the confirmation name the place ("Sunrise Clinic ·
+  MG Road", "your own place", "online"; branch names from the doctor's clinics). The type refusal (409 `SLOT_NOT_AVAILABLE`
+  "not offered for that consultation type") is renamed `SLOT_MODE_NOT_OFFERED` by the api (doctor and admin moves) and
+  said as such ("That time is not offered for this consultation type"); the picker reopens and the slots are read again
+  (`onSlotRefused`).
+- **4 MEDIUM: prescriptions of new medicines.** Q16c default (yes unless "no"); the preview shows "Needs a prescription" /
+  "Not needed" for new medicines ("As in the list" otherwise: an import never changes an existing medicine); the
+  confirmation counts the new ones that need one.
+- **5 LOW-MEDIUM: extension lock.** After a same-key resend is refused outright (4xx, not 408/429: that key was not
+  recorded when it arrived), **Choose another extension** frees the field with the minutes (a new key). After a check finds
+  nothing (also after a reload), **Forget it** frees it behind a second step that says a late copy may still be added.
+- **6 LOW: restored retry.** A step's kind survives a reload (a commit is keyed by the import id, a retry by a new key), so
+  a body-less retry is settled only by an outcome written after its `firstAttemptAt` (30 s for clocks); an older outcome
+  ends the marker with "The earlier try of the failed rows has not started…" and the retry is offered again.
+- **7 LOW: discard and same file.** The backend has **no route to discard a preview (gap, reported)**: **Discard this
+  preview…** hides it on this device for this sign-in (session memory, never storage): the page and Recent imports show
+  "Discarded on this device", nothing can be confirmed from it until **Use this preview after all**. Before committing,
+  another import of the same file name added (or being added) in the last 24 hours is warned about, with a link.
+- **8 LOW.**
+  - Upload, commit and retry wait 120 s (`RequestOptions.timeoutMs`, additive in `client.ts`). While an import step is
+    unconfirmed the page reads the import every 5 s and an outcome that settles it ends it on its own.
+  - The confirmation count follows the mode: "Only medicines already in my stock" leaves out rows for medicines not in the
+    list ("skipped and not counted"); "Only medicines not yet in my stock" says "up to"; the outcome counts skipped rows.
+  - A failed read again keeps what was read (Appointments today/14 days/one day, Home, Consult now offers and running
+    list): "Could not refresh just now (…). Showing what was read at HH:MM." with **Try again**; only a first read that
+    fails is an error page.
+  - Presence: a read is not a check-in, so after a reload (or on load) the first heartbeat goes at once (held back by a
+    change or read, it is tried again each second, 5 times), then every minute.
+  - `keyedLookup(key, find, notFoundCodes)`: the doctor's clinic (`CLINIC_NOT_FOUND`), payouts (`PAYOUT_NOT_FOUND`) and
+    adjustments (`ADJUSTMENT_NOT_FOUND`) treat only their own code as "not recorded"; another 404 is a failed check.
+    Desk and catalogue (WQ11b's screens) keep the old behaviour.
+  - Return to supplier, Add stock and Import list every active supplier (`allSuppliers`, all pages), with **Find the
+    supplier** when there are more than 12.
+  - Add stock with an unknown or malformed `?medicine=`: "Medicine not found — pick another." with the picker (a malformed
+    id waited forever; an unknown one showed an error).
+- **9 Q16c codes.** Template `GET /pharmacy-inventory-imports/template` (xlsx by default) is downloaded when the server
+  answers; otherwise the page makes a CSV with the same 16 columns (Q16c order, `supplier` last) and the same example row
+  (expiry `31-12-2027`, name "… (example - delete this row)", which Q16c refuses). Upload refusals in words:
+  `UNSUPPORTED_FILE_TYPE`, `FILE_TOO_LARGE`, `UNEXPECTED_FILE_FIELD`, `UPLOAD_INVALID`, `PARSE_FAILED`, `IMPORT_FILE_EMPTY`,
+  `IMPORT_COLUMNS_MISSING` (unknown codes: the server's words). Month-first dates are refused per row by Q16c; the import
+  page explains them ("This file writes dates month first…"). Supplier per delivery: Add stock sends `supplierId` (only
+  ever with received units); the import sends the form field `supplierId` for the whole file, or the file's `supplier`
+  column is used (rows show `supplierName`); the import page names the file's supplier (Q16c keeps only its id: the name
+  comes from the supplier list, archived ones included); `SUPPLIER_NOT_FOUND` / `SUPPLIER_ARCHIVED` are said in words and
+  the suppliers are read again. **Stock history** (new, on Add stock: `GET /pharmacy-inventory/adjustments`, 20 a page)
+  shows each delivery's `supplier.displayName`. "Today" for expiry is the India date (`serverToday`, as Q16c).
+- **Docs.** Pharmacy guide: day-first dates and the template, supplier per delivery, blank prices, the prescription
+  default, discard, stock history. Doctor guide: Mark completed after the start, the no-show picker's place, extensions,
+  refresh notes, the heartbeat at load.
+
+Assumptions (owner to confirm): an in-person no-show without a clinic moves only to a slot without a branch, and an online
+one never to a clinic slot; a discarded preview is hidden per sign-in on this device only, until the backend adds a
+discard route; the same-file warning reads the first 20 imports (newest first); the local template is used whenever the
+server's cannot be had (before Q16c deploys, the stage server answers the path with a 500).
+
+Backend contract: **confirmed** (Q16c committed, read in its routes, controller, services and design row): blank prices,
+prescription default, upload codes, month-first row refusal, template route and columns, `supplierId` on Add stock and on
+the import form, the `supplier` column and `supplierId`/`supplierName` on rows, `supplier` on adjustments, the import's
+`supplierId`, 404 `SUPPLIER_NOT_FOUND` / 409 `SUPPLIER_ARCHIVED`, IST "today"; slot `serviceModes`/`branchId` (stage).
+**Assumed** (Q16a uncommitted, read in its working tree): 409 `NOT_STARTED_YET`, 409 `APPOINTMENT_NOT_STARTED` (no-show
+grace); the type refusal stays `SLOT_NOT_AVAILABLE` with "consultation type" in its message (matched by message).
+**Gap:** no route to discard an import preview.
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -1249,3 +1337,4 @@ Backend now q14-owner-decisions 36bc35a (4343d10: booking patient name, abandon 
 | 2026-11-15 | WC1 (customer: partner labs, bills, Consult now) | typecheck clean; Vitest 82/82 (+ lab/bill/instant api modules, cancel rule, timeline, GST split, waiting rules, file sniffing); Playwright customer 176/176 (new: partner-labs 20, instant-consult 16, bills 6; desktop + Pixel 7, mocked API); release build with VITE_API_BASE_URL=https://api.example.test. The existing "inside 24 hours" test now accepts the Monday 48-hour rule (it failed when 5 hours ahead fell on a Monday). Not yet run against a real backend; not Codex-reviewed. |
 | 2026-11-15 | WC1 review round 1 + Q9 | Codex WC1: 5 MEDIUM (quote not bound to funding; stale lab coupon; unowned create/pay completions; no refresh after acceptance; file state across bill versions). Fixed with backend Q9 (78b9efe). typecheck clean; Vitest 89/89 (+ price agreement, paging, single lab, payable mirrors, versioned PDF, recorded refunds); Playwright customer 194/194 (new: coupon re-checked on test change, price refused then accepted (labs and Consult now), late create and pay answers after leaving open nothing, reload lookup used / unknown → confirmed give-up, Meet link after acceptance + doctor cancellation, bill PDF follows the version, report signers by file); release build with VITE_API_BASE_URL=https://api.example.test. |
 | 2026-11-16 | WC1 review round 2 | Codex WC1 re-review: 2 MEDIUM (older/left-page create success consumed a newer attempt's request; a coupon dropped by an automatic re-check auto-accepted the higher price). Fixed. typecheck clean; Vitest 89/89; Playwright customer 200/200 (new: out-of-order answers across remounts keep the newer attempt and complete it once; coupon dropped by re-check requires accepting the higher price, labs and Consult now); release build with VITE_API_BASE_URL=https://api.example.test. |
+| 2026-11-22 | WQ11c (doctor, pharmacy, finance: pre-production review) | typecheck clean; Vitest 264/264 (+11: completion rule and refusals, no-show slot fit and type refusal, import plan by mode, prices kept or ₹0, same file in 24 h, Q16c upload codes and month-first rows, supplier per delivery, 2-minute import timeout, server template or none, IST "today", by-key not-found codes); Playwright workspace 526/526 (+28 = 14 journeys x 2 devices: review proofs D1–D3 and S1–S2 as journeys, discard and same-file warning, file supplier and upload refusals, month-first rows, Add stock supplier beyond 50 with history and an archived refusal, Return to supplier beyond 50, unknown `?medicine=`, an import step that settles itself, a failed refresh that keeps the lists, the clinic by-key 404; the presence and no-show journeys updated to the new rules). With the source changes stashed, all 16 new or changed journeys fail. Customer 222/222. Both release builds with VITE_API_SAME_ORIGIN=true. Temporary config on ports 5521/5522 with `reuseExistingServer: false`, deleted before committing. |
