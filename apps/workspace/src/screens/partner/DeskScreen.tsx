@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router';
 import {
   addDays, ApiError, appointmentAt, appointmentDay, canonicalMobile, CLINIC_APPOINTMENT_STATUS_LABEL, clinicBranchesFor, DESK_GENDERS, DESK_RELATIONS,
   deskActions, deskBookingProblems, doctorsAtBranch, familyMemberProblems, holdsAny, INVOICE_STATE_LABEL, isRealDate, istDateOf, MAX_APPOINTMENTS,
-  MAX_DESK_CANCEL_REASON, MAX_DESK_NAME, MAX_DESK_NOTES, MAX_FAMILY_NAME,
+  MAX_DESK_CANCEL_REASON, MAX_DESK_NAME, MAX_DESK_NOTES, MAX_FAMILY_NAME, noShowMovedOnce,
   type Branch, type ClinicAppointment, type ClinicDoctorRow, type DeskAction, type DeskActionOffer, type DeskAppointment, type DeskBookingResult,
   type DeskGender, type DeskPatientInput, type DeskRelation, type DeskSlot,
 } from '@jansetu/api';
@@ -13,7 +13,7 @@ import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { NoShowMove, noShowMoveSlot, type NoShowMoveOp, type NoShowTarget } from '../../components/NoShowMove.tsx';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { messageOf } from '../../errors.ts';
-import { afterFailure, beginAttempt, keyedLookup, newRequestKey, resolveStored, startOp, stillCurrent, wasAbandoned } from '../../requests.ts';
+import { afterFailure, beginAttempt, keyedLookup, newRequestKey, ownsKey, resolveStored, startOp, stillCurrent, wasAbandoned } from '../../requests.ts';
 import { useSession, type SessionMemory } from '../../session.tsx';
 import { billPrefillSlot, type BillHandover, type BillPrefill } from './billing.tsx';
 import {
@@ -32,6 +32,10 @@ const BILL_READERS = ['invoices.create', 'invoices.cancel', 'payments.record', '
 const NO_MONEY = 'Nothing is charged or refunded through Jansetu: desk appointments are paid at the clinic.';
 /** Q13 409 BOOKING_CHANGED: the step named the version the person saw, and the appointment had changed since. */
 const isChanged = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'BOOKING_CHANGED';
+/** WQ11b (Q16a `closeDeskAppointment`): 409 NOT_STARTED_YET — a visit is marked as seen only once it has started. */
+const NOT_STARTED = 'The appointment has not started yet, so it was not marked as seen. Mark it once the appointment time has come.';
+const readable = (err: unknown) => (err instanceof ApiError && err.status === 409 && err.code === 'NOT_STARTED_YET'
+  ? new ApiError(409, NOT_STARTED, 'NOT_STARTED_YET') : err);
 const CHANGED = 'The appointment changed since you opened it (someone else updated it), so nothing was done. It has been read again: check it and try again.';
 /** Q13: the slot is taken (SLOT_NOT_AVAILABLE) or has started meanwhile (SLOT_STARTED): choose another; the details stay. */
 const slotGoneCodes = new Set(['SLOT_NOT_AVAILABLE', 'SLOT_STARTED']);
@@ -170,14 +174,20 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
   };
   /** Whether an answer started for `op` may still act: this page is on screen AND the stored booking is still exactly `op`. */
   const owns = (op: DeskPending) => mounted.current && stillCurrent(memory.get<DeskPending>(slotKey), op);
+  /**
+   * WQ11b: an answer about the key itself (a by-key lookup, a give-up's `used` or `abandoned`) settles what this page
+   * shows when the stored booking is this key or is gone: after leaving mid-send and coming back, the first page's late
+   * answer removes the stored booking while this page still shows it, and "Give up" must still act on the server's word.
+   */
+  const ownsTheKey = (op: DeskPending) => mounted.current && ownsKey(memory.get<DeskPending>(slotKey), op.requestKey);
 
   /**
    * `op` made this appointment (its answer, a replay, a by-key lookup or a give-up answered `used`): end it, and only it,
    * while this page owns it, then show the day with the appointment open. After a reload `op.body` is gone.
    */
-  function settled(view: ReceiptView, op: DeskPending) {
+  function settled(view: ReceiptView, op: DeskPending, byKey = false) {
     refresh();
-    if (!owns(op)) return;
+    if (byKey ? !ownsTheKey(op) : !owns(op)) return;
     resolveStored(memory, slotKey, op.requestKey);
     const k = op.requestKey;
     setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
@@ -206,7 +216,7 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
   /** Given up on the server, or known booked but outside this desk's branches: ends `op` only while this page owns it. */
   function closeWith(op: DeskPending, text: string) {
     refresh();
-    if (!owns(op)) return;
+    if (!ownsTheKey(op)) return;
     const k = op.requestKey;
     resolveStored(memory, slotKey, k);
     setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
@@ -282,7 +292,7 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
         <PendingOpPanel key={pending.attempts} label="Unconfirmed booking" op={pending} busy={sending} onResend={() => void send(pending)}
           // Q13: the exact appointment this desk member's key booked (`GET /clinic/appointments/by-key/:key`), also after a reload.
           fetchPage={keyedLookup(pending.requestKey, () => clinic.appointmentByKey(pending.requestKey))}
-          onFound={(b) => settled(viewOf(b, pending, { replayed: true }), pending)}
+          onFound={(b) => settled(viewOf(b, pending, { replayed: true }), pending, true)}
           // Q13: decided by the server: `abandoned` = it can never be booked; `used` = here it is (or it is no longer in your branches).
           abandon={async () => {
             const r = await clinic.abandonBookingKey(pending.requestKey);
@@ -653,6 +663,8 @@ function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, no
   const who = patientName(appt);
   const when = appointmentLabel(appt);
   const finished = ['completed', 'cancelled', 'no_show'].includes(appt.status);
+  // Whether its one move after a no-show was used: known only when the server lists it (true/false), else undefined.
+  const movedOnce = appt.noShows !== undefined || appt.noShowReschedules !== undefined ? noShowMovedOnce(appt) : undefined;
 
   return (
     <section className="ws-section" aria-labelledby="desk-appt-h">
@@ -677,7 +689,12 @@ function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, no
       )}
       {failure && <Alert>{failure}</Alert>}
       {appt.status === 'no_show' && appt.source === 'desk' && (
-        <p className="ws-muted">Did not come. Nothing is charged or refunded through Jansetu, and the doctor earns nothing for it. The desk may move it once to a new time.</p>
+        <p className="ws-muted">
+          Did not come. Nothing is charged or refunded through Jansetu, and the doctor earns nothing for it.
+          {movedOnce === true ? ' It was already moved once after an earlier no-show, so this second no-show is final: it cannot be moved again.'
+            : movedOnce === false ? ' The desk may move it once to a new time.'
+            : ' The desk may move it once to a new time, unless it was already moved after an earlier no-show (then this second no-show is final).'}
+        </p>
       )}
       {showMove && (
         <div className="ws-actions">
@@ -699,12 +716,18 @@ function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, no
               Mark arrived
             </Button>
           )}
-          {offer('complete') && (
+          {offer('complete') && (offer('complete')!.blocked ? (
+            <div className="ws-action">
+              <Button disabled>Mark as seen</Button>
+              <span className="ws-muted">{offer('complete')!.blocked}</span>
+            </div>
+          ) : (
             <ConfirmAction label="Mark as seen" disabled={disabled} confirmLabel="Mark as seen"
               consequence={<>Mark {who}’s visit with {appt.doctorName ?? 'the doctor'} as seen? The appointment ends here and the doctor’s time is freed. The fee of {formatRupees(appt.fee ?? 0)} is paid at the clinic: make a bill for it under Bills.</>}
-              onConfirm={() => perform(appt, 'complete', () => clinic.complete(appt.bookingId, appt.updatedAt), () => `${who}’s visit is marked as seen.`)} />
-          )}
-          {offer('no_show') && <NoShow appt={appt} offer={offer('no_show')!} who={who} when={when} disabled={disabled} perform={perform} clinic={clinic} />}
+              onConfirm={() => perform(appt, 'complete', () => clinic.complete(appt.bookingId, appt.updatedAt), () => `${who}’s visit is marked as seen.`)
+                .catch((err: unknown) => { throw readable(err); })} />
+          ))}
+          {offer('no_show') && <NoShow appt={appt} offer={offer('no_show')!} who={who} when={when} disabled={disabled} perform={perform} clinic={clinic} movedOnce={movedOnce} />}
           {offer('reschedule') && (
             <Reschedule ctx={ctx} clinic={clinic} appt={appt} doctors={doctors} branches={branches} now={now} disabled={disabled} perform={perform} />
           )}
@@ -730,8 +753,10 @@ function AppointmentPanel({ ctx, clinic, appt, doctors, branches, branchName, no
   );
 }
 
-function NoShow({ appt, offer, who, when, disabled, perform, clinic }: {
+function NoShow({ appt, offer, who, when, disabled, perform, clinic, movedOnce }: {
   appt: ClinicAppointment; offer: DeskActionOffer; who: string; when: string; disabled: boolean; perform: Perform; clinic: ClinicApi;
+  /** WQ11b: whether this appointment was already moved once after a no-show (undefined: the server does not say). */
+  movedOnce: boolean | undefined;
 }) {
   if (offer.blocked) {
     return (
@@ -743,7 +768,12 @@ function NoShow({ appt, offer, who, when, disabled, perform, clinic }: {
   }
   return (
     <ConfirmAction label="Mark did not come" danger disabled={disabled} confirmLabel="Mark did not come"
-      consequence={<>Mark {who} as not come for {when}? The appointment ends and the doctor’s time is freed. {NO_MONEY} This cannot be undone.</>}
+      consequence={<>Mark {who} as not come for {when}? The appointment ends and the doctor’s time is freed. {NO_MONEY}{' '}
+        {/* WQ11b: never promise a move the server refuses (a booking moves once after a no-show; a second no-show is final). */}
+        {movedOnce === true ? 'It was already moved once after an earlier no-show, so this second no-show is final: it cannot be moved to a new time. '
+          : movedOnce === false ? 'Afterwards the desk may move it once to a new time. '
+          : 'Afterwards the desk may move it once to a new time, unless it was already moved after an earlier no-show: then this second no-show is final. '}
+        This cannot be undone.</>}
       onConfirm={() => perform(appt, 'no_show', () => clinic.noShow(appt.bookingId, appt.updatedAt), () => `${who} is marked as not come.`)} />
   );
 }

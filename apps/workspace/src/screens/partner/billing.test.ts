@@ -139,10 +139,12 @@ describe('new bill', () => {
 describe('WQ8 review: a keyed payment refused for good on any attempt; a bill handover bound to its navigation', () => {
   it('settles definite refusals; version/state conflicts, network losses and other 5xx stay unknown', () => {
     for (const [status, code] of [[503, 'INVOICE_INDEXES_OUTDATED'], [409, 'PART_PAYMENTS_NOT_ALLOWED'], [409, 'AMOUNT_EXCEEDS_DUE'],
-      [400, 'PAYMENT_METHOD_REQUIRED'], [400, 'VALIDATION_ERROR'], [403, 'PARTNER_PERMISSION_REQUIRED']] as const) {
+      [400, 'PAYMENT_METHOD_REQUIRED'], [400, 'VALIDATION_ERROR'], [422, 'UNPROCESSABLE']] as const) {
       expect(paymentRefusedForGood(new ApiError(status, 'x', code))).toBe(true);
     }
-    for (const [status, code] of [[409, 'LIFECYCLE_VERSION_CONFLICT'], [409, 'INVOICE_STATE_CONFLICT'], [409, 'ALREADY_CANCELLED'], [503, 'UNAVAILABLE'], [0, undefined]] as const) {
+    // WQ11b: 401/403/404 come before the server looks for the key, so they say nothing about an earlier attempt.
+    for (const [status, code] of [[409, 'LIFECYCLE_VERSION_CONFLICT'], [409, 'INVOICE_STATE_CONFLICT'], [409, 'ALREADY_CANCELLED'], [503, 'UNAVAILABLE'], [0, undefined],
+      [401, 'UNAUTHORIZED'], [403, 'PARTNER_PERMISSION_REQUIRED'], [404, 'INVOICE_NOT_FOUND']] as const) {
       expect(paymentRefusedForGood(new ApiError(status, 'x', code))).toBe(false);
     }
     expect(paymentRefusedForGood(new Error('offline'))).toBe(false);

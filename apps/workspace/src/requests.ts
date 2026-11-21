@@ -53,6 +53,17 @@ export function stillCurrent<B>(stored: PendingOp<B> | undefined, attempt: Pendi
 }
 
 /**
+ * WQ11b: whether an answer ABOUT THE KEY (a give-up's `used`/`abandoned`, a by-key lookup) may settle what this page
+ * shows: the stored operation is this key (any attempt), or nothing is stored any more. The latter happens after
+ * leaving a page mid-send and coming back: the first page's late answer settled and removed the stored operation, while
+ * the page on screen still shows it. Such an answer is the server's word on the key itself, so it is safe to act on;
+ * only a different operation stored since must never be settled by it.
+ */
+export function ownsKey<B>(stored: PendingOp<B> | undefined, requestKey: string): boolean {
+  return !stored || stored.requestKey === requestKey;
+}
+
+/**
  * Looks for the record carrying the operation's key in a newest-first list, so its receipt can be shown. Not finding
  * it proves nothing (the request may still be running), so the only answer besides the record is "not found".
  * Stops after records clearly older than the submission or after `maxPages`, to bound the work.

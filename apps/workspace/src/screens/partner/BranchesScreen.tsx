@@ -1,13 +1,14 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  canReopenBranches, hasGlobalScope, HHMM_PATTERN, ISO_DATE_PATTERN, MAX_HOLIDAYS, MAX_NAME, PARTNER_PHONE_PATTERN, WEEKDAYS,
+  canReopenBranches, GST_STATE_CODE_PATTERN, hasGlobalScope, HHMM_PATTERN, ISO_DATE_PATTERN, MAX_HOLIDAYS, MAX_NAME, PARTNER_PHONE_PATTERN, WEEKDAYS,
   type Branch, type BranchInput, type BranchServices, type PartnerKind, type Weekday, type WeeklyHours,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { dirtyKeys, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft, type DraftState } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
+import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
 const SERVICE_LABEL: Record<keyof BranchServices, string> = {
@@ -60,6 +61,8 @@ export function branchBody(s: DraftState<Draft>, isNew: boolean): { body: Partia
   }
   if (dirty.has('phone') && !PARTNER_PHONE_PATTERN.test(d.phone)) errors.phone = 'Enter the 10-digit phone number.';
   if (addressDirty) for (const k of ['line1', 'city', 'state', 'stateCode', 'pincode'] as const) if (!t(d[k])) errors[k] = 'Required.';
+  // WQ11b: bills compare it with the GSTIN's first two digits (`assertRegistrationCovers`), so only a GST state code works.
+  if (addressDirty && t(d.stateCode) && !GST_STATE_CODE_PATTERN.test(t(d.stateCode))) errors.stateCode = 'Enter the 2-digit GST state code, e.g. 29 for Karnataka.';
   const hours: WeeklyHours = {};
   if (dirty.has('days')) {
     for (const { value, label } of WEEKDAYS) {
@@ -83,6 +86,12 @@ export function branchBody(s: DraftState<Draft>, isNew: boolean): { body: Partia
 }
 
 const conflictLabels = (keys: (keyof Draft)[]) => [...new Set(keys.map((k) => DRAFT_LABEL[k]))];
+const listWords = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}` : xs[0] ?? '');
+/** The same branch name as typed (the server trims it; people may differ in case or spacing). */
+const sameName = (a: string, b: string) => a.trim().replace(/\s+/g, ' ').toLowerCase() === b.trim().replace(/\s+/g, ' ').toLowerCase();
+
+/** What a save said: `dropped` names fields reset because someone else changed them meanwhile (not sent, not saved). */
+type Saved = { branch: Branch; dropped: string[]; found?: boolean };
 
 /** Branches (`branches.manage`): add, edit (address, hours, holidays, services), deactivate and reopen. */
 export function BranchesScreen() {
@@ -102,7 +111,15 @@ function Branches({ ctx }: { ctx: ScopeContext }) {
     queryFn: () => ctx.api.branches({ includeInactive: reopen }),
   });
   const [editing, setEditing] = useState<string | 'new' | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNoticeState] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
+  const setNotice = (text: string | null) => setNoticeState(text ? { tone: 'ok', text } : null);
+  /** WQ11b: a save closes only the form that made it (a late answer never closes another one, or drops what was typed there). */
+  const savedFrom = (form: string | 'new', s: Saved, verb: string) => {
+    setEditing((e) => (e === form ? null : e));
+    setNoticeState(s.dropped.length
+      ? { tone: 'warn', text: `${s.branch.name} was saved, except the ${listWords(s.dropped)}: someone else changed ${s.dropped.length > 1 ? 'them' : 'it'} while you were editing, so the saved ${s.dropped.length > 1 ? 'values are' : 'value is'} kept. Change ${s.dropped.length > 1 ? 'them' : 'it'} again if still needed.` }
+      : { tone: 'ok', text: s.found ? `${s.branch.name} was added (its answer was lost; it is in the list now).` : `${s.branch.name} was ${verb}.` });
+  };
   const canCreate = hasGlobalScope(ctx.actor);
   const refresh = () => queryClient.invalidateQueries({ queryKey: [...ctx.key, 'branches'] });
   const open = branches.data?.filter((b) => b.isActive !== false) ?? [];
@@ -113,17 +130,17 @@ function Branches({ ctx }: { ctx: ScopeContext }) {
   return (
     <>
       <PartnerPageHeading ctx={ctx} title="Branches" partnerName={partner.data?.name}>Where customers are served, and when.</PartnerPageHeading>
-      {notice && <Alert tone="ok">{notice}</Alert>}
+      {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
       {editing === null && (canCreate
         ? <div><Button onClick={() => { setEditing('new'); setNotice(null); }}>Add a branch</Button></div>
         : <p className="ws-muted">You manage only the branches given to you; an owner adds new branches.</p>)}
       {editing === 'new' && (
         <BranchForm key="new" ctx={ctx} kind={kind} onCancel={() => setEditing(null)}
-          onSaved={async (b) => { setEditing(null); setNotice(`${b.name} was added.`); await refresh(); }} />
+          onSaved={async (s) => { savedFrom('new', s, 'added'); await refresh(); }} />
       )}
       {target && (
         <BranchForm key={target._id} ctx={ctx} branch={target} kind={kind} onCancel={() => setEditing(null)}
-          onSaved={async (b) => { setEditing(null); setNotice(`${b.name} was saved.`); await refresh(); }} />
+          onSaved={async (s) => { savedFrom(target._id, s, 'saved'); await refresh(); }} />
       )}
       {branches.isPending ? <Loading label="Loading branches…" />
         : branches.isError ? <ErrorState message={messageOf(branches.error)} onRetry={() => void branches.refetch()} />
@@ -182,8 +199,14 @@ function Branches({ ctx }: { ctx: ScopeContext }) {
   );
 }
 
+/**
+ * A new branch is sent with a request key (Q16b `createBranchSchema.requestKey`: exactly once per partner and key). An
+ * answer that never arrives locks the form: the branch list is read again and a new branch of this name is taken as the
+ * one sent; otherwise only "Send again" (the same key and details: never a second branch) or, after a second step,
+ * starting again is offered.
+ */
 function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
-  ctx: ScopeContext; branch?: Branch; kind?: PartnerKind; onCancel: () => void; onSaved: (b: Branch) => Promise<void>;
+  ctx: ScopeContext; branch?: Branch; kind?: PartnerKind; onCancel: () => void; onSaved: (s: Saved) => Promise<void>;
 }) {
   const queryClient = useQueryClient();
   const draft = useDraft(() => draftOf(branch));
@@ -196,38 +219,89 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
   const [notice, setNotice] = useState<string | null>(null);
   const [stale, setStale] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  /** A create whose answer was lost: what was sent, under which key, and the branches there were before it. */
+  const [lost, setLost] = useState<{ body: BranchInput; requestKey: string; before: string[] } | null>(null);
+  /** WQ11b: fields reset because someone else changed them meanwhile; never reported as saved unless typed again. */
+  const dropped = useRef(new Set<keyof Draft>());
   const services = kind ? SERVICES_FOR[kind] : (Object.keys(SERVICE_LABEL) as (keyof BranchServices)[]);
   // Editing: a refreshed branch moves untouched fields along; a field changed here AND there is flagged for review.
   const serverValue = branch ? JSON.stringify(draftOf(branch)) : null;
   useEffect(() => {
     if (!serverValue) return;
     const c = rebaseTo(JSON.parse(serverValue) as Draft);
+    for (const k of c) dropped.current.add(k);
     if (c.length) setStale(staleMessage(conflictLabels(c)));
   }, [serverValue, rebaseTo]);
+  /** Fields reset by someone else's change and not typed again since (so not part of this save). */
+  const stillDropped = () => { const dirty = new Set(dirtyKeys(draft.current())); return [...dropped.current].filter((k) => !dirty.has(k)); };
+
+  /** Sends a new branch; a lost answer is settled by reading the list (a branch of this name made since is the one sent). */
+  async function create(body: BranchInput, requestKey: string, before: string[]) {
+    try {
+      const made = await ctx.api.createBranch(body, requestKey);
+      if (live.current) setLost(null);
+      await onSaved({ branch: made, dropped: [] });
+    } catch (err) {
+      if (definitelyNotRecorded(err)) { if (live.current) { setLost(null); setError(messageOf(err)); } return; }
+      if (live.current) setLost({ body, requestKey, before });
+      try {
+        const now = await ctx.api.branches();
+        void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'branches'] });
+        const found = now.find((b) => b.isActive !== false && !before.includes(b._id) && sameName(b.name, body.name));
+        if (found) { if (live.current) setLost(null); await onSaved({ branch: found, dropped: [], found: true }); return; }
+      } catch { /* still unknown: said below */ }
+      if (live.current) setError(`Not confirmed: ${messageOf(err)} ${body.name} is not in the branch list yet, but the request may still arrive.`);
+    }
+  }
 
   const field = (k: 'name' | 'line1' | 'line2' | 'city' | 'state' | 'stateCode' | 'pincode') =>
     ({ value: d[k], error: errors[k], onChange: (e: { target: { value: string } }) => draft.set(k, e.target.value) });
 
+  /** One send at a time (a double click, or Enter while saving, sends nothing more). */
+  async function once(run: () => Promise<void>) {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    try { await run(); } finally {
+      inFlight.current = false;
+      if (live.current) setBusy(false);
+    }
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (inFlight.current || lost) return;
     setError(null); setNotice(null); setStale(null);
     const first = branchBody(draft.current(), !branch);
     setErrors(first.errors);
     if (Object.keys(first.errors).length) return;
     if (branch && Object.keys(first.body).length === 0) { setNotice('Nothing has changed.'); return; }
-    setBusy(true);
+    if (!branch) {
+      await once(async () => {
+        // The branches there are now, so that after a lost answer only a branch made since can be taken as this one.
+        const known = queryClient.getQueryData<Branch[]>([...ctx.key, 'branches', 'with-closed'])
+          ?? queryClient.getQueryData<Branch[]>([...ctx.key, 'branches', 'open']) ?? await ctx.api.branches({ includeInactive: canReopenBranches(ctx.actor) });
+        await create(first.body as BranchInput, newRequestKey(), known.map((b) => b._id));
+      });
+      return;
+    }
+    await once(() => saveEdit(branch));
+  }
+
+  async function saveEdit(branch: Branch) {
     try {
-      if (!branch) {
-        await onSaved(await ctx.api.createBranch(first.body as BranchInput));
-        return;
-      }
       // Checked against what is saved now: nothing someone else changed meanwhile is overwritten unseen.
       const fresh = await ctx.api.branch(branch._id);
       const conflicts = rebaseTo(draftOf(fresh));
+      for (const k of conflicts) dropped.current.add(k);
       if (conflicts.length) { setStale(staleMessage(conflictLabels(conflicts))); return; }
       if (fresh.isActive === false) { setStale(`${fresh.name} was closed meanwhile.`); return; }
       const { body } = branchBody(draft.current(), false);
       if (Object.keys(body).length === 0) { setNotice('Nothing has changed.'); return; }
+      const notSent = conflictLabels(stillDropped());
       let saved: Branch;
       try {
         // Q10: refused (409 RECORD_CHANGED) if the branch moved after the read above.
@@ -235,15 +309,16 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
       } catch (err) {
         if (!isRecordChanged(err)) throw err;
         const c = rebaseTo(draftOf(await ctx.api.branch(branch._id)));
+        for (const k of c) dropped.current.add(k);
         setStale(c.length ? staleMessage(conflictLabels(c)) : RECORD_CHANGED_MESSAGE);
         return;
       }
-      await onSaved(saved);
+      dropped.current.clear();
+      await onSaved({ branch: saved, dropped: notSent });
     } catch (err) {
-      setError(messageOf(err));
+      if (live.current) setError(messageOf(err));
     } finally {
-      setBusy(false);
-      if (branch) void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'branches'] });
+      void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'branches'] });
     }
   }
 
@@ -258,7 +333,7 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
     <section className="ws-section" aria-labelledby="branch-form-h">
       <h2 id="branch-form-h">{branch ? `Edit ${branch.name}` : 'Add a branch'}</h2>
       <form className="rx-form" noValidate onSubmit={(e) => void submit(e)}>
-        <fieldset className="ws-frozen" disabled={busy}>
+        <fieldset className="ws-frozen" disabled={busy || !!lost}>
         <div className="rx-form-row">
           <TextField label="Branch name" maxLength={MAX_NAME} {...field('name')} />
           <TextField label="Phone" inputMode="numeric" maxLength={10} value={d.phone} error={errors.phone}
@@ -324,10 +399,25 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
         {stale && <Alert tone="warn">{stale}</Alert>}
         {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}
-        <div className="ws-actions">
-          <Button type="submit" busy={busy}>{branch ? 'Save branch' : 'Add branch'}</Button>
-          <Button variant="ghost" disabled={busy} onClick={onCancel}>Cancel</Button>
-        </div>
+        {lost ? (
+          <div className="confirm" role="group" aria-label="Unconfirmed branch">
+            <div className="confirm-text">
+              We could not confirm whether {lost.body.name} was added. Sending it again is safe: it is the same request, so it never
+              adds a second branch. The form stays locked until it is settled.
+            </div>
+            <div className="confirm-actions">
+              <Button busy={busy} onClick={() => { setError(null); void once(() => create(lost.body, lost.requestKey, lost.before)); }}>Send again</Button>
+              <ConfirmAction label="Start again" danger disabled={busy} confirmLabel="Unlock the form"
+                consequence={`Change the form and add it as a new request. If the first ${lost.body.name} still arrives, there will be two branches of that name; deactivate one of them.`}
+                onConfirm={async () => { setLost(null); setError(null); }} />
+            </div>
+          </div>
+        ) : (
+          <div className="ws-actions">
+            <Button type="submit" busy={busy}>{branch ? 'Save branch' : 'Add branch'}</Button>
+            <Button variant="ghost" disabled={busy} onClick={onCancel}>Cancel</Button>
+          </div>
+        )}
       </form>
     </section>
   );

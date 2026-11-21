@@ -23,6 +23,7 @@ async function mockBackend(page: Page): Promise<Backend> {
     calls: [],
     refunds: [
       { _id: ORDER, orderNumber: 'PO-9001', pharmacyId: 'p', status: 'rejected', prescriptionRefund: { cause: 'prescription_rejected', status: 'wallet_pending', walletAmount: 350, gatewayAmountPaise: 0, lastError: 'WALLET_INACTIVE', updatedAt: '2026-11-14T04:00:00.000Z' } },
+      { _id: 'c3'.repeat(12), orderNumber: 'PO-9003', pharmacyId: 'p', status: 'cancelled', prescriptionRefund: { cause: 'order_cancelled', status: 'source_processing', walletAmount: 0, gatewayAmountPaise: 50000 } },
       { _id: MANUAL, orderNumber: 'PO-9002', pharmacyId: 'p', status: 'cancelled', prescriptionRefund: { cause: 'delivery_refused', status: 'manual_review', walletAmount: 120, gatewayAmountPaise: 0, lastError: 'PRIOR_REFUND_AMOUNT_MISMATCH' } },
     ],
     cancels: [
@@ -91,7 +92,10 @@ test('refunds: a waiting wallet credit can be retried; a finance review cannot b
   await expect(manual).toContainText('Needs manual review by finance');
   await expect(manual.getByRole('button')).toHaveCount(0);
   const waiting = page.getByRole('row').filter({ hasText: 'PO-9001' });
-  await expect(waiting).toContainText('WALLET_INACTIVE');
+  await expect(waiting).toContainText('The customer’s wallet is inactive (WALLET_INACTIVE)');
+  // WQ11b: every cause has words (a cancelled order's refund too), never a raw code.
+  await expect(page.getByRole('row').filter({ hasText: 'PO-9003' })).toContainText('Order cancelled');
+  await expect(page.getByText('order_cancelled')).toHaveCount(0);
   await waiting.getByRole('button', { name: 'Retry' }).click();
   await waiting.getByRole('button', { name: 'Retry now' }).click();
   await expect(page.getByRole('row').filter({ hasText: 'PO-9001' })).toHaveCount(0);

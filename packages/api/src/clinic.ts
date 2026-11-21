@@ -192,6 +192,12 @@ export interface ClinicAppointment extends DeskAppointment {
   patient: { name?: string; relationship?: string; accountName?: string; phone?: string; dependentId?: string | null };
   /** Q14: the bill of this appointment (its open bill, else the latest cancelled one), or null when none was issued. */
   bill?: AppointmentBill | null;
+  /**
+   * WQ11b: the no-show history, when the server lists it (`noShows[]`, `noShowReschedules`; `NoShowHistory`). The desk
+   * list does not carry it yet (backend gap): absent = not known whether its one move after a no-show was used.
+   */
+  noShows?: readonly unknown[] | null;
+  noShowReschedules?: number | null;
 }
 
 /** `appointmentsQuerySchema` + `listClinicAppointments`: from ≤ to, at most 31 days, sorted by date and time, at most 1000. */
@@ -305,15 +311,22 @@ const MOVABLE: readonly ClinicAppointmentStatus[] = ['pending', 'confirmed'];
  * - Q14 `rescheduleDeskNoShow`: a no-show, once. Desk rows do not say whether the one move was used (`deskView` carries
  *   no history), so the step is offered and the server decides (409 NO_SHOW_RESCHEDULE_USED: a second no-show is final).
  */
+/** Q16a `NO_SHOW_GRACE_MS`: a no-show can be marked only this long after the appointment starts. */
+export const NO_SHOW_GRACE_MS = 15 * 60_000;
+
 export function deskActions(a: Pick<ClinicAppointment, 'source' | 'status' | 'arrivedAt' | 'bookingDate' | 'bookingTime'>,
   actor: Pick<PartnerActorView, 'role' | 'permissions'>, now: Date): DeskActionOffer[] {
   if (a.source !== 'desk' || !holdsAny(actor, ['bookings.manage'])) return [];
   const out: DeskActionOffer[] = [];
   if (a.status === 'confirmed') {
     if (!a.arrivedAt) out.push({ action: 'arrived' });
-    out.push({ action: 'complete' });
     const at = appointmentAt(a);
-    out.push({ action: 'no_show', blocked: at && at.getTime() <= now.getTime() ? undefined : 'A no-show can be marked only after the appointment time.' });
+    const started = !!at && at.getTime() <= now.getTime();
+    // WQ11b (Q16a `closeDeskAppointment`: 409 NOT_STARTED_YET): a visit is marked as seen only once it has started.
+    out.push({ action: 'complete', blocked: started ? undefined : 'A visit can be marked as seen only once the appointment has started.' });
+    // Q16a (`noShowAllowedFrom`, 409 APPOINTMENT_NOT_STARTED): a no-show only 15 minutes after the appointment time.
+    const noShowFrom = at ? at.getTime() + NO_SHOW_GRACE_MS : null;
+    out.push({ action: 'no_show', blocked: noShowFrom !== null && noShowFrom <= now.getTime() ? undefined : 'A no-show can be marked 15 minutes after the appointment time.' });
   }
   if (MOVABLE.includes(a.status)) out.push({ action: 'reschedule' }, { action: 'cancel' });
   if (a.status === 'no_show') out.push({ action: 'reschedule_no_show' });

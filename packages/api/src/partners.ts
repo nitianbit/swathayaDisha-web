@@ -57,6 +57,12 @@ export const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 export const INVOICE_PREFIX_PATTERN = /^[A-Z0-9]{1,6}$/;
 export const HHMM_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 export const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * WQ11b: a branch's GST state code, the two digits a GSTIN starts with (01–38, 97 "Other Territory"). The branch schema
+ * only requires text, but bills compare it with the GSTIN's first two digits and with `placeOfSupply` (`/^[0-9]{2}$/`,
+ * `partners/validation/invoice.ts`; `assertRegistrationCovers` in `services/invoice.ts`), so anything else cannot bill.
+ */
+export const GST_STATE_CODE_PATTERN = /^(0[1-9]|[12][0-9]|3[0-8]|97)$/;
 /** A pragmatic check for Joi `string().email()`; the server's own answer still decides. */
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const MAX_NAME = 200;
@@ -275,7 +281,15 @@ export function partnerWorkspaceApi(c: ApiClient, scope: PartnerScope) {
     branches: (o: { includeInactive?: boolean } = {}) =>
       c.get<Branch[]>(`${base()}/branches`, { query: { includeInactive: o.includeInactive ? 'true' : undefined } }),
     branch: (id: string) => c.get<Branch>(`${base()}/branches/${checkId(id, 'branch')}`),
-    createBranch: (body: BranchInput) => c.post<Branch>(`${base()}/branches`, { body }),
+    /**
+     * Q16b `createBranchSchema.requestKey` (optional): with a key the create is exactly once per (partner, key); a resend
+     * answers 200 with the branch already made (top-level `replayed: true`), other content under the key is 409
+     * REQUEST_KEY_REUSED (Q16b df87d96 `createBranch`).
+     */
+    createBranch: (body: BranchInput, requestKey?: string) => {
+      if (requestKey !== undefined && !REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
+      return c.post<Branch>(`${base()}/branches`, { body: { ...body, ...(requestKey ? { requestKey } : {}) } });
+    },
     updateBranch: (id: string, body: Partial<BranchInput>, version?: Version) =>
       c.put<Branch>(`${base()}/branches/${checkId(id, 'branch')}`, { body: { ...body, ...fence(version) } }),
     deactivateBranch: (id: string) => c.delete<unknown>(`${base()}/branches/${checkId(id, 'branch')}`),
@@ -371,15 +385,29 @@ export const canReopenBranches = (a: Pick<PartnerActorView, 'role' | 'permission
 export const canAddOwner = (a: Pick<PartnerActorView, 'role'>) => a.role === 'owner';
 /**
  * WQ9 `updateMemberEmail`: a sign-in identity, so like permissions only an owner (or an admin acting as owner) changes
- * it, for any active member including owners and themselves (`canGiveEmail` for a new member's).
+ * it (`canGiveEmail` for a new member's). Q16b (owner, 22 Nov): an OWNER's sign-in email is set or changed by the Jansetu
+ * team only (403 `OWNER_EMAIL_ADMIN_ONLY`), so on owner rows only an admin (`admin`: the actor is a platform admin acting
+ * as owner) is offered it. The member is told of every change by the server.
  */
-export const canEditEmail = (a: Pick<PartnerActorView, 'role'>, target: Pick<PartnerMember, 'isActive'>) =>
-  a.role === 'owner' && target.isActive !== false;
+export const canEditEmail = (a: Pick<PartnerActorView, 'role'>, target: Pick<PartnerMember, 'isActive'> & Partial<Pick<PartnerMember, 'role'>>, admin = false) =>
+  a.role === 'owner' && target.isActive !== false && (target.role !== 'owner' || admin);
 /** Q11 `setMemberProfessional`: owners only (admins act as owner), for any active member including owners and themselves. */
 export const canEditProfessional = (a: Pick<PartnerActorView, 'role'>, target: Pick<PartnerMember, 'isActive'>) =>
   a.role === 'owner' && target.isActive !== false;
-/** WQ9 `addMember`: only an owner (or an admin as owner) gives a new member a sign-in email (403 `OWNER_REQUIRED`). */
-export const canGiveEmail = (a: Pick<PartnerActorView, 'role'>) => a.role === 'owner';
+/**
+ * WQ9 `addMember`: only an owner (or an admin as owner) gives a new member a sign-in email (403 `OWNER_REQUIRED`). Q16b:
+ * a new OWNER gets one only from an admin (403 `OWNER_EMAIL_ADMIN_ONLY`): pass the role being added and `admin`.
+ */
+export const canGiveEmail = (a: Pick<PartnerActorView, 'role'>, role: MemberRole = 'staff', admin = false) =>
+  a.role === 'owner' && (role !== 'owner' || admin);
+/** Q16b: 403 `OWNER_EMAIL_ADMIN_ONLY`: an owner's sign-in email is set or changed by the Jansetu team only. */
+export const isOwnerEmailAdminOnly = (err: unknown) => err instanceof ApiError && err.status === 403 && err.code === 'OWNER_EMAIL_ADMIN_ONLY';
+export const OWNER_EMAIL_ADMIN_ONLY_MESSAGE = 'An owner’s sign-in email is set or changed by the Jansetu team only. Ask Jansetu support.';
+/** Q16b: 409 `USE_DOCTOR_UNLINK`: the member is a doctor of the clinic, removed on the Doctors page (owner or admin). */
+export const isUseDoctorUnlink = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'USE_DOCTOR_UNLINK';
+/** WQ11b: 400 `INVALID_BRANCH_IDS` (`validateBranchIds`): a chosen branch is closed or not this partner's. */
+export const isInvalidBranchIds = (err: unknown) => err instanceof ApiError && err.status === 400 && err.code === 'INVALID_BRANCH_IDS';
+export const INVALID_BRANCH_IDS_MESSAGE = 'One of the chosen branches is closed or no longer exists, so nothing was saved. Untick it and save again.';
 export const isOwnerRequired = (err: unknown) => err instanceof ApiError && err.status === 403 && err.code === 'OWNER_REQUIRED';
 /** WQ9: 409 `EMAIL_IN_USE`: another active member of this partner already signs in with this email. */
 export const isEmailInUse = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'EMAIL_IN_USE';
@@ -391,9 +419,14 @@ export function memberEmail(raw: string): string | null {
 export const canEditPermissions = (a: Pick<PartnerActorView, 'role'>, target: Pick<PartnerMember, 'role' | 'isActive'>) =>
   a.role === 'owner' && target.role === 'staff' && target.isActive !== false;
 
+/** Shown instead of "Remove" on a clinic doctor's membership (Q16b `removeMember`: 409 USE_DOCTOR_UNLINK). */
+export const DOCTOR_MEMBER_REMOVAL = 'A doctor of this clinic: removed on the Doctors page (owner only).';
+
 /** Why a member cannot be removed by this actor, or null (the server still decides; `removeMember`). */
-export function removalBlock(a: PartnerActorView, target: Pick<PartnerMember, '_id' | 'role'>, activeOwnerCount: number | undefined): string | null {
+export function removalBlock(a: PartnerActorView, target: Pick<PartnerMember, '_id' | 'role'> & Partial<Pick<PartnerMember, 'doctorId'>>, activeOwnerCount: number | undefined): string | null {
   if (a.memberId && a.memberId === target._id) return 'You cannot remove yourself.';
+  // Q16b: a clinic doctor's membership ends only by removing the doctor from the clinic (owner or admin), never as staff.
+  if (target.doctorId) return DOCTOR_MEMBER_REMOVAL;
   if (target.role === 'owner' && a.role !== 'owner') return 'Only an owner can remove an owner.';
   if (target.role === 'owner' && activeOwnerCount !== undefined && activeOwnerCount <= 1) return 'The last owner cannot be removed.';
   return null;
@@ -403,7 +436,9 @@ export function removalBlock(a: PartnerActorView, target: Pick<PartnerMember, '_
  * `assertScopeWithin`: the branch scope this actor may hand out. A partner-wide actor may give all branches (empty) or
  * any set; a branch-restricted actor only a non-empty subset of its own branches.
  */
-export function scopeProblem(a: Pick<PartnerActorView, 'role' | 'branchIds'>, target: readonly string[]): string | null {
+export function scopeProblem(a: Pick<PartnerActorView, 'role' | 'branchIds'>, target: readonly string[], closed: ReadonlySet<string> = new Set()): string | null {
+  // WQ11b: `validateBranchIds` takes active branches only (400 INVALID_BRANCH_IDS), whoever gives the access.
+  if (target.some((b) => closed.has(b))) return 'A closed branch cannot be given. Untick the branches marked “(closed)”.';
   if (hasGlobalScope(a)) return null;
   if (target.length === 0) return 'Choose at least one of your branches.';
   if (target.some((b) => !a.branchIds.includes(b))) return 'You can only give access to your own branches.';

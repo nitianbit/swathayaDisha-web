@@ -54,6 +54,14 @@ interface Backend {
   indexesOutdatedOnce?: boolean;
   /** WQ8 review: the next payment never reaches the server. */
   dropNextPay?: boolean;
+  /** WQ11b: the next item create waits for this promise, then is refused 400 (nothing made). */
+  holdRefusedItem?: Promise<void>;
+  /** WQ11b: the next item reactivation waits for this promise. */
+  holdReactivate?: Promise<void>;
+  /** WQ11b: the next bill create waits for this promise before the server looks at it. */
+  holdCreate?: Promise<void>;
+  /** WQ11b: the next payment is refused with this answer (nothing written). */
+  refuseNextPay?: { status: number; code: string; message: string };
   /** The next payment request (only that one) waits for this promise. */
   holdPay?: Promise<void>;
   /** The held payment then loses the compare-and-set: 409 "This bill is paid". */
@@ -97,8 +105,9 @@ function compute(body: Rec, stateCode: string) {
     t.subtotalMinor += (l.unitPriceMinor as number) * (l.qty as number);
     t.discountMinor += l.discountMinor;
     t.taxableMinor += l.amountMinor;
-    const tax = Math.round((l.amountMinor * (l.gstRate as number)) / 100);
-    if (same) { t.cgstMinor += Math.floor(tax / 2); t.sgstMinor += tax - Math.floor(tax / 2); } else t.igstMinor += tax;
+    // Q16a `computeTotals`: within a state CGST and SGST are each half the rate, rounded on their own.
+    const half = Math.round((l.amountMinor * (l.gstRate as number)) / 200);
+    if (same) { t.cgstMinor += half; t.sgstMinor += half; } else t.igstMinor += Math.round((l.amountMinor * (l.gstRate as number)) / 100);
   }
   return { items, totals: { ...t, totalMinor: t.taxableMinor + t.cgstMinor + t.sgstMinor + t.igstMinor, currency: 'INR' } };
 }
@@ -224,6 +233,10 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
     if (sub === '/catalogue' && method === 'POST') {
       if (!can('catalogue.manage')) return deny();
       const { requestKey, ...data } = body as Rec;
+      if (b.holdRefusedItem) {
+        const h = b.holdRefusedItem; b.holdRefusedItem = undefined; await h;
+        return fail(route, 400, 'VALIDATION_ERROR', 'name is not allowed to be this');
+      }
       const prior = b.catalogue.find((i) => i.partnerId === pid && requestKey && i.createRequestKey === requestKey);
       if (prior) {
         return prior.createRequestHash === JSON.stringify(data) ? ok(route, prior, 200)
@@ -246,6 +259,7 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
       if (!can('catalogue.manage') && method !== 'GET') return deny();
       const it = b.catalogue.find((x) => x._id === item[1])!;
       if (item[2]) {
+        if (b.holdReactivate) { const h = b.holdReactivate; b.holdReactivate = undefined; await h; }
         if (it.isActive) return fail(route, 409, 'ITEM_ALREADY_ACTIVE', 'This item is already active');
         it.isActive = true; touch(it);
         return ok(route, it);
@@ -305,6 +319,7 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
     if (sub === '/invoices' && method === 'POST') {
       if (!can('invoices.create')) return deny();
       const x = body as Rec;
+      if (b.holdCreate) { const h = b.holdCreate; b.holdCreate = undefined; await h; }
       const { idempotencyKey, ...request } = x;
       const hash = JSON.stringify(request);
       const existing = b.invoices.find((i) => i.idempotencyKey === idempotencyKey);
@@ -379,6 +394,7 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
         // Q14: splits + requestKey + expectedLifecycleVersion; paidMinor/dueMinor; partly_paid where the partner allows it.
         const raw = body as { mode?: string; splits?: { mode: string; amountMinor: number; reference?: string }[]; note?: string; requestKey: string; expectedLifecycleVersion: number };
         if (b.dropNextPay) { b.dropNextPay = false; return route.abort('failed'); }
+        if (b.refuseNextPay) { const r = b.refuseNextPay; b.refuseNextPay = undefined; return fail(route, r.status, r.code, r.message); }
         if (b.indexesOutdatedOnce) { b.indexesOutdatedOnce = false; return fail(route, 503, 'INVOICE_INDEXES_OUTDATED', 'Bills need a database update before payments can be recorded. Ask an admin.'); }
         // A plain method pays all that is due (a ₹0 bill: nothing).
         const x = { ...raw, splits: raw.splits ?? [{ mode: raw.mode!, amountMinor: Math.max(0, ((inv.totals as Rec).totalMinor as number) - ((inv.paidMinor as number | undefined) ?? 0)) }] };
@@ -1407,4 +1423,141 @@ test('WQ8 review: the part-payment setting says when someone else changed it mea
   await policy.getByRole('button', { name: 'Save payment setting' }).click();
   await expect(policy.getByText('Saved.')).toBeVisible();
   await expect(policy).toContainText('Full payment only');
+});
+
+test('WQ11b: a payment resend refused 403 (permission changed) stays unconfirmed; a lost payment the bill shows no receipt of can be forgotten after a second step', async ({ page }) => {
+  const backend = await mockBackend(page, owner(), { seed: true });
+  await signInPartner(page);
+  await page.goto(`/#/partner/invoices/${INV1}`);
+  await expect(page.getByRole('button', { name: 'Record payment' })).toBeEnabled();
+  backend.dropNextPay = true;
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
+  const unsure = page.getByRole('group', { name: 'Unconfirmed payment' });
+  await expect(unsure).toContainText('We could not confirm the payment of ₹1,008.00 by Cash');
+  // A resend answered 403 says nothing about the first attempt: it stays unconfirmed (not "not recorded").
+  backend.refuseNextPay = { status: 403, code: 'PARTNER_PERMISSION_REQUIRED', message: 'You no longer hold this permission' };
+  await unsure.getByRole('button', { name: 'Send the same payment again' }).click();
+  await expect(unsure).toContainText('You no longer hold this permission');
+  await expect(page.getByText(/Payment not recorded/)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
+  // The bill, read after that attempt, shows no receipt of it: it can be forgotten after a second step, without a reload.
+  await unsure.getByRole('button', { name: 'Forget this payment' }).click();
+  await unsure.getByRole('button', { name: 'Forget it: it was not recorded' }).click();
+  await expect(unsure).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Record payment' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeEnabled();
+  expect(backend.events.filter((e) => e.kind === 'payment')).toHaveLength(0);
+});
+
+test('WQ11b: a bill resend refused REQUEST_ABANDONED (given up elsewhere) settles: the form opens again and says it was never issued', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.dropNextCreate = true;
+  await signInPartner(page);
+  await issueCbcBill(page);
+  const panel = page.getByRole('group', { name: 'Unconfirmed bill' });
+  await expect(panel).toBeVisible();
+  // Given up from another tab meanwhile: the key can never issue a bill.
+  backend.abandoned.add((creates(backend)[0]!.body as Rec).idempotencyKey as string);
+  await panel.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(page.getByText('This bill was given up earlier, so it was never issued and never will be.', { exact: false })).toBeVisible();
+  await expect(panel).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Review the bill' })).toBeVisible();
+  expect(backend.invoices).toHaveLength(0);
+});
+
+test('WQ11b: a bill refused while the page was left: back on the page, "Give up this bill" still settles the unconfirmed bill', async ({ page }) => {
+  const backend = await mockBackend(page);
+  let release!: () => void;
+  backend.holdCreate = new Promise<void>((r) => { release = r; });
+  await signInPartner(page);
+  await issueCbcBill(page);
+  await expect.poll(() => creates(backend).length).toBe(1);
+  // Leave while it is on its way, and come back: the stored bill is shown as unconfirmed.
+  await page.goto('/#/partner/invoices');
+  await page.goto('/#/partner/invoices/new');
+  const panel = page.getByRole('group', { name: 'Unconfirmed bill' });
+  await expect(panel).toBeVisible();
+  // The first page's request is refused for good (a price changed): that page, now gone, forgets the stored bill.
+  backend.priceChangeBeforeBill = { id: CBC, priceMinor: 50000 };
+  release();
+  const key = (creates(backend)[0]!.body as Rec).idempotencyKey as string;
+  await expect.poll(() => page.evaluate((k) => Object.values({ ...sessionStorage }).some((v) => v.includes(k)), key)).toBe(false);
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panel).toContainText('Not recorded so far');
+  await panel.getByRole('button', { name: 'Give up this bill' }).click();
+  await expect(page.getByText('The earlier bill was given up: it can never be issued.', { exact: false })).toBeVisible();
+  await expect(panel).toHaveCount(0);
+  expect(backend.abandoned.has(key)).toBe(true);
+  expect(backend.invoices).toHaveLength(0);
+});
+
+test('WQ11b: Reactivate is busy while it runs and one row step at a time: the other rows wait', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.catalogue.find((i) => i._id === THY)!.isActive = false;
+  let release!: () => void;
+  backend.holdReactivate = new Promise<void>((r) => { release = r; });
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await page.getByLabel('Status').selectOption('inactive');
+  const old = page.getByRole('button', { name: 'Reactivate Old panel' });
+  await old.click();
+  await expect(old).toHaveAttribute('aria-busy', 'true');
+  await expect(page.getByRole('button', { name: 'Reactivate Thyroid profile' })).toBeDisabled();
+  release();
+  await expect(page.getByText('Old panel is active again.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reactivate Thyroid profile' })).toBeEnabled();
+  expect(backend.calls.filter((c) => c.path.endsWith('/reactivate'))).toHaveLength(1);
+});
+
+test('WQ11b: a field reset because someone else changed it is not reported as saved: the save says which change was kept', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await page.getByRole('button', { name: 'Edit CBC' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Complete blood count');
+  await page.getByLabel('Price (₹)').fill('480');
+  // Someone else changes the price; the list is read again (after another change on it) while the edit is open.
+  const cbc = backend.catalogue.find((i) => i._id === CBC)!;
+  Object.assign(cbc, { priceMinor: 49000, updatedAt: '2026-11-03T00:00:00.000Z' });
+  const thy = page.getByRole('row').filter({ hasText: 'Thyroid profile' });
+  await thy.getByRole('button', { name: 'Deactivate' }).click();
+  await thy.getByRole('button', { name: 'Deactivate Thyroid profile' }).click();
+  await expect(page.getByText(/Someone else changed the price while you were editing/)).toBeVisible();
+  await expect(page.getByLabel('Price (₹)')).toHaveValue('490');
+  await page.getByRole('button', { name: 'Save item' }).click();
+  await expect(page.getByText('Saved, except the price: someone else changed it while you were editing, so the saved value is kept. Change it again if still needed.')).toBeVisible();
+  await expect(page.getByText('Complete blood count was saved.')).toHaveCount(0);
+  const puts = backend.calls.filter((c) => c.method === 'PUT');
+  expect(puts.map((c) => c.body)).toEqual([{ name: 'Complete blood count', expectedUpdatedAt: '2026-11-03T00:00:00.000Z' }]);
+  expect(cbc.priceMinor).toBe(49000);
+});
+
+test('WQ11b: an item refused while the page was left: back on the page, "Give up this item" still settles the unconfirmed item', async ({ page }) => {
+  const backend = await mockBackend(page);
+  let release!: () => void;
+  backend.holdRefusedItem = new Promise<void>((r) => { release = r; });
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await page.getByRole('button', { name: 'Add an item' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Lipid profile');
+  await page.getByLabel('Price (₹)').fill('450');
+  await page.getByRole('button', { name: 'Add item' }).click();
+  await expect.poll(() => backend.calls.filter((c) => c.method === 'POST' && c.path === '/partner-workspace/catalogue').length).toBe(1);
+  const key = (backend.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/catalogue')!.body as Rec).requestKey as string;
+  // Leave while it is on its way, and come back: the stored item is shown as unconfirmed.
+  await nav(page).getByRole('link', { name: 'Bills' }).click();
+  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed item' });
+  await expect(panel).toBeVisible();
+  // The first page's request is refused for good: that page, now gone, forgets the stored item.
+  release();
+  await expect.poll(() => page.evaluate((k) => Object.values({ ...sessionStorage }).some((v) => v.includes(k)), key)).toBe(false);
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panel).toContainText('Not recorded so far');
+  await panel.getByRole('button', { name: 'Give up this item' }).click();
+  await expect(page.getByText('The earlier item was given up: it can never be added. You can add it again now.')).toBeVisible();
+  await expect(panel).toHaveCount(0);
+  expect(backend.abandonedItems.has(key)).toBe(true);
 });

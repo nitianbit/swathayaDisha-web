@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  ApiError, isPharmacyEmailTaken, isPharmacyPhoneTaken, normalizeEmail, OBJECT_ID_PATTERN, pharmacyAdminApi, pharmacyBody, pharmacyForm,
+  isPharmacyEmailTaken, isPharmacyPhoneTaken, normalizeEmail, OBJECT_ID_PATTERN, pharmacyAdminApi, pharmacyBody, pharmacyForm,
   pharmacyHolds, pharmacyState, signsPharmacyOut, type PharmacyAccount, type PharmacyForm, type PharmacyUpdate,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
@@ -75,7 +75,7 @@ function PharmacyDetail({ pharmacyId, scopeKey }: { pharmacyId: string; scopeKey
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : (
           <>
-            <StateSection p={q.data} perform={guard.perform} busy={guard.busy} reread={reread}
+            <StateSection p={q.data} perform={guard.perform} busy={guard.busy} reread={reread} readNow={readNow}
               update={(body, version) => admin.update(pharmacyId, body, version)} />
             <SignInSection p={q.data} perform={guard.perform} busy={guard.busy} reread={reread} readNow={readNow}
               update={(body, version) => admin.update(pharmacyId, body, version)} />
@@ -98,16 +98,35 @@ interface SectionProps {
 
 /**
  * Verify (customers can find it), activate or deactivate (whether it can sign in and be seen). Confirmed first, and sent
- * with the version the confirmation showed: if the pharmacy changed meanwhile, nothing changes and it is read again.
+ * with the version the confirmation was OPENED on (WQ11b): each step has its own confirmation (keyed), which closes when
+ * the pharmacy changes while it is open (ConfirmAction `version`), so nothing is ever confirmed on a record the admin did
+ * not see. Every answer closes the confirmation and is told here, in the section: done, refused (nothing changed; the
+ * pharmacy is read again), or lost (the pharmacy as read now says whether it went through).
+ *
+ * An archived pharmacy (`archivedAt`, the old delete) is never offered "Activate": activating does not undo the archive
+ * (the backend still refuses it as inactive), so it is shown as archived, restored by the tech team.
  */
-function StateSection({ p, perform, busy, reread, update }: SectionProps) {
+function StateSection({ p, perform, busy, reread, readNow, update }: SectionProps & { readNow: () => Promise<PharmacyAccount> }) {
   const s = pharmacyState(p);
-  const act = (body: PharmacyUpdate) => perform(async () => {
+  const [outcome, setOutcome] = useState<{ tone: 'ok' | 'warn' | 'error'; text: string } | null>(null);
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  const say = (tone: 'ok' | 'warn' | 'error', text: string) => { if (live.current) setOutcome({ tone, text }); };
+  const act = (body: PharmacyUpdate, openedOn: string | number | undefined, done: string) => perform(async () => {
+    setOutcome(null);
+    const name = p.name;
     try {
-      await update(body, p.updatedAt);
+      await update(body, typeof openedOn === 'string' ? openedOn : undefined);
+      say('ok', done);
     } catch (err) {
-      if (isRecordChanged(err)) throw new ApiError(409, `${p.name} was changed by someone else meanwhile, so nothing was changed. Check what is shown now and try again.`, 'RECORD_CHANGED');
-      throw err;
+      if (isRecordChanged(err)) say('warn', `${name} was changed by someone else meanwhile, so nothing was changed. Check what is shown now and try again.`);
+      else if (definitelyNotRecorded(err)) say('error', `Not changed: ${messageOf(err)}`);
+      else {
+        // The answer was lost: the pharmacy as saved now tells whether the change went through.
+        const now = await readNow().catch(() => null);
+        if (now && pharmacyHolds(now, body)) say('ok', done);
+        else say('warn', `Not confirmed: ${messageOf(err)} The status shown is what is saved now; try again if it is still needed.`);
+      }
     } finally {
       await reread();
     }
@@ -115,6 +134,7 @@ function StateSection({ p, perform, busy, reread, update }: SectionProps) {
   return (
     <section className="ws-section" aria-labelledby="ph-state-h">
       <h2 id="ph-state-h">Status</h2>
+      {outcome && <Alert tone={outcome.tone}>{outcome.text}</Alert>}
       <dl className="ws-dl">
         <dt>Status</dt><dd><PharmacyBadges p={p} /></dd>
         {p.archivedAt && <><dt>Archived</dt><dd>{formatDateTime(p.archivedAt)}{p.archiveReason ? ` (${p.archiveReason})` : ''}</dd></>}
@@ -123,18 +143,23 @@ function StateSection({ p, perform, busy, reread, update }: SectionProps) {
       </dl>
       <div className="ws-actions">
         {!s.verified && (
-          <ConfirmAction label="Verify" confirmLabel={`Verify ${p.name}`} disabled={busy}
+          <ConfirmAction key="verify" label="Verify" confirmLabel={`Verify ${p.name}`} disabled={busy} version={p.updatedAt}
             consequence={`${p.name} is marked verified: customers can find it and order from it${s.active ? '' : ' once it is active again'}.`}
-            onConfirm={() => act({ isVerified: true })} />
+            onConfirm={(_r, openedOn) => act({ isVerified: true }, openedOn, `${p.name} is verified.`)} />
         )}
         {s.active ? (
-          <ConfirmAction label="Deactivate" danger confirmLabel={`Deactivate ${p.name}`} disabled={busy}
+          <ConfirmAction key="deactivate" label="Deactivate" danger confirmLabel={`Deactivate ${p.name}`} disabled={busy} version={p.updatedAt}
             consequence={`${p.name} can no longer sign in, and customers no longer see it. Its orders and stock stay as they are. You can activate it again.`}
-            onConfirm={() => act({ isActive: false })} />
+            onConfirm={(_r, openedOn) => act({ isActive: false }, openedOn, `${p.name} was deactivated: it can no longer sign in, and customers no longer see it.`)} />
+        ) : p.archivedAt ? (
+          <p className="ws-muted">
+            {p.name} is archived: it cannot sign in and customers do not see it. An archived pharmacy cannot be activated here; the
+            tech team restores it if it should come back.
+          </p>
         ) : (
-          <ConfirmAction label="Activate" confirmLabel={`Activate ${p.name}`} disabled={busy}
+          <ConfirmAction key="activate" label="Activate" confirmLabel={`Activate ${p.name}`} disabled={busy} version={p.updatedAt}
             consequence={`${p.name} can sign in again${s.verified ? ', and customers see it again' : '. Customers see it once it is verified'}.`}
-            onConfirm={() => act({ isActive: true })} />
+            onConfirm={(_r, openedOn) => act({ isActive: true }, openedOn, `${p.name} is active again: it can sign in${s.verified ? ', and customers see it' : ''}.`)} />
         )}
       </div>
     </section>

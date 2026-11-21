@@ -56,6 +56,8 @@ interface Backend {
   bills: Rec[];
   /** Q14: the next no-show move is made, then its answer is lost. */
   loseNextNoShowMove?: boolean;
+  /** WQ11b (Q16a): the next "seen" is refused 409 NOT_STARTED_YET (the server's clock says it has not started). */
+  notStartedOnce?: boolean;
   /** Q14: the next admin link is recorded, then its answer is lost. */
   loseNextLink?: boolean;
   /** The next desk booking is recorded, then its answer is lost on the network. */
@@ -231,6 +233,19 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       if (a) a.bill = { invoiceId: inv._id, serial: inv.serial, number: inv.number, state: 'issued' };
       return ok(route, inv, 201);
     }
+    // WQ11b: a payment of a whole bill, so the desk's Bill column can be checked after it.
+    const pay = /^\/invoices\/([0-9a-f]{24})\/pay$/.exec(sub);
+    if (pay && method === 'POST') {
+      const inv = b.bills.find((y) => y._id === pay[1]);
+      if (!inv) return fail(route, 404, 'INVOICE_NOT_FOUND', 'Invoice not found');
+      const total = (inv.totals as Rec).totalMinor as number;
+      Object.assign(inv, { lifecycleState: 'paid', lifecycleVersion: (inv.lifecycleVersion as number) + 1, paidMinor: total, dueMinor: 0 });
+      const a = b.appts.find((y) => y.bill?.invoiceId === inv._id);
+      if (a) a.bill = { ...a.bill, state: 'paid' };
+      const event = { _id: `ev${inv.lifecycleVersion}`, invoiceId: inv._id, kind: 'payment', version: inv.lifecycleVersion, at: NOW.toISOString(), mode: 'cash',
+        amountMinor: total, requestKey: (body as Rec).requestKey, by: actor._id, byKind: 'member' };
+      return ok(route, { invoice: inv, event });
+    }
     const bill = /^\/invoices\/([0-9a-f]{24})$/.exec(sub);
     if (bill) {
       const inv = b.bills.find((y) => y._id === bill[1]);
@@ -400,6 +415,10 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
         if (a.status !== 'confirmed' || a.arrivedAt) return fail(route, 409, 'BOOKING_STATE_CONFLICT', a.arrivedAt ? 'Already marked as arrived' : `A ${a.status} appointment cannot be checked in`);
         a.arrivedAt = NOW.toISOString();
       } else if (cmd === 'complete' || cmd === 'no-show') {
+        if (cmd === 'complete' && b.notStartedOnce) {
+          b.notStartedOnce = false;
+          return fail(route, 409, 'NOT_STARTED_YET', 'An appointment can be completed only after it has started');
+        }
         if (a.status !== 'confirmed') return fail(route, 409, 'BOOKING_STATE_CONFLICT', `A ${a.status} appointment cannot be closed`);
         if (cmd === 'no-show' && Date.parse(istInstant(`${a.bookingDate.slice(0, 4)}-${a.bookingDate.slice(4, 6)}-${a.bookingDate.slice(6)}`, a.bookingTime)) > NOW.getTime()) {
           return fail(route, 409, 'APPOINTMENT_NOT_STARTED', 'A no-show can be marked only after the appointment time');
@@ -632,6 +651,13 @@ test('desk booking: details checked, reviewed, booked once with a key; then arri
   await expect(page.getByText('Kiran Shah is marked as arrived.')).toBeVisible();
   await expect(appointments(page).getByRole('row').filter({ hasText: '9800000009' })).toContainText('Arrived 10:00');
   await expect(page.getByRole('button', { name: 'Mark arrived' })).toHaveCount(0);
+  // WQ11b: "seen" waits for the appointment time (10:15; it is 10:00).
+  await expect(page.getByRole('button', { name: 'Mark as seen' })).toBeDisabled();
+  await expect(page.getByText('A visit can be marked as seen only once the appointment has started.')).toBeVisible();
+  await page.clock.setFixedTime(new Date('2026-11-17T04:46:00.000Z')); // 10:16 India time
+  await nav(page).getByRole('link', { name: 'Doctors' }).click();
+  await openDesk(page);
+  await page.getByRole('button', { name: 'Open Kiran Shah at 10:15' }).click();
   await page.getByRole('button', { name: 'Mark as seen' }).click();
   await expect(page.getByText('The fee of ₹500.00 is paid at the clinic: make a bill for it under Bills.', { exact: false })).toBeVisible();
   await page.getByRole('group', { name: 'Mark as seen' }).getByRole('button', { name: 'Mark as seen' }).click();
@@ -802,7 +828,11 @@ test('Q13: a step names the version it was decided on; a change made elsewhere i
   const cancels = backend.calls.filter((c) => c.path.endsWith('/cancel'));
   expect(cancels.map((c) => c.body)).toEqual([{ expectedUpdatedAt: seen }]);
 
-  // Decided again on what is shown now: it goes through with the new version.
+  // Decided again on what is shown now: it goes through with the new version (once its time has come: 12:01).
+  await page.clock.setFixedTime(new Date('2026-11-17T06:31:00.000Z'));
+  await nav(page).getByRole('link', { name: 'Doctors' }).click();
+  await openDesk(page);
+  await page.getByRole('button', { name: 'Open Chitra N at 12:00' }).click();
   await page.getByRole('button', { name: 'Mark as seen' }).click();
   await page.getByRole('group', { name: 'Mark as seen' }).getByRole('button', { name: 'Mark as seen' }).click();
   await expect(page.getByText('Chitra N’s visit is marked as seen.')).toBeVisible();
@@ -839,13 +869,15 @@ test('no-show only after the time, and no-show and cancel each need a confirmati
   // 12:00 has not come yet (it is 10:00).
   await page.getByRole('button', { name: 'Open Chitra N at 12:00' }).click();
   await expect(page.getByRole('button', { name: 'Mark did not come' })).toBeDisabled();
-  await expect(page.getByText('A no-show can be marked only after the appointment time.')).toBeVisible();
+  await expect(page.getByText('A no-show can be marked 15 minutes after the appointment time.')).toBeVisible();
 
   // 09:30 has passed.
   await page.getByRole('button', { name: 'Open Asha Rao at 09:30' }).click();
   await page.getByRole('button', { name: 'Mark did not come' }).click();
   const noShow = page.getByRole('group', { name: 'Mark did not come' });
-  await expect(noShow).toContainText('Mark Asha Rao as not come for Tue, 17 Nov, 2026, 09:30? The appointment ends and the doctor’s time is freed. Nothing is charged or refunded through Jansetu: desk appointments are paid at the clinic. This cannot be undone.');
+  await expect(noShow).toContainText('Mark Asha Rao as not come for Tue, 17 Nov, 2026, 09:30? The appointment ends and the doctor’s time is freed. Nothing is charged or refunded through Jansetu: desk appointments are paid at the clinic.');
+  // WQ11b: the desk list does not say whether it was moved once already, so no move is promised outright.
+  await expect(noShow).toContainText('Afterwards the desk may move it once to a new time, unless it was already moved after an earlier no-show: then this second no-show is final. This cannot be undone.');
   await noShow.getByRole('button', { name: 'Back' }).click();
   expect(writes(backend)).toEqual([]);
   await page.getByRole('button', { name: 'Mark did not come' }).click();
@@ -1181,4 +1213,108 @@ test('Q14 bill for an appointment: "Create bill" opens the form with the patient
   await page.getByRole('button', { name: 'Review the bill' }).click();
   await page.getByRole('button', { name: 'Issue bill' }).click();
   await expect(page.getByText('Not issued: This appointment already has a bill. Open it from the front desk; cancel it first to issue a new one.')).toBeVisible();
+});
+
+test('WQ11b: after a bill is paid, the desk row shows it paid (the Bill column is read again, not the cached day)', async ({ page }) => {
+  await mockBackend(page);
+  await signInPartner(page);
+  await openDesk(page);
+  const row = appointments(page).getByRole('row').filter({ hasText: 'Asha Rao' });
+  await row.getByRole('link', { name: 'Create bill' }).click();
+  await page.getByLabel('From the catalogue').selectOption({ label: 'Consultation · ₹500.00' });
+  await page.getByRole('button', { name: 'Add item' }).click();
+  await page.getByRole('button', { name: 'Review the bill' }).click();
+  await page.getByRole('button', { name: 'Issue bill' }).click();
+  await expect(page.getByText(/^Bill SC\/2627\/000\d+ issued\./)).toBeVisible();
+  await page.goto('/#/partner/desk');
+  await expect(row.getByRole('link', { name: /^Bill SC\/2627\/000\d+, Unpaid$/ })).toBeVisible();
+  await row.getByRole('link', { name: /^Bill SC\/2627\/000\d+, Unpaid$/ }).click();
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Record ₹500.00 paid' }).click();
+  await expect(page.getByText('Payment recorded.')).toBeVisible();
+  await page.goto('/#/partner/desk');
+  await expect(row.getByRole('link', { name: /^Bill SC\/2627\/000\d+, Paid$/ })).toBeVisible();
+});
+
+test('WQ11b: "seen" refused NOT_STARTED_YET is said in plain words; a no-show of an appointment moved once already says it is final', async ({ page }) => {
+  const backend = await mockBackend(page);
+  // When the server lists the no-show history, the desk knows this appointment was moved once after a no-show.
+  Object.assign(backend.appts.find((a) => a.bookingId === AP1)!, { noShowReschedules: 1 });
+  await signInPartner(page);
+  await openDesk(page);
+  await page.getByRole('button', { name: 'Open Asha Rao at 09:30' }).click();
+  backend.notStartedOnce = true;
+  await page.getByRole('button', { name: 'Mark as seen' }).click();
+  const seen = page.getByRole('group', { name: 'Mark as seen' });
+  await seen.getByRole('button', { name: 'Mark as seen' }).click();
+  await expect(seen).toContainText('The appointment has not started yet, so it was not marked as seen. Mark it once the appointment time has come.');
+  await seen.getByRole('button', { name: 'Back' }).click();
+  await page.getByRole('button', { name: 'Mark did not come' }).click();
+  const noShow = page.getByRole('group', { name: 'Mark did not come' });
+  await expect(noShow).toContainText('It was already moved once after an earlier no-show, so this second no-show is final: it cannot be moved to a new time.');
+  await expect(noShow).not.toContainText('may move it once');
+});
+
+test('WQ11b: a desk no-show move lost, then refused on the resend (time taken): Back resets the choice; a new time is chosen as a new move without a reload', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.appts.find((a) => a.bookingId === AP1)!.status = 'no_show';
+  let dropped = false;
+  await page.route('**/api/v1/**/reschedule-no-show', async (route) => {
+    if (!dropped) { dropped = true; return route.abort('failed'); }
+    return route.fallback();
+  });
+  await signInPartner(page);
+  await openDesk(page);
+  await page.getByRole('button', { name: 'Open Asha Rao at 09:30' }).click();
+  await page.getByRole('button', { name: 'Reschedule no-show' }).click();
+  const form = page.getByRole('form', { name: 'Reschedule no-show' });
+  await form.getByLabel('New day').fill('2026-11-18');
+  await form.getByLabel('New time').selectOption({ label: '11:00–11:15 (1 free)' });
+  await form.getByRole('button', { name: 'Continue' }).click();
+  // Back shows the picker again with nothing chosen, and the choice starts again too.
+  await form.getByRole('button', { name: 'Back' }).click();
+  await expect(form.getByLabel('New day')).toBeVisible();
+  await form.getByRole('button', { name: 'Continue' }).click();
+  await expect(form.getByText('Choose the new time.')).toBeVisible();
+  await form.getByLabel('New day').fill('2026-11-18');
+  await form.getByLabel('New time').selectOption({ label: '11:00–11:15 (1 free)' });
+  await form.getByRole('button', { name: 'Continue' }).click();
+  await form.getByRole('button', { name: /^Move to/ }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed no-show move' });
+  await expect(panel).toContainText('has not been confirmed');
+  const target = backend.slots.find((s) => s.slotId === slotIdOf(D1, BR1, '2026-11-18', '11:00'))!;
+  target.current = target.max; // someone else takes that time
+  await page.clock.setFixedTime(new Date(NOW.getTime() + 60_000));
+  await panel.getByRole('button', { name: 'Send the same move again' }).click();
+  await expect(panel).toContainText('That time is no longer free. Pick another time.');
+  await page.clock.setFixedTime(new Date(NOW.getTime() + 120_000));
+  await panel.getByRole('button', { name: 'Check the booking' }).click();
+  await panel.getByRole('button', { name: 'Choose a new time again' }).click();
+  await panel.getByRole('button', { name: 'Forget it and choose again' }).click();
+  const again = page.getByRole('form', { name: 'Reschedule no-show' });
+  await again.getByLabel('New day').fill('2026-11-18');
+  await again.getByLabel('New time').selectOption({ label: '11:15–11:30 (1 free)' });
+  await again.getByRole('button', { name: 'Continue' }).click();
+  await again.getByRole('button', { name: /^Move to/ }).click();
+  await expect(page.getByText(/Asha Rao’s no-show is moved to Wed, 18 Nov, 2026, 11:15/)).toBeVisible();
+  const moves = backend.calls.filter((c) => c.path.endsWith('/reschedule-no-show'));
+  // The dropped first attempt never reached the mock: the refused resend (same key) and the new move (a new key).
+  expect(moves.map((c) => (c.body as Rec).slotId)).toEqual([slotIdOf(D1, BR1, '2026-11-18', '11:00'), slotIdOf(D1, BR1, '2026-11-18', '11:15')]);
+  expect((moves[1]!.body as Rec).requestKey).not.toBe((moves[0]!.body as Rec).requestKey);
+});
+
+test('WQ11b: keyboard focus moves into a confirmation when it opens and back to its button on Back', async ({ page }) => {
+  await mockBackend(page);
+  await signInPartner(page);
+  await openDesk(page);
+  await page.getByRole('button', { name: 'Open Asha Rao at 09:30' }).click();
+  await page.getByRole('button', { name: 'Cancel appointment' }).focus();
+  await page.keyboard.press('Enter');
+  const group = page.getByRole('group', { name: 'Cancel appointment' });
+  await expect(group.getByLabel('Reason (optional)')).toBeFocused();
+  await group.getByRole('button', { name: 'Back' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(group).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel appointment' })).toBeFocused();
 });

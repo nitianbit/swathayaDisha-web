@@ -1,9 +1,10 @@
 import { createApiClient } from './client.ts';
 import {
-  addDays, capacityProblem, deriveTemplate, eligibleSigners, isBookable, isRealDate, istDateOf, labActions, labBookingsAdminApi, labNoShowMove,
-  manualSlotProblems, mondayOf, partnerLabsApi, reopenable, reportFileBooking, reportFileName, reportFileProblem, slotTimesFor,
-  templateProblems, weekdayOf, type LabBooking, type LabSlot,
+  addDays, capacityProblem, eligibleSigners, isBookable, isLabBookingChanged, isRealDate, isReportTooLarge, istDateOf, isTemplateChanged, isUploadFailed,
+  labActions, labBookingsAdminApi, labNoShowMove, manualSlotProblems, mondayOf, partnerLabsApi, reopenable, reportFileBooking, reportFileName,
+  reportFileProblem, slotTimesFor, templateInput, templateProblems, weekdayOf, type LabBooking, type LabSlot,
 } from './partnerLabs.ts';
+import { ApiError } from './client.ts';
 import { ADMIN_ACTOR, type PartnerMember } from './partners.ts';
 
 const P = 'a1'.repeat(12);
@@ -71,26 +72,12 @@ describe('weekly template rules (slotTemplateSchema, validateWindows, slotTimesF
     });
   });
 
-  it('derives the editor’s starting template from the generated slots (the server cannot return the saved one)', () => {
-    const slots = [
-      slot({ date: '2026-11-16', startTime: '09:00', endTime: '09:30' }),
-      slot({ date: '2026-11-16', startTime: '09:30', endTime: '10:00', booked: 2, capacity: 2 }),
-      slot({ date: '2026-11-16', startTime: '10:00', endTime: '10:30', closed: 'manual' }), // still wanted by the template
-      slot({ date: '2026-11-16', startTime: '14:00', endTime: '14:30' }),
-      slot({ date: '2026-11-17', startTime: '07:00', endTime: '07:30', closed: 'template' }), // no longer wanted
-      slot({ date: '2026-11-18', startTime: '08:00', endTime: '08:30', capacity: 5, booked: 4 }), // booked: kept its seats
-      slot({ date: '2026-11-23', startTime: '08:00', endTime: '08:30' }),
-      slot({ date: '2026-11-19', startTime: '11:00', endTime: '12:00', source: 'manual' }), // not from the template
-    ];
-    expect(deriveTemplate(slots)).toEqual({
-      slotMinutes: 30, capacity: 2,
-      days: {
-        mon: [{ start: '08:00', end: '08:30' }, { start: '09:00', end: '10:30' }, { start: '14:00', end: '14:30' }],
-        wed: [{ start: '08:00', end: '08:30' }],
-      },
-    });
-    expect(deriveTemplate([slot({ source: 'manual' })])).toBeNull();
-    expect(deriveTemplate([])).toBeNull();
+  it('edits the SAVED template as it is (WQ11b: no guessing from the generated slots)', () => {
+    const saved = { _id: 't', partnerId: P, branchId: B, visitMode: 'lab' as const, isActive: true, updatedAt: '2026-11-20T05:00:00.000Z',
+      slotMinutes: 30, capacity: 2, days: { wed: [{ start: '09:00', end: '10:00' }], thu: [] } };
+    expect(templateInput(saved)).toEqual({ slotMinutes: 30, capacity: 2, days: { wed: [{ start: '09:00', end: '10:00' }] } });
+    expect(isTemplateChanged(new ApiError(409, 'changed', 'TEMPLATE_CHANGED'))).toBe(true);
+    expect(isTemplateChanged(new ApiError(409, 'x', 'RECORD_CHANGED'))).toBe(false);
   });
 });
 
@@ -213,24 +200,24 @@ describe('partnerLabsApi paths', () => {
     const member = partnerLabsApi(client, { kind: 'member' });
     const admin = partnerLabsApi(client, { kind: 'admin', partnerId: P });
     await member.slots({ branchId: B, visitMode: 'home', from: '2026-11-16', to: '2026-11-22' });
-    await admin.saveTemplate(B, 'lab', { slotMinutes: 30, capacity: 2, days: { mon: [{ start: '09:00', end: '12:00' }] } });
+    await admin.saveTemplate(B, 'lab', { slotMinutes: 30, capacity: 2, days: { mon: [{ start: '09:00', end: '12:00' }] } }, '2026-11-20T05:00:00.000Z');
     await member.addSlot({ branchId: B, visitMode: 'lab', date: '2026-11-20', startTime: '18:00', endTime: '18:30', capacity: 1 });
     await admin.setCapacity(S, 4);
     await member.closeSlot(S);
     await member.reopenSlot(S);
-    await member.bookings({ status: 'confirmed', branchId: B, from: '2026-11-09', limit: 500 });
+    await member.bookings({ status: 'confirmed', branchId: B, from: '2026-11-09', limit: 100, cursor: `1763270000000_${K}` });
     await admin.booking(K);
-    await member.assignCollector(K, { memberId: M, name: 'Kiran', phone: '9000000002' });
-    await member.markCollected(K);
-    await member.markVisited(K);
-    await member.markNoShow(K);
-    await member.startProcessing(K);
-    await member.complete(K);
-    await admin.reject(K, 'Analyser down');
-    await member.reschedule(K, S, 'Phlebotomist unavailable');
-    await admin.releaseReport(K, `/api/static/partner-lab-reports/${K}/cbc.pdf`, M);
+    await member.assignCollector(K, { memberId: M, name: 'Kiran', phone: '9000000002' }, 3);
+    await member.markCollected(K, 3);
+    await member.markVisited(K, 3);
+    await member.markNoShow(K, 3);
+    await member.startProcessing(K, 4);
+    await member.complete(K, 7);
+    await admin.reject(K, 'Analyser down', 3);
+    await member.reschedule(K, S, 'Phlebotomist unavailable', 3);
+    await admin.releaseReport(K, `/api/static/partner-lab-reports/${K}/cbc.pdf`, M, 5);
     await member.releaseReport(K, `/api/static/partner-lab-reports/${K}/cbc.pdf`);
-    await labBookingsAdminApi(client).list({ partnerId: P, status: 'processing' });
+    await labBookingsAdminApi(client).list({ partnerId: P, status: 'processing', page: 2, limit: 100 });
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       `GET /partner-workspace/slots?branchId=${B}&visitMode=home&from=2026-11-16&to=2026-11-22`,
       `PUT /partner-workspace/admin/${P}/workspace/branches/${B}/slot-templates/lab`,
@@ -238,7 +225,7 @@ describe('partnerLabsApi paths', () => {
       `PUT /partner-workspace/admin/${P}/workspace/slots/${S}/capacity`,
       `POST /partner-workspace/slots/${S}/close`,
       `POST /partner-workspace/slots/${S}/reopen`,
-      `GET /partner-workspace/lab-bookings?status=confirmed&branchId=${B}&from=2026-11-09&limit=500`,
+      `GET /partner-workspace/lab-bookings?status=confirmed&branchId=${B}&from=2026-11-09&limit=100&cursor=1763270000000_${K}`,
       `GET /partner-workspace/admin/${P}/workspace/lab-bookings/${K}`,
       `POST /partner-workspace/lab-bookings/${K}/assign`,
       `POST /partner-workspace/lab-bookings/${K}/collect`,
@@ -250,28 +237,52 @@ describe('partnerLabsApi paths', () => {
       `POST /partner-workspace/lab-bookings/${K}/reschedule`,
       `POST /partner-workspace/admin/${P}/workspace/lab-bookings/${K}/reports/release`,
       `POST /partner-workspace/lab-bookings/${K}/reports/release`,
-      `GET /partner-workspace/admin/lab-bookings?partnerId=${P}&status=processing`,
+      `GET /partner-workspace/admin/lab-bookings?partnerId=${P}&status=processing&page=2&limit=100`,
     ]);
-    expect(calls[1]!.body).toEqual({ slotMinutes: 30, capacity: 2, days: { mon: [{ start: '09:00', end: '12:00' }] } });
+    // Q11: the template save names the version the editor started from; every booking step names the status version.
+    expect(calls[1]!.body).toEqual({ slotMinutes: 30, capacity: 2, days: { mon: [{ start: '09:00', end: '12:00' }] }, expectedUpdatedAt: '2026-11-20T05:00:00.000Z' });
     expect(calls[2]!.body).toEqual({ branchId: B, visitMode: 'lab', date: '2026-11-20', startTime: '18:00', endTime: '18:30', capacity: 1 });
     expect(calls[3]!.body).toEqual({ capacity: 4 });
-    expect(calls[8]!.body).toEqual({ memberId: M, name: 'Kiran', phone: '9000000002' });
-    expect(calls[14]!.body).toEqual({ reason: 'Analyser down' });
-    expect(calls[15]!.body).toEqual({ slotId: S, reason: 'Phlebotomist unavailable' });
-    expect(calls[16]!.body).toEqual({ file: `/api/static/partner-lab-reports/${K}/cbc.pdf`, signerMemberId: M });
+    expect(calls[8]!.body).toEqual({ memberId: M, name: 'Kiran', phone: '9000000002', expectedVersion: 3 });
+    expect(calls.slice(9, 14).map((c) => c.body)).toEqual([{ expectedVersion: 3 }, { expectedVersion: 3 }, { expectedVersion: 3 }, { expectedVersion: 4 }, { expectedVersion: 7 }]);
+    expect(calls[14]!.body).toEqual({ reason: 'Analyser down', expectedVersion: 3 });
+    expect(calls[15]!.body).toEqual({ slotId: S, reason: 'Phlebotomist unavailable', expectedVersion: 3 });
+    expect(calls[16]!.body).toEqual({ file: `/api/static/partner-lab-reports/${K}/cbc.pdf`, signerMemberId: M, expectedVersion: 5 });
     expect(calls[17]!.body).toEqual({ file: `/api/static/partner-lab-reports/${K}/cbc.pdf` }); // members sign as themselves
   });
 
-  it('uploads reports as multipart `files` (the browser sets the boundary)', async () => {
+  it('uploads ONE report per multipart request, under its request key (the browser sets the boundary)', async () => {
     const { client, calls } = recorder(() => new Response(JSON.stringify({ success: true, data: { _id: K } }), { status: 201 }));
     const a = new File(['%PDF-1.4'], 'cbc.pdf', { type: 'application/pdf' });
-    const b = new File([new Uint8Array([0xff, 0xd8, 0xff])], 'page2.jpg', { type: 'image/jpeg' });
-    await partnerLabsApi(client, { kind: 'member' }).uploadReports(K, [a, b]);
-    expect(calls[0]!.url).toBe(`/partner-workspace/lab-bookings/${K}/reports`);
+    await partnerLabsApi(client, { kind: 'member' }).uploadReport(K, a, 'u'.repeat(32));
+    expect(calls[0]!.url).toBe(`/partner-workspace/lab-bookings/${K}/reports?requestKey=${'u'.repeat(32)}`);
     const form = calls[0]!.raw as FormData;
     expect(form).toBeInstanceOf(FormData);
-    expect(form.getAll('files').map((f) => (f as File).name)).toEqual(['cbc.pdf', 'page2.jpg']);
+    expect(form.getAll('files').map((f) => (f as File).name)).toEqual(['cbc.pdf']);
     expect(calls[0]!.headers['Content-Type']).toBeUndefined();
+    expect(() => partnerLabsApi(client, { kind: 'member' }).uploadReport(K, a, 'bad key')).toThrow('Invalid request key');
+  });
+
+  it('Q16a: an admin cancels a moved no-show with a reason and an explicit refund choice', async () => {
+    const { client, calls } = recorder();
+    const admin = labBookingsAdminApi(client);
+    await admin.cancelMovedNoShow(K, { reason: '  The lab cannot attend  ', refund: true });
+    expect(calls[0]).toMatchObject({ method: 'POST', url: `/partner-workspace/admin/lab-bookings/${K}/cancel-no-show`, body: { reason: 'The lab cannot attend', refund: true } });
+    expect(() => admin.cancelMovedNoShow(K, { reason: 'no', refund: false })).toThrow('Invalid reason');
+    expect(() => admin.cancelMovedNoShow(K, { reason: 'Because', refund: undefined as never })).toThrow(/refunded/);
+    expect(() => admin.cancelMovedNoShow('x', { reason: 'Because', refund: false })).toThrow('Invalid booking id');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('tells a report refused for its size (any of the server’s ways) from other failures', () => {
+    // FileService: one file over 10 MB; formidable's own limits (the whole request counts) surface as UPLOAD_FAILED; a proxy says 413.
+    expect(isReportTooLarge(new ApiError(400, 'File a.pdf exceeds maximum size of 10MB', 'FILE_TOO_LARGE'))).toBe(true);
+    expect(isReportTooLarge(new ApiError(500, 'options.maxTotalFileSize (10485760 bytes) exceeded, received 10551296 bytes of file data', 'UPLOAD_FAILED'))).toBe(true);
+    expect(isReportTooLarge(new ApiError(413, 'Payload Too Large'))).toBe(true);
+    expect(isReportTooLarge(new ApiError(500, 'disk full', 'UPLOAD_FAILED'))).toBe(false);
+    expect(isUploadFailed(new ApiError(500, 'disk full', 'UPLOAD_FAILED'))).toBe(true);
+    expect(isReportTooLarge(new ApiError(0, 'Could not reach the server', 'NETWORK'))).toBe(false);
+    expect(isLabBookingChanged(new ApiError(409, 'changed', 'LAB_BOOKING_CHANGED'))).toBe(true);
   });
 
   it('reads a report file of this booking as a blob through the authenticated file route, the token in the header', async () => {
@@ -292,7 +303,11 @@ describe('partnerLabsApi paths', () => {
     expect(() => m.setCapacity(`${S}/x`, 1)).toThrow('Invalid slot id');
     expect(() => m.slots({ branchId: B, visitMode: 'clinic' as never, from: '2026-11-16', to: '2026-11-22' })).toThrow('Invalid visit mode');
     expect(() => m.slots({ branchId: B, visitMode: 'lab', from: '2026-02-30', to: '2026-11-22' })).toThrow('Invalid from date');
-    expect(() => m.saveTemplate('x', 'lab', { slotMinutes: 30, capacity: 1, days: {} })).toThrow('Invalid branch id');
+    expect(() => m.saveTemplate('x', 'lab', { slotMinutes: 30, capacity: 1, days: {} }, null)).toThrow('Invalid branch id');
+    expect(() => m.bookings({ cursor: '../x' })).toThrow('Invalid cursor');
+    expect(() => m.bookings({ limit: 500 })).toThrow('Invalid page size');
+    expect(() => m.markNoShow(K, -1)).toThrow('Invalid booking version');
+    expect(() => labBookingsAdminApi(client).list({ page: 0 })).toThrow('Invalid page');
     expect(() => m.reschedule(K, 'nope', 'reason')).toThrow('Invalid slot id');
     expect(() => m.assignCollector(K, { memberId: '1', name: 'A' })).toThrow('Invalid member id');
     expect(() => m.reportFile(K, `/api/static/partner-lab-reports/${S}/cbc.pdf`)).toThrow('Not a report file of this booking');

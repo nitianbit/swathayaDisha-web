@@ -35,11 +35,15 @@ const REFUSED_409 = new Set(['PART_PAYMENTS_NOT_ALLOWED', 'AMOUNT_EXCEEDS_DUE', 
  * answered as a replay) and these refusals abort the transaction, so nothing was recorded under the key. A version
  * conflict, a state conflict ("paid", "cancelled"), a network loss or another 5xx stays unknown: an earlier attempt of
  * the same payment may have committed in between.
+ *
+ * WQ11b: only CONTENT refusals (400, 422: the same content was sent by every attempt, so every attempt was refused the
+ * same way) settle it. 401, 403 and 404 come before the server looks for the key (`loadForActor`: the session, the
+ * permission or the bill's branch scope changed since), so they say nothing about an earlier attempt and stay unknown.
  */
 export function paymentRefusedForGood(err: unknown): boolean {
   if (isIndexesOutdated(err)) return true;
   if (!(err instanceof ApiError)) return false;
-  if ([400, 403, 404, 422].includes(err.status)) return true;
+  if ([400, 422].includes(err.status)) return true;
   return err.status === 409 && !!err.code && REFUSED_409.has(err.code);
 }
 /** Shown when the bill moved on while a payment or a cancellation was being reviewed. */
@@ -164,6 +168,8 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
   const reload = async () => {
     await queryClient.invalidateQueries({ queryKey: key });
     await queryClient.invalidateQueries({ queryKey: [...ctx.key, 'invoices'] });
+    // WQ11b: the front desk's Bill column shows this bill's state (paid, cancelled): read the day again too.
+    await queryClient.invalidateQueries({ queryKey: [...ctx.key, 'clinic-appointments'] });
   };
   const changed = (r: { invoice: Invoice; event: InvoiceEvent }) => {
     queryClient.setQueryData<Detail>(key, (cur) => mergeDetail(cur, r));
@@ -346,6 +352,12 @@ function payWords(b: PaymentInput): string {
   return ` of ${money(splitsTotal(b.splits))} (${b.splits.map((x) => `${MODE_LABEL[x.mode]} ${money(x.amountMinor)}${x.reference ? `, reference ${x.reference}` : ''}`).join(' + ')})`;
 }
 
+/**
+ * A payment whose answer did not arrive. It can be sent again unchanged, or (WQ11b) — once the bill, read after its last
+ * attempt, still takes a payment and shows no receipt of it — forgotten after a second step, without a reload: every
+ * payment names the bill version it was decided on, so if the earlier one still arrives after another payment it is
+ * refused, and the bill is never paid twice.
+ */
 function UnconfirmedPayment({ op, sending, billUnpaid, onResend, onCheck, onForget }: {
   op: PayOp; sending: boolean; billUnpaid: boolean;
   onResend: () => void; onCheck: () => void; onForget: () => void;
@@ -381,6 +393,11 @@ function UnconfirmedPayment({ op, sending, billUnpaid, onResend, onCheck, onForg
       <div className="confirm-actions">
         <Button busy={sending} onClick={onResend}>Send the same payment again</Button>
         <Button variant="secondary" disabled={sending} onClick={onCheck}>Check the bill</Button>
+        {billUnpaid && !sending && (
+          <ConfirmAction label="Forget this payment" danger confirmLabel="Forget it: it was not recorded"
+            consequence={`The bill as read now shows no such payment, so it was not recorded so far. Forget it here and record a payment again only if the customer still has to pay. If the earlier one still arrives after another payment, it is refused (it names the bill version it was decided on), so the bill is never paid twice.`}
+            onConfirm={async () => onForget()} />
+        )}
       </div>
     </div>
   );

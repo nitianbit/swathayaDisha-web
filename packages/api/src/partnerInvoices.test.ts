@@ -56,8 +56,9 @@ describe('tax rules mirrored from services/invoice.ts', () => {
     expect(allowedGstRates({ taxRegime: 'unregistered' })).toEqual([0]);
   });
 
-  it('rounds tax per line to the paisa and sums rounded lines; the odd paisa of CGST/SGST goes to SGST', () => {
-    // 333 paise at 5% = 16.65 → 17 (cgst 8, sgst 9); 3 × ₹99.99 − ₹0.97 = 29900 at 18% = 5382; 101 at 12% = 12.12 → 12
+  it('rounds tax per line to the paisa and sums rounded lines; Q16a: CGST and SGST are each half the rate, rounded on their own', () => {
+    // 333 paise at 5% = 16.65 → 17 on the line, but CGST = SGST = 8.325 → 8; 3 × ₹99.99 − ₹0.97 = 29900 at 18% = 5382
+    // (2691 + 2691); 101 at 12% = 12.12 → 12 (6.06 → 6 each).
     const p = previewInvoice(regular, '29', undefined, [
       line({ unitPriceMinor: 333, gstRate: 5 }),
       line({ qty: 3, unitPriceMinor: 9999, discountMinor: 97, gstRate: 18 }),
@@ -68,7 +69,7 @@ describe('tax rules mirrored from services/invoice.ts', () => {
     expect(p.lines.map((l) => [l.amountMinor, l.taxMinor])).toEqual([[333, 17], [29900, 5382], [101, 12]]);
     expect(p.totals).toEqual({
       subtotalMinor: 333 + 29997 + 101, discountMinor: 97, taxableMinor: 30334,
-      cgstMinor: 8 + 2691 + 6, sgstMinor: 9 + 2691 + 6, igstMinor: 0, totalMinor: 30334 + 17 + 5382 + 12, currency: 'INR',
+      cgstMinor: 8 + 2691 + 6, sgstMinor: 8 + 2691 + 6, igstMinor: 0, totalMinor: 30334 + 16 + 5382 + 12, currency: 'INR',
     });
     expect(p.problems).toEqual([]);
   });

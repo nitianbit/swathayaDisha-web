@@ -1,6 +1,6 @@
 import { ApiError, createApiClient } from './client.ts';
 import { isSlotRefusal, NO_SHOW_MOVE_REFUSAL } from './noShows.ts';
-import { adminNoShowMove, consultationAdminApi, consultationQueryProblem, type AdminConsultation } from './adminConsultations.ts';
+import { adminNoShowMove, canAdminCancelMovedNoShow, consultationAdminApi, consultationQueryProblem, type AdminConsultation } from './adminConsultations.ts';
 import { professionalInput, canEditProfessional, partnerWorkspaceApi } from './partners.ts';
 
 const ID = 'a1'.repeat(12);
@@ -82,6 +82,39 @@ describe('admin consultations (bookings getAll as admin, slots/available)', () =
     expect(adminNoShowMove(booking({ bookingKind: 'instant' }))).toBe('instant');
     expect(adminNoShowMove(booking({ clinicDesk: { partnerId: P, branchId: P } }))).toBe('clinic');
     expect(adminNoShowMove(booking({ status: 'confirmed', noShows: [{ rescheduledAt: '2026-11-18T05:00:00Z' }] }))).toBeNull();
+  });
+});
+
+describe('Q16a admin cancel of a moved no-show (adminCancelNoShowSchema)', () => {
+  it('posts the trimmed reason and the explicit refund choice to cancel-no-show', async () => {
+    const { client, calls } = recorder();
+    const api = consultationAdminApi(client);
+    await api.cancelMovedNoShow(ID, { reason: '  Doctor is on leave  ', refund: true });
+    await api.cancelMovedNoShow(ID, { reason: 'Doctor is on leave', refund: false });
+    expect(calls).toEqual([
+      { method: 'POST', url: `/specialists/admin/bookings/${ID}/cancel-no-show`, body: { reason: 'Doctor is on leave', refund: true } },
+      { method: 'POST', url: `/specialists/admin/bookings/${ID}/cancel-no-show`, body: { reason: 'Doctor is on leave', refund: false } },
+    ]);
+  });
+
+  it('refuses what the schema refuses before any request: a short or long reason, no refund choice, a bad id', () => {
+    const { client, calls } = recorder();
+    const api = consultationAdminApi(client);
+    expect(() => api.cancelMovedNoShow(ID, { reason: ' ab ', refund: true })).toThrow();
+    expect(() => api.cancelMovedNoShow(ID, { reason: 'x'.repeat(501), refund: true })).toThrow();
+    expect(() => api.cancelMovedNoShow(ID, { reason: 'Doctor is on leave', refund: undefined as unknown as boolean })).toThrow();
+    expect(() => api.cancelMovedNoShow('nope', { reason: 'Doctor is on leave', refund: true })).toThrow();
+    expect(calls).toEqual([]);
+  });
+
+  it('is offered only for a booking moved once after a no-show that is still to happen, never instant or front-desk', () => {
+    const moved = { noShowReschedules: 1, noShows: [{ rescheduledAt: '2026-11-18T05:00:00.000Z' }] };
+    expect(canAdminCancelMovedNoShow(booking({ status: 'confirmed', ...moved }))).toBe(true);
+    expect(canAdminCancelMovedNoShow(booking({ status: 'confirmed' }))).toBe(false);
+    expect(canAdminCancelMovedNoShow(booking({ status: 'no_show', ...moved }))).toBe(false);
+    expect(canAdminCancelMovedNoShow(booking({ status: 'cancelled', ...moved }))).toBe(false);
+    expect(canAdminCancelMovedNoShow(booking({ status: 'confirmed', bookingKind: 'instant', ...moved }))).toBe(false);
+    expect(canAdminCancelMovedNoShow(booking({ status: 'confirmed', clinicDesk: { partnerId: P, branchId: M }, ...moved }))).toBe(false);
   });
 });
 

@@ -4,6 +4,19 @@ import { useCallback, useReducer, useRef } from 'react';
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /**
+ * WQ11b: the server stores values canonically (trimmed names, upper-cased GSTIN and PAN, lower-cased emails). For "is
+ * this the same value the person typed?", strings are compared trimmed, with inner spaces collapsed and case ignored,
+ * also inside objects and arrays. Whether the server or the person changed a field at all is still compared exactly.
+ */
+export function canonical(v: unknown): unknown {
+  if (typeof v === 'string') return v.trim().replace(/\s+/g, ' ').toLowerCase();
+  if (Array.isArray(v)) return v.map(canonical);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, canonical(x)]));
+  return v;
+}
+export const sameCanonical = (a: unknown, b: unknown) => same(canonical(a), canonical(b));
+
+/**
  * An edit form's state: what the person started from (`base`, the server's value when the edit began or was last
  * rebased) and what they typed (`draft`). Only fields that differ from `base` are ever sent, so a field nobody touched
  * is never written back with an old value.
@@ -23,6 +36,8 @@ export function changedFields<T extends object>(s: DraftState<T>): Partial<T> {
 /**
  * Moves an open draft onto a newer server value. Untouched fields follow the server. A field the person changed AND
  * the server changed (to something else) is a conflict: it is reset to the server's value so they review it again.
+ * "Something else" is judged on canonical forms (WQ11b): the person's own save coming back trimmed or re-cased is not
+ * someone else's change.
  */
 export function rebase<T extends object>(s: DraftState<T>, latest: T): { next: DraftState<T>; conflicts: (keyof T)[] } {
   const draft = { ...s.draft };
@@ -30,7 +45,7 @@ export function rebase<T extends object>(s: DraftState<T>, latest: T): { next: D
   for (const k of Object.keys(latest) as (keyof T)[]) {
     if (same(latest[k], s.base[k])) continue; // the server did not change it
     const touched = !same(s.draft[k], s.base[k]);
-    if (touched && !same(s.draft[k], latest[k])) conflicts.push(k);
+    if (touched && !sameCanonical(s.draft[k], latest[k])) conflicts.push(k);
     draft[k] = latest[k];
   }
   return { next: { base: latest, draft }, conflicts };

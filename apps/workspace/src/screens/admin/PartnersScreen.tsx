@@ -14,15 +14,16 @@ const KINDS: PartnerKind[] = ['lab', 'clinic'];
 const STATES: VerificationState[] = ['pending', 'verified', 'suspended'];
 const PAGE_SIZE = 20;
 
-/** Filters from the URL, kept only when they are values `partnerQuerySchema` accepts. */
+/**
+ * Filters from the URL, kept only when they are values `partnerQuerySchema` accepts. WQ11b: the name searched for is
+ * not one of them: it stays in the page's own state, never in the address (and so never in the browser's history).
+ */
 function queryOf(params: URLSearchParams): PartnerQuery {
   const kind = params.get('kind');
   const state = params.get('verificationState');
   const active = params.get('isActive');
-  const q = (params.get('q') ?? '').trim().slice(0, 100);
   const page = Number.parseInt(params.get('page') ?? '1', 10);
   return {
-    ...(q ? { q } : {}),
     ...(Number.isInteger(page) && page > 1 ? { page } : {}),
     ...(KINDS.includes(kind as PartnerKind) ? { kind: kind as PartnerKind } : {}),
     ...(STATES.includes(state as VerificationState) ? { verificationState: state as VerificationState } : {}),
@@ -36,20 +37,34 @@ export const stateTone = (s?: VerificationState) => (s === 'verified' ? 'ok' : s
 export function PartnersScreen() {
   const { api } = useSession();
   const [params, setParams] = useSearchParams();
-  const q = queryOf(params);
+  // A name left in the address by an older link is taken into the page and removed from the address.
+  const [name, setName] = useState(() => (params.get('q') ?? '').trim().slice(0, 100));
+  const [search, setSearch] = useState(name);
+  useEffect(() => {
+    const fromAddress = params.get('q');
+    if (fromAddress === null) return;
+    const v = fromAddress.trim().slice(0, 100);
+    setName(v); setSearch(v);
+    const next = new URLSearchParams(params);
+    next.delete('q');
+    setParams(next, { replace: true });
+  }, [params, setParams]);
+  const q: PartnerQuery = { ...queryOf(params), ...(name ? { q: name } : {}) };
   const page = q.page ?? 1;
   const list = useQuery({ queryKey: ['admin-partners', 'list', q], queryFn: () => partnerAdminApi(api).list({ ...q, limit: PAGE_SIZE }) });
-  const [search, setSearch] = useState(q.q ?? '');
-  useEffect(() => { setSearch(q.q ?? ''); }, [q.q]);
-  /** A filter or search change starts again at page 1. */
-  const setFilter = (key: keyof PartnerQuery, value: string) => {
+  /** A filter change starts again at page 1. */
+  const setFilter = (key: Exclude<keyof PartnerQuery, 'q'>, value: string) => {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value); else next.delete(key);
     if (key !== 'page') next.delete('page');
     setParams(next, { replace: key !== 'page' });
   };
   const lastPage = Math.max(1, list.data?.totalPages ?? 1);
-  const submitSearch = (e: FormEvent) => { e.preventDefault(); setFilter('q', search.trim()); };
+  const submitSearch = (e: FormEvent) => {
+    e.preventDefault();
+    setName(search.trim().slice(0, 100));
+    if (params.has('page')) { const next = new URLSearchParams(params); next.delete('page'); setParams(next, { replace: true }); }
+  };
 
   return (
     <>

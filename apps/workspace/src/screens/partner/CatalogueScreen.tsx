@@ -12,7 +12,7 @@ import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { dirtyKeys, staleMessage, useDraft, type DraftState } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
 import {
-  afterFailure, beginAttempt, keyedLookup, newRequestKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp,
+  afterFailure, beginAttempt, keyedLookup, newRequestKey, ownsKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp,
 } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { ITEM_KIND_LABEL, money, useCatalogue, VISIT_MODE_LABEL } from './billing.tsx';
@@ -123,6 +123,12 @@ export function itemBody(s: DraftState<Draft>, rates: readonly GstRate[], kind: 
   return { body, errors };
 }
 
+/** WQ11b: the words after a save that kept someone else's value for fields this person had also changed. */
+export const keptMessage = (fields: readonly string[]) => {
+  const list = fields.length > 1 ? `${fields.slice(0, -1).join(', ')} and ${fields.at(-1)}` : fields[0];
+  return `Saved, except the ${list}: someone else changed ${fields.length > 1 ? 'them' : 'it'} while you were editing, so the saved ${fields.length > 1 ? 'values are' : 'value is'} kept. Change ${fields.length > 1 ? 'them' : 'it'} again if still needed.`;
+};
+
 /** A new item sent and not yet confirmed (Q10: exactly once per `requestKey`). Session memory + body-less reload marker. */
 type PendingItem = PendingOp<NewCatalogueItem & { requestKey: string }>;
 
@@ -163,7 +169,22 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
   const [status, setStatus] = useState<StatusFilter>('active');
   const [editing, setEditing] = useState<string | 'new' | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** WQ11b: a save that kept someone else's value for a field this person had also changed (never "saved" alone). */
+  const [warning, setWarning] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  /** WQ11b: one row step (reactivate, enable) at a time on this list, shown busy while it runs. */
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const rowRunning = useRef(false);
+  const rowStep = async (id: string, run: () => Promise<void>) => {
+    if (rowRunning.current) return;
+    rowRunning.current = true;
+    setRowBusy(id);
+    setNotice(null); setWarning(null); setFailure(null);
+    try { await run(); } finally {
+      rowRunning.current = false;
+      if (mounted.current) setRowBusy(null);
+    }
+  };
   const isAdmin = ctx.scope.kind === 'admin';
   const p = partner.data;
   const kind = p?.kind ?? 'lab';
@@ -191,9 +212,15 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
   };
   /** An answer for `op` acts only while this page is on screen and the stored item is still exactly `op` (key + attempt). */
   const owns = (op: PendingItem) => mounted.current && stillCurrent(memory.get<PendingItem>(slot), op);
+  /**
+   * WQ11b: an answer about the key itself (a by-key lookup, a give-up's `used` or `abandoned`) settles what this page
+   * shows when the stored item is this key or is gone: after leaving mid-send and coming back, the first page's late
+   * answer removes the stored item while this page still shows it, and "Give up" must still act on the server's word.
+   */
+  const ownsTheKey = (op: PendingItem) => mounted.current && ownsKey(memory.get<PendingItem>(slot), op.requestKey);
   const created = (it: CatalogueItem, op: PendingItem, earlier = false) => {
     void refresh();
-    if (!owns(op)) return; // a newer attempt owns the state; resending it replays this same item
+    if (earlier ? !ownsTheKey(op) : !owns(op)) return; // a newer attempt owns the state; resending it replays this same item
     const requestKey = op.requestKey;
     resolveStored(memory, slot, requestKey);
     setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
@@ -202,7 +229,7 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
   };
   /** Given up on the server (abandon, or a resend refused REQUEST_ABANDONED): ends `op` only while this page owns it. */
   const givenUp = (op: PendingItem, text: string) => {
-    if (!owns(op)) return;
+    if (!ownsTheKey(op)) return;
     const k = op.requestKey;
     resolveStored(memory, slot, k);
     setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));
@@ -242,6 +269,7 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
         What customers can book and what appears on bills. Price changes apply at once.
       </PartnerPageHeading>
       {notice && <Alert tone="ok">{notice}</Alert>}
+      {warning && <Alert tone="warn">{warning}</Alert>}
       {failure && <Alert>{failure}</Alert>}
       {gaveUp && !pending && <Alert tone="ok">{gaveUp}</Alert>}
       {p && !chargesGst(p) && (
@@ -273,7 +301,11 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
             const requestKey = newRequestKey();
             void sendCreate(startOp(requestKey, { ...body, requestKey }));
           }}
-          onSaved={async (it) => { setEditing(null); setNotice(`${it.name} was saved.`); await refresh(); }} />
+          onSaved={async (it, kept) => {
+            setEditing(null);
+            if (kept.length) { setNotice(null); setWarning(keptMessage(kept)); } else { setWarning(null); setNotice(`${it.name} was saved.`); }
+            await refresh();
+          }} />
       )}
       <div className="ws-search">
         <div className="j-field ws-filter">
@@ -332,27 +364,27 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
                         <div className="ws-actions">
                           {canManage && i.isActive && <Button variant="secondary" aria-label={`Edit ${i.name}`} onClick={() => { setEditing(i._id); setNotice(null); }}>Edit</Button>}
                           {canManage && i.isActive && (
-                            <ConfirmAction label="Deactivate" danger confirmLabel={`Deactivate ${i.name}`}
+                            <ConfirmAction label="Deactivate" danger confirmLabel={`Deactivate ${i.name}`} disabled={rowBusy !== null}
                               consequence={`${i.name} is taken off the catalogue: customers can no longer book it and it cannot be put on new bills. Bills already issued keep it. It can be reactivated later (Status: Deactivated).`}
                               onConfirm={async () => {
                                 try { await ctx.billing.deactivateCatalogueItem(i._id); setNotice(`${i.name} was deactivated.`); } finally { await refresh(); }
                               }} />
                           )}
                           {canManage && !i.isActive && (
-                            <Button variant="secondary" aria-label={`Reactivate ${i.name}`} onClick={async () => {
-                              setNotice(null); setFailure(null);
-                              try { await ctx.billing.reactivateCatalogueItem(i._id); setNotice(`${i.name} is active again.`); }
-                              catch (err) { setFailure(`${i.name} was not reactivated: ${messageOf(err)}`); } finally { await refresh(); }
-                            }}>Reactivate</Button>
+                            <Button variant="secondary" aria-label={`Reactivate ${i.name}`} busy={rowBusy === `${i._id}:reactivate`}
+                              disabled={rowBusy !== null} onClick={() => void rowStep(`${i._id}:reactivate`, async () => {
+                                try { await ctx.billing.reactivateCatalogueItem(i._id); if (mounted.current) setNotice(`${i.name} is active again.`); }
+                                catch (err) { if (mounted.current) setFailure(`${i.name} was not reactivated: ${messageOf(err)}`); } finally { await refresh(); }
+                              })}>Reactivate</Button>
                           )}
                           {isAdmin && (i.adminDisabled ? (
-                            <Button variant="secondary" onClick={async () => {
-                              setNotice(null); setFailure(null);
-                              try { await catalogueAdminApi(api).enable(i._id); setNotice(`${i.name} is offered again.`); }
-                              catch (err) { setFailure(`${i.name} was not enabled: ${messageOf(err)}`); } finally { await refresh(); }
-                            }}>Enable</Button>
+                            <Button variant="secondary" aria-label={`Enable ${i.name}`} busy={rowBusy === `${i._id}:enable`}
+                              disabled={rowBusy !== null} onClick={() => void rowStep(`${i._id}:enable`, async () => {
+                                try { await catalogueAdminApi(api).enable(i._id); if (mounted.current) setNotice(`${i.name} is offered again.`); }
+                                catch (err) { if (mounted.current) setFailure(`${i.name} was not enabled: ${messageOf(err)}`); } finally { await refresh(); }
+                              })}>Enable</Button>
                           ) : (
-                            <ConfirmAction label="Disable" danger confirmLabel={`Disable ${i.name}`}
+                            <ConfirmAction label="Disable" danger confirmLabel={`Disable ${i.name}`} disabled={rowBusy !== null}
                               consequence={`${i.name} stays in the partner’s list marked “Disabled by Jansetu”: customers cannot book it and it cannot be billed until a Jansetu admin enables it again. The partner cannot undo this.`}
                               onConfirm={async () => {
                                 try { await catalogueAdminApi(api).disable(i._id); setNotice(`${i.name} was disabled.`); } finally { await refresh(); }
@@ -372,7 +404,9 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
 }
 
 function ItemForm({ ctx, partner, item, onCancel, onSaved, onCreate, createBusy, createRefused }: {
-  ctx: ScopeContext; partner: Partner; item?: CatalogueItem; onCancel: () => void; onSaved: (i: CatalogueItem) => Promise<void>;
+  ctx: ScopeContext; partner: Partner; item?: CatalogueItem; onCancel: () => void;
+  /** `kept`: fields this person had changed that someone else changed too, so the saved values were kept (WQ11b). */
+  onSaved: (i: CatalogueItem, kept: string[]) => Promise<void>;
   /** New items go through the exactly-once create of the screen (keyed, resendable). */
   onCreate: (body: NewCatalogueItem) => void; createBusy: boolean; createRefused: string | null;
 }) {
@@ -391,7 +425,12 @@ function ItemForm({ ctx, partner, item, onCancel, onSaved, onCreate, createBusy,
   const allowed = allowedGstRates(partner);
   const current = item ? (Number(draft.state.base.gstRate) as GstRate) : undefined;
   const rateOptions = current !== undefined && !allowed.includes(current) ? [...allowed, current] : allowed;
-  const setField = <K extends keyof Draft>(k: K, v: Draft[K]) => draft.set(k, v);
+  /**
+   * WQ11b: fields this person had changed that a newer server value (a background refresh) also changed: they were reset
+   * to the saved value for review. Until the person changes one again, a save of the other fields says it kept them.
+   */
+  const kept = useRef(new Set<keyof Draft>());
+  const setField = <K extends keyof Draft>(k: K, v: Draft[K]) => { kept.current.delete(k); draft.set(k, v); };
   const text = (k: TextKey) => ({ value: d[k], error: errors[k], maxLength: LIMITS[k], onChange: (e: { target: { value: string } }) => setField(k, e.target.value) });
 
   // Editing: a refreshed item moves untouched fields along; a field changed here AND there is reset for review.
@@ -401,6 +440,7 @@ function ItemForm({ ctx, partner, item, onCancel, onSaved, onCreate, createBusy,
     if (!serverValue) return;
     const c = rebaseTo(JSON.parse(serverValue) as Draft);
     baseUpdatedAt.current = serverUpdatedAt;
+    for (const k of c) kept.current.add(k);
     if (c.length) setStale(staleMessage(c.map((k) => FIELD_LABEL[k])));
   }, [serverValue, serverUpdatedAt, rebaseTo]);
 
@@ -425,10 +465,21 @@ function ItemForm({ ctx, partner, item, onCancel, onSaved, onCreate, createBusy,
       if (Object.keys(errs).length) return;
       if (Object.keys(body).length === 0) { setNotice('Nothing has changed.'); return; }
       // Q10: the server refuses (409 CATALOGUE_ITEM_CHANGED) if the item moved after the version this edit is based on.
-      await onSaved(await ctx.billing.updateCatalogueItem(item._id, { ...body, ...(baseUpdatedAt.current ? { expectedUpdatedAt: baseUpdatedAt.current } : {}) }));
+      const saved = await ctx.billing.updateCatalogueItem(item._id, { ...body, ...(baseUpdatedAt.current ? { expectedUpdatedAt: baseUpdatedAt.current } : {}) });
+      await onSaved(saved, [...kept.current].map((k) => FIELD_LABEL[k]));
     } catch (err) {
       if (err instanceof ApiError && err.code === 'CATALOGUE_ITEM_CHANGED') {
-        setStale(`${err.message} The form now follows the saved item; your changes to other fields are kept.`);
+        // WQ11b: nothing was saved. Read the item as saved now and show it: a field changed here AND there is flagged.
+        try {
+          const now = await ctx.billing.catalogueItem(item._id);
+          const c = rebaseTo(draftOf(now, kind));
+          baseUpdatedAt.current = now.updatedAt;
+          for (const k of c) kept.current.add(k);
+          setStale(c.length ? staleMessage(c.map((k) => FIELD_LABEL[k]))
+            : 'Someone else changed this item while you were saving, so nothing was saved. The form now shows what is saved; check it and save again.');
+        } catch (readErr) {
+          setError(`Nothing was saved: ${err.message} The item could not be read again (${messageOf(readErr)}).`);
+        }
       } else setError(messageOf(err));
     } finally {
       setBusy(false);
@@ -480,7 +531,7 @@ function ItemForm({ ctx, partner, item, onCancel, onSaved, onCreate, createBusy,
               {MODES.map((m) => (
                 <label key={m} className="ws-check">
                   <input type="checkbox" checked={d.visitModes.includes(m)}
-                    onChange={(e) => draft.update((x) => ({ ...x, visitModes: e.target.checked ? MODES.filter((y) => y === m || x.visitModes.includes(y)) : x.visitModes.filter((y) => y !== m) }))} />
+                    onChange={(e) => { kept.current.delete('visitModes'); draft.update((x) => ({ ...x, visitModes: e.target.checked ? MODES.filter((y) => y === m || x.visitModes.includes(y)) : x.visitModes.filter((y) => y !== m) })); }} />
                   {VISIT_MODE_LABEL[m]}
                 </label>
               ))}
