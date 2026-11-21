@@ -1,6 +1,7 @@
 import { ApiError, createApiClient } from './client.ts';
 import {
-  IMPORT_COLUMNS, importCommittable, importStuck, importFileProblem, importRetryable, importTemplateCsv, isImportClaimed, isRealYyyymmdd,
+  IMPORT_COLUMNS, IMPORT_TIMEOUT_MS, importCommittable, importPlan, importPriceOf, importUploadRefusal, importZeroPrices, monthFirstRows, recentSameFile, serverToday, TEMPLATE_EXAMPLE_MARK,
+  isSupplierRefusal, type ImportRow, type InventoryImport, importStuck, importFileProblem, importRetryable, importTemplateCsv, isImportClaimed, isRealYyyymmdd,
   pharmacyStockApi, stockEntryBody, stockEntryProblems, type StockEntryDraft,
 } from './pharmacyStock.ts';
 import { cancelRefusal, orderStatusLabel, paymentStatusLabel } from './pharmacyOrders.ts';
@@ -115,11 +116,20 @@ describe('stock imports (pharmacyInventoryImports)', () => {
   });
 
   it('offers a template with the headers the server reads (any case since Q15), and expiry as a date or text', () => {
-    const header = importTemplateCsv().trim().split(',');
+    const [headerLine, example] = importTemplateCsv().trim().split('\r\n');
+    const header = headerLine!.split(',');
     expect(header.slice(0, 4)).toEqual(['medicine name', 'quantity to add', 'batch number', 'expiry date']);
     expect(header).toEqual(expect.arrayContaining(['mrp', 'retail price', 'purchase price', 'rack location']));
     expect(header.every((h) => h === h.toLowerCase())).toBe(true);
     expect(IMPORT_COLUMNS.find((c) => c.header === 'expiry date')?.format).not.toMatch(/Text/);
+    // WQ11c (owner, 22 Nov): one example row, expiry day first, one value per column.
+    const cells = example!.split(',');
+    expect(cells).toHaveLength(header.length);
+    expect(cells[header.indexOf('expiry date')]).toBe('31-12-2027');
+    expect(cells[header.indexOf('prescription required')]).toBe('no');
+    // Q16c: the server's column order (supplier last) and its example mark (the importer refuses that row).
+    expect(header.at(-1)).toBe('supplier');
+    expect(cells[0]).toContain(TEMPLATE_EXAMPLE_MARK);
   });
 
   it('uploads the file as multipart `file` with the mode, commits by id, retries and lists', async () => {
@@ -183,5 +193,83 @@ describe('orders: shared words and the cancel rule (requestCancel)', () => {
     for (const status of ['ready_for_pickup', 'out_for_delivery', 'pending_cancel', 'completed', 'cancelled'] as const) {
       expect(cancelRefusal({ status, paymentStatus: 'paid' })).toBe('state');
     }
+  });
+});
+
+describe('WQ11c: prices, prescriptions, suppliers and long imports', () => {
+  const row = (rowIndex: number, data: ImportRow['data'], status: ImportRow['status'] = 'valid'): ImportRow => ({ rowIndex, medicineName: data?.name ?? 'X', status, data });
+
+  it('a blank price keeps the current one; 0 is a price of ₹0 and is named', () => {
+    expect(importPriceOf(undefined)).toBe('keep');
+    expect(importPriceOf(null)).toBe('keep');
+    expect(importPriceOf(0)).toBe(0);
+    expect(importPriceOf(12.5)).toBe(12.5);
+    expect(importZeroPrices(row(2, { mrp: 0, retailPrice: 0, purchasePrice: 3 }))).toEqual(['MRP', 'selling price']);
+    expect(importZeroPrices(row(2, { mrp: 10 }))).toEqual([]);
+  });
+
+  it('the plan follows the mode: new medicines skipped in "already in my stock", prescription default, unpriced new ones', () => {
+    const rows = [
+      row(2, { name: 'Known', quantityToAdd: 10, medicineMatchStatus: 'matched', mrp: 5 }),
+      row(3, { name: 'New Rx', quantityToAdd: 4, medicineMatchStatus: 'not_found' }),
+      row(4, { name: 'New OTC', quantityToAdd: 6, medicineMatchStatus: 'not_found', prescriptionRequired: false, retailPrice: 0 }),
+      row(5, { name: 'Bad' }, 'error'),
+    ];
+    const upsert = importPlan({ importMode: 'upsert', previewRows: rows });
+    expect(upsert).toMatchObject({ rows: 3, units: 20, skippedNew: 0, newMedicines: 2, newNeedingPrescription: 1, mayBeSkipped: 0 });
+    expect(upsert.newWithoutPrice.map((r) => r.rowIndex)).toEqual([3, 4]);
+    expect(upsert.priceChanges.map((r) => r.rowIndex)).toEqual([2, 4]);
+    expect(upsert.zeroPrices.map((r) => r.rowIndex)).toEqual([4]);
+    expect(importPlan({ importMode: 'update_only', previewRows: rows })).toMatchObject({ rows: 1, units: 10, skippedNew: 2, newMedicines: 0 });
+    expect(importPlan({ importMode: 'create_only', previewRows: rows })).toMatchObject({ rows: 3, mayBeSkipped: 1 });
+  });
+
+  it('finds another import of the same file added in the last 24 hours', () => {
+    const now = Date.parse('2026-11-22T12:00:00Z');
+    const me = { _id: IMP, fileName: 'a.csv' } as InventoryImport;
+    const other = (o: Partial<InventoryImport>) => ({ _id: MED, fileName: 'a.csv', importMode: 'upsert', status: 'committed', totalRows: 1, validRows: 1, errorRows: 0, ...o }) as InventoryImport;
+    expect(recentSameFile(me, [other({ committedAt: '2026-11-22T02:00:00Z' })], now)?._id).toBe(MED);
+    expect(recentSameFile(me, [other({ committedAt: '2026-11-21T11:00:00Z' })], now)).toBeNull();
+    expect(recentSameFile(me, [other({ status: 'previewed', createdAt: '2026-11-22T11:00:00Z' })], now)).toBeNull();
+    expect(recentSameFile(me, [other({ fileName: 'b.csv', committedAt: '2026-11-22T11:00:00Z' })], now)).toBeNull();
+    expect(recentSameFile(me, [{ ...me, status: 'committed', committedAt: '2026-11-22T11:00:00Z' } as InventoryImport], now)).toBeNull();
+  });
+
+  it('upload refusals in words, with the server words for codes not known yet', () => {
+    // Q16c upload codes.
+    expect(importUploadRefusal(new ApiError(400, 'x', 'FILE_TOO_LARGE'))).toMatch(/10 MB/);
+    expect(importUploadRefusal(new ApiError(400, 'x', 'IMPORT_FILE_EMPTY'))).toMatch(/no rows/);
+    expect(importUploadRefusal(new ApiError(400, 'x', 'UNSUPPORTED_FILE_TYPE'))).toMatch(/Excel/);
+    expect(importUploadRefusal(new ApiError(400, 'x', 'IMPORT_COLUMNS_MISSING'))).toMatch(/medicine name/);
+    expect(importUploadRefusal(new ApiError(400, 'Something new', 'NEW_CODE'))).toBe('Something new');
+    const rows = [row(2, undefined, 'error'), { ...row(3, undefined, 'error'), errors: ['this file writes dates month first (row 3: 12/31/2027), so 05/06/2027 cannot be read safely'] }];
+    expect(monthFirstRows(rows).map((r) => r.rowIndex)).toEqual([3]);
+  });
+
+  it('a delivery names its supplier; upload, commit and retry wait 2 minutes; the supplier of a whole file is sent', async () => {
+    const SUP = 'ef'.repeat(12);
+    const d = draft({ supplierId: SUP.toUpperCase() });
+    expect(stockEntryBody(d).supplierId).toBe(SUP);
+    expect(stockEntryBody({ ...d, supplierId: '' }).supplierId).toBeUndefined();
+    expect(stockEntryProblems({ ...d, supplierId: 'nope' }).supplierId).toBeTruthy();
+    expect(isSupplierRefusal(new ApiError(409, 'x', 'SUPPLIER_ARCHIVED'))).toBe(true);
+    expect(isSupplierRefusal(new ApiError(404, 'x', 'SUPPLIER_NOT_FOUND'))).toBe(true);
+    expect(IMPORT_TIMEOUT_MS).toBe(120_000);
+    const { client, calls } = recorder();
+    await pharmacyStockApi(client).previewImport(new Blob(['a']), 'a.csv', 'upsert', SUP);
+    expect((calls[0]!.raw as FormData).get('supplierId')).toBe(SUP);
+  });
+
+  it('the server template when there is one; otherwise null (the page makes one)', async () => {
+    const ok = recorder(() => new Response('a,b', { status: 200, headers: { 'Content-Type': 'text/csv' } }));
+    expect(await pharmacyStockApi(ok.client).importTemplate()).toBeInstanceOf(Blob);
+    expect(ok.calls[0]!.url).toBe('/pharmacy-inventory-imports/template');
+    const missing = recorder(() => new Response(JSON.stringify({ error: 500, message: 'Cast to ObjectId failed' }), { status: 500 }));
+    expect(await pharmacyStockApi(missing.client).importTemplate()).toBeNull();
+  });
+
+  it('"today" for expiry is the India date (Q16c)', () => {
+    expect(serverToday(new Date('2026-11-21T19:00:00Z'))).toBe('20261122'); // 00:30 IST
+    expect(serverToday(new Date('2026-11-21T18:00:00Z'))).toBe('20261121'); // 23:30 IST
   });
 });

@@ -1,10 +1,11 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
 import { ArrowLeft, Download } from 'lucide-react';
 import {
-  IMPORT_ACCEPT, IMPORT_COLUMNS, IMPORT_EXPIRY_FORMS, IMPORT_NUMBER_NOTE, IMPORT_MODES, IMPORT_STATUS_LABEL, importFileProblem, importTemplateCsv, pharmacyStockApi,
-  type ImportMode, type ImportStatus, type InventoryImport,
+  IMPORT_ACCEPT, IMPORT_COLUMNS, IMPORT_DATE_FORMAT, IMPORT_EXPIRY_FORMS, IMPORT_NUMBER_NOTE, IMPORT_MODES, IMPORT_STATUS_LABEL, importFileProblem,
+  importTemplateCsv, importUploadRefusal, isSupplierRefusal, pharmacyStockApi, SUPPLIER_REFUSAL, type ApiError, type ImportMode, type ImportStatus,
+  type InventoryImport,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
@@ -12,13 +13,14 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
-import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
+import { CheckPanel, useDiscarded, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
+import { SupplierSelect, useActiveSuppliers } from './SupplierPicker.tsx';
 
 export const importTone = (s: ImportStatus) =>
   s === 'committed' ? 'ok' : s === 'failed' ? 'danger' : s === 'partially_committed' || s === 'committing' ? 'warn' : undefined;
 
-/** Only the file's name and the mode are kept for an unconfirmed check, never its contents. */
-interface PendingCheck { fileName: string; mode: ImportMode }
+/** Only the file's name, the mode and the supplier are kept for an unconfirmed check, never its contents. */
+interface PendingCheck { fileName: string; mode: ImportMode; supplierId?: string }
 
 /** WQ10a: upload a stock file to be checked (nothing changes in stock yet), and the list of earlier imports. */
 export function ImportStockScreen() {
@@ -44,15 +46,40 @@ function ImportStock({ pharmacyId }: { pharmacyId: string }) {
   );
 }
 
+const TEMPLATE_NAME = 'stock-import-template.csv';
+
 function Columns() {
-  const [file, setFile] = useState<string | null>(null);
-  useEffect(() => () => { if (file) URL.revokeObjectURL(file); }, [file]);
-  function template() {
-    const url = URL.createObjectURL(new Blob([importTemplateCsv()], { type: 'text/csv' }));
-    setFile(url);
+  const { api } = useSession();
+  const [file, setFile] = useState<{ url: string; name: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const ctrl = useRef<AbortController | null>(null);
+  useEffect(() => () => { ctrl.current?.abort(); }, []);
+  useEffect(() => () => { if (file) URL.revokeObjectURL(file.url); }, [file]);
+  /**
+   * WQ11c (owner, 22 Nov): the server's template (`GET /pharmacy-inventory-imports/template`, Q16c) when it answers one;
+   * until then one made here with every column and an example row (expiry 31-12-2027, day first).
+   */
+  async function template() {
+    ctrl.current?.abort();
+    const c = new AbortController();
+    ctrl.current = c;
+    setBusy(true);
+    let blob: Blob | null = null;
+    let name = TEMPLATE_NAME;
+    try {
+      blob = await pharmacyStockApi(api).importTemplate(c.signal);
+      if (blob && /sheet|excel/i.test(blob.type)) name = 'stock-import-template.xlsx';
+    } catch {
+      if (c.signal.aborted) return;
+    } finally {
+      if (ctrl.current === c) setBusy(false);
+    }
+    if (c.signal.aborted) return;
+    const url = URL.createObjectURL(blob ?? new Blob([importTemplateCsv()], { type: 'text/csv' }));
+    setFile({ url, name });
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'stock-import-template.csv';
+    a.download = name;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -64,10 +91,15 @@ function Columns() {
         Use an Excel (.xlsx, .xls) or CSV file of up to 10 MB. Only the first sheet is read. The first row holds the column
         names below, in capitals or small letters; other columns are ignored. One row per batch.
       </p>
+      <Alert tone="warn">
+        <strong>Dates are read day first.</strong> Write expiry dates as {IMPORT_DATE_FORMAT}. 05-06-2027 is 5 June 2027, never 6 May.
+        A file that writes a date month first (12/31/2027) has that date and every date like 05/06/2027 refused.
+      </Alert>
       <div className="ws-actions">
-        <Button variant="secondary" onClick={template}><Download size={16} aria-hidden="true" /> Download a blank template (CSV)</Button>
-        {file && <a href={file} download="stock-import-template.csv">Save the template again</a>}
+        <Button variant="secondary" busy={busy} onClick={() => void template()}><Download size={16} aria-hidden="true" /> Download the template (with an example row)</Button>
+        {file && <a href={file.url} download={file.name}>Save the template again</a>}
       </div>
+      <p className="ws-muted">The template has every column and one example row. Delete the example row and add your own before importing.</p>
       <div className="ws-table-wrap">
         <table className="j-table">
           <caption className="j-sr-only">Columns of a stock file</caption>
@@ -87,6 +119,12 @@ function Columns() {
       <p className="ws-muted">A row with an expiry in any other form is shown with a problem and is not added.</p>
       <h3>Numbers and prices</h3>
       <p>{IMPORT_NUMBER_NOTE}</p>
+      <p>
+        A price cell left blank keeps the medicine’s current price. A price of 0 sets it to ₹0: the check shows every row that
+        would. A new medicine without a selling price is not on sale until you price it.
+      </p>
+      <h3>New medicines</h3>
+      <p>A medicine not in the list is added to it. It needs a prescription unless its row says “no” under <code>prescription required</code>.</p>
     </section>
   );
 }
@@ -99,6 +137,9 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
   const { op, send, settle } = useOwnedOp<PendingCheck>(`stock-import-check:${pharmacyId}`);
   const { perform, busy } = useOneAtATime('stock file');
   const [mode, setMode] = useState<ImportMode>('upsert');
+  const [supplierId, setSupplierId] = useState('');
+  const [supplierError, setSupplierError] = useState<string | null>(null);
+  const suppliers = useActiveSuppliers(pharmacyId);
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
@@ -118,9 +159,17 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
     const chosen = file;
     try {
       await perform(async () => {
-        const r = await send(startOp(newRequestKey(), { fileName: chosen.name, mode }), (b) => stock.previewImport(chosen, b.fileName, b.mode));
+        const body: PendingCheck = { fileName: chosen.name, mode, ...(supplierId ? { supplierId } : {}) };
+        const r = await send(startOp(newRequestKey(), body), (b) => stock.previewImport(chosen, b.fileName, b.mode, b.supplierId));
         if (r.kind === 'ok') { void queryClient.invalidateQueries({ queryKey: ['pharmacy-inventory', pharmacyId, 'imports'] }); open(r.value); }
-        else if (r.kind === 'refused') setRefused(messageOf(r.error));
+        else if (r.kind === 'refused') {
+          if (isSupplierRefusal(r.error)) {
+            const words = SUPPLIER_REFUSAL[(r.error as ApiError).code ?? ''] ?? messageOf(r.error);
+            setSupplierError(words);
+            void suppliers.refetch();
+            setRefused(words);
+          } else setRefused(importUploadRefusal(r.error));
+        }
       });
     } catch (err) {
       setRefused(messageOf(err));
@@ -178,6 +227,14 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
               </label>
             ))}
           </fieldset>
+          {suppliers.isError ? (
+            <Alert tone="warn">Your suppliers could not be read ({messageOf(suppliers.error)}). You can check the file without one.</Alert>
+          ) : (
+            <SupplierSelect id="import-supplier" label="Supplier of this delivery (optional)" suppliers={suppliers.data ?? []} value={supplierId}
+              noneLabel={suppliers.isPending ? 'Loading suppliers…' : 'Not said'} disabled={busy} error={supplierError ?? undefined}
+              hint="Recorded with every row of the file that adds units. Shown in the stock history."
+              onChange={(v) => { setSupplierId(v); setSupplierError(null); }} />
+          )}
           <div className="j-field">
             <label htmlFor="import-file">Stock file</label>
             <input id="import-file" type="file" accept={IMPORT_ACCEPT} disabled={busy}
@@ -203,6 +260,7 @@ const PAGE_SIZE = 20;
 function History({ pharmacyId }: { pharmacyId: string }) {
   const { api } = useSession();
   const [page, setPage] = useState(1);
+  const discarded = useDiscarded(pharmacyId);
   const q = useQuery({
     queryKey: ['pharmacy-inventory', pharmacyId, 'imports', page],
     queryFn: () => pharmacyStockApi(api).imports(page, PAGE_SIZE),
@@ -226,7 +284,9 @@ function History({ pharmacyId }: { pharmacyId: string }) {
                     <tr key={r._id}>
                       <td><Link to={`/pharmacy/stock/imports/${r._id}`}>{formatDateTime(r.createdAt)}</Link></td>
                       <td>{r.fileName}</td>
-                      <td><Badge tone={importTone(r.status)}>{IMPORT_STATUS_LABEL[r.status] ?? r.status}</Badge></td>
+                      <td>{r.status === 'previewed' && discarded.ids.includes(r._id)
+                        ? <Badge>Discarded on this device</Badge>
+                        : <Badge tone={importTone(r.status)}>{IMPORT_STATUS_LABEL[r.status] ?? r.status}</Badge>}</td>
                       <td>{r.totalRows} ({r.validRows} ready, {r.errorRows} with problems)</td>
                       <td>{r.committedRows ?? 0}</td>
                     </tr>

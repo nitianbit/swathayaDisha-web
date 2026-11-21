@@ -7,12 +7,14 @@ import {
   type DoctorAppointment, type DoctorProfile, type InstantMode, type InstantOffer,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField, formatDateTime } from '@jansetu/ui';
+import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { afterFailure, beginAttempt, definitelyNotRecorded, newRequestKey, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { PageHeading } from '../../PageHeading.tsx';
 import {
-  appointmentsKey, MeetLink, NotADoctor, offersKey, rupeesOf, sortAppointments, useDoctor, useDoctorProfile, useMeetPoll, useTicker, type DoctorContext,
+  appointmentsKey, MeetLink, NotADoctor, offersKey, RefreshFailed, rupeesOf, sortAppointments, useDoctor, useDoctorProfile, useMeetPoll, useTicker,
+  type DoctorContext,
 } from './doctor.tsx';
 
 import { useDoctorPresence } from './presence.tsx';
@@ -299,8 +301,9 @@ function Offers({ d }: { d: DoctorContext }) {
           {outcome.checking ? 'Checking your appointments…' : outcome.checked}
         </Alert>
       )}
+      {offers.isError && offers.data !== undefined && <RefreshFailed error={offers.error} readAt={offers.dataUpdatedAt} onRetry={offers.refetch} />}
       {offers.isPending ? <Loading label="Loading offers…" />
-        : offers.isError ? <ErrorState message={messageOf(offers.error)} onRetry={() => void offers.refetch()} />
+        : offers.isError && offers.data === undefined ? <ErrorState message={messageOf(offers.error)} onRetry={() => void offers.refetch()} />
         : list.length === 0 ? <Empty title="No offers right now">{presence.presence?.available ? 'New offers appear here on their own.' : 'Go available now to receive offers.'}</Empty>
         : (
           <>
@@ -362,8 +365,9 @@ function Running({ d }: { d: DoctorContext }) {
   return (
     <section className="ws-section" aria-labelledby="running-h">
       <h2 id="running-h">Instant consultations today</h2>
+      {q.isError && q.data !== undefined && <RefreshFailed error={q.error} readAt={q.dataUpdatedAt} onRetry={q.refetch} />}
       {q.isPending ? <Loading label="Loading today’s consultations…" />
-        : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
+        : q.isError && q.data === undefined ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : running.length === 0 ? <Empty title="None running">Accepted instant consultations appear here so you can give them more time.</Empty>
         : (
           <ul className="stock-list" aria-label="Running instant consultations">
@@ -398,6 +402,13 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
   const [checking, setChecking] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'error'; text: string } | null>(null);
   const [op, setOp] = useState<PendingOp<ExtendBody> | undefined>(() => memory.get<PendingOp<ExtendBody>>(slot));
+  /**
+   * WQ11c: the key whose same-key resend the server refused outright (e.g. it would run into the next booking): that key
+   * was not recorded when the resend arrived, so another extension (a new key) may be chosen; and the key a check found
+   * not recorded (e.g. after a reload): it may be forgotten after a second step. Neither is kept across leaving the page.
+   */
+  const [refusedKey, setRefusedKey] = useState<string | null>(null);
+  const [notFoundKey, setNotFoundKey] = useState<string | null>(null);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const sync = () => { if (alive.current) setOp(memory.get<PendingOp<ExtendBody>>(slot)); };
@@ -429,6 +440,7 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
         say('warn', 'Not extended: the consultation is no longer held, so this extension can never be added.');
         return;
       }
+      setNotFoundKey(current.requestKey);
       say('warn', `${cause ? `${cause} ` : ''}The extension is not recorded yet. ${current.restored
         ? 'Its details were not kept after the reload, so it can only be checked again.'
         : 'Send the same extension again: it is added once, never twice.'}`);
@@ -481,13 +493,30 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
       if (after) memory.set(slot, after); else memory.delete(slot);
       sync();
       if (!after) { say('error', `Not extended: ${refusal ?? messageOf(err)}`); return; }
+      // A same-key resend refused outright: the key was not recorded when it arrived (a recorded key is answered again).
+      // (A 401 says nothing about the request: the session ended.)
+      if (definitelyNotRecorded(err) && !(err instanceof ApiError && err.status === 401)) setRefusedKey(attempt.requestKey);
       await reconcile(refusal ? `Not extended this time: ${refusal}` : messageOf(err));
     } finally {
       if (alive.current) setBusy(false);
     }
   }
 
+  /** Ends the unresolved extension on this page (only the one shown): the field is free for a new extension. */
+  function release(text: string) {
+    const current = memory.get<PendingOp<ExtendBody>>(slot);
+    if (!op || !current || current.requestKey !== op.requestKey) return;
+    if (current.body) setMinutes(String(current.body.minutes));
+    memory.delete(slot);
+    sync();
+    setRefusedKey(null);
+    setNotFoundKey(null);
+    say('warn', text);
+  }
+
   const locked = !!op;
+  const refused = !!op && refusedKey === op.requestKey;
+  const forgettable = !!op && !busy && !checking && (refused || notFoundKey === op.requestKey);
   return (
     <li className="doc-offer" aria-label={label}>
       <strong>{label}</strong>
@@ -500,9 +529,19 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
           <>
             {!op.restored && op.body && <Button type="submit" variant="secondary" busy={busy} disabled={checking}>Send the same extension again</Button>}
             <Button variant="ghost" busy={checking} disabled={busy} onClick={() => void reconcile()}>Check whether it was recorded</Button>
+            {refused && !busy && !checking && (
+              <Button variant="secondary" onClick={() => release('Choose the minutes and extend again: this is a new extension. The one refused was not added.')}>
+                Choose another extension
+              </Button>
+            )}
           </>
         )}
       </form>
+      {forgettable && (
+        <ConfirmAction label="Forget it" danger confirmLabel="Forget this extension"
+          consequence="The extension is not recorded so far. Forget it and the field is free again. If it still reaches the server, it is added then and your held time shows it, so check the time before extending again."
+          onConfirm={async () => release('Forgotten. Check the time held for you before extending again.')} />
+      )}
     </li>
   );
 }

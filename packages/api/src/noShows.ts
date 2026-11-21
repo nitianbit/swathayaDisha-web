@@ -36,8 +36,10 @@ export const NO_SHOW_MOVE_REFUSAL: Record<string, string> = {
   IDEMPOTENCY_KEY_REUSED: 'This request was already used for a different time. Reload the page and start again.',
   // Q14 review (`rescheduleWithHolds`): a desk appointment is moved by its clinic only.
   CLINIC_APPOINTMENT: 'The clinic can move this appointment: it was booked at its front desk.',
+  // WQ11c: a slot that does not take the booking's consultation type (`assertSlotMode`, named so by `noShowModeRefusal`).
+  SLOT_MODE_NOT_OFFERED: 'That time is not offered for this consultation type. Pick another time.',
 };
 
 /** A move refused because of the chosen time (the person picks another; the booking itself is unchanged). */
 export const isSlotRefusal = (err: unknown) =>
-  err instanceof ApiError && !!err.code && ['SAME_SLOT', 'SLOT_STARTED', 'SLOT_NOT_AVAILABLE', 'SLOT_NOT_THIS_DOCTOR'].includes(err.code);
+  err instanceof ApiError && !!err.code && ['SAME_SLOT', 'SLOT_STARTED', 'SLOT_NOT_AVAILABLE', 'SLOT_NOT_THIS_DOCTOR', 'SLOT_MODE_NOT_OFFERED'].includes(err.code);

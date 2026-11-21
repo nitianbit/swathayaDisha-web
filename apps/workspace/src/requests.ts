@@ -91,14 +91,17 @@ export const wasAbandoned = (err: unknown) => err instanceof ApiError && err.sta
 /**
  * An exact by-key lookup (Q10/Q12/Q13 `GET .../by-key/:key`) as the newest-first "records" `PendingOpPanel` checks: the
  * record that key produced, or nothing on a 404 (not recorded yet: only a give-up on the server settles that).
+ * WQ11c: with `notFoundCodes`, only a 404 carrying one of the route's own "nothing with this key" codes means not
+ * recorded; any other 404 (the account or the route itself missing) stays unknown and is shown as a failed check.
  */
-export function keyedLookup<T>(requestKey: string, find: () => Promise<T>) {
+export function keyedLookup<T>(requestKey: string, find: () => Promise<T>, notFoundCodes?: readonly string[]) {
   return async (page: number): Promise<Page<T & { requestKey: string }>> => {
     let items: (T & { requestKey: string })[] = [];
     try {
       items = [{ ...(await find()), requestKey }];
     } catch (err) {
-      if (!(err instanceof ApiError && err.status === 404)) throw err;
+      const notRecorded = err instanceof ApiError && err.status === 404 && (!notFoundCodes || (!!err.code && notFoundCodes.includes(err.code)));
+      if (!notRecorded) throw err;
     }
     return { items, page, limit: 1, total: items.length, totalPages: 1 };
   };

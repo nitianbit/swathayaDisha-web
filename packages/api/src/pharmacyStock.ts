@@ -10,7 +10,10 @@ import type { InventoryItem, MedicineRef } from './inventory.ts';
  * change writes an adjustment (`GET /pharmacy-inventory/adjustments`, newest first) carrying the request's `notes`.
  * Q15: the save takes a `requestKey` (exactly once per pharmacy and key; the same key and items again answer 200
  * `replayed: true` without adding stock again), and `GET /pharmacy-inventory/by-key/:key` returns what a key saved (404
- * REQUEST_KEY_NOT_FOUND = nothing so far). Stock rows have no supplier field.
+ * REQUEST_KEY_NOT_FOUND = nothing so far).
+ * WQ11c (owner, 22 Nov; backend Q16c): a delivery may name the pharmacy's own active `supplierId` (with a positive
+ * quantity only; 404 SUPPLIER_NOT_FOUND / 409 SUPPLIER_ARCHIVED otherwise). It is kept on the delivery's adjustment, never
+ * on the batch, and the adjustment history answers it as `supplier`.
  *
  * Imports mirror src1/modules/pharmacyInventoryImports: `POST /preview` (multipart `file` + `importMode`), `POST /commit`
  * (`importId`), `POST /:id/retry`, `GET /`, `GET /:id`, `GET /:id/failed-rows/download`.
@@ -53,6 +56,8 @@ export interface StockEntryDraft {
   reorderThreshold: string;
   reason: AddStockReason;
   note: string;
+  /** WQ11c: the supplier this delivery came from ('' = not said). */
+  supplierId?: string;
 }
 
 /** One item of `POST /pharmacy-inventory` as this app sends it (only ever adding units). */
@@ -68,7 +73,12 @@ export interface StockEntry {
   purchasePrice?: number;
   rackLocation?: string;
   reorderThreshold?: number;
+  /** Q16c: the pharmacy's own active supplier the units came from. */
+  supplierId?: string;
 }
+
+/** Q16c `withSuppliers`: the supplier of a delivery, as the adjustment history answers it. */
+export interface DeliverySupplier { supplierId: string; displayName: string; state: 'active' | 'archived' }
 
 /** inventory adjustment (`IInventoryAdjustment`, `medicineId` populated with name and generic name). */
 export interface StockAdjustment {
@@ -83,8 +93,18 @@ export interface StockAdjustment {
   sourceType?: 'manual' | 'inventory_import' | 'order';
   reason?: string;
   notes?: string;
+  /** Q16c: the delivery's supplier (id, and the supplier as the history reads it; null = none recorded). */
+  supplierId?: string;
+  supplier?: DeliverySupplier | null;
   createdAt?: string;
 }
+
+/** Q16c: refusals of a delivery's supplier. */
+export const SUPPLIER_REFUSAL: Readonly<Record<string, string>> = {
+  SUPPLIER_NOT_FOUND: 'That supplier is not one of yours any more. Choose another supplier, or none.',
+  SUPPLIER_ARCHIVED: 'That supplier has been archived. Choose an active supplier, or none.',
+};
+export const isSupplierRefusal = (err: unknown) => err instanceof ApiError && !!err.code && err.code in SUPPLIER_REFUSAL;
 
 const OBJECT_ID = /^[0-9a-fA-F]{24}$/;
 const RUPEES = /^\d+(\.\d{1,2})?$/;
@@ -97,8 +117,11 @@ export function isRealYyyymmdd(v: string): boolean {
   return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
 }
 
-/** The server's "today" (UTC date, as `saveItem` computes it): stock expiring before it is refused (BATCH_ALREADY_EXPIRED). */
-export const serverToday = (now = new Date()) => now.toISOString().slice(0, 10).replace(/-/g, '');
+/**
+ * The server's "today": Q16c makes every pharmacy expiry check use the India calendar date (`istTodayYyyymmdd`); stock
+ * expiring before it is refused (BATCH_ALREADY_EXPIRED). Before Q16c the server used the UTC date, which is never later.
+ */
+export const serverToday = (now = new Date()) => new Date(now.getTime() + 330 * 60_000).toISOString().slice(0, 10).replace(/-/g, '');
 
 /** What is wrong with the draft, field by field (the server checks the same and still decides). */
 export function stockEntryProblems(d: StockEntryDraft, today = serverToday()): Partial<Record<keyof StockEntryDraft, string>> {
@@ -121,6 +144,7 @@ export function stockEntryProblems(d: StockEntryDraft, today = serverToday()): P
   if (reorder && (!/^\d+$/.test(reorder) || !Number.isSafeInteger(Number(reorder)))) e.reorderThreshold = 'Enter a whole number of units.';
   if (d.note.trim().length > MAX_STOCK_NOTE) e.note = `At most ${MAX_STOCK_NOTE} characters.`;
   if (!ADD_STOCK_REASONS.some((r) => r.value === d.reason)) e.reason = 'Choose why the stock is added.';
+  if (d.supplierId && !OBJECT_ID.test(d.supplierId)) e.supplierId = 'Choose the supplier again.';
   return e;
 }
 
@@ -141,6 +165,7 @@ export function stockEntryBody(d: StockEntryDraft): StockEntry {
   const purchase = money(d.purchasePrice); if (purchase !== undefined) body.purchasePrice = purchase;
   if (d.rackLocation.trim()) body.rackLocation = d.rackLocation.trim();
   if (d.reorderThreshold.trim()) body.reorderThreshold = Number(d.reorderThreshold.trim());
+  if (d.supplierId && OBJECT_ID.test(d.supplierId)) body.supplierId = d.supplierId.toLowerCase();
   return body;
 }
 
@@ -165,6 +190,10 @@ export interface ImportRow {
     name?: string; quantityToAdd?: number; batchNumber?: string; expiryDate?: string; mrp?: number; retailPrice?: number;
     wholesalePrice?: number; purchasePrice?: number; rackLocation?: string;
     medicineId?: string; medicineMatchStatus?: 'matched' | 'not_found' | 'duplicate'; matchedMedicineName?: string;
+    /** For a new medicine: whether it will need a prescription (Q16c: yes unless the row says "no"). */
+    prescriptionRequired?: boolean;
+    /** Q16c: the row's supplier, when the file or the row names one. */
+    supplierId?: string; supplierName?: string;
   };
 }
 
@@ -187,6 +216,9 @@ export interface InventoryImport {
   createdAt?: string;
   updatedAt?: string;
   committedAt?: string;
+  /** Q16c: the supplier named for the whole file, when one was. */
+  supplierId?: string;
+  supplier?: DeliverySupplier | null;
 }
 
 export const IMPORT_STATUS_LABEL: Readonly<Record<ImportStatus, string>> = {
@@ -212,21 +244,23 @@ export const IMPORT_MODES: readonly { value: ImportMode; label: string; hint: st
  * without surrounding spaces, and the expiry may be any of `IMPORT_EXPIRY_FORMS`.
  */
 export const IMPORT_COLUMNS: readonly { header: string; need: string; format: string }[] = [
-  { header: 'medicine name', need: 'Required', format: 'As in the medicine list. A name not in the list adds a new medicine.' },
-  { header: 'quantity to add', need: 'Required to add units', format: 'Whole number, 0 or more (1,000 is fine). 0 only updates prices and rack.' },
+  // Q16c: in the server template's order (`IMPORT_COLUMNS` of the importer).
+  { header: 'medicine name', need: 'Required', format: 'As in the medicine list. A name not in the list adds a new medicine. A row whose name starts with # is a note and is not imported.' },
+  { header: 'quantity to add', need: 'Required to add units', format: 'Whole number from 0 to 1,000,000 (1,000 is fine). 0 only updates prices and rack.' },
   { header: 'batch number', need: 'When adding units', format: 'As printed on the pack.' },
-  { header: 'expiry date', need: 'When adding units', format: 'A date (see below). Not in the past.' },
-  { header: 'mrp', need: 'Optional', format: 'Rupees, e.g. 42.50 or 1,250.00. Use a point for paise: 1,5 is refused.' },
-  { header: 'retail price', need: 'Optional', format: 'Your selling price in rupees.' },
-  { header: 'purchase price', need: 'Optional', format: 'Rupees.' },
-  { header: 'wholesale price', need: 'Optional', format: 'Rupees.' },
-  { header: 'rack location', need: 'Optional', format: 'e.g. B2.' },
+  { header: 'expiry date', need: 'When adding units', format: 'Day first, e.g. 31-12-2027 (see below). Not in the past, at most 15 years ahead.' },
+  { header: 'mrp', need: 'Optional — blank keeps the current price', format: 'Rupees, e.g. 42.50 or 1,250.00. Use a point for paise: 1,5 is refused. 0 sets the price to ₹0.' },
+  { header: 'retail price', need: 'Optional — blank keeps the current price', format: 'Your selling price in rupees. A new medicine without one is not on sale until you price it.' },
+  { header: 'wholesale price', need: 'Optional — blank keeps the current price', format: 'Rupees.' },
+  { header: 'purchase price', need: 'Optional — blank keeps the current price', format: 'Rupees.' },
+  { header: 'gst percent', need: 'Optional', format: '0 to 100, written 18 or 18%. Used only for a new medicine.' },
+  { header: 'hsn code', need: 'Optional', format: 'Used only for a new medicine.' },
+  { header: 'prescription required', need: 'Optional', format: 'For a new medicine: “no” if it is sold without a prescription. Left blank, a new medicine needs a prescription.' },
   { header: 'generic name', need: 'Optional', format: 'Used only for a new medicine.' },
   { header: 'brand name', need: 'Optional', format: 'Used only for a new medicine.' },
-  { header: 'hsn code', need: 'Optional', format: 'Used only for a new medicine.' },
-  { header: 'gst percent', need: 'Optional', format: '0 to 100. Used only for a new medicine.' },
-  { header: 'prescription required', need: 'Optional', format: '“yes” for a new prescription medicine.' },
+  { header: 'rack location', need: 'Optional', format: 'e.g. B2.' },
   { header: 'active status', need: 'Optional', format: '“no” to keep a new medicine inactive.' },
+  { header: 'supplier', need: 'Optional', format: 'One of your suppliers, by name as on your supplier list. Recorded for rows that add units. Or choose one supplier for the whole file below.' },
 ];
 
 /**
@@ -260,8 +294,100 @@ export function importFileProblem(f: { name: string; size: number } | null | und
   return null;
 }
 
-/** A blank CSV with every column header, for staff to fill in. */
-export const importTemplateCsv = () => `${IMPORT_COLUMNS.map((c) => c.header).join(',')}\r\n`;
+/** The one way of writing a date that is always read right: day first, then month, then the year in full. */
+export const IMPORT_DATE_FORMAT = 'DD-MM-YYYY (day first), for example 31-12-2027';
+
+/** Q16c `TEMPLATE_EXAMPLE_MARK`: the example row's name says to delete it, and the importer refuses a row so named. */
+export const TEMPLATE_EXAMPLE_MARK = '(example - delete this row)';
+/** The example row of the template (one per column, as the server's template has it). */
+const TEMPLATE_EXAMPLE: Readonly<Record<string, string>> = {
+  'medicine name': `Paracetamol 500 mg tablet ${TEMPLATE_EXAMPLE_MARK}`, 'quantity to add': '100', 'batch number': 'PCM2412',
+  'expiry date': '31-12-2027', mrp: '30', 'retail price': '28', 'wholesale price': '25', 'purchase price': '20', 'gst percent': '12',
+  'hsn code': '3004', 'prescription required': 'no', 'generic name': 'Paracetamol', 'brand name': 'Example brand',
+  'rack location': 'A-3', 'active status': 'yes', supplier: '',
+};
+const csvCell = (v: string) => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+
+/**
+ * WQ11c (owner, 22 Nov): the template made on this device when the server's `GET /pharmacy-inventory-imports/template`
+ * (Q16c) cannot be had: every column header and the same example row (expiry 31-12-2027, day first). Delete the example
+ * before importing (Q16c refuses a row with its name).
+ */
+export const importTemplateCsv = () =>
+  `${IMPORT_COLUMNS.map((c) => c.header).join(',')}\r\n${IMPORT_COLUMNS.map((c) => csvCell(TEMPLATE_EXAMPLE[c.header] ?? '')).join(',')}\r\n`;
+
+/** WQ11c: an import with a large file can take long; upload, commit and retry wait up to 2 minutes for the answer. */
+export const IMPORT_TIMEOUT_MS = 120_000;
+
+/**
+ * Q16c: the server's refusals of an upload (400, the file is removed), in words. The server's own message is the fallback,
+ * so a code added later still reads right. Dates written month first are refused per row, not here (`monthFirstRows`).
+ */
+export const IMPORT_UPLOAD_REFUSAL: Readonly<Record<string, string>> = {
+  FILE_REQUIRED: 'Choose the file to import.',
+  UNSUPPORTED_FILE_TYPE: 'Use an Excel (.xlsx, .xls) or CSV (.csv) file.',
+  FILE_TOO_LARGE: 'The file is larger than 10 MB. Split it into smaller files.',
+  UNEXPECTED_FILE_FIELD: 'Upload one file at a time.',
+  UPLOAD_INVALID: 'The upload did not arrive whole. Choose the file and check it again.',
+  PARSE_FAILED: 'The file could not be read. Save it again as .xlsx or .csv and upload it again.',
+  IMPORT_FILE_EMPTY: 'The first sheet of the file has no rows. Fill in the template and upload it again.',
+  IMPORT_COLUMNS_MISSING: 'The first row has no “medicine name” column. Keep the column names of the template in the first row.',
+};
+export function importUploadRefusal(err: unknown): string {
+  if (!(err instanceof ApiError)) return err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+  const known = err.code ? IMPORT_UPLOAD_REFUSAL[err.code] : undefined;
+  return known ?? err.message;
+}
+
+/** Q16c: rows refused because the file writes dates month first (the server's row errors say so). */
+export const monthFirstRows = (rows: readonly ImportRow[]) =>
+  rows.filter((r) => r.status === 'error' && (r.errors ?? []).some((e) => /month first/i.test(e)));
+
+/** A price as the import will apply it: a number (0 included), or 'keep' when the cell was blank (Q16c). */
+export type ImportPrice = number | 'keep';
+export const importPriceOf = (v: number | null | undefined): ImportPrice => (typeof v === 'number' && Number.isFinite(v) ? v : 'keep');
+export const IMPORT_PRICE_FIELDS = [
+  { key: 'mrp', label: 'MRP' }, { key: 'retailPrice', label: 'selling price' },
+  { key: 'purchasePrice', label: 'purchase price' }, { key: 'wholesalePrice', label: 'wholesale price' },
+] as const;
+/** The prices a ready row would set to ₹0 (by their words). */
+export const importZeroPrices = (r: ImportRow) => IMPORT_PRICE_FIELDS.filter((f) => importPriceOf(r.data?.[f.key]) === 0).map((f) => f.label);
+/** The prices a ready row would change (any number, 0 included). */
+export const importSetPrices = (r: ImportRow) => IMPORT_PRICE_FIELDS.filter((f) => importPriceOf(r.data?.[f.key]) !== 'keep').map((f) => f.label);
+
+/**
+ * What a confirmed import would do, from its checked rows and mode. Q16c: a new medicine needs a prescription unless its
+ * row says "no". In "Only medicines already in my stock" rows for a medicine not in the list are skipped (it cannot be in
+ * stock); whether a listed medicine is in this pharmacy's stock is decided only while adding, so those rows are "up to".
+ */
+export function importPlan(record: Pick<InventoryImport, 'importMode' | 'previewRows'>) {
+  const ready = (record.previewRows ?? []).filter((r) => r.status === 'valid');
+  const isNew = (r: ImportRow) => r.data?.medicineMatchStatus === 'not_found';
+  const used = record.importMode === 'update_only' ? ready.filter((r) => !isNew(r)) : ready;
+  const skippedNew = ready.length - used.length;
+  const units = used.reduce((a, r) => a + Number(r.data?.quantityToAdd ?? 0), 0);
+  const newRows = used.filter(isNew);
+  return {
+    rows: used.length,
+    units,
+    skippedNew,
+    /** create_only: rows for medicines already in this pharmacy's stock are skipped while adding. */
+    mayBeSkipped: record.importMode === 'create_only' ? used.filter((r) => !isNew(r)).length : 0,
+    newMedicines: newRows.length,
+    newNeedingPrescription: newRows.filter((r) => r.data?.prescriptionRequired !== false).length,
+    newWithoutPrice: newRows.filter((r) => !(typeof r.data?.retailPrice === 'number' && r.data.retailPrice > 0)),
+    priceChanges: used.filter((r) => importSetPrices(r).length > 0),
+    zeroPrices: used.filter((r) => importZeroPrices(r).length > 0),
+  };
+}
+
+/** Another import of the same file name that was added in the last 24 hours (the newest), if any. */
+export function recentSameFile(record: Pick<InventoryImport, '_id' | 'fileName'>, others: readonly InventoryImport[], now = Date.now()): InventoryImport | null {
+  const since = now - 24 * 60 * 60_000;
+  return others.find((r) => r._id !== record._id && r.fileName === record.fileName
+    && (r.status === 'committed' || r.status === 'partially_committed' || r.status === 'committing')
+    && Date.parse(r.committedAt ?? r.updatedAt ?? r.createdAt ?? '') >= since) ?? null;
+}
 
 /** commit: only a checked import with at least one ready row. */
 export const importCommittable = (r: Pick<InventoryImport, 'status' | 'validRows'>) => r.status === 'previewed' && r.validRows > 0;
@@ -322,20 +448,37 @@ export function pharmacyStockApi(c: ApiClient) {
     abandonStock: (requestKey: string) =>
       c.post<{ state: 'abandoned' } | { state: 'used'; items: InventoryItem[] }>(`/pharmacy-inventory/by-key/${checkKey(requestKey)}/abandon`, { body: {} }),
     adjustments: (page = 1, limit = 100) => c.page<StockAdjustment>('/pharmacy-inventory/adjustments', { query: { page, limit } }),
-    /** Reads the file and checks every row; nothing changes in stock until `commitImport`. Q15: another mode is a 400. */
-    previewImport: (file: Blob, fileName: string, importMode: ImportMode) => {
+    /**
+     * Reads the file and checks every row; nothing changes in stock until `commitImport`. Q15: another mode is a 400.
+     * Q16c: an optional `supplierId` names the supplier of the whole file.
+     */
+    previewImport: (file: Blob, fileName: string, importMode: ImportMode, supplierId?: string) => {
       const form = new FormData();
       form.append('importMode', importMode);
+      if (supplierId && OBJECT_ID.test(supplierId)) form.append('supplierId', supplierId.toLowerCase());
       form.append('file', file, fileName);
-      return c.post<InventoryImport>('/pharmacy-inventory-imports/preview', { form });
+      return c.post<InventoryImport>('/pharmacy-inventory-imports/preview', { form, timeoutMs: IMPORT_TIMEOUT_MS });
     },
     /** Adds the ready rows once: a second commit is refused (409) once the first has started. */
     commitImport: (importId: string) => {
       importPath(importId);
-      return c.post<InventoryImport>('/pharmacy-inventory-imports/commit', { body: { importId } });
+      return c.post<InventoryImport>('/pharmacy-inventory-imports/commit', { body: { importId }, timeoutMs: IMPORT_TIMEOUT_MS });
     },
     /** Tries the rows that failed again; a row already added is never added twice (one adjustment per row). */
-    retryImport: (importId: string) => c.post<InventoryImport>(`${importPath(importId)}/retry`),
+    retryImport: (importId: string) => c.post<InventoryImport>(`${importPath(importId)}/retry`, { timeoutMs: IMPORT_TIMEOUT_MS }),
+    /**
+     * Q16c `GET /pharmacy-inventory-imports/template`: the server's template file, or null when it cannot be had. Until
+     * the route is deployed the path falls to `GET /:id` (a 500 for the id "template"), so any refusal of the server means
+     * "not there": the page then makes `importTemplateCsv` on this device. A cancelled download is rethrown.
+     */
+    importTemplate: async (signal?: AbortSignal): Promise<Blob | null> => {
+      try {
+        return await c.blob('/pharmacy-inventory-imports/template', { signal });
+      } catch (err) {
+        if (err instanceof ApiError) return null;
+        throw err;
+      }
+    },
     imports: (page = 1, limit = 20): Promise<Page<InventoryImport>> => c.page<InventoryImport>('/pharmacy-inventory-imports', { query: { page, limit } }),
     import: (importId: string) => c.get<InventoryImport>(importPath(importId)),
     /** An .xlsx of the rows with problems (404 NO_FAILED_IMPORT_ROWS when there are none). */

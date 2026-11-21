@@ -1,6 +1,6 @@
 import { ApiError, createApiClient } from './client.ts';
 import {
-  appointmentActions, doctorAdminApi, doctorClinicProblems, doctorNoShowMove, doctorStanding, meetingLinkState, doctorToolsApi, fromYmd, movableSlot, instantRefusal, offerSecondsLeft, payoutDetailsProblems, periodProblem,
+  appointmentActions, appointmentRefusal, doctorAdminApi, noShowModeRefusal, noShowSlotFits, doctorClinicProblems, doctorNoShowMove, doctorStanding, meetingLinkState, doctorToolsApi, fromYmd, movableSlot, instantRefusal, offerSecondsLeft, payoutDetailsProblems, periodProblem,
   presenceProblems, scheduleProblems, schedulableBranches, scheduleSlotCount, soloPracticeProblems, statementCsvName, toYmd,
   type DoctorAppointment, type SoloPracticeInput,
 } from './doctorTools.ts';
@@ -108,7 +108,8 @@ describe('appointment commands offered (updateAppointmentStatus, markNoShow, can
   const before = new Date('2026-11-17T04:00:00.000Z'); // 09:30 IST
   const after = new Date('2026-11-17T05:00:00.000Z'); // 10:30 IST
   it('offers what the server accepts', () => {
-    expect(appointmentActions(appt({}), before)).toEqual(['complete', 'cancel']);
+    // WQ11c: completed (like a no-show) only once the start time has passed (Q16a 409 NOT_STARTED_YET).
+    expect(appointmentActions(appt({}), before)).toEqual(['cancel']);
     expect(appointmentActions(appt({}), after)).toEqual(['complete', 'cancel', 'no_show']);
     expect(appointmentActions(appt({ bookingTime: '10:00 AM' }), after)).toContain('no_show');
     expect(appointmentActions(appt({ status: 'pending', paymentStatus: 'pending' }), after)).toEqual(['cancel']);
@@ -343,5 +344,39 @@ describe('paths and bodies', () => {
     expect(calls[0]!.url).toBe('/specialists/me/finance/statement.csv?from=2026-11-01&to=2026-11-30');
     expect(calls[0]!.url).not.toMatch(/tok/);
     expect(calls[0]!.headers.Authorization).toBe('Bearer tok');
+  });
+});
+
+describe('WQ11c: completing, and the no-show slot picker', () => {
+  it('names the refusal of a completion before the start time (NOT_STARTED_YET); other codes fall back', () => {
+    expect(appointmentRefusal(new ApiError(409, 'x', 'NOT_STARTED_YET'))).toMatch(/not started yet/);
+    expect(appointmentRefusal(new ApiError(409, 'x', 'SOMETHING_ELSE'))).toBeNull();
+    expect(appointmentRefusal(new Error('x'))).toBeNull();
+  });
+
+  it('a no-show moves only to a slot that takes its consultation type, at its place', () => {
+    const video = appt({ consultationMode: 'video' });
+    const ownPlace = appt({ consultationMode: 'in-person' });
+    const atClinic = appt({ consultationMode: 'in-person', clinicVisit: { partnerId: ID, branchId: BR } });
+    expect(noShowSlotFits({ serviceModes: ['video', 'call'] }, video)).toBe(true);
+    expect(noShowSlotFits({}, video)).toBe(true); // no types: any type
+    expect(noShowSlotFits({ serviceModes: ['chat'] }, video)).toBe(false);
+    expect(noShowSlotFits({ serviceModes: ['in-person'] }, video)).toBe(false);
+    expect(noShowSlotFits({ serviceModes: ['video'], branchId: BR }, video)).toBe(false); // online moves stay off clinics
+    expect(noShowSlotFits({ serviceModes: ['in-person'] }, ownPlace)).toBe(true);
+    expect(noShowSlotFits({ serviceModes: ['in-person'], branchId: BR }, ownPlace)).toBe(false); // another place
+    expect(noShowSlotFits({ serviceModes: ['in-person'], branchId: BR.toUpperCase() }, atClinic)).toBe(true);
+    expect(noShowSlotFits({ serviceModes: ['in-person'] }, atClinic)).toBe(false);
+    expect(noShowSlotFits({ serviceModes: ['in-person'], branchId: 'd1'.repeat(12) }, atClinic)).toBe(false);
+  });
+
+  it('names a refusal for the consultation type (assertSlotMode) so it is not read as "no longer free"', async () => {
+    const typed = noShowModeRefusal(new ApiError(409, 'This slot is not offered for that consultation type', 'SLOT_NOT_AVAILABLE'));
+    expect(typed).toBeInstanceOf(ApiError);
+    expect((typed as ApiError).code).toBe('SLOT_MODE_NOT_OFFERED');
+    const taken = new ApiError(409, 'Slot is not available', 'SLOT_NOT_AVAILABLE');
+    expect(noShowModeRefusal(taken)).toBe(taken);
+    const { api } = recorder(() => new Response(JSON.stringify({ error: 409, code: 'SLOT_NOT_AVAILABLE', message: 'This slot is not offered for that consultation type' }), { status: 409 }));
+    await expect(api.rescheduleNoShow(ID, BR, 'k'.repeat(32))).rejects.toMatchObject({ code: 'SLOT_MODE_NOT_OFFERED' });
   });
 });

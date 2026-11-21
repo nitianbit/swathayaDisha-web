@@ -115,3 +115,19 @@ export function CheckPanel({ label, children, onCheck, resend, giveUp, forget }:
     </div>
   );
 }
+
+/**
+ * WQ11c: previews discarded on this device (there is no server route to discard one: Q16c gap). They are hidden here,
+ * for this sign-in only; the server keeps them as "checked, not added yet", and nothing is added unless confirmed.
+ */
+export const discardedSlot = (pharmacyId: string) => `stock-import-discarded:${pharmacyId}`;
+export function useDiscarded(pharmacyId: string) {
+  const { memory } = useSession();
+  const [ids, setIds] = useState<readonly string[]>(() => memory.get<string[]>(discardedSlot(pharmacyId)) ?? []);
+  const save = (next: string[]) => { memory.set(discardedSlot(pharmacyId), next); setIds(next); };
+  return {
+    ids,
+    discard: (id: string) => save([...new Set([...(memory.get<string[]>(discardedSlot(pharmacyId)) ?? []), id])]),
+    restore: (id: string) => save((memory.get<string[]>(discardedSlot(pharmacyId)) ?? []).filter((x) => x !== id)),
+  };
+}
