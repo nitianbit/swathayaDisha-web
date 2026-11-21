@@ -219,10 +219,18 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
         )}
         {ctx.scope.kind === 'admin' && b.status === 'confirmed' && noShowMovedOnce(b) && (
           <AdminCancelNoShow booking={b} disabled={disabled}
-            run={(reason, refund) => perform('reject', async () => {
-              const r = await labBookingsAdminApi(api).cancelMovedNoShow(b._id, { reason, refund });
-              return r.booking;
-            }, refund ? 'Cancelled by the Jansetu team; the patient’s payment is back in their wallet.' : 'Cancelled by the Jansetu team; the patient was not refunded.')} />
+            run={(reason, refund) => guarded('reject', async () => {
+              try {
+                const r = await labBookingsAdminApi(api).cancelMovedNoShow(b._id, { reason, refund });
+                await apply(r.booking);
+                setNotice(refund ? 'Cancelled by the Jansetu team; the patient’s payment is back in their wallet.' : 'Cancelled by the Jansetu team; the patient was not refunded.');
+              } catch (err) {
+                // Q16a final: a repeat is refused 409 ALREADY_CANCELLED (another admin, or an earlier try whose answer was
+                // lost); nothing more was done, never refunded twice. The booking is read again (`guarded`).
+                if (!(err instanceof ApiError && err.code === 'ALREADY_CANCELLED')) throw err;
+                setNotice('This booking was already cancelled (by another admin, or by an earlier try whose answer was lost): nothing more was done. It is shown as it is now.');
+              }
+            })} />
         )}
       </section>
 

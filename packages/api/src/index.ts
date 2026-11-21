@@ -66,7 +66,7 @@ export {
 } from './pharmacyStock.ts';
 export type {
   AddStockReason, ImportCommitError, ImportMode, ImportRow, ImportRowStatus, ImportStatus, InventoryImport, Medicine, StockAdjustment, StockEntry,
-  StockEntryDraft, DeliverySupplier, ImportPrice, ImportPriceView,
+  StockEntryDraft, DeliverySupplier, ImportCurrentPrices, ImportPrice, ImportPriceView,
 } from './pharmacyStock.ts';
 export { adminQueuesApi } from './adminQueues.ts';
 export type { CancelState, OpenCancellation, ProviderOutcome, RefundAttentionRow } from './adminQueues.ts';
@@ -96,7 +96,7 @@ export type {
 export {
   addDays, ADMIN_LAB_BOOKINGS_PAGE_MAX, canReadDrafts, capacityProblem, COLLECTOR_PHONE_PATTERN, eligibleSigners, isBookable, isLabBookingChanged,
   isRealDate, isReportTooLarge, isTemplateChanged, isUploadFailed, istDateOf,
-  LAB_BOOKING_STATUS_LABEL, LAB_BOOKING_STATUSES, LAB_BOOKINGS_PAGE_MAX, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, LAB_VISIT_MODES, labActions,
+  LAB_BOOKING_STATUS_LABEL, LAB_BOOKING_STATUSES, LAB_BOOKINGS_PAGE_MAX, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, LAB_VISIT_MODES, labActions, labSlotEnd,
   labBookingsAdminApi, labNoShowMove, manualSlotProblems, MAX_COLLECTOR_NAME, MAX_LAB_REASON,
   MAX_WINDOWS_PER_DAY, MIN_LAB_REASON, mondayOf, partnerLabsApi, releaseOf, reopenable, REPORT_ACCEPT, REPORT_MAX_BYTES,
   reportFileBooking, reportFileName, reportFileProblem, ROLLING_DAYS, SLOT_CAPACITY_MIN, SLOT_CLOSURE_LABEL, SLOT_MINUTES_MAX,

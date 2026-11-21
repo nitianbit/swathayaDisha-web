@@ -1005,6 +1005,9 @@ test('WQ11c: the file check sends the delivery’s supplier, shows it, and says 
   backend.previewRefusal = { status: 400, code: 'IMPORT_FILE_EMPTY', message: 'empty' };
   await page.getByRole('button', { name: 'Check the file' }).click();
   await expect(page.getByText('The file was not checked: The first sheet of the file has no rows. Fill in the template and upload it again.')).toBeVisible();
+  backend.previewRefusal = { status: 400, code: 'IMPORT_FILE_TOO_BIG', message: 'The file is too big to import at once (250000 cells); split it' };
+  await page.getByRole('button', { name: 'Check the file' }).click();
+  await expect(page.getByText('The file was not checked: The file is too big to import at once (at most 200,000 cells). Split it into smaller files and import them one after another.')).toBeVisible();
   backend.previewRefusal = { status: 400, code: 'SOMETHING_NEW', message: 'A refusal this page does not know yet' };
   await page.getByRole('button', { name: 'Check the file' }).click();
   await expect(page.getByText('The file was not checked: A refusal this page does not know yet')).toBeVisible();
@@ -1190,8 +1193,8 @@ test('WQ11c (re-review N3): a preview cannot be discarded while its confirmation
 
 test('WQ11c (re-review N4): a listed medicine not yet in my stock with a blank price is not on sale until priced; a known current price is named', async ({ page }) => {
   const rows = [
-    { rowIndex: 2, medicineName: 'Cetirizine', status: 'valid', data: { name: 'Cetirizine', quantityToAdd: 10, batchNumber: 'CT-1', expiryDate: '20280131', medicineId: MED2, medicineMatchStatus: 'matched', matchedMedicineName: 'Cetirizine', inMyStock: false } },
-    { rowIndex: 3, medicineName: 'Paracetamol', status: 'valid', data: { name: 'Paracetamol', quantityToAdd: 5, batchNumber: 'P-1', expiryDate: '20280131', medicineId: MED, medicineMatchStatus: 'matched', matchedMedicineName: 'Paracetamol', inMyStock: true, currentPrices: { mrp: 25, retailPrice: 22 }, wholesalePrice: 18 } },
+    { rowIndex: 2, medicineName: 'Cetirizine', status: 'valid', data: { name: 'Cetirizine', quantityToAdd: 10, batchNumber: 'CT-1', expiryDate: '20280131', medicineId: MED2, medicineMatchStatus: 'matched', matchedMedicineName: 'Cetirizine' }, inMyStock: false, currentPrices: null },
+    { rowIndex: 3, medicineName: 'Paracetamol', status: 'valid', data: { name: 'Paracetamol', quantityToAdd: 5, batchNumber: 'P-1', expiryDate: '20280131', medicineId: MED, medicineMatchStatus: 'matched', matchedMedicineName: 'Paracetamol', wholesalePrice: 18 }, inMyStock: true, currentPrices: { mrp: 25, retailPrice: 22, wholesalePrice: 16, purchasePrice: null } },
   ];
   const now = new Date().toISOString();
   await mockBackend(page, { imports: [{ _id: IMP, fileName: 'first-stock.csv', importMode: 'upsert', status: 'previewed', totalRows: 2, validRows: 2, errorRows: 0, previewRows: rows, createdAt: now, updatedAt: now }] });

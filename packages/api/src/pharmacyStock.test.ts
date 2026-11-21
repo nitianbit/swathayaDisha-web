@@ -1,7 +1,7 @@
 import { ApiError, createApiClient } from './client.ts';
 import {
   IMPORT_COLUMNS, IMPORT_TIMEOUT_MS, importCommittable, importPlan, importPriceOf, importPriceView, isTemplateExample, importUploadRefusal, importZeroPrices, monthFirstRows, recentSameFile, serverToday, TEMPLATE_EXAMPLE_MARK,
-  isSupplierRefusal, type ImportRow, type InventoryImport, importStuck, importFileProblem, importRetryable, importTemplateCsv, isImportClaimed, isRealYyyymmdd,
+  isSupplierRefusal, type ImportCurrentPrices, type ImportRow, type InventoryImport, importStuck, importFileProblem, importRetryable, importTemplateCsv, isImportClaimed, isRealYyyymmdd,
   pharmacyStockApi, stockEntryBody, stockEntryProblems, type StockEntryDraft,
 } from './pharmacyStock.ts';
 import { cancelRefusal, orderStatusLabel, paymentStatusLabel } from './pharmacyOrders.ts';
@@ -241,6 +241,7 @@ describe('WQ11c: prices, prescriptions, suppliers and long imports', () => {
     expect(importUploadRefusal(new ApiError(400, 'x', 'IMPORT_FILE_EMPTY'))).toMatch(/no rows/);
     expect(importUploadRefusal(new ApiError(400, 'x', 'UNSUPPORTED_FILE_TYPE'))).toMatch(/Excel/);
     expect(importUploadRefusal(new ApiError(400, 'x', 'IMPORT_COLUMNS_MISSING'))).toMatch(/medicine name/);
+    expect(importUploadRefusal(new ApiError(400, 'x', 'IMPORT_FILE_TOO_BIG'))).toMatch(/too big to import at once.*Split it/);
     expect(importUploadRefusal(new ApiError(400, 'Something new', 'NEW_CODE'))).toBe('Something new');
     const rows = [row(2, undefined, 'error'), { ...row(3, undefined, 'error'), errors: ['this file writes dates month first (row 3: 12/31/2027), so 05/06/2027 cannot be read safely'] }];
     expect(monthFirstRows(rows).map((r) => r.rowIndex)).toEqual([3]);
@@ -275,17 +276,19 @@ describe('WQ11c: prices, prescriptions, suppliers and long imports', () => {
 });
 
 describe('WQ11c re-review: what a blank price leaves, and the template example', () => {
-  const row = (data: ImportRow['data'], medicineName = 'X'): ImportRow => ({ rowIndex: 2, medicineName, status: 'valid', data });
+  const row = (data: ImportRow['data'], medicineName = 'X', stock: Pick<ImportRow, 'inMyStock' | 'currentPrices'> = {}): ImportRow =>
+    ({ rowIndex: 2, medicineName, status: 'valid', data, ...stock });
+  const prices = (p: Partial<ImportCurrentPrices>): ImportCurrentPrices => ({ mrp: null, retailPrice: null, wholesalePrice: null, purchasePrice: null, ...p });
   it('a blank cell keeps a current price only when there is one (Q16c inMyStock / currentPrices)', () => {
     expect(importPriceView(row({ retailPrice: 0 }), 'retailPrice')).toEqual({ kind: 'set', value: 0 });
     expect(importPriceView(row({ medicineMatchStatus: 'not_found' }), 'retailPrice')).toEqual({ kind: 'none' });
-    expect(importPriceView(row({ medicineMatchStatus: 'matched', inMyStock: false }), 'retailPrice')).toEqual({ kind: 'none' });
-    expect(importPriceView(row({ medicineMatchStatus: 'matched', inMyStock: true, currentPrices: { retailPrice: 22 } }), 'retailPrice')).toEqual({ kind: 'kept', value: 22 });
-    expect(importPriceView(row({ medicineMatchStatus: 'matched', inMyStock: true, currentPrices: { retailPrice: null } }), 'retailPrice')).toEqual({ kind: 'none' });
+    expect(importPriceView(row({ medicineMatchStatus: 'matched' }, 'X', { inMyStock: false, currentPrices: null }), 'retailPrice')).toEqual({ kind: 'none' });
+    expect(importPriceView(row({ medicineMatchStatus: 'matched' }, 'X', { inMyStock: true, currentPrices: prices({ retailPrice: 22 }) }), 'retailPrice')).toEqual({ kind: 'kept', value: 22 });
+    expect(importPriceView(row({ medicineMatchStatus: 'matched' }, 'X', { inMyStock: true, currentPrices: prices({ mrp: 30 }) }), 'retailPrice')).toEqual({ kind: 'none' });
     expect(importPriceView(row({ medicineMatchStatus: 'matched' }), 'retailPrice')).toEqual({ kind: 'unknown' });
     const plan = importPlan({ importMode: 'upsert', previewRows: [
-      row({ medicineMatchStatus: 'matched', inMyStock: false, quantityToAdd: 1 }),
-      row({ medicineMatchStatus: 'matched', inMyStock: true, currentPrices: { retailPrice: 9 }, quantityToAdd: 1 }),
+      row({ medicineMatchStatus: 'matched', quantityToAdd: 1 }, 'X', { inMyStock: false, currentPrices: null }),
+      row({ medicineMatchStatus: 'matched', quantityToAdd: 1 }, 'X', { inMyStock: true, currentPrices: prices({ retailPrice: 9 }) }),
     ] });
     expect(plan.unpriced).toHaveLength(1);
   });

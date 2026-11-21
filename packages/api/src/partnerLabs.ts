@@ -368,6 +368,19 @@ export const releaseOf = (b: Pick<LabBooking, 'report'>, stored: string) =>
 /** Q11: 409 LAB_BOOKING_CHANGED — the booking moved since the step was reviewed (nothing was done; read it again). */
 export const isLabBookingChanged = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'LAB_BOOKING_CHANGED';
 
+/**
+ * Q16a re-review (N6) `labSlotEnd`: the end of a booked lab slot — its start plus the slot's own length ("HH:mm" start →
+ * end; a window running past midnight wraps; unreadable times give no length).
+ */
+export function labSlotEnd(slot: Pick<LabBookingSlot, 'startsAt' | 'startTime' | 'endTime'>): Date {
+  const start = Date.parse(slot.startsAt);
+  const min = (t?: string) => (typeof t === 'string' && /^\d{2}:\d{2}$/.test(t) ? Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5)) : NaN);
+  let len = min(slot.endTime) - min(slot.startTime);
+  if (!Number.isFinite(len)) len = 0;
+  if (len < 0) len += 24 * 60;
+  return new Date(start + len * 60_000);
+}
+
 export type LabAction = 'assign' | 'collect' | 'visit' | 'no_show' | 'process' | 'complete' | 'reject' | 'reschedule' | 'upload' | 'release';
 /** An action this person may take on this booking now; `blocked` says why it cannot be taken yet (offered, disabled). */
 export interface LabActionOffer { action: LabAction; blocked?: string }
@@ -375,7 +388,7 @@ export interface LabActionOffer { action: LabAction; blocked?: string }
 /**
  * The §4 transitions of `services/labBookings.ts`, for this actor:
  * - `bookings.manage`: on a confirmed booking — assign a collector (home collections here), mark collected (home) or
- *   visited (lab), no-show (only after the slot time), each of these three only while no new time is waiting for the
+ *   visited (lab), no-show (Q16a: only once the arrival window has ENDED, `labSlotEnd`; 409 SLOT_NOT_STARTED), each of these three only while no new time is waiting for the
  *   customer; reject (full refund) and propose a new time. Then processing (from collected/visited) and completed (from
  *   report released).
  * - `reports.upload`: add draft files while processing or report released; `reports.release`: release a draft then.
@@ -390,8 +403,8 @@ export function labActions(b: Pick<LabBooking, 'status' | 'paymentStatus' | 'vis
   if (b.status === 'confirmed' && manage) {
     if (b.visitMode === 'home') out.push({ action: 'assign' }, { action: 'collect', blocked: waiting });
     else out.push({ action: 'visit', blocked: waiting });
-    const started = Date.parse(b.slot.startsAt) <= now.getTime();
-    out.push({ action: 'no_show', blocked: waiting ?? (started ? undefined : 'A no-show can be marked only after the slot time.') });
+    const ended = labSlotEnd(b.slot).getTime() <= now.getTime();
+    out.push({ action: 'no_show', blocked: waiting ?? (ended ? undefined : `A no-show can be marked only after the slot has ended (${b.slot.endTime}).`) });
     // Q14: a booking moved after a no-show is neither moved again the ordinary way (409 NO_SHOW_RESCHEDULE_USED) nor
     // rejected for a refund (409 NO_SHOW_NOT_REFUNDABLE).
     if (!noShowMovedOnce(b)) out.push({ action: 'reschedule' }, { action: 'reject' });

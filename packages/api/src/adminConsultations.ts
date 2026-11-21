@@ -105,6 +105,8 @@ export const ADMIN_CANCEL_REFUSAL: Record<string, string> = {
   INSTANT_CONSULT_COMMAND_REQUIRED: 'An instant consultation is cancelled with its own command, not here.',
   ADMIN_ONLY: 'Only the Jansetu team can cancel a moved no-show.',
   BOOKING_NOT_FOUND: 'This booking no longer exists.',
+  // Q16a final: a repeat of the admin cancel (the screen reads the booking and says how it was cancelled).
+  ALREADY_CANCELLED: 'This booking is already cancelled: nothing more was done.',
 };
 
 /** Why the filters cannot be sent (as `bookingQuerySchema` would refuse them), or null. */
@@ -152,8 +154,9 @@ export function consultationAdminApi(c: ApiClient) {
      * Q16a `POST /specialists/admin/bookings/:bookingId/cancel-no-show` (`adminCancelNoShowSchema`: `reason` trimmed 3–500,
      * `refund` a strict boolean, both required; `BookingService.adminCancelMovedNoShow`). With `refund`: a full refund to
      * the patient's wallet (as a doctor cancellation); without: the money stays and nobody earns it. Seat and doctor time
-     * are released, the patient and the doctor are notified. Answers the booking and `refunded` (rupees); a booking
-     * already cancelled answers as it is with `refunded: 0` (a repeat never refunds twice).
+     * are released, the patient and the doctor are notified. Answers the booking and `refunded` (rupees). Q16a final
+     * (`cancelBookingSettlement` with `movedNoShow`): a booking already cancelled is refused 409 ALREADY_CANCELLED (a
+     * repeat never refunds twice).
      */
     cancelMovedNoShow: (id: string, input: { reason: string; refund: boolean }) => {
       const reason = input.reason.trim();

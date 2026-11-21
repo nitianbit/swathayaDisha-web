@@ -173,7 +173,7 @@ A medicine that is not in the medicine list yet cannot be added here. Add it wit
 ### Import stock from a file
 
 1. Open **Stock** and tap **Import stock from a file**.
-2. Make the file. Tap **Download the template (with an example row)**: it has every column name and one example row (delete the example row before importing; it is refused if left in). Or use your own Excel or CSV file (up to 10 MB). The first row must have the column names listed on the screen, in capitals or small letters. One row per batch.
+2. Make the file. Tap **Download the template (with an example row)**: it has every column name and one example row (delete the example row before importing; it is refused if left in). Or use your own Excel or CSV file (up to 10 MB and 200,000 cells; split a bigger file into several). The first row must have the column names listed on the screen, in capitals or small letters. One row per batch.
 
    **Dates are read day first.** Write the expiry date as **DD-MM-YYYY**, for example **31-12-2027**. 05-06-2027 is 5 June 2027. These also work:
    - 31/12/2027 (day first);

@@ -194,14 +194,19 @@ export interface ImportRow {
     prescriptionRequired?: boolean;
     /** Q16c: the row's supplier, when the file or the row names one. */
     supplierId?: string; supplierName?: string;
-    /**
-     * Q16c (announced, not yet in the backend): whether this pharmacy already stocks the medicine, and its prices now. A
-     * blank cell keeps a current price only when there is one; without these fields that is not known.
-     */
-    inMyStock?: boolean;
-    currentPrices?: Partial<Record<'mrp' | 'retailPrice' | 'wholesalePrice' | 'purchasePrice', number | null>>;
   };
+  /**
+   * Q16c (`enrichPreviewRow`, on the row itself, not in `data`): whether this pharmacy already has the medicine in its
+   * inventory, and its prices now (MRP from the row's batch, else the latest batch; each null when unset; the whole
+   * object null when not stocked). A blank cell keeps a current price only when there is one; without these fields
+   * (an import previewed before Q16c) that is not known.
+   */
+  inMyStock?: boolean;
+  currentPrices?: ImportCurrentPrices | null;
 }
+
+/** Q16c `ImportCurrentPrices`. */
+export interface ImportCurrentPrices { mrp: number | null; retailPrice: number | null; wholesalePrice: number | null; purchasePrice: number | null }
 
 export interface ImportCommitError { rowIndex: number; medicineName?: string; error: string; code?: string; retryable?: boolean }
 
@@ -338,6 +343,8 @@ export const IMPORT_UPLOAD_REFUSAL: Readonly<Record<string, string>> = {
   PARSE_FAILED: 'The file could not be read. Save it again as .xlsx or .csv and upload it again.',
   IMPORT_FILE_EMPTY: 'The first sheet of the file has no rows. Fill in the template and upload it again.',
   IMPORT_COLUMNS_MISSING: 'The first row has no “medicine name” column. Keep the column names of the template in the first row.',
+  // Q16c re-review (`assertImportSize`): more than 200,000 cells (all sheets), or a read longer than 5 seconds.
+  IMPORT_FILE_TOO_BIG: 'The file is too big to import at once (at most 200,000 cells). Split it into smaller files and import them one after another.',
 };
 export function importUploadRefusal(err: unknown): string {
   if (!(err instanceof ApiError)) return err instanceof Error ? err.message : 'Something went wrong. Please try again.';
@@ -366,10 +373,10 @@ export type ImportPriceView = { kind: 'set'; value: number } | { kind: 'kept'; v
 export function importPriceView(r: ImportRow, key: PriceKey): ImportPriceView {
   const own = importPriceOf(r.data?.[key]);
   if (own !== 'keep') return { kind: 'set', value: own };
-  if (r.data?.medicineMatchStatus === 'not_found' || r.data?.inMyStock === false) return { kind: 'none' };
-  const current = r.data?.currentPrices?.[key];
+  if (r.data?.medicineMatchStatus === 'not_found' || r.inMyStock === false) return { kind: 'none' };
+  const current = r.currentPrices?.[key];
   if (typeof current === 'number' && Number.isFinite(current) && current > 0) return { kind: 'kept', value: current };
-  if (r.data?.currentPrices && key in r.data.currentPrices) return { kind: 'none' };
+  if (r.currentPrices && key in r.currentPrices) return { kind: 'none' };
   return { kind: 'unknown' };
 }
 /** A row whose medicine will have no selling price after it (blank or 0, nothing current): not on sale until priced. */

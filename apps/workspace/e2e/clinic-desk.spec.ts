@@ -933,6 +933,22 @@ test('reschedule: another day’s free slot after a confirmation; a slot taken m
   await expect(appointments(page).getByRole('row').filter({ hasText: 'Chitra N' })).toContainText('11:15');
 });
 
+test('WQ11 (Q16a final): a desk appointment whose time has passed (a late patient) can still be moved to another time', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await openDesk(page);
+  // 09:30 has passed (it is 10:00) and the patient has not been marked seen or not come.
+  await page.getByRole('button', { name: 'Open Asha Rao at 09:30' }).click();
+  await page.getByRole('button', { name: 'Move to another time' }).click();
+  const move = page.getByRole('form', { name: 'Move to another time' });
+  await move.getByLabel('New time').selectOption({ label: '10:15–10:30 (1 free)' });
+  await move.getByRole('button', { name: 'Continue' }).click();
+  await move.getByRole('button', { name: 'Move the appointment' }).click();
+  await expect(page.getByText(/^Moved to Tue, 17 Nov, 2026, 10:15 at Indiranagar\./)).toBeVisible();
+  await expect(appointments(page).getByRole('row').filter({ hasText: 'Asha Rao' })).toContainText('10:15');
+  expect(backend.calls.filter((c) => c.path === `/partner-workspace/clinic/appointments/${AP1}/reschedule`)).toHaveLength(1);
+});
+
 test('one step at a time per appointment (an open confirmation included); a late answer shows nothing on another appointment', async ({ page }) => {
   const backend = await mockBackend(page);
   await signInPartner(page);

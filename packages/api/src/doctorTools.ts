@@ -246,6 +246,8 @@ export const INSTANT_REFUSAL: Record<string, string> = {
   SPECIALIZATION_MISMATCH: 'This request is for another speciality than the one on your profile.',
   COUPON_NOT_FOR_DOCTOR: 'The patient used a coupon for other doctors, so you cannot take this request.',
   FEE_ABOVE_QUOTE: 'Your instant fee is above what this patient paid. Lower your fee to take requests like this one.',
+  // Q16a re-review (C, `feeAffordable`): with this fee the patient's coupon is worked out again and no longer covers it.
+  OFFER_NO_LONGER_AFFORDABLE: 'What this patient paid no longer covers your fee once their coupon is worked out again, so you cannot take this request. It stays open for other doctors.',
   DOCTOR_BUSY: 'You already have a consultation at this time.',
   SPECIALIST_NOT_ACTIVE: 'Your doctor account is not active or not verified, so you cannot take instant consultations. Contact Jansetu.',
   BOOKING_NOT_FOUND: 'This consultation is not one of yours, or it is no longer running.',
@@ -341,6 +343,8 @@ export interface DoctorSlot {
   /** "HH:mm" (template slots) or "h:mm AM" (older slots). */
   startTime: string;
   endTime: string;
+  /** Minutes; the slot's length when its end time is missing (`slotIntervalOf`). */
+  duration?: number;
   maxBookings?: number;
   currentBookings?: number;
   isAvailable?: boolean;
@@ -381,12 +385,21 @@ export function noShowModeRefusal(err: unknown): unknown {
   return err;
 }
 
-/** A slot the doctor could move a no-show onto: open, a seat free, and not yet started (`reserveSlot`, `startedClock`). */
+/**
+ * A slot a no-show could move onto: open, a seat free, and still admitted (`reserveSlot`, `startedClock`): a one-patient
+ * slot until it starts; Q16a re-review N1 (owner): a multi-seat window (`maxBookings` > 1, a doctor session) until it
+ * ENDS (`slotIntervalOf`: its end time, or the start plus `duration` or 30 minutes when the end is missing or not later).
+ */
 export function movableSlot(s: DoctorSlot, now: Date): boolean {
   if (s.isActive === false || s.isAvailable === false || s.closedReason) return false;
-  if ((s.currentBookings ?? 0) >= (s.maxBookings ?? 1)) return false;
+  const max = s.maxBookings ?? 1;
+  if ((s.currentBookings ?? 0) >= max) return false;
   const at = appointmentInstant(s.date, s.startTime)?.at;
-  return !!at && at.getTime() > now.getTime();
+  if (!at) return false;
+  if (max <= 1) return at.getTime() > now.getTime();
+  const endAt = s.endTime ? appointmentInstant(s.date, s.endTime)?.at : undefined;
+  const end = endAt && endAt.getTime() > at.getTime() ? endAt.getTime() : at.getTime() + (Number(s.duration) > 0 ? Number(s.duration) : 30) * 60_000;
+  return end > now.getTime();
 }
 
 /**

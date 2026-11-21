@@ -192,8 +192,9 @@ function AdminSlotPicker({ b, now, scopeKey, onChoose }: { b: AdminConsultation;
  * Q16a (owner, 22 Nov 2026): "Cancel (admin)" for a booking moved after a no-show that its doctor cannot attend. The
  * admin gives a reason and chooses, explicitly (no default), whether the patient is refunded; the confirmation says what
  * each choice does with the money, and that the patient and the doctor are told. One step at a time on this page; the
- * booking is read again after every answer. A lost answer is settled by reading it: cancelled = done (a repeat of the
- * command answers the cancelled booking and never refunds twice). Keyed by the booking's version, so a confirmation
+ * booking is read again after every answer. A lost answer is settled by reading it: cancelled = done. Q16a final: a
+ * repeat of the command is refused 409 ALREADY_CANCELLED (never refunded twice); that is said as "already cancelled,
+ * nothing more was done", with how it was cancelled as read now. Keyed by the booking's version, so a confirmation
  * never outlives a change to the booking.
  */
 function AdminCancel({ b, perform, busy, cancel, readNow, reread, onNotice, onFailure }: {
@@ -235,6 +236,14 @@ function AdminCancel({ b, perform, busy, cancel, readNow, reread, onNotice, onFa
           onNotice(done(after.noShowCancel ? after.noShowCancel.refund : choice, after.refunded));
           if (live.current) setOpen(false);
         } catch (err) {
+          if (err instanceof ApiError && err.code === 'ALREADY_CANCELLED') {
+            // An earlier try of this admin (its answer lost) or another admin cancelled it: nothing more was done.
+            const now = await readNow().catch(() => null);
+            const how = now?.noShowCancel ? (now.noShowCancel.refund ? ', with a refund to the patient’s Jansetu wallet' : ', without a refund') : '';
+            onNotice(`This appointment was already cancelled${how}: nothing more was done.`);
+            if (live.current) setOpen(false);
+            return;
+          }
           if (definitelyNotRecorded(err)) {
             onFailure(`Not cancelled: ${(err instanceof ApiError && err.code && ADMIN_CANCEL_REFUSAL[err.code]) || (err instanceof Error ? err.message : String(err))}`);
             if (live.current) setOpen(false);

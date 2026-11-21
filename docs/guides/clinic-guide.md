@@ -131,7 +131,7 @@ Tap **Open** on an appointment, then:
 - **Mark arrived**: when the patient checks in.
 - **Mark as seen**: when the visit is over. The fee is paid at the clinic, so make a bill for it (section 7).
 - **Mark did not come**: only after the appointment time. Nothing is charged or refunded through Jansetu, and the doctor earns nothing.
-- **Move to another time**: choose **Branch**, **New day** and **New time** (same doctor), tap **Continue**, then **Move the appointment**.
+- **Move to another time**: choose **Branch**, **New day** and **New time** (same doctor), tap **Continue**, then **Move the appointment**. This works even after the appointment time, for a patient who is running late, until you mark them seen or did not come.
 - **Cancel appointment**: add a reason if you like. The seat is freed. If you already made a bill, cancel it under **Bills**.
 - **Reschedule no-show**: on a "Did not come" appointment, pick a new time and confirm. This works **once only**. If the patient misses again, it is final.
 

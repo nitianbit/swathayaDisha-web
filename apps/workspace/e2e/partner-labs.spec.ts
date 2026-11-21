@@ -227,6 +227,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       const bk = b.bookings.find((x) => x._id === cancelNoShow[1]);
       if (!bk) return fail(route, 404, 'LAB_BOOKING_NOT_FOUND', 'Booking not found');
       const x = body as { reason: string; refund: boolean };
+      if (bk.status === 'cancelled') return fail(route, 409, 'ALREADY_CANCELLED', 'This booking is already cancelled');
       if (bk.status !== 'confirmed') return fail(route, 409, 'LAB_BOOKING_STATE_CONFLICT', `A ${bk.status} booking cannot be cancelled`);
       if (!((bk.noShows as Rec[] | undefined)?.length)) return fail(route, 409, 'BOOKING_NOT_MOVED_NO_SHOW', 'This booking was not moved after a no-show; use the ordinary cancellation');
       Object.assign(bk, { status: 'cancelled', statusVersion: (bk.statusVersion as number) + 1, ...(x.refund ? { paymentStatus: 'refunded' } : {}),
@@ -709,7 +710,7 @@ test('a new time is proposed from open slots with a reason; a taken slot is refu
   // A lab visit before its slot: visited is offered, a no-show not yet.
   await expect(page.getByRole('button', { name: 'Mark visited' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Mark no-show' })).toBeDisabled();
-  await expect(page.getByText('A no-show can be marked only after the slot time.')).toBeVisible();
+  await expect(page.getByText('A no-show can be marked only after the slot has ended (09:30).')).toBeVisible();
 
   await page.getByRole('button', { name: 'Propose a new time' }).click();
   const thu = slotId('lab', '2026-11-19', '09:30');
@@ -1249,6 +1250,24 @@ test('WQ11b: marking a booking moved once after a no-show as a no-show again say
   await expect(confirm).not.toContainText('Afterwards the lab may move it once');
 });
 
+test('WQ11 (Q16a): a no-show is offered only once the arrival window has ended, not when it starts', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const bk = backend.bookings.find((x) => x._id === BK1)!;
+  // 09:45–10:15 India time; the page clock is 10:00: the slot has started but the patient may still come.
+  bk.slot = { slotId: slotId('home', '2026-11-17', '09:30'), date: '2026-11-17', startTime: '09:45', endTime: '10:15', startsAt: istInstant('2026-11-17', '09:45') };
+  await signInPartner(page);
+  await page.goto(`/#/partner/lab-bookings/${BK1}`);
+  await expect(page.getByRole('heading', { name: 'Lab booking: Asha Rao' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Mark no-show' })).toBeDisabled();
+  await expect(page.getByText('A no-show can be marked only after the slot has ended (10:15).')).toBeVisible();
+  // At the window's end it is offered.
+  await page.clock.setFixedTime(new Date(Date.parse(istInstant('2026-11-17', '10:15'))));
+  await page.goto('/#/partner/lab-bookings'); // the booking page reads the clock again when it is opened again
+  await page.goto(`/#/partner/lab-bookings/${BK1}`);
+  await expect(page.getByRole('button', { name: 'Mark no-show' })).toBeEnabled();
+  await expect(page.getByText(/A no-show can be marked only after/)).toHaveCount(0);
+});
+
 test('WQ11b: the weekly template editor edits the saved template and saves on its version; a save in between is shown, not overwritten', async ({ page }) => {
   const backend = await mockBackend(page);
   await signInPartner(page);
@@ -1313,4 +1332,26 @@ test('WQ11b (Q16a): an admin cancels a booking moved after a no-show, choosing w
   await page.goto(`/#/admin/partners/${LAB}/lab-bookings/${BK2}`);
   await expect(page.getByRole('heading', { name: 'Lab booking: Bala Rao' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Cancel (admin)' })).toHaveCount(0); // not moved after a no-show
+});
+
+test('WQ11 (Q16a final): an admin cancel of a moved no-show that another admin already cancelled is refused 409 ALREADY_CANCELLED and said as already done', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const bk = backend.bookings.find((x) => x._id === BK1)!;
+  Object.assign(bk, { noShowReschedules: 1, noShows: [{ at: '2026-11-16T05:00:00.000Z', rescheduledAt: '2026-11-16T06:00:00.000Z', fromSlot: bk.slot, toSlot: bk.slot, requestKey: 'x'.repeat(32) }] });
+  await signInAdmin(page);
+  await page.goto(`/#/admin/partners/${LAB}/lab-bookings/${BK1}`);
+  await page.getByRole('button', { name: 'Cancel (admin)' }).click();
+  const form = page.getByRole('form', { name: 'Cancel (admin)' });
+  await form.getByLabel('Reason (the patient sees this)').fill('The lab cannot attend the new time');
+  await form.getByRole('radio', { name: 'No: the payment is kept' }).check();
+  await form.getByRole('button', { name: 'Continue' }).click();
+  // Meanwhile another admin cancelled it with a refund.
+  Object.assign(bk, { status: 'cancelled', statusVersion: (bk.statusVersion as number) + 1, paymentStatus: 'refunded',
+    cancellation: { reason: 'admin_no_show', note: 'Another admin', by: `admin:${ADMIN}`, byKind: 'admin', at: NOW.toISOString(), refund: true } });
+  await form.getByRole('button', { name: 'Cancel without a refund' }).click();
+  await expect(page.getByText('This booking was already cancelled (by another admin, or by an earlier try whose answer was lost): nothing more was done. It is shown as it is now.')).toBeVisible();
+  await expect(page.getByText(/^Not cancelled/)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel (admin)' })).toHaveCount(0);
+  expect(backend.calls.filter((c) => c.path.endsWith('/cancel-no-show'))).toHaveLength(1);
+  expect((bk.cancellation as Rec).refund).toBe(true); // the refused repeat changed nothing
 });

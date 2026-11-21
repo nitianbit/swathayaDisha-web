@@ -1459,8 +1459,8 @@ that fails without its fix (proofs `/tmp/wq11c-review-5473/proofs` NEW-1–NEW-7
   said ("… the server did not record a supplier for it").
 - **N3.** "Discard this preview…" is disabled while a confirmation is being sent or is unconfirmed, and runs under the
   page's one-at-a-time guard.
-- **N4.** `importPriceView`: a blank cell keeps a current price only when there is one. With Q16c's announced per-row
-  `inMyStock` / `currentPrices` (**not in the q16c worktree yet; handled when present**): a medicine not yet in my stock (or
+- **N4.** `importPriceView`: a blank cell keeps a current price only when there is one. With Q16c's per-row
+  `inMyStock` / `currentPrices` (on the row itself, not in `data`: adopted in the WQ11 integration below): a medicine not yet in my stock (or
   a new one) shows "No price yet", and its selling price "Not on sale until priced"; a known current price shows "Kept:
   ₹…"; without the fields "Current price kept". The confirmation counts every row that leaves a medicine unpriced (new,
   not in stock, or selling price 0).
@@ -1473,10 +1473,48 @@ that fails without its fix (proofs `/tmp/wq11c-review-5473/proofs` NEW-1–NEW-7
   minutes after the start (Q16a `NO_SHOW_GRACE_MS`; still uncommitted there). A booking whose time cannot be read still
   offers Mark completed (the server decides). Guidance true only with Q16c is kept (shipped together).
 
+## WQ11 integration: WQ11a + WQ11b + WQ11c on the final Q16a/Q16c contract (2026-11-22, taken autonomously at the owner's request)
+
+Branch `wq11/integration` from stage `317f21e`; merged in order `wq11a-customer-signin` (c0db443), `wq11b-partner-admin`
+(711f858), `wq11c-doctor-pharmacy` (2eee5e9). Backend read-only: `q16c-pharmacy` bbc467e; `q16a-bookings-money` at ab5d6df +
+28225e7 plus its uncommitted re-review work (read in the worktree, still being finished).
+
+Merge conflicts and how they were resolved (both sides' behaviour kept):
+- `docs/PLAN.md` (both merges): every section and verification row kept; the WQ11c rows grouped with the other 2026-11-22 rows.
+- `packages/api/src/client.ts` `RequestOptions`: WQ11a `keepalive` (sign-out outlives the page) and WQ11c `timeoutMs` (long
+  uploads) side by side; the request uses both.
+- `packages/api/src/noShows.ts` `isSlotRefusal`: WQ11b's `SLOT_REFUSAL_CODES` (with the lab's `SLOT_UNAVAILABLE`) kept as the one
+  list, WQ11c's `SLOT_MODE_NOT_OFFERED` added to it (both are "pick another time": picker reopens, slots read again).
+- Auto-merged and checked: `packages/api/src/index.ts` (each branch's exports), `apps/workspace/src/requests.ts` (WQ11c
+  `keyedLookup(…, notFoundCodes)`; WQ11b callers keep the old any-404 rule), `partners.test.ts`. There is one focus helper
+  (WQ11b `components/focus.ts` `usePanelFocus`); WQ11a's `Confirm` focus is the customer app's own and WQ11c adds none.
+
+Final backend contract adopted:
+- **Q16c import preview rows** (`enrichPreviewRow`): `inMyStock` and `currentPrices {mrp, retailPrice, wholesalePrice,
+  purchasePrice} | null` are on the row itself, not in `data` as WQ11c assumed: `ImportRow` and `importPriceView` read them
+  there (`ImportCurrentPrices`). 400 `IMPORT_FILE_TOO_BIG` (more than 200,000 cells, or a read over 5 s) is said in words.
+- **Q16a admin cancel of a moved no-show**: a repeat is refused 409 `ALREADY_CANCELLED` (consultation: `cancelBookingSettlement`
+  with `movedNoShow`; lab: `adminCancelMovedNoShow`). Both pages say "already cancelled: nothing more was done" (the
+  consultation one with how it was cancelled, read again), never "Not cancelled".
+- **Q16a instant accept**: 409 `OFFER_NO_LONGER_AFFORDABLE` (`feeAffordable`: the coupon worked out again on the fee) in words.
+- **Q16a desk move after the start** (`rescheduleDeskAppointment` no longer passes `refuseStartedSource`): "Move to another
+  time" stays offered for a started desk appointment (a late patient) until it is marked seen or did not come.
+- **Q16a lab no-show** (`labSlotEnd`, 409 `SLOT_NOT_STARTED`): offered only once the arrival window has ENDED (was: started).
+- **Q16a multi-seat windows** (`reserveSlot`, `bookableNow`): a started doctor session with `maxBookings` > 1 is admitted until
+  it ends, so `movableSlot` (doctor and admin no-show moves) offers it until its end; one-patient slots until their start.
+
 ## Follow-ups
 
-- WQ11b: Q16a refuses moving a desk appointment that has already started (400 `BOOKING_ALREADY_STARTED`); the desk still
-  offers "Move to another time" then and shows the server's message. The desk view carries no no-show history (Q14 and Q16a),
+- WQ11 integration: the Q16a backend still refuses a customer booking of a started multi-seat session before admission
+  (`validateBookingDateAndSlot` checks the start for every slot, while `reserveSlot` and the listings allow it until the end);
+  the customer app shows what the server lists, so such a session can be listed and then refused `SLOT_STARTED`. For the
+  backend to align. The clinic desk's own slot list (Q13) still leaves started slots out, so a desk move onto a running
+  session is not offered even though admission would take it.
+- WQ11 integration: Q16c `currentPrices.mrp` is the row's batch's MRP when that batch exists, else the LATEST batch's, but
+  a new batch with a blank MRP cell gets no MRP on commit (`adjustBatchStock`). The preview cannot tell the two apart, so
+  its MRP column may say "Kept: ₹…" for a new batch. Selling, wholesale and purchase prices are per item and correct. A
+  per-row "batch already in stock" flag (backend) would settle it.
+- WQ11b: the desk view carries no no-show history (Q14 and Q16a),
   so its second no-show confirmation uses conditional words. The partner lab list has no newest-first order on the server,
   so Past shows oldest first within the chosen dates.
 
@@ -1498,6 +1536,7 @@ that fails without its fix (proofs `/tmp/wq11c-review-5473/proofs` NEW-1–NEW-7
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-22 | WQ11 integration (WQ11a + WQ11b + WQ11c merged on stage 317f21e; final Q16c preview rows and IMPORT_FILE_TOO_BIG; Q16a ALREADY_CANCELLED, OFFER_NO_LONGER_AFFORDABLE, desk move after the start, lab no-show after the window end, multi-seat sessions until their end) | typecheck clean; Vitest 298/298 (266 + 19 + 13 from the three branches; cases added inside existing tests: row-level `inMyStock`/`currentPrices`, IMPORT_FILE_TOO_BIG words, `labSlotEnd` and the no-show window, `movableSlot` for running multi-seat sessions, OFFER_NO_LONGER_AFFORDABLE words); Playwright workspace 648/648 (498 + 14 + 82 + 44 from the branches = 638; +10 = 5 journeys x 2: lab no-show disabled while the window runs and offered at its end; lab and consultation admin cancel answered 409 ALREADY_CANCELLED said as already done; a running doctor session with seats offered for an admin no-show move; a late desk appointment still moved. Changed: the N4 preview rows in the Q16c shape, IMPORT_FILE_TOO_BIG in the upload refusals, OFFER_NO_LONGER_AFFORDABLE in the offers journey, the lab no-show reason. Every new or changed journey fails without the source changes except the desk one, which confirms existing behaviour); Playwright customer 266/266; no flakes in the final run; both builds OK with VITE_API_SAME_ORIGIN=true. Temporary configs on ports 5531/5532 (`reuseExistingServer: false`), deleted before commit. |
 | 2026-11-22 | WQ11a re-review N1–N5 + pill | typecheck clean; Vitest 266/266 (marker clear test removed; +1 logout answer shape; the resend rule test rewritten to settle-by-abandon); Playwright customer 266/266 (250 + 16 = 8 more journeys x 2, four of the earlier ones rewritten — markers survive sign-out and the request is resolved, never made twice; Confirm focus on Back, Enter twice does nothing; start-up Reconnecting… then resumed; Sign in again escape and a definite refusal at start; a 200 non-backend logout keeps the record; the pill never covers the title; lost lab resend refused 409/422 settled by abandon; abandon answering used opens the booking; a lost resend given up; doctor resend refused 400 opens the booked one / settles by abandon); Playwright workspace 512/512 (508 + 4 = 2 journeys x 2: start-up Reconnecting… and Sign in again; a 200 non-backend logout keeps the record); every new journey fails on 7d97d74; no flakes; both builds OK with VITE_API_SAME_ORIGIN=true. Temporary configs on ports 5503/5504 (`reuseExistingServer: false`), deleted before commit. |
 | 2026-11-22 | WQ11a pre-production review (customer app; sign-in and session on both apps; Q16b partner sessions) | typecheck clean; Vitest 266/266 (253 + 13: web sign-out record and fallback/unknown, transient session errors, marker clear, logout noRenew + keepalive, partner bearer verify/select refused before sending (2 partner/auth tests rewritten to the cookie/native modes), resend settled only on REQUEST_ABANDONED/400/422, payment-check answers, workspace SessionProvider refusing partner sign-in in a cross-origin build and keeping bearer for other staff); Playwright customer 250/250 (222 + 28 = 14 journeys x 2: failed sign-out said, retried, not resumed on reload and cleared when the server answers; next start logs out before any refresh; renewal network failure keeps the session with Reconnecting…; a definite refusal still ends it; profile failure after the code ends the new session; lab coupon re-checked for a family member; lost lab create refused on resend then given up; a 422 resend settled; pay again after 400 PAYMENT_FAILED with amount due and wallet part; sign-in alerts, focus and code description; Confirm focus in and back; explicit sign-out clears markers; a doctor booking answer after leaving opens nothing; doctor give-up. All fail on 317f21e except the definite-refusal guard); Playwright workspace 508/508 (498 + 10 = 5 journeys x 2: failed sign-out not resumed, logout before refresh, Reconnecting…, profile failure ends the session, sign-in alerts and focus; all fail on 317f21e); no flakes; both builds OK with VITE_API_SAME_ORIGIN=true. Temporary configs on ports 5501/5502 (`reuseExistingServer: false`), deleted before commit. |
 | 2026-11-22 | WQ11b (partner and admin screens: pre-production review fixes, on Q16a/Q16b) | typecheck clean; Vitest 272/272 (+19: lab paging/cursor/page checks, version fences on every lab step, one-file uploads with keys, size refusals, saved template + TEMPLATE_CHANGED, admin cancel of moved no-shows (lab and consultation), canonical rebase, doctor-membership removal, closed branch scope, owner email admin-only, audit labels, payment refusals 400/422 only, desk 15-minute no-show and start-time rules, CGST/SGST rounding; DOM: ConfirmAction step identity, version and focus, NoShowMove choose-again and Back); Playwright workspace 580/580 (+82 = 41 journeys x 2, ported from the reviewer's proofs; every new one fails on 317f21e, checked in a copy with the source at 317f21e), customer 222/222; temporary configs on 5511/5512 with reuseExistingServer false (deleted); both builds with VITE_API_SAME_ORIGIN=true. |

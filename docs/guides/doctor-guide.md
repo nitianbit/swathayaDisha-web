@@ -34,7 +34,7 @@ Patients who pay now are offered to available doctors of their speciality. The f
 
 1. Open **Consult now**.
 2. Under **Consultation types you take now**, tick **Video**, **Phone call** and/or **Chat**.
-3. Enter **Your fee for an instant consultation (₹)**. You get offers only from patients who paid at least this much.
+3. Enter **Your fee for an instant consultation (₹)**. You get offers only from patients who paid at least this much. If a patient's coupon does not apply to your fee, what they paid may not cover it: such an offer cannot be accepted and stays open for other doctors.
 4. Tap **Go available now**. The status shows **On**.
 
 **Keep a workspace page open and visible.** It checks in every minute, and at once when the page is opened or reloaded. If the page is hidden or closed, you stop getting offers two minutes later. "On, not checked in" means no page has checked in recently. Tap **Go available now** again.

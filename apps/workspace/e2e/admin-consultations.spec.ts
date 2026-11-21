@@ -137,7 +137,8 @@ async function mockBackend(page: Page): Promise<Backend> {
         return fail(route, 400, 'VALIDATION_ERROR', '"reason" and "refund" are required');
       }
       if (bk.bookingKind === 'instant') return fail(route, 409, 'INSTANT_CONSULT_COMMAND_REQUIRED', 'Use the instant consultation cancel command');
-      if (bk.status === 'cancelled') return ok(route, { ...bk, refunded: 0 });
+      // Q16a final: a repeat of the admin cancel is refused (never refunded twice).
+      if (bk.status === 'cancelled') return fail(route, 409, 'ALREADY_CANCELLED', 'This booking is already cancelled');
       if (!['pending', 'confirmed'].includes(String(bk.status))) return fail(route, 409, 'BOOKING_NOT_CANCELLABLE', `A ${bk.status} booking cannot be cancelled`);
       if (!(bk.noShows as Rec[] | undefined)?.length) return fail(route, 409, 'BOOKING_NOT_MOVED_NO_SHOW', 'This booking was not moved after a no-show; use the ordinary cancellation');
       Object.assign(bk, { status: 'cancelled', cancellationReason: x.reason.trim(), noShowCancel: { at: NOW.toISOString(), refund: x.refund },
@@ -268,6 +269,26 @@ test('a no-show is moved once to a free time of its own doctor after a confirmat
   expect(backend.calls.some((c) => c.path === `/slots/available?specialistId=${DOC1}&date=20261120&mode=video`)).toBe(true);
   const stored = await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }));
   expect(stored).not.toContain(S1);
+});
+
+test('WQ11 (Q16a): a doctor session with several seats that has started is still offered until it ends; a started one-patient slot is not', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const SESSION = '5a'.repeat(12);
+  const ENDED = '5b'.repeat(12);
+  backend.slots.unshift( // the server lists them by start time
+    slot(ENDED, '20261120', '09:00', '10:00', { maxBookings: 4, currentBookings: 1 }), // ended at 10:00
+    slot(SESSION, '20261120', '09:30', '10:30', { maxBookings: 4, currentBookings: 1 }), // 10:00 now: running, seats free
+  );
+  await signInAdmin(page);
+  await page.goto(`/#/admin/consultations/${BK1}`);
+  await page.getByRole('button', { name: 'Reschedule no-show' }).click();
+  const form = page.getByRole('form', { name: 'Reschedule no-show' });
+  await expect(form.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '09:30–10:30', '11:00–11:30', '11:30–12:00']);
+  await form.getByLabel('New time').selectOption({ label: '09:30–10:30' });
+  await form.getByRole('button', { name: 'Continue' }).click();
+  await form.getByRole('button', { name: /^Move to/ }).click();
+  await expect(page.getByText(/The patient’s no-show is moved to .*09:30\. It is booked again at the same price\./)).toBeVisible();
+  expect(moves(backend).map((c) => (c.body as Rec).slotId)).toEqual([SESSION]);
 });
 
 test('a lost move answer: the booking read again settles it; one lost before the server is sent again with the same key, once', async ({ page }) => {
@@ -464,4 +485,24 @@ test('WQ11b (Q16a): a "Cancel (admin)" whose answer is lost is settled by readin
   expect(bk.status).toBe('cancelled');
   expect(bk.noShowCancel).toEqual({ at: NOW.toISOString(), refund: false });
   expect(backend.calls.filter((c) => c.path.endsWith('/cancel-no-show'))).toHaveLength(1);
+});
+
+test('WQ11 (Q16a final): a "Cancel (admin)" of a booking another admin already cancelled is refused 409 ALREADY_CANCELLED and said as already done', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await page.goto(`/#/admin/consultations/${BK4}`);
+  const bk = backend.bookings.find((x) => x._id === BK4)!;
+  await page.getByRole('button', { name: 'Cancel (admin)' }).click();
+  const panel = page.getByRole('group', { name: 'Cancel (admin)' });
+  await panel.getByLabel('Reason (the patient sees this)').fill('The doctor is on leave');
+  await panel.getByLabel(/No: the payment stays with Jansetu/).check();
+  // Meanwhile another admin cancelled it with a refund.
+  Object.assign(bk, { status: 'cancelled', noShowCancel: { at: NOW.toISOString(), refund: true }, paymentStatus: 'refunded', updatedAt: '2026-11-20T04:41:00.000Z' });
+  await panel.getByRole('button', { name: 'Cancel the appointment' }).click();
+  await expect(page.getByText('This appointment was already cancelled, with a refund to the patient’s Jansetu wallet: nothing more was done.')).toBeVisible();
+  await expect(page.getByText(/^Not cancelled/)).toHaveCount(0);
+  await expect(page.getByText('Cancelled', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel (admin)' })).toHaveCount(0);
+  expect(backend.calls.filter((c) => c.path.endsWith('/cancel-no-show'))).toHaveLength(1);
+  expect(bk.noShowCancel).toEqual({ at: NOW.toISOString(), refund: true }); // not changed by the refused repeat
 });

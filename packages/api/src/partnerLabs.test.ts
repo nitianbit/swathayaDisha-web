@@ -1,7 +1,7 @@
 import { createApiClient } from './client.ts';
 import {
   addDays, capacityProblem, eligibleSigners, isBookable, isLabBookingChanged, isRealDate, isReportTooLarge, istDateOf, isTemplateChanged, isUploadFailed,
-  labActions, labBookingsAdminApi, labNoShowMove, manualSlotProblems, mondayOf, partnerLabsApi, reopenable, reportFileBooking, reportFileName,
+  labActions, labBookingsAdminApi, labSlotEnd, labNoShowMove, manualSlotProblems, mondayOf, partnerLabsApi, reopenable, reportFileBooking, reportFileName,
   reportFileProblem, slotTimesFor, templateInput, templateProblems, weekdayOf, type LabBooking, type LabSlot,
 } from './partnerLabs.ts';
 import { ApiError } from './client.ts';
@@ -123,6 +123,11 @@ describe('lab booking transitions (services/labBookings.ts §4)', () => {
     expect(names(labActions(booking({}), ADMIN_ACTOR, after))).toEqual(['assign', 'collect', 'no_show', 'reschedule', 'reject']);
     expect(names(labActions(booking({ visitMode: 'lab' }), ADMIN_ACTOR, after))).toEqual(['visit', 'no_show', 'reschedule', 'reject']);
     expect(names(labActions(booking({}), ADMIN_ACTOR, before))).toEqual(['assign', 'collect', 'no_show!', 'reschedule', 'reject']);
+    // Q16a: a no-show only once the arrival window (09:00–09:30 India time) has ended, not when it starts.
+    const during = labActions(booking({}), ADMIN_ACTOR, new Date('2026-11-16T03:45:00Z'));
+    expect(during.find((o) => o.action === 'no_show')?.blocked).toBe('A no-show can be marked only after the slot has ended (09:30).');
+    expect(names(labActions(booking({}), ADMIN_ACTOR, new Date('2026-11-16T04:00:00Z')))).toContain('no_show');
+    expect(labSlotEnd({ startsAt: '2026-11-16T18:00:00.000Z', startTime: '23:30', endTime: '00:30' }).toISOString()).toBe('2026-11-16T19:00:00.000Z');
     // A new time waiting for the customer blocks collected/visited/no-show, not another proposal or a rejection.
     expect(names(labActions(booking({ reschedule: { version: 1, pending: true } }), ADMIN_ACTOR, after)))
       .toEqual(['assign', 'collect!', 'no_show!', 'reschedule', 'reject']);

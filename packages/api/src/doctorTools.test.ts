@@ -92,7 +92,7 @@ describe('instant consultations', () => {
     const now = new Date('2026-11-17T04:30:00.000Z');
     expect(offerSecondsLeft({ offerExpiresAt: '2026-11-17T04:34:00.500Z' }, now)).toBe(241);
     expect(offerSecondsLeft({ offerExpiresAt: '2026-11-17T04:29:00.000Z' }, now)).toBe(0);
-    for (const code of ['OFFER_EXPIRED', 'OFFER_NO_LONGER_AVAILABLE', 'DOCTOR_NOT_AVAILABLE', 'SPECIALIZATION_MISMATCH', 'COUPON_NOT_FOR_DOCTOR', 'FEE_ABOVE_QUOTE', 'DOCTOR_BUSY']) {
+    for (const code of ['OFFER_EXPIRED', 'OFFER_NO_LONGER_AVAILABLE', 'DOCTOR_NOT_AVAILABLE', 'SPECIALIZATION_MISMATCH', 'COUPON_NOT_FOR_DOCTOR', 'FEE_ABOVE_QUOTE', 'OFFER_NO_LONGER_AFFORDABLE', 'DOCTOR_BUSY']) {
       expect(instantRefusal(new ApiError(409, 'server words', code))).not.toBe('server words');
     }
     expect(instantRefusal(new ApiError(403, 'x', 'SPECIALIST_NOT_ACTIVE'))).toMatch(/not active/);
@@ -148,6 +148,13 @@ describe('Q14 no-shows (rescheduleNoShow: once, never instant, no earning)', () 
     expect(movableSlot({ ...slot, isAvailable: false }, now)).toBe(false);
     expect(movableSlot({ ...slot, closedReason: 'leave' }, now)).toBe(false);
     expect(movableSlot({ ...slot, startTime: '9:30 PM' }, now)).toBe(true);
+    // Q16a: a started multi-seat session stays open until it ends; a full one does not.
+    const session = { ...slot, startTime: '09:30', endTime: '10:30', maxBookings: 4, currentBookings: 2 };
+    expect(movableSlot(session, now)).toBe(true);
+    expect(movableSlot({ ...session, endTime: '10:00' }, now)).toBe(false);
+    expect(movableSlot({ ...session, currentBookings: 4 }, now)).toBe(false);
+    expect(movableSlot({ ...session, endTime: '09:30', duration: 45 }, now)).toBe(true); // no later end: start + duration
+    expect(movableSlot({ ...session, maxBookings: 1, currentBookings: 0 }, now)).toBe(false);
   });
 
   it('moves with a key and the version decided on; admins search verified doctors and move any booking', async () => {

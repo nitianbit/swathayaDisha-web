@@ -281,6 +281,7 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
           DOCTOR_BUSY: [409, 'The doctor is not free at that time'], OFFER_EXPIRED: [409, 'This offer has expired'], FEE_ABOVE_QUOTE: [409, 'Your fee is above what this patient paid'],
           OFFER_NO_LONGER_AVAILABLE: [409, 'This request was taken, refunded or withdrawn'], DOCTOR_NOT_AVAILABLE: [409, 'Go online for this consultation type to accept'],
           SPECIALIST_NOT_ACTIVE: [403, 'Doctor account is not active'],
+          OFFER_NO_LONGER_AFFORDABLE: [409, 'What the patient paid does not cover your fee for this request'],
         };
         const [status, message] = messages[script]!;
         return fail(route, status, script, message);
@@ -685,6 +686,8 @@ test('offers: countdown, accept after confirming, every refusal in words, a lost
     ['Gita', 'OFFER_NO_LONGER_AVAILABLE', 'Another doctor accepted it first, or the patient withdrew or was refunded.'],
     ['Indu', 'DOCTOR_NOT_AVAILABLE', 'You are not available now for this consultation type'],
     ['Jaya', 'SPECIALIST_NOT_ACTIVE', 'Your doctor account is not active or not verified'],
+    // Q16a re-review (C): the patient's coupon, worked out again on this fee, no longer covers it.
+    ['Mohan', 'OFFER_NO_LONGER_AFFORDABLE', 'What this patient paid no longer covers your fee once their coupon is worked out again'],
   ];
   backend.offers = [offer(1, 'Asha Rao', { offerExpiresAt: plusMin(4) }), offer(8, 'Hari', { mode: 'chat' }),
     ...names.map(([n], i) => offer(10 + i, n)), offer(30, 'Old', { offerExpiresAt: new Date(NOW.getTime() - 1000).toISOString() }),

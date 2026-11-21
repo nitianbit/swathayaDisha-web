@@ -166,7 +166,7 @@ A paid booking is **Confirmed** automatically. There is no separate confirm step
 
 - **Propose a new time**: pick a free slot and write a reason. The customer accepts it, or cancels for a full refund. The booking shows **New time proposed** until they answer.
 - **Reject booking**: write a reason the customer will see. The booking is cancelled and the customer gets the full amount back in their Jansetu wallet.
-- **Mark no-show**: only after the slot time has passed. The customer is not refunded and the lab earns nothing. It cannot be undone.
+- **Mark no-show**: only after the slot has ended (for a 9:00–9:30 slot, from 9:30). The patient may still arrive during the slot. The customer is not refunded and the lab earns nothing. It cannot be undone.
 - **Reschedule no-show**: on a no-show booking, choose a new time and confirm. This works **once only**, at the same price. If the patient misses again, that no-show is final.
 
 The **Timeline** at the bottom shows everything that happened.
@@ -245,7 +245,7 @@ You do not have that permission. Ask your owner.
 Check that the lab is **Verified**, the branch offers the right service, the tests are **Offered**, and slots exist in **Slots**.
 
 **The Mark no-show button is grey.**
-It works only after the slot time has passed.
+It works only after the slot has ended (its end time, not its start).
 
 **How do I close the lab on a festival day?**
 Add the date under **Holidays** on the branch. Its slots close by themselves.
