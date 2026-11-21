@@ -112,6 +112,10 @@ describe('appointment commands offered (updateAppointmentStatus, markNoShow, can
     expect(appointmentActions(appt({}), before)).toEqual(['cancel']);
     expect(appointmentActions(appt({}), after)).toEqual(['complete', 'cancel', 'no_show']);
     expect(appointmentActions(appt({ bookingTime: '10:00 AM' }), after)).toContain('no_show');
+    // Q16a: a no-show 15 minutes after the start, not before; an unreadable time still offers completing (the server decides).
+    expect(appointmentActions(appt({}), new Date('2026-11-17T04:44:00.000Z'))).toEqual(['complete', 'cancel']);
+    expect(appointmentActions(appt({}), new Date('2026-11-17T04:45:00.000Z'))).toContain('no_show');
+    expect(appointmentActions(appt({ bookingTime: 'soon' }), before)).toEqual(['complete', 'cancel']);
     expect(appointmentActions(appt({ status: 'pending', paymentStatus: 'pending' }), after)).toEqual(['cancel']);
     expect(appointmentActions(appt({ status: 'pending' }), after)).toEqual(['confirm', 'cancel']);
     expect(appointmentActions(appt({ paymentStatus: 'pending', settlementSystem: 'ledger' }), after)).toEqual(['cancel']);

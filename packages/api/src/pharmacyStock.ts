@@ -194,6 +194,12 @@ export interface ImportRow {
     prescriptionRequired?: boolean;
     /** Q16c: the row's supplier, when the file or the row names one. */
     supplierId?: string; supplierName?: string;
+    /**
+     * Q16c (announced, not yet in the backend): whether this pharmacy already stocks the medicine, and its prices now. A
+     * blank cell keeps a current price only when there is one; without these fields that is not known.
+     */
+    inMyStock?: boolean;
+    currentPrices?: Partial<Record<'mrp' | 'retailPrice' | 'wholesalePrice' | 'purchasePrice', number | null>>;
   };
 }
 
@@ -350,6 +356,31 @@ export const IMPORT_PRICE_FIELDS = [
   { key: 'mrp', label: 'MRP' }, { key: 'retailPrice', label: 'selling price' },
   { key: 'purchasePrice', label: 'purchase price' }, { key: 'wholesalePrice', label: 'wholesale price' },
 ] as const;
+type PriceKey = (typeof IMPORT_PRICE_FIELDS)[number]['key'];
+/**
+ * The price a row leaves in place for `key`: 'set' (the row's own number), 'kept' (a blank cell and a known current price),
+ * 'none' (a blank cell and no price: a new medicine, one not yet in this pharmacy's stock, or a current price that is
+ * empty) or 'unknown' (a blank cell; whether there is a current price is not said).
+ */
+export type ImportPriceView = { kind: 'set'; value: number } | { kind: 'kept'; value: number } | { kind: 'none' } | { kind: 'unknown' };
+export function importPriceView(r: ImportRow, key: PriceKey): ImportPriceView {
+  const own = importPriceOf(r.data?.[key]);
+  if (own !== 'keep') return { kind: 'set', value: own };
+  if (r.data?.medicineMatchStatus === 'not_found' || r.data?.inMyStock === false) return { kind: 'none' };
+  const current = r.data?.currentPrices?.[key];
+  if (typeof current === 'number' && Number.isFinite(current) && current > 0) return { kind: 'kept', value: current };
+  if (r.data?.currentPrices && key in r.data.currentPrices) return { kind: 'none' };
+  return { kind: 'unknown' };
+}
+/** A row whose medicine will have no selling price after it (blank or 0, nothing current): not on sale until priced. */
+export function importLeavesUnpriced(r: ImportRow): boolean {
+  const v = importPriceView(r, 'retailPrice');
+  return v.kind === 'none' || (v.kind === 'set' && v.value <= 0);
+}
+/** WQ11c: the template's example row, still in the file (Q16c refuses it by name; an older importer would not). */
+export const isTemplateExample = (r: ImportRow) =>
+  [r.medicineName, r.data?.name].some((n) => typeof n === 'string' && n.toLowerCase().includes(TEMPLATE_EXAMPLE_MARK));
+
 /** The prices a ready row would set to ₹0 (by their words). */
 export const importZeroPrices = (r: ImportRow) => IMPORT_PRICE_FIELDS.filter((f) => importPriceOf(r.data?.[f.key]) === 0).map((f) => f.label);
 /** The prices a ready row would change (any number, 0 included). */
@@ -375,7 +406,10 @@ export function importPlan(record: Pick<InventoryImport, 'importMode' | 'preview
     mayBeSkipped: record.importMode === 'create_only' ? used.filter((r) => !isNew(r)).length : 0,
     newMedicines: newRows.length,
     newNeedingPrescription: newRows.filter((r) => r.data?.prescriptionRequired !== false).length,
-    newWithoutPrice: newRows.filter((r) => !(typeof r.data?.retailPrice === 'number' && r.data.retailPrice > 0)),
+    /** New medicines, medicines not yet in this pharmacy's stock, and selling prices set to 0, with no selling price after. */
+    unpriced: used.filter(importLeavesUnpriced),
+    /** The template's example row (the confirmation is blocked while it is there). */
+    examples: ready.filter(isTemplateExample),
     priceChanges: used.filter((r) => importSetPrices(r).length > 0),
     zeroPrices: used.filter((r) => importZeroPrices(r).length > 0),
   };

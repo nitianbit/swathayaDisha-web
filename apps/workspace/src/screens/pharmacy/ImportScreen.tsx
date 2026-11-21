@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router';
+import { Link, useLocation, useParams } from 'react-router';
 import { ArrowLeft, Download } from 'lucide-react';
 import {
-  formatExpiry, IMPORT_MODES, IMPORT_ROW_STATUS_LABEL, IMPORT_STATUS_LABEL, importCommittable, importPlan, importPriceOf, importRetryable, importSettled,
-  importStuck, importZeroPrices, isImportClaimed, monthFirstRows, pharmacyStockApi, recentSameFile, type ImportPrice, type ImportRow, type InventoryImport,
-  IMPORT_DATE_FORMAT, allSuppliers,
+  formatExpiry, IMPORT_MODES, IMPORT_ROW_STATUS_LABEL, IMPORT_STATUS_LABEL, importCommittable, importPlan, importRetryable, importSettled,
+  importStuck, importZeroPrices, isImportClaimed, monthFirstRows, pharmacyStockApi, recentSameFile, type ImportRow, type InventoryImport,
+  IMPORT_DATE_FORMAT, allSuppliers, importLeavesUnpriced, importPriceView, IMPORT_PRICE_FIELDS, TEMPLATE_EXAMPLE_MARK, type ImportPriceView,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
@@ -14,12 +14,18 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
-import { useTicker } from '../doctor/doctor.tsx';
+import { RefreshFailed, useTicker } from '../doctor/doctor.tsx';
 import { importTone } from './ImportStockScreen.tsx';
 import { CheckPanel, useDiscarded, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 
-/** The step being sent for this import: adding its ready rows, or trying its failed rows again. */
-interface PendingStep { kind: 'commit' | 'retry'; importId: string }
+/**
+ * The step being sent for this import: adding its ready rows, or trying its failed rows again. A retry keeps the
+ * outcome on screen when it was sent (`since`: the import's `updatedAt`), so only another outcome settles it.
+ */
+interface PendingStep { kind: 'commit' | 'retry'; importId: string; since?: string }
+
+/** Navigation state from the file check: the supplier chosen for the whole file (to tell whether the server kept it). */
+export interface ImportArrival { supplierAsked?: string }
 
 /**
  * The kind of a stored step. A commit is stored under the import's id as its key, a retry under a new key: so a marker
@@ -29,13 +35,18 @@ const stepKind = (p: PendingOp<PendingStep>, importId: string): PendingStep['kin
 
 /**
  * Whether the import as read now settles the stored step: it finished adding, and (for a retry, whose import had an
- * outcome before it was sent) that outcome was written after the retry was first sent (30 s allowed for clocks).
+ * outcome before it was sent) the outcome is another one. WQ11c re-review N6: with the outcome on screen when the retry
+ * was sent (`since`), only a different one written after the retry was first sent (30 s for clocks) settles it; without
+ * it (a marker restored after a reload) the outcome must be strictly later than the first send, with no allowance.
  */
 function settles(p: PendingOp<PendingStep>, r: InventoryImport): boolean {
   if (!importSettled(r.status)) return false;
   if (stepKind(p, r._id) === 'commit') return true;
-  const at = Date.parse(r.updatedAt ?? r.committedAt ?? '');
-  return Number.isFinite(at) && at >= p.firstAttemptAt - 30_000;
+  const stamp = r.updatedAt ?? r.committedAt ?? '';
+  const at = Date.parse(stamp);
+  if (!Number.isFinite(at)) return false;
+  if (p.body?.since !== undefined) return stamp !== p.body.since && at >= p.firstAttemptAt - 30_000;
+  return at > p.firstAttemptAt;
 }
 
 
@@ -59,8 +70,16 @@ function ImportLoader({ pharmacyId, importId }: { pharmacyId: string; importId: 
     refetchInterval: (query) => (query.state.data?.status === 'committing' ? 5_000 : false),
   });
   if (q.isPending) return <Loading label="Loading import…" />;
-  if (q.isError) return <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />;
-  return <ImportView pharmacyId={pharmacyId} record={q.data} reread={() => q.refetch().then((r) => r.data)} />;
+  if (q.isError && q.data === undefined) return <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />;
+  // WQ11c re-review N5: a failed read again keeps the import on screen, with a quiet note. A read that failed is never
+  // taken as the import as it is now (a check says it could not check).
+  return (
+    <>
+      {q.isError && <RefreshFailed error={q.error} readAt={q.dataUpdatedAt} onRetry={q.refetch} />}
+      <ImportView pharmacyId={pharmacyId} record={q.data}
+        reread={() => q.refetch().then((r) => { if (r.isError) throw r.error; return r.data; })} />
+    </>
+  );
 }
 
 function ImportView({ pharmacyId, record, reread }: {
@@ -73,6 +92,7 @@ function ImportView({ pharmacyId, record, reread }: {
   const { perform, busy } = useOneAtATime('import');
   const [notice, setNotice] = useState<string | null>(null);
   const discarded = useDiscarded(pharmacyId);
+  const arrival = (useLocation().state ?? null) as ImportArrival | null;
   const now = useTicker(30_000);
   const stuck = importStuck(record, now.getTime());
   const rows = record.previewRows ?? [];
@@ -137,7 +157,7 @@ function ImportView({ pharmacyId, record, reread }: {
   // WQ11c: while a step is unconfirmed the import is read again every 5 seconds, and an outcome that settles it ends it.
   useEffect(() => {
     if (!op || busy) return undefined;
-    const t = setInterval(() => { void reread(); }, 5_000);
+    const t = setInterval(() => { void reread().catch(() => undefined); }, 5_000);
     return () => clearInterval(t);
   }, [op, busy]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -181,6 +201,12 @@ function ImportView({ pharmacyId, record, reread }: {
           <dt>Rows used</dt><dd>{mode ? `${mode.label} (${mode.hint})` : record.importMode}</dd>
           {fileSupplier && <><dt>Supplier</dt><dd>{fileSupplier}</dd></>}
         </dl>
+        {arrival?.supplierAsked && !record.supplierId && record.status === 'previewed' && (
+          <Alert tone="warn">
+            You chose {arrival.supplierAsked} as the supplier of this file, but the server did not record a supplier for it: no
+            supplier is recorded for these rows.
+          </Alert>
+        )}
         {monthFirst.length > 0 && (
           <Alert tone="warn">
             This file writes dates month first, so {monthFirst.length === 1 ? '1 row was' : `${monthFirst.length} rows were`} refused. Dates are read
@@ -227,7 +253,12 @@ function ImportView({ pharmacyId, record, reread }: {
                   current price, leave it blank in the file and upload it again.
                 </Alert>
               )}
-              {importCommittable(record) && plan.rows > 0 ? (
+              {plan.examples.length > 0 ? (
+                <Alert>
+                  Row {plan.examples.map((r) => r.rowIndex).join(', ')} is the template’s example row (“{TEMPLATE_EXAMPLE_MARK}”). Delete it
+                  from the file and upload the file again before adding anything.
+                </Alert>
+              ) : importCommittable(record) && plan.rows > 0 ? (
                 <ConfirmAction label={`Add ${record.validRows} ready ${record.validRows === 1 ? 'row' : 'rows'} to stock…`} confirmLabel="Yes, add them"
                   consequence={<>
                     {record.importMode === 'create_only' && plan.mayBeSkipped > 0
@@ -236,7 +267,7 @@ function ImportView({ pharmacyId, record, reread }: {
                     {plan.skippedNew > 0 && ` ${rowsWord(plan.skippedNew)} for medicines not in your stock ${plan.skippedNew === 1 ? 'is' : 'are'} skipped and not counted.`}
                     {plan.newMedicines > 0 && ` ${plan.newMedicines} ${plan.newMedicines === 1 ? 'medicine is' : 'medicines are'} not in the medicine list yet and will be added to it`}
                     {plan.newMedicines > 0 && (plan.newNeedingPrescription > 0 ? ` (${plan.newNeedingPrescription} needing a prescription).` : ' (none needing a prescription).')}
-                    {plan.newWithoutPrice.length > 0 && ` ${plan.newWithoutPrice.length === 1 ? 'A new medicine has' : `${plan.newWithoutPrice.length} new medicines have`} no selling price: not on sale until priced (${named(plan.newWithoutPrice)}).`}
+                    {plan.unpriced.length > 0 && ` ${rowsWord(plan.unpriced.length)} ${plan.unpriced.length === 1 ? 'leaves its medicine' : 'leave their medicines'} without a selling price: not on sale until priced (${named(plan.unpriced)}).`}
                     {plan.priceChanges.length > 0
                       ? ` Prices change in ${rowsWord(plan.priceChanges.length)}: ${named(plan.priceChanges)}${plan.zeroPrices.length > 0 ? `, ${rowsWord(plan.zeroPrices.length)} to ₹0` : ''}. Blank price cells keep the current price.`
                       : ' No price changes: every price cell is blank, so current prices stay.'}
@@ -248,9 +279,10 @@ function ImportView({ pharmacyId, record, reread }: {
               ) : importCommittable(record) ? <Alert tone="warn">Every ready row is for a medicine not in your stock, and you chose to add only medicines already in your stock: nothing would be added. Upload the file again with another choice.</Alert>
                 : <Alert tone="warn">No row is ready to add. Fix the file and upload it again.</Alert>}
               <div className="ws-action">
-                <ConfirmAction label="Discard this preview…" danger confirmLabel="Discard it"
+                {/* N3: never while a confirmation is on its way or unconfirmed; under the page's one-at-a-time guard. */}
+                <ConfirmAction label="Discard this preview…" danger confirmLabel="Discard it" disabled={busy || !!op}
                   consequence="Nothing from this file is added. The preview is hidden on this device; the server keeps it as checked, and it is added only if someone confirms it (there is no way to delete it on the server yet)."
-                  onConfirm={async () => { discarded.discard(record._id); }} />
+                  onConfirm={() => perform(async () => { discarded.discard(record._id); })} />
               </div>
             </section>
           )}
@@ -264,7 +296,7 @@ function ImportView({ pharmacyId, record, reread }: {
               </Alert>
               <ConfirmAction label="Try again…" confirmLabel="Yes, try again"
                 consequence="The rows not added yet are added now. A row already added is never added twice. Rows with problems in the file are not tried."
-                onConfirm={() => run(startOp(newRequestKey(), { kind: 'retry', importId: record._id }))} />
+                onConfirm={() => run(startOp(newRequestKey(), { kind: 'retry', importId: record._id, since: record.updatedAt ?? record.committedAt }))} />
             </section>
           )}
           {importRetryable(record, now.getTime()) && !stuck && (
@@ -272,7 +304,7 @@ function ImportView({ pharmacyId, record, reread }: {
               <h2 id="retry-h">Rows that failed</h2>
               <ConfirmAction label="Try the failed rows again…" confirmLabel="Yes, try again"
                 consequence="Only rows that failed while being added are tried again; a row already added is never added twice. Rows with problems in the file are not tried: fix them in a new file."
-                onConfirm={() => run(startOp(newRequestKey(), { kind: 'retry', importId: record._id }))} />
+                onConfirm={() => run(startOp(newRequestKey(), { kind: 'retry', importId: record._id, since: record.updatedAt ?? record.committedAt }))} />
             </section>
           )}
         </>
@@ -330,11 +362,17 @@ const MATCH_LABEL = { matched: 'In the list', not_found: 'New: will be added to 
 const rowTone = (s: ImportRow['status']) => (s === 'committed' || s === 'valid' ? 'ok' : s === 'skipped' ? undefined : 'danger');
 const STEP = 100;
 
-/** A price as the row will apply it: ₹0 is shown as such (never a dash); a blank cell keeps the current price. */
-function Price({ value, ready }: { value: ImportPrice; ready: boolean }) {
+/**
+ * A price as the row leaves it: its own number (₹0 shown as such, never a dash); a blank cell keeps the current price,
+ * named when the preview says it (Q16c `currentPrices`), or none when there is none (a new medicine, or one not yet in
+ * this pharmacy's stock: `inMyStock`).
+ */
+function Price({ view, ready }: { view: ImportPriceView; ready: boolean }) {
   if (!ready) return <>—</>;
-  if (value === 'keep') return <span className="ws-muted">Current price kept</span>;
-  return <>{formatRupees(value)}</>;
+  if (view.kind === 'set') return <>{formatRupees(view.value)}</>;
+  if (view.kind === 'kept') return <span className="ws-muted">Kept: {formatRupees(view.value)}</span>;
+  if (view.kind === 'none') return <span className="ws-muted">No price yet</span>;
+  return <span className="ws-muted">Current price kept</span>;
 }
 
 function Rows({ rows }: { rows: ImportRow[] }) {
@@ -343,6 +381,9 @@ function Rows({ rows }: { rows: ImportRow[] }) {
   // Problems first, then the rest in file order.
   const ordered = [...rows].sort((a, b) => Number(b.status === 'error' || b.status === 'failed') - Number(a.status === 'error' || a.status === 'failed') || a.rowIndex - b.rowIndex);
   const withSupplier = rows.some((r) => r.data?.supplierName || r.data?.supplierId);
+  // N7: wholesale and purchase prices are shown when a row changes them.
+  const extra = IMPORT_PRICE_FIELDS.filter((f) => (f.key === 'wholesalePrice' || f.key === 'purchasePrice')
+    && rows.some((r) => r.status !== 'error' && importPriceView(r, f.key).kind === 'set'));
   return (
     <section className="ws-section" aria-labelledby="rows-h">
       <h2 id="rows-h">Rows</h2>
@@ -354,6 +395,7 @@ function Rows({ rows }: { rows: ImportRow[] }) {
             <tr>
               <th scope="col">Row</th><th scope="col">Medicine</th><th scope="col">Medicine list</th><th scope="col">Prescription</th><th scope="col">Batch</th>
               <th scope="col">Expiry</th><th scope="col">Units</th><th scope="col">MRP</th><th scope="col">Selling price</th>
+              {extra.map((f) => <th key={f.key} scope="col">{f.key === 'wholesalePrice' ? 'Wholesale price' : 'Purchase price'}</th>)}
               {withSupplier && <th scope="col">Supplier</th>}<th scope="col">Result</th>
             </tr>
           </thead>
@@ -374,11 +416,12 @@ function Rows({ rows }: { rows: ImportRow[] }) {
                   <td>{r.data?.batchNumber || '—'}</td>
                   <td>{r.data?.expiryDate ? formatExpiry(r.data.expiryDate) : '—'}</td>
                   <td>{r.data?.quantityToAdd ?? '—'}</td>
-                  <td><Price ready={ready} value={importPriceOf(r.data?.mrp)} /></td>
+                  <td><Price ready={ready} view={importPriceView(r, 'mrp')} /></td>
                   <td>
-                    <Price ready={ready} value={importPriceOf(r.data?.retailPrice)} />
-                    {ready && isNew && importPriceOf(r.data?.retailPrice) === 'keep' && <div className="ws-muted">Not on sale until priced</div>}
+                    <Price ready={ready} view={importPriceView(r, 'retailPrice')} />
+                    {ready && importLeavesUnpriced(r) && <div className="ws-muted">Not on sale until priced</div>}
                   </td>
+                  {extra.map((f) => <td key={f.key}><Price ready={ready} view={importPriceView(r, f.key)} /></td>)}
                   {withSupplier && <td>{r.data?.supplierName ?? (r.data?.supplierId ? 'A supplier' : '—')}</td>}
                   <td>
                     <Badge tone={rowTone(r.status)}>{IMPORT_ROW_STATUS_LABEL[r.status] ?? r.status}</Badge>

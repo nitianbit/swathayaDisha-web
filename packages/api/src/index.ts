@@ -56,11 +56,11 @@ export {
   importFileProblem, importRetryable, importSettled, importTemplateCsv, isImportClaimed, isRealYyyymmdd, MAX_STOCK_NOTE, pharmacyStockApi,
   serverToday, STOCK_LIMITS, stockEntryBody, stockEntryProblems,
   IMPORT_DATE_FORMAT, IMPORT_PRICE_FIELDS, IMPORT_TIMEOUT_MS, IMPORT_UPLOAD_REFUSAL, importPlan, importPriceOf, importSetPrices, importUploadRefusal,
-  importZeroPrices, isSupplierRefusal, monthFirstRows, recentSameFile, SUPPLIER_REFUSAL, TEMPLATE_EXAMPLE_MARK,
+  importZeroPrices, importPriceView, importLeavesUnpriced, isTemplateExample, isSupplierRefusal, monthFirstRows, recentSameFile, SUPPLIER_REFUSAL, TEMPLATE_EXAMPLE_MARK,
 } from './pharmacyStock.ts';
 export type {
   AddStockReason, ImportCommitError, ImportMode, ImportRow, ImportRowStatus, ImportStatus, InventoryImport, Medicine, StockAdjustment, StockEntry,
-  StockEntryDraft, DeliverySupplier, ImportPrice,
+  StockEntryDraft, DeliverySupplier, ImportPrice, ImportPriceView,
 } from './pharmacyStock.ts';
 export { adminQueuesApi } from './adminQueues.ts';
 export type { CancelState, OpenCancellation, ProviderOutcome, RefundAttentionRow } from './adminQueues.ts';
@@ -128,7 +128,7 @@ export type { NoShowHistory } from './noShows.ts';
 // WQ4 doctor tools: names shared with finance.ts are exported with a Doctor prefix.
 export {
   APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentStart, CONSULT_MINUTES, CONSULT_MODE_LABEL, CONSULT_MODES, doctorAdminApi, doctorClinicProblems,
-  doctorNoShowMove, doctorStanding, doctorToolsApi, MAX_DIRECTORY_SEARCH, movableSlot, noShowModeRefusal, noShowSlotFits, APPOINTMENT_REFUSAL, appointmentRefusal,
+  doctorNoShowMove, doctorStanding, doctorToolsApi, MAX_DIRECTORY_SEARCH, movableSlot, noShowModeRefusal, noShowSlotFits, NO_SHOW_GRACE_MS, APPOINTMENT_REFUSAL, appointmentRefusal,
   DOCTOR_ROLLING_DAYS, EXTEND_MINUTES_MAX, fromYmd, HEARTBEAT_MS, INSTANT_FEE_MAX_MINOR, INSTANT_MODES, INSTANT_REFUSAL, instantRefusal,
   FINANCE_PAGE, LEDGER_KIND_LABEL as DOCTOR_LEDGER_KIND_LABEL, meetingLinkState, OFFER_MS, offerSecondsLeft, payoutDetailsProblems as doctorPayoutDetailsProblems, periodProblem, presenceProblems, PRESENCE_TTL_MS, SCHEDULE_MINUTES_MAX,
   SCHEDULE_MINUTES_MIN, SCHEDULE_WEEKDAYS, SCHEDULE_WINDOWS_MAX, scheduleProblems, schedulableBranches, scheduleSlotCount, soloPracticeProblems,

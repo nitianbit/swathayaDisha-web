@@ -1541,3 +1541,22 @@ test('WQ11c: a lost clinic create is "not recorded" only on the by-key route’s
   await expect(page.getByText('Jansetu has not verified your clinic yet.')).toBeVisible();
   expect(backend.calls.filter((c) => c.method === 'POST' && c.path === '/specialists/me/clinic')).toHaveLength(1);
 });
+
+test('WQ11c (re-review N7): "Patient did not come" from 15 minutes after the start (Q16a); an unreadable time still offers Mark completed', async ({ page }) => {
+  const backend = await mockBackend(page, { install: true });
+  backend.appointments.push(
+    appt(43, { bookingTime: '09:50', primaryConcern: 'Ten minutes ago' }),
+    appt(44, { bookingTime: 'after lunch', primaryConcern: 'Unreadable time' }),
+  );
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Appointments' }).click();
+  const table = page.getByRole('table', { name: 'Appointments' });
+  const recent = table.getByRole('row').filter({ hasText: 'Ten minutes ago' });
+  await expect(recent.getByRole('button', { name: 'Mark completed' })).toBeVisible();
+  await expect(recent.getByRole('button', { name: 'Patient did not come' })).toHaveCount(0);
+  const unreadable = table.getByRole('row').filter({ hasText: 'Unreadable time' });
+  await expect(unreadable.getByRole('button', { name: 'Mark completed' })).toBeVisible();
+  await expect(unreadable.getByRole('button', { name: 'Patient did not come' })).toHaveCount(0);
+  await page.clock.runFor(5 * 60_000 + 30_000); // 15 minutes after 09:50
+  await expect(recent.getByRole('button', { name: 'Patient did not come' })).toBeVisible();
+});

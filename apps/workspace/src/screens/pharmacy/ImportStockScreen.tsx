@@ -15,6 +15,7 @@ import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { CheckPanel, useDiscarded, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 import { SupplierSelect, useActiveSuppliers } from './SupplierPicker.tsx';
+import type { ImportArrival } from './ImportScreen.tsx';
 
 export const importTone = (s: ImportStatus) =>
   s === 'committed' ? 'ok' : s === 'failed' ? 'danger' : s === 'partially_committed' || s === 'committing' ? 'warn' : undefined;
@@ -146,8 +147,8 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
   /** A recent import with this file's name, found by "Check": the person decides whether it is this upload. */
   const [candidate, setCandidate] = useState<InventoryImport | null>(null);
 
-  const open = (r: InventoryImport) => {
-    if (/^[0-9a-fA-F]{24}$/.test(r._id)) navigate(`/pharmacy/stock/imports/${r._id}`);
+  const open = (r: InventoryImport, arrival?: ImportArrival) => {
+    if (/^[0-9a-fA-F]{24}$/.test(r._id)) navigate(`/pharmacy/stock/imports/${r._id}`, arrival ? { state: arrival } : undefined);
   };
 
   async function submit(e: FormEvent) {
@@ -161,7 +162,12 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
       await perform(async () => {
         const body: PendingCheck = { fileName: chosen.name, mode, ...(supplierId ? { supplierId } : {}) };
         const r = await send(startOp(newRequestKey(), body), (b) => stock.previewImport(chosen, b.fileName, b.mode, b.supplierId));
-        if (r.kind === 'ok') { void queryClient.invalidateQueries({ queryKey: ['pharmacy-inventory', pharmacyId, 'imports'] }); open(r.value); }
+        if (r.kind === 'ok') {
+          void queryClient.invalidateQueries({ queryKey: ['pharmacy-inventory', pharmacyId, 'imports'] });
+          // N2: the import page names a supplier only when the answer carries it, and says so when one was asked for.
+          const asked = body.supplierId ? (suppliers.data ?? []).find((x) => x.supplierId === body.supplierId)?.displayName ?? 'a supplier' : undefined;
+          open(r.value, asked ? { supplierAsked: asked } : undefined);
+        }
         else if (r.kind === 'refused') {
           if (isSupplierRefusal(r.error)) {
             const words = SUPPLIER_REFUSAL[(r.error as ApiError).code ?? ''] ?? messageOf(r.error);

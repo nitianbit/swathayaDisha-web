@@ -47,6 +47,34 @@ const describe = (e: StockEntry, name: string, supplier?: string) =>
   `${e.quantity} units of ${name}, batch ${e.batchNumber.toUpperCase()} (expires ${formatExpiry(e.expiryDate)})${supplier ? ` from ${supplier}` : ''}`;
 const describeOp = (b: PendingEntry) => describe(b.entry, b.medicineName, b.supplierName);
 
+/** The adjustment's medicine id (populated or not). */
+const adjustmentMedicine = (a: StockAdjustment) => String(typeof a.medicineId === 'object' && a.medicineId ? a.medicineId._id : a.medicineId).toLowerCase();
+
+/**
+ * WQ11c re-review N2: the words for a saved entry. The save answers only the items, so a supplier is named only when the
+ * delivery as recorded (the newest matching adjustment, re-read) carries it; otherwise "(supplier not recorded)", or
+ * "(supplier not confirmed …)" when the history could not be read. An entry without a supplier is described as it is.
+ */
+async function savedWords(read: () => Promise<StockAdjustment[]>, p: PendingOp<PendingEntry>): Promise<string> {
+  const b = p.body;
+  if (!b) return 'the stock entry';
+  if (!b.entry.supplierId) return describe(b.entry, b.medicineName);
+  const base = describe(b.entry, b.medicineName);
+  try {
+    const since = p.firstAttemptAt - 10 * 60_000;
+    const hit = (await read()).find((a) => adjustmentMedicine(a) === b.entry.medicineId.toLowerCase()
+      && (a.batchNumber ?? '').toUpperCase() === b.entry.batchNumber.toUpperCase() && a.quantity === b.entry.quantity
+      && a.adjustmentType === 'add' && (!a.createdAt || Date.parse(a.createdAt) >= since));
+    const recorded = hit?.supplier?.supplierId ?? hit?.supplierId;
+    if (hit && recorded && String(recorded).toLowerCase() === b.entry.supplierId.toLowerCase()) {
+      return `${base} from ${hit.supplier?.displayName ?? b.supplierName ?? 'the supplier'}`;
+    }
+    return `${base} (supplier not recorded)`;
+  } catch {
+    return `${base} (supplier not confirmed: see the stock history)`;
+  }
+}
+
 const searchText = (m: Medicine) => m.name ?? m.brandName ?? m.genericName ?? '';
 
 /** The medicine's name in a saved item (populated) for the Stock link, or ''. */
@@ -89,6 +117,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
 
   const set = <K extends keyof Fields>(k: K, v: Fields[K]) => setDraft((d) => ({ ...d, [k]: v }));
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['pharmacy-inventory'] });
+  const readAdjustments = () => stock.adjustments(1, 20).then((x) => x.items);
 
   function check(e: FormEvent) {
     e.preventDefault();
@@ -115,14 +144,14 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
       return;
     }
     if (r.kind === 'ok') {
-      const what = p.body ? describeOp(p.body) : 'the units';
+      setDraft(EMPTY);
+      setErrors({});
+      void refresh();
+      const what = p.body ? await savedWords(readAdjustments, p) : 'the units';
       setDone({
         text: r.value.replayed ? `Already added: ${what}. Nothing was added twice.` : `Added ${what}.`,
         search: search || itemSearch(r.value.items),
       });
-      setDraft(EMPTY);
-      setErrors({});
-      void refresh();
     } else if (r.kind === 'refused') {
       // Q16c: the supplier is no longer one of the pharmacy's active ones: read them again and ask for another.
       if (isSupplierRefusal(r.error)) {
@@ -135,16 +164,14 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
   }
 
   /** The recorded entry was found (by key or by giving up): show it and clear the form, so it is not added again. */
-  function recorded(p: PendingOp<PendingEntry>, items: InventoryItem[]) {
+  async function recorded(p: PendingOp<PendingEntry>, items: InventoryItem[]) {
     settle(p.requestKey);
-    setDone({
-      text: `Recorded: ${p.body ? describeOp(p.body) : 'the stock entry'} was added. Nothing was added twice.`,
-      search: itemSearch(items),
-    });
     setDraft(EMPTY);
     setErrors({});
     setReview(null);
     void refresh();
+    const what = await savedWords(readAdjustments, p);
+    setDone({ text: `Recorded: ${what} was added. Nothing was added twice.`, search: itemSearch(items) });
   }
 
   /**
@@ -156,7 +183,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
     setGivingUp(true);
     try {
       const r = await perform(() => stock.abandonStock(p.requestKey));
-      if (r.state === 'used') { recorded(p, r.items); return; }
+      if (r.state === 'used') { await recorded(p, r.items); return; }
       settle(p.requestKey);
       setNotice('Given up: nothing was added with that entry, and it can never be added now. Check the details and add the units again.');
     } catch (err) {
@@ -197,7 +224,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
                 ? 'Not recorded so far. It may still be on its way. Give it up to make sure it never is, then add the units again.'
                 : 'Not recorded so far. It may still be on its way. Sending the same entry again is safe: it is never added twice.';
             }
-            recorded(op, items);
+            await recorded(op, items);
             return null;
           }}
           resend={restored ? undefined : {

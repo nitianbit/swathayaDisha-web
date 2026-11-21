@@ -1,6 +1,6 @@
 import { ApiError, createApiClient } from './client.ts';
 import {
-  IMPORT_COLUMNS, IMPORT_TIMEOUT_MS, importCommittable, importPlan, importPriceOf, importUploadRefusal, importZeroPrices, monthFirstRows, recentSameFile, serverToday, TEMPLATE_EXAMPLE_MARK,
+  IMPORT_COLUMNS, IMPORT_TIMEOUT_MS, importCommittable, importPlan, importPriceOf, importPriceView, isTemplateExample, importUploadRefusal, importZeroPrices, monthFirstRows, recentSameFile, serverToday, TEMPLATE_EXAMPLE_MARK,
   isSupplierRefusal, type ImportRow, type InventoryImport, importStuck, importFileProblem, importRetryable, importTemplateCsv, isImportClaimed, isRealYyyymmdd,
   pharmacyStockApi, stockEntryBody, stockEntryProblems, type StockEntryDraft,
 } from './pharmacyStock.ts';
@@ -217,7 +217,7 @@ describe('WQ11c: prices, prescriptions, suppliers and long imports', () => {
     ];
     const upsert = importPlan({ importMode: 'upsert', previewRows: rows });
     expect(upsert).toMatchObject({ rows: 3, units: 20, skippedNew: 0, newMedicines: 2, newNeedingPrescription: 1, mayBeSkipped: 0 });
-    expect(upsert.newWithoutPrice.map((r) => r.rowIndex)).toEqual([3, 4]);
+    expect(upsert.unpriced.map((r) => r.rowIndex)).toEqual([3, 4]);
     expect(upsert.priceChanges.map((r) => r.rowIndex)).toEqual([2, 4]);
     expect(upsert.zeroPrices.map((r) => r.rowIndex)).toEqual([4]);
     expect(importPlan({ importMode: 'update_only', previewRows: rows })).toMatchObject({ rows: 1, units: 10, skippedNew: 2, newMedicines: 0 });
@@ -271,5 +271,27 @@ describe('WQ11c: prices, prescriptions, suppliers and long imports', () => {
   it('"today" for expiry is the India date (Q16c)', () => {
     expect(serverToday(new Date('2026-11-21T19:00:00Z'))).toBe('20261122'); // 00:30 IST
     expect(serverToday(new Date('2026-11-21T18:00:00Z'))).toBe('20261121'); // 23:30 IST
+  });
+});
+
+describe('WQ11c re-review: what a blank price leaves, and the template example', () => {
+  const row = (data: ImportRow['data'], medicineName = 'X'): ImportRow => ({ rowIndex: 2, medicineName, status: 'valid', data });
+  it('a blank cell keeps a current price only when there is one (Q16c inMyStock / currentPrices)', () => {
+    expect(importPriceView(row({ retailPrice: 0 }), 'retailPrice')).toEqual({ kind: 'set', value: 0 });
+    expect(importPriceView(row({ medicineMatchStatus: 'not_found' }), 'retailPrice')).toEqual({ kind: 'none' });
+    expect(importPriceView(row({ medicineMatchStatus: 'matched', inMyStock: false }), 'retailPrice')).toEqual({ kind: 'none' });
+    expect(importPriceView(row({ medicineMatchStatus: 'matched', inMyStock: true, currentPrices: { retailPrice: 22 } }), 'retailPrice')).toEqual({ kind: 'kept', value: 22 });
+    expect(importPriceView(row({ medicineMatchStatus: 'matched', inMyStock: true, currentPrices: { retailPrice: null } }), 'retailPrice')).toEqual({ kind: 'none' });
+    expect(importPriceView(row({ medicineMatchStatus: 'matched' }), 'retailPrice')).toEqual({ kind: 'unknown' });
+    const plan = importPlan({ importMode: 'upsert', previewRows: [
+      row({ medicineMatchStatus: 'matched', inMyStock: false, quantityToAdd: 1 }),
+      row({ medicineMatchStatus: 'matched', inMyStock: true, currentPrices: { retailPrice: 9 }, quantityToAdd: 1 }),
+    ] });
+    expect(plan.unpriced).toHaveLength(1);
+  });
+  it('finds the template example row by its mark, in any case', () => {
+    expect(isTemplateExample(row({ name: 'Paracetamol 500 mg tablet (Example - delete this row)' }))).toBe(true);
+    expect(isTemplateExample(row({ name: 'Paracetamol' }), )).toBe(false);
+    expect(importPlan({ importMode: 'upsert', previewRows: [row({ name: `A ${TEMPLATE_EXAMPLE_MARK}` }, `A ${TEMPLATE_EXAMPLE_MARK}`)] }).examples).toHaveLength(1);
   });
 });

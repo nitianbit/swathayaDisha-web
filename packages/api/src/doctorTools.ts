@@ -401,15 +401,21 @@ export function appointmentActions(b: DoctorAppointment, now: Date): Appointment
   if (b.status !== 'confirmed') return [];
   const out: AppointmentAction[] = [];
   const at = appointmentInstant(b.bookingDate, b.bookingTime);
-  const started = !!at && at.at.getTime() <= now.getTime();
-  // WQ11c (Q16a 409 NOT_STARTED_YET): completed only once its start time has passed, as for a no-show.
+  // WQ11c (Q16a 409 NOT_STARTED_YET): completed only once its start time has passed. A time that cannot be read does not
+  // hide it: the server decides.
+  const started = !at || at.at.getTime() <= now.getTime();
   if ((paid || b.settlementSystem !== 'ledger') && started) out.push('complete');
   // Q14: a booking moved after a no-show is never refunded, so it is not cancelled (409 NO_SHOW_NOT_REFUNDABLE; desk rows
   // paid at the clinic excepted: nothing was taken through Jansetu).
   if (!noShowMovedOnce(b) || b.settlementSystem === 'clinic') out.push('cancel');
-  if (paid && started) out.push('no_show');
+  // Q16a: a no-show is marked only 15 minutes after the start (409 APPOINTMENT_NOT_STARTED before; an instant
+  // consultation's time is its acceptance).
+  if (paid && at && at.at.getTime() + NO_SHOW_GRACE_MS <= now.getTime()) out.push('no_show');
   return out;
 }
+
+/** Q16a `NO_SHOW_GRACE_MS`: a no-show can be marked 15 minutes after the appointment time. */
+export const NO_SHOW_GRACE_MS = 15 * 60_000;
 
 /** The words for refusals of an appointment status change (the server's own message is the fallback). */
 export const APPOINTMENT_REFUSAL: Readonly<Record<string, string>> = {
