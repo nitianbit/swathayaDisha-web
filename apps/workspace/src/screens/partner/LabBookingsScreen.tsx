@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
   addDays, isRealDate, istDateOf, LAB_BOOKING_STATUS_LABEL, LAB_BOOKING_STATUSES, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL,
-  MAX_LAB_BOOKINGS, type LabBookingQuery, type LabBookingStatus,
+  type LabBooking, type LabBookingQuery, type LabBookingStatus,
 } from '@jansetu/api';
-import { Badge, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
+import { Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { LabOnly, labStatusTone, slotLabel, useScopedBranches } from './labs.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
@@ -23,7 +23,7 @@ function LabBookings({ ctx }: { ctx: ScopeContext }) {
   return (
     <>
       <PartnerPageHeading ctx={ctx} title="Lab bookings" partnerName={partner.data?.name}>
-        Tests customers booked and paid for in the Jansetu app, by slot time. Times are India time.
+        Tests customers booked and paid for in the Jansetu app, by slot time: upcoming ones first. Times are India time.
       </PartnerPageHeading>
       {ctx.adminHome && <div><Link to={ctx.link('slots')}>Slots of this lab</Link></div>}
       <LabOnly ctx={ctx}><BookingList ctx={ctx} /></LabOnly>
@@ -31,26 +31,70 @@ function LabBookings({ ctx }: { ctx: ScopeContext }) {
   );
 }
 
+/** One page of the list (the server gives at most 200 a page; this many keeps the page quick to read). */
+export const LAB_BOOKINGS_PAGE = 100;
+
+/**
+ * Which bookings the list asks for. WQ11b: the server pages the list (soonest slot first, an exact cursor), so the
+ * default view starts today and shows the soonest first: nothing upcoming can fall behind older bookings. Past bookings
+ * are a separate view over chosen dates (before today).
+ */
+export type LabListView = 'upcoming' | 'past';
+export function labListFilter(f: { view: LabListView; status: string; branchId: string; from: string; to: string }, today: string):
+  { query: LabBookingQuery; error: string | null } {
+  const yesterday = addDays(today, -1);
+  const from = isRealDate(f.from) ? f.from : undefined;
+  const to = isRealDate(f.to) ? f.to : undefined;
+  const base = { status: (f.status || undefined) as LabBookingStatus | undefined, branchId: f.branchId || undefined, limit: LAB_BOOKINGS_PAGE };
+  if (f.view === 'upcoming') {
+    if (to && to < today) return { query: {}, error: 'Choose today or a later date (earlier bookings are under Past).' };
+    return { query: { ...base, from: today, to }, error: null };
+  }
+  const until = to && to < today ? to : yesterday;
+  if (to && to >= today) return { query: {}, error: 'Choose a date before today (today and later are under Upcoming).' };
+  if (from && from > until) return { query: {}, error: 'The start date is after the end date.' };
+  return { query: { ...base, from, to: until }, error: null };
+}
+
 function BookingList({ ctx }: { ctx: ScopeContext }) {
   const branches = useScopedBranches(ctx);
+  const today = istDateOf(new Date());
+  const [view, setView] = useState<LabListView>('upcoming');
   const [status, setStatus] = useState<'' | LabBookingStatus>('');
   const [branchId, setBranchId] = useState('');
-  // The list is oldest slot first with no paging: by default from a week back, so current work is not cut off.
-  const [from, setFrom] = useState(() => addDays(istDateOf(new Date()), -7));
-  const [to, setTo] = useState('');
-  const filter: LabBookingQuery = {
-    status: status || undefined, branchId: branchId || undefined,
-    from: isRealDate(from) ? from : undefined, to: isRealDate(to) ? to : undefined, limit: MAX_LAB_BOOKINGS,
-  };
-  const dateError = filter.from && filter.to && filter.from > filter.to ? 'The end date is before the start date.' : null;
-  const list = useQuery({
-    queryKey: [...ctx.key, 'lab-bookings', filter], queryFn: () => ctx.labs.bookings(filter), enabled: !dateError,
+  // Past: by default the last week before today; Upcoming: from today, with an optional last day.
+  const [pastFrom, setPastFrom] = useState(() => addDays(today, -7));
+  const [pastTo, setPastTo] = useState('');
+  const [until, setUntil] = useState('');
+  const { query, error: dateError } = labListFilter(
+    view === 'upcoming' ? { view, status, branchId, from: '', to: until } : { view, status, branchId, from: pastFrom, to: pastTo }, today);
+  const list = useInfiniteQuery({
+    queryKey: [...ctx.key, 'lab-bookings', query],
+    queryFn: ({ pageParam }) => ctx.labs.bookings({ ...query, cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    // Q11: the server's exact cursor (`<slot start ms>_<id>`): nothing is skipped or shown twice.
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    enabled: !dateError,
   });
   const names = useMemo(() => new Map((branches.data ?? []).map((b) => [b._id, b.name])), [branches.data]);
-  const rows = list.data ?? [];
+  const rows: LabBooking[] = (list.data?.pages ?? []).flatMap((p) => p.items);
+  const total = list.data?.pages[0]?.total;
+  const filtered = !!(status || branchId || (view === 'upcoming' && until));
 
   return (
     <>
+      <fieldset className="ws-checks" aria-describedby="lb-view-hint">
+        <legend>Show</legend>
+        <label className="ws-check">
+          <input type="radio" name="lb-view" checked={view === 'upcoming'} onChange={() => setView('upcoming')} /> Upcoming (today and later)
+        </label>
+        <label className="ws-check">
+          <input type="radio" name="lb-view" checked={view === 'past'} onChange={() => setView('past')} /> Past (before today)
+        </label>
+        <span id="lb-view-hint" className="j-field__hint">
+          {view === 'upcoming' ? 'Soonest first.' : 'Oldest first within the dates you choose.'} Times are India time.
+        </span>
+      </fieldset>
       <div className="ws-search">
         <div className="j-field ws-filter">
           <label htmlFor="lb-branch">Branch</label>
@@ -66,16 +110,26 @@ function BookingList({ ctx }: { ctx: ScopeContext }) {
             {LAB_BOOKING_STATUSES.map((s) => <option key={s} value={s}>{LAB_BOOKING_STATUS_LABEL[s]}</option>)}
           </select>
         </div>
-        <TextField label="Slot from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        <TextField label="Slot until" type="date" value={to} error={dateError} onChange={(e) => setTo(e.target.value)} />
+        {view === 'upcoming' ? (
+          <TextField label="Slot until (optional)" type="date" min={today} value={until} error={dateError} onChange={(e) => setUntil(e.target.value)} />
+        ) : (
+          <>
+            <TextField label="Slot from" type="date" max={addDays(today, -1)} value={pastFrom} onChange={(e) => setPastFrom(e.target.value)} />
+            <TextField label="Slot until" type="date" max={addDays(today, -1)} value={pastTo} error={dateError}
+              hint={pastTo ? undefined : 'Empty: until yesterday.'} onChange={(e) => setPastTo(e.target.value)} />
+          </>
+        )}
       </div>
       {dateError ? null
         : list.isPending ? <Loading label="Loading bookings…" />
-        : list.isError ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
-        : rows.length === 0 ? <Empty title="No bookings">No booking matches these filters.</Empty>
+        : list.isError && !list.data ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
+        : rows.length === 0 ? <Empty title="No bookings">{filtered ? 'No booking matches these filters.' : view === 'upcoming' ? 'No booking from today on.' : 'No booking in these dates.'}</Empty>
         : (
           <>
-            <p className="ws-count">{rows.length} {rows.length === 1 ? 'booking' : 'bookings'}{rows.length >= MAX_LAB_BOOKINGS ? ` (the first ${MAX_LAB_BOOKINGS}; narrow the dates to see later ones)` : ''}</p>
+            <p className="ws-count" aria-live="polite">
+              {total === undefined ? `${rows.length} ${rows.length === 1 ? 'booking' : 'bookings'}`
+                : `${total} ${total === 1 ? 'booking' : 'bookings'}${list.hasNextPage ? ` · showing the ${view === 'upcoming' ? 'soonest' : 'earliest'} ${rows.length}` : ''}`}
+            </p>
             <div className="ws-table-wrap">
               <table className="j-table">
                 <caption className="j-sr-only">Lab bookings</caption>
@@ -100,6 +154,14 @@ function BookingList({ ctx }: { ctx: ScopeContext }) {
                 </tbody>
               </table>
             </div>
+            {list.isFetchNextPageError && <ErrorState message={`Could not load more bookings: ${messageOf(list.error)}`} onRetry={() => void list.fetchNextPage()} />}
+            {list.hasNextPage && (
+              <div>
+                <Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
+                  Show more ({total !== undefined ? `${total - rows.length} more` : 'later slots'})
+                </Button>
+              </div>
+            )}
           </>
         )}
     </>

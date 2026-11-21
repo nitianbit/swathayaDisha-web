@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  adminNoShowMove, consultationAdminApi, CONSULTATION_STATUS_LABEL, doctorAdminApi, fromYmd, isRealDate, istDateOf, movableSlot,
-  OBJECT_ID_PATTERN, type AdminConsultation,
+  ADMIN_CANCEL_REFUSAL, adminNoShowMove, ApiError, canAdminCancelMovedNoShow, consultationAdminApi, CONSULTATION_STATUS_LABEL, doctorAdminApi, fromYmd,
+  isRealDate, istDateOf, MAX_ADMIN_CANCEL_REASON, MIN_ADMIN_CANCEL_REASON, movableSlot, OBJECT_ID_PATTERN, type AdminConsultation,
 } from '@jansetu/api';
-import { Alert, Badge, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
+import { FOCUS_HOST_STYLE, usePanelFocus } from '../../components/focus.ts';
+import { definitelyNotRecorded } from '../../requests.ts';
 import { NoShowMove, noShowMoveSlot, type NoShowTarget } from '../../components/NoShowMove.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -90,6 +92,20 @@ function Consultation({ bookingId, identity, scopeKey }: { bookingId: string; id
               )}
               {move === 'instant' && <p className="ws-muted">An instant consultation is never moved to a new time.</p>}
               {move === 'clinic' && <p className="ws-muted">The clinic moves this appointment: it was booked at its front desk.</p>}
+              {q.data.noShowCancel && q.data.status === 'cancelled' && (
+                <p className="ws-muted">
+                  Cancelled by the Jansetu team after its move{q.data.noShowCancel.at ? ` (${formatDateTime(q.data.noShowCancel.at)})` : ''}:
+                  {q.data.noShowCancel.refund ? ' the patient was refunded to their Jansetu wallet.' : ' not refunded; the payment stays and nobody earns it.'}
+                </p>
+              )}
+              {canAdminCancelMovedNoShow(q.data) && (
+                <AdminCancel key={q.data.updatedAt ?? ''} b={q.data} perform={guard.perform} busy={guard.busy || q.isFetching}
+                  cancel={(input) => consultationAdminApi(api).cancelMovedNoShow(bookingId, input)}
+                  readNow={async () => { const fresh = await consultationAdminApi(api).get(bookingId); queryClient.setQueryData(key, fresh); return fresh; }}
+                  reread={reread}
+                  onNotice={(t) => { setFailure(null); setNotice(t); }}
+                  onFailure={(t) => { setNotice(null); setFailure(t); }} />
+              )}
               {showMove && (
                 <NoShowMove slot={slot} who="The patient" missed={when(q.data)} state={move === 'used' ? 'used' : 'offer'} status={q.data.status}
                   readAt={q.dataUpdatedAt} reading={q.isFetching} disabled={guard.busy || q.isFetching} version={q.data.updatedAt}
@@ -169,5 +185,110 @@ function AdminSlotPicker({ b, now, scopeKey, onChoose }: { b: AdminConsultation;
           </div>
         )}
     </>
+  );
+}
+
+/**
+ * Q16a (owner, 22 Nov 2026): "Cancel (admin)" for a booking moved after a no-show that its doctor cannot attend. The
+ * admin gives a reason and chooses, explicitly (no default), whether the patient is refunded; the confirmation says what
+ * each choice does with the money, and that the patient and the doctor are told. One step at a time on this page; the
+ * booking is read again after every answer. A lost answer is settled by reading it: cancelled = done (a repeat of the
+ * command answers the cancelled booking and never refunds twice). Keyed by the booking's version, so a confirmation
+ * never outlives a change to the booking.
+ */
+function AdminCancel({ b, perform, busy, cancel, readNow, reread, onNotice, onFailure }: {
+  b: AdminConsultation; perform: <T>(run: () => Promise<T>) => Promise<T>; busy: boolean;
+  cancel: (input: { reason: string; refund: boolean }) => Promise<AdminConsultation & { refunded?: number }>;
+  readNow: () => Promise<AdminConsultation>; reread: () => void; onNotice: (text: string) => void;
+  /** Shown by the page: this panel is keyed by the booking's version and may be gone once the booking is read again. */
+  onFailure: (text: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [refund, setRefund] = useState<'yes' | 'no' | ''>('');
+  const [errors, setErrors] = useState<{ reason?: string; refund?: string }>({});
+  const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  const host = usePanelFocus<HTMLSpanElement>(open ? 'open' : 'closed');
+  const paid = typeof b.price === 'number' && b.paymentStatus === 'paid' ? formatRupees(b.price) : 'what the patient paid';
+  const done = (refunded: boolean, amount?: number) => `The appointment was cancelled${refunded
+    ? `; ${typeof amount === 'number' && amount > 0 ? formatRupees(amount) : 'the payment'} is back in the patient’s Jansetu wallet`
+    : ' without a refund: the payment stays with Jansetu and nobody earns it'}. The patient and the doctor are told.`;
+
+  async function submit() {
+    const r = reason.trim();
+    const errs: { reason?: string; refund?: string } = {};
+    if (r.length < MIN_ADMIN_CANCEL_REASON) errs.reason = `Give a reason (at least ${MIN_ADMIN_CANCEL_REASON} characters).`;
+    else if (r.length > MAX_ADMIN_CANCEL_REASON) errs.reason = `Use at most ${MAX_ADMIN_CANCEL_REASON} characters.`;
+    if (!refund) errs.refund = 'Choose whether the patient is refunded.';
+    setErrors(errs);
+    if (Object.keys(errs).length) return;
+    const choice = refund === 'yes';
+    setError(null);
+    setSending(true);
+    try {
+      await perform(async () => {
+        try {
+          const after = await cancel({ reason: r, refund: choice });
+          onNotice(done(after.noShowCancel ? after.noShowCancel.refund : choice, after.refunded));
+          if (live.current) setOpen(false);
+        } catch (err) {
+          if (definitelyNotRecorded(err)) {
+            onFailure(`Not cancelled: ${(err instanceof ApiError && err.code && ADMIN_CANCEL_REFUSAL[err.code]) || (err instanceof Error ? err.message : String(err))}`);
+            if (live.current) setOpen(false);
+            return;
+          }
+          // The answer was lost: the booking as read now tells whether it was cancelled.
+          const now = await readNow().catch(() => null);
+          if (now?.status === 'cancelled') { onNotice(done(now.noShowCancel ? now.noShowCancel.refund : choice)); if (live.current) setOpen(false); return; }
+          onFailure(`Not confirmed: ${err instanceof Error ? err.message : String(err)} The booking is shown as saved now; cancel it again if it still has to be cancelled (it is never cancelled or refunded twice).`);
+        } finally {
+          reread();
+        }
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (live.current) setSending(false);
+    }
+  }
+
+  return (
+    <span ref={host} style={FOCUS_HOST_STYLE}>
+      {!open ? (
+        <div className="ws-actions">
+          <Button variant="secondary" disabled={busy} onClick={() => { setOpen(true); setError(null); setErrors({}); }}>Cancel (admin)</Button>
+          <span className="ws-muted">Moved once after a no-show: only the Jansetu team cancels it, for example when the doctor cannot attend.</span>
+        </div>
+      ) : (
+        <div className="confirm" role="group" aria-label="Cancel (admin)">
+          <div className="confirm-text">
+            Cancel the patient’s appointment on {formatYmd(b.bookingDate)}, {b.bookingTime}{b.doctorName ? ` with ${b.doctorName}` : ''}? Its seat and the
+            doctor’s time are freed at once, and the patient and the doctor are told. This cannot be undone.
+          </div>
+          <TextArea label="Reason (the patient sees this)" value={reason} maxLength={MAX_ADMIN_CANCEL_REASON} error={errors.reason}
+            onChange={(e) => setReason(e.target.value)} />
+          <fieldset className="ws-checks" aria-describedby={errors.refund ? 'admin-cancel-refund-err' : undefined}>
+            <legend>Refund the patient?</legend>
+            <label className="ws-check">
+              <input type="radio" name="admin-cancel-refund" checked={refund === 'yes'} onChange={() => setRefund('yes')} />
+              {' '}Yes: {paid} goes back to the patient’s Jansetu wallet (as when a doctor cancels).
+            </label>
+            <label className="ws-check">
+              <input type="radio" name="admin-cancel-refund" checked={refund === 'no'} onChange={() => setRefund('no')} />
+              {' '}No: the payment stays with Jansetu, as for a no-show, and nobody earns it.
+            </label>
+            {errors.refund && <span id="admin-cancel-refund-err" className="j-field__error">{errors.refund}</span>}
+          </fieldset>
+          {error && <Alert>{error}</Alert>}
+          <div className="confirm-actions">
+            <Button variant="danger" busy={sending} disabled={busy && !sending} onClick={() => void submit()}>Cancel the appointment</Button>
+            <Button variant="ghost" disabled={sending} onClick={() => { setOpen(false); setError(null); }}>Back</Button>
+          </div>
+        </div>
+      )}
+    </span>
   );
 }

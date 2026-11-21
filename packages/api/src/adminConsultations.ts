@@ -53,6 +53,8 @@ export interface AdminConsultation {
   noShow?: { at?: string };
   noShows?: BookingNoShowMove[];
   noShowReschedules?: number;
+  /** Q16a: an admin cancelled this booking after it was moved from a no-show; `refund` = whether the patient was refunded. */
+  noShowCancel?: { at?: string; refund: boolean };
   createdAt?: string;
   updatedAt?: string;
 }
@@ -81,6 +83,29 @@ export function adminNoShowMove(b: Pick<AdminConsultation, 'status' | 'bookingKi
   if (b.clinicDesk) return 'clinic';
   return noShowMovedOnce(b) ? 'used' : 'offer';
 }
+
+/** Q16a `adminCancelNoShowSchema.reason`: trimmed, 3 to 500 characters. */
+export const MIN_ADMIN_CANCEL_REASON = 3;
+export const MAX_ADMIN_CANCEL_REASON = 500;
+
+/**
+ * Q16a (owner, 22 Nov 2026): a booking moved after a no-show that its doctor cannot attend is cancelled by an admin only,
+ * who chooses whether the patient is refunded. Offered on a booking that is pending or confirmed again after its one
+ * move (`cancelBookingSettlement` refuses other statuses BOOKING_NOT_CANCELLABLE and an unmoved booking
+ * BOOKING_NOT_MOVED_NO_SHOW); never an instant consultation (INSTANT_CONSULT_COMMAND_REQUIRED) nor a front-desk
+ * appointment (paid at the clinic: the clinic cancels it, or an admin as its owner).
+ */
+export const canAdminCancelMovedNoShow = (b: Pick<AdminConsultation, 'status' | 'bookingKind' | 'clinicDesk' | 'noShows' | 'noShowReschedules'>) =>
+  (b.status === 'confirmed' || b.status === 'pending') && b.bookingKind !== 'instant' && !b.clinicDesk && noShowMovedOnce(b);
+
+/** The refusals of an admin cancel of a moved no-show, in words (the server's message is the fallback). */
+export const ADMIN_CANCEL_REFUSAL: Record<string, string> = {
+  BOOKING_NOT_MOVED_NO_SHOW: 'This booking was not moved after a no-show, so it cannot be cancelled here. Use the ordinary cancellation.',
+  BOOKING_NOT_CANCELLABLE: 'This booking can no longer be cancelled (it was completed, cancelled or marked a no-show again meanwhile).',
+  INSTANT_CONSULT_COMMAND_REQUIRED: 'An instant consultation is cancelled with its own command, not here.',
+  ADMIN_ONLY: 'Only the Jansetu team can cancel a moved no-show.',
+  BOOKING_NOT_FOUND: 'This booking no longer exists.',
+};
 
 /** Why the filters cannot be sent (as `bookingQuerySchema` would refuse them), or null. */
 export function consultationQueryProblem(q: ConsultationQuery): string | null {
@@ -123,9 +148,24 @@ export function consultationAdminApi(c: ApiClient) {
      * `GET /slots/available?specialistId&date&mode`: the doctor's open slots with a seat free on one day (YYYY-MM-DD),
      * offered for the booking's consultation type, without those overlapping time the doctor already holds.
      */
+    /**
+     * Q16a `POST /specialists/admin/bookings/:bookingId/cancel-no-show` (`adminCancelNoShowSchema`: `reason` trimmed 3–500,
+     * `refund` a strict boolean, both required; `BookingService.adminCancelMovedNoShow`). With `refund`: a full refund to
+     * the patient's wallet (as a doctor cancellation); without: the money stays and nobody earns it. Seat and doctor time
+     * are released, the patient and the doctor are notified. Answers the booking and `refunded` (rupees); a booking
+     * already cancelled answers as it is with `refunded: 0` (a repeat never refunds twice).
+     */
+    cancelMovedNoShow: (id: string, input: { reason: string; refund: boolean }) => {
+      const reason = input.reason.trim();
+      if (reason.length < MIN_ADMIN_CANCEL_REASON || reason.length > MAX_ADMIN_CANCEL_REASON) throw new Error('Invalid reason');
+      if (typeof input.refund !== 'boolean') throw new Error('Choose whether the patient is refunded');
+      return c.post<AdminConsultation & { refunded?: number }>(`/specialists/admin/bookings/${checkId(id, 'booking')}/cancel-no-show`,
+        { body: { reason, refund: input.refund } });
+    },
     freeSlots: (specialistId: string, day: string, mode?: ConsultMode) =>
       c.get<(DoctorSlot & { specialistId?: string; serviceModes?: string[] })[]>('/slots/available', { query: {
         specialistId: checkId(specialistId, 'doctor'), date: toYmd(day), ...(mode ? { mode } : {}),
       } }),
   };
 }
+

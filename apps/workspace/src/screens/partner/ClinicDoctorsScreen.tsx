@@ -192,7 +192,7 @@ function Invitations({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) 
                           <td>
                             {inv.state === 'pending' ? (
                               <ConfirmAction label={`Revoke invitation to ${who}`} danger confirmLabel="Revoke invitation"
-                                consequence={<>Revoke the invitation to {who}? They can no longer accept it. You can invite them again later.</>}
+                                consequence={<>Revoke the invitation to {who}? They can no longer accept it. Clinics no longer invite doctors: to have them consult here, ask the Jansetu team to link them.</>}
                                 onConfirm={() => revoke(inv)} />
                             ) : '—'}
                           </td>

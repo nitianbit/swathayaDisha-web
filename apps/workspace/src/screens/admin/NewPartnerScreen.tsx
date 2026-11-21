@@ -9,7 +9,7 @@ import {
 } from '@jansetu/api';
 import { Alert, Button, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
-import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
+import { afterFailure, beginAttempt, newRequestKey, ownsKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 
@@ -94,11 +94,11 @@ export function NewPartnerScreen() {
     setPendingState(p);
   };
   /**
-   * Whether an answer started for `p` may still act: this page is on screen AND the stored creation is still exactly
-   * `p` (same key, same attempt count). A newer retry (on this or a returned page) owns the state otherwise, and an
-   * obsolete answer must leave it intact.
+   * WQ11b: an answer about the KEY itself (the give-up's `used`/`abandoned`, the by-key lookup) acts while this page is on
+   * screen and no other creation is stored. After leaving mid-send and coming back, the first page's late answer may have
+   * settled and removed the stored creation while this page still shows it: the server's word on the key settles it here.
    */
-  const owns = (p: Pending) => live.current && stillCurrent(memory.get<Pending>(PENDING_SLOT), p);
+  const ownsTheKey = (p: Pending) => live.current && ownsKey(memory.get<Pending>(PENDING_SLOT), p.requestKey);
   /** Ends the stored creation with this key, and only it. */
   const settle = (requestKey: string) => {
     resolveStored(memory, PENDING_SLOT, requestKey);
@@ -118,7 +118,7 @@ export function NewPartnerScreen() {
   });
   useEffect(() => {
     // Only for the restored creation this page is showing (a cached answer for another key or a newer state is ignored).
-    if (restoredKey && lookup.data && pending?.requestKey === restoredKey && owns(pending)) {
+    if (restoredKey && lookup.data && pending?.requestKey === restoredKey && ownsTheKey(pending)) {
       setFound(lookup.data.partner);
       settle(restoredKey);
     }
@@ -153,8 +153,8 @@ export function NewPartnerScreen() {
     setError(null); setNotice(null);
     try {
       const r = await admin.abandonCreate(p.requestKey);
-      // Left page, or a newer retry of the same key started meanwhile: this answer settles and opens nothing.
-      if (!owns(p)) return;
+      // Left page, or another creation stored meanwhile: this answer settles and opens nothing.
+      if (!ownsTheKey(p)) return;
       if (r.state === 'used') {
         settle(p.requestKey);
         if (r.partner) { await open(r.partner._id); return; }
@@ -165,7 +165,7 @@ export function NewPartnerScreen() {
       if (p.restored) setD(EMPTY);
       setNotice('Given up: nothing was created and that request can never create a partner. You can create it again.');
     } catch (err) {
-      if (owns(p)) setError(messageOf(err));
+      if (ownsTheKey(p)) setError(messageOf(err));
     } finally {
       if (live.current) setBusy(false);
     }

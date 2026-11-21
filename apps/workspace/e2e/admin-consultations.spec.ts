@@ -32,6 +32,8 @@ interface Backend {
   loseAfter?: boolean;
   /** The next move is lost before it reaches the server. */
   loseBefore?: boolean;
+  /** WQ11b (Q16a): the next admin cancel is made, then its answer is lost. */
+  loseCancelAfter?: boolean;
   /** The next move finds its slot just taken. */
   takeNext?: boolean;
   /** Free-slot reads also list another doctor's slot without saying whose it is (as a misbehaving server might). */
@@ -124,6 +126,24 @@ async function mockBackend(page: Page): Promise<Backend> {
         ...free.filter((s) => s.specialistId === q.get('specialistId')),
         ...(b.stray ? free.filter((s) => s.specialistId !== q.get('specialistId')).map(({ specialistId: _d, ...rest }) => rest) : []),
       ]);
+    }
+    // Q16a `adminCancelNoShow` → `adminCancelMovedNoShow` / `cancelBookingSettlement` with `movedNoShow`.
+    const cn = /^\/specialists\/admin\/bookings\/([0-9a-f]{24})\/cancel-no-show$/.exec(path);
+    if (cn && method === 'POST') {
+      const bk = b.bookings.find((x) => x._id === cn[1]);
+      if (!bk) return fail(route, 404, 'BOOKING_NOT_FOUND', 'Booking not found');
+      const x = body as { reason?: unknown; refund?: unknown };
+      if (typeof x.reason !== 'string' || x.reason.trim().length < 3 || x.reason.trim().length > 500 || typeof x.refund !== 'boolean') {
+        return fail(route, 400, 'VALIDATION_ERROR', '"reason" and "refund" are required');
+      }
+      if (bk.bookingKind === 'instant') return fail(route, 409, 'INSTANT_CONSULT_COMMAND_REQUIRED', 'Use the instant consultation cancel command');
+      if (bk.status === 'cancelled') return ok(route, { ...bk, refunded: 0 });
+      if (!['pending', 'confirmed'].includes(String(bk.status))) return fail(route, 409, 'BOOKING_NOT_CANCELLABLE', `A ${bk.status} booking cannot be cancelled`);
+      if (!(bk.noShows as Rec[] | undefined)?.length) return fail(route, 409, 'BOOKING_NOT_MOVED_NO_SHOW', 'This booking was not moved after a no-show; use the ordinary cancellation');
+      Object.assign(bk, { status: 'cancelled', cancellationReason: x.reason.trim(), noShowCancel: { at: NOW.toISOString(), refund: x.refund },
+        ...(x.refund ? { paymentStatus: 'refunded' } : {}), updatedAt: '2026-11-20T04:40:00.000Z' });
+      if (b.loseCancelAfter) { b.loseCancelAfter = false; return route.abort('failed'); }
+      return ok(route, { ...bk, refunded: x.refund ? bk.price : 0 });
     }
     const mv = /^\/specialists\/admin\/bookings\/([0-9a-f]{24})\/reschedule-no-show$/.exec(path);
     if (mv && method === 'POST') {
@@ -349,4 +369,99 @@ test('WQ10c: a time that belongs to another doctor is refused SLOT_NOT_THIS_DOCT
   await expect(page.getByText(/no-show is moved to .*11:00/)).toBeVisible();
   expect(moves(backend).map((c) => (c.body as Rec).slotId)).toEqual([S_OTHER, S1]);
   expect(backend.bookings.find((x) => x._id === BK1)!.specialistId).toBe(DOC1);
+});
+
+test('WQ11b: a move lost before the server whose time is then taken: after the refused resend a new time is chosen as a new move, without a reload', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await page.goto(`/#/admin/consultations/${BK1}`);
+  const form = await chooseTime(page, '11:00–11:30');
+  backend.loseBefore = true; // the request never reaches the server
+  await form.getByRole('button', { name: /^Move to/ }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed no-show move' });
+  await expect(panel).toBeVisible();
+  // Someone books 11:00 meanwhile: the resend (same key, same time) is refused for good.
+  backend.slots.find((s) => s._id === S1)!.currentBookings = 1;
+  await panel.getByRole('button', { name: 'Send the same move again' }).click();
+  await expect(panel.getByText(/That time is no longer free\. Pick another time\./)).toBeVisible();
+  // The booking, read again after that attempt, is still a no-show: a new time can be chosen (after a second step).
+  await panel.getByRole('button', { name: 'Check the booking' }).click();
+  await panel.getByRole('button', { name: 'Choose a new time again' }).click();
+  await expect(panel).toContainText('A new time is sent as a new move.');
+  await panel.getByRole('button', { name: 'Forget it and choose again' }).click();
+  const again = page.getByRole('form', { name: 'Reschedule no-show' });
+  await again.getByLabel('New time').selectOption({ label: '11:30–12:00' });
+  await again.getByRole('button', { name: 'Continue' }).click();
+  await again.getByRole('button', { name: /^Move to/ }).click();
+  await expect(page.getByText(/no-show is moved to .*11:30/)).toBeVisible();
+  await expect(panel).toHaveCount(0);
+  const sent = moves(backend);
+  expect(sent.map((c) => (c.body as Rec).slotId)).toEqual([S1, S1, S2]);
+  expect((sent[1]!.body as Rec).requestKey).toBe((sent[0]!.body as Rec).requestKey);
+  expect((sent[2]!.body as Rec).requestKey).not.toBe((sent[0]!.body as Rec).requestKey); // a new move, a new key
+  expect(backend.bookings[0]!.status).toBe('confirmed');
+});
+
+test('WQ11b (Q16a): "Cancel (admin)" of a booking moved after a no-show needs a reason and an explicit refund choice; refunded, the patient is told', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  // Not offered on a no-show that was never moved, nor on a finished booking.
+  await page.goto(`/#/admin/consultations/${BK1}`);
+  await expect(page.getByRole('heading', { name: /^Consultation on/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel (admin)' })).toHaveCount(0);
+  await page.goto(`/#/admin/consultations/${BK4}`);
+  await page.getByRole('button', { name: 'Cancel (admin)' }).click();
+  const panel = page.getByRole('group', { name: 'Cancel (admin)' });
+  await expect(panel).toContainText('the patient and the doctor are told');
+  await expect(panel.getByLabel(/Yes: ₹800\.00 goes back to the patient’s Jansetu wallet/)).not.toBeChecked();
+  await expect(panel.getByLabel(/No: the payment stays with Jansetu/)).not.toBeChecked();
+  // Nothing is sent without a reason and a choice (there is no default).
+  await panel.getByRole('button', { name: 'Cancel the appointment' }).click();
+  await expect(panel.getByText('Give a reason (at least 3 characters).')).toBeVisible();
+  await expect(panel.getByText('Choose whether the patient is refunded.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.path.endsWith('/cancel-no-show'))).toHaveLength(0);
+  await panel.getByLabel('Reason (the patient sees this)').fill('  The doctor is on leave  ');
+  await panel.getByLabel(/Yes: ₹800\.00/).check();
+  await panel.getByRole('button', { name: 'Cancel the appointment' }).click();
+  await expect(page.getByText('The appointment was cancelled; ₹800.00 is back in the patient’s Jansetu wallet. The patient and the doctor are told.')).toBeVisible();
+  const sent = backend.calls.filter((c) => c.path.endsWith('/cancel-no-show'));
+  expect(sent.map((c) => [c.path, c.body])).toEqual([[`/specialists/admin/bookings/${BK4}/cancel-no-show`, { reason: 'The doctor is on leave', refund: true }]]);
+  // Read again: cancelled, the button is gone, and the page says how.
+  await expect(page.getByText('Cancelled', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel (admin)' })).toHaveCount(0);
+  await expect(page.getByText(/the patient was refunded to their Jansetu wallet/)).toBeVisible();
+});
+
+test('WQ11b (Q16a): a refused "Cancel (admin)" is said in words and the booking read again', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await page.goto(`/#/admin/consultations/${BK4}`);
+  // Refused: the booking was completed meanwhile.
+  await page.getByRole('button', { name: 'Cancel (admin)' }).click();
+  const panel = page.getByRole('group', { name: 'Cancel (admin)' });
+  await panel.getByLabel('Reason (the patient sees this)').fill('The doctor is on leave');
+  await panel.getByLabel(/No: the payment stays with Jansetu/).check();
+  const bk = backend.bookings.find((x) => x._id === BK4)!;
+  bk.status = 'completed';
+  await panel.getByRole('button', { name: 'Cancel the appointment' }).click();
+  await expect(page.getByText('Not cancelled: This booking can no longer be cancelled (it was completed, cancelled or marked a no-show again meanwhile).')).toBeVisible();
+  await expect(page.getByText('Completed', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel (admin)' })).toHaveCount(0);
+});
+
+test('WQ11b (Q16a): a "Cancel (admin)" whose answer is lost is settled by reading the booking (cancelled = done)', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await page.goto(`/#/admin/consultations/${BK4}`);
+  const bk = backend.bookings.find((x) => x._id === BK4)!;
+  await page.getByRole('button', { name: 'Cancel (admin)' }).click();
+  const panel = page.getByRole('group', { name: 'Cancel (admin)' });
+  await panel.getByLabel('Reason (the patient sees this)').fill('The doctor is on leave');
+  await panel.getByLabel(/No: the payment stays with Jansetu/).check();
+  backend.loseCancelAfter = true;
+  await panel.getByRole('button', { name: 'Cancel the appointment' }).click();
+  await expect(page.getByText('The appointment was cancelled without a refund: the payment stays with Jansetu and nobody earns it. The patient and the doctor are told.')).toBeVisible();
+  expect(bk.status).toBe('cancelled');
+  expect(bk.noShowCancel).toEqual({ at: NOW.toISOString(), refund: false });
+  expect(backend.calls.filter((c) => c.path.endsWith('/cancel-no-show'))).toHaveLength(1);
 });

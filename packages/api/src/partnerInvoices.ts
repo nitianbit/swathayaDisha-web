@@ -378,8 +378,8 @@ export interface InvoicePreview {
 
 /**
  * What the server will compute (`computeLines` + `computeTotals`): per line, amount = unit price × qty − discount; tax
- * per line = round(amount × rate / 100) to the paisa; totals are sums of the rounded line values; with CGST/SGST the
- * odd paisa goes to SGST. Place of supply: no customer state = the branch's state (intra-state).
+ * per line = round(amount × rate / 100) to the paisa; totals are sums of the rounded line values. Q16a: within a state
+ * CGST and SGST are each round(amount × rate / 200) per line (always equal). Place of supply: no customer state = the branch's state (intra-state).
  */
 export function previewInvoice(
   supplier: SupplierTax,
@@ -405,9 +405,11 @@ export function previewInvoice(
     t.discountMinor += problem && problem !== rateProblem ? 0 : discount;
     t.taxableMinor += amountMinor;
     if (sameState) {
-      const half = Math.floor(taxMinor / 2);
+      // Q16a `computeTotals`: CGST and SGST are each charged at half the rate and rounded on their own (always equal;
+      // their sum can differ by a paisa from the line's tax rounded once).
+      const half = Math.round((amountMinor * item.gstRate) / 200);
       t.cgstMinor += half;
-      t.sgstMinor += taxMinor - half;
+      t.sgstMinor += half;
     } else {
       t.igstMinor += taxMinor;
     }

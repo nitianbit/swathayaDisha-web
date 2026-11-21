@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router';
 import {
-  ALL_PARTNER_PERMISSIONS, canAddOwner, canEditProfessional, PROFESSIONAL_KIND_LABEL, PROFESSIONAL_KINDS, professionalInput, type MemberProfessional, canChangeBranches, canEditEmail, canEditPermissions, canGiveEmail, EMAIL_IN_USE_MESSAGE, grantablePermissions,
-  hasGlobalScope, isEmailInUse, isOwnerRequired, MAX_EMAIL, MAX_NAME, memberEmail, PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN, PERMISSION_LABEL, removalBlock, scopeProblem,
+  ALL_PARTNER_PERMISSIONS, ApiError, canAddOwner, canEditProfessional, PROFESSIONAL_KIND_LABEL, PROFESSIONAL_KINDS, professionalInput, type MemberProfessional, canChangeBranches, canEditEmail, canEditPermissions, canGiveEmail, canReopenBranches, EMAIL_IN_USE_MESSAGE, grantablePermissions,
+  hasGlobalScope, INVALID_BRANCH_IDS_MESSAGE, isEmailInUse, isInvalidBranchIds, isOwnerEmailAdminOnly, isOwnerRequired, isUseDoctorUnlink, MAX_EMAIL, MAX_NAME, memberEmail, OWNER_EMAIL_ADMIN_ONLY_MESSAGE,
+  PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN, PERMISSION_LABEL, removalBlock, scopeProblem,
   type Branch, type MemberRole, type PartnerMember, type PartnerPermission,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
@@ -10,6 +12,7 @@ import { definitelyNotRecorded } from '../../requests.ts';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { changedFields, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
+import { clinicLink } from './clinic.tsx';
 import {
   branchLabel, NoSuchPartner, PartnerPageHeading, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext,
 } from './scope.tsx';
@@ -36,16 +39,27 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
   const partner = useWorkspacePartner(ctx);
   const members = useQuery({ queryKey: [...ctx.key, 'members'], queryFn: () => ctx.api.members() });
   const branches = useBranches(ctx);
+  // WQ11b: closed branches a member still holds are named and can be unticked (readable by partner-wide branch managers).
+  const withClosed = useQuery({
+    queryKey: [...ctx.key, 'branches', 'with-closed'], queryFn: () => ctx.api.branches({ includeInactive: true }), enabled: canReopenBranches(ctx.actor),
+  });
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<Editing>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const names = new Map((branches.data ?? []).map((b) => [b._id, b.name]));
+  const names = new Map([...(withClosed.data ?? []), ...(branches.data ?? [])].map((b) => [b._id, b.isActive === false ? `${b.name} (closed)` : b.name]));
+  const admin = ctx.scope.kind === 'admin';
+  const doctorsLink = clinicLink(ctx, 'clinic-doctors');
   const refresh = () => Promise.all([
     queryClient.invalidateQueries({ queryKey: [...ctx.key, 'members'] }),
     queryClient.invalidateQueries({ queryKey: [...ctx.key, 'me'] }), // the owner count
   ]);
   const editTarget = editing ? members.data?.find((m) => m._id === editing.id) : undefined;
   const open = (e: Editing) => { setEditing(e); setNotice(null); };
+  /**
+   * WQ11b: a save's answer closes only the editor that made it (still open, same kind and member). One that arrives after
+   * another editor was opened leaves that editor and what was typed in it alone; the list is read again either way.
+   */
+  const closeIfOpen = (e: NonNullable<Editing>) => setEditing((cur) => (cur && cur.kind === e.kind && cur.id === e.id ? null : cur));
 
   return (
     <>
@@ -58,7 +72,7 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
       {adding && (
         <AddMember ctx={ctx} branches={branches.data} branchesError={branches.isError ? messageOf(branches.error) : null}
           onCancel={() => setAdding(false)}
-          onAdded={async (m) => { setAdding(false); setNotice(`${m.name} was added.`); await refresh(); }} />
+          admin={admin} onAdded={async (m) => { setAdding(false); setNotice(`${m.name} was added.`); await refresh(); }} />
       )}
       {members.isPending ? <Loading label="Loading staff…" />
         : members.isError ? <ErrorState message={messageOf(members.error)} onRetry={() => void members.refetch()} />
@@ -78,7 +92,7 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
                       <td>{m.name}{ctx.actor.memberId === m._id && <> <Badge>You</Badge></>}</td>
                       <td>{m.phone}</td>
                       <td>{m.email || <span className="ws-muted">None</span>}</td>
-                      <td>{m.role === 'owner' ? 'Owner' : 'Staff'}</td>
+                      <td>{m.role === 'owner' ? 'Owner' : m.doctorId ? 'Clinic doctor' : 'Staff'}</td>
                       <td>{m.professional?.registrationNumber ? professionalLabel(m.professional) : <span className="ws-muted">Not added</span>}</td>
                       <td>{m.role === 'owner' ? 'Everything' : m.permissions.length ? m.permissions.map((p) => PERMISSION_LABEL[p] ?? p).join(', ') : 'None'}</td>
                       <td>{m.role === 'owner' ? 'All branches' : branchLabel(names, m.branchIds)}</td>
@@ -87,7 +101,7 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
                           {canEditPermissions(ctx.actor, m) && (
                             <Button variant="secondary" onClick={() => open({ kind: 'permissions', id: m._id })}>Edit permissions</Button>
                           )}
-                          {canEditEmail(ctx.actor, m) && (
+                          {canEditEmail(ctx.actor, m, admin) && (
                             <Button variant="secondary" onClick={() => open({ kind: 'email', id: m._id })}>{m.email ? 'Change email' : 'Add email'}</Button>
                           )}
                           {canEditProfessional(ctx.actor, m) && (
@@ -98,11 +112,19 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
                           {canChangeBranches(ctx.actor, m) && (
                             <Button variant="secondary" onClick={() => open({ kind: 'branches', id: m._id })}>Change branch access</Button>
                           )}
-                          {block ? <span className="ws-muted">{block}</span> : (
+                          {m.doctorId && ctx.actor.memberId !== m._id ? (
+                            // Q16b: a clinic doctor's membership ends on Doctors (owner or admin), never as staff (409 USE_DOCTOR_UNLINK).
+                            <span className="ws-muted">A doctor of this clinic: removed on <Link to={doctorsLink}>Doctors</Link> (owner only).</span>
+                          ) : block ? <span className="ws-muted">{block}</span> : (
                             <ConfirmAction label="Remove" danger confirmLabel={`Remove ${m.name}`}
                               consequence={`${m.name} loses access to this workspace at once. To give access again, add them again.`}
                               onConfirm={async () => {
-                                try { await ctx.api.removeMember(m._id); setNotice(`${m.name} was removed.`); } finally { await refresh(); }
+                                try { await ctx.api.removeMember(m._id); setNotice(`${m.name} was removed.`); } catch (err) {
+                                  if (isUseDoctorUnlink(err)) {
+                                    throw new ApiError(409, `${m.name} is a doctor of this clinic, so nothing was changed. The owner removes them from the clinic on the Doctors page.`, 'USE_DOCTOR_UNLINK');
+                                  }
+                                  throw err;
+                                } finally { await refresh(); }
                               }} />
                           )}
                         </div>
@@ -116,24 +138,24 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
         )}
       {editTarget && editing?.kind === 'permissions' && (
         <EditPermissions key={`p:${editTarget._id}`} ctx={ctx} member={editTarget} onClose={() => setEditing(null)}
-          onSaved={async () => { setEditing(null); setNotice(`Permissions for ${editTarget.name} were saved.`); await refresh(); }} />
+          onSaved={async () => { closeIfOpen({ kind: 'permissions', id: editTarget._id }); setNotice(`Permissions for ${editTarget.name} were saved.`); await refresh(); }} />
       )}
       {editTarget && editing?.kind === 'email' && (
-        <EditEmail key={`e:${editTarget._id}`} ctx={ctx} member={editTarget} onClose={() => setEditing(null)}
-          onSaved={async () => { setEditing(null); setNotice(`The email for ${editTarget.name} was saved.`); await refresh(); }} />
+        <EditEmail key={`e:${editTarget._id}`} ctx={ctx} member={editTarget} admin={admin} onClose={() => setEditing(null)}
+          onSaved={async () => { closeIfOpen({ kind: 'email', id: editTarget._id }); setNotice(`The email for ${editTarget.name} was saved.`); await refresh(); }} />
       )}
       {editTarget && editing?.kind === 'professional' && (
         <EditProfessional key={`r:${editTarget._id}`} ctx={ctx} member={editTarget} onClose={() => setEditing(null)}
           onSaved={async (removed) => {
-            setEditing(null);
+            closeIfOpen({ kind: 'professional', id: editTarget._id });
             setNotice(removed ? `The registration of ${editTarget.name} was removed.` : `The registration of ${editTarget.name} was saved.`);
             await refresh();
           }} />
       )}
       {editTarget && editing?.kind === 'branches' && (
-        <EditBranches key={`b:${editTarget._id}`} ctx={ctx} member={editTarget} branches={branches.data}
+        <EditBranches key={`b:${editTarget._id}`} ctx={ctx} member={editTarget} branches={branches.data} closedBranches={withClosed.data}
           branchesError={branches.isError ? messageOf(branches.error) : null} onClose={() => setEditing(null)}
-          onSaved={async () => { setEditing(null); setNotice(`Branch access for ${editTarget.name} was saved.`); await refresh(); }} />
+          onSaved={async () => { closeIfOpen({ kind: 'branches', id: editTarget._id }); setNotice(`Branch access for ${editTarget.name} was saved.`); await refresh(); }} />
       )}
     </>
   );
@@ -157,11 +179,18 @@ function PermissionChecklist({ legend, allowed, value, onChange, error }:
   );
 }
 
-/** Branch access picker: "all branches" (partner-wide actors only) or some of the branches this actor can see. */
-function BranchPicker({ wide, all, ids, options, loadError, error, onChange }: {
+/**
+ * Branch access picker: "all branches" (partner-wide actors only) or some of the branches this actor can see. WQ11b:
+ * branches the member already holds that are not open (closed, or not readable here) are listed too, marked, so they
+ * can be unticked: `held` are those ids, `closedNames` names the closed ones this actor can read.
+ */
+function BranchPicker({ wide, all, ids, options, held = [], closedNames, loadError, error, onChange }: {
   wide: boolean; all: boolean; ids: readonly string[]; options: readonly Branch[] | undefined; loadError: string | null; error?: string;
+  held?: readonly string[]; closedNames?: ReadonlyMap<string, string>;
   onChange: (v: { all: boolean; ids: string[] }) => void;
 }) {
+  const open = new Set((options ?? []).map((b) => b._id));
+  const extra = held.filter((id) => !open.has(id));
   return (
     <fieldset className="ws-checks" aria-describedby={error ? 'branch-error' : undefined}>
       <legend>Branches</legend>
@@ -176,18 +205,25 @@ function BranchPicker({ wide, all, ids, options, loadError, error, onChange }: {
             onChange({ all, ids: (e.target.checked ? [...ids, b._id] : ids.filter((x) => x !== b._id)).sort() })} /> {b.name}
         </label>
       ))}
-      {!all && options?.length === 0 && <p className="ws-muted">There are no branches yet.</p>}
+      {!all && options && extra.map((id) => (
+        <label key={id} className="ws-check">
+          <input type="checkbox" checked={ids.includes(id)} onChange={(e) =>
+            onChange({ all, ids: (e.target.checked ? [...ids, id] : ids.filter((x) => x !== id)).sort() })} />{' '}
+          {closedNames?.get(id) ?? (wide ? `Closed or removed branch …${id.slice(-6)}` : `Branch …${id.slice(-6)} (not one of yours)`)}{wide || closedNames?.has(id) ? ' (closed)' : ''}
+        </label>
+      ))}
+      {!all && options?.length === 0 && extra.length === 0 && <p className="ws-muted">There are no branches yet.</p>}
       {!all && loadError && <p className="ws-muted">Branches could not be loaded: {loadError}</p>}
       {error && <span id="branch-error" className="j-field__error">{error}</span>}
     </fieldset>
   );
 }
 
-const branchProblem = (ctx: ScopeContext, all: boolean, ids: string[]) =>
-  !all && ids.length === 0 ? 'Choose at least one branch, or all branches.' : scopeProblem(ctx.actor, all ? [] : ids);
+const branchProblem = (ctx: ScopeContext, all: boolean, ids: string[], closed?: ReadonlySet<string>) =>
+  !all && ids.length === 0 ? 'Choose at least one branch, or all branches.' : scopeProblem(ctx.actor, all ? [] : ids, closed);
 
-function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
-  ctx: ScopeContext; branches: Branch[] | undefined; branchesError: string | null;
+function AddMember({ ctx, branches, branchesError, admin, onCancel, onAdded }: {
+  ctx: ScopeContext; branches: Branch[] | undefined; branchesError: string | null; admin: boolean;
   onCancel: () => void; onAdded: (m: PartnerMember) => Promise<void>;
 }) {
   const wide = hasGlobalScope(ctx.actor);
@@ -195,8 +231,10 @@ function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const withEmailField = canGiveEmail(ctx.actor);
   const [role, setRole] = useState<MemberRole>('staff');
+  // Q16b: a new owner gets a sign-in email from the Jansetu team only (an admin here).
+  const withEmailField = canGiveEmail(ctx.actor, role, admin);
+  const anyEmailField = canGiveEmail(ctx.actor, 'staff', admin);
   const [perms, setPerms] = useState<PartnerPermission[]>([]);
   const [scope, setScope] = useState<{ all: boolean; ids: string[] }>({ all: wide, ids: [] });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -227,6 +265,8 @@ function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
       // WQ9: the email belongs to another account: say so on the field (nothing was added).
       if (isEmailInUse(err)) setErrors({ email: EMAIL_IN_USE_MESSAGE });
       else if (mail && isOwnerRequired(err)) setErrors({ email: 'Only an owner can give a member a sign-in email. Leave it empty to add them without one.' });
+      else if (mail && isOwnerEmailAdminOnly(err)) setErrors({ email: `${OWNER_EMAIL_ADMIN_ONLY_MESSAGE} Leave it empty to add them without one.` });
+      else if (isInvalidBranchIds(err)) setErrors({ branches: INVALID_BRANCH_IDS_MESSAGE });
       else setError(messageOf(err));
     } finally {
       setBusy(false);
@@ -238,6 +278,7 @@ function AddMember({ ctx, branches, branchesError, onCancel, onAdded }: {
       <h2 id="add-h">Add a staff member</h2>
       <p className="ws-muted">
         They sign in with this mobile number (a code by SMS){withEmailField ? ', or with the email if you add one (a code by email)' : ''}.
+        {anyEmailField && !withEmailField && ' An owner’s sign-in email is added by the Jansetu team.'}
       </p>
       <form className="rx-form" noValidate onSubmit={(e) => void submit(e)}>
         <div className="rx-form-row">
@@ -330,8 +371,8 @@ const emailDraft = (m: PartnerMember) => ({ email: m.email ?? '' });
  * RECORD_CHANGED shows the saved value). Empty removes it. A late answer settles only while this editor is still open
  * and the save is still the latest one started here.
  */
-function EditEmail({ ctx, member, onClose, onSaved }:
-  { ctx: ScopeContext; member: PartnerMember; onClose: () => void; onSaved: () => Promise<void> }) {
+function EditEmail({ ctx, member, admin, onClose, onSaved }:
+  { ctx: ScopeContext; member: PartnerMember; admin: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
   const queryClient = useQueryClient();
   const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, emailDraft, 'email');
   const [error, setError] = useState<string | null>(null);
@@ -366,6 +407,7 @@ function EditEmail({ ctx, member, onClose, onSaved }:
     } catch (err) {
       if (!owns()) return;
       if (isEmailInUse(err)) setFieldError(EMAIL_IN_USE_MESSAGE);
+      else if (isOwnerEmailAdminOnly(err)) setError(OWNER_EMAIL_ADMIN_ONLY_MESSAGE);
       else setError(messageOf(err));
     } finally {
       if (live.current) setBusy(false);
@@ -379,6 +421,8 @@ function EditEmail({ ctx, member, onClose, onSaved }:
         They can sign in with this email (a code by email) as well as with their mobile number. Leave it empty to remove it.
         {/* A first email ends nothing; changing or removing one ends the member's sessions (`updateMemberEmail`). */}
         {member.email && ` Changing or removing it signs them out of the workspace on the web and in the phone app${ctx.actor.memberId === member._id ? ' (you too)' : ''}.`}
+        {' '}They are told when it is set, changed or removed.
+        {member.role === 'owner' && admin && ' Only the Jansetu team changes an owner’s sign-in email.'}
       </p>
       <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
         <fieldset className="ws-frozen" disabled={busy}>
@@ -404,6 +448,8 @@ function EditPermissions({ ctx, member, onClose, onSaved }:
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const grantable = grantablePermissions(ctx.actor);
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
 
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -412,14 +458,15 @@ function EditPermissions({ ctx, member, onClose, onSaved }:
     setBusy(true);
     try {
       const fresh = await recheck();
-      if (!fresh) return;
+      if (!fresh || !live.current) return;
       const next = changedFields(d.current()).permissions;
       if (!next) { setNotice('Nothing has changed.'); return; }
+      // Saved: the page says so and reads the list again; it closes this editor only if it is still the one open.
       if (await fenced(() => ctx.api.setPermissions(member._id, next.filter((p) => grantable.includes(p)), fresh.updatedAt))) await onSaved();
     } catch (err) {
-      setError(messageOf(err));
+      if (live.current) setError(messageOf(err));
     } finally {
-      setBusy(false);
+      if (live.current) setBusy(false);
     }
   }
 
@@ -446,8 +493,8 @@ function EditPermissions({ ctx, member, onClose, onSaved }:
 const scopeDraft = (m: PartnerMember) => ({ scope: { all: m.branchIds.length === 0, ids: [...m.branchIds].sort() } });
 const scopeOf = (v: { all: boolean; ids: string[] }) => (v.all ? [] : v.ids);
 
-function EditBranches({ ctx, member, branches, branchesError, onClose, onSaved }: {
-  ctx: ScopeContext; member: PartnerMember; branches: Branch[] | undefined; branchesError: string | null;
+function EditBranches({ ctx, member, branches, closedBranches, branchesError, onClose, onSaved }: {
+  ctx: ScopeContext; member: PartnerMember; branches: Branch[] | undefined; closedBranches?: Branch[]; branchesError: string | null;
   onClose: () => void; onSaved: () => Promise<void>;
 }) {
   const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, scopeDraft, 'branch access');
@@ -455,14 +502,23 @@ function EditBranches({ ctx, member, branches, branchesError, onClose, onSaved }
   const [fieldError, setFieldError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const unchanged = () => { const s = d.current(); return JSON.stringify(scopeOf(s.draft.scope)) === JSON.stringify(scopeOf(s.base.scope)); };
+  const wide = hasGlobalScope(ctx.actor);
+  // WQ11b: branches the member holds that are not open. A partner-wide actor reads every open branch, so for them such an
+  // id is closed (or removed); others name only the closed ones they can read. They are shown, and can be unticked.
+  const openIds = new Set((branches ?? []).map((b) => b._id));
+  const closedNames = new Map((closedBranches ?? []).filter((b) => b.isActive === false).map((b) => [b._id, b.name]));
+  const held = branches ? member.branchIds.filter((id) => !openIds.has(id)) : [];
+  const closed = new Set(held.filter((id) => wide || closedNames.has(id)));
 
   async function save(e: FormEvent) {
     e.preventDefault();
     setError(null); setNotice(null);
     // The validated scope is what is sent: an immutable copy, and the picker is frozen while saving.
     const now = d.current().draft.scope;
-    const problem = branchProblem(ctx, now.all, now.ids);
+    const problem = branchProblem(ctx, now.all, now.ids, closed);
     setFieldError(problem ?? undefined);
     if (problem) return;
     if (unchanged()) { setNotice('Nothing has changed.'); return; }
@@ -470,16 +526,19 @@ function EditBranches({ ctx, member, branches, branchesError, onClose, onSaved }
     setBusy(true);
     try {
       const fresh = await recheck();
-      if (!fresh) return;
+      if (!fresh || !live.current) return;
       // Re-read the draft after the wait: anything but exactly the validated scope is not sent.
       const after = d.current().draft.scope;
       if (JSON.stringify(scopeOf(after)) !== JSON.stringify(validated)) { setNotice('The branch choice changed while saving. Check it and save again.'); return; }
       if (unchanged()) { setNotice('Nothing has changed.'); return; }
+      // Saved: the page says so and reads the list again; it closes this editor only if it is still the one open.
       if (await fenced(() => ctx.api.setBranches(member._id, validated, fresh.updatedAt))) await onSaved();
     } catch (err) {
-      setError(messageOf(err));
+      if (!live.current) return;
+      if (isInvalidBranchIds(err)) setFieldError(INVALID_BRANCH_IDS_MESSAGE);
+      else setError(messageOf(err));
     } finally {
-      setBusy(false);
+      if (live.current) setBusy(false);
     }
   }
 
@@ -488,8 +547,8 @@ function EditBranches({ ctx, member, branches, branchesError, onClose, onSaved }
       <h2 id="scope-h">Branch access for {member.name}</h2>
       <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
         <fieldset className="ws-frozen" disabled={busy}>
-          <BranchPicker wide={hasGlobalScope(ctx.actor)} all={d.draft.scope.all} ids={d.draft.scope.ids} options={branches} loadError={branchesError}
-            error={fieldError} onChange={(v) => d.set('scope', v)} />
+          <BranchPicker wide={wide} all={d.draft.scope.all} ids={d.draft.scope.ids} options={branches} loadError={branchesError}
+            held={held} closedNames={closedNames} error={fieldError} onChange={(v) => d.set('scope', v)} />
         </fieldset>
         {stale && <Alert tone="warn">{stale}</Alert>}
         {notice && <Alert tone="ok">{notice}</Alert>}

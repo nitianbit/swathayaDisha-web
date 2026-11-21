@@ -105,13 +105,17 @@ describe('desk booking and list rules (deskBookingSchema, listClinicAppointments
 describe('desk steps (markArrived, closeDeskAppointment, cancel/reschedule)', () => {
   const before = new Date('2026-11-17T04:30:00Z'); // 10:00 IST
   const after = new Date('2026-11-17T05:10:00Z'); // 10:40 IST
+  const late = new Date('2026-11-17T05:15:00Z'); // 10:45 IST
   const acts = (a: ClinicAppointment, now: Date, actor = owner) => deskActions(a, actor, now).map((o) => (o.blocked ? `${o.action}!` : o.action));
 
   it('offers check-in, seen, no-show after the time, move and cancel on a booked desk appointment', () => {
-    expect(acts(appt(), before)).toEqual(['arrived', 'complete', 'no_show!', 'reschedule', 'cancel']);
-    expect(acts(appt(), after)).toEqual(['arrived', 'complete', 'no_show', 'reschedule', 'cancel']);
-    expect(acts(appt({ arrivedAt: '2026-11-17T04:50:00Z' }), after)).toEqual(['complete', 'no_show', 'reschedule', 'cancel']);
-    expect(acts(appt({ bookingTime: 'unreadable' }), after)).toEqual(['arrived', 'complete', 'no_show!', 'reschedule', 'cancel']);
+    // WQ11b: "seen" only once the appointment has started (Q16a 409 NOT_STARTED_YET), like the no-show.
+    expect(acts(appt(), before)).toEqual(['arrived', 'complete!', 'no_show!', 'reschedule', 'cancel']);
+    // Q16a: a no-show only 15 minutes after the time (10:30 → from 10:45).
+    expect(acts(appt(), after)).toEqual(['arrived', 'complete', 'no_show!', 'reschedule', 'cancel']);
+    expect(acts(appt(), late)).toEqual(['arrived', 'complete', 'no_show', 'reschedule', 'cancel']);
+    expect(acts(appt({ arrivedAt: '2026-11-17T04:50:00Z' }), late)).toEqual(['complete', 'no_show', 'reschedule', 'cancel']);
+    expect(acts(appt({ bookingTime: 'unreadable' }), after)).toEqual(['arrived', 'complete!', 'no_show!', 'reschedule', 'cancel']);
   });
 
   it('offers nothing on finished, online or view-only appointments', () => {

@@ -1,27 +1,47 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
   LAB_BOOKING_STATUS_LABEL, LAB_BOOKING_STATUSES, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, labBookingsAdminApi,
-  MAX_ADMIN_LAB_BOOKINGS, partnerAdminApi, type AdminLabBookingQuery, type LabBookingStatus,
+  partnerAdminApi, type AdminLabBookingQuery, type AdminLabBookingRow, type LabBookingStatus,
 } from '@jansetu/api';
-import { Badge, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
+import { Badge, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { labStatusTone, slotLabel } from '../partner/labs.tsx';
 
-/** Admin: online lab bookings of every partner lab, newest booked first (the server answers at most 200). */
+/** One page of the admin list (the server gives at most 200 a page, 50 when not asked). */
+export const ADMIN_LAB_BOOKINGS_PAGE = 100;
+
+/**
+ * The pages read so far as one list. The list is paged by number, newest booked first, so a booking made while the
+ * admin reads moves the later pages along by one: a row already shown is not shown twice.
+ */
+export function mergeAdminPages(pages: readonly { items: readonly AdminLabBookingRow[] }[]): AdminLabBookingRow[] {
+  const seen = new Set<string>();
+  const out: AdminLabBookingRow[] = [];
+  for (const p of pages) for (const b of p.items) if (!seen.has(b._id)) { seen.add(b._id); out.push(b); }
+  return out;
+}
+
+/** Admin: online lab bookings of every partner lab, newest booked first, paged by the server (Q11 `adminList`). */
 export function AdminLabBookingsScreen() {
   const { api } = useSession();
   const [partnerId, setPartnerId] = useState('');
   const [status, setStatus] = useState<'' | LabBookingStatus>('');
-  const filter: AdminLabBookingQuery = { partnerId: partnerId || undefined, status: status || undefined };
-  const list = useQuery({ queryKey: ['admin-lab-bookings', filter], queryFn: () => labBookingsAdminApi(api).list(filter) });
+  const filter: AdminLabBookingQuery = { partnerId: partnerId || undefined, status: status || undefined, limit: ADMIN_LAB_BOOKINGS_PAGE };
+  const list = useInfiniteQuery({
+    queryKey: ['admin-lab-bookings', filter],
+    queryFn: ({ pageParam }) => labBookingsAdminApi(api).list({ ...filter, page: pageParam }),
+    initialPageParam: 1,
+    getNextPageParam: (last) => (last.page < last.totalPages && last.items.length > 0 ? last.page + 1 : undefined),
+  });
   // Names for the lab column and filter (labs only; the list's page size is 200, the largest the server gives).
   const labs = useQuery({ queryKey: ['admin-partners', 'labs'], queryFn: () => partnerAdminApi(api).list({ kind: 'lab', limit: 200 }) });
   const names = useMemo(() => new Map((labs.data?.items ?? []).map((p) => [p._id, p.name])), [labs.data]);
-  const rows = list.data ?? [];
+  const rows = mergeAdminPages(list.data?.pages ?? []);
+  const total = list.data?.pages[0]?.total;
 
   return (
     <>
@@ -44,11 +64,14 @@ export function AdminLabBookingsScreen() {
         </div>
       </div>
       {list.isPending ? <Loading label="Loading lab bookings…" />
-        : list.isError ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
+        : list.isError && !list.data ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
         : rows.length === 0 ? <Empty title="No lab bookings">{partnerId || status ? 'No booking matches these filters.' : 'Bookings made in the app appear here.'}</Empty>
         : (
           <>
-            <p className="ws-count">{rows.length} {rows.length === 1 ? 'booking' : 'bookings'}{rows.length >= MAX_ADMIN_LAB_BOOKINGS ? ` (the latest ${MAX_ADMIN_LAB_BOOKINGS}; filter by lab or status to see others)` : ''}</p>
+            <p className="ws-count" aria-live="polite">
+              {total === undefined ? `${rows.length} ${rows.length === 1 ? 'booking' : 'bookings'}`
+                : `${total} ${total === 1 ? 'booking' : 'bookings'}${list.hasNextPage ? ` · showing the newest ${rows.length}` : ''}`}
+            </p>
             <div className="ws-table-wrap">
               <table className="j-table">
                 <caption className="j-sr-only">Lab bookings of every lab</caption>
@@ -73,6 +96,14 @@ export function AdminLabBookingsScreen() {
                 </tbody>
               </table>
             </div>
+            {list.isFetchNextPageError && <ErrorState message={`Could not load more bookings: ${messageOf(list.error)}`} onRetry={() => void list.fetchNextPage()} />}
+            {list.hasNextPage && (
+              <div>
+                <Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
+                  Show more{total !== undefined ? ` (${Math.max(0, total - rows.length)} more)` : ''}
+                </Button>
+              </div>
+            )}
           </>
         )}
     </>

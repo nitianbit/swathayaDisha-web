@@ -9,6 +9,11 @@ export {
   PAN_PATTERN, PARTNER_KIND_LABEL, PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN, partnerAdminApi, partnerWorkspaceApi,
   partnerWorkspaceBase, PERMISSION_LABEL, removalBlock, scopeProblem, TAX_REGIME_LABEL, VERIFICATION_LABEL, WEEKDAYS,
 } from './partners.ts';
+// WQ11b: doctor memberships, owner emails (Q16b), closed branches and GST state codes.
+export {
+  DOCTOR_MEMBER_REMOVAL, GST_STATE_CODE_PATTERN, INVALID_BRANCH_IDS_MESSAGE, isInvalidBranchIds, isOwnerEmailAdminOnly, isUseDoctorUnlink,
+  OWNER_EMAIL_ADMIN_ONLY_MESSAGE,
+} from './partners.ts';
 export type {
   Branch, BranchAddress, BranchInput, BranchServices, MemberRole, MyPartnerUpdate, NewMember, NewPartner, Partner,
   PartnerActorView, PartnerAuditEvent, PartnerKind, PartnerMember, PartnerPermission, PartnerQuery, PartnerScope,
@@ -24,6 +29,7 @@ export {
 export type { NewPharmacy, PharmacyAccount, PharmacyDetails, PharmacyForm, PharmacyQuery, PharmacyUpdate } from './adminPharmacies.ts';
 export {
   adminNoShowMove, consultationAdminApi, consultationQueryProblem, CONSULTATION_STATUS_FILTERS, CONSULTATION_STATUS_LABEL, CONSULTATIONS_PAGE_SIZE,
+  ADMIN_CANCEL_REFUSAL, canAdminCancelMovedNoShow, MAX_ADMIN_CANCEL_REASON, MIN_ADMIN_CANCEL_REASON,
 } from './adminConsultations.ts';
 export type { AdminConsultation, ConsultationQuery, ConsultationStatus, DoctorRef } from './adminConsultations.ts';
 export { clearSignOutPending, markSignOutPending, nativeSecureStore, nativeSignOut, refreshTokenKey, rotateNative, signOutState } from './nativeSession.ts';
@@ -86,17 +92,18 @@ export type {
   LinePreview, NewCatalogueItem, NewInvoice, NewInvoiceLine, PaymentAnswer, PaymentInput, PaymentSplit, RefundInput, SupplierTax, VisitMode,
 } from './partnerInvoices.ts';
 export {
-  addDays, canReadDrafts, capacityProblem, COLLECTOR_PHONE_PATTERN, deriveTemplate, eligibleSigners, isBookable, isRealDate, istDateOf,
-  LAB_BOOKING_STATUS_LABEL, LAB_BOOKING_STATUSES, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, LAB_VISIT_MODES, labActions,
-  labBookingsAdminApi, labNoShowMove, manualSlotProblems, MAX_ADMIN_LAB_BOOKINGS, MAX_COLLECTOR_NAME, MAX_LAB_BOOKINGS, MAX_LAB_REASON,
+  addDays, ADMIN_LAB_BOOKINGS_PAGE_MAX, canReadDrafts, capacityProblem, COLLECTOR_PHONE_PATTERN, eligibleSigners, isBookable, isLabBookingChanged,
+  isRealDate, isReportTooLarge, isTemplateChanged, isUploadFailed, istDateOf,
+  LAB_BOOKING_STATUS_LABEL, LAB_BOOKING_STATUSES, LAB_BOOKINGS_PAGE_MAX, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, LAB_VISIT_MODES, labActions,
+  labBookingsAdminApi, labNoShowMove, manualSlotProblems, MAX_COLLECTOR_NAME, MAX_LAB_REASON,
   MAX_WINDOWS_PER_DAY, MIN_LAB_REASON, mondayOf, partnerLabsApi, releaseOf, reopenable, REPORT_ACCEPT, REPORT_MAX_BYTES,
   reportFileBooking, reportFileName, reportFileProblem, ROLLING_DAYS, SLOT_CAPACITY_MIN, SLOT_CLOSURE_LABEL, SLOT_MINUTES_MAX,
-  SLOT_MINUTES_MIN, SLOT_SEATS_MAX, slotTimesFor, TEMPLATE_WEEKDAYS, templateProblems, weekdayOf,
+  SLOT_MINUTES_MIN, SLOT_SEATS_MAX, slotTimesFor, templateInput, TEMPLATE_WEEKDAYS, templateProblems, weekdayOf,
 } from './partnerLabs.ts';
 export type {
-  AdminLabBookingQuery, AdminLabBookingRow, CollectorInput, ExpansionResult, LabAction, LabActionOffer, LabBooking, LabBookingItem,
+  AdminLabBookingQuery, AdminLabBookingRow, AdminNoShowCancel, CollectorInput, ExpansionResult, LabAction, LabActionOffer, LabBooking, LabBookingItem,
   LabBookingQuery, LabBookingSlot, LabBookingStatus, LabLifecycleKey, LabNoShowMove, LabPaymentStatus, LabReportRelease, LabSlot, NewManualSlot,
-  SlotClosure, SlotQuery, SlotTemplate, SlotTemplateInput, SlotWindow, TemplateDays,
+  SlotClosure, SlotQuery, SlotTemplate, SlotTemplateInput, SlotWindow, TemplateDays, TemplateVersion,
 } from './partnerLabs.ts';
 export {
   ACCOUNT_NUMBER_PATTERN, ACCOUNTS_PAGE_MAX, DETAILS_STATE_LABEL, IFSC_PATTERN, isStatementCsv, istToday, PAGE_CURSOR_PATTERN, PAGE_LIMIT_MAX,

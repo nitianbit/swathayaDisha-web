@@ -12,7 +12,7 @@ import { Alert, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/u
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
-import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
+import { afterFailure, beginAttempt, newRequestKey, ownsKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { APPOINTMENT_BILL_REFUSAL, billPrefillSlot, money, takeHandover, useCatalogue, useClinicDoctors, type BillHandover, type BillPrefill } from './billing.tsx';
 import { Totals } from './InvoiceScreen.tsx';
@@ -179,12 +179,18 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
    * answer must leave it — and its reload marker — intact: resending it replays the same bill.
    */
   const owns = (op: Pending) => mounted.current && stillCurrent(memory.get<Pending>(slot), op);
+  /**
+   * WQ11b: an answer about the key itself (a by-key lookup, a give-up's `used` or `abandoned`) settles what this page shows
+   * when the stored bill is this key or is gone. After leaving mid-send and coming back, the first page's late answer
+   * removes the stored bill while this page still shows it; "Give up" must then still act on the server's word.
+   */
+  const ownsTheKey = (op: Pending) => mounted.current && ownsKey(memory.get<Pending>(slot), op.requestKey);
 
   /** `op` produced this bill (answer, replay, lookup or give-up `used`): end it, and only it, then open the bill. */
   const issued = (inv: Invoice, op: Pending, earlier = false) => {
     void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'invoices'] });
     void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'clinic-appointments'] });
-    if (!owns(op)) return;
+    if (earlier ? !ownsTheKey(op) : !owns(op)) return;
     resolveStored(memory, slot, op.requestKey);
     const requestKey = op.requestKey;
     setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
@@ -209,6 +215,15 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
       // Q14: another bill was issued for the appointment meanwhile: the desk rows show it once read again.
       if (err instanceof ApiError && err.code === 'APPOINTMENT_ALREADY_BILLED') void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'clinic-appointments'] });
       if (!stillCurrent(memory.get<Pending>(slot), attempt)) return;
+      // WQ11b: the key was given up (e.g. in another tab, or on a page left earlier): no bill was or can ever be issued
+      // with it, whatever attempt this is. It settles, and the form opens again.
+      if (wasAbandoned(err)) {
+        if (mounted.current) {
+          setPending(undefined);
+          setRefused('This bill was given up earlier, so it was never issued and never will be. Check the form and issue it again.');
+        } else memory.delete(slot);
+        return;
+      }
       // Customer linking is checked before anything is written; on a first attempt that refusal is definite too.
       const linkingOff = err instanceof ApiError && err.code === 'CUSTOMER_LINKING_UNAVAILABLE' && attempt.attempts === 1 && !attempt.uncertain;
       const next = linkingOff ? null : afterFailure(attempt, err, messageOf(err));
@@ -240,8 +255,8 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
           }}
           abandonWhenNotFound abandonLabel="Give up this bill"
           onDiscard={() => {
-            // Given up on the server; acts only for the attempt this panel showed, on this page.
-            if (!owns(pending)) return;
+            // Given up on the server (the server's word on this key): acts unless another bill is stored since.
+            if (!ownsTheKey(pending)) return;
             const k = pending.requestKey;
             resolveStored(memory, slot, k);
             setPendingState((cur) => (cur && cur.requestKey !== k ? cur : undefined));

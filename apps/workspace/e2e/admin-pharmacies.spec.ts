@@ -30,6 +30,8 @@ interface Backend {
   bumpBeforePut: boolean;
   /** Q15 review: the next keyed create is refused 503 INDEXES_OUTDATED (sync-indexes has not run). */
   indexesOutdated: boolean;
+  /** WQ11b: the next PUT is applied, then its answer is lost on the network. */
+  dropPut?: boolean;
 }
 
 let seq = 0;
@@ -142,6 +144,7 @@ async function mockBackend(page: Page, opts: { many?: boolean } = {}): Promise<B
         }
         p.updatedAt = stamp();
         if (phoneChanged || emailChanged) b.signedOut.push(String(p._id));
+        if (b.dropPut) { b.dropPut = false; return route.abort('failed'); }
         return ok(route, p);
       }
     }
@@ -534,4 +537,105 @@ test('WQ10c: a create refused 503 INDEXES_OUTDATED stays unconfirmed with the se
   expect(sent).toHaveLength(2);
   expect(sent[1]!.body).toEqual(sent[0]!.body);
   expect(backend.pharmacies.filter((p) => p.phone === '9000000011')).toHaveLength(1);
+});
+
+// ── WQ11b review proofs, as journeys ──
+
+test('WQ11b: a Deactivate refused RECORD_CHANGED closes its confirmation and says nothing changed; no Activate is left open to click', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await page.goto(`/#/admin/pharmacies/${P2}`);
+  const status = page.getByRole('region', { name: 'Status' });
+  await status.getByRole('button', { name: 'Deactivate', exact: true }).click();
+  await expect(status.getByRole('button', { name: 'Deactivate Care Chemist' })).toBeVisible();
+  // Another admin deactivates it first.
+  const rec = backend.pharmacies.find((p) => p._id === P2)!;
+  Object.assign(rec, { isActive: false, updatedAt: stamp() });
+  await status.getByRole('button', { name: 'Deactivate Care Chemist' }).click();
+  await expect(status.getByText('Care Chemist was changed by someone else meanwhile, so nothing was changed. Check what is shown now and try again.')).toBeVisible();
+  await expect(status).toContainText('Inactive');
+  // The confirmation is gone: neither the old step nor the opposite one is open.
+  await expect(status.getByRole('group')).toHaveCount(0);
+  await expect(status.getByRole('button', { name: 'Activate Care Chemist' })).toHaveCount(0);
+  await expect(status.getByRole('button', { name: 'Activate', exact: true })).toBeVisible();
+  expect(puts(backend)).toHaveLength(1);
+  expect(rec.isActive).toBe(false);
+});
+
+test('WQ11b: a Deactivate whose answer is lost is settled by reading the pharmacy: it says it was deactivated, nothing left open', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await page.goto(`/#/admin/pharmacies/${P2}`);
+  const status = page.getByRole('region', { name: 'Status' });
+  await status.getByRole('button', { name: 'Deactivate', exact: true }).click();
+  backend.dropPut = true;
+  await status.getByRole('button', { name: 'Deactivate Care Chemist' }).click();
+  await expect(status.getByText('Care Chemist was deactivated: it can no longer sign in, and customers no longer see it.')).toBeVisible();
+  await expect(status).toContainText('Inactive');
+  await expect(status.getByRole('group')).toHaveCount(0);
+  expect(backend.pharmacies.find((p) => p._id === P2)!.isActive).toBe(false);
+  expect(puts(backend)).toHaveLength(1);
+});
+
+test('WQ11b: an open Verify confirmation closes when the pharmacy changes under it, so it is never sent on a version the admin did not see', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await page.goto(`/#/admin/pharmacies/${P2}`);
+  const status = page.getByRole('region', { name: 'Status' });
+  const reviewed = String(backend.pharmacies.find((p) => p._id === P2)!.updatedAt);
+  await status.getByRole('button', { name: 'Verify', exact: true }).click();
+  await expect(status.getByRole('button', { name: 'Verify Care Chemist' })).toBeVisible();
+  // Another admin changes the drug licence meanwhile; this admin saves a detail, which reads the pharmacy again.
+  Object.assign(backend.pharmacies.find((p) => p._id === P2)!, { drugLicenseNumber: 'DL-CHANGED-9', updatedAt: stamp() });
+  const details = page.getByRole('region', { name: 'Details' });
+  await details.getByLabel('Owner’s name (optional)').fill('Meena');
+  await details.getByRole('button', { name: 'Save details' }).click();
+  await expect(details.getByText('Saved.')).toBeVisible();
+  await expect(status.getByRole('button', { name: 'Verify Care Chemist' })).toHaveCount(0);
+  await expect(status.getByText('This changed while the confirmation was open, so nothing was done. Check what is shown now and try again.')).toBeVisible();
+  // Opened again on the version now shown, it is sent on that version.
+  await status.getByRole('button', { name: 'Verify', exact: true }).click();
+  const now = String(backend.pharmacies.find((p) => p._id === P2)!.updatedAt);
+  await status.getByRole('button', { name: 'Verify Care Chemist' }).click();
+  await expect(status.getByText('Care Chemist is verified.')).toBeVisible();
+  const verify = puts(backend).filter(([, body]) => (body as Rec).isVerified === true);
+  expect(verify).toHaveLength(1);
+  expect((verify[0]![1] as Rec).expectedUpdatedAt).toBe(now);
+  expect(now).not.toBe(reviewed);
+});
+
+test('WQ11b: an archived pharmacy is not offered Activate: it says it is archived and the tech team restores it', async ({ page }) => {
+  const backend = await mockBackend(page);
+  Object.assign(backend.pharmacies.find((p) => p._id === P3)!, { archivedAt: '2026-11-01T06:00:00.000Z', archiveReason: 'closed' });
+  await signInAdmin(page);
+  await page.goto(`/#/admin/pharmacies/${P3}`);
+  const status = page.getByRole('region', { name: 'Status' });
+  await expect(status.getByText('Old Meds is archived: it cannot sign in and customers do not see it.', { exact: false })).toBeVisible();
+  await expect(status.getByText('the tech team restores it', { exact: false })).toBeVisible();
+  await expect(status.getByRole('button', { name: 'Activate', exact: true })).toHaveCount(0);
+  await expect(page.getByText('can sign in again')).toHaveCount(0);
+  expect(puts(backend)).toHaveLength(0);
+});
+
+test('WQ11b: a create answered after the admin left and came back: "Give up this create" opens the pharmacy the server says it made', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await nav(page).getByRole('link', { name: 'Pharmacies' }).click();
+  await page.getByRole('link', { name: 'Add a pharmacy' }).click();
+  await fillNew(page, 'Nova Meds', '9000000099');
+  backend.slowCreate = 2500;
+  await page.getByRole('button', { name: 'Add pharmacy' }).click();
+  // Leave while the create is on its way, and come back.
+  await page.getByRole('link', { name: 'Back to pharmacies' }).click();
+  await expect(page.getByRole('heading', { name: 'Pharmacies', level: 1 })).toBeVisible();
+  await page.getByRole('link', { name: 'Add a pharmacy' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed pharmacy' });
+  await expect(panel).toBeVisible();
+  // The first page's answer arrives (201) and settles the stored create; the page on screen still shows it.
+  await expect.poll(() => backend.pharmacies.some((p) => p.name === 'Nova Meds')).toBe(true);
+  await expect.poll(() => page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.includes('pharmacy-create')).length), { timeout: 10_000 }).toBe(0);
+  await panel.getByRole('button', { name: 'Give up this create' }).click();
+  await expect(page.getByRole('heading', { name: 'Nova Meds', level: 1 })).toBeVisible();
+  expect(posts(backend)).toHaveLength(1);
+  expect(backend.pharmacies.filter((p) => p.name === 'Nova Meds')).toHaveLength(1);
 });

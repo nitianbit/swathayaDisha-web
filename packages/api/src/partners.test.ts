@@ -3,6 +3,7 @@ import { authApi, partnerSelectionOf } from './auth.ts';
 import {
   ADMIN_ACTOR, ALL_PARTNER_PERMISSIONS, canAddOwner, canChangeBranches, canEditEmail, canEditPermissions, isEmailInUse, memberEmail, canEditProfile, canReopenBranches, grantablePermissions, holdsAny, partnerAdminApi,
   partnerWorkspaceApi, partnerWorkspaceBase, removalBlock, scopeProblem, type PartnerActorView,
+  canGiveEmail, DOCTOR_MEMBER_REMOVAL, GST_STATE_CODE_PATTERN, isInvalidBranchIds, isOwnerEmailAdminOnly, isUseDoctorUnlink,
 } from './partners.ts';
 
 const P = 'a1'.repeat(12);
@@ -196,6 +197,16 @@ describe('partner rules mirrored from the backend service', () => {
     expect(removalBlock(ADMIN_ACTOR, { _id: M, role: 'staff' }, 1)).toBeNull();
   });
 
+  it('WQ11b/Q16b: a clinic doctor’s membership is never removed as staff (it is removed on Doctors, 409 USE_DOCTOR_UNLINK)', () => {
+    const manager: PartnerActorView = { role: 'staff', permissions: ['staff.manage'], branchIds: [], memberId: 'a'.repeat(24) };
+    const doctor = { _id: 'b'.repeat(24), role: 'staff' as const, doctorId: 'd'.repeat(24) };
+    expect(removalBlock(manager, doctor, 1)).toBe(DOCTOR_MEMBER_REMOVAL);
+    expect(removalBlock(owner, doctor, 1)).toBe(DOCTOR_MEMBER_REMOVAL);
+    expect(removalBlock(ADMIN_ACTOR, doctor, 1)).toBe(DOCTOR_MEMBER_REMOVAL);
+    expect(isUseDoctorUnlink(new ApiError(409, 'x', 'USE_DOCTOR_UNLINK'))).toBe(true);
+    expect(isUseDoctorUnlink(new ApiError(409, 'x', 'LAST_OWNER'))).toBe(false);
+  });
+
   it('Q8: profile edits are for owners; branch access not for owners or yourself; reopening needs partner-wide branch managers', () => {
     expect(canEditProfile(owner)).toBe(true);
     expect(canEditProfile(staff)).toBe(false);
@@ -215,6 +226,29 @@ describe('partner rules mirrored from the backend service', () => {
     expect(scopeProblem(staff, [])).toBe('Choose at least one of your branches.');
     expect(scopeProblem(staff, ['f6'.repeat(12)])).toBe('You can only give access to your own branches.');
     expect(scopeProblem(staff, [B])).toBeNull();
+  });
+
+  it('WQ11b: a branch known to be closed is refused for every actor (validateBranchIds: 400 INVALID_BRANCH_IDS)', () => {
+    const closed = new Set(['c9'.repeat(12)]);
+    expect(scopeProblem(owner, ['c9'.repeat(12)], closed)).toMatch(/closed/);
+    expect(scopeProblem(wideStaff, [B, 'c9'.repeat(12)], closed)).toMatch(/closed/);
+    expect(scopeProblem(owner, [B], closed)).toBeNull();
+    expect(isInvalidBranchIds(new ApiError(400, 'x', 'INVALID_BRANCH_IDS'))).toBe(true);
+  });
+
+  it('WQ11b: a branch state code is the two-digit GST state code', () => {
+    for (const ok of ['01', '29', '38', '97']) expect(GST_STATE_CODE_PATTERN.test(ok)).toBe(true);
+    for (const bad of ['', '1', '00', '39', '290', 'KA', ' 29']) expect(GST_STATE_CODE_PATTERN.test(bad)).toBe(false);
+  });
+
+  it('Q16b: a branch create may carry a request key (exactly once per partner and key)', async () => {
+    const { client, calls } = recorder();
+    const ws = partnerWorkspaceApi(client, { kind: 'member' });
+    const body = { name: 'Jayanagar', phone: '9000000020', address: { line1: '4th Block', city: 'Bengaluru', state: 'Karnataka', stateCode: '29', pincode: '560011' } };
+    await ws.createBranch(body, 'key-12345678');
+    await ws.createBranch(body);
+    expect(calls.map((c) => c.body)).toEqual([{ ...body, requestKey: 'key-12345678' }, body]);
+    expect(() => ws.createBranch(body, 'bad key')).toThrow('Invalid request key');
   });
 });
 
@@ -245,6 +279,18 @@ describe('WQ9 member email', () => {
     expect(canEditEmail({ role: 'owner' }, { isActive: true })).toBe(true);
     expect(canEditEmail(ADMIN_ACTOR, { isActive: true })).toBe(true);
     expect(canEditEmail(ADMIN_ACTOR, { isActive: false })).toBe(false);
+  });
+
+  it('Q16b: an owner’s sign-in email is changed by an admin only; a new owner gets one from an admin only', () => {
+    expect(canEditEmail({ role: 'owner' }, { isActive: true, role: 'owner' })).toBe(false);
+    expect(canEditEmail({ role: 'owner' }, { isActive: true, role: 'staff' })).toBe(true);
+    expect(canEditEmail(ADMIN_ACTOR, { isActive: true, role: 'owner' }, true)).toBe(true);
+    expect(canGiveEmail({ role: 'owner' })).toBe(true);
+    expect(canGiveEmail({ role: 'owner' }, 'owner')).toBe(false);
+    expect(canGiveEmail(ADMIN_ACTOR, 'owner', true)).toBe(true);
+    expect(canGiveEmail({ role: 'staff' }, 'staff')).toBe(false);
+    expect(isOwnerEmailAdminOnly(new ApiError(403, 'x', 'OWNER_EMAIL_ADMIN_ONLY'))).toBe(true);
+    expect(isOwnerEmailAdminOnly(new ApiError(403, 'x', 'OWNER_REQUIRED'))).toBe(false);
   });
 
   it('recognises 409 EMAIL_IN_USE only', () => {

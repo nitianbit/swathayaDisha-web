@@ -9,7 +9,7 @@ import {
 import { Alert, Button, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
-import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp } from '../../requests.ts';
+import { afterFailure, beginAttempt, newRequestKey, ownsKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { useAdminScope } from './adminScope.ts';
@@ -65,8 +65,12 @@ function NewPharmacy({ identity, scopeKey }: { identity: string; scopeKey: reado
     if (p) memory.set(slot, p); else memory.delete(slot);
     if (live.current) setPendingState(p);
   };
-  /** The stored creation is still exactly `p` (same key, same attempt) and this page is on screen. */
-  const owns = (p: Pending) => live.current && stillCurrent(memory.get<Pending>(slot), p);
+  /**
+   * WQ11b: an answer about the key itself (a give-up's `used`/`abandoned`, a by-key lookup) settles what this page shows
+   * when the stored creation is this key or is gone: after leaving mid-send and coming back, the first page's late answer
+   * removes the stored creation while this page still shows it (and "Give up" must not then do nothing).
+   */
+  const ownsTheKey = (p: Pending) => live.current && ownsKey(memory.get<Pending>(slot), p.requestKey);
   /** Ends the stored creation `requestKey`, and only it. */
   const settle = (requestKey: string) => {
     resolveStored(memory, slot, requestKey);
@@ -86,7 +90,7 @@ function NewPharmacy({ identity, scopeKey }: { identity: string; scopeKey: reado
   });
   useEffect(() => {
     // Only for the restored creation this page shows (a cached answer for another key or a newer state is ignored).
-    if (restoredKey && lookup.data && pending?.requestKey === restoredKey && owns(pending)) {
+    if (restoredKey && lookup.data && pending?.requestKey === restoredKey && ownsTheKey(pending)) {
       setFound(lookup.data);
       settle(restoredKey);
     }
@@ -136,8 +140,9 @@ function NewPharmacy({ identity, scopeKey }: { identity: string; scopeKey: reado
     setError(null); setNotice(null);
     try {
       const r = await admin.abandonCreate(p.requestKey);
-      // Left page, or a newer resend of the same key started meanwhile: this answer settles and opens nothing.
-      if (!owns(p)) return;
+      // Left page, or another creation stored since: this answer settles and opens nothing. (The same key settled by a
+      // page left earlier is still this page's to show: the server's word on the key decides.)
+      if (!ownsTheKey(p)) return;
       settle(p.requestKey);
       if (r.state === 'used') {
         if (r.pharmacy) { await open(r.pharmacy._id); return; }
@@ -147,7 +152,7 @@ function NewPharmacy({ identity, scopeKey }: { identity: string; scopeKey: reado
       if (p.restored) setForm(EMPTY_PHARMACY_FORM);
       setNotice('Given up: nothing was created, and that request can never create a pharmacy. You can change the form and add it again.');
     } catch (err) {
-      if (owns(p)) setError(messageOf(err));
+      if (ownsTheKey(p)) setError(messageOf(err));
     }
   });
 

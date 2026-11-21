@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  addDays, capacityProblem, deriveTemplate, holdsAny, istDateOf, LAB_VISIT_MODE_LABEL, manualSlotProblems, MAX_WINDOWS_PER_DAY,
-  mondayOf, reopenable, ROLLING_DAYS, SLOT_CLOSURE_LABEL, SLOT_SEATS_MAX, slotTimesFor, TEMPLATE_WEEKDAYS, templateProblems, WEEKDAYS,
-  type Branch, type LabSlot, type SlotTemplateInput, type SlotWindow, type VisitMode, type Weekday,
+  addDays, capacityProblem, holdsAny, istDateOf, isTemplateChanged, LAB_VISIT_MODE_LABEL, manualSlotProblems, MAX_WINDOWS_PER_DAY,
+  mondayOf, reopenable, ROLLING_DAYS, SLOT_CLOSURE_LABEL, SLOT_SEATS_MAX, slotTimesFor, templateInput, TEMPLATE_WEEKDAYS, templateProblems, WEEKDAYS,
+  type Branch, type LabSlot, type SlotTemplate, type SlotTemplateInput, type SlotWindow, type TemplateVersion, type VisitMode, type Weekday,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
@@ -332,54 +332,71 @@ const fromDraft = (d: TemplateDraft): SlotTemplateInput => ({
   days: Object.fromEntries(TEMPLATE_WEEKDAYS.map((day) => [day, d[day].map((w) => ({ start: w.start, end: w.end }))])),
 });
 
-type Basis = { template: SlotTemplateInput; source: 'slots' | 'hours' | 'none' };
+type Basis = { template: SlotTemplateInput; source: 'saved' | 'hours' | 'none'; version: TemplateVersion };
 /**
- * The server cannot return the saved template, so the editor starts from the slots it generated (next two weeks), else
- * from the branch's opening hours, else from nothing.
+ * WQ11b: the editor starts from the SAVED template (Q11 `GET .../slot-templates/:visitMode`), and its version
+ * (`updatedAt`) fences the save. With no template yet it starts from the branch's opening hours, else from nothing
+ * (version null: a template saved by someone else in between is refused too).
  */
-function basisOf(slots: readonly LabSlot[] | undefined, branch: Branch): Basis {
-  const derived = deriveTemplate(slots ?? []);
-  if (derived) return { template: derived, source: 'slots' };
+function basisOf(saved: SlotTemplate | null, branch: Branch): Basis {
+  if (saved) return { template: templateInput(saved), source: 'saved', version: saved.updatedAt ?? null };
   const days = Object.fromEntries(Object.entries(branch.hours ?? {}).filter(([, h]) => h?.open && h?.close).map(([d, h]) => [d, [{ start: h!.open, end: h!.close }]]));
-  return Object.keys(days).length ? { template: { slotMinutes: 30, capacity: 1, days }, source: 'hours' } : { template: { slotMinutes: 30, capacity: 1, days: {} }, source: 'none' };
+  return Object.keys(days).length
+    ? { template: { slotMinutes: 30, capacity: 1, days }, source: 'hours', version: null }
+    : { template: { slotMinutes: 30, capacity: 1, days: {} }, source: 'none', version: null };
 }
+
+/** Whether two templates are the same (the server keeps exactly what is sent). */
+const sameTemplate = (a: SlotTemplateInput, b: SlotTemplateInput) => JSON.stringify(toDraft(a)) === JSON.stringify(toDraft(b));
+
+export const TEMPLATE_CHANGED_MESSAGE = 'Someone else saved the weekly template while you were editing, so nothing was saved. The form now shows what is saved; check it and save again.';
 
 function TemplateEditor({ ctx, branch, mode, where, onClose, onSaved }: {
   ctx: ScopeContext; branch: Branch; mode: VisitMode; where: string; onClose: () => void; onSaved: (message: string) => void;
 }) {
-  const from = istDateOf(new Date());
-  const key = slotsKey(ctx, branch._id, mode, from, addDays(from, 13));
-  const read = () => ctx.labs.slots({ branchId: branch._id, visitMode: mode, from, to: addDays(from, 13) });
-  const basis = useQuery({ queryKey: key, queryFn: read });
+  const key = [...ctx.key, 'slot-template', branch._id, mode];
+  const read = () => ctx.labs.template(branch._id, mode);
+  const saved = useQuery({ queryKey: key, queryFn: read });
   return (
     <section className="ws-section" aria-labelledby="tpl-h">
       <h2 id="tpl-h">Weekly template: {where}</h2>
-      {basis.isPending ? <Loading label="Reading the current slots…" />
-        : basis.isError ? <ErrorState message={messageOf(basis.error)} onRetry={() => void basis.refetch()} />
-        : <TemplateForm ctx={ctx} branch={branch} mode={mode} where={where} slots={basis.data} reread={read} basisKey={key} onClose={onClose} onSaved={onSaved} />}
+      {saved.isPending ? <Loading label="Reading the saved template…" />
+        : saved.isError ? <ErrorState message={messageOf(saved.error)} onRetry={() => void saved.refetch()} />
+        : <TemplateForm ctx={ctx} branch={branch} mode={mode} where={where} saved={saved.data} reread={read} templateKey={key} onClose={onClose} onSaved={onSaved} />}
     </section>
   );
 }
 
-function TemplateForm({ ctx, branch, mode, where, slots, reread, basisKey, onClose, onSaved }: {
-  ctx: ScopeContext; branch: Branch; mode: VisitMode; where: string; slots: LabSlot[]; reread: () => Promise<LabSlot[]>;
-  basisKey: readonly unknown[]; onClose: () => void; onSaved: (message: string) => void;
+function TemplateForm({ ctx, branch, mode, where, saved, reread, templateKey, onClose, onSaved }: {
+  ctx: ScopeContext; branch: Branch; mode: VisitMode; where: string; saved: SlotTemplate | null; reread: () => Promise<SlotTemplate | null>;
+  templateKey: readonly unknown[]; onClose: () => void; onSaved: (message: string) => void;
 }) {
   const queryClient = useQueryClient();
-  const basis = useMemo(() => basisOf(slots, branch), [slots, branch]);
+  const basis = useMemo(() => basisOf(saved, branch), [saved, branch]);
   const d = useDraft(() => toDraft(basis.template));
   const { rebaseTo } = d;
+  /** The saved version the form's baseline belongs to (sent as `expectedUpdatedAt`). */
+  const baseVersion = useRef<TemplateVersion>(basis.version);
   const [errors, setErrors] = useState<Partial<Record<keyof TemplateDraft, string>>>({});
   const [stale, setStale] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const serverValue = JSON.stringify(toDraft(basis.template));
+  const serverVersion = basis.version;
   // A refetch moves untouched fields along; a field changed here and there is reset with a notice.
   useEffect(() => {
     const c = rebaseTo(JSON.parse(serverValue) as TemplateDraft);
+    baseVersion.current = serverVersion;
     if (c.length) { setStale(staleMessage(c.map((k) => DRAFT_LABEL[k]))); setConfirming(false); }
-  }, [serverValue, rebaseTo]);
+  }, [serverValue, serverVersion, rebaseTo]);
+  /** Reads the saved template now (and shows it), moving the form onto it; the conflicting fields, if any. */
+  const rebaseOnSaved = async () => {
+    const fresh = await queryClient.fetchQuery({ queryKey: templateKey, queryFn: reread, staleTime: 0 });
+    const b = basisOf(fresh, branch);
+    baseVersion.current = b.version;
+    return { fresh, conflicts: rebaseTo(toDraft(b.template)) };
+  };
 
   const t = d.draft;
   const body = fromDraft(t);
@@ -401,21 +418,41 @@ function TemplateForm({ ctx, branch, mode, where, slots, reread, basisKey, onClo
   async function save() {
     setBusy(true);
     setFailure(null);
+    let sent: SlotTemplateInput | null = null;
     try {
       // Read again right before replacing: a change made elsewhere since the form opened is shown, not overwritten.
-      const fresh = await queryClient.fetchQuery({ queryKey: basisKey, queryFn: reread, staleTime: 0 });
-      const conflicts = rebaseTo(toDraft(basisOf(fresh, branch).template));
+      const { conflicts } = await rebaseOnSaved();
       if (conflicts.length) { setStale(staleMessage(conflicts.map((k) => DRAFT_LABEL[k]))); setConfirming(false); return; }
       if (!check()) { setConfirming(false); return; }
-      const r = await ctx.labs.saveTemplate(branch._id, mode, fromDraft(d.current().draft));
+      sent = fromDraft(d.current().draft);
+      // Q11: named by the version just read; another save in between is refused (409 TEMPLATE_CHANGED), never overwritten.
+      const r = await ctx.labs.saveTemplate(branch._id, mode, sent, baseVersion.current);
       const x = r.expansion;
       onSaved(`Weekly template saved for ${where}. Next ${ROLLING_DAYS} days: ${x.inserted} slots added, ${x.updated} changed, ${x.closed} closed, ${x.reopened} reopened.`);
     } catch (err) {
-      // Saving the same template again is safe (the server sets it; it does not add to it).
-      setFailure(definitelyNotRecorded(err) ? `Not saved: ${messageOf(err)}` : `${messageOf(err)} It may have been saved; saving the same template again is safe.`);
+      if (isTemplateChanged(err)) {
+        // Read the template as saved now and show it: what someone else changed is never overwritten unseen.
+        setConfirming(false);
+        try {
+          const { conflicts } = await rebaseOnSaved();
+          setStale(conflicts.length ? staleMessage(conflicts.map((k) => DRAFT_LABEL[k])) : TEMPLATE_CHANGED_MESSAGE);
+        } catch (e) { setFailure(`Not saved: ${TEMPLATE_CHANGED_MESSAGE} It could not be read again: ${messageOf(e)}`); }
+        return;
+      }
+      if (definitelyNotRecorded(err) || !sent) { setFailure(`Not saved: ${messageOf(err)}`); return; }
+      // The answer was lost: the template as saved now says whether it went through.
+      try {
+        const now = await queryClient.fetchQuery({ queryKey: templateKey, queryFn: reread, staleTime: 0 });
+        if (now && sameTemplate(templateInput(now), sent)) {
+          onSaved(`Weekly template saved for ${where} (its answer was lost; the saved template is what you sent). The slots of the next ${ROLLING_DAYS} days follow it.`);
+          return;
+        }
+      } catch { /* still unknown: said below */ }
+      setFailure(`${messageOf(err)} It is not known whether the template was saved. Check the slots, then review and save again if needed.`);
     } finally {
       setBusy(false);
       void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'slots'] });
+      void queryClient.invalidateQueries({ queryKey: templateKey });
     }
   }
 
@@ -425,9 +462,9 @@ function TemplateForm({ ctx, branch, mode, where, slots, reread, basisKey, onClo
   return (
     <form className="rx-form" noValidate onSubmit={review} aria-label="Weekly template">
       <p className="ws-muted">
-        {basis.source === 'slots' ? 'Filled in from the slots this template generated for the next two weeks (the server does not return the saved template). Check every day before saving.'
-          : basis.source === 'hours' ? 'No generated slots were found, so this starts from the branch’s opening hours.'
-          : 'No generated slots or opening hours were found: add the times for each day.'}
+        {basis.source === 'saved' ? 'This is the saved weekly template.'
+          : basis.source === 'hours' ? 'There is no weekly template yet, so this starts from the branch’s opening hours.'
+          : 'There is no weekly template yet and no opening hours: add the times for each day.'}
         {' '}Times are India time. Saving replaces the whole template.
       </p>
       <div className="rx-form-row">

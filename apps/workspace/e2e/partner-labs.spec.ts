@@ -43,6 +43,14 @@ interface Backend {
   live: boolean;
   /** WQ10b: every partner's members (a test may change them). */
   members?: Record<string, Rec[]>;
+  /** Q11: saved weekly templates by `<branchId>:<mode>` (GET answers null when there is none). */
+  templates: Record<string, Rec>;
+  /** WQ11b: the next no-show move never reaches the server (the connection drops before anything is done). */
+  dropNextMove?: boolean;
+  /** WQ11b: someone else saves the template right before the next template save is decided. */
+  templateSavedElsewhere?: Rec;
+  /** WQ11b: someone else acts on this booking right before the next step on it is decided (its status version moves). */
+  bumpBeforeStep?: string;
 }
 
 const istInstant = (date: string, hhmm: string) => new Date(Date.parse(`${date}T${hhmm}:00+05:30`)).toISOString();
@@ -115,7 +123,15 @@ const staff = (...permissions: string[]): Me => ({ _id: STAFF, partnerId: LAB, n
 
 async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
-  const b: Backend = { calls: [], me, slots: seedSlots(), bookings: seedBookings(), live: false };
+  // The saved weekly templates the seeded slots came from (Mon–Sat 09:00–11:00, 30 minutes, 2 seats).
+  const week = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat'].map((d) => [d, [{ start: '09:00', end: '11:00' }]]));
+  const template = (partnerId: string, branchId: string, visitMode: Mode): Rec => ({ _id: `f${visitMode === 'home' ? 1 : 2}`.repeat(12), partnerId, branchId, visitMode,
+    isActive: true, slotMinutes: 30, capacity: 2, days: week, updatedAt: '2026-11-10T05:00:00.000Z' });
+  const b: Backend = { calls: [], me, slots: seedSlots(), bookings: seedBookings(), live: false, templates: {
+    [`${BR1}:home`]: template(LAB, BR1, 'home'), [`${BR1}:lab`]: template(LAB, BR1, 'lab'), [`${BR2}:lab`]: template(LAB2, BR2, 'lab'),
+  } };
+  let stamp = 0;
+  const nextStamp = () => new Date(Date.UTC(2026, 10, 17, 4, 0, ++stamp)).toISOString();
   const partners: Rec[] = [
     { _id: LAB, kind: 'lab', name: 'City Lab', contact: { phone: '9000000000' }, verification: { state: 'verified' }, taxRegime: 'unregistered', invoiceSeries: { prefix: 'LB' }, activeOwnerCount: 1, isActive: true },
     { _id: LAB2, kind: 'lab', name: 'Lake Lab', contact: { phone: '9000000009' }, verification: { state: 'verified' }, taxRegime: 'unregistered', invoiceSeries: { prefix: 'LK' }, activeOwnerCount: 1, isActive: true },
@@ -161,7 +177,8 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
     }
     if (path === '/auth/session/logout') { b.live = false; return ok(route, {}); }
     if (path.startsWith('/auth/session')) return ok(route, {});
-    const files = multipart ? [...(req.postDataBuffer()?.toString('latin1') ?? '').matchAll(/name="files"; filename="([^"]+)"/g)].map((m) => m[1]!) : undefined;
+    const raw = multipart ? (req.postDataBuffer()?.toString('latin1') ?? '') : '';
+    const files = multipart ? [...raw.matchAll(/name="files"; filename="([^"]+)"/g)].map((m) => m[1]!) : undefined;
     b.calls.push({ method, path: `${path}${url.search}`, body, auth: req.headers().authorization, ...(files ? { files } : {}) });
     if (path === '/auth/partner/send' || path === '/auth/admin/send') return ok(route, undefined);
     if (path === '/auth/partner/verify') { b.live = true; return ok(route, { token: 't1', expiresIn: 900, user: {} }); }
@@ -190,11 +207,31 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       return route.fulfill({ status: 200, contentType: 'application/octet-stream', body: '%PDF-1.4\n%mock report\n' });
     }
 
+    // Q11 `adminList` (services/labBookings.ts): newest booked first, limit = min(max(limit || 50, 1), 200), page || 1,
+    // answered with { page, limit, total, totalPages } (controller adminListLabBookings).
     if (path === '/partner-workspace/admin/lab-bookings') {
       if (!admin) return fail(route, 403, 'FORBIDDEN', 'Admin access is required');
       const pid = url.searchParams.get('partnerId');
       const st = url.searchParams.get('status');
-      return ok(route, b.bookings.filter((x) => (!pid || x.partnerId === pid) && (!st || x.status === st)));
+      const all = b.bookings.filter((x) => (!pid || x.partnerId === pid) && (!st || x.status === st))
+        .sort((x, y) => Date.parse(y.createdAt as string) - Date.parse(x.createdAt as string) || String(y._id).localeCompare(String(x._id)));
+      const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 200);
+      const pg = Math.max(Number(url.searchParams.get('page')) || 1, 1);
+      return json(route, 200, { success: true, data: all.slice((pg - 1) * limit, pg * limit),
+        pagination: { page: pg, limit, total: all.length, totalPages: Math.max(1, Math.ceil(all.length / limit)) } });
+    }
+    // Q16a `adminCancelMovedNoShow`: a confirmed booking moved after a no-show, refund chosen by the admin.
+    const cancelNoShow = /^\/partner-workspace\/admin\/lab-bookings\/([0-9a-f]{24})\/cancel-no-show$/.exec(path);
+    if (cancelNoShow && method === 'POST') {
+      if (!admin) return fail(route, 403, 'FORBIDDEN', 'Admin access is required');
+      const bk = b.bookings.find((x) => x._id === cancelNoShow[1]);
+      if (!bk) return fail(route, 404, 'LAB_BOOKING_NOT_FOUND', 'Booking not found');
+      const x = body as { reason: string; refund: boolean };
+      if (bk.status !== 'confirmed') return fail(route, 409, 'LAB_BOOKING_STATE_CONFLICT', `A ${bk.status} booking cannot be cancelled`);
+      if (!((bk.noShows as Rec[] | undefined)?.length)) return fail(route, 409, 'BOOKING_NOT_MOVED_NO_SHOW', 'This booking was not moved after a no-show; use the ordinary cancellation');
+      Object.assign(bk, { status: 'cancelled', statusVersion: (bk.statusVersion as number) + 1, ...(x.refund ? { paymentStatus: 'refunded' } : {}),
+        cancellation: { reason: 'admin_no_show', note: x.reason, by: `admin:${ADMIN}`, byKind: 'admin', at: NOW.toISOString(), refund: x.refund } });
+      return ok(route, { booking: bk, refunded: x.refund ? 450 : 0 });
     }
     if (path === '/partner-workspace/admin' && admin) {
       const kind = url.searchParams.get('kind');
@@ -238,9 +275,21 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
         .sort((x, y) => Date.parse(x.startsAt) - Date.parse(y.startsAt)));
     }
     const tpl = /^\/branches\/([0-9a-f]{24})\/slot-templates\/(home|lab)$/.exec(sub);
+    // Q11 `getSlotTemplate`: the saved template, or null.
+    if (tpl && method === 'GET') {
+      if (!can('slots.manage', 'bookings.view', 'bookings.manage')) return deny();
+      return ok(route, b.templates[`${tpl[1]}:${tpl[2]}`] ?? null);
+    }
     if (tpl && method === 'PUT') {
       if (!can('slots.manage')) return deny();
-      const t = body as { slotMinutes: number; capacity: number; days: Record<string, { start: string; end: string }[]> };
+      const tkey = `${tpl[1]}:${tpl[2]}`;
+      if (b.templateSavedElsewhere) { b.templates[tkey] = { ...b.templateSavedElsewhere, updatedAt: nextStamp() }; b.templateSavedElsewhere = undefined; }
+      // Q11 `saveSlotTemplate`: `expectedUpdatedAt` (null = started from no template) must be the saved one's.
+      const { expectedUpdatedAt, ...t } = body as { slotMinutes: number; capacity: number; days: Record<string, { start: string; end: string }[]>; expectedUpdatedAt?: string | null };
+      if (expectedUpdatedAt !== undefined && (b.templates[tkey]?.updatedAt ?? null) !== expectedUpdatedAt) {
+        return fail(route, 409, 'TEMPLATE_CHANGED', 'The weekly template changed since you opened it; review it again');
+      }
+      b.templates[tkey] = { _id: 'f0'.repeat(12), partnerId: pid, branchId: tpl[1], visitMode: tpl[2], isActive: true, ...t, updatedAt: nextStamp() };
       const x = { inserted: 0, updated: 0, closed: 0, reopened: 0 };
       for (let i = 0; i < 30; i++) {
         const date = plus('2026-11-17', i);
@@ -250,7 +299,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
         }
       }
       await held();
-      return ok(route, { template: { _id: 'f0'.repeat(12), partnerId: pid, branchId: tpl[1], visitMode: tpl[2], isActive: true, ...t }, expansion: x });
+      return ok(route, { template: b.templates[tkey], expansion: x });
     }
     if (sub === '/slots' && method === 'POST') {
       if (!can('slots.manage')) return deny();
@@ -280,12 +329,25 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
 
     // ── lab bookings ──
     const readers = ['bookings.view', 'bookings.manage', 'reports.upload', 'reports.release'];
+    // Q11 `listForPartnerPage`: soonest slot first (then id), limit = min(max(limit || 50, 1), 200), an exact cursor
+    // `<ms>_<id>`, answered with { total, nextCursor } (controller listLabBookings).
     if (sub === '/lab-bookings' && method === 'GET') {
       if (!can(...readers)) return deny();
       const q = Object.fromEntries(url.searchParams);
-      const slotDate = (x: Rec) => (x.slot as Rec).date as string;
-      return ok(route, b.bookings.filter((x) => x.partnerId === pid && (!q.status || x.status === q.status) && (!q.branchId || x.branchId === q.branchId)
-        && (!q.from || slotDate(x) >= q.from) && (!q.to || slotDate(x) <= q.to)));
+      const slotOf = (x: Rec) => x.slot as { date: string; startsAt: string };
+      const all = b.bookings.filter((x) => x.partnerId === pid && (!q.status || x.status === q.status) && (!q.branchId || x.branchId === q.branchId)
+        && (!q.from || slotOf(x).date >= q.from) && (!q.to || slotOf(x).date <= q.to))
+        .sort((x, y) => Date.parse(slotOf(x).startsAt) - Date.parse(slotOf(y).startsAt) || String(x._id).localeCompare(String(y._id)));
+      let rest = all;
+      if (q.cursor) {
+        const [ms, cid] = q.cursor.split('_');
+        rest = all.filter((x) => Date.parse(slotOf(x).startsAt) > Number(ms) || (Date.parse(slotOf(x).startsAt) === Number(ms) && String(x._id) > cid!));
+      }
+      const limit = Math.min(Math.max(Number(q.limit) || 50, 1), 200);
+      const items = rest.slice(0, limit);
+      const last = items[items.length - 1];
+      return json(route, 200, { success: true, data: items,
+        pagination: { total: all.length, nextCursor: rest.length > limit && last ? `${Date.parse(slotOf(last).startsAt)}_${String(last._id)}` : null } });
     }
     const one = /^\/lab-bookings\/([0-9a-f]{24})(?:\/(.+))?$/.exec(sub);
     if (one) {
@@ -293,6 +355,10 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       if (!bk) return fail(route, 404, 'LAB_BOOKING_NOT_FOUND', 'Booking not found');
       const cmd = one[2];
       if (!cmd) return can(...readers) ? ok(route, bk) : deny();
+      if (b.bumpBeforeStep === bk._id && cmd !== 'reports') { b.bumpBeforeStep = undefined; bk.statusVersion = (bk.statusVersion as number) + 1; }
+      // Q11 `assertVersion`: a step naming another status version than the booking's is refused.
+      const ev = (body as { expectedVersion?: number } | null)?.expectedVersion;
+      if (cmd !== 'reschedule-no-show' && ev !== undefined && ev !== bk.statusVersion) return fail(route, 409, 'LAB_BOOKING_CHANGED', 'The booking changed since you opened it; review it again');
       const step = (from: string[], to: string, set: Rec = {}) => {
         if (!from.includes(bk.status as string)) return `Not allowed while the booking is ${bk.status}`;
         Object.assign(bk, { status: to, statusVersion: (bk.statusVersion as number) + 1, ...set });
@@ -302,8 +368,18 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       let refused: string | null = null;
       if (cmd === 'reports') {
         if (!can('reports.upload')) return deny();
+        // Q11 `?requestKey=`: a key already attached answers the booking (replayed), never a second copy.
+        const key = url.searchParams.get('requestKey');
+        const keys = ((rep as Rec).uploadKeys as string[] | undefined) ?? [];
+        if (key && keys.includes(key)) return ok(route, { ...bk, replayed: true });
         if (!['processing', 'report_ready'].includes(bk.status as string)) return fail(route, 409, 'LAB_BOOKING_STATE_CONFLICT', 'Reports can be uploaded while the sample is being processed');
+        // FileService/formidable: 10 MB for the whole request (`maxTotalFileSize` defaults to `maxFileSize`); the error is
+        // not an AppError, so it is answered 500 UPLOAD_FAILED with formidable's message, nothing attached.
+        if (raw.length > 10 * 1024 * 1024) {
+          return fail(route, 500, 'UPLOAD_FAILED', `options.maxTotalFileSize (10485760 bytes) exceeded, received ${raw.length} bytes of file data`);
+        }
         rep.draftFiles.push(...(files ?? []).map((f) => file(bk._id as string, f)));
+        if (key) (rep as Rec).uploadKeys = [...keys, key];
         await held();
         return ok(route, bk, 201);
       }
@@ -328,6 +404,7 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
       const now = NOW.toISOString();
       // Q14: a no-show moved once (same price, no refund), keyed, fenced by the status version.
       if (cmd === 'reschedule-no-show') {
+        if (b.dropNextMove) { b.dropNextMove = false; return route.abort('failed'); }
         const x = body as { slotId: string; requestKey: string; expectedVersion?: number };
         const moves = (bk.noShows as Rec[] | undefined) ?? [];
         const prior = moves.find((n) => n.requestKey === x.requestKey);
@@ -336,7 +413,8 @@ async function mockBackend(page: Page, me: Me = owner()): Promise<Backend> {
         if (bk.status !== 'no_show') return fail(route, 409, 'BOOKING_NOT_NO_SHOW', `A ${bk.status} booking is not a no-show`);
         if (x.expectedVersion !== undefined && x.expectedVersion !== bk.statusVersion) return fail(route, 409, 'LAB_BOOKING_CHANGED', 'The booking changed meanwhile; reload and try again');
         const target = b.slots.find((y) => y._id === x.slotId);
-        if (!target || target.closed || target.booked >= target.capacity) return fail(route, 409, 'SLOT_NOT_AVAILABLE', 'That slot is no longer available; pick another');
+        // services/slots.ts `takeSeat`: a closed, full, started or holiday slot is 409 SLOT_UNAVAILABLE.
+        if (!target || target.closed || target.booked >= target.capacity) return fail(route, 409, 'SLOT_UNAVAILABLE', 'That slot is no longer available; pick another');
         target.booked++;
         const from = bk.slot as Rec;
         const to = { slotId: target._id, date: target.date, startTime: target.startTime, endTime: target.endTime, startsAt: target.startsAt };
@@ -407,7 +485,10 @@ async function signInAdmin(page: Page) {
 
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main' });
 const day = (page: Page, date: RegExp) => page.getByRole('table', { name: date });
-const writes = (b: Backend) => b.calls.filter((c) => c.method !== 'GET' && !c.path.startsWith('/auth/')).map((c) => `${c.method} ${c.path}`);
+/** Writes as `METHOD path` (a report upload's request key left out: each upload has its own). */
+const writes = (b: Backend) => b.calls.filter((c) => c.method !== 'GET' && !c.path.startsWith('/auth/'))
+  .map((c) => `${c.method} ${c.path.replace(/\?requestKey=[A-Za-z0-9_-]+$/, '')}`);
+const isUpload = (c: Call) => /\/reports(\?|$)/.test(c.path);
 
 test('slots: week view, template saved after review, one-off slot, a capacity refusal from the server, close and reopen', async ({ page }) => {
   const backend = await mockBackend(page);
@@ -446,7 +527,8 @@ test('slots: week view, template saved after review, one-off slot, a capacity re
   const put = backend.calls.find((c) => c.method === 'PUT')!;
   expect(put.path).toBe(`/partner-workspace/branches/${BR1}/slot-templates/home`);
   const w = [{ start: '09:00', end: '11:00' }];
-  expect(put.body).toEqual({ slotMinutes: 30, capacity: 3, days: { mon: w, tue: w, wed: w, thu: w, fri: w, sat: [], sun: [] } });
+  // WQ11b: named by the saved template's version the editor started from.
+  expect(put.body).toEqual({ slotMinutes: 30, capacity: 3, days: { mon: w, tue: w, wed: w, thu: w, fri: w, sat: [], sun: [] }, expectedUpdatedAt: '2026-11-10T05:00:00.000Z' });
   await expect(day(page, /21 Nov/).getByRole('row').filter({ hasText: '09:30–10:00' })).toContainText('Closed: no longer in the weekly template');
 
   // A one-off slot; the same again is refused by the server (no second slot at one time).
@@ -532,15 +614,15 @@ test('a home collection moves through its states; each step offered only when th
   await expect(page.getByText('Processing started. Reports can be uploaded now.')).toBeVisible();
 
   // Upload: only PDF/images; the drafts are not visible to the customer.
-  const input = page.getByLabel('Report files (PDF, JPEG, PNG or WebP; up to 10 MB each)');
+  const input = page.getByLabel(/^Report files/);
   await input.setInputFiles([{ name: 'notes.docx', mimeType: 'application/msword', buffer: Buffer.from('x') }]);
   await expect(page.getByText('notes.docx: only PDF, JPEG, PNG or WebP files can be uploaded.')).toBeVisible();
   await page.getByRole('button', { name: 'Upload as drafts' }).click();
-  expect(backend.calls.some((c) => c.path.endsWith('/reports'))).toBe(false);
+  expect(backend.calls.some(isUpload)).toBe(false);
   await input.setInputFiles([{ name: 'cbc.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 cbc') }]);
   await page.getByRole('button', { name: 'Upload as drafts' }).click();
   await expect(page.getByText('1 file was added as drafts. Release each one when it is checked.')).toBeVisible();
-  expect(backend.calls.find((c) => c.path.endsWith('/reports'))!.files).toEqual(['cbc.pdf']);
+  expect(backend.calls.find(isUpload)!.files).toEqual(['cbc.pdf']);
   const drafts = page.getByRole('list', { name: 'Draft reports' });
   await expect(drafts).toContainText('cbc.pdf');
 
@@ -569,8 +651,12 @@ test('a home collection moves through its states; each step offered only when th
     `POST /partner-workspace/lab-bookings/${BK1}/reports/release`,
     `POST /partner-workspace/lab-bookings/${BK1}/complete`,
   ]);
-  expect(backend.calls.find((c) => c.path.endsWith('/assign'))!.body).toEqual({ name: 'Kiran', phone: '9000000002' });
-  expect(backend.calls.find((c) => c.path.endsWith('/release'))!.body).toEqual({ file: file(BK1, 'cbc.pdf') });
+  // WQ11b: every step names the status version it was reviewed on (Q11 expectedVersion); the upload keeps the version.
+  expect(backend.calls.find((c) => c.path.endsWith('/assign'))!.body).toEqual({ name: 'Kiran', phone: '9000000002', expectedVersion: 1 });
+  expect(backend.calls.filter((c) => /\/(collect|process|complete)$/.test(c.path)).map((c) => c.body))
+    .toEqual([{ expectedVersion: 1 }, { expectedVersion: 2 }, { expectedVersion: 4 }]);
+  expect(backend.calls.find((c) => c.path.endsWith('/release'))!.body).toEqual({ file: file(BK1, 'cbc.pdf'), expectedVersion: 3 });
+  expect(backend.calls.find(isUpload)!.path).toMatch(/\?requestKey=[A-Za-z0-9_-]{8,100}$/);
   // Nothing about the patient was written to browser storage.
   expect(await page.evaluate(() => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }))).not.toMatch(/Asha|Kiran|cbc/);
 });
@@ -650,7 +736,8 @@ test('a new time is proposed from open slots with a reason; a taken slot is refu
   await expect(page.getByRole('button', { name: 'Mark visited' })).toBeDisabled();
   await expect(page.getByText('The customer has not answered the new time yet.').first()).toBeVisible();
   const proposals = backend.calls.filter((c) => c.path.endsWith('/reschedule'));
-  expect(proposals.map((c) => c.body)).toEqual([{ slotId: thu, reason: 'Analyser maintenance' }, { slotId: fri, reason: 'Analyser maintenance' }]);
+  // WQ11b: each proposal names the status version it was reviewed on.
+  expect(proposals.map((c) => c.body)).toEqual([{ slotId: thu, reason: 'Analyser maintenance', expectedVersion: 1 }, { slotId: fri, reason: 'Analyser maintenance', expectedVersion: 1 }]);
 
   await page.getByRole('button', { name: 'Reject booking' }).click();
   await expect(page.getByText(/customer’s full payment of ₹450.00 goes back to their Jansetu wallet\. This cannot be undone\./)).toBeVisible();
@@ -661,7 +748,7 @@ test('a new time is proposed from open slots with a reason; a taken slot is refu
   await expect(page.getByText('Booking rejected; the customer’s payment is back in their wallet.')).toBeVisible();
   await expect(page.getByText('Rejected by the lab: “No phlebotomist available”', { exact: false })).toBeVisible();
   await expect(page.getByText('Refunded', { exact: true }).first()).toBeVisible();
-  expect(backend.calls.find((c) => c.path.endsWith('/reject'))!.body).toEqual({ reason: 'No phlebotomist available' });
+  expect(backend.calls.find((c) => c.path.endsWith('/reject'))!.body).toEqual({ reason: 'No phlebotomist available', expectedVersion: 2 });
 });
 
 test('admin: every lab’s bookings; a release under a chosen signer; report files open from in-memory blobs', async ({ page }) => {
@@ -672,7 +759,7 @@ test('admin: every lab’s bookings; a release under a chosen signer; report fil
   await expect(page.getByRole('row').filter({ hasText: 'Asha Rao' })).toContainText('City Lab');
   await page.getByLabel('Lab').selectOption(LAB2);
   await expect(page.getByRole('row').filter({ hasText: 'Asha Rao' })).toHaveCount(0);
-  expect(backend.calls.some((c) => c.path === `/partner-workspace/admin/lab-bookings?partnerId=${LAB2}`)).toBe(true);
+  expect(backend.calls.some((c) => c.path === `/partner-workspace/admin/lab-bookings?partnerId=${LAB2}&page=1&limit=100`)).toBe(true);
   await page.getByRole('row').filter({ hasText: 'Esha K' }).getByRole('link').click();
   await expect(page.getByRole('heading', { name: 'Lab booking: Esha K' })).toBeVisible();
   await expect(page.getByText('Managing Lake Lab with owner authority.', { exact: false })).toBeVisible();
@@ -785,7 +872,7 @@ test('one step at a time: an open release waits for an upload; the page then sho
   await signInPartner(page);
   await page.goto(`/#/partner/lab-bookings/${BK3}`);
   await expect(page.getByRole('heading', { name: 'Lab booking: Chitra N' })).toBeVisible();
-  const input = page.getByLabel('Report files (PDF, JPEG, PNG or WebP; up to 10 MB each)');
+  const input = page.getByLabel(/^Report files/);
   await input.setInputFiles([{ name: 'a.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 a') }]);
   await page.getByRole('button', { name: 'Upload as drafts' }).click();
   const drafts = page.getByRole('list', { name: 'Draft reports' });
@@ -938,4 +1025,292 @@ test('WQ10b: nobody can sign a report: the release points to Staff, where an adm
   await again.getByLabel('Signed by').selectOption(PATH);
   await again.getByRole('button', { name: 'Release lipid.pdf' }).click();
   await expect(page.getByText('lipid.pdf was released to the customer.')).toBeVisible();
+});
+
+// ───────────────────────── WQ11b (pre-production review) ─────────────────────────
+
+const hex = (n: number) => n.toString(16).padStart(24, '0');
+/** Many bookings on given days (each its own slot time, so the order is plain), for the paged lists. */
+function bulk(b: Backend, from: number, count: number, days: readonly string[], o: (i: number) => Rec = () => ({})) {
+  for (let i = 0; i < count; i++) {
+    const date = days[i % days.length]!;
+    const minute = Math.floor(i / days.length);
+    const start = `${String(8 + Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
+    b.bookings.push(booking(hex(from + i), { patient: { kind: 'self', name: `Patient ${from + i}` },
+      slotSnap: { slotId: hex(9_000_000 + from + i), date, startTime: start, endTime: start, startsAt: istInstant(date, start) }, ...o(i) }));
+  }
+}
+
+test('WQ11b: the lab list starts today, soonest first, pages on with the server’s cursor and says how many there are; Past is its own view', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.bookings = [];
+  // 200 bookings of the past week and 260 from today on: the server gives at most 200 a page.
+  bulk(backend, 1000, 200, ['2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13', '2026-11-14', '2026-11-15', '2026-11-16'], () => ({ status: 'completed' }));
+  bulk(backend, 5000, 260, ['2026-11-17', '2026-11-18']);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Lab bookings' }).click();
+  const table = page.getByRole('table', { name: 'Lab bookings' });
+  await expect(page.locator('.ws-count')).toHaveText('260 bookings · showing the soonest 100');
+  await expect(table.locator('tbody tr')).toHaveCount(100);
+  await expect(table.locator('tbody tr').first()).toContainText('Patient 5000'); // today, earliest first
+  await expect(page.getByText(/Patient 1\d{3}\b/)).toHaveCount(0); // nothing from the past in this view
+  const lists = () => backend.calls.filter((c) => c.method === 'GET' && c.path.startsWith('/partner-workspace/lab-bookings?'));
+  expect(lists()[0]!.path).toBe('/partner-workspace/lab-bookings?from=2026-11-17&limit=100');
+
+  await page.getByRole('button', { name: 'Show more (160 more)' }).click();
+  await expect(table.locator('tbody tr')).toHaveCount(200);
+  await page.getByRole('button', { name: 'Show more (60 more)' }).click();
+  await expect(table.locator('tbody tr')).toHaveCount(260);
+  await expect(page.locator('.ws-count')).toHaveText('260 bookings');
+  await expect(page.getByRole('button', { name: /Show more/ })).toHaveCount(0);
+  // Each next page names the last row of the one before (exact cursor): nothing skipped or shown twice.
+  expect(lists().slice(1).map((c) => new URL(`http://x${c.path}`).searchParams.get('cursor'))).toEqual([
+    expect.stringMatching(/^\d+_[0-9a-f]{24}$/), expect.stringMatching(/^\d+_[0-9a-f]{24}$/),
+  ]);
+  const ids = await table.locator('tbody tr td:nth-child(2)').allInnerTexts();
+  expect(new Set(ids).size).toBe(260);
+
+  // Past: before today, over chosen dates (a week back by default).
+  await page.getByLabel('Past (before today)').check();
+  await expect(page.locator('.ws-count')).toHaveText('200 bookings · showing the earliest 100');
+  expect(lists().at(-1)!.path).toBe('/partner-workspace/lab-bookings?from=2026-11-10&to=2026-11-16&limit=100');
+  await expect(table).not.toContainText('Patient 5000');
+  await page.getByLabel('Slot until').fill('2026-11-18');
+  await expect(page.getByText('Choose a date before today (today and later are under Upcoming).')).toBeVisible();
+});
+
+test('WQ11b: the admin list of every lab’s bookings pages on (newest first) and says how many there are', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.bookings = [];
+  bulk(backend, 7000, 120, ['2026-11-18'], (i) => ({ partnerId: i % 2 ? LAB : LAB2, createdAt: new Date(Date.parse('2026-11-16T00:00:00Z') - i * 60_000).toISOString() }));
+  await signInAdmin(page);
+  await nav(page).getByRole('link', { name: 'Lab bookings' }).click();
+  const table = page.getByRole('table', { name: 'Lab bookings of every lab' });
+  await expect(page.locator('.ws-count')).toHaveText('120 bookings · showing the newest 100');
+  await expect(table.locator('tbody tr')).toHaveCount(100);
+  await expect(table.getByText('Patient 7100', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Show more (20 more)' }).click();
+  await expect(table.locator('tbody tr')).toHaveCount(120);
+  await expect(table.getByText('Patient 7119', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Show more/ })).toHaveCount(0);
+  expect(backend.calls.filter((c) => c.path.startsWith('/partner-workspace/admin/lab-bookings')).map((c) => c.path)).toEqual([
+    '/partner-workspace/admin/lab-bookings?page=1&limit=100', '/partner-workspace/admin/lab-bookings?page=2&limit=100',
+  ]);
+});
+
+test('WQ11b: a lab step names the version it was reviewed on; when the booking changed meanwhile nothing is done and it is read again', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await page.goto(`/#/partner/lab-bookings/${BK1}`);
+  await expect(page.getByRole('heading', { name: 'Lab booking: Asha Rao' })).toBeVisible();
+  const reads = () => backend.calls.filter((c) => c.method === 'GET' && c.path === `/partner-workspace/lab-bookings/${BK1}`).length;
+  const before = reads();
+  backend.bumpBeforeStep = BK1; // someone else acts on it (version 1 → 2) right before our step arrives
+  await page.getByRole('button', { name: 'Mark sample collected' }).click();
+  await expect(page.getByText('Not marked collected: The booking changed since you looked at it (someone else acted on it), so nothing was done.', { exact: false })).toBeVisible();
+  await expect.poll(reads).toBeGreaterThan(before);
+  expect(backend.bookings.find((x) => x._id === BK1)!.status).toBe('confirmed');
+  // The step is offered again on the booking as read now, and names that version.
+  await page.getByRole('button', { name: 'Mark sample collected' }).click();
+  await expect(page.getByText('Marked as sample collected.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.path.endsWith('/collect')).map((c) => c.body)).toEqual([{ expectedVersion: 1 }, { expectedVersion: 2 }]);
+
+  // A confirmation names the version it was opened on: refused the same way, it closes and says why.
+  backend.bumpBeforeStep = BK1;
+  await page.getByRole('button', { name: 'Start processing' }).click();
+  await expect(page.getByText(/Not moved to processing: The booking changed since you looked at it/)).toBeVisible();
+});
+
+test('WQ11b: a lab no-show move refused because the time was taken (SLOT_UNAVAILABLE) opens the picker again with the slots read again', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const bk = backend.bookings.find((x) => x._id === BK1)!;
+  Object.assign(bk, { status: 'no_show', statusVersion: 2 });
+  await signInPartner(page);
+  await page.goto(`/#/partner/lab-bookings/${BK1}`);
+  await page.getByRole('button', { name: 'Reschedule no-show' }).click();
+  const form = page.getByRole('form', { name: 'Reschedule no-show' });
+  const target = backend.slots.find((s) => s._id === slotId('home', '2026-11-18', '10:00'))!;
+  await form.getByLabel('New time').selectOption(target._id);
+  await form.getByRole('button', { name: 'Continue' }).click();
+  target.booked = target.capacity; // a customer takes the last seat while the move is being confirmed
+  const slotReads = () => backend.calls.filter((c) => c.method === 'GET' && c.path.startsWith('/partner-workspace/slots?')).length;
+  const before = slotReads();
+  await form.getByRole('button', { name: /^Move to / }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'Not moved:' })).toHaveText('Not moved: That time is no longer free. Pick another time.');
+  await expect(page.getByRole('form', { name: 'Reschedule no-show' }).getByLabel('New time')).toBeVisible();
+  await expect.poll(slotReads).toBeGreaterThan(before);
+  await expect(page.getByRole('form', { name: 'Reschedule no-show' }).getByLabel('New time').locator('option', { hasText: 'Wed, 18 Nov, 2026, 10:00–10:30' })).toHaveCount(0);
+});
+
+test('WQ11b: a move lost before the server and then refused on the resend can be given a new time (a new move), without a reload', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const bk = backend.bookings.find((x) => x._id === BK1)!;
+  Object.assign(bk, { status: 'no_show', statusVersion: 2 });
+  await signInPartner(page);
+  await page.goto(`/#/partner/lab-bookings/${BK1}`);
+  await page.getByRole('button', { name: 'Reschedule no-show' }).click();
+  const form = page.getByRole('form', { name: 'Reschedule no-show' });
+  const target = backend.slots.find((s) => s._id === slotId('home', '2026-11-18', '10:00'))!;
+  await form.getByLabel('New time').selectOption(target._id);
+  await form.getByRole('button', { name: 'Continue' }).click();
+  backend.dropNextMove = true;
+  await form.getByRole('button', { name: /^Move to / }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed no-show move' });
+  await expect(panel).toBeVisible();
+  target.booked = target.capacity; // somebody else takes the seat
+  await page.clock.setFixedTime(new Date(NOW.getTime() + 60_000));
+  await panel.getByRole('button', { name: 'Send the same move again' }).click();
+  await expect(panel).toContainText('That time is no longer free. Pick another time.');
+  // Still a no-show as read after that attempt, and the resend was refused for certain: a new time may be chosen.
+  await page.clock.setFixedTime(new Date(NOW.getTime() + 120_000));
+  await panel.getByRole('button', { name: 'Check the booking' }).click();
+  await panel.getByRole('button', { name: 'Choose a new time again' }).click();
+  await panel.getByRole('button', { name: 'Forget it and choose again' }).click();
+  const again = page.getByRole('form', { name: 'Reschedule no-show' });
+  await again.getByLabel('New time').selectOption({ label: 'Fri, 20 Nov, 2026, 09:30–10:00 (2 free)' });
+  await again.getByRole('button', { name: 'Continue' }).click();
+  await again.getByRole('button', { name: /^Move to / }).click();
+  await expect(page.getByText('Asha Rao’s no-show is moved to Fri, 20 Nov, 2026, 09:30–10:00. It is booked again at the same price.')).toBeVisible();
+  const moves = backend.calls.filter((c) => c.path.endsWith('/reschedule-no-show')).map((c) => c.body as Rec);
+  expect(moves).toHaveLength(3);
+  expect(moves[1]!.requestKey).toBe(moves[0]!.requestKey); // the resend: the same request
+  expect(moves[2]!.requestKey).not.toBe(moves[0]!.requestKey); // the new time: a new move
+});
+
+test('WQ11b: reports go one file per request (each up to 10 MB), under a key; a size refusal says “File too large”', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await page.goto(`/#/partner/lab-bookings/${BK3}`);
+  const six = Buffer.alloc(6 * 1024 * 1024, 0x41);
+  const input = page.getByLabel(/^Report files/);
+  await input.setInputFiles([{ name: 'page1.pdf', mimeType: 'application/pdf', buffer: six }, { name: 'page2.pdf', mimeType: 'application/pdf', buffer: six }]);
+  await page.getByRole('button', { name: 'Upload as drafts' }).click();
+  await expect(page.getByText('2 files were added as drafts. Release each one when it is checked.')).toBeVisible();
+  const posts = backend.calls.filter(isUpload);
+  expect(posts.map((c) => c.files)).toEqual([['page1.pdf'], ['page2.pdf']]);
+  expect(new Set(posts.map((c) => c.path)).size).toBe(2); // a key of its own each
+  await expect(page.getByRole('list', { name: 'Draft reports' })).toContainText('page2.pdf');
+
+  // Over 10 MB on its own: said before anything is sent.
+  await input.setInputFiles([{ name: 'scan.pdf', mimeType: 'application/pdf', buffer: Buffer.alloc(10 * 1024 * 1024 + 1, 0x41) }]);
+  await expect(page.getByText('scan.pdf is larger than 10 MB.').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Upload as drafts' }).click();
+  expect(backend.calls.filter(isUpload)).toHaveLength(2);
+  // Just under 10 MB, but the server counts the request as larger (formidable, 500 UPLOAD_FAILED): “File too large”.
+  await input.setInputFiles([{ name: 'big.pdf', mimeType: 'application/pdf', buffer: Buffer.alloc(10 * 1024 * 1024 - 10, 0x41) }]);
+  await page.getByRole('button', { name: 'Upload as drafts' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'File too large: big.pdf is over the 10 MB limit, so it was not uploaded.' })).toBeVisible();
+  await expect(page.getByText(/may have been uploaded/)).toHaveCount(0);
+});
+
+test('WQ11b: keyboard focus moves into a confirmation or panel when it opens and back to its button on Back', async ({ page }) => {
+  await mockBackend(page);
+  await signInPartner(page);
+  await page.goto(`/#/partner/lab-bookings/${BK1}`);
+  const active = () => page.evaluate(() => {
+    const a = document.activeElement as HTMLElement | null;
+    return `${a?.tagName}:${a?.getAttribute('aria-label') ?? a?.id ?? ''}:${(a?.textContent ?? '').trim().slice(0, 30)}`;
+  });
+  // ConfirmAction (Reject): into the reason field, then back to the trigger.
+  await page.getByRole('button', { name: 'Reject booking' }).focus();
+  await page.keyboard.press('Enter');
+  const reject = page.getByRole('group', { name: 'Reject booking' });
+  await expect(reject).toBeVisible();
+  await expect(reject.getByRole('textbox')).toBeFocused();
+  await reject.getByRole('button', { name: 'Back' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('button', { name: 'Reject booking' })).toBeFocused();
+  // The collector panel, the new-time panel and the release panel do the same.
+  await page.getByRole('button', { name: 'Assign collector' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByLabel('Who collects')).toBeFocused();
+  await page.getByRole('form', { name: 'Assign collector' }).getByRole('button', { name: 'Back' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('button', { name: 'Assign collector' })).toBeFocused();
+  await page.getByRole('button', { name: 'Propose a new time' }).focus();
+  await page.keyboard.press('Enter');
+  const propose = page.getByRole('form', { name: 'Propose a new time' });
+  await expect(propose.getByLabel('New time')).toBeFocused();
+  await propose.getByRole('button', { name: 'Back' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('button', { name: 'Propose a new time' })).toBeFocused();
+  expect(await active()).toMatch(/^BUTTON:/);
+});
+
+test('WQ11b: marking a booking moved once after a no-show as a no-show again says it is final (no move is promised)', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const bk = backend.bookings.find((x) => x._id === BK1)!;
+  Object.assign(bk, { noShowReschedules: 1, noShows: [{ at: '2026-11-16T05:00:00.000Z', rescheduledAt: '2026-11-16T06:00:00.000Z', fromSlot: bk.slot, toSlot: bk.slot, requestKey: 'x'.repeat(32) }] });
+  await signInPartner(page);
+  await page.goto(`/#/partner/lab-bookings/${BK1}`);
+  await page.getByRole('button', { name: 'Mark no-show' }).click();
+  const confirm = page.getByRole('group', { name: 'Mark no-show' });
+  await expect(confirm).toContainText('This booking was already moved once after a no-show, so this second no-show is final: it cannot be moved again');
+  await expect(confirm).not.toContainText('Afterwards the lab may move it once');
+});
+
+test('WQ11b: the weekly template editor edits the saved template and saves on its version; a save in between is shown, not overwritten', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Slots' }).click();
+  await page.getByRole('button', { name: 'Edit the weekly template' }).click();
+  await expect(page.getByText('This is the saved weekly template.')).toBeVisible();
+  await expect(page.getByText(/does not return the saved template/)).toHaveCount(0);
+  expect(backend.calls.some((c) => c.method === 'GET' && c.path === `/partner-workspace/branches/${BR1}/slot-templates/home`)).toBe(true);
+  await page.getByLabel('Seats per slot').fill('3');
+  await page.getByRole('button', { name: 'Review the template' }).click();
+  // Someone else saves the template (4 seats) right before ours arrives.
+  backend.templateSavedElsewhere = { ...backend.templates[`${BR1}:home`], capacity: 4 };
+  await page.getByRole('group', { name: 'Save the weekly template' }).getByRole('button', { name: 'Save the template' }).click();
+  await expect(page.getByText('Someone else changed the seats per slot while you were editing.', { exact: false })).toBeVisible();
+  await expect(page.getByLabel('Seats per slot')).toHaveValue('4');
+  expect(backend.templates[`${BR1}:home`]!.capacity).toBe(4); // ours was refused (409 TEMPLATE_CHANGED), nothing overwritten
+  const puts = () => backend.calls.filter((c) => c.method === 'PUT' && c.path.includes('/slot-templates/'));
+  expect((puts()[0]!.body as Rec).expectedUpdatedAt).toBe('2026-11-10T05:00:00.000Z');
+  // Saving again goes on the version now shown.
+  await page.getByLabel('Seats per slot').fill('3');
+  await page.getByRole('button', { name: 'Review the template' }).click();
+  await page.getByRole('group', { name: 'Save the weekly template' }).getByRole('button', { name: 'Save the template' }).click();
+  await expect(page.getByText(/Weekly template saved for home collection at Indiranagar/)).toBeVisible();
+  expect(backend.templates[`${BR1}:home`]!.capacity).toBe(3);
+  expect((puts()[1]!.body as Rec).expectedUpdatedAt).toEqual(expect.stringMatching(/^2026-11-17T04:00:0\d\.000Z$/)); // the other save's version
+
+  // A branch and mode with no template yet starts from the opening hours, and its save names “no template” (null).
+  delete backend.templates[`${BR1}:lab`];
+  await page.getByLabel('Visit type').selectOption('lab');
+  await page.getByRole('button', { name: 'Edit the weekly template' }).click();
+  await expect(page.getByText('There is no weekly template yet, so this starts from the branch’s opening hours.')).toBeVisible();
+  await page.getByRole('button', { name: 'Review the template' }).click();
+  await page.getByRole('group', { name: 'Save the weekly template' }).getByRole('button', { name: 'Save the template' }).click();
+  await expect(page.getByText(/Weekly template saved for lab visits at Indiranagar|Weekly template saved for/)).toBeVisible();
+  expect((puts()[2]!.body as Rec).expectedUpdatedAt).toBeNull();
+});
+
+test('WQ11b (Q16a): an admin cancels a booking moved after a no-show, choosing whether the patient is refunded; nothing is chosen for them', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const bk = backend.bookings.find((x) => x._id === BK1)!;
+  Object.assign(bk, { noShowReschedules: 1, noShows: [{ at: '2026-11-16T05:00:00.000Z', rescheduledAt: '2026-11-16T06:00:00.000Z', fromSlot: bk.slot, toSlot: bk.slot, requestKey: 'x'.repeat(32) }] });
+  await signInAdmin(page);
+  await page.goto(`/#/admin/partners/${LAB}/lab-bookings/${BK1}`);
+  await page.getByRole('button', { name: 'Cancel (admin)' }).click();
+  const form = page.getByRole('form', { name: 'Cancel (admin)' });
+  await expect(form.getByLabel('Reason (the patient sees this)')).toBeFocused();
+  await form.getByRole('button', { name: 'Continue' }).click();
+  await expect(form.getByText('Give a reason (at least 3 characters).')).toBeVisible();
+  await expect(form.getByText('Choose whether the patient is refunded.')).toBeVisible();
+  await form.getByLabel('Reason (the patient sees this)').fill('The lab cannot attend the new time');
+  await form.getByRole('radio', { name: 'No: the payment is kept' }).check();
+  await form.getByRole('button', { name: 'Continue' }).click();
+  await expect(form).toContainText('The patient is not refunded: the payment is kept, as for a no-show, and nobody earns it.');
+  await form.getByRole('button', { name: 'Cancel without a refund' }).click();
+  await expect(page.getByText('Cancelled by the Jansetu team; the patient was not refunded.')).toBeVisible();
+  await expect(page.getByText('Cancelled by the Jansetu team after a no-show move', { exact: false })).toBeVisible();
+  expect(backend.calls.filter((c) => c.path.endsWith('/cancel-no-show')).map((c) => [c.path, c.body])).toEqual([
+    [`/partner-workspace/admin/lab-bookings/${BK1}/cancel-no-show`, { reason: 'The lab cannot attend the new time', refund: false }],
+  ]);
+  await expect(page.getByRole('button', { name: 'Cancel (admin)' })).toHaveCount(0);
+  // Members never see it (only admins cancel a moved no-show).
+  await page.goto(`/#/admin/partners/${LAB}/lab-bookings/${BK2}`);
+  await expect(page.getByRole('heading', { name: 'Lab booking: Bala Rao' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel (admin)' })).toHaveCount(0); // not moved after a no-show
 });

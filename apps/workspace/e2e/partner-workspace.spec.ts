@@ -56,6 +56,8 @@ interface Backend {
   holdCreate: Promise<void> | null;
   /** Abandon answers sent so far. */
   abandonAnswers: string[];
+  /** WQ11b: the next branch create is lost before it is made ('before') or made and its answer lost ('after'). */
+  dropBranch?: 'before' | 'after' | null;
 }
 
 let clock = 0;
@@ -260,8 +262,15 @@ async function mockBackend(page: Page, me: Me = ownerMe, opts: Partial<Pick<Back
         return ok(route, b.branches.filter((x) => (withClosed || x.isActive) && (!scoped || b.me.branchIds.includes(x._id as string))));
       }
       if (sub === '/branches' && method === 'POST') {
-        const br = { _id: BR2, partnerId: pid, isActive: true, ...(body as Rec) };
+        // Q16b `createBranch`: with a request key, exactly once per (partner, key); a resend answers the branch it made.
+        const { requestKey, ...content } = body as Rec;
+        const prior = requestKey ? b.branches.find((x) => x.createRequestKey === requestKey) : undefined;
+        if (prior) return json(route, 200, { success: true, data: prior, replayed: true });
+        if (b.dropBranch === 'before') { b.dropBranch = null; return route.abort('failed'); }
+        const id = b.branches.some((x) => x._id === BR2) ? `d${b.branches.length % 10}`.repeat(12) : BR2;
+        const br = { _id: id, partnerId: pid, isActive: true, updatedAt: V0, ...content, ...(requestKey ? { createRequestKey: requestKey } : {}) };
         b.branches.push(br);
+        if (b.dropBranch === 'after') { b.dropBranch = null; return route.abort('failed'); }
         return ok(route, br, 201);
       }
       const bm = /^\/branches\/([0-9a-f]{24})(\/reactivate)?$/.exec(sub);
@@ -456,6 +465,7 @@ test('branches: add with hours and holidays; deactivate only after confirming', 
     address: { line1: '5 Ring Rd', city: 'Bengaluru', state: 'Karnataka', stateCode: '29', pincode: '560034' },
     hours: { mon: day, tue: day, wed: day, thu: day, fri: day }, holidays: ['2026-12-25'],
     services: { homeCollection: false, inLab: true, inClinic: false },
+    requestKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,100}$/), // Q16b: exactly once per key
   });
 
   const row = page.getByRole('row').filter({ hasText: 'Indiranagar' });
@@ -1067,8 +1077,9 @@ test('WQ9: an email save landing after its editor was replaced still shows in th
   backend.slowEmail = 800;
   await page.getByRole('region', { name: 'Email for Sita Staff' }).getByRole('button', { name: 'Save email' }).click();
   await expect.poll(() => backend.calls.some((c) => c.method === 'PUT')).toBe(true);
-  await page.getByRole('row').filter({ hasText: 'Ravi Owner' }).getByRole('button', { name: 'Add email' }).click();
-  const ravi = page.getByRole('region', { name: 'Email for Ravi Owner' });
+  // Q16b: an owner's own sign-in email is the Jansetu team's; another editor is opened instead.
+  await page.getByRole('row').filter({ hasText: 'Ravi Owner' }).getByRole('button', { name: 'Add registration' }).click();
+  const ravi = page.getByRole('region', { name: 'Professional registration of Ravi Owner' });
   await expect(ravi).toBeVisible();
   await expect(sita).toContainText('sita@lab.in');
   await expect(ravi).toBeVisible();
@@ -1264,4 +1275,304 @@ test('WQ10b: an admin acting as owner adds a registration through the admin work
   expect(backend.calls.filter((c) => c.method === 'PUT').map((c) => [c.path, c.body])).toEqual([
     [`/partner-workspace/admin/${LAB}/workspace/members/${OWNER}/professional`, { professional: { kind: 'pathologist', registrationNumber: 'KMC-11' }, expectedUpdatedAt: V0 }],
   ]);
+});
+
+// ── WQ11b: review findings of the pre-production review (org slice). Each journey failed before its fix. ──
+
+const BR3 = 'c3'.repeat(12);
+const DOC = 'd9'.repeat(12);
+const fulfil = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+const koramangala = (): Rec => ({ _id: BR3, partnerId: LAB, name: 'Koramangala', address: { line1: '5 Ring Rd', city: 'Bengaluru', state: 'Karnataka', stateCode: '29', pincode: '560034' },
+  phone: '9000000012', holidays: [], services: { inLab: true }, isActive: true, updatedAt: V0 });
+
+test('WQ11b: a closed branch a member holds is shown “(closed)”, can be unticked, and is never sent unless still ticked', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.members.find((m) => m._id === STAFF)!.branchIds = [BR1, BR_OLD];
+  backend.branches.push(koramangala());
+  // As `validateBranchIds`: every id must be an ACTIVE branch of the partner.
+  await page.route(`**/api/v1/partner-workspace/members/${STAFF}/branches`, async (route) => {
+    const body = route.request().postDataJSON() as { branchIds: string[] };
+    const active = new Set(backend.branches.filter((x) => x.isActive).map((x) => x._id));
+    const invalid = body.branchIds.filter((id) => !active.has(id));
+    if (invalid.length) {
+      backend.calls.push({ method: 'PUT', path: `/partner-workspace/members/${STAFF}/branches`, body });
+      return fulfil(route, 400, { error: 400, code: 'INVALID_BRANCH_IDS', message: `Branch IDs not found in this partner: ${invalid.join(', ')}` });
+    }
+    return route.fallback();
+  });
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  await expect(page.getByRole('row').filter({ hasText: 'Sita Staff' })).toContainText('Old Town (closed)');
+  await page.getByRole('row').filter({ hasText: 'Sita Staff' }).getByRole('button', { name: 'Change branch access' }).click();
+  const editor = page.getByRole('region', { name: 'Branch access for Sita Staff' });
+  await expect(editor.getByLabel('Old Town (closed)')).toBeChecked();
+  // Move her from Indiranagar to Koramangala, leaving the closed branch ticked: refused here, nothing sent.
+  await editor.getByLabel('Koramangala').check();
+  await editor.getByLabel('Indiranagar').uncheck();
+  await editor.getByRole('button', { name: 'Save branch access' }).click();
+  await expect(editor.getByText(/A closed branch cannot be given/)).toBeVisible();
+  expect(backend.calls.filter((c) => c.method === 'PUT')).toHaveLength(0);
+  // Untick it: only the open choice is sent.
+  await editor.getByLabel('Old Town (closed)').uncheck();
+  await editor.getByRole('button', { name: 'Save branch access' }).click();
+  await expect(page.getByText('Branch access for Sita Staff was saved.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.method === 'PUT').map((c) => (c.body as Rec).branchIds)).toEqual([[BR3]]);
+  expect(backend.members.find((m) => m._id === STAFF)!.branchIds).toEqual([BR3]);
+
+  // A branch closed by someone else after the list was read: the server's refusal is said in words.
+  backend.branches.find((x) => x._id === BR3)!.isActive = false;
+  await page.getByRole('row').filter({ hasText: 'Sita Staff' }).getByRole('button', { name: 'Change branch access' }).click();
+  const again = page.getByRole('region', { name: 'Branch access for Sita Staff' });
+  await again.getByLabel('Indiranagar').check();
+  await again.getByRole('button', { name: 'Save branch access' }).click();
+  await expect(again.getByText('One of the chosen branches is closed or no longer exists, so nothing was saved. Untick it and save again.')).toBeVisible();
+  await expect(again.getByText(/Branch IDs not found/)).toHaveCount(0);
+});
+
+test('WQ11b: a permissions save answered after another editor was opened leaves that editor and what was typed in it', async ({ page }) => {
+  const backend = await mockBackend(page);
+  let release!: () => void;
+  const hold = new Promise<void>((r) => { release = r; });
+  await page.route(`**/api/v1/partner-workspace/members/${STAFF}/permissions`, async (route) => { await hold; return route.fallback(); });
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  await page.getByRole('row').filter({ hasText: 'Sita Staff' }).getByRole('button', { name: 'Edit permissions' }).click();
+  const perms = page.getByRole('region', { name: 'Permissions for Sita Staff' });
+  await perms.getByLabel('Manage bookings').check();
+  const sent = page.waitForRequest((r) => r.method() === 'PUT' && r.url().endsWith(`/members/${STAFF}/permissions`));
+  await perms.getByRole('button', { name: 'Save permissions' }).click();
+  await sent;
+  // While that save is on its way the owner opens another editor and types in it.
+  await page.getByRole('row').filter({ hasText: 'Sita Staff' }).getByRole('button', { name: 'Add email' }).click();
+  const email = page.getByRole('region', { name: 'Email for Sita Staff' });
+  await email.getByLabel('Email').fill('sita@lab.in');
+  release();
+  await expect(page.getByText('Permissions for Sita Staff were saved.')).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'Sita Staff' })).toContainText('Manage bookings');
+  await expect(email).toBeVisible();
+  await expect(email.getByLabel('Email')).toHaveValue('sita@lab.in');
+  expect(backend.members.find((m) => m._id === STAFF)!.permissions).toEqual(['bookings.view', 'bookings.manage']);
+});
+
+test('WQ11b: a branch save answered after another branch’s form was opened leaves that form alone', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.branches.push(koramangala());
+  let release!: () => void;
+  const hold = new Promise<void>((r) => { release = r; });
+  await page.route(`**/api/v1/partner-workspace/branches/${BR1}`, async (route) => {
+    if (route.request().method() === 'PUT') await hold;
+    return route.fallback();
+  });
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Branches' }).click();
+  await page.getByRole('row').filter({ hasText: 'Indiranagar' }).getByRole('button', { name: 'Edit' }).click();
+  await page.getByLabel('Branch name').fill('Indiranagar Main');
+  const sent = page.waitForRequest((r) => r.method() === 'PUT' && r.url().endsWith(`/branches/${BR1}`));
+  await page.getByRole('button', { name: 'Save branch' }).click();
+  await sent;
+  await page.getByRole('row').filter({ hasText: 'Koramangala' }).getByRole('button', { name: 'Edit' }).click();
+  await expect(page.getByRole('heading', { name: 'Edit Koramangala' })).toBeVisible();
+  await page.getByLabel('Branch name').fill('Koramangala East');
+  release();
+  await expect(page.getByText('Indiranagar Main was saved.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Edit Koramangala' })).toBeVisible();
+  await expect(page.getByLabel('Branch name')).toHaveValue('Koramangala East');
+  expect(backend.branches.find((x) => x._id === BR1)!.name).toBe('Indiranagar Main');
+});
+
+test('WQ11b: a field reset because someone else changed it is not reported as saved', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.branches.push(koramangala());
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Branches' }).click();
+  await page.getByRole('row').filter({ hasText: 'Indiranagar' }).getByRole('button', { name: 'Edit' }).click();
+  await page.getByLabel('Branch name').fill('Indiranagar Main');
+  await page.getByLabel('Phone', { exact: true }).fill('9000000044');
+  // Someone else renames it meanwhile; the list is read again (here: after another branch is deactivated).
+  Object.assign(backend.branches.find((x) => x._id === BR1)!, { name: 'Indiranagar 100ft Rd', updatedAt: '2026-11-14T01:00:00.000Z' });
+  const kor = page.getByRole('row').filter({ hasText: 'Koramangala' });
+  await kor.getByRole('button', { name: 'Deactivate' }).click();
+  await kor.getByRole('button', { name: 'Deactivate Koramangala' }).click();
+  await expect(page.getByText(/Someone else changed the name while you were editing/)).toBeVisible();
+  await expect(page.getByLabel('Branch name')).toHaveValue('Indiranagar 100ft Rd');
+  await page.getByRole('button', { name: 'Save branch' }).click();
+  await expect(page.getByText('Indiranagar 100ft Rd was saved, except the name: someone else changed it while you were editing, so the saved value is kept. Change it again if still needed.')).toBeVisible();
+  await expect(page.getByText('Indiranagar 100ft Rd was saved.', { exact: true })).toHaveCount(0);
+  expect(backend.calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toEqual([{ phone: '9000000044', expectedUpdatedAt: '2026-11-14T01:00:00.000Z' }]);
+});
+
+test('WQ11b: a create answered after the admin left and came back: “Give up this create” opens the partner it made', async ({ page }) => {
+  const backend = await mockBackend(page);
+  let releaseCreate!: () => void;
+  backend.holdCreate = new Promise<void>((r) => { releaseCreate = r; });
+  await signInAdmin(page);
+  await fillNewPartner(page);
+  await page.getByRole('button', { name: 'Create', exact: true }).click();
+  await expect.poll(() => backend.partners.some((p) => p.name === 'Metro Diagnostics')).toBe(true); // committed; answer held
+  await page.goto('/#/admin/partners');
+  await expect(page.getByRole('heading', { name: 'Labs and clinics' })).toBeVisible();
+  await page.goto('/#/admin/partners/new');
+  await expect(page.getByText(/We could not confirm whether Metro Diagnostics was created/)).toBeVisible();
+  releaseCreate(); // the first page's answer arrives now and settles the stored create
+  await expect.poll(() => page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.endsWith(':admin-partner-create')).length)).toBe(0);
+  await page.getByRole('button', { name: 'Give up this create' }).click();
+  await expect.poll(() => backend.abandonAnswers).toEqual(['used']);
+  await expect(page.getByRole('heading', { name: 'Metro Diagnostics' })).toBeVisible();
+  expect(backend.partners.filter((p) => p.name === 'Metro Diagnostics')).toHaveLength(1);
+});
+
+test('WQ11b: the person’s own profile save coming back trimmed is only “Saved.”', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Profile' }).click();
+  await page.getByLabel('Display name').fill('City Lab Plus ');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Saved.', { exact: true })).toBeVisible();
+  expect(backend.calls.filter((c) => c.method === 'PUT').map((c) => (c.body as Rec).name)).toEqual(['City Lab Plus']);
+  await expect(page.getByText(/Someone else changed/)).toHaveCount(0);
+  await expect(page.getByLabel('Display name')).toHaveValue('City Lab Plus');
+});
+
+test('WQ11b: an admin’s GSTIN typed in small letters is saved upper-cased and not reported as someone else’s change', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const bodies: Rec[] = [];
+  await page.route(`**/api/v1/partner-workspace/admin/${LAB}`, async (route) => {
+    if (route.request().method() !== 'PUT') return route.fallback();
+    const body = route.request().postDataJSON() as Rec;
+    bodies.push(body);
+    const p = backend.partners.find((x) => x._id === LAB)!;
+    if (body.gstin) p.gstin = String(body.gstin).toUpperCase();
+    if (body.taxRegime) p.taxRegime = body.taxRegime;
+    touch(p);
+    return fulfil(route, 200, { success: true, data: p });
+  });
+  await signInAdmin(page);
+  await page.goto(`/#/admin/partners/${LAB}`);
+  await page.getByLabel('GSTIN').fill('29abcde1234f1z5');
+  await page.getByRole('button', { name: 'Save tax details' }).click();
+  await expect(page.getByText('Saved.', { exact: true })).toBeVisible();
+  expect(bodies.map((b) => b.gstin)).toEqual(['29ABCDE1234F1Z5']);
+  await expect(page.getByLabel('GSTIN')).toHaveValue('29ABCDE1234F1Z5');
+  await expect(page.getByText(/Someone else changed/)).toHaveCount(0);
+});
+
+test('WQ11b: a branch add whose answer is lost is found in the list (made once); one lost before the server is sent again with the same key', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const fill = async (name: string) => {
+    await page.getByRole('button', { name: 'Add a branch' }).click();
+    await page.getByLabel('Branch name').fill(name);
+    await page.getByLabel('Phone', { exact: true }).fill('9000000020');
+    await page.getByLabel('Address line 1').fill('4th Block');
+    await page.getByLabel('City').fill('Bengaluru');
+    await page.getByLabel('State', { exact: true }).fill('Karnataka');
+    await page.getByLabel('State code').fill('KA');
+    await page.getByLabel('PIN code').fill('560011');
+  };
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Branches' }).click();
+  await fill('Jayanagar');
+  // The state code must be the GST one (bills compare it with the GSTIN).
+  await page.getByRole('button', { name: 'Add branch', exact: true }).click();
+  await expect(page.getByText('Enter the 2-digit GST state code, e.g. 29 for Karnataka.')).toBeVisible();
+  expect(backend.calls.some((c) => c.method === 'POST' && c.path === '/partner-workspace/branches')).toBe(false);
+  await page.getByLabel('State code').fill('29');
+  // Made, but the answer never arrives: the list is read again and the new branch of that name is taken as this one.
+  backend.dropBranch = 'after';
+  await page.getByRole('button', { name: 'Add branch', exact: true }).click();
+  await expect(page.getByText('Jayanagar was added (its answer was lost; it is in the list now).')).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'Jayanagar' })).toHaveCount(1);
+  expect(backend.branches.filter((x) => x.name === 'Jayanagar')).toHaveLength(1);
+
+  // Lost before the server: the form is locked; "Send again" sends the same key and details, so one branch is made.
+  await fill('Basavanagudi');
+  await page.getByLabel('State code').fill('29');
+  backend.dropBranch = 'before';
+  await page.getByRole('button', { name: 'Add branch', exact: true }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed branch' });
+  await expect(panel).toBeVisible();
+  await expect(page.getByText(/Not confirmed: .*Basavanagudi is not in the branch list yet/)).toBeVisible();
+  await expect(page.getByLabel('Branch name')).toBeDisabled();
+  await panel.getByRole('button', { name: 'Send again' }).click();
+  await expect(page.getByText('Basavanagudi was added.')).toBeVisible();
+  const posts = backend.calls.filter((c) => c.method === 'POST' && c.path === '/partner-workspace/branches' && (c.body as Rec).name === 'Basavanagudi');
+  expect(posts).toHaveLength(2);
+  expect(posts[1]!.body).toEqual(posts[0]!.body);
+  expect(backend.branches.filter((x) => x.name === 'Basavanagudi')).toHaveLength(1);
+});
+
+test('WQ11b: the partner name an admin searches for stays out of the address', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signInAdmin(page);
+  await nav(page).getByRole('link', { name: 'Labs and clinics' }).click();
+  await page.getByLabel('Search by name').fill('Sunrise');
+  await page.getByRole('button', { name: 'Search' }).click();
+  await expect(page.getByText('1 partner', { exact: true })).toBeVisible();
+  expect(backend.calls.some((c) => c.path.includes('q=Sunrise'))).toBe(true);
+  expect(page.url()).not.toContain('Sunrise');
+  // An old link with a name in it: searched, and the name taken out of the address.
+  await page.goto('/#/admin/partners?q=City&kind=lab');
+  await expect(page.getByLabel('Search by name')).toHaveValue('City');
+  await expect.poll(() => page.url()).not.toContain('City');
+  expect(page.url()).toContain('kind=lab');
+});
+
+test('WQ11b: the activity log names every action and record in words, never by its code', async ({ page }) => {
+  await mockBackend(page);
+  await page.route('**/api/v1/partner-workspace/audit', (route) => fulfil(route, 200, { success: true, data: [
+    { _id: 'e1', partnerId: LAB, actorKind: 'member', actorId: OWNER, action: 'invoice.pay', targetKind: 'invoice', targetId: 'f1'.repeat(12), at: '2026-11-15T04:30:00.000Z' },
+    { _id: 'e2', partnerId: LAB, actorKind: 'member', actorId: OWNER, action: 'member.email', targetKind: 'member', targetId: STAFF, detail: { email: 'set' }, at: '2026-11-15T04:20:00.000Z' },
+    { _id: 'e3', partnerId: LAB, actorKind: 'member', actorId: OWNER, action: 'member.professional', targetKind: 'member', targetId: STAFF, at: '2026-11-15T04:10:00.000Z' },
+    { _id: 'e4', partnerId: LAB, actorKind: 'admin', actorId: 'ad'.repeat(12), action: 'finance.refund_reversed', targetKind: 'settlement_account', targetId: 'f2'.repeat(12), at: '2026-11-15T04:00:00.000Z' },
+  ] }));
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Activity log' }).click();
+  await expect(page.getByRole('cell', { name: 'Recorded a payment', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Changed a sign-in email', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Changed a professional registration', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Earnings: refund reversed', exact: true })).toBeVisible(); // an action added later
+  await expect(page.getByRole('cell', { name: 'A bill', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Payout account', exact: true })).toBeVisible();
+  for (const code of ['invoice.pay', 'member.email', 'member.professional', 'invoice', 'settlement_account']) {
+    await expect(page.getByRole('cell', { name: code, exact: true })).toHaveCount(0);
+  }
+});
+
+test('WQ11b: a clinic doctor’s membership is not removed on Staff: it points to Doctors; a 409 USE_DOCTOR_UNLINK is said in words', async ({ page }) => {
+  const manager: Me = { _id: STAFF, partnerId: LAB, name: 'Sita Staff', role: 'staff', permissions: ['staff.manage'], branchIds: [] };
+  const backend = await mockBackend(page, manager);
+  backend.members.find((m) => m._id === STAFF)!.permissions = ['staff.manage'];
+  backend.members.find((m) => m._id === STAFF)!.branchIds = [];
+  // A consult-only doctor membership as attachDoctorMember makes it, and a staff member who becomes one meanwhile.
+  backend.members.push({ _id: 'b7'.repeat(12), partnerId: LAB, name: 'Dr Meera Rao', phone: '9000000077', role: 'staff', permissions: [], branchIds: [], doctorId: DOC, isActive: true, updatedAt: V0 });
+  backend.members.push({ _id: 'b8'.repeat(12), partnerId: LAB, name: 'Dr Arun Shah', phone: '9000000078', role: 'staff', permissions: [], branchIds: [], isActive: true, updatedAt: V0 });
+  await page.route(`**/api/v1/partner-workspace/members/${'b8'.repeat(12)}`, (route) => (route.request().method() === 'DELETE'
+    ? fulfil(route, 409, { error: 409, code: 'USE_DOCTOR_UNLINK', message: 'This member is a doctor of the clinic: remove the doctor from the clinic instead (owner or admin)' })
+    : route.fallback()));
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  const meera = page.getByRole('row').filter({ hasText: 'Dr Meera Rao' });
+  await expect(meera).toContainText('Clinic doctor');
+  await expect(meera.getByRole('button', { name: 'Remove' })).toHaveCount(0);
+  await expect(meera).toContainText('A doctor of this clinic: removed on Doctors (owner only).');
+  await expect(meera.getByRole('link', { name: 'Doctors' })).toHaveAttribute('href', '#/partner/clinic-doctors');
+
+  const arun = page.getByRole('row').filter({ hasText: 'Dr Arun Shah' });
+  await arun.getByRole('button', { name: 'Remove' }).click();
+  await arun.getByRole('button', { name: 'Remove Dr Arun Shah' }).click();
+  await expect(arun.getByText('Dr Arun Shah is a doctor of this clinic, so nothing was changed. The owner removes them from the clinic on the Doctors page.')).toBeVisible();
+  await expect(page.getByText('Dr Arun Shah was removed.')).toHaveCount(0);
+  expect(backend.calls.some((c) => c.method === 'DELETE' && c.path === `/partner-workspace/members/${'b7'.repeat(12)}`)).toBe(false);
+});
+
+test('WQ11b/Q16b: an owner’s sign-in email is changed by an admin only; owners change staff emails, and add owners without one', async ({ page }) => {
+  await mockBackend(page);
+  await signInPartner(page);
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  await expect(page.getByRole('row').filter({ hasText: 'Sita Staff' }).getByRole('button', { name: 'Add email' })).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'Ravi Owner' }).getByRole('button', { name: /email/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add a staff member' }).click();
+  await expect(page.getByLabel('Email (optional)')).toBeVisible();
+  await page.getByLabel('Owner', { exact: true }).check();
+  await expect(page.getByLabel('Email (optional)')).toHaveCount(0);
+  await expect(page.getByText(/An owner’s sign-in email is added by the Jansetu team/)).toBeVisible();
 });

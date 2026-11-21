@@ -1,4 +1,4 @@
-import type { ApiClient } from './client.ts';
+import { ApiError, type ApiClient, type Page } from './client.ts';
 import { noShowMovedOnce } from './noShows.ts';
 import type { VisitMode } from './partnerInvoices.ts';
 import {
@@ -52,6 +52,13 @@ export interface SlotTemplateInput { slotMinutes: number; capacity: number; days
 export interface SlotTemplate extends SlotTemplateInput {
   _id: string; partnerId: string; branchId: string; visitMode: VisitMode; isActive: boolean; updatedAt?: string;
 }
+/**
+ * Q11 `slotTemplateSchema.expectedUpdatedAt`: the saved template's `updatedAt` the editor started from, or null when it
+ * started from no template. Another save in between is refused with 409 TEMPLATE_CHANGED (`saveSlotTemplate`).
+ */
+export type TemplateVersion = string | null;
+/** 409 TEMPLATE_CHANGED: the weekly template was saved by someone else since the editor read it. */
+export const isTemplateChanged = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'TEMPLATE_CHANGED';
 /** `expandSlots` result, answered with a template save (the next 30 days are brought in line at once). */
 export interface ExpansionResult { inserted: number; updated: number; closed: number; reopened: number }
 /** `manualSlotSchema`. */
@@ -161,33 +168,14 @@ const mostCommon = (values: number[]): number | undefined => {
   return best;
 };
 
-/**
- * The server has no route that reads a saved template, so the editor starts from what the template GENERATED: the
- * template slots (`source: 'template'`) the template still wants (not `closed: 'template'`). The slot length and seats
- * are the most common among unbooked ones (a booked slot keeps its old time and never loses seats); each weekday's
- * windows are runs of back-to-back start times. Null when no generated slot is in the given list.
- */
-export function deriveTemplate(slots: readonly LabSlot[]): SlotTemplateInput | null {
-  const wanted = slots.filter((s) => s.source === 'template' && s.closed !== 'template'
-    && HHMM_PATTERN.test(s.startTime) && HHMM_PATTERN.test(s.endTime) && isRealDate(s.date));
-  if (wanted.length === 0) return null;
-  const unbooked = wanted.filter((s) => s.booked === 0);
-  const basis = unbooked.length ? unbooked : wanted;
-  const slotMinutes = mostCommon(basis.map((s) => toMinutes(s.endTime) - toMinutes(s.startTime)).filter((m) => m > 0));
-  const capacity = mostCommon(basis.map((s) => s.capacity).filter((c) => c >= 1));
-  if (!slotMinutes || !capacity) return null;
+/** The saved template as the editor edits it (whole windows per weekday; days with no window are left out). */
+export function templateInput(t: Pick<SlotTemplate, 'slotMinutes' | 'capacity' | 'days'>): SlotTemplateInput {
   const days: TemplateDays = {};
   for (const day of TEMPLATE_WEEKDAYS) {
-    const starts = [...new Set(wanted.filter((s) => weekdayOf(s.date) === day).map((s) => toMinutes(s.startTime)))].sort((a, b) => a - b);
-    const windows: SlotWindow[] = [];
-    for (const m of starts) {
-      const last = windows[windows.length - 1];
-      if (last && toMinutes(last.end) === m) last.end = toHHMM(Math.min(m + slotMinutes, 24 * 60 - 1));
-      else windows.push({ start: toHHMM(m), end: toHHMM(Math.min(m + slotMinutes, 24 * 60 - 1)) });
-    }
+    const windows = (t.days?.[day] ?? []).map((w) => ({ start: w.start, end: w.end }));
     if (windows.length) days[day] = windows;
   }
-  return { slotMinutes, capacity, days };
+  return { slotMinutes: t.slotMinutes, capacity: t.capacity, days };
 }
 
 /** `addManualSlot` + `manualSlotSchema`: why this manual slot would be refused, per field. */
@@ -266,7 +254,11 @@ export interface LabBooking {
   statusVersion: number;
   paymentStatus: LabPaymentStatus;
   paymentDeadline: string;
-  cancellation?: { reason: 'timeout' | 'customer' | 'lab_reject'; note?: string; by: string; byKind: 'customer' | 'member' | 'admin' | 'system'; at: string };
+  /**
+   * Q16a: `admin_no_show` = an admin cancelled a booking moved after a no-show, with `refund` saying whether the patient
+   * was refunded (`adminCancelMovedNoShow`).
+   */
+  cancellation?: { reason: 'timeout' | 'customer' | 'lab_reject' | 'admin_no_show'; note?: string; by: string; byKind: 'customer' | 'member' | 'admin' | 'system'; at: string; refund?: boolean };
   reschedule: { version: number; pending: boolean; previousSlot?: LabBookingSlot; reason?: string; at?: string; by?: string };
   collector?: { memberId?: string; name: string; phone?: string };
   report: { draftFiles: string[]; releasedFiles: string[]; releases: LabReportRelease[] };
@@ -302,12 +294,22 @@ export function labNoShowMove(b: Pick<LabBooking, 'status' | 'noShows' | 'noShow
 /** Admin list rows are the stored records (report paths without the `/api/static/` prefix). */
 export type AdminLabBookingRow = Omit<LabBooking, 'report'> & { report?: { draftFiles?: string[]; releasedFiles?: string[] } };
 
-/** `partnerLabBookingQuerySchema`: sorted by slot time (oldest first); `limit` 1–500 (server default 100); no paging. */
-export interface LabBookingQuery { status?: LabBookingStatus; branchId?: string; from?: string; to?: string; limit?: number }
-export const MAX_LAB_BOOKINGS = 500;
-/** `GET /partner-workspace/admin/lab-bookings`: newest created first, at most 200, filters partnerId and status only. */
-export interface AdminLabBookingQuery { partnerId?: string; status?: LabBookingStatus }
-export const MAX_ADMIN_LAB_BOOKINGS = 200;
+/**
+ * `partnerLabBookingQuerySchema` + Q11 `listForPartnerPage`: soonest slot first (then id), one page of at most 200
+ * (`limit` defaults to 50 and is capped at 200 by the service, whatever the schema admits), with the total that match
+ * and an exact `nextCursor` (`<slot start ms>_<id>`) for the page after, or null on the last one.
+ */
+export interface LabBookingQuery { status?: LabBookingStatus; branchId?: string; from?: string; to?: string; limit?: number; cursor?: string }
+/** The most one page holds (`listForPartnerPage` caps `limit` at 200). */
+export const LAB_BOOKINGS_PAGE_MAX = 200;
+/** Q11 cursors are `<ms>_<objectId>` (the service refuses anything else with 400 INVALID_CURSOR). */
+export const LAB_BOOKING_CURSOR_PATTERN = /^\d{1,15}_[0-9a-fA-F]{24}$/;
+/**
+ * `adminLabBookingQuerySchema` + Q11 `adminList`: newest booked first (`createdAt`, then id), paged by `page` with
+ * `limit` 1–200 (default 50); filters lab, status and slot dates. Answered with `{ page, limit, total, totalPages }`.
+ */
+export interface AdminLabBookingQuery { partnerId?: string; status?: LabBookingStatus; from?: string; to?: string; page?: number; limit?: number }
+export const ADMIN_LAB_BOOKINGS_PAGE_MAX = 200;
 
 /** `assignCollectorSchema`. */
 export interface CollectorInput { memberId?: string; name: string; phone?: string }
@@ -331,6 +333,23 @@ export function reportFileProblem(f: Pick<File, 'name' | 'size'>): string | null
   return null;
 }
 
+/**
+ * The server's refusal of an uploaded report file because of its size: `FileService.uploadFiles` answers 400
+ * FILE_TOO_LARGE for one file over 10 MB, and formidable's own size limits (`maxFileSize`, and `maxTotalFileSize`, which
+ * defaults to the same 10 MB for the whole request) surface as 500 UPLOAD_FAILED "options.max…FileSize … exceeded";
+ * a proxy in front may answer 413. In every case the request was refused before anything was attached.
+ */
+export function isReportTooLarge(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  if (err.status === 413 || err.code === 'FILE_TOO_LARGE') return true;
+  return err.code === 'UPLOAD_FAILED' && /max(Total)?FileSize|exceed/i.test(err.message);
+}
+/**
+ * `uploadFiles` fails as a whole before the booking is touched (the files it wrote are removed again and nothing is
+ * attached), and the attach step itself is fenced by the request key: so UPLOAD_FAILED is a definite "not uploaded".
+ */
+export const isUploadFailed = (err: unknown) => err instanceof ApiError && err.code === 'UPLOAD_FAILED';
+
 /** Report files of THIS booking, as the partner view gives them (`REPORT_UPLOAD_MODULE` folder of the booking). */
 const REPORT_FILE = /^\/api\/static\/partner-lab-reports\/([0-9a-f]{24})\/([^/?#]+)$/;
 /** The booking a stored report value belongs to, or null if it is not a report file value. */
@@ -345,6 +364,9 @@ export function reportFileName(stored: string): string {
 /** The `report.releases` entry of a released file value (`/api/static/<path>`). */
 export const releaseOf = (b: Pick<LabBooking, 'report'>, stored: string) =>
   b.report.releases.find((r) => `/api/static/${r.path}` === stored);
+
+/** Q11: 409 LAB_BOOKING_CHANGED — the booking moved since the step was reviewed (nothing was done; read it again). */
+export const isLabBookingChanged = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'LAB_BOOKING_CHANGED';
 
 export type LabAction = 'assign' | 'collect' | 'visit' | 'no_show' | 'process' | 'complete' | 'reject' | 'reschedule' | 'upload' | 'release';
 /** An action this person may take on this booking now; `blocked` says why it cannot be taken yet (offered, disabled). */
@@ -419,16 +441,31 @@ export function partnerLabsApi(c: ApiClient, scope: PartnerScope) {
   const base = () => partnerWorkspaceBase(scope);
   const slot = (id: string) => `${base()}/slots/${checkId(id, 'slot')}`;
   const booking = (id: string) => `${base()}/lab-bookings/${checkId(id, 'booking')}`;
-  const act = (id: string, command: string) => c.post<LabBooking>(`${booking(id)}/${command}`, { body: {} });
+  /**
+   * Q11 `expectedVersionSchema`: every step may name the booking's `statusVersion` it was reviewed on; the server then
+   * refuses it with 409 LAB_BOOKING_CHANGED if the booking moved since (`assertVersion`).
+   */
+  const fence = (v: number | undefined) => {
+    if (v === undefined) return {};
+    if (!Number.isSafeInteger(v) || v < 0) throw new Error('Invalid booking version');
+    return { expectedVersion: v };
+  };
+  const act = (id: string, command: string, v?: number) => c.post<LabBooking>(`${booking(id)}/${command}`, { body: fence(v) });
   return {
     /** Every slot of one branch and visit mode between two IST dates (inclusive), by start time; at most 2000. */
     slots: (q: SlotQuery) => c.get<LabSlot[]>(`${base()}/slots`, {
       query: { branchId: checkId(q.branchId, 'branch'), visitMode: checkMode(q.visitMode), from: checkDate(q.from, 'from'), to: checkDate(q.to, 'to') },
     }),
-    /** Replaces the weekly template and expands the next 30 days at once (`saveSlotTemplate`). */
-    saveTemplate: (branchId: string, visitMode: VisitMode, body: SlotTemplateInput) =>
+    /** Q11 `getSlotTemplate`: the saved weekly template of a branch and visit mode, or null when it has none. */
+    template: async (branchId: string, visitMode: VisitMode) =>
+      (await c.get<SlotTemplate | null>(`${base()}/branches/${checkId(branchId, 'branch')}/slot-templates/${checkMode(visitMode)}`)) ?? null,
+    /**
+     * Replaces the weekly template and expands the next 30 days at once (`saveSlotTemplate`). `expectedUpdatedAt` is the
+     * version the editor started from (null = no template then): 409 TEMPLATE_CHANGED when another save came in between.
+     */
+    saveTemplate: (branchId: string, visitMode: VisitMode, body: SlotTemplateInput, expectedUpdatedAt: TemplateVersion) =>
       c.put<{ template: SlotTemplate; expansion: ExpansionResult }>(
-        `${base()}/branches/${checkId(branchId, 'branch')}/slot-templates/${checkMode(visitMode)}`, { body }),
+        `${base()}/branches/${checkId(branchId, 'branch')}/slot-templates/${checkMode(visitMode)}`, { body: { ...body, expectedUpdatedAt } }),
     /** 409 SLOT_EXISTS when a slot already starts then (so a resend after a lost answer cannot make a second one). */
     addSlot: (body: NewManualSlot) => {
       checkId(body.branchId, 'branch'); checkMode(body.visitMode); checkDate(body.date, 'slot');
@@ -440,27 +477,34 @@ export function partnerLabsApi(c: ApiClient, scope: PartnerScope) {
     closeSlot: (id: string) => c.post<LabSlot>(`${slot(id)}/close`, { body: {} }),
     reopenSlot: (id: string) => c.post<LabSlot>(`${slot(id)}/reopen`, { body: {} }),
 
-    bookings: (q: LabBookingQuery = {}) => c.get<LabBooking[]>(`${base()}/lab-bookings`, {
-      query: {
-        status: q.status, branchId: q.branchId === undefined ? undefined : checkId(q.branchId, 'branch'),
-        from: checkDate(q.from, 'from'), to: checkDate(q.to, 'to'), limit: q.limit,
-      },
-    }),
-    booking: (id: string) => c.get<LabBooking>(booking(id)),
-    assignCollector: (id: string, body: CollectorInput) => {
-      if (body.memberId !== undefined) checkId(body.memberId, 'member');
-      return c.post<LabBooking>(`${booking(id)}/assign`, { body });
+    /** One page of bookings, soonest slot first; pass the last page's `nextCursor` for the next one. */
+    bookings: (q: LabBookingQuery = {}): Promise<Page<LabBooking>> => {
+      if (q.cursor !== undefined && !LAB_BOOKING_CURSOR_PATTERN.test(q.cursor)) throw new Error('Invalid cursor');
+      if (q.limit !== undefined && (!Number.isInteger(q.limit) || q.limit < 1 || q.limit > LAB_BOOKINGS_PAGE_MAX)) throw new Error('Invalid page size');
+      return c.page<LabBooking>(`${base()}/lab-bookings`, {
+        query: {
+          status: q.status, branchId: q.branchId === undefined ? undefined : checkId(q.branchId, 'branch'),
+          from: checkDate(q.from, 'from'), to: checkDate(q.to, 'to'), limit: q.limit, cursor: q.cursor,
+        },
+      });
     },
-    markCollected: (id: string) => act(id, 'collect'),
-    markVisited: (id: string) => act(id, 'visit'),
-    markNoShow: (id: string) => act(id, 'no-show'),
-    startProcessing: (id: string) => act(id, 'process'),
-    complete: (id: string) => act(id, 'complete'),
+    booking: (id: string) => c.get<LabBooking>(booking(id)),
+    /** Every step below takes the `statusVersion` it was reviewed on (409 LAB_BOOKING_CHANGED when the booking moved). */
+    assignCollector: (id: string, body: CollectorInput, v?: number) => {
+      if (body.memberId !== undefined) checkId(body.memberId, 'member');
+      return c.post<LabBooking>(`${booking(id)}/assign`, { body: { ...body, ...fence(v) } });
+    },
+    markCollected: (id: string, v?: number) => act(id, 'collect', v),
+    markVisited: (id: string, v?: number) => act(id, 'visit', v),
+    markNoShow: (id: string, v?: number) => act(id, 'no-show', v),
+    startProcessing: (id: string, v?: number) => act(id, 'process', v),
+    complete: (id: string, v?: number) => act(id, 'complete', v),
     /** Cancels a confirmed booking and returns the full payment to the customer's wallet (`refunded` in rupees). */
-    reject: (id: string, reason: string) => c.post<{ booking: LabBooking; refunded: number }>(`${booking(id)}/reject`, { body: { reason } }),
+    reject: (id: string, reason: string, v?: number) =>
+      c.post<{ booking: LabBooking; refunded: number }>(`${booking(id)}/reject`, { body: { reason, ...fence(v) } }),
     /** Moves the seat to another slot now; the customer accepts it or cancels with a full refund. */
-    reschedule: (id: string, slotId: string, reason: string) =>
-      c.post<LabBooking>(`${booking(id)}/reschedule`, { body: { slotId: checkId(slotId, 'slot'), reason } }),
+    reschedule: (id: string, slotId: string, reason: string, v?: number) =>
+      c.post<LabBooking>(`${booking(id)}/reschedule`, { body: { slotId: checkId(slotId, 'slot'), reason, ...fence(v) } }),
     /**
      * Q14: moves a no-show once to a later open slot of its branch and visit mode (same price, no payment, no refund);
      * back to confirmed. `expectedVersion` is the `statusVersion` the move was decided on (409 LAB_BOOKING_CHANGED).
@@ -473,20 +517,25 @@ export function partnerLabsApi(c: ApiClient, scope: PartnerScope) {
         body: { slotId: checkId(slotId, 'slot'), requestKey, ...(expectedVersion !== undefined ? { expectedVersion } : {}) },
       });
     },
-    /** multipart `files`: each becomes a draft report of this booking (not visible to the customer). */
-    uploadReports: (id: string, files: readonly File[]) => {
+    /**
+     * multipart `files`: ONE file per request (WQ11b: the server's upload limit of 10 MB is for the whole request, so
+     * several files together are refused), added as a draft report of this booking (not visible to the customer). Q11
+     * `?requestKey=`: the same key again answers the booking with that file already attached (`replayed`), never a copy.
+     */
+    uploadReport: (id: string, file: File, requestKey: string) => {
+      if (!REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
       const form = new FormData();
-      for (const f of files) form.append('files', f, f.name);
-      return c.post<LabBooking>(`${booking(id)}/reports`, { form });
+      form.append('files', file, file.name);
+      return c.post<LabBooking>(`${booking(id)}/reports`, { form, query: { requestKey } });
     },
     /**
      * Releases one draft to the customer under a professional (`releaseReport`): members always sign as themselves (omit
      * `signerMemberId`); admins must name the signer. Releasing an already released file changes nothing.
      */
-    releaseReport: (id: string, file: string, signerMemberId?: string) => {
+    releaseReport: (id: string, file: string, signerMemberId?: string, v?: number) => {
       if (reportFileBooking(file) !== id.toLowerCase()) throw new Error('Not a report file of this booking');
       if (signerMemberId !== undefined) checkId(signerMemberId, 'signer');
-      return c.post<LabBooking>(`${booking(id)}/reports/release`, { body: { file, ...(signerMemberId ? { signerMemberId } : {}) } });
+      return c.post<LabBooking>(`${booking(id)}/reports/release`, { body: { file, ...(signerMemberId ? { signerMemberId } : {}), ...fence(v) } });
     },
     /**
      * A report file of `bookingId`, read with the session's token through the authenticated file route (D1 decides:
@@ -499,11 +548,35 @@ export function partnerLabsApi(c: ApiClient, scope: PartnerScope) {
   };
 }
 
+/** Q16a `adminCancelNoShowSchema`: a reason (trimmed, 3–500) and an explicit refund choice. */
+export interface AdminNoShowCancel { reason: string; refund: boolean }
+
 /** Platform admins: lab bookings of every partner. */
 export function labBookingsAdminApi(c: ApiClient) {
   return {
-    list: (q: AdminLabBookingQuery = {}) => c.get<AdminLabBookingRow[]>('/partner-workspace/admin/lab-bookings', {
-      query: { partnerId: q.partnerId === undefined ? undefined : checkId(q.partnerId, 'partner'), status: q.status },
-    }),
+    /**
+     * Q16a `POST /partner-workspace/admin/lab-bookings/:bookingId/cancel-no-show` (`adminCancelMovedNoShow`): an admin
+     * cancels a CONFIRMED booking that was moved after a no-show (409 BOOKING_NOT_MOVED_NO_SHOW otherwise; 409
+     * LAB_BOOKING_STATE_CONFLICT when it is no longer confirmed). `refund` true = the ordinary full refund to the
+     * wallet (`refunded`, rupees); false = the money stays as for a no-show. The seat is freed either way.
+     */
+    cancelMovedNoShow: (bookingId: string, body: AdminNoShowCancel) => {
+      const reason = body.reason.trim();
+      if (reason.length < MIN_LAB_REASON || reason.length > MAX_LAB_REASON) throw new Error('Invalid reason');
+      if (typeof body.refund !== 'boolean') throw new Error('Choose whether the patient is refunded');
+      return c.post<{ booking: LabBooking; refunded: number }>(`/partner-workspace/admin/lab-bookings/${checkId(bookingId, 'booking')}/cancel-no-show`,
+        { body: { reason, refund: body.refund } });
+    },
+    /** One page, newest booked first (`page` from 1, `limit` up to 200). */
+    list: (q: AdminLabBookingQuery = {}): Promise<Page<AdminLabBookingRow>> => {
+      if (q.page !== undefined && (!Number.isInteger(q.page) || q.page < 1)) throw new Error('Invalid page');
+      if (q.limit !== undefined && (!Number.isInteger(q.limit) || q.limit < 1 || q.limit > ADMIN_LAB_BOOKINGS_PAGE_MAX)) throw new Error('Invalid page size');
+      return c.page<AdminLabBookingRow>('/partner-workspace/admin/lab-bookings', {
+        query: {
+          partnerId: q.partnerId === undefined ? undefined : checkId(q.partnerId, 'partner'), status: q.status,
+          from: checkDate(q.from, 'from'), to: checkDate(q.to, 'to'), page: q.page, limit: q.limit,
+        },
+      });
+    },
   };
 }
