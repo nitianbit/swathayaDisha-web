@@ -17,8 +17,10 @@ export function useAlive() {
 /**
  * A create that must happen once per intent (lab booking, Consult now request), with the doctor booking's rules
  * (pending.ts): the request is stored in session memory with its key BEFORE it is sent; an unanswered attempt locks the
- * form and offers only "send it again" (same key, same details: the server answers a known key with the first record);
- * only a definite refusal of the sole first attempt unlocks it. After a reload only a body-less marker survives (D4).
+ * form and offers "send it again" (same key, same details: the server answers a known key with the first record) or
+ * "give it up" (the server's abandon, WQ11a); a definite refusal of the sole first attempt, or a refusal that settles
+ * any attempt (a given-up key, a content refusal: `afterFailure`), unlocks it. After a reload only a body-less marker
+ * survives (D4).
  *
  * A success counts only for the newest attempt of the request that still owns the slot, on a page still on screen: an
  * answer for an ended or replaced intent, an older attempt's answer, or one arriving after the page was left changes
@@ -78,10 +80,11 @@ export function useOnceOnly<B, R>(slotKey: string, perform: (body: B, requestKey
 }
 
 /**
- * Shown instead of the form while a create's outcome is unknown. In this page's memory: send it again unchanged.
- * Restored after a reload (no details kept on the device): the server is asked, read-only, what became of the key
- * (Q9 lookup): made → open it; abandoned → start again; unknown (may still be on its way) → check again later, or, only
- * if the customer chooses, give it up for good (abandon: then it can never be made) and start again.
+ * Shown instead of the form while a create's outcome is unknown. In this page's memory: send it again unchanged, or
+ * (WQ11a) give it up for good. Restored after a reload (no details kept on the device): the server is asked, read-only,
+ * what became of the key (Q9 lookup): made → open it; abandoned → start again; unknown (may still be on its way) → check
+ * again later, or give it up. Giving up is the server's abandon: afterwards the request can never be made, so the form
+ * opens again; if it was made after all, the server names the record and it opens.
  */
 export function PendingCreatePanel<B>({ once, kind, what, onFound, children }: {
   once: ReturnType<typeof useOnceOnly<B, unknown>>; kind: OnceOnlyKind; what: string; onFound: (recordId: string) => void; children?: ReactNode;
@@ -96,6 +99,15 @@ export function PendingCreatePanel<B>({ once, kind, what, onFound, children }: {
   const key = p.requestKey;
   // Opens the record only if this request still owns the slot and the page is still on screen.
   const found = (id: string) => { if (once.endIfCurrent(key) && alive.current) onFound(id); };
+  const giveUp = async () => {
+    const r = await requestKeysApi(api).abandon(kind, key);
+    if (!alive.current) return;
+    if (r.state === 'abandoned') { once.endIfCurrent(key); return; }
+    if (r.record?._id) { found(r.record._id); return; } // it was made after all: the server names it
+    setUnknown(false);
+    setNote('It was made after all, but it could not be shown here. Look in My bookings.');
+  };
+  const giveUpConsequence = `The ${what} is cancelled for good: it can never be made later, even if it is still on its way. Then you can start again.`;
 
   if (p.restored) {
     async function check() {
@@ -122,17 +134,7 @@ export function PendingCreatePanel<B>({ once, kind, what, onFound, children }: {
         </Alert>
         {note && <Alert tone={unknown ? 'warn' : 'error'}>{note}</Alert>}
         <div className="row"><Button busy={checking} onClick={() => void check()}>{unknown ? 'Check again' : 'Check what happened'}</Button></div>
-        {unknown && (
-          <Confirm label="Give it up and start again" confirmLabel="Yes, give it up"
-            consequence={`The earlier ${what} is cancelled for good: it can never be made later, even if it is still on its way. Then you can start again.`}
-            onConfirm={async () => {
-              const r = await requestKeysApi(api).abandon(kind, key);
-              if (r.state === 'abandoned') { once.endIfCurrent(key); return; }
-              if (r.record?._id) { found(r.record._id); return; } // it was made after all: the server names it
-              setUnknown(false);
-              setNote('It was made after all, but it could not be shown here. Look in My bookings.');
-            }} />
-        )}
+        {unknown && <Confirm label="Give it up and start again" confirmLabel="Yes, give it up" consequence={giveUpConsequence} onConfirm={giveUp} />}
       </section>
     );
   }
@@ -141,12 +143,14 @@ export function PendingCreatePanel<B>({ once, kind, what, onFound, children }: {
     <section className="card stack" role="group" aria-label={`Unconfirmed ${what}`}>
       <Alert tone="warn">
         Your {what} for {p.label} did not get an answer{p.error ? ` (${p.error})` : ''}. It may already have been made. Send it
-        again to find out: it will not be made twice.
+        again to find out: it will not be made twice. Or give it up to start again.
       </Alert>
+      {note && <Alert>{note}</Alert>}
       <div className="row">
         <Button busy={once.busy} onClick={() => void once.send(p)}>Send it again</Button>
         {children}
       </div>
+      <Confirm label="Give it up and start again" confirmLabel="Yes, give it up" disabled={once.busy} consequence={giveUpConsequence} onConfirm={giveUp} />
     </section>
   );
 }

@@ -147,21 +147,21 @@ describe('partner sign-in selection (Q7)', () => {
   it('select is sent in the same session mode as the verify', async () => {
     const { client, calls } = recorder();
     const auth = authApi(client);
-    await auth.selectPartner('tk', P, { kind: 'bearer' });
+    // Q16b: a partner never gets a bearer token: refused before anything is sent.
+    await expect(auth.selectPartner('tk', P, { kind: 'bearer' })).rejects.toMatchObject({ status: 400, code: 'SESSION_REQUIRED' });
     await auth.selectPartner('tk', P, { kind: 'cookie' });
     await auth.selectPartner('tk', P, { kind: 'native', app: 'workspace', previousRefreshToken: 'rt-old' });
     expect(calls.every((c) => c.url === '/auth/partner/select' && c.method === 'POST')).toBe(true);
     expect(calls.map((c) => c.body)).toEqual([
-      { ticket: 'tk', partnerId: P },
       { ticket: 'tk', partnerId: P, session: 'cookie' },
       { ticket: 'tk', partnerId: P, session: 'native', app: 'workspace', previousRefreshToken: 'rt-old' },
     ]);
     const headers = calls.map((c) => c.init.headers as Record<string, string>);
     expect(headers[0]!.Authorization).toBeUndefined();
-    expect(headers[1]!['X-Jansetu-Session']).toBe('1');
-    expect(calls[1]!.init.credentials).toBe('same-origin');
-    expect(headers[2]!['X-Jansetu-Native']).toBe('1');
-    expect(calls[2]!.init.credentials).toBe('omit');
+    expect(headers[0]!['X-Jansetu-Session']).toBe('1');
+    expect(calls[0]!.init.credentials).toBe('same-origin');
+    expect(headers[1]!['X-Jansetu-Native']).toBe('1');
+    expect(calls[1]!.init.credentials).toBe('omit');
     expect(() => auth.selectPartner('tk', 'x', { kind: 'bearer' })).toThrow('Invalid partner id');
   });
 });

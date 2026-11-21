@@ -17,7 +17,8 @@ const fromInput = (v: string) => v.replace(/-/g, '');
 
 export function ProfileScreen() {
   const { api, signOut, signOutEverywhere } = useSession();
-  const q = useQuery({ queryKey: ['me'], queryFn: () => customerApi(api).profile() });
+  const me = useCustomer();
+  const q = useQuery({ queryKey: ['me', me.id], queryFn: () => customerApi(api).profile() });
   return (
     <>
       <PageHeading title="Profile" />
@@ -53,7 +54,7 @@ function ProfileForm({ profile }: { profile: CustomerProfile }) {
 
   const save = useMutation({
     mutationFn: (body: ProfileUpdate) => customerApi(api).updateProfile(me.id, body),
-    onSuccess: (user) => queryClient.setQueryData(['me'], user),
+    onSuccess: (user) => queryClient.setQueryData(['me', me.id], user),
   });
 
   function submit(e: FormEvent) {

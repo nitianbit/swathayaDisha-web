@@ -1,4 +1,4 @@
-import { customerApi, type ApiClient, type PaymentOrder } from '@jansetu/api';
+import { ApiError, customerApi, type ApiClient, type PaymentOrder } from '@jansetu/api';
 
 /** Razorpay Checkout (https://checkout.razorpay.com/v1/checkout.js), loaded only when a payment starts. */
 interface RazorpayInstance { open(): void; on(event: 'payment.failed', cb: (r: { error?: { description?: string } }) => void): void }
@@ -72,12 +72,26 @@ export async function payOrder(api: ApiClient, order: PaymentOrder, prefill: { n
   return checkPayment(api, order.paymentTransactionId);
 }
 
-/** Asks the server to check a payment with Razorpay. Never throws. */
-export async function checkPayment(api: ApiClient, paymentTransactionId: string): Promise<PaymentOutcome> {
+/**
+ * WQ11a: what the server's payment check said. `returned`: the attempt's money went back to the wallet (a capture that
+ * arrived after the booking was released or paid otherwise; the record is then 'refunded'). A definite refusal of the
+ * check (400 PAYMENT_FAILED / PAYMENT_REFUNDED: that attempt is over) is not "could not check": a new payment may start
+ * (the server's /pay settles every earlier attempt first and decides).
+ */
+export async function paymentCheck(api: ApiClient, paymentTransactionId: string): Promise<{ outcome: PaymentOutcome; returned: boolean }> {
   try {
     const r = await customerApi(api).reconcilePayment(paymentTransactionId);
-    return r.state === 'paid' ? 'paid' : 'unpaid';
-  } catch {
-    return 'unknown';
+    if (r.state === 'paid' && r.paymentRecord?.status === 'refunded') return { outcome: 'unpaid', returned: true };
+    return { outcome: r.state === 'paid' ? 'paid' : 'unpaid', returned: false };
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 400 && (err.code === 'PAYMENT_FAILED' || err.code === 'PAYMENT_REFUNDED')) {
+      return { outcome: 'unpaid', returned: err.code === 'PAYMENT_REFUNDED' };
+    }
+    return { outcome: 'unknown', returned: false };
   }
+}
+
+/** Asks the server to check a payment with Razorpay. Never throws. */
+export async function checkPayment(api: ApiClient, paymentTransactionId: string): Promise<PaymentOutcome> {
+  return (await paymentCheck(api, paymentTransactionId)).outcome;
 }

@@ -69,7 +69,7 @@ export type {
   Booking, BookingPayment, BookingStatus, ConsultationMode, CouponCheck, CustomerProfile, NewConsultation, PaymentOrder, Slot, Specialist, Dependent, ExternalBooking, ExternalIntegration, Gender, NewDependent,
   ProfileUpdate, Relationship, Wallet, WalletTransaction,
 } from './customer.ts';
-export { markerStore, samePrincipal, sessionChannel, withSessionLock } from './webSession.ts';
+export { clearWebSignOutPending, isTransientSessionError, markerStore, markWebSignOutPending, samePrincipal, sessionChannel, webSignOutState, withSessionLock } from './webSession.ts';
 export type { PendingMarker, Principal, SessionAnnouncement } from './webSession.ts';
 export { customerPharmacyApi, normalizeCart, PHARMACY_PAYMENT_WINDOW_MIN, shelfOf } from './customerPharmacy.ts';
 export type { Cart, CartItem, Checkout, CheckoutResult, PharmacyStore, ShelfItem, StockRow } from './customerPharmacy.ts';

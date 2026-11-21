@@ -69,13 +69,13 @@ function RequestView({ request: r }: { request: InstantRequest }) {
 
       {paymentError && r.paymentStatus === 'pending' && <Alert>The payment page could not open: {paymentError} You can pay below.</Alert>}
       {r.status === 'pending_payment' && r.paymentStatus === 'pending' && (
-        <PayAgainPanel key={`${r._id}:${r.paymentTransactionId ?? ''}`} what="request" deadline={r.paymentDeadline} paymentTransactionId={r.paymentTransactionId} expiredCode="INSTANT_PAYMENT_EXPIRED"
+        <PayAgainPanel key={`${r._id}:${r.paymentTransactionId ?? ''}`} what="request" amountDue={paidAmount} deadline={r.paymentDeadline} paymentTransactionId={r.paymentTransactionId} expiredCode="INSTANT_PAYMENT_EXPIRED"
           description={`Consultation now · ${r.specialization}`} pay={() => instantConsultApi(api).pay(r._id)} onSettled={refresh} />
       )}
       {r.status === 'expired_unpaid' && (
         <Alert tone="warn">
-          This request was not paid within {INSTANT_PAYMENT_WINDOW_MIN} minutes, so it was closed. Any wallet money used is back
-          in your wallet. <Link to="/consult">Start again</Link>
+          This request was not paid within {INSTANT_PAYMENT_WINDOW_MIN} minutes, so it was closed. Any amount taken is back in
+          your wallet, including a payment that went through after the time ran out. <Link to="/consult">Start again</Link>
         </Alert>
       )}
       {r.status === 'offered' && <Waiting request={r} paid={paidAmount ?? 0} onChanged={refresh} />}

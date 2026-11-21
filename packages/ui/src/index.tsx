@@ -3,7 +3,7 @@ import { useCallback, useEffect, useId, useState, type ButtonHTMLAttributes, typ
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
 
 export function Button({ variant = 'primary', busy = false, className = '', children, disabled, ...rest }:
-  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; busy?: boolean }) {
+  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; busy?: boolean; ref?: Ref<HTMLButtonElement> }) {
   return (
     <button {...rest} type={rest.type ?? 'button'} disabled={disabled || busy} aria-busy={busy || undefined}
       className={`j-btn j-btn--${variant} ${className}`.trim()}>
@@ -18,31 +18,36 @@ interface FieldProps {
   error?: string | null;
 }
 
-export function TextField({ label, hint, error, id, ...rest }:
+/**
+ * A field's description: an `aria-describedby` passed in (e.g. the sentence naming where a code was sent) comes first,
+ * then the hint and the error. WQ11a: the error is announced when it appears (`role="alert"`).
+ */
+const describedByOf = (own: string | undefined, inputId: string, hint?: string, error?: string | null) =>
+  [own ?? '', hint ? `${inputId}-hint` : '', error ? `${inputId}-error` : ''].filter(Boolean).join(' ') || undefined;
+
+export function TextField({ label, hint, error, id, 'aria-describedby': own, ...rest }:
   FieldProps & InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> }) {
   const auto = useId();
   const inputId = id ?? auto;
-  const describedBy = [hint ? `${inputId}-hint` : '', error ? `${inputId}-error` : ''].filter(Boolean).join(' ') || undefined;
   return (
     <div className="j-field">
       <label htmlFor={inputId}>{label}</label>
-      <input {...rest} id={inputId} aria-invalid={error ? true : undefined} aria-describedby={describedBy} />
+      <input {...rest} id={inputId} aria-invalid={error ? true : undefined} aria-describedby={describedByOf(own, inputId, hint, error)} />
       {hint && <span id={`${inputId}-hint`} className="j-field__hint">{hint}</span>}
-      {error && <span id={`${inputId}-error`} className="j-field__error">{error}</span>}
+      {error && <span id={`${inputId}-error`} className="j-field__error" role="alert">{error}</span>}
     </div>
   );
 }
 
-export function TextArea({ label, hint, error, id, ...rest }: FieldProps & TextareaHTMLAttributes<HTMLTextAreaElement>) {
+export function TextArea({ label, hint, error, id, 'aria-describedby': own, ...rest }: FieldProps & TextareaHTMLAttributes<HTMLTextAreaElement>) {
   const auto = useId();
   const inputId = id ?? auto;
-  const describedBy = [hint ? `${inputId}-hint` : '', error ? `${inputId}-error` : ''].filter(Boolean).join(' ') || undefined;
   return (
     <div className="j-field">
       <label htmlFor={inputId}>{label}</label>
-      <textarea {...rest} id={inputId} aria-invalid={error ? true : undefined} aria-describedby={describedBy} />
+      <textarea {...rest} id={inputId} aria-invalid={error ? true : undefined} aria-describedby={describedByOf(own, inputId, hint, error)} />
       {hint && <span id={`${inputId}-hint`} className="j-field__hint">{hint}</span>}
-      {error && <span id={`${inputId}-error`} className="j-field__error">{error}</span>}
+      {error && <span id={`${inputId}-error`} className="j-field__error" role="alert">{error}</span>}
     </div>
   );
 }
@@ -53,6 +58,14 @@ export function Alert({ tone = 'error', children }: { tone?: 'error' | 'ok' | 'w
 
 export function Badge({ tone, children }: { tone?: 'warn' | 'danger' | 'ok'; children: ReactNode }) {
   return <span className={`j-badge${tone ? ` j-badge--${tone}` : ''}`}>{children}</span>;
+}
+
+/**
+ * WQ11a: shown while a session renewal is being retried after a network or server failure: the person stays signed in
+ * and nothing else changes; it goes away once the renewal succeeds.
+ */
+export function Reconnecting() {
+  return <div className="j-reconnecting" role="status" aria-live="polite">Reconnecting…</div>;
 }
 
 /** Every data screen shows one of these while it has no content to show. */

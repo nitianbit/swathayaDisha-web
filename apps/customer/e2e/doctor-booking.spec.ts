@@ -27,6 +27,8 @@ interface Backend {
   sessions: boolean;
   live: boolean;
   abandoned: Set<string>;
+  /** WQ11a: while set, a booking create waits for it before answering (a slow network). */
+  hold?: Promise<void>;
 }
 
 /** Fake Razorpay Checkout: `window.__rz` = 'pay' | 'close'. Paying marks the order captured at the fake gateway. */
@@ -102,6 +104,7 @@ async function mockBackend(page: Page): Promise<Backend> {
     if (path === '/bookings' && req.method() === 'GET') return page1(route, [...state.bookings.values()]);
     if (path.startsWith('/external-bookings')) return page1(route, []);
     if (path === '/bookings' && req.method() === 'POST') {
+      if (state.hold) await state.hold;
       const b = body as Record<string, unknown>;
       const known = state.byKey.get(String(b.requestKey));
       if (known) {
@@ -465,4 +468,38 @@ test('D4: a used key is resolved exactly, even when the booking is not among the
   await expect(page.getByText('Awaiting confirmation', { exact: true })).toBeVisible(); // the booking the server named
   expect(backend.abandoned.size).toBe(0);
   expect(backend.bookings.size).toBe(1);
+});
+
+test('WQ11a: a booking answer that arrives after the customer left the page opens neither payment nor the booking', async ({ page }) => {
+  const backend = await mockBackend(page);
+  let release!: () => void;
+  backend.hold = new Promise<void>((r) => { release = r; });
+  await signIn(page);
+  await bookPaid(page);
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  await expect.poll(() => posts(backend, '/bookings').length).toBe(1);
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Wallet', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Wallet' })).toBeVisible();
+  release();
+  await expect.poll(() => backend.bookings.size).toBe(1);
+  await page.waitForTimeout(1500);
+  await expect(page.getByRole('heading', { level: 1, name: 'Wallet' })).toBeVisible();
+  expect(page.url()).toMatch(/#\/wallet$/);
+  expect(posts(backend, '/payments/verify')).toHaveLength(0);
+});
+
+test('WQ11a: an unanswered booking request can be given up on the server, and the form comes back', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.createDrops = 'before';
+  await signIn(page);
+  await bookPaid(page);
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed booking request' });
+  await expect(panel).toBeVisible();
+  await panel.getByRole('button', { name: 'Give it up and book again' }).click();
+  await panel.getByRole('button', { name: 'Yes, give it up' }).click();
+  await expect(panel).toHaveCount(0);
+  expect(backend.abandoned.size).toBe(1);
+  await expect(page.getByRole('button', { name: '11:30 PM' })).toBeVisible();
+  expect(backend.bookings.size).toBe(0);
 });

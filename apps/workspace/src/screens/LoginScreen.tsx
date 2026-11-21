@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import {
   ApiError, EMAIL_NOT_REGISTERED_MESSAGE, EMAIL_NOT_REGISTERED_STAFF_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, PARTNER_KIND_LABEL, parseLoginIdentifier,
   targetKey, targetKind, type OtpTarget, type PartnerSelection,
@@ -38,8 +38,17 @@ export function LoginScreen({ notice }: { notice?: string }) {
   const cooldown = cooldowns.remaining(current ? targetKey(current) : null);
   const waiting = cooldown > 0;
   const codeRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => { if (step === 'code') codeRef.current?.focus(); }, [step]);
+  const identifierRef = useRef<HTMLInputElement>(null);
+  const sentId = useId();
+  // WQ11a: focus follows the step (the code field on the code step, the identifier on "Change number or email" and
+  // "Start again") and goes to the field an error is about. Asked for by a counter so the same field can be asked again.
+  const [focus, setFocus] = useState<{ field: 'identifier' | 'code'; n: number } | null>(null);
+  const focusOn = (field: 'identifier' | 'code') => setFocus((f) => ({ field, n: (f?.n ?? 0) + 1 }));
+  useEffect(() => {
+    if (!focus) return;
+    (focus.field === 'code' ? codeRef : identifierRef).current?.focus();
+  }, [focus]);
+  useEffect(() => { if (step === 'code') focusOn('code'); }, [step]);
   const chooseRef = useRef<HTMLLegendElement>(null);
   useEffect(() => { if (step === 'choose') chooseRef.current?.focus(); }, [step]);
 
@@ -49,7 +58,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
     setError(null);
     // The role is captured with the destination (the role choice is frozen while sending).
     const next = step === 'identify' ? (typed ? { role, target: typed } : null) : sent;
-    if (!next) { setFieldError('Enter a 10-digit mobile number or an email address.'); return; }
+    if (!next) { setFieldError('Enter a 10-digit mobile number or an email address.'); focusOn('identifier'); return; }
     setFieldError(null);
     setBusy(true);
     try {
@@ -71,7 +80,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
   async function verify(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!OTP_PATTERN.test(otp)) { setFieldError('Enter the 6-digit code.'); return; }
+    if (!OTP_PATTERN.test(otp)) { setFieldError('Enter the 6-digit code.'); focusOn('code'); return; }
     if (!sent) { setStep('identify'); return; }
     setFieldError(null);
     setBusy(true);
@@ -100,6 +109,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
     setStep('identify');
     setFieldError(forRole === 'specialist' || forRole === 'pharmacy' ? EMAIL_NOT_REGISTERED_STAFF_MESSAGE
       : err instanceof ApiError && err.message ? err.message : EMAIL_NOT_REGISTERED_MESSAGE);
+    focusOn('identifier');
   }
 
   async function open(e: FormEvent) {
@@ -107,7 +117,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
     // Q7: only a lab/clinic sign-in has a workspace choice, opened for the role the code was sent for.
     if (!selection || sent?.role !== 'partner') return;
     setError(null);
-    if (!selection.choices.some((c) => c.partnerId === chosen)) { setFieldError('Choose the workspace to open.'); return; }
+    if (!selection.choices.some((c) => c.partnerId === chosen)) { setFieldError('Choose the workspace to open.'); chooseRef.current?.focus(); return; }
     setFieldError(null);
     setBusy(true);
     try {
@@ -145,7 +155,8 @@ export function LoginScreen({ notice }: { notice?: string }) {
                 </label>
               ))}
             </fieldset>
-            <TextField label="Mobile number or email" type="text" inputMode="text" autoComplete="username" autoCapitalize="none"
+            {/* WQ11a: a shared staff PC: the browser must not offer the previous person's number. */}
+            <TextField ref={identifierRef} label="Mobile number or email" type="text" inputMode="text" autoComplete="off" autoCapitalize="none"
               spellCheck={false} maxLength={MAX_EMAIL} value={identifier} onChange={(e) => setIdentifier(e.target.value)}
               error={fieldError} hint="We will send a 6-digit code by SMS to a mobile number, or to an email address." />
             <Button type="submit" busy={busy} disabled={waiting}>{waiting ? `Send code in ${cooldown}s` : 'Send code'}</Button>
@@ -168,20 +179,21 @@ export function LoginScreen({ notice }: { notice?: string }) {
                   </span>
                 </label>
               ))}
-              {fieldError && <span id="choose-error" className="j-field__error">{fieldError}</span>}
+              {fieldError && <span id="choose-error" className="j-field__error" role="alert">{fieldError}</span>}
             </fieldset>
             <Button type="submit" busy={busy}>Open workspace</Button>
             <div className="login-actions">
               <Button variant="ghost" disabled={busy}
-                onClick={() => { setSelection(null); setStep('identify'); setError(null); setFieldError(null); }}>
+                onClick={() => { setSelection(null); setStep('identify'); setError(null); setFieldError(null); focusOn('identifier'); }}>
                 Start again
               </Button>
             </div>
           </form>
         ) : (
           <form onSubmit={verify} className="login-form" noValidate>
-            {target && <p>We sent a 6-digit code to your {targetKind(target)} <strong>{maskTarget(target)}</strong>.</p>}
+            {target && <p id={sentId}>We sent a 6-digit code to your {targetKind(target)} <strong>{maskTarget(target)}</strong>.</p>}
             <TextField ref={codeRef} label="6-digit code" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+              aria-describedby={target ? sentId : undefined}
               value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} error={fieldError} />
             <Button type="submit" busy={busy}>Verify and sign in</Button>
             <div className="login-actions">
@@ -189,7 +201,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
                 {waiting ? `Resend code in ${cooldown}s` : 'Resend code'}
               </Button>
               <Button variant="ghost" disabled={busy}
-                onClick={() => { setStep('identify'); setError(null); setFieldError(null); }}>
+                onClick={() => { setStep('identify'); setError(null); setFieldError(null); focusOn('identifier'); }}>
                 Change number or email
               </Button>
             </div>

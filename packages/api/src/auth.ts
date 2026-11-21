@@ -183,9 +183,13 @@ interface PartnerSelector {
   (ticket: string, partnerId: string, mode: { kind: 'native'; app: 'workspace'; previousRefreshToken?: string | null }): Promise<NativeSignedIn>;
 }
 
+/** Q16b: partner members get no bearer token; their verify and select must open a cookie or native session. */
+const partnerNeedsSession = () => new ApiError(400, "Partner sign-in needs session 'cookie' (web) or 'native' (phone app)", 'SESSION_REQUIRED');
+
 function partnerSelector(c: ApiClient): PartnerSelector {
   return ((ticket: string, partnerId: string, mode: SignInMode) => {
     if (!OBJECT_ID.test(partnerId)) throw new Error('Invalid partner id');
+    if (mode.kind === 'bearer') return Promise.reject(partnerNeedsSession());
     const body = { ticket, partnerId };
     if (mode.kind === 'cookie') {
       return c.post<SessionSignedIn>('/auth/partner/select', { body: { ...body, session: 'cookie' }, auth: false, session: true });
@@ -202,8 +206,10 @@ export function authApi(c: ApiClient) {
   return {
     sendOtp: (userType: UserType, target: OtpTarget) =>
       c.post<void>(`/auth/${userType}/send`, { body: target, auth: false }),
-    verifyOtp: <U extends UserType>(userType: U, target: OtpTarget, otp: string) =>
-      c.post<VerifyAnswer<U, SignedIn>>(`/auth/${userType}/verify`, { body: { ...target, otp }, auth: false }),
+    /** Legacy bearer sign-in. Q16b: never for partners (refused here, as the server would: 400 SESSION_REQUIRED). */
+    verifyOtp: <U extends UserType>(userType: U, target: OtpTarget, otp: string) => (userType === 'partner'
+      ? Promise.reject(partnerNeedsSession())
+      : c.post<VerifyAnswer<U, SignedIn>>(`/auth/${userType}/verify`, { body: { ...target, otp }, auth: false })),
     /** D4: sign in with a first-party cookie session (web apps behind their own host's /api forward). */
     verifyOtpSession: <U extends UserType>(userType: U, target: OtpTarget, otp: string) =>
       c.post<VerifyAnswer<U, SessionSignedIn>>(`/auth/${userType}/verify`, { body: { ...target, otp, session: 'cookie' }, auth: false, session: true }),
@@ -213,19 +219,23 @@ export function authApi(c: ApiClient) {
      */
     selectPartner: partnerSelector(c),
     refreshSession: () => c.post<SessionRefreshed>('/auth/session/refresh', { body: {}, auth: false, session: true }),
-    /** Ends the cookie's family and the family of `token` (the access token this tab was using). */
+    /**
+     * Ends the cookie's family and the family of `token` (the access token this tab was using). Sent under the session
+     * lock, so it never renews on a 401 (that would wait for the same lock); `keepalive` lets it finish after the page
+     * closes (WQ11a).
+     */
     logoutSession: (token?: string | null) =>
-      c.post<unknown>('/auth/session/logout', { body: {}, auth: !!token, ...(token ? { token } : {}), session: true }),
+      c.post<unknown>('/auth/session/logout', { body: {}, auth: !!token, ...(token ? { token } : {}), session: true, noRenew: true, keepalive: true }),
     /** N1: phone-app sign-in; `previousRefreshToken` (the one still in the secure store) is ended by the server. */
     verifyOtpNative: <U extends UserType>(userType: U, target: OtpTarget, otp: string, app: NativeApp, previousRefreshToken?: string | null) =>
       c.post<VerifyAnswer<U, NativeSignedIn>>(`/auth/${userType}/verify`, { body: { ...target, otp, session: 'native', app,
         ...(previousRefreshToken ? { previousRefreshToken } : {}) }, auth: false, native: true }),
     refreshNative: (app: NativeApp, refreshToken: string) =>
       c.post<NativeRefreshed>('/auth/session/native/refresh', { body: { app, refreshToken }, auth: false, native: true }),
-    /** Ends the stored family and the family of `token` (the access token in use). */
+    /** Ends the stored family and the family of `token` (the access token in use). Under the session lock: never renews. */
     logoutNative: (app: NativeApp, refreshToken: string | null, token?: string | null) =>
       c.post<unknown>('/auth/session/native/logout', { body: { app, ...(refreshToken ? { refreshToken } : {}) },
-        auth: !!token, ...(token ? { token } : {}), native: true }),
+        auth: !!token, ...(token ? { token } : {}), native: true, noRenew: true }),
     /** Checked while the session lock is held: a 401 fails it (no renewal, which would wait for the same lock). */
     profile: () => c.get<Profile>('/auth/profile', { noRenew: true }),
     /** Customers only: every token issued so far stops working. */

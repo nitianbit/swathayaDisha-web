@@ -14,7 +14,7 @@ export function HomeScreen() {
   const { api } = useSession();
   const me = useCustomer();
   const customers = customerApi(api);
-  const profile = useQuery({ queryKey: ['me'], queryFn: () => customers.profile() });
+  const profile = useQuery({ queryKey: ['me', me.id], queryFn: () => customers.profile() });
   const wallet = useQuery({ queryKey: ['wallet', me.id], queryFn: () => customers.wallet(me.id) });
 
   if (profile.isPending) return <Loading />;

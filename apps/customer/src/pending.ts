@@ -26,9 +26,21 @@ export const startOp = <B,>(body: B, now = Date.now()): PendingOp<B> =>
 export const beginAttempt = <B,>(p: PendingOp<B>, now = Date.now()): PendingOp<B> =>
   ({ ...p, attempts: p.attempts + 1, uncertain: p.uncertain || p.attempts > 0, lastAttemptAt: now, error: undefined });
 
-/** null = forget it (only a sole first attempt definitely refused); otherwise keep it, uncertain. */
+/**
+ * WQ11a (as the workspace, WQ7/WQ10c): refusals that settle ANY attempt as not made. 409 `REQUEST_ABANDONED`: the key
+ * was given up, and the server writes the key's claim in the same transaction as the record, so nothing was or ever
+ * will be made under it. 400/422: the request's own content is refused, so the same body sent earlier was refused too.
+ * Other refusals of a resend (a slot taken, a price changed, 401/403) may race an earlier attempt still on its way:
+ * they leave the request unconfirmed, and "Give it up" (the server's abandon) settles it.
+ */
+export function definitelyNeverDone(err: unknown): boolean {
+  return err instanceof ApiError && ((err.status === 409 && err.code === 'REQUEST_ABANDONED') || err.status === 400 || err.status === 422);
+}
+
+/** null = forget it (a sole first attempt definitely refused, or any attempt refused for good); otherwise keep it, uncertain. */
 export function afterFailure<B>(attempt: PendingOp<B>, err: unknown, message: string): PendingOp<B> | null {
   if (attempt.attempts === 1 && !attempt.uncertain && definitelyNotDone(err)) return null;
+  if (definitelyNeverDone(err)) return null;
   return { ...attempt, uncertain: true, error: message };
 }
 

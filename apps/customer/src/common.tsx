@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ApiError, appointmentInstant } from '@jansetu/api';
 import { Alert, Button, TextArea } from '@jansetu/ui';
 
@@ -41,6 +41,8 @@ export const BOOKING_STATUS: Record<string, { label: string; tone?: 'ok' | 'warn
 
 /**
  * Two-step confirmation for things that cannot be undone: the first tap says what will happen, the second does it.
+ * WQ11a: opening it moves the focus to its first button (the consequence is the group's description, so it is read
+ * out); Back, or finishing, returns the focus to the button that opened it.
  */
 export function Confirm({ label, consequence, confirmLabel, withReason = false, onConfirm, disabled }: {
   label: string; consequence: ReactNode; confirmLabel: string; withReason?: boolean; disabled?: boolean;
@@ -50,18 +52,40 @@ export function Confirm({ label, consequence, confirmLabel, withReason = false, 
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  if (!open) return <Button variant="secondary" disabled={disabled} onClick={() => setOpen(true)}>{label}</Button>;
+  const first = useRef<HTMLButtonElement>(null);
+  const opener = useRef<HTMLButtonElement>(null);
+  // null: nothing to move; 'in' after opening; 'back' after closing (only when the focus was inside the group).
+  const move = useRef<'in' | 'back' | null>(null);
+  const group = useRef<HTMLDivElement>(null);
+  const consequenceId = useId();
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => {
+    if (move.current === 'in') first.current?.focus();
+    else if (move.current === 'back') opener.current?.focus();
+    move.current = null;
+  }, [open]);
+  const close = () => {
+    if (group.current?.contains(document.activeElement) || document.activeElement === document.body) move.current = 'back';
+    setOpen(false);
+  };
+  if (!open) {
+    return <Button ref={opener} variant="secondary" disabled={disabled} onClick={() => { move.current = 'in'; setOpen(true); }}>{label}</Button>;
+  }
   return (
-    <div className="confirm" role="group" aria-label={label}>
-      <div>{consequence}</div>
+    <div ref={group} className="confirm" role="group" aria-label={label} aria-describedby={consequenceId}>
+      <div id={consequenceId}>{consequence}</div>
       {withReason && <TextArea label="Reason (optional)" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />}
       {error && <Alert>{error}</Alert>}
       <div className="confirm-actions">
-        <Button variant="danger" busy={busy} onClick={async () => {
+        <Button ref={first} variant="danger" busy={busy} onClick={async () => {
           setBusy(true); setError(null);
-          try { await onConfirm(reason.trim()); setOpen(false); } catch (err) { setError(messageOf(err)); } finally { setBusy(false); }
+          try {
+            await onConfirm(reason.trim());
+            if (alive.current) close();
+          } catch (err) { setError(messageOf(err)); } finally { if (alive.current) setBusy(false); }
         }}>{confirmLabel}</Button>
-        <Button variant="ghost" disabled={busy} onClick={() => { setOpen(false); setError(null); }}>Back</Button>
+        <Button variant="ghost" disabled={busy} onClick={() => { setError(null); close(); }}>Back</Button>
       </div>
     </div>
   );
