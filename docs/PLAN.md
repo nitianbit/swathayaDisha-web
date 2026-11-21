@@ -1181,25 +1181,30 @@ Base `317f21e` (stage). Backend contract read-only: `SwasthaDisha-worktrees/q14-
   with `keepalive` and is retried with backoff (1 s … 30 s) while the page is open. Until the server answers, the sign-in
   screen says "You are signed out on this device. The server has not confirmed it yet…", and every start finishes the
   logout BEFORE any refresh (`restore`), never resuming; an unreadable record counts as pending (as N1 on the phone). The
-  record clears on a server answer (2xx, or a definite 4xx: the server is reachable and refresh would be refused the same
-  way), when another tab finished it, or when a new sign-in replaced the browser's session (the server revokes the
+  record clears only on the backend's own answer `data.signedOut === true` (re-review N4: a 200 page from something in
+  front of the backend, or any refusal, is retried), when another tab finished it, or when a new sign-in replaced the
+  browser's session (the server revokes the
   presented cookie's family on verify). A `signed-in` message from another tab stops this tab's retries.
 - **2 Renewal without an answer keeps the session (MEDIUM).** `isTransientSessionError`: no answer, timeout, 408, 429, 5xx (and
   non-HTTP failures such as a busy secure store). Then the session stays, a quiet `Reconnecting…` status shows, the renewal
   is retried (2 s … 60 s, and at once on `online`), and the request that needed it fails with its network error (screens
-  offer Try again). Only a definite answer (401/SESSION_ENDED or another 4xx) ends the session.
-- **3 Lost create + definite refusal (MEDIUM).** `afterFailure` (pending.ts) also settles ANY attempt as not made on 409
-  `REQUEST_ABANDONED` or a content refusal 400/422 (the workspace's WQ7/WQ10c rule). Other refusals of a resend (409
-  SLOT_FULL, PRICE_CHANGED, 401/403) may race an earlier attempt still on its way, so they stay unconfirmed; the in-memory
-  panel now offers "Give it up and start again" (the server's abandon: `abandoned` opens the form, `used` opens the record)
-  on lab bookings, Consult now and doctor bookings.
+  offer Try again). Only a definite answer (401/SESSION_ENDED or another 4xx) ends the session. Re-review N3: the same
+  holds for the FIRST refresh at start-up: "Reconnecting… We keep trying" with backoff (2 s … 60 s, at once on `online`),
+  and "Sign in again" as the way out; only a definite answer shows the sign-in screen. The renewal note is a slim bar
+  above the page (in the flow), never covering the page title.
+- **3 Lost create + definite refusal (MEDIUM).** A refusal for good of any attempt after an unanswered one is never
+  settled locally (re-review N5: doctor bookings answer 400 SLOT_NOT_AVAILABLE / SLOT_FULL after the key lookup while an
+  earlier attempt may still be on its way). `settleByAbandon` asks the server's abandon first: `abandoned` = it can never
+  be made, the form opens with the refusal; `used` = its record opens; no answer = it stays unconfirmed. The in-memory
+  panel also offers "Give it up and start again" on lab bookings, Consult now and doctor bookings.
 - **4 Lab coupon and patient (MEDIUM).** Choosing who the tests are for re-checks the applied coupon ("Checking coupon…"),
   so Book never stays off silently. Doctor booking (its coupon is checked per patient) drops it and says so.
 - **5 Sign-in accessibility (MEDIUM).** Field errors are `role="alert"` (shared `TextField`/`TextArea`; an outside
   `aria-describedby` is merged first). Focus goes to the code field on the code step, to the identifier on "Change number
   or email" / "Start again" / email-not-registered, and to the field a validation error is about. "We sent a code to …" is
   the code field's description. `Confirm` focuses its first button on opening (the consequence is the group's description)
-  and returns focus to its opener on Back or when done (`Button` takes a `ref`, additive).
+  and returns focus to its opener on Back or when done (`Button` takes a `ref`, additive). Re-review N2: the initial
+  focus is "Back", never the action, so Enter pressed twice cannot carry it out.
 - **6 Profile check failing after the code (LOW).** The new session is ended (web: recorded + logout loop; phone: N1 clean-up),
   never left live.
 - **7 Pay again after a refused check (LOW).** `paymentCheck`: 400 PAYMENT_FAILED / PAYMENT_REFUNDED = that attempt is over,
@@ -1213,17 +1218,18 @@ Base `317f21e` (stage). Backend contract read-only: `SwasthaDisha-worktrees/q14-
   Pay now, the part held from the wallet and what the payment page asks for.
 - **11 Doctor booking guards (LOW).** As `useOnceOnly`: only the newest attempt that still owns the slot, on a page still on
   screen, finishes the booking; payment and navigation never start for a page the customer left.
-- **12 Notes.** An explicit customer sign-out clears that customer's `sd:pend:customer:<id>:…` markers (`markerStore.clear`;
-  a session ended by the server keeps them, as before; the workspace keeps staff markers). The shared-device identifier
-  field is `autoComplete="off"` (the code field keeps `one-time-code`).
+- **12 Notes.** Reload markers are kept through sign-out (D4; re-review N1 reverted the clear: clearing let a second booking
+  be made beside an unanswered first one). They hold ids and times only. The shared-device identifier field is
+  `autoComplete="off"` (the code field keeps `one-time-code`).
 - **Q16b partner sessions.** Partner verify and select always send `session: 'cookie'` (web) or `'native'` (phone).
   `authApi.verifyOtp('partner', …)` and `selectPartner(…, { kind: 'bearer' })` are refused before sending (400
   SESSION_REQUIRED, as the server). A cross-origin (bearer) workspace build refuses lab/clinic sign-in before any code is
   sent: "Lab and clinic sign-in needs the workspace served from the Jansetu site itself (the same-origin build)…" (no
   cross-origin cookies are configured; stage and production use `VITE_API_SAME_ORIGIN=true`).
 
-Assumptions: the marker's `localStorage` flag is not "patient data" (a boolean and a time); a non-2xx definite logout
-answer means the session cannot be resumed either; 400/422 refusals of a resend are content refusals (as the workspace);
+Assumptions: the marker's `localStorage` flag is not "patient data" (a boolean and a time); the backend's logout answer is
+`{ success: true, data: { signedOut: true } }` (auth controller `logoutSession`, also in `q16b-identity`); a resend refused
+for good is settled only by the server's abandon;
 the wallet part of Pay again is known only from the server's `/pay` answer (the customer views strip `walletFunding`).
 
 ## Follow-ups
@@ -1246,6 +1252,7 @@ the wallet part of Pay again is known only from the server's `/pay` answer (the 
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-22 | WQ11a re-review N1–N5 + pill | typecheck clean; Vitest 266/266 (marker clear test removed; +1 logout answer shape; the resend rule test rewritten to settle-by-abandon); Playwright customer 266/266 (250 + 16 = 8 more journeys x 2, four of the earlier ones rewritten — markers survive sign-out and the request is resolved, never made twice; Confirm focus on Back, Enter twice does nothing; start-up Reconnecting… then resumed; Sign in again escape and a definite refusal at start; a 200 non-backend logout keeps the record; the pill never covers the title; lost lab resend refused 409/422 settled by abandon; abandon answering used opens the booking; a lost resend given up; doctor resend refused 400 opens the booked one / settles by abandon); Playwright workspace 512/512 (508 + 4 = 2 journeys x 2: start-up Reconnecting… and Sign in again; a 200 non-backend logout keeps the record); every new journey fails on 7d97d74; no flakes; both builds OK with VITE_API_SAME_ORIGIN=true. Temporary configs on ports 5503/5504 (`reuseExistingServer: false`), deleted before commit. |
 | 2026-11-22 | WQ11a pre-production review (customer app; sign-in and session on both apps; Q16b partner sessions) | typecheck clean; Vitest 266/266 (253 + 13: web sign-out record and fallback/unknown, transient session errors, marker clear, logout noRenew + keepalive, partner bearer verify/select refused before sending (2 partner/auth tests rewritten to the cookie/native modes), resend settled only on REQUEST_ABANDONED/400/422, payment-check answers, workspace SessionProvider refusing partner sign-in in a cross-origin build and keeping bearer for other staff); Playwright customer 250/250 (222 + 28 = 14 journeys x 2: failed sign-out said, retried, not resumed on reload and cleared when the server answers; next start logs out before any refresh; renewal network failure keeps the session with Reconnecting…; a definite refusal still ends it; profile failure after the code ends the new session; lab coupon re-checked for a family member; lost lab create refused on resend then given up; a 422 resend settled; pay again after 400 PAYMENT_FAILED with amount due and wallet part; sign-in alerts, focus and code description; Confirm focus in and back; explicit sign-out clears markers; a doctor booking answer after leaving opens nothing; doctor give-up. All fail on 317f21e except the definite-refusal guard); Playwright workspace 508/508 (498 + 10 = 5 journeys x 2: failed sign-out not resumed, logout before refresh, Reconnecting…, profile failure ends the session, sign-in alerts and focus; all fail on 317f21e); no flakes; both builds OK with VITE_API_SAME_ORIGIN=true. Temporary configs on ports 5501/5502 (`reuseExistingServer: false`), deleted before commit. |
 | 2026-11-20 | WQ10c final review N1/N2 | typecheck clean; Vitest 253/253; Playwright workspace 498/498 (+4 = 2 journeys x 2: give up during an in-flight first send keeps the panel busy and the late send is refused; a supplier add resent into a 403 stays unconfirmed and the check finds it; both fail on f164cbe); stock-supply spec 46/46; both builds OK with VITE_API_SAME_ORIGIN=true. Temporary config on port 5425 (no server reuse), deleted before commit. |
 | 2026-11-20 | WQ10c review fixes (patientName on the booking, Give this up for stock and suppliers, P1–P4, retry window, supplier refusals, by-key codes, name search out of the URL, import price note) | typecheck clean; Vitest 253/253 (+3: stuck import retry rule, abandon and specific-404 for stock, suppliers and pharmacies; the list-walk test replaced); Playwright workspace 494/494 (476 + 18 = 9 journeys x 2: P1 found entry clears the form, P2 panel stays busy during a resend, give up an entry that was added, give up / used for a supplier add, a resend refused outright and forget for a supplier edit, P3 older same-name import never opened and a new one asked, P3 restored marker never matched, P4 stuck import Try again, a lost retry not settled by an older outcome; P1–P4 and the retry journey fail on 30b62cd); Playwright customer 222/222; both builds OK with VITE_API_SAME_ORIGIN=true. Temporary configs on ports 5423/5424 (no server reuse), deleted before commit. |

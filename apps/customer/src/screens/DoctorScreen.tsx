@@ -8,7 +8,7 @@ import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextArea, Text
 import { Confirm, messageOf, PageHeading } from '../common.tsx';
 import { useAlive } from '../onceOnly.tsx';
 import { payOrder } from '../payments.ts';
-import { afterFailure, beginAttempt, startOp, stillCurrent, type PendingOp } from '../pending.ts';
+import { afterFailure, beginAttempt, settleByAbandon, startOp, stillCurrent, type PendingOp } from '../pending.ts';
 import { useCustomer, useSession } from '../session.tsx';
 
 /** The next `n` days as IST calendar dates (YYYYMMDD) with a short label. */
@@ -82,9 +82,23 @@ function useCreateBooking(doctor: Specialist) {
     try {
       created = await customerApi(api).bookConsultation(attempt.body, attempt.requestKey);
     } catch (err) {
-      done();
-      if (!stillCurrent(memory.get<PendingCreate>(slotKey), attempt)) return; // a newer attempt, or nothing, owns it
+      const owns = () => stillCurrent(memory.get<PendingCreate>(slotKey), attempt);
+      if (!owns()) { done(); return; } // a newer attempt, or nothing, owns it
       const next = afterFailure(attempt, err, messageOf(err));
+      if (next && settleByAbandon(attempt, err)) {
+        // N5: refused for good after an unanswered attempt (bookings answer 400 SLOT_NOT_AVAILABLE / SLOT_FULL after
+        // the key lookup): only the server's abandon says whether it was booked.
+        setPending({ ...next, label: attempt.label });
+        try {
+          const r = await requestKeysApi(api).abandon('booking_create', attempt.requestKey);
+          if (!owns() || !alive.current) return;
+          if (r.state === 'abandoned') { setPending(undefined); setError(messageOf(err)); }
+          else if (r.record?._id) { setPending(undefined); navigate(`/bookings/${r.record._id}`); }
+          else setPending({ ...next, label: attempt.label, error: 'It was booked, but the booking could not be shown. Open My bookings' });
+        } catch { /* not settled: it stays unconfirmed (send again or give it up) */ } finally { done(); }
+        return;
+      }
+      done();
       if (next) { setPending({ ...next, label: attempt.label }); return; }
       setPending(undefined);
       setError(messageOf(err)); // refused for good: nothing was booked; the form stays as typed

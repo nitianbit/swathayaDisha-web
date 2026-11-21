@@ -9,11 +9,11 @@ const ME = 'a1'.repeat(12);
 
 interface Backend {
   live: boolean; calls: string[]; logoutAttempts: number; logoutFails: boolean; refreshes: number; refreshFails: boolean;
-  profileFailsOnce: boolean; expireNext: boolean;
+  profileFailsOnce: boolean; expireNext: boolean; logoutHtml: boolean;
 }
 
 async function mockBackend(page: Page): Promise<Backend> {
-  const b: Backend = { live: false, calls: [], logoutAttempts: 0, logoutFails: false, refreshes: 0, refreshFails: false, profileFailsOnce: false, expireNext: false };
+  const b: Backend = { live: false, calls: [], logoutAttempts: 0, logoutFails: false, refreshes: 0, refreshFails: false, profileFailsOnce: false, expireNext: false, logoutHtml: false };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   await page.context().route('**/api/v1/**', async (route) => {
     const req = route.request();
@@ -33,6 +33,7 @@ async function mockBackend(page: Page): Promise<Backend> {
     if (path === '/auth/session/logout') {
       b.logoutAttempts++;
       if (b.logoutFails) return route.abort('internetdisconnected');
+      if (b.logoutHtml) return route.fulfill({ status: 200, contentType: 'text/html', body: '<html><body>Jansetu</body></html>' });
       b.live = false;
       return json(route, 200, { success: true, data: { signedOut: true } });
     }
@@ -143,4 +144,35 @@ test('sign-in: errors are announced, focus moves to the field, and the code fiel
   await expect(code).toBeFocused();
   await page.getByRole('button', { name: 'Change number or email' }).click();
   await expect(id).toBeFocused();
+});
+
+test('opening the workspace while the first refresh gets no answer says "Reconnecting…" and resumes; "Sign in again" leaves it', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await expect(page.locator('.ws-user-name')).toHaveText('Asha Medicals');
+  b.refreshFails = true;
+  await page.reload();
+  await expect(page.getByText(/^Reconnecting…/)).toBeVisible();
+  await expect(page.getByLabel('Mobile number or email')).toHaveCount(0);
+  b.refreshFails = false;
+  await expect(page.locator('.ws-user-name')).toHaveText('Asha Medicals', { timeout: 15_000 });
+  b.refreshFails = true;
+  await page.reload();
+  await page.getByRole('button', { name: 'Sign in again' }).click();
+  await expect(page.getByLabel('Mobile number or email')).toBeVisible();
+});
+
+test('a logout answered 200 by something that is not the backend keeps the sign-out record: no reload resumes it', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await expect(page.locator('.ws-user-name')).toHaveText('Asha Medicals');
+  b.logoutHtml = true;
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByText(SIGNED_OUT_HERE)).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('Mobile number or email')).toBeVisible();
+  await expect(page.locator('.ws-user-name')).toHaveCount(0);
+  expect(b.live).toBe(true);
+  b.logoutHtml = false;
+  await expect.poll(() => b.live, { timeout: 15_000 }).toBe(false);
 });

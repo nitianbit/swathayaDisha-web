@@ -46,7 +46,7 @@ export function ConsultScreen() {
       void queryClient.invalidateQueries({ queryKey: ['instant-doctors'] });
       setQuoteRefusals((n) => n + 1);
     }
-  });
+  }, { kind: 'instant_request_create', onFound: (id) => navigate(`/consult/requests/${id}`) });
 
   const [mode, setMode] = useState<InstantMode>('video');
   const [speciality, setSpeciality] = useState('');

@@ -41,8 +41,8 @@ export const BOOKING_STATUS: Record<string, { label: string; tone?: 'ok' | 'warn
 
 /**
  * Two-step confirmation for things that cannot be undone: the first tap says what will happen, the second does it.
- * WQ11a: opening it moves the focus to its first button (the consequence is the group's description, so it is read
- * out); Back, or finishing, returns the focus to the button that opened it.
+ * WQ11a: opening it moves the focus to "Back" (never to the action: pressing Enter twice cannot carry it out), the
+ * consequence is the group's description, so it is read out; Back, or finishing, returns the focus to the opener.
  */
 export function Confirm({ label, consequence, confirmLabel, withReason = false, onConfirm, disabled }: {
   label: string; consequence: ReactNode; confirmLabel: string; withReason?: boolean; disabled?: boolean;
@@ -52,7 +52,7 @@ export function Confirm({ label, consequence, confirmLabel, withReason = false, 
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const first = useRef<HTMLButtonElement>(null);
+  const back = useRef<HTMLButtonElement>(null);
   const opener = useRef<HTMLButtonElement>(null);
   // null: nothing to move; 'in' after opening; 'back' after closing (only when the focus was inside the group).
   const move = useRef<'in' | 'back' | null>(null);
@@ -61,7 +61,7 @@ export function Confirm({ label, consequence, confirmLabel, withReason = false, 
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
-    if (move.current === 'in') first.current?.focus();
+    if (move.current === 'in') back.current?.focus();
     else if (move.current === 'back') opener.current?.focus();
     move.current = null;
   }, [open]);
@@ -78,14 +78,14 @@ export function Confirm({ label, consequence, confirmLabel, withReason = false, 
       {withReason && <TextArea label="Reason (optional)" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />}
       {error && <Alert>{error}</Alert>}
       <div className="confirm-actions">
-        <Button ref={first} variant="danger" busy={busy} onClick={async () => {
+        <Button variant="danger" busy={busy} onClick={async () => {
           setBusy(true); setError(null);
           try {
             await onConfirm(reason.trim());
             if (alive.current) close();
           } catch (err) { setError(messageOf(err)); } finally { if (alive.current) setBusy(false); }
         }}>{confirmLabel}</Button>
-        <Button variant="ghost" disabled={busy} onClick={() => { setError(null); close(); }}>Back</Button>
+        <Button ref={back} variant="ghost" disabled={busy} onClick={() => { setError(null); close(); }}>Back</Button>
       </div>
     </div>
   );

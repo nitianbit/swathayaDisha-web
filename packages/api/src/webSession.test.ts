@@ -1,5 +1,5 @@
 import { ApiError } from './client.ts';
-import { clearWebSignOutPending, isTransientSessionError, markerStore, markWebSignOutPending, webSignOutState } from './webSession.ts';
+import { clearWebSignOutPending, isSignedOutAnswer, isTransientSessionError, markWebSignOutPending, webSignOutState } from './webSession.ts';
 
 describe('WQ11a web sign-out record', () => {
   afterEach(() => { localStorage.clear(); sessionStorage.clear(); vi.restoreAllMocks(); });
@@ -42,17 +42,9 @@ describe('WQ11a session command failures', () => {
   });
 });
 
-describe('WQ11a reload markers', () => {
-  afterEach(() => sessionStorage.clear());
-  it('clear() forgets one person\'s markers in one app only', () => {
-    const m = { requestKey: 'abcdefgh12', attempts: 1, firstAttemptAt: 1, lastAttemptAt: 1 };
-    markerStore('customer', 'u1').save('lab-create:x', m);
-    markerStore('customer', 'u1').save('instant-create', m);
-    markerStore('customer', 'u2').save('lab-create:x', m);
-    markerStore('workspace', 'u1').save('return', m);
-    markerStore('customer', 'u1').clear();
-    expect(markerStore('customer', 'u1').all()).toEqual({});
-    expect(Object.keys(markerStore('customer', 'u2').all())).toEqual(['lab-create:x']);
-    expect(Object.keys(markerStore('workspace', 'u1').all())).toEqual(['return']);
+describe('WQ11a N4 logout answer', () => {
+  it('only the backend\'s { signedOut: true } proves the session ended', () => {
+    expect(isSignedOutAnswer({ signedOut: true })).toBe(true);
+    for (const a of [null, undefined, '', '<html></html>', {}, { signedOut: 'true' }, { success: true }]) expect(isSignedOutAnswer(a)).toBe(false);
   });
 });

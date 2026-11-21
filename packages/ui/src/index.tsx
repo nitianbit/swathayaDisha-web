@@ -68,6 +68,21 @@ export function Reconnecting() {
   return <div className="j-reconnecting" role="status" aria-live="polite">Reconnecting…</div>;
 }
 
+/**
+ * WQ11a N3: shown instead of the start-up screen while the first refresh gets no answer: the session may still be
+ * there and is resumed as soon as the server answers; "Sign in again" is the way out.
+ */
+export function ReconnectingStart({ onSignIn }: { onSignIn: () => void }) {
+  return (
+    <main className="login">
+      <div className="j-state">
+        <span role="status" aria-live="polite">Reconnecting… We could not reach the server to resume your sign-in. We keep trying.</span>
+        <Button variant="secondary" onClick={onSignIn}>Sign in again</Button>
+      </div>
+    </main>
+  );
+}
+
 /** Every data screen shows one of these while it has no content to show. */
 export function Loading({ label = 'Loading…' }: { label?: string }) {
   return <div className="j-state" role="status" aria-live="polite">{label}</div>;

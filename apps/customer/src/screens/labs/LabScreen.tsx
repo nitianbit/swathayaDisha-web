@@ -71,7 +71,7 @@ function LabView({ lab }: { lab: PartnerLab }) {
         void queryClient.invalidateQueries({ queryKey: ['partner-lab-catalogue', lab.partnerId] });
         setPriceRefusals((n) => n + 1);
       }
-    });
+    }, { kind: 'lab_booking_create', onFound: (id) => navigate(`/partner-lab-bookings/${id}`) });
 
   const modes = (['home', 'lab'] as VisitMode[]).filter((m) => lab.branches.some((b) => (m === 'home' ? b.homeCollection : b.inLab)));
   const [mode, setMode] = useState<VisitMode>(modes[0] ?? 'lab');

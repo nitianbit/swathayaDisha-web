@@ -25,13 +25,17 @@ window.Razorpay = function (o) {
 
 interface Backend {
   live: boolean; calls: string[]; logoutAttempts: number; logoutFails: boolean; refreshes: number; refreshFails: boolean;
-  profileFailsOnce: boolean; expireNextGet: boolean; creates: unknown[]; createMode: 'ok' | 'drop' | 'refuse' | 'unprocessable';
+  profileFailsOnce: boolean; expireNextGet: boolean; creates: unknown[]; createMode: 'ok' | 'drop' | 'hang' | 'refuse' | 'unprocessable';
   reconcileRefused: boolean; coupons: unknown[]; abandons: { kind: string; key: string }[]; pays: number;
+  /** What the server's abandon answers: the key was never used, or it made BOOKING. */
+  abandonAnswer: 'abandoned' | 'used';
+  /** N4: the logout is answered 200 by something in front of the backend (an HTML page): the session is NOT ended. */
+  logoutHtml: boolean;
 }
 
 async function mockBackend(page: Page): Promise<Backend> {
   const b: Backend = { live: false, calls: [], logoutAttempts: 0, logoutFails: false, refreshes: 0, refreshFails: false, profileFailsOnce: false,
-    expireNextGet: false, creates: [], createMode: 'ok', reconcileRefused: false, coupons: [], abandons: [], pays: 0 };
+    expireNextGet: false, creates: [], createMode: 'ok', reconcileRefused: false, coupons: [], abandons: [], pays: 0, abandonAnswer: 'abandoned', logoutHtml: false };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const ok = (route: Route, data: unknown) => json(route, 200, { success: true, data });
   const page1 = (route: Route, items: unknown[]) => json(route, 200, { success: true, data: items, pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
@@ -55,6 +59,7 @@ async function mockBackend(page: Page): Promise<Backend> {
     if (path === '/auth/session/logout') {
       b.logoutAttempts++;
       if (b.logoutFails) return route.abort('internetdisconnected'); // never reaches the server: the cookie stays valid
+      if (b.logoutHtml) return route.fulfill({ status: 200, contentType: 'text/html', body: '<html><body>Jansetu</body></html>' });
       b.live = false;
       return ok(route, { signedOut: true });
     }
@@ -85,11 +90,12 @@ async function mockBackend(page: Page): Promise<Backend> {
     }
     if (path === '/request-keys/abandon') {
       b.abandons.push(body as { kind: string; key: string });
-      return ok(route, { state: 'abandoned' });
+      return ok(route, b.abandonAnswer === 'used' ? { state: 'used', record: { _id: BOOKING } } : { state: 'abandoned' });
     }
     if (path === '/lab-bookings' && req.method() === 'POST') {
       b.creates.push(body);
       if (b.createMode === 'drop') return route.abort('connectionreset'); // lost before it reached the server
+      if (b.createMode === 'hang') return; // reaches the server; the answer never comes back
       if (b.createMode === 'refuse') return json(route, 409, { error: 409, code: 'SLOT_FULL', message: 'This time is no longer available' });
       if (b.createMode === 'unprocessable') return json(route, 422, { error: 422, code: 'UNPROCESSABLE', message: 'These tests cannot be booked together' });
       return json(route, 500, { error: 500, message: 'not used' });
@@ -247,18 +253,17 @@ test('lab booking: choosing a family member after applying a coupon checks the c
   await expect(book).toBeEnabled();
 });
 
-test('lab booking: a lost request refused on resend can be given up, and the form comes back', async ({ page }) => {
+test('lab booking: a lost request whose resend is lost too can be given up, and the form comes back', async ({ page }) => {
   const b = await mockBackend(page);
   await openLabForm(page);
   b.createMode = 'drop';
   await page.getByRole('button', { name: /^Book/ }).click();
   const panel = page.getByRole('group', { name: 'Unconfirmed lab booking request' });
   await expect(panel).toBeVisible();
-  b.createMode = 'refuse'; // the slot filled up meanwhile: it may race the first attempt, so it stays unconfirmed
   await panel.getByRole('button', { name: 'Send it again' }).click();
-  await expect(panel).toContainText('This time is no longer available');
+  await expect.poll(() => b.creates.length).toBe(2);
+  await expect(panel.getByRole('button', { name: 'Send it again' })).toBeEnabled();
   await panel.getByRole('button', { name: 'Give it up and start again' }).click();
-  await expect(panel.getByRole('button', { name: 'Yes, give it up' })).toBeFocused();
   await panel.getByRole('button', { name: 'Yes, give it up' }).click();
   await expect(panel).toHaveCount(0);
   expect(b.abandons).toHaveLength(1);
@@ -266,7 +271,25 @@ test('lab booking: a lost request refused on resend can be given up, and the for
   await expect(page.getByRole('checkbox', { name: /Complete blood count/ })).toBeVisible();
 });
 
-test('lab booking: a lost request whose resend is refused for its content is settled as not made', async ({ page }) => {
+for (const [mode, words] of [['refuse', 'This time is no longer available'], ['unprocessable', 'These tests cannot be booked together']] as const) {
+  test(`lab booking: a lost request whose resend is refused (${mode}) is settled by the server's abandon, then the form comes back`, async ({ page }) => {
+    const b = await mockBackend(page);
+    await openLabForm(page);
+    b.createMode = 'drop';
+    await page.getByRole('button', { name: /^Book/ }).click();
+    const panel = page.getByRole('group', { name: 'Unconfirmed lab booking request' });
+    await expect(panel).toBeVisible();
+    b.createMode = mode;
+    await panel.getByRole('button', { name: 'Send it again' }).click();
+    await expect(panel).toHaveCount(0);
+    expect(b.abandons).toEqual([{ kind: 'lab_booking_create', key: (b.creates[0] as { requestKey: string }).requestKey }]);
+    await expect(page.getByRole('checkbox', { name: /Complete blood count/ })).toBeVisible();
+    await page.getByRole('button', { name: '11:30 pm' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: words })).toBeVisible();
+  });
+}
+
+test('lab booking: a resend refused after the first attempt was made opens that booking (the abandon answers used)', async ({ page }) => {
   const b = await mockBackend(page);
   await openLabForm(page);
   b.createMode = 'drop';
@@ -274,12 +297,10 @@ test('lab booking: a lost request whose resend is refused for its content is set
   const panel = page.getByRole('group', { name: 'Unconfirmed lab booking request' });
   await expect(panel).toBeVisible();
   b.createMode = 'unprocessable';
+  b.abandonAnswer = 'used'; // the first attempt was made after all
   await panel.getByRole('button', { name: 'Send it again' }).click();
-  await expect(panel).toHaveCount(0);
-  await expect(page.getByRole('checkbox', { name: /Complete blood count/ })).toBeVisible();
-  await page.getByRole('button', { name: '11:30 pm' }).click();
-  await expect(page.getByRole('alert').filter({ hasText: 'These tests cannot be booked together' })).toBeVisible();
-  expect(b.abandons).toHaveLength(0);
+  await expect(page).toHaveURL(new RegExp(`#/partner-lab-bookings/${BOOKING}$`));
+  await expect(page.getByRole('heading', { level: 1, name: /Complete blood count/ })).toBeVisible();
 });
 
 test('pay again: a refused payment check (400 PAYMENT_FAILED) allows a new payment; the amount due and the wallet part are shown', async ({ page }) => {
@@ -323,27 +344,101 @@ test('sign-in: errors are announced, focus moves to the field, and the code fiel
   await expect(id).toBeFocused();
 });
 
-test('a two-step confirmation takes the focus to its first button and gives it back on Back', async ({ page }) => {
-  await mockBackend(page);
+test('a two-step confirmation takes the focus to Back (Enter twice never carries it out) and gives it back', async ({ page }) => {
+  const b = await mockBackend(page);
+  let revokes = 0;
+  await page.context().route('**/api/v1/auth/sessions/revoke', (route) => { revokes++; return route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true,"data":{}}' }); });
   await signIn(page, '/profile');
   const opener = page.getByRole('button', { name: 'Sign out on all devices' });
-  await opener.click();
+  await opener.focus();
+  await page.keyboard.press('Enter');
   const group = page.getByRole('group', { name: 'Sign out on all devices' });
-  await expect(group.getByRole('button', { name: 'Sign out everywhere' })).toBeFocused();
+  await expect(group.getByRole('button', { name: 'Back' })).toBeFocused();
   await expect(group).toHaveAccessibleDescription(/Every phone or browser signed in to your account will be signed out/);
-  await group.getByRole('button', { name: 'Back' }).click();
+  await page.keyboard.press('Enter');
+  await expect(group).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Sign out on all devices' })).toBeFocused();
+  expect(revokes).toBe(0);
+  expect(b.live).toBe(true);
 });
 
-test('an explicit sign-out forgets the customer\'s unconfirmed-request markers on this device', async ({ page }) => {
+test('an unanswered booking request survives signing out and in again: it is resolved, never made a second time', async ({ page }) => {
   const b = await mockBackend(page);
   await openLabForm(page);
-  b.createMode = 'drop';
+  b.createMode = 'hang'; // the request reaches the server; the answer never arrives
   await page.getByRole('button', { name: /^Book/ }).click();
-  await expect(page.getByRole('group', { name: 'Unconfirmed lab booking request' })).toBeVisible();
-  expect(await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith('sd:pend:customer:')).length)).toBe(1);
+  await expect.poll(() => b.creates.length).toBe(1);
   await tab(page, 'Profile').click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page.getByLabel('Mobile number or email')).toBeVisible();
-  expect(await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith('sd:pend:')).length)).toBe(0);
+  b.createMode = 'ok';
+  await signIn(page, `/labs/${LAB}`);
+  const panel = page.getByRole('group', { name: 'Unconfirmed lab booking request' });
+  await expect(panel).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: /Complete blood count/ })).toHaveCount(0);
+  expect(b.creates).toHaveLength(1);
+});
+
+test('opening the app while the first refresh gets no answer says "Reconnecting…", keeps trying and resumes the session', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await expect(page.getByRole('heading', { level: 1, name: 'Hello, Asha' })).toBeVisible();
+  b.refreshFails = true;
+  await page.reload();
+  await expect(page.getByText(/^Reconnecting…/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign in again' })).toBeVisible();
+  await expect(page.getByLabel('Mobile number or email')).toHaveCount(0);
+  const tries = b.refreshes;
+  await expect.poll(() => b.refreshes, { timeout: 8000 }).toBeGreaterThan(tries); // retried with backoff
+  b.refreshFails = false;
+  await expect(page.getByRole('heading', { level: 1, name: 'Hello, Asha' })).toBeVisible({ timeout: 15_000 });
+});
+
+test('a start-up that cannot reach the server can be left with "Sign in again"; a definite refusal shows sign-in at once', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await expect(page.getByRole('heading', { level: 1, name: 'Hello, Asha' })).toBeVisible();
+  b.refreshFails = true;
+  await page.reload();
+  await page.getByRole('button', { name: 'Sign in again' }).click();
+  await expect(page.getByLabel('Mobile number or email')).toBeVisible();
+  const tries = b.refreshes;
+  await page.waitForTimeout(2500);
+  expect(b.refreshes).toBe(tries); // no more retries
+  b.refreshFails = false;
+  b.live = false; // 401 SESSION_ENDED
+  await page.reload();
+  await expect(page.getByLabel('Mobile number or email')).toBeVisible();
+  await expect(page.getByText(/^Reconnecting…/)).toHaveCount(0);
+});
+
+test('a logout answered 200 by something that is not the backend keeps the sign-out record: no reload resumes it', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page, '/profile');
+  await expect(page.getByRole('heading', { level: 1, name: 'Profile' })).toBeVisible();
+  b.logoutHtml = true;
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByLabel('Mobile number or email')).toBeVisible();
+  await expect(page.getByText(SIGNED_OUT_HERE)).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('sd:signout:customer'))).not.toBeNull();
+  await page.reload();
+  await expect(page.getByLabel('Mobile number or email')).toBeVisible();
+  await expect(page.getByLabel('Full name')).toHaveCount(0);
+  b.logoutHtml = false;
+  await expect.poll(() => b.live, { timeout: 15_000 }).toBe(false);
+});
+
+test('"Reconnecting…" sits above the page and never covers its title', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await expect(page.getByRole('heading', { level: 1, name: 'Hello, Asha' })).toBeVisible();
+  b.expireNextGet = true;
+  b.refreshFails = true;
+  await tab(page, 'Wallet').click();
+  const pill = page.getByText('Reconnecting…');
+  await expect(pill).toBeVisible();
+  const title = page.getByRole('heading', { level: 1, name: 'Wallet' });
+  await expect(title).toBeVisible();
+  const [p, t] = [await pill.boundingBox(), await title.boundingBox()];
+  expect(p!.y + p!.height).toBeLessThanOrEqual(t!.y);
 });

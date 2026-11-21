@@ -2,9 +2,8 @@
  * D4 helpers shared by the web apps: one cross-tab lock for every cookie-changing command (sign-in, refresh, sign-out),
  * identity announcements between tabs, and reload markers for once-only requests whose outcome is not known yet.
  * Markers hold only an opaque request key, a slot name and timestamps - never a request body, names, health data or
- * credentials - in the tab's sessionStorage, under the signed-in person's id. They are kept through account switches
- * and session ends (another person never sees them) until the server resolves the key: found, or abandoned. An
- * explicit sign-out may clear the person's own markers (`clear`, WQ11a: the customer app on a shared phone).
+ * credentials - in the tab's sessionStorage, under the signed-in person's id. They are kept through sign-out and
+ * account switches (another person never sees them) until the server resolves the key: found, or abandoned.
  */
 
 export interface Principal { userId: string; userType: string }
@@ -53,16 +52,6 @@ export function markerStore(app: string, userId: string) {
       try { storage()?.setItem(base + slot, JSON.stringify({ requestKey: m.requestKey, attempts: m.attempts, firstAttemptAt: m.firstAttemptAt, lastAttemptAt: m.lastAttemptAt })); } catch { /* storage full or blocked: memory still holds it */ }
     },
     remove(slot: string) { try { storage()?.removeItem(base + slot); } catch { /* ignore */ } },
-    /** WQ11a: forgets every marker of this person in this app (explicit sign-out). */
-    clear() {
-      const s = storage();
-      if (!s) return;
-      try {
-        const mine: string[] = [];
-        for (let i = 0; i < s.length; i++) { const k = s.key(i); if (k?.startsWith(base)) mine.push(k); }
-        for (const k of mine) s.removeItem(k);
-      } catch { /* ignore */ }
-    },
     all(): Record<string, PendingMarker> {
       const s = storage(); const out: Record<string, PendingMarker> = {};
       if (!s) return out;
@@ -127,6 +116,13 @@ export function clearWebSignOutPending(app: string): void {
     try { s.removeItem(webSignOutKey(app)); } catch { /* an unreadable record keeps blocking resumption: safe */ }
   }
 }
+
+/**
+ * WQ11a N4: the backend's own logout answer (`{ success: true, data: { signedOut: true } }`, auth controller
+ * `logoutSession`): only this proves the session ended. A 200 page from something in front of the backend does not.
+ */
+export const isSignedOutAnswer = (data: unknown): boolean =>
+  !!data && typeof data === 'object' && (data as { signedOut?: unknown }).signedOut === true;
 
 /**
  * WQ11a: whether a session command (refresh, logout) failed without a definite answer: no connection, a timeout, 408,

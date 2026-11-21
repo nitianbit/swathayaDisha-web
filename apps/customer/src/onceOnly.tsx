@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { requestKeysApi, type OnceOnlyKind } from '@jansetu/api';
 import { Alert, Button } from '@jansetu/ui';
 import { Confirm, messageOf } from './common.tsx';
-import { afterFailure, beginAttempt, startOp, stillCurrent, type PendingOp } from './pending.ts';
+import { afterFailure, beginAttempt, settleByAbandon, startOp, stillCurrent, type PendingOp } from './pending.ts';
 import { useSession } from './session.tsx';
 
 export type PendingCreate<B> = PendingOp<B> & { label: string };
@@ -18,9 +18,9 @@ export function useAlive() {
  * A create that must happen once per intent (lab booking, Consult now request), with the doctor booking's rules
  * (pending.ts): the request is stored in session memory with its key BEFORE it is sent; an unanswered attempt locks the
  * form and offers "send it again" (same key, same details: the server answers a known key with the first record) or
- * "give it up" (the server's abandon, WQ11a); a definite refusal of the sole first attempt, or a refusal that settles
- * any attempt (a given-up key, a content refusal: `afterFailure`), unlocks it. After a reload only a body-less marker
- * survives (D4).
+ * "give it up" (the server's abandon, WQ11a); a definite refusal of the sole first attempt unlocks it. A later attempt
+ * refused for good is settled by the server's abandon (`settleByAbandon`, N5): `abandoned` unlocks it with the refusal
+ * shown, `used` opens the record. After a reload only a body-less marker survives (D4).
  *
  * A success counts only for the newest attempt of the request that still owns the slot, on a page still on screen: an
  * answer for an ended or replaced intent, an older attempt's answer, or one arriving after the page was left changes
@@ -28,8 +28,9 @@ export function useAlive() {
  * own waits.
  */
 export function useOnceOnly<B, R>(slotKey: string, perform: (body: B, requestKey: string) => Promise<R>,
-  onRecorded: (result: R, alive: () => boolean) => Promise<void>, onRefused?: (err: unknown) => void) {
-  const { memory } = useSession();
+  onRecorded: (result: R, alive: () => boolean) => Promise<void>, onRefused: ((err: unknown) => void) | undefined,
+  settle: { kind: OnceOnlyKind; onFound: (recordId: string) => void }) {
+  const { api, memory } = useSession();
   const alive = useAlive();
   const [pending, setPendingState] = useState<PendingCreate<B> | undefined>(() => memory.get<PendingCreate<B>>(slotKey));
   const [busy, setBusy] = useState(false);
@@ -48,9 +49,29 @@ export function useOnceOnly<B, R>(slotKey: string, perform: (body: B, requestKey
     try {
       result = await perform(attempt.body, attempt.requestKey);
     } catch (err) {
-      done();
-      if (!stillCurrent(memory.get<PendingCreate<B>>(slotKey), attempt)) return; // a newer attempt, or nothing, owns it
+      const owns = () => stillCurrent(memory.get<PendingCreate<B>>(slotKey), attempt);
+      if (!owns()) { done(); return; } // a newer attempt, or nothing, owns it
       const next = afterFailure(attempt, err, messageOf(err));
+      if (next && settleByAbandon(attempt, err)) {
+        // N5: refused for good after an unanswered attempt: only the server's abandon says whether it was made.
+        setPending({ ...next, label: attempt.label });
+        try {
+          const r = await requestKeysApi(api).abandon(settle.kind, attempt.requestKey);
+          if (!owns() || !alive.current) return;
+          if (r.state === 'abandoned') {
+            setPending(undefined);
+            setError(messageOf(err)); // it can never be made now: the form stays as filled in, with the refusal
+            onRefused?.(err);
+          } else if (r.record?._id) {
+            setPending(undefined);
+            settle.onFound(r.record._id); // it was made after all: the server names it
+          } else {
+            setPending({ ...next, label: attempt.label, error: 'It was made, but it could not be shown here. Look in My bookings' });
+          }
+        } catch { /* not settled: it stays unconfirmed (send again or give it up) */ } finally { done(); }
+        return;
+      }
+      done();
       if (next) { setPending({ ...next, label: attempt.label }); return; }
       setPending(undefined);
       setError(messageOf(err)); // the first attempt was refused: nothing was made; the form stays as filled in

@@ -29,6 +29,8 @@ interface Backend {
   abandoned: Set<string>;
   /** WQ11a: while set, a booking create waits for it before answering (a slow network). */
   hold?: Promise<void>;
+  /** WQ11a N5: the next create is refused 400 SLOT_FULL before its key is looked up (an earlier attempt still in flight). */
+  refuseBeforeKey?: boolean;
 }
 
 /** Fake Razorpay Checkout: `window.__rz` = 'pay' | 'close'. Paying marks the order captured at the fake gateway. */
@@ -105,6 +107,7 @@ async function mockBackend(page: Page): Promise<Backend> {
     if (path.startsWith('/external-bookings')) return page1(route, []);
     if (path === '/bookings' && req.method() === 'POST') {
       if (state.hold) await state.hold;
+      if (state.refuseBeforeKey) { state.refuseBeforeKey = false; return json(route, 400, { error: 400, code: 'SLOT_FULL', message: 'This time is no longer available' }); }
       const b = body as Record<string, unknown>;
       const known = state.byKey.get(String(b.requestKey));
       if (known) {
@@ -498,6 +501,38 @@ test('WQ11a: an unanswered booking request can be given up on the server, and th
   await expect(panel).toBeVisible();
   await panel.getByRole('button', { name: 'Give it up and book again' }).click();
   await panel.getByRole('button', { name: 'Yes, give it up' }).click();
+  await expect(panel).toHaveCount(0);
+  expect(backend.abandoned.size).toBe(1);
+  await expect(page.getByRole('button', { name: '11:30 PM' })).toBeVisible();
+  expect(backend.bookings.size).toBe(0);
+});
+
+test('WQ11a N5: a resend refused 400 while the first request was in fact booked opens that booking, never a second one', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.createDrops = 'after'; // booked; the answer is lost
+  await signIn(page);
+  await bookPaid(page);
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed booking request' });
+  await expect(panel).toBeVisible();
+  backend.refuseBeforeKey = true;
+  await panel.getByRole('button', { name: 'Send it again' }).click();
+  await expect(page).toHaveURL(/#\/bookings\/b{23}1$/);
+  expect(posts(backend, '/request-keys/abandon')).toHaveLength(1);
+  expect(backend.bookings.size).toBe(1);
+  expect(backend.abandoned.size).toBe(0);
+});
+
+test('WQ11a N5: a resend refused 400 when nothing was booked is settled by the abandon and the form comes back', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.createDrops = 'before';
+  await signIn(page);
+  await bookPaid(page);
+  await page.getByRole('button', { name: 'Book and pay' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed booking request' });
+  await expect(panel).toBeVisible();
+  backend.refuseBeforeKey = true;
+  await panel.getByRole('button', { name: 'Send it again' }).click();
   await expect(panel).toHaveCount(0);
   expect(backend.abandoned.size).toBe(1);
   await expect(page.getByRole('button', { name: '11:30 PM' })).toBeVisible();
