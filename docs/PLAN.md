@@ -1168,7 +1168,137 @@ Backend now q14-owner-decisions 36bc35a (4343d10: booking patient name, abandon 
   unconfirmed panel on screen, busy (add stock and suppliers); a supplier resend is settled as not saved only on
   REQUEST_ABANDONED or a content refusal (400/422): 401, 403 and other answers leave it unconfirmed, as add stock does.
 
+## WQ11b partner and admin screens: pre-production review fixes (2026-11-22, taken autonomously at the owner's request)
+
+Backend (read-only): stage line `SwasthaDisha-worktrees/q14-owner-decisions` a1735c5, plus the two packets that landed the same
+night and are adopted here: `q16b-identity` df87d96 (+ docs 8ec45e8) and `q16a-bookings-money` ab5d6df (+ de776ba, 28225e7).
+Every route, schema and code below was read in its route, validation, controller and service. Built on stage 317f21e. The
+reviewer's proof tests (`/tmp/review-5461/proofs/{labs,admin,org,desk}`) were turned into journeys in the repo; each new journey
+fails on 317f21e (run against a copy of the worktree with the source at 317f21e and only the new tests and mocks).
+
+**Deploy order.** The branch create now sends Q16b's optional `requestKey`; the stage backend before df87d96 refuses unknown
+fields, so this web build must ship with or after Q16b. The admin "Cancel (admin)" buttons call Q16a routes: ship with or after
+Q16a. Everything else works on a1735c5.
+
+Shared pieces (also used by WQ11c's doctor, pharmacy and finance screens; every change is backward-compatible):
+- **`ConfirmAction`** belongs to one step. When its `label`/`confirmLabel` change under it (Deactivate becoming Activate after
+  a re-read) it closes; the refusal it showed, or a late answer of the step sent before, is shown next to the trigger with the
+  step's name, never inside the other step's confirmation. New optional `version` prop: the confirmation remembers the version
+  it was opened on and passes it to `onConfirm(reason, openedOn)`; if the record moves while it is open (and nothing is being
+  sent) it closes with "This changed while the confirmation was open, so nothing was done…".
+- **Keyboard focus** (`components/focus.ts`, `usePanelFocus`): an inline panel that replaces its trigger moves focus to its first
+  control on every step and back to the trigger on Back or close, only when focus would otherwise be lost (on the body, or
+  inside the panel). Used by `ConfirmAction`, `NoShowMove` and the lab collector, new-time, release and admin-cancel panels.
+- **`NoShowMove`**: after a lost first send, a resend refused for certain no longer locks the move for the session. Once the
+  booking, read after that attempt, is still a no-show, the panel offers "Choose a new time again" (a second step). The resend
+  keeps the same key (the server answers the same request); a new time is a new move with a new key (a booking moves once
+  only, so an earlier attempt arriving later makes the new one refused, never a second move). The stored op carries
+  `refused`. Back from the confirmation starts the choice again (the picker remounts empty).
+- **`noShows.ts`**: the lab move's slot refusal is `SLOT_UNAVAILABLE` (`partners/services/slots.ts takeSeat`), the doctor/desk
+  one `SLOT_NOT_AVAILABLE`; both are slot refusals (picker reopens, slots read again) with the same words.
+- **`requests.ts` `ownsKey`**: answers ABOUT A KEY (give-up `used`/`abandoned`, by-key lookups) settle what the page shows when
+  the stored operation is that key or nothing is stored any more (a page left mid-send whose late answer already settled it).
+
+Labs (`partnerLabs.ts`, `LabBookingsScreen`, `LabBookingScreen`, `AdminLabBookingsScreen`, `SlotsScreen`):
+- **Lab bookings list (HIGH).** Q11 `listForPartnerPage` caps a page at 200 and answers `{ total, nextCursor }`; the web asked
+  for 500 and dropped the cursor, so the newest (upcoming) bookings fell off. Now the list is paged with the server's exact
+  cursor (`useInfiniteQuery`, 100 a page, "Show more (N more)"), with the total ("260 bookings · showing the soonest 100").
+  The default view is **Upcoming** (from today, soonest first, optional "until"); **Past** is a separate view over chosen
+  dates before today (a week back by default, oldest first within them, as the server sorts). `bookings()` returns a `Page`;
+  cursors and page sizes are checked before any request.
+- **Admin lab bookings.** Q11 `adminList` pages by number (default 50, at most 200, newest booked first): the web now asks for
+  100 a page, shows the total and "Show more"; rows already shown are not repeated when a new booking shifts the pages.
+- **Version fence.** Every lab step sends the `statusVersion` it was reviewed on (Q11 `expectedVersion`): button steps the
+  booking as shown, confirmations (no-show, complete, reject) the version they were opened on, the collector form the version
+  it was opened on, a new-time proposal the version at its review, a release the version its panel opened on. 409
+  `LAB_BOOKING_CHANGED` says the booking changed and nothing was done; the booking is read again (every step re-reads it) and
+  the open form adopts the version read.
+- **Report uploads.** formidable's `maxTotalFileSize` defaults to the 10 MB `maxFileSize`, so two 6 MB files in one request
+  were always refused (500 UPLOAD_FAILED) and shown as "may have been uploaded". Files now go one per request, each with its
+  own Q11 `?requestKey=` (a resend after a lost answer is answered, never copied), each checked to be at most 10 MB first. A
+  size refusal (400 FILE_TOO_LARGE, 500 UPLOAD_FAILED "max…FileSize exceeded", 413) says "File too large: … not uploaded";
+  UPLOAD_FAILED is a definite "not uploaded" (the file service removes what it wrote before anything is attached). After a
+  lost answer, "Upload the rest" sends the remaining files with the same keys.
+- **Weekly template.** The editor reads the saved template (Q11 `GET /branches/:id/slot-templates/:mode`, null = none) instead
+  of guessing it from generated slots (`deriveTemplate` removed), and saves with `expectedUpdatedAt` (its version, null when it
+  started from no template). 409 `TEMPLATE_CHANGED` reads it again and shows the conflict (nothing overwritten); a lost answer
+  is settled by reading the template (saved = what was sent). The "server does not return the saved template" text is gone.
+- **Second no-show.** Marking a booking already moved once as a no-show now says this second no-show is final (no move).
+- **Q16a admin cancel of a moved lab no-show** (`POST /partner-workspace/admin/lab-bookings/:id/cancel-no-show`, `{ reason
+  3–500, refund boolean }`): an admin on a confirmed booking moved after a no-show gets "Cancel (admin)" with a required
+  reason and a "Refund the patient?" choice with no default; refusals and a lost answer are said, the booking re-read. The
+  `admin_no_show` cancellation reason is named. Q16a also makes the lab's earning the price after the coupon: the "Complete
+  booking" text shows subtotal − discount.
+
+Org (`StaffScreen`, `BranchesScreen`, `ProfileScreen`, `AuditScreen`, `ClinicDoctorsScreen`, admin `PartnerScreen`,
+`PartnersScreen`, `NewPartnerScreen`, `draft.ts`, `partners.ts`):
+- **Clinic doctors on Staff.** A member with `doctorId` shows "Clinic doctor" and no Remove: "A doctor of this clinic: removed on
+  Doctors (owner only)" with a link (`removalBlock` blocks it too). Q16b 409 `USE_DOCTOR_UNLINK` on removal is said in words.
+  The Doctors page no longer says "You can invite them again later" (clinics cannot add doctors; the Jansetu team links them).
+- **Closed branches in branch access.** Staff reads closed branches too (owners and all-branch branch managers): a closed branch
+  a member holds is listed "Name (closed)", can be unticked, and is never sent unless still ticked (`scopeProblem` refuses known
+  closed ids). 400 `INVALID_BRANCH_IDS` is shown on the picker in words.
+- **Owner sign-in email (Q16b).** Changing any owner's sign-in email is admin-only (403 `OWNER_EMAIL_ADMIN_ONLY`): owners' rows
+  offer the email edit only to admins (`canEditEmail(actor, target, admin)`), and an owner added by a member has no email field
+  (`canGiveEmail(actor, role, admin)`); members are told by the server.
+- **Late save answers** close only the editor that made the save (Staff `closeIfOpen`, Branches `savedFrom`); another editor
+  opened meanwhile keeps what was typed.
+- **Edit conflicts (Branches; Catalogue the same).** Fields reset because someone else changed them are kept in a list until the
+  person types them again; a save then says "… was saved, except the {fields}: someone else changed them …" (warn), never a
+  plain "saved". Catalogue's 409 `CATALOGUE_ITEM_CHANGED` re-reads the item and shows the conflict.
+- **Own save reported as someone else's change.** `rebase` judges "changed to something else" on canonical forms (trimmed,
+  inner spaces collapsed, case ignored, also inside objects and arrays); whether a field changed at all stays exact.
+- **Add branch.** Sends Q16b's optional `requestKey` (a repeat answers 200 with the first branch, `replayed`), one send at a
+  time; after a lost answer the list is read again and a new branch of that name is taken as the one sent; if none is found
+  the form locks with "Send again" (same key and details) or "Start again" behind a confirmation that warns about a duplicate.
+- **Branch State code** must be a GST state code (`/^(0[1-9]|[12][0-9]|3[0-8]|97)$/`). Assumption: the backend schema takes any
+  text, but bills compare it with the GSTIN's first two digits and `placeOfSupply`.
+- **Partner name search** lives in page state, not the URL (an old `?q=` link is read once and removed from the address).
+- **Activity log**: plain-words labels for every action the backend records (Q16b's `partner.create/update/verify/suspend`
+  included), a readable fallback for later codes, and the record kind in words.
+- **New lab/clinic, stale panel.** Give-up and the reload lookup act on the key (`ownsKey`): after leaving and returning
+  mid-send, "Give up" opens the partner if it was made and unlocks the form if it was abandoned.
+
+Money, desk and admin (`PharmacyScreen`, `NewPharmacyScreen`, `RefundsScreen`, `ConsultationScreen`, `InvoiceScreen`,
+`NewInvoiceScreen`, `DeskScreen`, `CatalogueScreen`, `clinic.ts`, `adminConsultations.ts`):
+- **Pharmacy Deactivate/Activate.** Each confirmation has its own key and `version={updatedAt}` and sends the version it was
+  opened on; it always closes and the section says the outcome: done, refused (RECORD_CHANGED: nothing changed; other
+  definite refusals "Not changed: …") or lost (read again: done if the pharmacy holds it, else "Not confirmed…"). An open Verify
+  closes when the pharmacy changes under it. An **archived** pharmacy is never offered Activate: it says it is archived and
+  the tech team restores it (Verify is still offered).
+- **Stale unconfirmed panels** (NewPharmacy, NewInvoice, Catalogue, Desk): answers about the key use `ownsKey`, so "Give up"
+  works after leaving and returning mid-send.
+- **Bill resends** refused `REQUEST_ABANDONED` settle on any attempt (the bill was never issued; the form reopens).
+- **Payment resends** settle as "not recorded" only on content refusals (400, 422, and the existing definite 409s); 401, 403
+  and 404 come before the server looks for the key (`loadForActor`), so they stay unknown.
+- **Unconfirmed payment**: "Forget this payment" (second step) once a fresh read of the bill shows no receipt for the key and
+  the bill still takes a payment; an earlier send arriving later is refused by its bill-version fence.
+- **Desk**: the Bill column is read again after a pay or cancel on the bill; "Mark as seen" is offered (disabled with the
+  reason) only from the start time and Q16a 409 `NOT_STARTED_YET` is said in words; the second no-show confirmation says it is
+  final when the server says the appointment was moved once, conditional words otherwise (the desk view carries no no-show
+  history, in Q14 or Q16a).
+- **Catalogue**: Reactivate/Enable show busy and run one at a time.
+- **Refunds queue**: `order_cancelled` and the other causes in words; error codes readable with the code kept.
+- **Q16a admin cancel of a moved consultation no-show** (`POST /specialists/admin/bookings/:id/cancel-no-show`, `{ reason 3–500,
+  refund boolean }`, `BookingService.adminCancelMovedNoShow`): the admin consultation page offers "Cancel (admin)" on a pending
+  or confirmed booking moved once after a no-show (never instant, never front-desk: `canAdminCancelMovedNoShow`), with a
+  required reason and a "Refund the patient?" choice with no default; refusals in words (`ADMIN_CANCEL_REFUSAL`), a lost
+  answer settled by reading the booking (cancelled = done; the server never refunds twice), and a cancelled one says whether
+  the patient was refunded (`noShowCancel`).
+- **Other Q16a rules adopted**: the desk's "Did not come" is offered from 15 minutes after the appointment time
+  (`NO_SHOW_GRACE_MS`, refusal `APPOINTMENT_NOT_STARTED`); the new-bill preview charges CGST and SGST each at half the rate,
+  rounded on their own (`computeTotals`).
+
+Assumptions: the Past view sorts as the server does (oldest first within the chosen dates; the server has no newest-first
+partner list); 100 rows a page for both lab lists; the "Complete booking" earning follows Q16a (after the coupon); the desk's
+"Mark as seen" rule uses the page clock and the server's 409 has the last word; a 422 is a content refusal like a 400.
+
 ## Follow-ups
+
+- WQ11b: Q16a refuses moving a desk appointment that has already started (400 `BOOKING_ALREADY_STARTED`); the desk still
+  offers "Move to another time" then and shows the server's message. The desk view carries no no-show history (Q14 and Q16a),
+  so its second no-show confirmation uses conditional words. The partner lab list has no newest-first order on the server,
+  so Past shows oldest first within the chosen dates.
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
 - Backend: unpaid internal (doctor/package) bookings expire after 30 minutes (decision 2): backend branch
@@ -1188,6 +1318,7 @@ Backend now q14-owner-decisions 36bc35a (4343d10: booking patient name, abandon 
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-22 | WQ11b (partner and admin screens: pre-production review fixes, on Q16a/Q16b) | typecheck clean; Vitest 272/272 (+19: lab paging/cursor/page checks, version fences on every lab step, one-file uploads with keys, size refusals, saved template + TEMPLATE_CHANGED, admin cancel of moved no-shows (lab and consultation), canonical rebase, doctor-membership removal, closed branch scope, owner email admin-only, audit labels, payment refusals 400/422 only, desk 15-minute no-show and start-time rules, CGST/SGST rounding; DOM: ConfirmAction step identity, version and focus, NoShowMove choose-again and Back); Playwright workspace 580/580 (+82 = 41 journeys x 2, ported from the reviewer's proofs; every new one fails on 317f21e, checked in a copy with the source at 317f21e), customer 222/222; temporary configs on 5511/5512 with reuseExistingServer false (deleted); both builds with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-20 | WQ10c final review N1/N2 | typecheck clean; Vitest 253/253; Playwright workspace 498/498 (+4 = 2 journeys x 2: give up during an in-flight first send keeps the panel busy and the late send is refused; a supplier add resent into a 403 stays unconfirmed and the check finds it; both fail on f164cbe); stock-supply spec 46/46; both builds OK with VITE_API_SAME_ORIGIN=true. Temporary config on port 5425 (no server reuse), deleted before commit. |
 | 2026-11-20 | WQ10c review fixes (patientName on the booking, Give this up for stock and suppliers, P1–P4, retry window, supplier refusals, by-key codes, name search out of the URL, import price note) | typecheck clean; Vitest 253/253 (+3: stuck import retry rule, abandon and specific-404 for stock, suppliers and pharmacies; the list-walk test replaced); Playwright workspace 494/494 (476 + 18 = 9 journeys x 2: P1 found entry clears the form, P2 panel stays busy during a resend, give up an entry that was added, give up / used for a supplier add, a resend refused outright and forget for a supplier edit, P3 older same-name import never opened and a new one asked, P3 restored marker never matched, P4 stuck import Try again, a lost retry not settled by an older outcome; P1–P4 and the retry journey fail on 30b62cd); Playwright customer 222/222; both builds OK with VITE_API_SAME_ORIGIN=true. Temporary configs on ports 5423/5424 (no server reuse), deleted before commit. |
 | 2026-11-20 | WQ10c (WQ10 screens on Q15: no-show filter and patient names, SLOT_NOT_THIS_DOCTOR, keyed pharmacy create with by-key/abandon and phone lookup, fenced pharmacy edit with clearing and sign-out warning, keyed stock save and supplier create, INDEXES_OUTDATED, import date guidance) | typecheck clean; Vitest 250/250 (246 → 250: keyed stock save and by-key, keyed supplier create and by-key, pharmacy create key / by-key / abandon / phone filter / fenced update with nulls, sign-out and re-read rules, no-show filter and patient-name lookup, SLOT_NOT_THIS_DOCTOR words; the notes-reference tests removed); Playwright workspace 476/476 (436 + 24 = 460 on the merge; +16 = 8 new journeys x 2: consultations — patient name on the booking page, SLOT_NOT_THIS_DOCTOR refused in words and another time chosen; pharmacies — give up a lost create (abandoned / used), version fence RECORD_CHANGED between re-read and save, a first email does not sign out, 503 INDEXES_OUTDATED kept and resent; stock — lost entry resent with the same key and answered replayed, 503 kept and resent; suppliers — lost add resent replayed after a 503. One journey removed (a resend refused PHONE_ALREADY_EXISTS checked by number). Rewritten to the new contracts: no-show filter and patient names in rows, pharmacy list with the phone lookup, create with key and the holder of a taken number named, lost create resent replayed, lost before made resent once, reload looked up by key or given up, status and details saves with versions and a cleared city, sign-in with email removal, sign-out warning and a 409 email, stock entry with its key, lost entry found by key, lost-before resend and forget, import guidance and the server's expiry error, supplier add with key and a lost add found by key)); Playwright customer 222/222; both builds OK (workspace and customer with VITE_API_SAME_ORIGIN=true). Temporary configs on ports 5421/5422 (no server reuse), deleted before commit. |
