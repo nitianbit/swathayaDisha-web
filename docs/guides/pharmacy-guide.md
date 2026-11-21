@@ -160,6 +160,8 @@ The units are on sale once added if the medicine has a selling price; a medicine
 
 If the supplier was archived meanwhile, the screen says so and lists your suppliers again: choose another, or none.
 
+The message after adding names the supplier only once the stock history shows it was recorded. "(supplier not recorded)" means the units were added without a supplier.
+
 **Stock history**, at the bottom of the page, lists the latest stock changes: when, the medicine, how many units, the batch, the **Supplier** of each delivery, and how (by hand, import or order).
 
 If the page opens with "Medicine not found — pick another", the link named a medicine that is not in the list: find the medicine and tap **Choose**.
@@ -189,10 +191,10 @@ A medicine that is not in the medicine list yet cannot be added here. Add it wit
 3. Choose **Which rows to add**: every row, only medicines already in your stock, or only new ones.
 4. If the whole delivery came from one supplier, choose it under **Supplier of this delivery (optional)**. Or name a supplier on each row in the **supplier** column (as on your supplier list). It is recorded with every row that adds units.
 5. Choose the file under **Stock file** and tap **Check the file**. Nothing is added yet. A large file can take up to two minutes.
-6. The import page lists every row. Rows with a problem come first and say what is wrong. Each row shows the prices it will set ("Current price kept" for a blank cell, ₹0.00 for a 0) and, for a new medicine, whether it needs a prescription. Tap **Download the rows with problems** to fix them in a new file.
+6. The import page lists every row. Rows with a problem come first and say what is wrong. Each row shows the prices it will set: the number (₹0.00 for a 0), "Kept: ₹…" for a blank cell when there is a current price, and "No price yet" for a blank cell of a medicine you do not stock yet ("Not on sale until priced" for its selling price). Wholesale and purchase prices are shown when a row changes them. For a new medicine it also says whether it needs a prescription. If the template's example row is still in the file, nothing can be added: delete that row and upload the file again. If you chose a supplier for the file but the server did not keep it, the page says so. Tap **Download the rows with problems** to fix them in a new file.
 7. Tap **Add … ready rows to stock…**, read what will happen, and tap **Yes, add them**. The confirmation counts only the rows your choice in step 3 adds, names every price change, and says which new medicines are not on sale until priced. If the same file name was added in the last 24 hours, the page warns you first: adding it again adds the units again.
 
-Not adding a checked file? Tap **Discard this preview…**. Nothing from it is added. It is hidden on this device only (the server keeps it as checked, and it is added only if someone confirms it).
+Not adding a checked file? Tap **Discard this preview…** (not possible while the rows are being added). Nothing from it is added. It is hidden on this device only (the server keeps it as checked, and it is added only if someone confirms it).
 
 **Recent imports** on the import page lists every file you uploaded and what happened to it. If some rows failed while being added, open the import and tap **Try the failed rows again…**. If an import says **Adding stopped** (it has not finished for more than 15 minutes), tap **Try again…**. A row is never added twice.
 

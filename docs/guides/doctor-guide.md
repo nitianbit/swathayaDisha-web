@@ -75,7 +75,7 @@ The **Kind** column shows **Booked**, **Instant** or **At a clinic**.
 
 - **Confirm**: confirm a paid appointment that is waiting.
 - **Mark completed**: after the consultation. It only shows once the appointment's start time has passed. This cannot be changed later.
-- **Patient did not come**: marks a no-show. It only shows once the appointment time has come. The patient is not refunded and you are not paid.
+- **Patient did not come**: marks a no-show. It only shows 15 minutes after the appointment time. The patient is not refunded and you are not paid.
 - **Cancel**: write a reason (the patient sees it). A paid patient gets the full amount back in their Jansetu wallet. This cannot be undone.
 
 ### Reschedule a no-show (once)

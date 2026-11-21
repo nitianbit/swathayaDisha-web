@@ -1256,6 +1256,34 @@ the import form, the `supplier` column and `supplierId`/`supplierName` on rows, 
 grace); the type refusal stays `SLOT_NOT_AVAILABLE` with "consultation type" in its message (matched by message).
 **Gap:** no route to discard an import preview.
 
+### WQ11c re-review fixes (2026-11-22)
+
+Re-review of `b0a64a4` (every first-round finding closed; fit for stage with backend Q16c). New items, each with a journey
+that fails without its fix (proofs `/tmp/wq11c-review-5473/proofs` NEW-1–NEW-7):
+
+- **N1.** While any ready row's name contains `TEMPLATE_EXAMPLE_MARK` the confirmation is not offered: "Row N is the
+  template's example row … Delete it from the file and upload the file again" (whatever the backend; discard still works).
+- **N2.** Add stock names the supplier only when the delivery as recorded carries it: the save answers only the items, so
+  the newest matching adjustment (medicine, batch, units, `add`, since the first send) is re-read; otherwise "Added …
+  (supplier not recorded)" (or "supplier not confirmed" when the history cannot be read). The import page shows a
+  supplier only from the preview's answer (`supplierId`); a supplier chosen for the file that the answer does not carry is
+  said ("… the server did not record a supplier for it").
+- **N3.** "Discard this preview…" is disabled while a confirmation is being sent or is unconfirmed, and runs under the
+  page's one-at-a-time guard.
+- **N4.** `importPriceView`: a blank cell keeps a current price only when there is one. With Q16c's announced per-row
+  `inMyStock` / `currentPrices` (**not in the q16c worktree yet; handled when present**): a medicine not yet in my stock (or
+  a new one) shows "No price yet", and its selling price "Not on sale until priced"; a known current price shows "Kept:
+  ₹…"; without the fields "Current price kept". The confirmation counts every row that leaves a medicine unpriced (new,
+  not in stock, or selling price 0).
+- **N5.** One failed read again of the import keeps the page with a quiet note ("Could not refresh just now…"); a read
+  that failed is never used as the import as it is now (a check says it could not check).
+- **N6.** A retry stores the outcome on screen when it was sent (`since`, the import's `updatedAt`): only another outcome
+  (written after the first send, 30 s for clocks) settles it. A body-less marker after a reload needs an outcome strictly
+  later than its first send (no allowance).
+- **N7.** Wholesale and purchase prices are shown in the preview when a row changes them. "Patient did not come" from 15
+  minutes after the start (Q16a `NO_SHOW_GRACE_MS`; still uncommitted there). A booking whose time cannot be read still
+  offers Mark completed (the server decides). Guidance true only with Q16c is kept (shipped together).
+
 ## Follow-ups
 
 - Backend: the booking-payment recovery scheduler runs every 5 minutes in each app instance (fenced, idempotent).
@@ -1338,3 +1366,4 @@ grace); the type refusal stays `SLOT_NOT_AVAILABLE` with "consultation type" in 
 | 2026-11-15 | WC1 review round 1 + Q9 | Codex WC1: 5 MEDIUM (quote not bound to funding; stale lab coupon; unowned create/pay completions; no refresh after acceptance; file state across bill versions). Fixed with backend Q9 (78b9efe). typecheck clean; Vitest 89/89 (+ price agreement, paging, single lab, payable mirrors, versioned PDF, recorded refunds); Playwright customer 194/194 (new: coupon re-checked on test change, price refused then accepted (labs and Consult now), late create and pay answers after leaving open nothing, reload lookup used / unknown → confirmed give-up, Meet link after acceptance + doctor cancellation, bill PDF follows the version, report signers by file); release build with VITE_API_BASE_URL=https://api.example.test. |
 | 2026-11-16 | WC1 review round 2 | Codex WC1 re-review: 2 MEDIUM (older/left-page create success consumed a newer attempt's request; a coupon dropped by an automatic re-check auto-accepted the higher price). Fixed. typecheck clean; Vitest 89/89; Playwright customer 200/200 (new: out-of-order answers across remounts keep the newer attempt and complete it once; coupon dropped by re-check requires accepting the higher price, labs and Consult now); release build with VITE_API_BASE_URL=https://api.example.test. |
 | 2026-11-22 | WQ11c (doctor, pharmacy, finance: pre-production review) | typecheck clean; Vitest 264/264 (+11: completion rule and refusals, no-show slot fit and type refusal, import plan by mode, prices kept or ₹0, same file in 24 h, Q16c upload codes and month-first rows, supplier per delivery, 2-minute import timeout, server template or none, IST "today", by-key not-found codes); Playwright workspace 526/526 (+28 = 14 journeys x 2 devices: review proofs D1–D3 and S1–S2 as journeys, discard and same-file warning, file supplier and upload refusals, month-first rows, Add stock supplier beyond 50 with history and an archived refusal, Return to supplier beyond 50, unknown `?medicine=`, an import step that settles itself, a failed refresh that keeps the lists, the clinic by-key 404; the presence and no-show journeys updated to the new rules). With the source changes stashed, all 16 new or changed journeys fail. Customer 222/222. Both release builds with VITE_API_SAME_ORIGIN=true. Temporary config on ports 5521/5522 with `reuseExistingServer: false`, deleted before committing. |
+| 2026-11-22 | WQ11c re-review fixes (N1–N7) | typecheck clean; Vitest 266/266 (+2: what a blank price leaves with Q16c `inMyStock`/`currentPrices`, the template example mark; the completion and no-show rules extended: 15-minute no-show grace, unreadable time still completes); Playwright workspace 542/542 (+16 = 8 journeys x 2 devices: N1 example row blocks adding, N2 Add stock supplier only when recorded and an unkept file supplier said, N3 no discard while confirming, N4 unpriced rows and kept prices with the wholesale column, N5 a failed re-read keeps the import page, N6 a retry lost within 30 s of the previous outcome stays unconfirmed, N7 no-show grace; the S2 journey updated: a ₹0 selling price is unpriced too). With the source changes stashed, all 8 new journeys fail. Customer 222/222. Both release builds with VITE_API_SAME_ORIGIN=true. Temporary config on ports 5523/5524 with `reuseExistingServer: false`, deleted before committing. |
