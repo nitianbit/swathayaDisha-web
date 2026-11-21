@@ -4,7 +4,7 @@ import { appointmentStart, CONSULT_MODE_LABEL, doctorStanding } from '@jansetu/a
 import { Alert, Badge, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { appointmentLabel } from './AppointmentsScreen.tsx';
-import { offersKey, rupeesOf, useDoctor, useDoctorProfile, useUpcomingAppointments, useTicker, type DoctorContext } from './doctor.tsx';
+import { offersKey, RefreshFailed, rupeesOf, useDoctor, useDoctorProfile, useUpcomingAppointments, useTicker, type DoctorContext } from './doctor.tsx';
 import { useDoctorPresence } from './presence.tsx';
 
 /** Home for a doctor: standing with Jansetu, "available now", open offers and the next appointments. */
@@ -43,6 +43,7 @@ function Status({ d }: { d: DoctorContext }) {
         <dd>{offers.isPending ? '…' : offers.isError ? messageOf(offers.error) : offers.data.length === 0 ? 'None' : <Link to="/doctor/consult-now">{offers.data.length} open {offers.data.length === 1 ? 'offer' : 'offers'}</Link>}</dd>
       </dl>
       <h3>Next appointments</h3>
+      {next.refreshError && <RefreshFailed error={next.refreshError} readAt={next.readAt} onRetry={next.refetch} />}
       {next.pending ? <Loading label="Loading appointments…" />
         : next.error ? <ErrorState message={messageOf(next.error)} onRetry={() => void next.refetch()} />
         : coming.length === 0 ? <p className="ws-muted">No appointments in the next two weeks.</p>

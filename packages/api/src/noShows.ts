@@ -38,6 +38,8 @@ export const NO_SHOW_MOVE_REFUSAL: Record<string, string> = {
   IDEMPOTENCY_KEY_REUSED: 'This request was already used for a different time. Reload the page and start again.',
   // Q14 review (`rescheduleWithHolds`): a desk appointment is moved by its clinic only.
   CLINIC_APPOINTMENT: 'The clinic can move this appointment: it was booked at its front desk.',
+  // WQ11c: a slot that does not take the booking's consultation type (`assertSlotMode`, named so by `noShowModeRefusal`).
+  SLOT_MODE_NOT_OFFERED: 'That time is not offered for this consultation type. Pick another time.',
 };
 
 /**
@@ -45,6 +47,13 @@ export const NO_SHOW_MOVE_REFUSAL: Record<string, string> = {
  * desk and admin moves answer `SLOT_NOT_AVAILABLE` (`bookings/holds.ts`); the lab move answers `SLOT_UNAVAILABLE`
  * (`partners/services/slots.ts takeSeat`), so both are accepted.
  */
-export const SLOT_REFUSAL_CODES = ['SAME_SLOT', 'SLOT_STARTED', 'SLOT_NOT_AVAILABLE', 'SLOT_UNAVAILABLE', 'SLOT_NOT_THIS_DOCTOR'] as const;
+export const SLOT_REFUSAL_CODES = [
+  'SAME_SLOT',
+  'SLOT_STARTED',
+  'SLOT_NOT_AVAILABLE',
+  'SLOT_UNAVAILABLE',
+  'SLOT_NOT_THIS_DOCTOR',
+  'SLOT_MODE_NOT_OFFERED',
+] as const;
 export const isSlotRefusal = (err: unknown) =>
   err instanceof ApiError && !!err.code && (SLOT_REFUSAL_CODES as readonly string[]).includes(err.code);

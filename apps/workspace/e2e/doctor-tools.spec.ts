@@ -66,6 +66,12 @@ interface Backend {
   payouts: Rec[];
   events: Rec[];
   hold?: { match: RegExp; gate: Promise<void> };
+  /** WQ11c: the next status change to completed is refused with this code (e.g. Q16a NOT_STARTED_YET). */
+  completeRefusal?: string;
+  /** WQ11c: GETs whose path matches are refused 429 (a failed read again in the background). */
+  failReads?: RegExp;
+  /** WQ11c: the by-key route of the doctor's clinic answers a bare 404 (as if the route were missing). */
+  clinicByKeyBroken?: boolean;
 }
 
 function offer(n: number, name: string, o: Rec = {}): Rec {
@@ -191,6 +197,7 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
       return ok(route, { user: b.profile, userRole: 'specialist' });
     }
     if (b.hold && b.hold.match.test(path)) { const g = b.hold.gate; b.hold = undefined; await g; }
+    if (method === 'GET' && b.failReads?.test(path)) return fail(route, 429, 'RATE_LIMITED', 'Too many requests, slow down');
     const me = /^\/specialists\/me(\/.*)$/.exec(path);
     if (!me) return ok(route, []);
     if (b.who !== 'specialist') return fail(route, 403, 'FORBIDDEN', 'Specialist access is required');
@@ -347,6 +354,7 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
       const a = b.appointments.find((x) => x._id === st[1]);
       const want = (body as { status: string }).status;
       if (!a) return fail(route, 404, 'BOOKING_NOT_FOUND', 'Booking not found');
+      if (want === 'completed' && b.completeRefusal) return fail(route, 409, b.completeRefusal, 'Appointment has not started yet');
       a.status = want;
       if (want === 'cancelled') { a.paymentStatus = 'refunded'; a.cancellationReason = (body as { reason?: string }).reason; }
       return ok(route, a);
@@ -371,6 +379,7 @@ async function mockBackend(page: Page, o: { install?: boolean } = {}): Promise<B
     // Q14: the doctor's own clinic, keyed; a lost answer is found by its key.
     const byKey = /^\/clinic\/by-key\/([A-Za-z0-9_-]{8,100})$/.exec(p);
     if (byKey) {
+      if (b.clinicByKeyBroken) return fail(route, 404, 'NOT_FOUND', 'Cannot GET this path');
       if (!b.practice || b.clinicKey !== byKey[1]) return fail(route, 404, 'CLINIC_NOT_FOUND', 'No clinic was created with this key');
       return ok(route, b.practice);
     }
@@ -640,17 +649,21 @@ test('available now: switched on with types and fee, heartbeats only while visib
   await expect.poll(() => heartbeats(backend)).toBe(4);
   await nav(page).getByRole('link', { name: 'Home' }).click();
   await expect(page.getByRole('region', { name: 'Your status' })).toContainText('On Video, Chat · ₹450.00');
-  // A reload reads the presence again: still checked in, so this page goes on keeping it alive.
+  // A reload reads the presence again: still checked in, so this page goes on keeping it alive. WQ11c: a read is not a
+  // check-in, so the first heartbeat goes at once (the last one may be nearly two minutes old), then every minute.
   await page.reload();
   await expect(page.getByRole('region', { name: 'Your status' })).toContainText('On Video, Chat · ₹450.00');
-  await page.clock.runFor(60_000);
   await expect.poll(() => heartbeats(backend)).toBe(5);
+  await page.clock.runFor(30_000);
+  expect(heartbeats(backend)).toBe(5);
+  await page.clock.runFor(30_000);
+  await expect.poll(() => heartbeats(backend)).toBe(6);
   // Found switched on but no longer checked in (e.g. the browser was closed): not revived on its own.
   backend.lapsed = true;
   await page.reload();
   await expect(page.getByRole('region', { name: 'Your status' })).toContainText('On, not checked in');
   await page.clock.runFor(120_000);
-  expect(heartbeats(backend)).toBe(5);
+  expect(heartbeats(backend)).toBe(6);
   await nav(page).getByRole('link', { name: 'Consult now' }).click();
   await expect(page.getByText('Switched on, but no workspace page has checked in for two minutes')).toBeVisible();
   await expect(page.getByLabel('Your fee for an instant consultation (₹)')).toHaveValue('450');
@@ -658,7 +671,7 @@ test('available now: switched on with types and fee, heartbeats only while visib
   await expect(page.getByText('You are not available now. No new offers come to you.')).toBeVisible();
   expect(presencePuts(backend).at(-1)).toEqual({ available: false, modes: ['video', 'chat'], instantFeeMinor: 45_000, expectedPresenceVersion: 2 });
   await page.clock.runFor(180_000);
-  expect(heartbeats(backend)).toBe(5);
+  expect(heartbeats(backend)).toBe(6);
 });
 
 test('offers: countdown, accept after confirming, every refusal in words, a lost answer found among the appointments, and extending', async ({ page }) => {
@@ -1290,14 +1303,14 @@ test('Q14 doctor no-show: no earning and no refund; moved once to one of the doc
   await missed.getByRole('button', { name: 'Reschedule no-show' }).click();
   const form = missed.getByRole('form', { name: 'Reschedule no-show' });
   await form.getByLabel('New day').fill('2026-11-18');
-  // Open, free, online slots only (a full one and a clinic slot are left out).
-  await expect(form.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '09:00–09:15', '16:00–16:15']);
-  await form.getByLabel('New time').selectOption('16:00–16:15');
+  // Open, free, online slots only (a full one and a clinic slot are left out); WQ11c: each names its place.
+  await expect(form.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '09:00–09:15 · online', '16:00–16:15 · online']);
+  await form.getByLabel('New time').selectOption('16:00–16:15 · online');
   await form.getByRole('button', { name: 'Continue' }).click();
-  await expect(form).toContainText('Move The patient’s missed time (Tue, 17 Nov, 2026, 09:00) to Wed, 18 Nov, 2026, 16:00? It is booked again at the same price: nothing is paid or refunded.');
+  await expect(form).toContainText('Move The patient’s missed time (Tue, 17 Nov, 2026, 09:00) to Wed, 18 Nov, 2026, 16:00 (online)? It is booked again at the same price: nothing is paid or refunded.');
   await expect(form).toContainText('You earn for it only once it is completed.');
-  await form.getByRole('button', { name: 'Move to Wed, 18 Nov, 2026, 16:00' }).click();
-  await expect(page.getByText('The patient’s no-show is moved to Wed, 18 Nov, 2026, 16:00. It is booked again at the same price.')).toBeVisible();
+  await form.getByRole('button', { name: 'Move to Wed, 18 Nov, 2026, 16:00 (online)' }).click();
+  await expect(page.getByText('The patient’s no-show is moved to Wed, 18 Nov, 2026, 16:00 (online). It is booked again at the same price.')).toBeVisible();
   const moves = backend.calls.filter((c) => c.path.endsWith('/reschedule-no-show'));
   expect(moves.map((c) => c.path)).toEqual([`/specialists/me/bookings/${bid(2)}/reschedule-no-show`]);
   expect(moves[0]!.body).toEqual({ slotId: '52'.repeat(12), requestKey: expect.stringMatching(/^[0-9a-f]{32}$/), expectedUpdatedAt: '2026-11-17T04:00:00.000Z' });
@@ -1330,11 +1343,220 @@ test('WQ8 review: a desk no-show is the clinic’s to move; a move that empties 
   await table.getByRole('button', { name: 'Reschedule no-show' }).click();
   const form = page.getByRole('form', { name: 'Reschedule no-show' });
   await form.getByLabel('New day').fill('2026-11-18');
-  await form.getByLabel('New time').selectOption('16:00–16:15');
+  await form.getByLabel('New time').selectOption('16:00–16:15 · online');
   await form.getByRole('button', { name: 'Continue' }).click();
   await form.getByRole('button', { name: /^Move to/ }).click();
   // The only booking of the day moved away: the list is empty, and the notice is still shown.
   await expect(page.getByText('No appointments on')).toBeVisible();
-  await expect(page.getByText('The patient’s no-show is moved to Wed, 18 Nov, 2026, 16:00. It is booked again at the same price.')).toBeVisible();
+  await expect(page.getByText('The patient’s no-show is moved to Wed, 18 Nov, 2026, 16:00 (online). It is booked again at the same price.')).toBeVisible();
   expect(backend.calls.filter((c) => c.path.endsWith('/reschedule-no-show')).map((c) => c.path)).toEqual([`/specialists/me/bookings/${bid(40)}/reschedule-no-show`]);
+});
+
+// ───────────── WQ11c (pre-production review): doctor screens ─────────────
+
+test('WQ11c (review D1): a lost extension refused outright on its resend can be replaced by another one (a new key), or forgotten after a second step', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  const row = () => page.getByRole('list', { name: 'Running instant consultations' }).getByRole('listitem', { name: 'Video consultation accepted at 09:50' });
+  backend.extendLost = 'dropped'; // never reached the server
+  await row().getByLabel('Extend by (minutes)').fill('30');
+  await row().getByRole('button', { name: 'Extend' }).click();
+  await expect(row()).toContainText('The extension is not recorded yet.');
+  await expect(row().getByRole('button', { name: 'Choose another extension' })).toHaveCount(0); // nothing refused yet
+  backend.extendRefusal = 'DOCTOR_BUSY'; // 30 more minutes would run into the next booking
+  await row().getByRole('button', { name: 'Send the same extension again' }).click();
+  await expect(row()).toContainText('Not extended this time: You already have a consultation at this time.');
+  await expect(row().getByLabel('Extend by (minutes)')).toBeDisabled();
+  backend.extendRefusal = undefined;
+  await row().getByRole('button', { name: 'Choose another extension' }).click();
+  await expect(row().getByLabel('Extend by (minutes)')).toBeEnabled();
+  await expect(row().getByLabel('Extend by (minutes)')).toHaveValue('30');
+  await row().getByLabel('Extend by (minutes)').fill('10');
+  await row().getByRole('button', { name: 'Extend', exact: true }).click();
+  await expect(row()).toContainText('Extended by 10 minutes');
+  const sent = backend.calls.filter((c) => c.path.endsWith('/extend')).map((c) => c.body as { minutes: number; requestKey: string });
+  expect(sent.map((x) => x.minutes)).toEqual([30, 30, 10]);
+  expect(sent[2]!.requestKey).not.toBe(sent[0]!.requestKey); // a new extension, a new key
+  expect(backend.extensions[bid(5)]!.map((e) => e.minutes)).toEqual([10]);
+
+  // Lost again, then the page is reloaded: only a check is possible; after it finds nothing, "Forget it" (second step).
+  backend.extendLost = 'dropped';
+  await row().getByLabel('Extend by (minutes)').fill('15');
+  await row().getByRole('button', { name: 'Extend', exact: true }).click();
+  await expect(row()).toContainText('The extension is not recorded yet.');
+  await page.reload();
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  await expect(row()).toContainText('Its details were not kept after the reload, so it can only be checked again.');
+  await expect(row().getByLabel('Extend by (minutes)')).toBeDisabled();
+  await row().getByRole('button', { name: 'Forget it' }).click();
+  await expect(row()).toContainText('If it still reaches the server, it is added then');
+  await row().getByRole('button', { name: 'Forget this extension' }).click();
+  await expect(row().getByLabel('Extend by (minutes)')).toBeEnabled();
+  await expect(row().getByRole('button', { name: 'Extend', exact: true })).toBeVisible();
+  expect(backend.extensions[bid(5)]!.map((e) => e.minutes)).toEqual([10]);
+});
+
+test('WQ11c (review D2): "Mark completed" is offered only once the start time has passed; the server’s NOT_STARTED_YET is said in words', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Appointments' }).click();
+  const table = page.getByRole('table', { name: 'Appointments' });
+  // Today 11:30 ("now" is 10:00): not yet; today 09:00: started.
+  await expect(table.getByRole('row').filter({ hasText: '11:30' })).toContainText('Confirmed');
+  await expect(table.getByRole('row').filter({ hasText: '11:30' }).getByRole('button', { name: 'Mark completed' })).toHaveCount(0);
+  await page.getByLabel('Show').selectOption('upcoming');
+  const future = table.getByRole('row').filter({ hasText: '21 Nov' }); // Sat 21 Nov 12:00
+  await expect(future).toContainText('Confirmed');
+  await expect(future.getByRole('button', { name: 'Mark completed' })).toHaveCount(0);
+  await expect(future.getByRole('button', { name: 'Patient did not come' })).toHaveCount(0);
+  await expect(future.getByRole('button', { name: 'Cancel' })).toBeVisible();
+  // A clock that runs behind the server's: the server refuses, and the page says why.
+  backend.completeRefusal = 'NOT_STARTED_YET';
+  const started = table.getByRole('row').filter({ hasText: '09:00' });
+  await started.getByRole('button', { name: 'Mark completed' }).click();
+  await started.getByRole('button', { name: /^Complete / }).click();
+  await expect(started).toContainText('This appointment has not started yet. Mark it completed once its time has come.');
+  expect(backend.calls.filter((c) => c.method === 'PATCH').map((c) => c.path)).toEqual([`/specialists/me/appointments/${bid(2)}/status`]);
+});
+
+test('WQ11c (review D3): the no-show slot picker offers only slots for the booking’s type and place, names the place, and explains a type refusal', async ({ page }) => {
+  const backend = await mockBackend(page);
+  // 09:00: in person at the doctor's own place (no clinic). 08:00: video. 08:30: in person at Sunrise Clinic, MG Road.
+  Object.assign(backend.appointments.find((a) => a._id === bid(2))!, { status: 'no_show', consultationMode: 'in-person', clinicVisit: undefined, serviceMode: 'in-person', updatedAt: '2026-11-17T04:00:00.000Z' });
+  Object.assign(backend.appointments.find((a) => a._id === bid(1))!, { status: 'no_show', bookingTime: '08:00', consultationMode: 'video', updatedAt: '2026-11-17T04:00:00.000Z' });
+  backend.appointments.push(appt(42, { bookingTime: '08:30', status: 'no_show', consultationMode: 'in-person', serviceMode: 'clinic', clinicVisit: { partnerId: SUNRISE, branchId: BR1 }, updatedAt: '2026-11-17T04:00:00.000Z' }));
+  // Slots as `GET /specialists/me/slots` returns them (template slots carry `serviceModes`, clinic ones `branchId`).
+  let slotReads = 0;
+  await page.route('**/api/v1/specialists/me/slots**', (route) => {
+    slotReads += 1;
+    const date = new URL(route.request().url()).searchParams.get('date');
+    const s = (id: string, startTime: string, endTime: string, extra: Rec) => ({ _id: id.repeat(12), date, startTime, endTime, maxBookings: 1, currentBookings: 0, isAvailable: true, isActive: true, ...extra });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: [
+      s('61', '15:00', '15:15', { serviceModes: ['in-person'] }),
+      s('62', '16:00', '16:15', { serviceModes: ['chat'] }),
+      s('63', '17:00', '17:15', { serviceModes: ['video', 'call'] }),
+      s('64', '18:00', '18:15', { serviceModes: ['in-person'], branchId: BR1 }),
+    ] }) });
+  });
+  // The server's refusal of a slot not open to the booking's type (bookings/holds.ts assertSlotMode).
+  await page.route('**/api/v1/specialists/me/bookings/*/reschedule-no-show', (route) => route.fulfill({ status: 409, contentType: 'application/json',
+    body: JSON.stringify({ error: 409, code: 'SLOT_NOT_AVAILABLE', message: 'This slot is not offered for that consultation type' }) }));
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Appointments' }).click();
+  const table = page.getByRole('table', { name: 'Appointments' });
+
+  const ownPlace = table.getByRole('row').filter({ hasText: '09:00' });
+  await ownPlace.getByRole('button', { name: 'Reschedule no-show' }).click();
+  const f1 = ownPlace.getByRole('form', { name: 'Reschedule no-show' });
+  await f1.getByLabel('New day').fill('2026-11-18');
+  await expect(f1.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '15:00–15:15 · your own place']);
+  await f1.getByRole('button', { name: 'Back' }).click();
+
+  const clinic = table.getByRole('row').filter({ hasText: '08:30' });
+  await clinic.getByRole('button', { name: 'Reschedule no-show' }).click();
+  const f3 = clinic.getByRole('form', { name: 'Reschedule no-show' });
+  await f3.getByLabel('New day').fill('2026-11-18');
+  await expect(f3.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '18:00–18:15 · Sunrise Clinic · MG Road']);
+  await f3.getByLabel('New time').selectOption('18:00–18:15 · Sunrise Clinic · MG Road');
+  await f3.getByRole('button', { name: 'Continue' }).click();
+  await expect(f3).toContainText('to Wed, 18 Nov, 2026, 18:00 (Sunrise Clinic · MG Road)?');
+  await f3.getByRole('button', { name: 'Back' }).click();
+  await f3.getByRole('button', { name: 'Back' }).click();
+
+  const video = table.getByRole('row').filter({ hasText: '08:00' });
+  await video.getByRole('button', { name: 'Reschedule no-show' }).click();
+  const f2 = video.getByRole('form', { name: 'Reschedule no-show' });
+  await f2.getByLabel('New day').fill('2026-11-18');
+  await expect(f2.getByLabel('New time').locator('option')).toHaveText(['Choose a time', '17:00–17:15 · online']);
+  await f2.getByLabel('New time').selectOption('17:00–17:15 · online');
+  await f2.getByRole('button', { name: 'Continue' }).click();
+  await expect(f2).toContainText('to Wed, 18 Nov, 2026, 17:00 (online)?');
+  const before = slotReads;
+  await f2.getByRole('button', { name: /^Move to / }).click();
+  await expect(page.getByText('Not moved: That time is not offered for this consultation type. Pick another time.')).toBeVisible();
+  // The picker opens again with the slots read again.
+  await expect(video.getByRole('form', { name: 'Reschedule no-show' })).toBeVisible();
+  await expect.poll(() => slotReads).toBeGreaterThan(before);
+});
+
+test('WQ11c: a failed read again keeps the appointments and offers on screen, with a quiet note; the first failed read is an error', async ({ page }) => {
+  const backend = await mockBackend(page, { install: true });
+  backend.offers = [offer(1, 'Asha')];
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Appointments' }).click();
+  const table = page.getByRole('table', { name: 'Appointments' });
+  await expect(table.getByRole('row').filter({ hasText: '11:30' })).toBeVisible();
+  backend.failReads = /\/specialists\/me\/(appointments|instant\/offers)$/;
+  await page.clock.runFor(16_000); // the list is no longer fresh: coming back reads it again, and that read fails
+  await nav(page).getByRole('link', { name: 'Schedule' }).click();
+  await nav(page).getByRole('link', { name: 'Appointments' }).click();
+  await expect(page.getByText(/Could not refresh just now \(Too many requests, slow down\)\. Showing what was read at \d\d:\d\d\./)).toBeVisible();
+  await expect(table.getByRole('row').filter({ hasText: '11:30' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(1);
+  // Consult now: offers read every 15 s; a failed one keeps the list.
+  backend.failReads = undefined;
+  await nav(page).getByRole('link', { name: 'Consult now' }).click();
+  await expect(page.getByRole('listitem', { name: 'Offer for Asha' })).toBeVisible();
+  backend.failReads = /\/specialists\/me\/instant\/offers$/;
+  await page.clock.runFor(16_000);
+  await expect(page.getByRole('region', { name: 'Offers for you' }).getByText(/Could not refresh just now/)).toBeVisible();
+  await expect(page.getByRole('listitem', { name: 'Offer for Asha' })).toBeVisible();
+  // Read again successfully: the note goes.
+  backend.failReads = undefined;
+  await page.getByRole('region', { name: 'Offers for you' }).getByRole('button', { name: 'Try again' }).click();
+  await expect(page.getByRole('region', { name: 'Offers for you' }).getByText(/Could not refresh just now/)).toHaveCount(0);
+  // A first read that fails is still an error page.
+  backend.failReads = /\/specialists\/me\/appointments$/;
+  await page.reload();
+  await nav(page).getByRole('link', { name: 'Appointments' }).click();
+  await expect(page.getByText('Too many requests, slow down')).toBeVisible();
+  await expect(table).toHaveCount(0);
+});
+
+test('WQ11c: a lost clinic create is "not recorded" only on the by-key route’s own CLINIC_NOT_FOUND; a bare 404 is a failed check', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.loseNextClinic = true;
+  backend.clinicByKeyBroken = true;
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Clinics' }).click();
+  const form = page.getByRole('form', { name: 'Create my clinic' });
+  await form.getByLabel('Clinic name').fill('Dr Meera Rao Heart Care');
+  await form.getByLabel('Bill number prefix').fill('mrh');
+  await form.getByLabel('Branch name').fill('Indiranagar');
+  await form.getByLabel('Branch phone').fill('9000000021');
+  await form.getByLabel('Address', { exact: true }).fill('5 CMH Road');
+  await form.getByLabel('City').fill('Bengaluru');
+  await form.getByLabel('State', { exact: true }).fill('Karnataka');
+  await form.getByLabel('State code').fill('29');
+  await form.getByLabel('PIN code').fill('560038');
+  await form.getByRole('button', { name: 'Review' }).click();
+  await form.getByRole('button', { name: 'Create my clinic' }).click();
+  const unsure = page.getByRole('group', { name: 'Unconfirmed clinic' });
+  await unsure.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(unsure).toContainText('Could not check the records: Cannot GET this path');
+  await expect(unsure).not.toContainText('not recorded');
+  backend.clinicByKeyBroken = false;
+  await unsure.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Jansetu has not verified your clinic yet.')).toBeVisible();
+  expect(backend.calls.filter((c) => c.method === 'POST' && c.path === '/specialists/me/clinic')).toHaveLength(1);
+});
+
+test('WQ11c (re-review N7): "Patient did not come" from 15 minutes after the start (Q16a); an unreadable time still offers Mark completed', async ({ page }) => {
+  const backend = await mockBackend(page, { install: true });
+  backend.appointments.push(
+    appt(43, { bookingTime: '09:50', primaryConcern: 'Ten minutes ago' }),
+    appt(44, { bookingTime: 'after lunch', primaryConcern: 'Unreadable time' }),
+  );
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Appointments' }).click();
+  const table = page.getByRole('table', { name: 'Appointments' });
+  const recent = table.getByRole('row').filter({ hasText: 'Ten minutes ago' });
+  await expect(recent.getByRole('button', { name: 'Mark completed' })).toBeVisible();
+  await expect(recent.getByRole('button', { name: 'Patient did not come' })).toHaveCount(0);
+  const unreadable = table.getByRole('row').filter({ hasText: 'Unreadable time' });
+  await expect(unreadable.getByRole('button', { name: 'Mark completed' })).toBeVisible();
+  await expect(unreadable.getByRole('button', { name: 'Patient did not come' })).toHaveCount(0);
+  await page.clock.runFor(5 * 60_000 + 30_000); // 15 minutes after 09:50
+  await expect(recent.getByRole('button', { name: 'Patient did not come' })).toBeVisible();
 });

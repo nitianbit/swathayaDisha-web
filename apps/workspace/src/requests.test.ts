@@ -1,5 +1,5 @@
 import { ApiError, type Page } from '@jansetu/api';
-import { afterFailure, beginAttempt, findByKey, resolveStored, startOp, stillCurrent } from './requests.ts';
+import { afterFailure, beginAttempt, findByKey, keyedLookup, resolveStored, startOp, stillCurrent } from './requests.ts';
 
 const T0 = Date.UTC(2026, 10, 14, 10, 0);
 const refused = new ApiError(403, 'Pharmacy is not verified');
@@ -66,5 +66,16 @@ describe('resolveStored', () => {
     resolveStored(memory, 'slot', 'K2');
     expect(store.has('slot')).toBe(false);
     resolveStored(memory, 'slot', 'K3'); // nothing stored: fine
+  });
+});
+
+describe('WQ11c: keyedLookup with the route’s own not-found codes', () => {
+  it('only the named codes mean "not recorded"; another 404 stays unknown; without codes any 404 does', async () => {
+    const missing = (code?: string) => async () => { throw new ApiError(404, 'x', code); };
+    await expect(keyedLookup('k'.repeat(32), missing('PAYOUT_NOT_FOUND'), ['PAYOUT_NOT_FOUND'])(1)).resolves.toMatchObject({ items: [] });
+    await expect(keyedLookup('k'.repeat(32), missing('ACCOUNT_NOT_FOUND'), ['PAYOUT_NOT_FOUND'])(1)).rejects.toBeInstanceOf(ApiError);
+    await expect(keyedLookup('k'.repeat(32), missing(), ['CLINIC_NOT_FOUND'])(1)).rejects.toBeInstanceOf(ApiError);
+    await expect(keyedLookup('k'.repeat(32), missing('ANY'))(1)).resolves.toMatchObject({ items: [] });
+    await expect(keyedLookup('k'.repeat(32), async () => ({ _id: 'a' }), ['X'])(1)).resolves.toMatchObject({ items: [{ _id: 'a', requestKey: 'k'.repeat(32) }] });
   });
 });

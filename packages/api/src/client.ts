@@ -45,6 +45,8 @@ export interface RequestOptions {
   form?: FormData;
   /** WQ11a: the request outlives the page (sign-out: a tab closed right after still tells the server). */
   keepalive?: boolean;
+  /** WQ11c: this request's own time limit (a large upload or import), instead of the client's default. */
+  timeoutMs?: number;
 }
 
 export interface Page<T> {
@@ -118,7 +120,7 @@ export function createApiClient(options: ApiClientOptions) {
 
     const sessionSignal = token ? options.getSessionSignal?.() : undefined;
     const timeout = new AbortController();
-    const timer = setTimeout(() => timeout.abort(), timeoutMs);
+    const timer = setTimeout(() => timeout.abort(), o.timeoutMs ?? timeoutMs);
     const signals = [timeout.signal, o.signal, sessionSignal].filter((x): x is AbortSignal => x !== undefined);
     const signal = signals.length > 1 ? AbortSignal.any(signals) : timeout.signal;
 

@@ -10,6 +10,7 @@ import { messageOf } from '../../errors.ts';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
+import { SupplierSelect, useActiveSuppliers } from './SupplierPicker.tsx';
 
 type Panel = null | 'release' | 'supplier' | 'recall' | 'trace';
 
@@ -131,7 +132,8 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
   const { api, memory } = useSession();
   const key = supplierPendingKey(batch._id);
   const pharmacyId = useStaff().id;
-  const suppliers = useQuery({ queryKey: ['pharmacy-suppliers', pharmacyId, 'for-returns'], queryFn: () => inventoryApi(api).suppliers() });
+  // WQ11c: every active supplier (all pages), with a name filter when the list is long.
+  const suppliers = useActiveSuppliers(pharmacyId);
   const [pending, setPendingState] = useState<PendingSupplierReturn | undefined>(() => memory.get<PendingSupplierReturn>(key));
   const [supplierId, setSupplierId] = useState('');
   const [qty, setQty] = useState('');
@@ -194,7 +196,7 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
 
   if (suppliers.isPending) return <Loading label="Loading suppliers…" />;
   if (suppliers.isError) return <Alert>{messageOf(suppliers.error)}</Alert>;
-  const active = suppliers.data.items.filter((s) => s.state === 'active');
+  const active = suppliers.data.filter((s) => s.state === 'active');
   if (active.length === 0) {
     return (
       <Alert tone="warn">
@@ -220,14 +222,7 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
           });
         }
       }}>
-      <div className="j-field">
-        <label htmlFor={`sup-${batch._id}`}>Supplier</label>
-        <select id={`sup-${batch._id}`} value={supplierId} aria-invalid={errors.supplier ? true : undefined} onChange={(e) => setSupplierId(e.target.value)}>
-          <option value="">Choose…</option>
-          {active.map((s) => <option key={s.supplierId} value={s.supplierId}>{s.displayName}</option>)}
-        </select>
-        {errors.supplier && <span className="j-field__error">{errors.supplier}</span>}
-      </div>
+      <SupplierSelect id={`sup-${batch._id}`} label="Supplier" suppliers={active} value={supplierId} onChange={setSupplierId} error={errors.supplier} />
       <TextField label="Units" inputMode="numeric" value={qty} error={errors.qty} hint={`Up to ${batch.availableQty} unreserved units.`}
         onChange={(e) => setQty(e.target.value.replace(/\D/g, ''))} />
       <div className="j-field">

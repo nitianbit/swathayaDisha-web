@@ -144,7 +144,7 @@ What you can do with a batch (only the buttons that fit its status appear):
 
 - **Quarantine**: stop selling the batch for now. Give a reason.
 - **Release…**: put a quarantined batch back on sale. You can write off damaged units.
-- **Return to supplier…**: send unreserved units back. Choose the **Supplier**, **Units** and **Reason**, then tap **Record supplier return**. If you have no supplier yet, tap **Add a supplier** first (see section 6).
+- **Return to supplier…**: send unreserved units back. Choose the **Supplier**, **Units** and **Reason**, then tap **Record supplier return**. Every active supplier is listed; with many, type part of the name in **Find the supplier**. If you have no supplier yet, tap **Add a supplier** first (see section 6).
 - **Recall…**: stop the batch for good. This cannot be undone. You then see which open orders hold it and which customers received it.
 - **Recall trace**: see that list again for a recalled batch.
 
@@ -153,9 +153,18 @@ What you can do with a batch (only the buttons that fit its status appear):
 1. Open **Stock** and tap **Add stock**. Or tap **Add a batch** next to a medicine you already stock.
 2. Under **Find the medicine**, type its name and tap **Search**. Tap **Choose** next to the right one.
 3. Fill in **Batch number**, **Expiry date** and **Units received**. MRP, selling price, purchase price, rack and reorder level are optional. You can add a **Note**, for example the supplier's bill number.
-4. Tap **Check and add**. Read the summary, then tap **Yes, add to stock**.
+4. Choose the **Supplier (optional)** who delivered these units. Only your active suppliers are listed (with many, type part of the name in **Find the supplier**). The supplier is recorded with this delivery, not with the batch: the same batch can be topped up later from another supplier.
+5. Tap **Check and add**. Read the summary, then tap **Yes, add to stock**.
 
-The units go on sale at once. The workspace cannot take them out again, so check the number first. Expired stock cannot be added.
+The units are on sale once added if the medicine has a selling price; a medicine without one is not on sale until you price it. The workspace cannot take the units out again, so check the number first. Expired stock cannot be added.
+
+If the supplier was archived meanwhile, the screen says so and lists your suppliers again: choose another, or none.
+
+The message after adding names the supplier only once the stock history shows it was recorded. "(supplier not recorded)" means the units were added without a supplier.
+
+**Stock history**, at the bottom of the page, lists the latest stock changes: when, the medicine, how many units, the batch, the **Supplier** of each delivery, and how (by hand, import or order).
+
+If the page opens with "Medicine not found — pick another", the link named a medicine that is not in the list: find the medicine and tap **Choose**.
 
 If you see "This stock entry was not confirmed", do not type it in again. Tap **Send the same entry again**: the units are never added twice. Or tap **Check whether it was recorded** first. To stop it instead, tap **Give this up**: if it was not added, it can never be added now and you can add the units again; if it was added, the screen says so.
 
@@ -164,22 +173,32 @@ A medicine that is not in the medicine list yet cannot be added here. Add it wit
 ### Import stock from a file
 
 1. Open **Stock** and tap **Import stock from a file**.
-2. Make the file. Tap **Download a blank template (CSV)**, or use your own Excel or CSV file (up to 10 MB). The first row must have the column names listed on the screen, in capitals or small letters. One row per batch. Write the expiry date in one of these ways:
-   - 20271231 (year, month, day);
-   - 2027-12-31;
-   - 31-12-2027 or 31/12/2027 (day first);
+2. Make the file. Tap **Download the template (with an example row)**: it has every column name and one example row (delete the example row before importing; it is refused if left in). Or use your own Excel or CSV file (up to 10 MB). The first row must have the column names listed on the screen, in capitals or small letters. One row per batch.
+
+   **Dates are read day first.** Write the expiry date as **DD-MM-YYYY**, for example **31-12-2027**. 05-06-2027 is 5 June 2027. These also work:
+   - 31/12/2027 (day first);
+   - 2027-12-31 or 20271231 (year first);
    - 12/2027 or 12-2027, as printed on packs (the last day of that month);
    - a date cell in Excel.
 
-   A row with any other date shows a problem and is not added.
+   A row with any other date shows a problem and is not added. If a file writes a date month first (12/31/2027), that row is refused, and so is every date like 05/06/2027 in the same file (it could be read two ways): the import page says so. Write the dates day first and upload the file again.
+
+   **Prices.** A price cell left **blank keeps the medicine's current price**. A price of **0 sets it to ₹0**: the check shows every such row with a warning. A new medicine without a selling price is not on sale until you price it.
+
+   **New medicines.** A name not in the medicine list adds a new medicine. It **needs a prescription** unless its row says "no" under **prescription required**. Existing medicines are not changed by an import.
 
    Numbers may have commas between thousands, such as 1,000 or 10,00,000. Write paise with a point, such as 12.50. A price written as 1,5 or 12 rs shows a problem and is not added.
 3. Choose **Which rows to add**: every row, only medicines already in your stock, or only new ones.
-4. Choose the file under **Stock file** and tap **Check the file**. Nothing is added yet.
-5. The import page lists every row. Rows with a problem come first and say what is wrong. Tap **Download the rows with problems** to fix them in a new file.
-6. Tap **Add … ready rows to stock…**, read what will happen, and tap **Yes, add them**.
+4. If the whole delivery came from one supplier, choose it under **Supplier of this delivery (optional)**. Or name a supplier on each row in the **supplier** column (as on your supplier list). It is recorded with every row that adds units.
+5. Choose the file under **Stock file** and tap **Check the file**. Nothing is added yet. A large file can take up to two minutes.
+6. The import page lists every row. Rows with a problem come first and say what is wrong. Each row shows the prices it will set: the number (₹0.00 for a 0), "Kept: ₹…" for a blank cell when there is a current price, and "No price yet" for a blank cell of a medicine you do not stock yet ("Not on sale until priced" for its selling price). Wholesale and purchase prices are shown when a row changes them. For a new medicine it also says whether it needs a prescription. If the template's example row is still in the file, nothing can be added: delete that row and upload the file again. If you chose a supplier for the file but the server did not keep it, the page says so. Tap **Download the rows with problems** to fix them in a new file.
+7. Tap **Add … ready rows to stock…**, read what will happen, and tap **Yes, add them**. The confirmation counts only the rows your choice in step 3 adds, names every price change, and says which new medicines are not on sale until priced. If the same file name was added in the last 24 hours, the page warns you first: adding it again adds the units again.
+
+Not adding a checked file? Tap **Discard this preview…** (not possible while the rows are being added). Nothing from it is added. It is hidden on this device only (the server keeps it as checked, and it is added only if someone confirms it).
 
 **Recent imports** on the import page lists every file you uploaded and what happened to it. If some rows failed while being added, open the import and tap **Try the failed rows again…**. If an import says **Adding stopped** (it has not finished for more than 15 minutes), tap **Try again…**. A row is never added twice.
+
+If the answer to adding the rows does not arrive, the import page checks again on its own every few seconds and shows the result when it is there.
 
 If the answer to **Check the file** does not arrive, tap **Check whether it was recorded**. If an import of the same file name started just then, the screen asks "Is this it?": tap **Open it**, or **Upload again**.
 
@@ -191,7 +210,7 @@ If the answer to **Check the file** does not arrive, tap **Check whether it was 
 
 - **Add a supplier**: fill in **Supplier name** (the rest is optional) and tap **Add supplier**. If it says "not confirmed", tap **Send the same change again**: the supplier is never added twice. Or tap **Give this up**: then it can never be added (if it already was, the screen says so).
 - **Edit**: change the details and tap **Save changes**. If someone else changed the same supplier meanwhile, the screen shows their change; check it and save again.
-- **Archive**: the supplier is no longer offered for returns. Returns already recorded keep it. An archived supplier cannot be brought back; add it again if you need it.
+- **Archive**: the supplier is no longer offered for returns or deliveries. Returns and deliveries already recorded keep it. An archived supplier cannot be brought back; add it again if you need it.
 
 Use **Show** to see **Active**, **Archived** or **All** suppliers.
 

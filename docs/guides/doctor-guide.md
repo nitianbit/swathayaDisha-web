@@ -37,7 +37,7 @@ Patients who pay now are offered to available doctors of their speciality. The f
 3. Enter **Your fee for an instant consultation (₹)**. You get offers only from patients who paid at least this much.
 4. Tap **Go available now**. The status shows **On**.
 
-**Keep a workspace page open and visible.** It checks in every minute. If the page is hidden or closed, you stop getting offers two minutes later. "On, not checked in" means no page has checked in recently. Tap **Go available now** again.
+**Keep a workspace page open and visible.** It checks in every minute, and at once when the page is opened or reloaded. If the page is hidden or closed, you stop getting offers two minutes later. "On, not checked in" means no page has checked in recently. Tap **Go available now** again.
 
 To stop, tap **Stop being available**. To change types or fee, edit them and tap **Update**.
 
@@ -52,6 +52,8 @@ If an offer says your fee is above what the patient paid, you cannot take it. Lo
 ### Give more time
 
 Under **Instant consultations today**, enter **Extend by (minutes)** (1 to 60) and tap **Extend**. It is refused if it would run into your next booking.
+
+If the answer does not arrive, tap **Send the same extension again** (it is added once, never twice) or **Check whether it was recorded**. If the same extension is then refused (for example it would run into your next booking), tap **Choose another extension** to try other minutes. If a check finds nothing (for example after a reload), **Forget it** frees the field after a second step; check the time held for you before extending again.
 
 ---
 
@@ -72,8 +74,8 @@ The **Kind** column shows **Booked**, **Instant** or **At a clinic**.
 ### Actions
 
 - **Confirm**: confirm a paid appointment that is waiting.
-- **Mark completed**: after the consultation. This cannot be changed later.
-- **Patient did not come**: marks a no-show. It only shows once the appointment time has come. The patient is not refunded and you are not paid.
+- **Mark completed**: after the consultation. It only shows once the appointment's start time has passed. This cannot be changed later.
+- **Patient did not come**: marks a no-show. It only shows 15 minutes after the appointment time. The patient is not refunded and you are not paid.
 - **Cancel**: write a reason (the patient sees it). A paid patient gets the full amount back in their Jansetu wallet. This cannot be undone.
 
 ### Reschedule a no-show (once)
@@ -81,9 +83,11 @@ The **Kind** column shows **Booked**, **Instant** or **At a clinic**.
 On a no-show (not an instant one):
 
 1. Tap **Reschedule no-show**.
-2. Choose a **New day** and **New time**, tap **Continue**, then confirm.
+2. Choose a **New day** and **New time**, tap **Continue**, then confirm. Only times for the same consultation type, at the same place, are offered: each time shows its place (the clinic and branch, **your own place**, or **online**), and so does the confirmation. If the time is refused (for example it does not take this consultation type), the screen says why and shows the times again.
 
 It is booked again at the same price, with nothing paid or refunded. You earn only if it is then completed. This works once only. A second no-show is final.
+
+If a list cannot be read again (for example the connection dropped), the list already shown stays, with "Could not refresh just now" and **Try again**.
 
 ### Clinic desk appointments
 

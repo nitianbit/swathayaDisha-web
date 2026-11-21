@@ -273,7 +273,7 @@ function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api:
       {refused && <Alert>Not recorded: {refused}</Alert>}
       {showPanel ? (
         <PendingOpPanel key={pending.attempts} label="Unconfirmed payout" op={pending} busy={busy} onResend={() => void send(pending)}
-          fetchPage={keyedLookup(pending.requestKey, () => s.payoutByKey(accountId, pending.requestKey))}
+          fetchPage={keyedLookup(pending.requestKey, () => s.payoutByKey(accountId, pending.requestKey), ['PAYOUT_NOT_FOUND'])}
           onFound={(p) => recorded(p, pending, true)}
           // Q13: decided by the server: `abandoned` = this payout can never be recorded; `used` = here it is.
           abandon={async () => {
@@ -464,7 +464,7 @@ function PostAdjustment({ api: s, accountId, summary, perform, onChanged }: { ap
       {refused && <Alert>Not posted: {refused}</Alert>}
       {showPanel ? (
         <PendingOpPanel key={pending.attempts} label="Unconfirmed adjustment" op={pending} busy={busy} onResend={() => void send(pending)}
-          fetchPage={keyedLookup(pending.requestKey, () => s.adjustmentByKey(accountId, pending.requestKey))}
+          fetchPage={keyedLookup(pending.requestKey, () => s.adjustmentByKey(accountId, pending.requestKey), ['ADJUSTMENT_NOT_FOUND'])}
           onFound={(l) => posted(l.amountMinor, pending, true)}
           abandon={async () => {
             const r = await s.abandonAdjustmentKey(accountId, pending.requestKey);

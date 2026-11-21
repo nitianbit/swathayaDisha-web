@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  APPOINTMENT_STATUS_LABEL, appointmentActions, CONSULT_MODE_LABEL, doctorNoShowMove, fromYmd, isRealDate, istDateOf, movableSlot,
-  type AppointmentAction, type DoctorAppointment,
+  ApiError, APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentRefusal, CONSULT_MODE_LABEL, doctorNoShowMove, fromYmd, isRealDate, istDateOf,
+  movableSlot, noShowSlotFits, schedulableBranches, type AppointmentAction, type DoctorAppointment, type DoctorSlot,
 } from '@jansetu/api';
 import { Alert, Badge, Empty, ErrorState, Loading, TextField, formatRupees } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
@@ -13,7 +13,8 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { formatDay } from '../partner/labs.tsx';
 import {
-  appointmentsKey, formatYmd, MeetLink, NotADoctor, sortAppointments, useDoctor, useMeetPoll, useTicker, useUpcomingAppointments, type DoctorContext,
+  appointmentsKey, formatYmd, MeetLink, NotADoctor, RefreshFailed, sortAppointments, useClinics, useDoctor, useMeetPoll, useTicker, useUpcomingAppointments,
+  type DoctorContext,
 } from './doctor.tsx';
 
 type MeetPoll = ReturnType<typeof useMeetPoll>;
@@ -57,17 +58,27 @@ function UpcomingList({ d, days }: { d: DoctorContext; days: number }) {
   const q = useUpcomingAppointments(d, days, meet.interval);
   if (q.pending) return <Loading label="Loading appointments…" />;
   if (q.error) return <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />;
-  return <AppointmentTable d={d} items={q.items} meet={meet} refresh={q.refetch} readAt={q.readAt} reading={q.fetching}
-    empty={days === 1 ? 'No appointments today.' : `No appointments in the next ${days} days.`} />;
+  return (
+    <>
+      {q.refreshError && <RefreshFailed error={q.refreshError} readAt={q.readAt} onRetry={q.refetch} />}
+      <AppointmentTable d={d} items={q.items} meet={meet} refresh={q.refetch} readAt={q.readAt} reading={q.fetching}
+        empty={days === 1 ? 'No appointments today.' : `No appointments in the next ${days} days.`} />
+    </>
+  );
 }
 
 function DayList({ d, day }: { d: DoctorContext; day: string }) {
   const meet = useMeetPoll();
   const q = useQuery({ queryKey: [...appointmentsKey(d), 'day', day], queryFn: () => d.api.appointmentsOn(day), refetchInterval: (query) => meet.interval(query.state.data) });
   if (q.isPending) return <Loading label="Loading appointments…" />;
-  if (q.isError) return <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />;
-  return <AppointmentTable d={d} items={sortAppointments(q.data ?? [])} meet={meet} refresh={q.refetch} readAt={q.dataUpdatedAt} reading={q.isFetching}
-    empty={`No appointments on ${formatDay(day)}.`} />;
+  if (q.isError && q.data === undefined) return <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />;
+  return (
+    <>
+      {q.isError && <RefreshFailed error={q.error} readAt={q.dataUpdatedAt} onRetry={q.refetch} />}
+      <AppointmentTable d={d} items={sortAppointments(q.data ?? [])} meet={meet} refresh={q.refetch} readAt={q.dataUpdatedAt} reading={q.isFetching}
+        empty={`No appointments on ${formatDay(day)}.`} />
+    </>
+  );
 }
 
 const statusTone = (s: DoctorAppointment['status']) => (s === 'completed' ? 'ok' : s === 'cancelled' || s === 'no_show' ? 'danger' : s === 'pending' ? 'warn' : undefined);
@@ -122,6 +133,7 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
   d: DoctorContext; b: DoctorAppointment; actions: AppointmentAction[]; link: ReactNode; onChanged: (m: string) => void; onRefused: () => void; move: MoveProps;
 }) {
   const { memory } = useSession();
+  const queryClient = useQueryClient();
   const label = appointmentLabel(b);
   // Q14: the one move of a no-show (never an instant one), also while a move sent earlier is unconfirmed.
   const moveSlot = noShowMoveSlot(d.identity, b._id);
@@ -134,7 +146,9 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
       onChanged(done);
     } catch (err) {
       onRefused();
-      throw err;
+      // WQ11c: the server's refusals in words (409 NOT_STARTED_YET: completed only once the time has come).
+      const words = appointmentRefusal(err);
+      throw words && err instanceof ApiError ? new ApiError(err.status, words, err.code, err.retryAfter) : err;
     }
   };
   const clinic = !!(b.clinicVisit || b.clinicDesk);
@@ -163,7 +177,8 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
             consequence={<>The patient is told the new time. You earn for it only once it is completed.</>}
             picker={(choose) => <DoctorSlotPicker d={d} b={b} now={move.now} onChoose={choose} />}
             send={(t: NoShowTarget, requestKey) => move.perform(() => d.api.rescheduleNoShow(b._id, t.slotId, requestKey, typeof t.version === 'string' ? t.version : undefined))}
-            reread={move.reread} onNotice={move.onNotice} onFailure={move.onFailure} />
+            reread={move.reread} onNotice={move.onNotice} onFailure={move.onFailure}
+            onSlotRefused={() => void queryClient.invalidateQueries({ queryKey: [...d.key, 'slots'] })} />
         )}
         {actions.length === 0 ? (!showMove && noShowMove !== 'clinic' && <span className="ws-muted">—</span>) : (
           <div className="ws-actions">
@@ -194,23 +209,42 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
   );
 }
 
-/** Q14: the doctor's own open, not-yet-started slots on a chosen day, for the one move of a no-show. */
+/**
+ * The place of a slot in words: a clinic branch by its name (the doctor's clinics), or none: the doctor's own place for
+ * an in-person slot, online otherwise.
+ */
+function placeOf(s: Pick<DoctorSlot, 'branchId'>, inPerson: boolean, branches: ReadonlyMap<string, string>): string {
+  if (!s.branchId) return inPerson ? 'your own place' : 'online';
+  return branches.get(String(s.branchId).toLowerCase()) ?? 'a clinic';
+}
+
+/**
+ * Q14: the doctor's own open, not-yet-started slots on a chosen day, for the one move of a no-show. WQ11c: only slots that
+ * take the booking's consultation type and are at its place (`noShowSlotFits`); each names its place, and so does the
+ * confirmation.
+ */
 function DoctorSlotPicker({ d, b, now, onChoose }: { d: DoctorContext; b: DoctorAppointment; now: Date; onChoose: (t: NoShowTarget | null) => void }) {
   const [day, setDay] = useState(() => istDateOf(now));
   const [slotId, setSlotId] = useState('');
   const ok = isRealDate(day);
   const slots = useQuery({ queryKey: [...d.key, 'slots', day], queryFn: () => d.api.slotsOn(day), enabled: ok });
-  // In-person bookings move to in-person (clinic) slots, others to slots without a clinic branch; the server decides finally.
+  const clinics = useClinics(d);
+  const branches = new Map((clinics.data ? schedulableBranches(clinics.data) : []).map((x) => [x.branchId.toLowerCase(), x.label]));
   const inPerson = b.consultationMode === 'in-person';
-  const choices = (slots.data ?? []).filter((s) => movableSlot(s, now) && (inPerson ? !!s.branchId : !s.branchId));
+  const choices = (slots.data ?? []).filter((s) => movableSlot(s, now) && noShowSlotFits(s, b));
+  const where = (s: DoctorSlot) => placeOf(s, inPerson, branches);
+  const mode = b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode : null;
   return (
     <>
+      <p className="ws-muted">
+        Times {mode ? `for ${mode.toLowerCase()} consultations ` : ''}at {inPerson ? (b.clinicVisit?.branchId ? branches.get(String(b.clinicVisit.branchId).toLowerCase()) ?? 'the same clinic' : 'your own place') : 'no clinic (online)'}, as booked.
+      </p>
       <TextField label="New day" type="date" value={day} min={istDateOf(now)} error={ok ? undefined : 'Enter a real date.'}
         onChange={(e) => { setDay(e.target.value); setSlotId(''); onChoose(null); }} />
       {!ok ? null
         : slots.isPending ? <Loading label="Loading your slots…" />
         : slots.isError ? <ErrorState message={messageOf(slots.error)} onRetry={() => void slots.refetch()} />
-        : choices.length === 0 ? <p className="ws-muted">No open slot that day. Choose another day, or add hours on your schedule.</p>
+        : choices.length === 0 ? <p className="ws-muted">No open slot for this consultation that day. Choose another day, or add hours on your schedule.</p>
         : (
           <div className="j-field">
             <label htmlFor={`noshow-slot-${b._id}`}>New time</label>
@@ -218,10 +252,10 @@ function DoctorSlotPicker({ d, b, now, onChoose }: { d: DoctorContext; b: Doctor
               setSlotId(e.target.value);
               const s = choices.find((x) => x._id === e.target.value);
               const iso = s ? fromYmd(s.date) : null;
-              onChoose(s ? { slotId: s._id, label: `${iso ? formatDay(iso) : s.date}, ${s.startTime}` } : null);
+              onChoose(s ? { slotId: s._id, label: `${iso ? formatDay(iso) : s.date}, ${s.startTime} (${where(s)})` } : null);
             }}>
               <option value="">Choose a time</option>
-              {choices.map((s) => <option key={s._id} value={s._id}>{s.startTime}–{s.endTime}</option>)}
+              {choices.map((s) => <option key={s._id} value={s._id}>{s.startTime}–{s.endTime} · {where(s)}</option>)}
             </select>
           </div>
         )}

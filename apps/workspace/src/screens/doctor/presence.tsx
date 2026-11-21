@@ -138,7 +138,13 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
   const read = useCallback(async (mine: number) => {
     const p = await doctor.presence();
     if (generation.current === mine) {
-      if (uncertain.current) { lastRead.current = p; setShown(p); } else adopt(p, checkedIn(p));
+      if (uncertain.current) { lastRead.current = p; setShown(p); } else {
+        adopt(p, checkedIn(p));
+        // WQ11c: a read is not a check-in. After a reload the last heartbeat may be close to two minutes old, so the
+        // heartbeats start with one at once (below) instead of a minute later.
+        lastBeat.current = null;
+        setLastBeatAt(null);
+      }
       setProblem(null);
       setLoadError(null);
     }
@@ -197,16 +203,18 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!beating) return undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
-    const beat = async () => {
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    /** Answers false when it did not send (a change, a read or another heartbeat is on its way). */
+    const beat = async (): Promise<boolean> => {
       // One heartbeat at a time, and never while a change or read is on its way.
-      if (busyRef.current || beatInFlight.current) return;
+      if (busyRef.current || beatInFlight.current) return false;
       beatInFlight.current = true;
       const mine = generation.current;
       try {
         const p = await doctor.heartbeat();
-        if (generation.current !== mine || uncertain.current) return;
+        if (generation.current !== mine || uncertain.current) return true;
         // An answer older than the terms already adopted (it was overtaken) changes nothing.
-        if (acknowledged.current && p.presenceVersion < acknowledged.current.presenceVersion) return;
+        if (acknowledged.current && p.presenceVersion < acknowledged.current.presenceVersion) return true;
         // The heartbeat answers the presence as it is: a fresh read (terms changed elsewhere are adopted as such).
         acknowledged.current = p;
         setPresence(p);
@@ -216,7 +224,7 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
         if (!p.available) setLive(false);
         setProblem(null);
       } catch (err) {
-        if (generation.current !== mine || aborted(err)) return;
+        if (generation.current !== mine || aborted(err)) return true;
         if (err instanceof ApiError && err.status === 403) {
           // A deactivated or unverified doctor is taken offline by the server (a new version): read it again.
           generation.current += 1;
@@ -224,24 +232,34 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
           setOnline(false);
           setProblem(instantRefusal(err) ?? messageOf(err));
           void refresh().catch(() => undefined);
-          return;
+          return true;
         }
         setProblem(`The last heartbeat did not reach the server (${messageOf(err)}). If this goes on for two minutes you stop being offered consultations.`);
       } finally {
         beatInFlight.current = false;
       }
+      return true;
     };
-    const stop = () => { if (timer !== undefined) clearInterval(timer); timer = undefined; };
+    /** A heartbeat now when none was sent for a minute (or since the page loaded); held back by a change, tried again shortly. */
+    const due = (tries = 5) => {
+      if (lastBeat.current !== null && Date.now() - lastBeat.current < HEARTBEAT_MS) return;
+      void beat().then((sent) => { if (!sent && tries > 1) retry = setTimeout(() => due(tries - 1), 1_000); });
+    };
+    const stop = () => {
+      if (timer !== undefined) clearInterval(timer);
+      if (retry !== undefined) clearTimeout(retry);
+      timer = undefined; retry = undefined;
+    };
     const start = () => { stop(); timer = setInterval(() => void beat(), HEARTBEAT_MS); };
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
-        if (lastBeat.current === null || Date.now() - lastBeat.current >= HEARTBEAT_MS) void beat();
         start();
+        due();
       } else {
         stop();
       }
     };
-    if (document.visibilityState === 'visible') start();
+    if (document.visibilityState === 'visible') { start(); due(); }
     document.addEventListener('visibilitychange', onVisibility);
     return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
   }, [beating, doctor, refresh]);

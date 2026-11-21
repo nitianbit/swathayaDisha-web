@@ -244,7 +244,7 @@ function ClinicForm({ d, onSettled }: { d: DoctorContext; onSettled: (s: { tone:
   if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
     return (
       <PendingOpPanel<DoctorClinicInput, DoctorClinicFound & { requestKey: string }> key={op.attempts} label="Unconfirmed clinic" op={op} busy={busy} onResend={() => void send(op)}
-        fetchPage={keyedLookup(op.requestKey, () => d.api.myClinicByKey(op.requestKey))}
+        fetchPage={keyedLookup(op.requestKey, () => d.api.myClinicByKey(op.requestKey), ['CLINIC_NOT_FOUND'])}
         onFound={(c) => made(op, `Your clinic “${c.partner.name}” had already been created: nothing was made twice.`)}
         forget={{ label: 'Forget it and start again', confirmLabel: 'Forget the earlier request',
           consequence: 'If the earlier request still arrives, your clinic is created; a new request is then refused because you can have only one, so nothing is made twice.',

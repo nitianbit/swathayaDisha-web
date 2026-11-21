@@ -347,7 +347,38 @@ export interface DoctorSlot {
   isActive?: boolean;
   /** A clinic branch for in-person slots. */
   branchId?: string;
+  /** The consultation types the slot takes (template slots; empty or missing = any type, `assertSlotMode`). */
+  serviceModes?: ConsultMode[];
   closedReason?: string;
+}
+
+/**
+ * WQ11c: whether a no-show can move onto this slot — the slot takes the booking's consultation type (`assertSlotMode`:
+ * a slot with types takes only those) and is at the booking's place: an in-person visit stays at its clinic branch (or,
+ * without one, at a slot with no branch: the doctor's own place); an online consultation moves to a slot with no branch.
+ * The server decides finally.
+ */
+export function noShowSlotFits(s: Pick<DoctorSlot, 'serviceModes' | 'branchId'>, b: Pick<DoctorAppointment, 'consultationMode' | 'clinicVisit'>): boolean {
+  const modes = s.serviceModes ?? [];
+  if (modes.length > 0 && b.consultationMode && !modes.includes(b.consultationMode)) return false;
+  const branch = s.branchId ? String(s.branchId).toLowerCase() : null;
+  if (b.consultationMode === 'in-person') {
+    const at = b.clinicVisit?.branchId ? String(b.clinicVisit.branchId).toLowerCase() : null;
+    return branch === at;
+  }
+  return branch === null;
+}
+
+/**
+ * A move refused because the slot does not take this consultation type (`assertSlotMode` answers 409 SLOT_NOT_AVAILABLE
+ * "not offered for that consultation type"; Q16a may give it its own code): named `SLOT_MODE_NOT_OFFERED` here so the page
+ * says so instead of "no longer free". Any other error is returned unchanged.
+ */
+export function noShowModeRefusal(err: unknown): unknown {
+  if (err instanceof ApiError && err.status === 409 && err.code === 'SLOT_NOT_AVAILABLE' && /consultation type|mode/i.test(err.message)) {
+    return new ApiError(err.status, err.message, 'SLOT_MODE_NOT_OFFERED', err.retryAfter);
+  }
+  return err;
 }
 
 /** A slot the doctor could move a no-show onto: open, a seat free, and not yet started (`reserveSlot`, `startedClock`). */
@@ -360,7 +391,7 @@ export function movableSlot(s: DoctorSlot, now: Date): boolean {
 
 /**
  * The status commands the server would accept now (`updateAppointmentStatus`): confirm a paid waiting booking; complete
- * a confirmed one (ledger bookings only once paid: `BOOKING_NOT_PAID`); cancel a waiting or confirmed one (full refund,
+ * a confirmed one whose start time has passed (ledger bookings only once paid: `BOOKING_NOT_PAID`); cancel a waiting or confirmed one (full refund,
  * `cancelByDoctor` / `cancelAccepted` for instant ones, which must be confirmed); no-show only for a paid, confirmed
  * booking whose time has come (`markNoShow`). Terminal states offer nothing.
  */
@@ -369,14 +400,32 @@ export function appointmentActions(b: DoctorAppointment, now: Date): Appointment
   if (b.status === 'pending') return b.bookingKind === 'instant' ? [] : paid ? ['confirm', 'cancel'] : ['cancel'];
   if (b.status !== 'confirmed') return [];
   const out: AppointmentAction[] = [];
-  if (paid || b.settlementSystem !== 'ledger') out.push('complete');
+  const at = appointmentInstant(b.bookingDate, b.bookingTime);
+  // WQ11c (Q16a 409 NOT_STARTED_YET): completed only once its start time has passed. A time that cannot be read does not
+  // hide it: the server decides.
+  const started = !at || at.at.getTime() <= now.getTime();
+  if ((paid || b.settlementSystem !== 'ledger') && started) out.push('complete');
   // Q14: a booking moved after a no-show is never refunded, so it is not cancelled (409 NO_SHOW_NOT_REFUNDABLE; desk rows
   // paid at the clinic excepted: nothing was taken through Jansetu).
   if (!noShowMovedOnce(b) || b.settlementSystem === 'clinic') out.push('cancel');
-  const at = appointmentInstant(b.bookingDate, b.bookingTime);
-  if (paid && at && at.at.getTime() <= now.getTime()) out.push('no_show');
+  // Q16a: a no-show is marked only 15 minutes after the start (409 APPOINTMENT_NOT_STARTED before; an instant
+  // consultation's time is its acceptance).
+  if (paid && at && at.at.getTime() + NO_SHOW_GRACE_MS <= now.getTime()) out.push('no_show');
   return out;
 }
+
+/** Q16a `NO_SHOW_GRACE_MS`: a no-show can be marked 15 minutes after the appointment time. */
+export const NO_SHOW_GRACE_MS = 15 * 60_000;
+
+/** The words for refusals of an appointment status change (the server's own message is the fallback). */
+export const APPOINTMENT_REFUSAL: Readonly<Record<string, string>> = {
+  NOT_STARTED_YET: 'This appointment has not started yet. Mark it completed once its time has come.',
+  // Q16a (in progress): a no-show is marked only a while after the start time.
+  APPOINTMENT_NOT_STARTED: 'It is too early to mark this appointment a no-show. Try again a little after its start time.',
+  BOOKING_NOT_PAID: 'This appointment is not paid yet, so it cannot be completed.',
+};
+export const appointmentRefusal = (err: unknown): string | null =>
+  (err instanceof ApiError && err.code ? APPOINTMENT_REFUSAL[err.code] ?? null : null);
 
 /**
  * The call link of an appointment (`isInternalMeetApplicable` + `syncBookingMeet`): only paid, confirmed call and video
@@ -662,7 +711,7 @@ export function doctorToolsApi(c: ApiClient) {
       if (expectedUpdatedAt !== undefined && Number.isNaN(Date.parse(expectedUpdatedAt))) throw new Error('Invalid booking version');
       return c.post<DoctorAppointment & { replayed?: boolean }>(`${ME}/bookings/${checkId(bookingId, 'booking')}/reschedule-no-show`, {
         body: { slotId: checkId(slotId, 'slot'), requestKey, ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}) },
-      });
+      }).catch((err: unknown) => { throw noShowModeRefusal(err); });
     },
     setAppointmentStatus: (id: string, status: 'confirmed' | 'completed' | 'cancelled' | 'no_show', reason?: string) =>
       c.patch<DoctorAppointment>(`${ME}/appointments/${checkId(id, 'appointment')}/status`, {
@@ -738,7 +787,7 @@ export function doctorAdminApi(c: ApiClient) {
       if (!REQUEST_KEY.test(requestKey)) throw new Error('Invalid request key');
       return c.post<DoctorAppointment & { replayed?: boolean }>(`/specialists/admin/bookings/${checkId(bookingId, 'booking')}/reschedule-no-show`, {
         body: { slotId: checkId(slotId, 'slot'), requestKey, ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}) },
-      });
+      }).catch((err: unknown) => { throw noShowModeRefusal(err); });
     },
   };
 }

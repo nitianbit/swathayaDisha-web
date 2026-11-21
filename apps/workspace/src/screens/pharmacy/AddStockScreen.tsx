@@ -3,28 +3,30 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  ADD_STOCK_REASONS, formatExpiry, MAX_STOCK_NOTE, medicineName, pharmacyStockApi, STOCK_LIMITS, stockEntryBody,
-  stockEntryProblems, type AddStockReason, type InventoryItem, type Medicine, type StockEntry, type StockEntryDraft,
+  ADD_STOCK_REASONS, ApiError, formatExpiry, isSupplierRefusal, MAX_STOCK_NOTE, medicineName, pharmacyStockApi, STOCK_LIMITS, stockEntryBody,
+  stockEntryProblems, SUPPLIER_REFUSAL, type AddStockReason, type InventoryItem, type Medicine, type PharmacySupplier, type StockAdjustment,
+  type StockEntry, type StockEntryDraft,
 } from '@jansetu/api';
-import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
+import { SupplierSelect, useActiveSuppliers } from './SupplierPicker.tsx';
 
 /**
  * What is kept (in session memory only) for an entry being sent: the request and the words to describe it. Q15: it is
  * sent with its request key, so the same entry can be sent again safely (the server answers the key with what it saved,
  * `replayed`, and never adds the units twice) and a lost answer is looked up by key.
  */
-interface PendingEntry { entry: StockEntry; medicineName: string }
+interface PendingEntry { entry: StockEntry; medicineName: string; supplierName?: string }
 
 type Fields = Omit<StockEntryDraft, 'medicineId'>;
 const EMPTY: Fields = {
   batchNumber: '', expiry: '', quantity: '', mrp: '', retailPrice: '', purchasePrice: '', rackLocation: '', reorderThreshold: '',
-  reason: 'purchase', note: '',
+  reason: 'purchase', note: '', supplierId: '',
 };
 
 /** WQ10a: add units of one batch of a medicine (`POST /pharmacy-inventory`, keyed since Q15). */
@@ -41,8 +43,37 @@ export function AddStockScreen() {
   );
 }
 
-const describe = (e: StockEntry, name: string) =>
-  `${e.quantity} units of ${name}, batch ${e.batchNumber.toUpperCase()} (expires ${formatExpiry(e.expiryDate)})`;
+const describe = (e: StockEntry, name: string, supplier?: string) =>
+  `${e.quantity} units of ${name}, batch ${e.batchNumber.toUpperCase()} (expires ${formatExpiry(e.expiryDate)})${supplier ? ` from ${supplier}` : ''}`;
+const describeOp = (b: PendingEntry) => describe(b.entry, b.medicineName, b.supplierName);
+
+/** The adjustment's medicine id (populated or not). */
+const adjustmentMedicine = (a: StockAdjustment) => String(typeof a.medicineId === 'object' && a.medicineId ? a.medicineId._id : a.medicineId).toLowerCase();
+
+/**
+ * WQ11c re-review N2: the words for a saved entry. The save answers only the items, so a supplier is named only when the
+ * delivery as recorded (the newest matching adjustment, re-read) carries it; otherwise "(supplier not recorded)", or
+ * "(supplier not confirmed …)" when the history could not be read. An entry without a supplier is described as it is.
+ */
+async function savedWords(read: () => Promise<StockAdjustment[]>, p: PendingOp<PendingEntry>): Promise<string> {
+  const b = p.body;
+  if (!b) return 'the stock entry';
+  if (!b.entry.supplierId) return describe(b.entry, b.medicineName);
+  const base = describe(b.entry, b.medicineName);
+  try {
+    const since = p.firstAttemptAt - 10 * 60_000;
+    const hit = (await read()).find((a) => adjustmentMedicine(a) === b.entry.medicineId.toLowerCase()
+      && (a.batchNumber ?? '').toUpperCase() === b.entry.batchNumber.toUpperCase() && a.quantity === b.entry.quantity
+      && a.adjustmentType === 'add' && (!a.createdAt || Date.parse(a.createdAt) >= since));
+    const recorded = hit?.supplier?.supplierId ?? hit?.supplierId;
+    if (hit && recorded && String(recorded).toLowerCase() === b.entry.supplierId.toLowerCase()) {
+      return `${base} from ${hit.supplier?.displayName ?? b.supplierName ?? 'the supplier'}`;
+    }
+    return `${base} (supplier not recorded)`;
+  } catch {
+    return `${base} (supplier not confirmed: see the stock history)`;
+  }
+}
 
 const searchText = (m: Medicine) => m.name ?? m.brandName ?? m.genericName ?? '';
 
@@ -71,15 +102,22 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
 
   // "Add a batch" on the Stock page names the medicine (its id only).
   const preset = params.get('medicine') ?? '';
+  const presetValid = /^[0-9a-fA-F]{24}$/.test(preset);
   const presetQ = useQuery({
     queryKey: ['pharmacy-medicines', pharmacyId, 'one', preset],
     queryFn: () => stock.medicine(preset),
-    enabled: /^[0-9a-fA-F]{24}$/.test(preset),
+    enabled: presetValid,
+    retry: (n, err) => !(err instanceof ApiError && err.status >= 400 && err.status < 500) && n < 2,
   });
-  const chosen = picked ?? (preset ? presetQ.data ?? null : null);
+  // WQ11c: a malformed id in the address, or one the server does not know: say so and offer the picker.
+  const presetMissing = !!preset && !picked && (!presetValid || (presetQ.isError && presetQ.error instanceof ApiError && (presetQ.error.status === 404 || presetQ.error.status === 400)));
+  const chosen = picked ?? (preset && presetValid ? presetQ.data ?? null : null);
+  const suppliers = useActiveSuppliers(pharmacyId);
+  const supplierList = suppliers.data ?? [];
 
   const set = <K extends keyof Fields>(k: K, v: Fields[K]) => setDraft((d) => ({ ...d, [k]: v }));
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['pharmacy-inventory'] });
+  const readAdjustments = () => stock.adjustments(1, 20).then((x) => x.items);
 
   function check(e: FormEvent) {
     e.preventDefault();
@@ -90,7 +128,8 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
     const problems = stockEntryProblems(full);
     setErrors(problems);
     if (Object.keys(problems).length || !chosen) return;
-    setReview({ requestKey: newRequestKey(), entry: stockEntryBody(full), medicineName: medicineName(chosen) });
+    const supplier = draft.supplierId ? supplierList.find((x) => x.supplierId === draft.supplierId) : undefined;
+    setReview({ requestKey: newRequestKey(), entry: stockEntryBody(full), medicineName: medicineName(chosen), ...(supplier ? { supplierName: supplier.displayName } : {}) });
   }
 
   /** Sends `p` (its key, its entry) under the one-at-a-time guard; an unknown outcome stays stored for the panel below. */
@@ -105,30 +144,34 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
       return;
     }
     if (r.kind === 'ok') {
-      const what = p.body ? describe(p.body.entry, p.body.medicineName) : 'the units';
+      setDraft(EMPTY);
+      setErrors({});
+      void refresh();
+      const what = p.body ? await savedWords(readAdjustments, p) : 'the units';
       setDone({
         text: r.value.replayed ? `Already added: ${what}. Nothing was added twice.` : `Added ${what}.`,
         search: search || itemSearch(r.value.items),
       });
-      setDraft(EMPTY);
-      setErrors({});
-      void refresh();
     } else if (r.kind === 'refused') {
-      setRefused(messageOf(r.error));
+      // Q16c: the supplier is no longer one of the pharmacy's active ones: read them again and ask for another.
+      if (isSupplierRefusal(r.error)) {
+        const words = SUPPLIER_REFUSAL[(r.error as ApiError).code ?? ''] ?? messageOf(r.error);
+        setErrors((e) => ({ ...e, supplierId: words }));
+        void suppliers.refetch();
+        setRefused(words);
+      } else setRefused(messageOf(r.error));
     }
   }
 
   /** The recorded entry was found (by key or by giving up): show it and clear the form, so it is not added again. */
-  function recorded(p: PendingOp<PendingEntry>, items: InventoryItem[]) {
+  async function recorded(p: PendingOp<PendingEntry>, items: InventoryItem[]) {
     settle(p.requestKey);
-    setDone({
-      text: `Recorded: ${p.body ? describe(p.body.entry, p.body.medicineName) : 'the stock entry'} was added. Nothing was added twice.`,
-      search: itemSearch(items),
-    });
     setDraft(EMPTY);
     setErrors({});
     setReview(null);
     void refresh();
+    const what = await savedWords(readAdjustments, p);
+    setDone({ text: `Recorded: ${what} was added. Nothing was added twice.`, search: itemSearch(items) });
   }
 
   /**
@@ -140,7 +183,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
     setGivingUp(true);
     try {
       const r = await perform(() => stock.abandonStock(p.requestKey));
-      if (r.state === 'used') { recorded(p, r.items); return; }
+      if (r.state === 'used') { await recorded(p, r.items); return; }
       settle(p.requestKey);
       setNotice('Given up: nothing was added with that entry, and it can never be added now. Check the details and add the units again.');
     } catch (err) {
@@ -181,7 +224,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
                 ? 'Not recorded so far. It may still be on its way. Give it up to make sure it never is, then add the units again.'
                 : 'Not recorded so far. It may still be on its way. Sending the same entry again is safe: it is never added twice.';
             }
-            recorded(op, items);
+            await recorded(op, items);
             return null;
           }}
           resend={restored ? undefined : {
@@ -194,7 +237,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
               ? 'A stock entry made earlier on this device (before the page was reloaded, or before you signed out) was not confirmed. Its details are not kept here. Check it, or give it up: then it can never be added.'
               : `This stock entry was not confirmed${op.error ? ` (${op.error})` : ''}. The units may already be in stock. Sending the same entry again is safe: it is never added twice. Or give it up: then it can never be added.`}
           </Alert>
-          {!restored && op.body && <div>{describe(op.body.entry, op.body.medicineName)}</div>}
+          {!restored && op.body && <div>{describeOp(op.body)}</div>}
         </CheckPanel>
       </>
     );
@@ -218,6 +261,11 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
             {chosen.manufacturer && <span className="ws-muted">{chosen.manufacturer}</span>}
             <Button variant="ghost" disabled={!!review || busy} onClick={changeMedicine}>Change medicine</Button>
           </div>
+        ) : presetMissing ? (
+          <>
+            <Alert tone="warn">Medicine not found — pick another.</Alert>
+            <MedicinePicker pharmacyId={pharmacyId} error={errors.medicineId} onChoose={(m) => { setPicked(m); setParams({}, { replace: true }); setErrors((e) => ({ ...e, medicineId: undefined })); }} />
+          </>
         ) : preset && presetQ.isPending ? <Loading label="Loading medicine…" />
           : preset && presetQ.isError ? <ErrorState message={messageOf(presetQ.error)} onRetry={() => void presetQ.refetch()} />
           : <MedicinePicker pharmacyId={pharmacyId} error={errors.medicineId} onChoose={(m) => { setPicked(m); setErrors((e) => ({ ...e, medicineId: undefined })); }} />}
@@ -252,6 +300,16 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
               </select>
             </div>
           </div>
+          <div className="rx-form-row">
+            {suppliers.isError ? (
+              <Alert tone="warn">Your suppliers could not be read ({messageOf(suppliers.error)}). You can add the stock without one.</Alert>
+            ) : (
+              <SupplierSelect id="stock-supplier" label="Supplier (optional)" suppliers={supplierList} value={draft.supplierId ?? ''}
+                noneLabel={suppliers.isPending ? 'Loading suppliers…' : 'Not said'} error={errors.supplierId}
+                hint={supplierList.length === 0 && !suppliers.isPending ? 'You have no active suppliers. Add them on the Suppliers page.' : 'Who delivered these units. Shown in the stock history.'}
+                onChange={(v) => { set('supplierId', v); setErrors((e) => ({ ...e, supplierId: undefined })); }} />
+            )}
+          </div>
           <TextArea label="Note (optional)" value={draft.note} maxLength={MAX_STOCK_NOTE} error={errors.note}
             hint="For example the supplier’s bill number." onChange={(e) => set('note', e.target.value)} />
         </fieldset>
@@ -268,16 +326,74 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
             {review.entry.purchasePrice !== undefined && <li>Purchase price {formatRupees(review.entry.purchasePrice)}</li>}
             {review.entry.rackLocation && <li>Rack {review.entry.rackLocation}</li>}
             {review.entry.reorderThreshold !== undefined && <li>Reorder at {review.entry.reorderThreshold}</li>}
+            <li>Supplier: {review.supplierName ?? 'not said'}</li>
             <li>{ADD_STOCK_REASONS.find((r) => r.value === review.entry.reason)?.label}</li>
           </ul>
-          <span className="ws-muted">The units go on sale at once. The workspace cannot take them out again, so check the number.</span>
+          <span className="ws-muted">The units are on sale once added if the medicine has a selling price (without one it is not on sale until priced). The workspace cannot take them out again, so check the number.</span>
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => void add()}>Yes, add to stock</Button>
             <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>Back</Button>
           </div>
         </div>
       )}
+      <StockHistory pharmacyId={pharmacyId} suppliers={supplierList} />
     </>
+  );
+}
+
+const SOURCE_LABEL: Readonly<Record<NonNullable<StockAdjustment['sourceType']>, string>> = {
+  manual: 'Added by hand', inventory_import: 'Import', order: 'Order',
+};
+const HISTORY_SIZE = 20;
+
+/** WQ11c: the latest stock changes (`GET /pharmacy-inventory/adjustments`, newest first) with each delivery's supplier. */
+function StockHistory({ pharmacyId, suppliers }: { pharmacyId: string; suppliers: readonly PharmacySupplier[] }) {
+  const { api } = useSession();
+  const [page, setPage] = useState(1);
+  const q = useQuery({
+    queryKey: ['pharmacy-inventory', pharmacyId, 'adjustments', page],
+    queryFn: () => pharmacyStockApi(api).adjustments(page, HISTORY_SIZE),
+  });
+  const supplierOf = (a: StockAdjustment) =>
+    a.supplier?.displayName ?? (a.supplierId ? suppliers.find((s) => s.supplierId === String(a.supplierId).toLowerCase())?.displayName ?? 'A supplier' : '—');
+  return (
+    <section className="ws-section" aria-labelledby="hist-h">
+      <h2 id="hist-h">Stock history</h2>
+      {q.isPending ? <Loading label="Loading stock history…" />
+        : q.isError && q.data === undefined ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
+        : q.data.items.length === 0 ? <Empty title="No stock changes yet">Stock you add, import or sell is listed here.</Empty>
+        : (
+          <>
+            <div className="ws-table-wrap">
+              <table className="j-table">
+                <caption className="j-sr-only">Stock changes, newest first</caption>
+                <thead>
+                  <tr><th scope="col">When</th><th scope="col">Medicine</th><th scope="col">Change</th><th scope="col">Batch</th><th scope="col">Supplier</th><th scope="col">How</th></tr>
+                </thead>
+                <tbody>
+                  {q.data.items.map((a) => (
+                    <tr key={a._id}>
+                      <td>{formatDateTime(a.createdAt)}</td>
+                      <td>{medicineName(a.medicineId as InventoryItem['medicineId'])}</td>
+                      <td>{a.adjustmentType === 'remove' ? `−${a.quantity}` : a.adjustmentType === 'add' ? `+${a.quantity}` : `set ${a.quantity}`}</td>
+                      <td>{a.batchNumber ? `${a.batchNumber}${a.expiryDate ? ` · ${formatExpiry(a.expiryDate)}` : ''}` : '—'}</td>
+                      <td>{supplierOf(a)}</td>
+                      <td>{a.sourceType ? SOURCE_LABEL[a.sourceType] ?? a.sourceType : '—'}{a.notes ? <div className="ws-muted">{a.notes}</div> : null}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {q.data.totalPages > 1 && (
+              <nav className="ws-pager" aria-label="Stock history pages">
+                <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Newer</Button>
+                <span>Page {page} of {q.data.totalPages}</span>
+                <Button variant="secondary" disabled={page >= q.data.totalPages} onClick={() => setPage(page + 1)}>Older</Button>
+              </nav>
+            )}
+          </>
+        )}
+    </section>
   );
 }
 

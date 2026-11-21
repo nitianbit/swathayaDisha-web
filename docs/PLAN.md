@@ -1357,6 +1357,122 @@ Assumptions: the Past view sorts as the server does (oldest first within the cho
 partner list); 100 rows a page for both lab lists; the "Complete booking" earning follows Q16a (after the coupon); the desk's
 "Mark as seen" rule uses the page clock and the server's 409 has the last word; a 422 is a content refusal like a 400.
 
+## WQ11c pre-production review: doctor, pharmacy and finance screens (2026-11-22, taken autonomously at the owner's request)
+
+Branch `wq11c-doctor-pharmacy` from stage `317f21e`. Backend (read only): stage line `q14-owner-decisions` a1735c5; **Q16c
+pharmacy committed** (`q16c-pharmacy` 5499417 + 788d268, design table row "Q16c") and adopted; **Q16a bookings not
+committed yet** (`q16a-bookings-money` working tree read only), so its doctor codes are handled generically. The
+reviewer's proofs (`/tmp/wq10-review-5471/proofs`, PROOF-D1–D3, S1–S2) are journeys now, each failing without its fix.
+Parallel packets: WQ11a (customer app, sign-in), WQ11b (partner/admin, `NoShowMove`, `ConfirmAction`): this packet only
+uses those two components; `noShows.ts`, `requests.ts`, `client.ts` and `styles.css` get strictly additive changes.
+
+Owner decisions (22 Nov): dates stay day first, said plainly, with a template; a medicine created by an import needs a
+prescription unless the file says no; an optional supplier per delivery (Add stock, import).
+
+- **1 HIGH: blank import prices.** Q16c: a blank price cell is "not given" (left out of the row) and keeps the stored
+  price; a typed 0 sets 0. The column guide says "Optional — blank keeps the current price"; the preview shows the price
+  that will apply: a number (₹0.00 for 0, never "—") or "Current price kept"; a row that sets a price to ₹0 says so
+  ("Sets the MRP, selling price to ₹0") and a warning above the confirmation names those rows. The confirmation names the
+  rows whose prices change (and how many go to ₹0), and a new medicine without a retail price is "not on sale until
+  priced" (Q16c: unpriced items are off the customer shelf); "on sale at once" is no longer said. `importPlan`,
+  `importPriceOf`, `importZeroPrices` (api).
+- **2 MEDIUM: Mark completed.** `appointmentActions` offers `complete` only once the start time has passed (as no-show).
+  Q16a's 409 `NOT_STARTED_YET` (and its no-show grace 409 `APPOINTMENT_NOT_STARTED`) are said in words
+  (`APPOINTMENT_REFUSAL`), and the list is read again.
+- **3 MEDIUM: no-show slot picker.** `GET /specialists/me/slots` returns the stored slots with `serviceModes` and
+  `branchId` (confirmed in `findManagedBySpecialistId`). `noShowSlotFits`: a slot with types takes only those
+  (`assertSlotMode`); an in-person visit stays at its clinic branch (or, without one, at a slot with no branch: the doctor's
+  own place); an online one moves to a slot without a branch. Options and the confirmation name the place ("Sunrise Clinic ·
+  MG Road", "your own place", "online"; branch names from the doctor's clinics). The type refusal (409 `SLOT_NOT_AVAILABLE`
+  "not offered for that consultation type") is renamed `SLOT_MODE_NOT_OFFERED` by the api (doctor and admin moves) and
+  said as such ("That time is not offered for this consultation type"); the picker reopens and the slots are read again
+  (`onSlotRefused`).
+- **4 MEDIUM: prescriptions of new medicines.** Q16c default (yes unless "no"); the preview shows "Needs a prescription" /
+  "Not needed" for new medicines ("As in the list" otherwise: an import never changes an existing medicine); the
+  confirmation counts the new ones that need one.
+- **5 LOW-MEDIUM: extension lock.** After a same-key resend is refused outright (4xx, not 408/429: that key was not
+  recorded when it arrived), **Choose another extension** frees the field with the minutes (a new key). After a check finds
+  nothing (also after a reload), **Forget it** frees it behind a second step that says a late copy may still be added.
+- **6 LOW: restored retry.** A step's kind survives a reload (a commit is keyed by the import id, a retry by a new key), so
+  a body-less retry is settled only by an outcome written after its `firstAttemptAt` (30 s for clocks); an older outcome
+  ends the marker with "The earlier try of the failed rows has not started…" and the retry is offered again.
+- **7 LOW: discard and same file.** The backend has **no route to discard a preview (gap, reported)**: **Discard this
+  preview…** hides it on this device for this sign-in (session memory, never storage): the page and Recent imports show
+  "Discarded on this device", nothing can be confirmed from it until **Use this preview after all**. Before committing,
+  another import of the same file name added (or being added) in the last 24 hours is warned about, with a link.
+- **8 LOW.**
+  - Upload, commit and retry wait 120 s (`RequestOptions.timeoutMs`, additive in `client.ts`). While an import step is
+    unconfirmed the page reads the import every 5 s and an outcome that settles it ends it on its own.
+  - The confirmation count follows the mode: "Only medicines already in my stock" leaves out rows for medicines not in the
+    list ("skipped and not counted"); "Only medicines not yet in my stock" says "up to"; the outcome counts skipped rows.
+  - A failed read again keeps what was read (Appointments today/14 days/one day, Home, Consult now offers and running
+    list): "Could not refresh just now (…). Showing what was read at HH:MM." with **Try again**; only a first read that
+    fails is an error page.
+  - Presence: a read is not a check-in, so after a reload (or on load) the first heartbeat goes at once (held back by a
+    change or read, it is tried again each second, 5 times), then every minute.
+  - `keyedLookup(key, find, notFoundCodes)`: the doctor's clinic (`CLINIC_NOT_FOUND`), payouts (`PAYOUT_NOT_FOUND`) and
+    adjustments (`ADJUSTMENT_NOT_FOUND`) treat only their own code as "not recorded"; another 404 is a failed check.
+    Desk and catalogue (WQ11b's screens) keep the old behaviour.
+  - Return to supplier, Add stock and Import list every active supplier (`allSuppliers`, all pages), with **Find the
+    supplier** when there are more than 12.
+  - Add stock with an unknown or malformed `?medicine=`: "Medicine not found — pick another." with the picker (a malformed
+    id waited forever; an unknown one showed an error).
+- **9 Q16c codes.** Template `GET /pharmacy-inventory-imports/template` (xlsx by default) is downloaded when the server
+  answers; otherwise the page makes a CSV with the same 16 columns (Q16c order, `supplier` last) and the same example row
+  (expiry `31-12-2027`, name "… (example - delete this row)", which Q16c refuses). Upload refusals in words:
+  `UNSUPPORTED_FILE_TYPE`, `FILE_TOO_LARGE`, `UNEXPECTED_FILE_FIELD`, `UPLOAD_INVALID`, `PARSE_FAILED`, `IMPORT_FILE_EMPTY`,
+  `IMPORT_COLUMNS_MISSING` (unknown codes: the server's words). Month-first dates are refused per row by Q16c; the import
+  page explains them ("This file writes dates month first…"). Supplier per delivery: Add stock sends `supplierId` (only
+  ever with received units); the import sends the form field `supplierId` for the whole file, or the file's `supplier`
+  column is used (rows show `supplierName`); the import page names the file's supplier (Q16c keeps only its id: the name
+  comes from the supplier list, archived ones included); `SUPPLIER_NOT_FOUND` / `SUPPLIER_ARCHIVED` are said in words and
+  the suppliers are read again. **Stock history** (new, on Add stock: `GET /pharmacy-inventory/adjustments`, 20 a page)
+  shows each delivery's `supplier.displayName`. "Today" for expiry is the India date (`serverToday`, as Q16c).
+- **Docs.** Pharmacy guide: day-first dates and the template, supplier per delivery, blank prices, the prescription
+  default, discard, stock history. Doctor guide: Mark completed after the start, the no-show picker's place, extensions,
+  refresh notes, the heartbeat at load.
+
+Assumptions (owner to confirm): an in-person no-show without a clinic moves only to a slot without a branch, and an online
+one never to a clinic slot; a discarded preview is hidden per sign-in on this device only, until the backend adds a
+discard route; the same-file warning reads the first 20 imports (newest first); the local template is used whenever the
+server's cannot be had (before Q16c deploys, the stage server answers the path with a 500).
+
+Backend contract: **confirmed** (Q16c committed, read in its routes, controller, services and design row): blank prices,
+prescription default, upload codes, month-first row refusal, template route and columns, `supplierId` on Add stock and on
+the import form, the `supplier` column and `supplierId`/`supplierName` on rows, `supplier` on adjustments, the import's
+`supplierId`, 404 `SUPPLIER_NOT_FOUND` / 409 `SUPPLIER_ARCHIVED`, IST "today"; slot `serviceModes`/`branchId` (stage).
+**Assumed** (Q16a uncommitted, read in its working tree): 409 `NOT_STARTED_YET`, 409 `APPOINTMENT_NOT_STARTED` (no-show
+grace); the type refusal stays `SLOT_NOT_AVAILABLE` with "consultation type" in its message (matched by message).
+**Gap:** no route to discard an import preview.
+
+### WQ11c re-review fixes (2026-11-22)
+
+Re-review of `b0a64a4` (every first-round finding closed; fit for stage with backend Q16c). New items, each with a journey
+that fails without its fix (proofs `/tmp/wq11c-review-5473/proofs` NEW-1–NEW-7):
+
+- **N1.** While any ready row's name contains `TEMPLATE_EXAMPLE_MARK` the confirmation is not offered: "Row N is the
+  template's example row … Delete it from the file and upload the file again" (whatever the backend; discard still works).
+- **N2.** Add stock names the supplier only when the delivery as recorded carries it: the save answers only the items, so
+  the newest matching adjustment (medicine, batch, units, `add`, since the first send) is re-read; otherwise "Added …
+  (supplier not recorded)" (or "supplier not confirmed" when the history cannot be read). The import page shows a
+  supplier only from the preview's answer (`supplierId`); a supplier chosen for the file that the answer does not carry is
+  said ("… the server did not record a supplier for it").
+- **N3.** "Discard this preview…" is disabled while a confirmation is being sent or is unconfirmed, and runs under the
+  page's one-at-a-time guard.
+- **N4.** `importPriceView`: a blank cell keeps a current price only when there is one. With Q16c's announced per-row
+  `inMyStock` / `currentPrices` (**not in the q16c worktree yet; handled when present**): a medicine not yet in my stock (or
+  a new one) shows "No price yet", and its selling price "Not on sale until priced"; a known current price shows "Kept:
+  ₹…"; without the fields "Current price kept". The confirmation counts every row that leaves a medicine unpriced (new,
+  not in stock, or selling price 0).
+- **N5.** One failed read again of the import keeps the page with a quiet note ("Could not refresh just now…"); a read
+  that failed is never used as the import as it is now (a check says it could not check).
+- **N6.** A retry stores the outcome on screen when it was sent (`since`, the import's `updatedAt`): only another outcome
+  (written after the first send, 30 s for clocks) settles it. A body-less marker after a reload needs an outcome strictly
+  later than its first send (no allowance).
+- **N7.** Wholesale and purchase prices are shown in the preview when a row changes them. "Patient did not come" from 15
+  minutes after the start (Q16a `NO_SHOW_GRACE_MS`; still uncommitted there). A booking whose time cannot be read still
+  offers Mark completed (the server decides). Guidance true only with Q16c is kept (shipped together).
+
 ## Follow-ups
 
 - WQ11b: Q16a refuses moving a desk appointment that has already started (400 `BOOKING_ALREADY_STARTED`); the desk still
@@ -1385,6 +1501,8 @@ partner list); 100 rows a page for both lab lists; the "Complete booking" earnin
 | 2026-11-22 | WQ11a re-review N1–N5 + pill | typecheck clean; Vitest 266/266 (marker clear test removed; +1 logout answer shape; the resend rule test rewritten to settle-by-abandon); Playwright customer 266/266 (250 + 16 = 8 more journeys x 2, four of the earlier ones rewritten — markers survive sign-out and the request is resolved, never made twice; Confirm focus on Back, Enter twice does nothing; start-up Reconnecting… then resumed; Sign in again escape and a definite refusal at start; a 200 non-backend logout keeps the record; the pill never covers the title; lost lab resend refused 409/422 settled by abandon; abandon answering used opens the booking; a lost resend given up; doctor resend refused 400 opens the booked one / settles by abandon); Playwright workspace 512/512 (508 + 4 = 2 journeys x 2: start-up Reconnecting… and Sign in again; a 200 non-backend logout keeps the record); every new journey fails on 7d97d74; no flakes; both builds OK with VITE_API_SAME_ORIGIN=true. Temporary configs on ports 5503/5504 (`reuseExistingServer: false`), deleted before commit. |
 | 2026-11-22 | WQ11a pre-production review (customer app; sign-in and session on both apps; Q16b partner sessions) | typecheck clean; Vitest 266/266 (253 + 13: web sign-out record and fallback/unknown, transient session errors, marker clear, logout noRenew + keepalive, partner bearer verify/select refused before sending (2 partner/auth tests rewritten to the cookie/native modes), resend settled only on REQUEST_ABANDONED/400/422, payment-check answers, workspace SessionProvider refusing partner sign-in in a cross-origin build and keeping bearer for other staff); Playwright customer 250/250 (222 + 28 = 14 journeys x 2: failed sign-out said, retried, not resumed on reload and cleared when the server answers; next start logs out before any refresh; renewal network failure keeps the session with Reconnecting…; a definite refusal still ends it; profile failure after the code ends the new session; lab coupon re-checked for a family member; lost lab create refused on resend then given up; a 422 resend settled; pay again after 400 PAYMENT_FAILED with amount due and wallet part; sign-in alerts, focus and code description; Confirm focus in and back; explicit sign-out clears markers; a doctor booking answer after leaving opens nothing; doctor give-up. All fail on 317f21e except the definite-refusal guard); Playwright workspace 508/508 (498 + 10 = 5 journeys x 2: failed sign-out not resumed, logout before refresh, Reconnecting…, profile failure ends the session, sign-in alerts and focus; all fail on 317f21e); no flakes; both builds OK with VITE_API_SAME_ORIGIN=true. Temporary configs on ports 5501/5502 (`reuseExistingServer: false`), deleted before commit. |
 | 2026-11-22 | WQ11b (partner and admin screens: pre-production review fixes, on Q16a/Q16b) | typecheck clean; Vitest 272/272 (+19: lab paging/cursor/page checks, version fences on every lab step, one-file uploads with keys, size refusals, saved template + TEMPLATE_CHANGED, admin cancel of moved no-shows (lab and consultation), canonical rebase, doctor-membership removal, closed branch scope, owner email admin-only, audit labels, payment refusals 400/422 only, desk 15-minute no-show and start-time rules, CGST/SGST rounding; DOM: ConfirmAction step identity, version and focus, NoShowMove choose-again and Back); Playwright workspace 580/580 (+82 = 41 journeys x 2, ported from the reviewer's proofs; every new one fails on 317f21e, checked in a copy with the source at 317f21e), customer 222/222; temporary configs on 5511/5512 with reuseExistingServer false (deleted); both builds with VITE_API_SAME_ORIGIN=true. |
+| 2026-11-22 | WQ11c re-review fixes (N1–N7) | typecheck clean; Vitest 266/266 (+2: what a blank price leaves with Q16c `inMyStock`/`currentPrices`, the template example mark; the completion and no-show rules extended: 15-minute no-show grace, unreadable time still completes); Playwright workspace 542/542 (+16 = 8 journeys x 2 devices: N1 example row blocks adding, N2 Add stock supplier only when recorded and an unkept file supplier said, N3 no discard while confirming, N4 unpriced rows and kept prices with the wholesale column, N5 a failed re-read keeps the import page, N6 a retry lost within 30 s of the previous outcome stays unconfirmed, N7 no-show grace; the S2 journey updated: a ₹0 selling price is unpriced too). With the source changes stashed, all 8 new journeys fail. Customer 222/222. Both release builds with VITE_API_SAME_ORIGIN=true. Temporary config on ports 5523/5524 with `reuseExistingServer: false`, deleted before committing. |
+| 2026-11-22 | WQ11c (doctor, pharmacy, finance: pre-production review) | typecheck clean; Vitest 264/264 (+11: completion rule and refusals, no-show slot fit and type refusal, import plan by mode, prices kept or ₹0, same file in 24 h, Q16c upload codes and month-first rows, supplier per delivery, 2-minute import timeout, server template or none, IST "today", by-key not-found codes); Playwright workspace 526/526 (+28 = 14 journeys x 2 devices: review proofs D1–D3 and S1–S2 as journeys, discard and same-file warning, file supplier and upload refusals, month-first rows, Add stock supplier beyond 50 with history and an archived refusal, Return to supplier beyond 50, unknown `?medicine=`, an import step that settles itself, a failed refresh that keeps the lists, the clinic by-key 404; the presence and no-show journeys updated to the new rules). With the source changes stashed, all 16 new or changed journeys fail. Customer 222/222. Both release builds with VITE_API_SAME_ORIGIN=true. Temporary config on ports 5521/5522 with `reuseExistingServer: false`, deleted before committing. |
 | 2026-11-20 | WQ10c final review N1/N2 | typecheck clean; Vitest 253/253; Playwright workspace 498/498 (+4 = 2 journeys x 2: give up during an in-flight first send keeps the panel busy and the late send is refused; a supplier add resent into a 403 stays unconfirmed and the check finds it; both fail on f164cbe); stock-supply spec 46/46; both builds OK with VITE_API_SAME_ORIGIN=true. Temporary config on port 5425 (no server reuse), deleted before commit. |
 | 2026-11-20 | WQ10c review fixes (patientName on the booking, Give this up for stock and suppliers, P1–P4, retry window, supplier refusals, by-key codes, name search out of the URL, import price note) | typecheck clean; Vitest 253/253 (+3: stuck import retry rule, abandon and specific-404 for stock, suppliers and pharmacies; the list-walk test replaced); Playwright workspace 494/494 (476 + 18 = 9 journeys x 2: P1 found entry clears the form, P2 panel stays busy during a resend, give up an entry that was added, give up / used for a supplier add, a resend refused outright and forget for a supplier edit, P3 older same-name import never opened and a new one asked, P3 restored marker never matched, P4 stuck import Try again, a lost retry not settled by an older outcome; P1–P4 and the retry journey fail on 30b62cd); Playwright customer 222/222; both builds OK with VITE_API_SAME_ORIGIN=true. Temporary configs on ports 5423/5424 (no server reuse), deleted before commit. |
 | 2026-11-20 | WQ10c (WQ10 screens on Q15: no-show filter and patient names, SLOT_NOT_THIS_DOCTOR, keyed pharmacy create with by-key/abandon and phone lookup, fenced pharmacy edit with clearing and sign-out warning, keyed stock save and supplier create, INDEXES_OUTDATED, import date guidance) | typecheck clean; Vitest 250/250 (246 → 250: keyed stock save and by-key, keyed supplier create and by-key, pharmacy create key / by-key / abandon / phone filter / fenced update with nulls, sign-out and re-read rules, no-show filter and patient-name lookup, SLOT_NOT_THIS_DOCTOR words; the notes-reference tests removed); Playwright workspace 476/476 (436 + 24 = 460 on the merge; +16 = 8 new journeys x 2: consultations — patient name on the booking page, SLOT_NOT_THIS_DOCTOR refused in words and another time chosen; pharmacies — give up a lost create (abandoned / used), version fence RECORD_CHANGED between re-read and save, a first email does not sign out, 503 INDEXES_OUTDATED kept and resent; stock — lost entry resent with the same key and answered replayed, 503 kept and resent; suppliers — lost add resent replayed after a 503. One journey removed (a resend refused PHONE_ALREADY_EXISTS checked by number). Rewritten to the new contracts: no-show filter and patient names in rows, pharmacy list with the phone lookup, create with key and the holder of a taken number named, lost create resent replayed, lost before made resent once, reload looked up by key or given up, status and details saves with versions and a cleared city, sign-in with email removal, sign-out warning and a 409 email, stock entry with its key, lost entry found by key, lost-before resend and forget, import guidance and the server's expiry error, supplier add with key and a lost add found by key)); Playwright customer 222/222; both builds OK (workspace and customer with VITE_API_SAME_ORIGIN=true). Temporary configs on ports 5421/5422 (no server reuse), deleted before commit. |

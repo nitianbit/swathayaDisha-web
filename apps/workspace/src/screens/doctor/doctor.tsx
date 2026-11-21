@@ -4,6 +4,7 @@ import {
   addDays, appointmentStart, CONSULT_MODE_LABEL, doctorToolsApi, fromYmd, istDateOf, meetingLinkState, type ConsultMode, type DoctorAppointment, type DoctorToolsApi,
 } from '@jansetu/api';
 import { Button, Empty, formatRupees } from '@jansetu/ui';
+import { messageOf } from '../../errors.ts';
 import { useSession, useStaff, type StaffUser } from '../../session.tsx';
 import { formatDay } from '../partner/labs.tsx';
 
@@ -125,7 +126,9 @@ export function useUpcomingAppointments(d: DoctorContext, days: number, refetchI
       ...(refetchInterval ? { refetchInterval: (q: { state: { data?: DoctorAppointment[] } }) => refetchInterval(q.state.data) } : {}),
     })),
   });
-  const error = qs.find((q) => q.isError)?.error ?? null;
+  // WQ11c: a failed read again keeps the list already read (shown with a quiet note); only a first read that failed is an error.
+  const error = qs.find((q) => q.isError && q.data === undefined)?.error ?? null;
+  const refreshError = qs.find((q) => q.isError && q.data !== undefined)?.error ?? null;
   const pending = qs.some((q) => q.isPending);
   const from = today.replace(/-/g, '');
   const to = last.replace(/-/g, '');
@@ -133,7 +136,23 @@ export function useUpcomingAppointments(d: DoctorContext, days: number, refetchI
   // When every month was last read, and whether one is being read again (Q14: decides a stored no-show move).
   const readAt = Math.min(...qs.map((q) => q.dataUpdatedAt));
   const fetching = qs.some((q) => q.isFetching);
-  return { items, pending, error, today, readAt, fetching, refetch: () => Promise.all(qs.map((q) => q.refetch())) };
+  return { items, pending, error, refreshError, today, readAt, fetching, refetch: () => Promise.all(qs.map((q) => q.refetch())) };
+}
+
+/** HH:MM, India time. */
+const clock = (at: number) => new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Kolkata' }).format(new Date(at));
+
+/**
+ * WQ11c: a list read again in the background failed, but an earlier read is on screen: the list stays, with this quiet
+ * note (when it was read, and a way to try again) instead of an error page.
+ */
+export function RefreshFailed({ error, readAt, onRetry }: { error: unknown; readAt: number; onRetry: () => unknown }) {
+  return (
+    <p className="ws-muted" role="status">
+      Could not refresh just now ({messageOf(error)}).{readAt > 0 ? ` Showing what was read at ${clock(readAt)}.` : ''}{' '}
+      <Button variant="ghost" onClick={() => void onRetry()}>Try again</Button>
+    </p>
+  );
 }
 
 export const sortAppointments = (list: readonly DoctorAppointment[]) => [...list].sort(byStart);
