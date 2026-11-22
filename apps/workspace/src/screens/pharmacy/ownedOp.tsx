@@ -75,11 +75,16 @@ export function CheckPanel({ label, children, onCheck, resend, giveUp, forget }:
   /** Q15: give the request up on the server (its key can then never be recorded), or learn that it was recorded. */
   giveUp?: { label: string; busy: boolean; onClick: () => void };
   /** Offered after a check found nothing, behind a second step that says what forgetting risks. */
-  forget?: { label: string; confirmLabel: string; consequence: ReactNode; onForget: () => void };
+  forget?: {
+    label: string; confirmLabel: string; consequence: ReactNode; onForget: () => void;
+    /** WQ13 review M1: a sentence the person must tick before forgetting is possible (e.g. "the money may already be added"). */
+    acknowledge?: string;
+  };
 }) {
   const [checking, setChecking] = useState(false);
   const [note, setNote] = useState<{ tone: 'warn' | 'error'; text: string } | null>(null);
   const [checked, setChecked] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
 
@@ -108,8 +113,16 @@ export function CheckPanel({ label, children, onCheck, resend, giveUp, forget }:
           <Button variant="secondary" busy={giveUp.busy} disabled={checking || resend?.busy} onClick={giveUp.onClick}>{giveUp.label}</Button>
         )}
         {forget && checked && !resend?.busy && (
-          <ConfirmAction label={forget.label} danger confirmLabel={forget.confirmLabel} consequence={forget.consequence}
-            onConfirm={async () => forget.onForget()} />
+          <>
+            {forget.acknowledge && (
+              <label className="ws-check">
+                <input type="checkbox" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} />
+                {forget.acknowledge}
+              </label>
+            )}
+            <ConfirmAction label={forget.label} danger confirmLabel={forget.confirmLabel} consequence={forget.consequence}
+              disabled={!!forget.acknowledge && !acknowledged} onConfirm={async () => forget.onForget()} />
+          </>
         )}
       </div>
     </div>

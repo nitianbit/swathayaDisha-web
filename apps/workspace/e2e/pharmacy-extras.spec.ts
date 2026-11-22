@@ -47,6 +47,10 @@ interface PharmacyBackend {
   loseNextNameAnswer: boolean;
   /** r6 `shownName`: the patient linked this pharmacy by ordering (`customer_order`), so the account name shows. */
   accountNameShown: string | null;
+  /** The next read of one booking fails (500). */
+  failNextBookingRead: boolean;
+  /** Addresses of the customer-list reads (the stored typed-name check). */
+  customerReads: string[];
   slotReads: URL[];
   /** The doctor list's next slot is chat-only. */
   chatOnlyNext: boolean;
@@ -71,7 +75,7 @@ const SLOTS: Json[] = [
 async function mockPharmacy(page: Page, bookings: Json[] = [row()]): Promise<PharmacyBackend> {
   let seq = 0;
   const b: PharmacyBackend = {
-    bookings, moves: [], moveKeys: {}, loseNextMoveAnswer: false, refuseNextMove: null, names: [], nameIds: [], typed: {}, loseNextNameAnswer: false, accountNameShown: null, slotReads: [],
+    bookings, moves: [], moveKeys: {}, loseNextMoveAnswer: false, refuseNextMove: null, names: [], nameIds: [], typed: {}, loseNextNameAnswer: false, accountNameShown: null, failNextBookingRead: false, customerReads: [], slotReads: [],
     chatOnlyNext: false,
     bump: () => { b.bookings[0]!.updatedAt = new Date(Date.UTC(2026, 10, 22, 6, 0, 0, ++seq)).toISOString(); },
   };
@@ -143,9 +147,18 @@ async function mockPharmacy(page: Page, bookings: Json[] = [row()]): Promise<Pha
       return json(route, 200, { success: true, data: { _id: LINK, userId: USER, typedName: body!.typedName,
         ...(r6 ? { shownName: b.accountNameShown ?? body!.typedName } : {}) } });
     }
+    if (path === '/pharmacy-customers' && method === 'GET') {
+      b.customerReads.push(url.search);
+      const rows = [{ _id: 'f9'.repeat(12), typedName: 'Someone else', userId: { _id: 'f8'.repeat(12) } },
+        { _id: LINK, typedName: b.typed[USER] ?? null, userId: { _id: USER } }];
+      const pg = Number(url.searchParams.get('page') ?? 1);
+      // One row a page, so the check has to page by id.
+      return json(route, 200, { success: true, data: rows.slice(pg - 1, pg), pagination: { page: pg, limit: 1, total: rows.length, totalPages: rows.length } });
+    }
     if (path === '/pharmacy-bookings') return json(route, 200, { success: true, data: b.bookings.map(view), pagination: { total: b.bookings.length, nextCursor: null } });
     const one = /^\/pharmacy-bookings\/(\w{24})$/.exec(path);
     if (one) {
+      if (b.failNextBookingRead) { b.failNextBookingRead = false; return refuse(route, 500, 'INTERNAL', 'Something broke'); }
       const x = b.bookings.find((r) => r._id === one[1]);
       return x ? json(route, 200, { success: true, data: view(x) }) : refuse(route, 404, 'BOOKING_NOT_FOUND', 'Booking not found');
     }
@@ -297,7 +310,7 @@ test('correct the name: only this pharmacy’s name for the patient changes; a f
 
   await page.getByRole('link', { name: 'Booked consultations' }).first().click();
   await page.getByRole('link', { name: /Open the consultation of Asha Devi/ }).click();
-  await expect(page.getByText('only the patient can change this name, in their Jansetu app')).toBeVisible();
+  await expect(page.getByText('only the phone’s owner can change this name, in their Jansetu app')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Correct the name' })).toHaveCount(0);
 });
 
@@ -360,11 +373,17 @@ interface AdminBackend {
   loseNextTopupAnswer: boolean;
   /** The wallet of P2 does not exist yet. */
   noWalletFor: string | null;
+  /** r7: the server has the exact by-key read (otherwise it answers the catch-all 404 with no code). */
+  byKeyRoute: boolean;
+  byKeyReads: number;
+  /** Adds `n` newer booking movements on top (so an older credit moves down the pages). */
+  addNewer: (n: number) => void;
 }
 
 async function mockAdmin(page: Page, init: Partial<Pick<AdminBackend, 'receivableMinor'>> = {}): Promise<AdminBackend> {
   const b: AdminBackend = {
-    calls: [], walletPaise: 120_000, receivableMinor: init.receivableMinor ?? 0, credits: {}, loseNextTopupAnswer: false, noWalletFor: P2,
+    calls: [], walletPaise: 120_000, receivableMinor: init.receivableMinor ?? 0, credits: {}, loseNextTopupAnswer: false, noWalletFor: P2, byKeyRoute: false, byKeyReads: 0,
+    addNewer: (n) => { for (let i = 0; i < n; i++) b.movements.unshift({ _id: `n${b.movements.length}`, transactionType: 'debit', movementType: 'booking_debit', signedAmountPaise: -100, amountPaise: 100, balanceAfterPaise: b.walletPaise, createdAt: '2026-11-22T12:00:00.000Z', status: 'completed' }); },
     movements: [
       { _id: 'm1', transactionType: 'debit', movementType: 'booking_debit', signedAmountPaise: -50_000, amountPaise: 50_000, balanceAfterPaise: 120_000, createdAt: '2026-11-21T10:00:00.000Z', status: 'completed' },
     ],
@@ -408,8 +427,19 @@ async function mockAdmin(page: Page, init: Partial<Pick<AdminBackend, 'receivabl
     }
     if (path === '/pharmacy-wallet/transactions') {
       if (!pid) return refuse(route, 400, 'PHARMACY_ID_REQUIRED');
-      const rows = pid === P1 ? b.movements : [];
-      return json(route, 200, { success: true, data: rows, pagination: { page: 1, limit: 20, total: rows.length, totalPages: 1 } });
+      const all = pid === P1 ? b.movements : [];
+      const pg = Number(url.searchParams.get('page') ?? 1);
+      const limit = Number(url.searchParams.get('limit') ?? 20);
+      return json(route, 200, { success: true, data: all.slice((pg - 1) * limit, pg * limit), pagination: { page: pg, limit, total: all.length, totalPages: Math.ceil(all.length / limit) } });
+    }
+    // r7 `adminTopupByKey`; an older server answers its catch-all 404 with no code.
+    const byKey = /^\/pharmacy-wallet\/topups\/admin\/by-key\/([A-Za-z0-9_-]+)$/.exec(path);
+    if (byKey && method === 'GET') {
+      if (!b.byKeyRoute) return json(route, 404, { success: false, message: 'Route not found' });
+      if (pid !== P1) return refuse(route, 400, 'VALIDATION_ERROR');
+      b.byKeyReads += 1;
+      const transaction = b.movements.find((m) => m.referenceType === 'topup' && m.referenceId === byKey[1]);
+      return json(route, 200, { success: true, data: transaction ? { state: 'credited', transaction, wallet: wallet() } : { state: 'not_found' } });
     }
     if (path === '/pharmacy-wallet/topup' && method === 'POST') {
       const key = req.headers()['idempotency-key'];
@@ -542,4 +572,141 @@ test('admin: a wallet that owes Jansetu says the credit clears it first; a pharm
   await expect(page.getByText('This pharmacy has no wallet yet.')).toBeVisible();
   await expect(page.getByText('No money in or out yet')).toBeVisible();
   expect(b.calls.some((c) => c.path === `/pharmacy-wallet?pharmacyId=${P2}`)).toBe(true);
+});
+
+// ── WQ13 review fixes ──
+
+test('review L1: a resend answered `replayed` while the booking was moved again since says both times', async ({ page }) => {
+  const b = await mockPharmacy(page);
+  await openBooking(page);
+  await page.getByRole('button', { name: 'Change time' }).click();
+  await page.getByRole('button', { name: '12:30–12:45' }).click();
+  await page.getByRole('button', { name: 'Next: check the new time' }).click();
+  b.loseNextMoveAnswer = true;
+  await page.getByRole('button', { name: 'Yes, move it' }).click();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  // Moved again meanwhile (another device): the booking now holds 11:30.
+  Object.assign(b.bookings[0]!, { slotId: SLOT3, bookingTime: '11:30' });
+  await page.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(page.getByText(`It was moved to your time (${fmtDay(TOMORROW)} at 12:30) earlier, and has since been moved again to ${fmtDay(TOMORROW)} at 11:30.`)).toBeVisible();
+});
+
+test('review L2: a move settled by “Check” closes its review and the time list', async ({ page }) => {
+  const b = await mockPharmacy(page);
+  await openBooking(page);
+  await page.getByRole('button', { name: 'Change time' }).click();
+  await page.getByRole('button', { name: '11:30–11:45' }).click();
+  await page.getByRole('button', { name: 'Next: check the new time' }).click();
+  b.loseNextMoveAnswer = true;
+  await page.getByRole('button', { name: 'Yes, move it' }).click();
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText(`Moved to ${fmtDay(TOMORROW)} at 11:30.`)).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Move this consultation' })).toHaveCount(0);
+  await expect(page.getByRole('form', { name: 'Choose the new time' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Change time' })).toBeVisible();
+  expect(b.moves).toHaveLength(1);
+});
+
+test('review L3: “Check” compares the stored typed name (a customer-linked patient keeps the account name shown); no address carries the name', async ({ page }) => {
+  const b = await mockPharmacy(page, [row({ holder: { pharmacyCustomerId: LINK, name: 'Rina K.' } })]);
+  await openBooking(page);
+  b.accountNameShown = 'Rina Kumari Sharma';
+  await page.getByRole('button', { name: 'Correct the name' }).click();
+  await page.getByLabel('Patient’s name as your pharmacy writes it').fill('Rina Kumari');
+  b.loseNextNameAnswer = true;
+  await page.getByRole('button', { name: 'Save the name' }).click();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Saved. The name your pharmacy typed for this patient is now “Rina Kumari”.')).toBeVisible();
+  expect(b.names).toHaveLength(1);
+  expect(b.customerReads).toEqual(['?page=1&limit=100', '?page=2&limit=100']);
+  // Review L5: the unconfirmed edit was remembered under the link id, never the patient's account id.
+  const stored = await page.evaluate(() => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }));
+  expect(stored).not.toContain(USER);
+  expect(stored).not.toContain('Rina Kumari');
+});
+
+test('review L3: on the older backend a failed re-read after saving claims nothing about which name is shown', async ({ page }) => {
+  const b = await mockPharmacy(page);
+  await openBooking(page);
+  await page.getByRole('button', { name: 'Correct the name' }).click();
+  await page.getByLabel('Patient’s name as your pharmacy writes it').fill('Rina Kumari');
+  b.failNextBookingRead = true;
+  await page.getByRole('button', { name: 'Save the name' }).click();
+  await expect(page.getByText('Saved. The name your pharmacy typed for this patient is now “Rina Kumari”.')).toBeVisible();
+  await expect(page.getByText(/chose your pharmacy themselves/)).toHaveCount(0);
+});
+
+async function loseOneCredit(page: Page, b: AdminBackend, amount: string) {
+  await page.getByLabel('Amount to add (₹)').fill(amount);
+  await page.getByLabel('Why is the money added?').fill('stage testing');
+  await page.getByRole('button', { name: 'Next: check before adding' }).click();
+  b.loseNextTopupAnswer = true;
+  await page.getByRole('button', { name: `Yes, add ₹${amount}.00` }).click();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+}
+
+test('review M1: after a reload, “Check” finds a credit older than 5 pages (older backend: history, no clock cut-off)', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await openAdminWallet(page);
+  await loseOneCredit(page, b, '250');
+  b.addNewer(150); // the credit is now on page 8
+  await page.reload();
+  await expect(page.getByText(/Money added earlier on this device \(before the page was reloaded\) was not confirmed/)).toBeVisible();
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText(/It was added: ₹250.00 on .*Nothing was added twice\./)).toBeVisible();
+  const reads = b.calls.filter((c) => c.path.startsWith('/pharmacy-wallet/transactions?') && c.path.includes(`pharmacyId=${P1}`));
+  expect(reads.some((c) => c.path.includes('page=8'))).toBe(true);
+  expect(topups(b)).toHaveLength(1);
+});
+
+test('review M1: beyond 20 pages the check says only the latest movements were searched; Forget needs a tick', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await openAdminWallet(page);
+  await loseOneCredit(page, b, '250');
+  b.addNewer(450);
+  await page.reload();
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Only the latest 400 movements were searched; the credit may be older. Ask the tech team before adding money again.')).toBeVisible();
+  const forget = page.getByRole('button', { name: 'Forget it' });
+  await expect(forget).toBeDisabled();
+  await page.getByLabel('I understand the money may already have been added to this wallet.').check();
+  await forget.click();
+  await expect(page.getByText(/The money may already have been added, or may still arrive/)).toBeVisible();
+  await page.getByRole('button', { name: 'Yes, forget it' }).click();
+  await expect(page.getByRole('button', { name: 'Next: check before adding' })).toBeVisible();
+  expect(topups(b)).toHaveLength(1);
+});
+
+test('review M1 and L6: the exact by-key read finds it at once; the review shows the last admin credit', async ({ page }) => {
+  const b = await mockAdmin(page);
+  b.byKeyRoute = true;
+  await openAdminWallet(page);
+  await loseOneCredit(page, b, '250');
+  b.addNewer(500);
+  await page.reload();
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText(/It was added: ₹250.00 on .*Nothing was added twice\./)).toBeVisible();
+  expect(b.byKeyReads).toBe(1);
+  expect(b.calls.filter((c) => c.path.startsWith('/pharmacy-wallet/transactions?') && c.path.includes('page=2'))).toHaveLength(0);
+
+  // L6: the credit is older than the newest page, so the review says none is in the latest movements; a fresh one shows.
+  b.movements.unshift({ _id: 'other', transactionType: 'credit', movementType: 'credit', signedAmountPaise: 30_000, amountPaise: 30_000, balanceAfterPaise: b.walletPaise,
+    referenceType: 'topup', referenceId: 'k'.repeat(32), notes: 'support credit', actor: { kind: 'admin', id: 'ff'.repeat(12) }, createdAt: '2026-11-22T13:00:00.000Z', status: 'completed' });
+  await page.getByLabel('Amount to add (₹)').fill('300');
+  await page.getByLabel('Why is the money added?').fill('support credit');
+  await page.getByRole('button', { name: 'Next: check before adding' }).click();
+  await expect(page.getByRole('group', { name: 'Add this money' }).getByText(/Last money added by an admin: ₹300.00 on .*“support credit”.*Make sure this is not the same credit\./)).toBeVisible();
+});
+
+test('review L7: an unknown outcome reads the history again; read errors never say nothing was added', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await openAdminWallet(page);
+  const before = b.calls.filter((c) => c.path.startsWith('/pharmacy-wallet/transactions?')).length;
+  await loseOneCredit(page, b, '250');
+  await expect.poll(() => b.calls.filter((c) => c.path.startsWith('/pharmacy-wallet/transactions?')).length).toBeGreaterThan(before + 1);
+  await expect(page.getByRole('table', { name: 'Wallet history, newest first' }).getByRole('cell', { name: 'stage testing' })).toBeVisible();
+  await page.goto(`/#/admin/pharmacy-wallets/${'a9'.repeat(12)}`);
+  await expect(page.getByText('This pharmacy was not found.').first()).toBeVisible();
+  await expect(page.getByText(/Nothing was added/)).toHaveCount(0);
 });

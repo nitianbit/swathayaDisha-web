@@ -4,7 +4,8 @@ import {
   SWITCHED_OFF_MESSAGE, typedNameProblem, typedNameRefusal, typedNameTarget, type AssistedSlot, type BookedConsultation, type WalletMovement,
 } from './assisted.ts';
 import {
-  ADMIN_TOPUP_WARNING, adminPharmacyWalletApi, adminTopupForm, adminTopupRefusal, findAdminTopup, isAdminTopupRow,
+  ADMIN_TOPUP_WARNING, adminPharmacyWalletApi, adminTopupForm, adminTopupRefusal, adminWalletReadError, findAdminTopup, isAdminTopupRow,
+  latestAdminCredit, topupNotFoundWords,
 } from './adminPharmacyWallet.ts';
 import type { Page } from './client.ts';
 
@@ -119,18 +120,35 @@ describe('the typed-name edit (§17.4)', () => {
     expect(typedNameProblem('a'.repeat(201))).toBe('Use at most 200 characters.');
     expect(typedNameProblem('a'.repeat(200))).toBeNull();
   });
-  it('targets the booking’s account holder (q16: by user id, on the holder’s own booking only)', () => {
-    expect(typedNameTarget({ userId: ID.toUpperCase(), dependentId: null, patientName: 'Rina K.' })).toEqual({ id: ID, name: 'Rina K.', family: false });
-    expect(typedNameTarget({ userId: ID, dependentId: 'd'.repeat(24), patientName: 'Asha' })).toBeNull();
-    expect(typedNameTarget({ userId: undefined, dependentId: null })).toBeNull();
+  const BK = 'e'.repeat(24);
+  it('targets the booking’s account holder (q16: by user id, on the holder’s own booking only; remembered by the booking id)', () => {
+    expect(typedNameTarget({ _id: BK, userId: ID.toUpperCase(), dependentId: null, patientName: 'Rina K.' })).toEqual({ id: ID, name: 'Rina K.', family: false, markerId: BK });
+    expect(typedNameTarget({ _id: BK, userId: ID, dependentId: 'd'.repeat(24), patientName: 'Asha' })).toBeNull();
+    expect(typedNameTarget({ _id: BK, userId: undefined, dependentId: null })).toBeNull();
   });
   it('r6: uses this pharmacy’s own link id from `holder`, also on a family member’s booking; no link, no edit', () => {
     const link = 'c'.repeat(24);
-    expect(typedNameTarget({ userId: ID, dependentId: null, patientName: 'Rina K.', holder: { pharmacyCustomerId: link, name: 'Rina K.' } }))
-      .toEqual({ id: link, name: 'Rina K.', family: false });
-    expect(typedNameTarget({ userId: ID, dependentId: 'd'.repeat(24), patientName: 'Asha', holder: { pharmacyCustomerId: link, name: 'Rina K.' } }))
-      .toEqual({ id: link, name: 'Rina K.', family: true });
-    expect(typedNameTarget({ userId: ID, dependentId: null, patientName: 'Rina K.', holder: { pharmacyCustomerId: null, name: 'Rina K.' } })).toBeNull();
+    expect(typedNameTarget({ _id: BK, userId: ID, dependentId: null, patientName: 'Rina K.', holder: { pharmacyCustomerId: link, name: 'Rina K.' } }))
+      .toEqual({ id: link, name: 'Rina K.', family: false, markerId: link });
+    expect(typedNameTarget({ _id: BK, userId: ID, dependentId: 'd'.repeat(24), patientName: 'Asha', holder: { pharmacyCustomerId: link, name: 'Rina K.' } }))
+      .toEqual({ id: link, name: 'Rina K.', family: true, markerId: link });
+    expect(typedNameTarget({ _id: BK, userId: ID, dependentId: null, patientName: 'Rina K.', holder: { pharmacyCustomerId: null, name: 'Rina K.' } })).toBeNull();
+  });
+  it('review L3: reads the stored typed name by paging the list by id, never with the name in the address', async () => {
+    let n = 0;
+    const { client, calls } = setup(() => {
+      n += 1;
+      return n === 1
+        ? json(200, { success: true, data: [{ _id: 'f'.repeat(24), typedName: 'Other', userId: { _id: 'd'.repeat(24) } }], pagination: { page: 1, limit: 100, total: 2, totalPages: 2 } })
+        : json(200, { success: true, data: [{ _id: 'c'.repeat(24), typedName: 'Rina Kumari', userId: { _id: ID } }], pagination: { page: 2, limit: 100, total: 2, totalPages: 2 } });
+    });
+    await expect(pharmacyCustomersApi(client).storedTypedName(ID)).resolves.toEqual({ found: true, typedName: 'Rina Kumari' });
+    expect(calls.map((c) => c.url)).toEqual([
+      'https://api.example.test/api/v1/pharmacy-customers?page=1&limit=100',
+      'https://api.example.test/api/v1/pharmacy-customers?page=2&limit=100',
+    ]);
+    const none = setup(() => json(200, { success: true, data: [], pagination: { page: 1, limit: 100, total: 0, totalPages: 0 } }));
+    await expect(pharmacyCustomersApi(none.client).storedTypedName(ID)).resolves.toEqual({ found: false });
   });
   it('says the refusals plainly', () => {
     expect(typedNameRefusal(err(404, 'CUSTOMER_NOT_LINKED'))).toBe('This patient is not linked to your pharmacy, so the name cannot be changed here.');
@@ -180,25 +198,55 @@ describe('admin wallet credit', () => {
     expect(adminTopupForm('100', 'ab').notes).toBeTruthy();
     expect(adminTopupForm('100', 'a'.repeat(501)).notes).toBe('Use at most 500 characters.');
   });
-  it('finds a lost credit in the history by its key, and stops at older rows', async () => {
-    const row = (o: Partial<WalletMovement>): WalletMovement => ({ _id: 'm', transactionType: 'credit', createdAt: '2026-11-22T10:00:00.000Z', ...o });
+  const row = (o: Partial<WalletMovement>): WalletMovement => ({ _id: 'm', transactionType: 'credit', createdAt: '2026-11-22T10:00:00.000Z', ...o });
+  it('finds a lost credit in the history by its key, with no time cut-off (an old row does not stop the search)', async () => {
     const pages: Page<WalletMovement>[] = [
       { items: [row({ _id: 'm1', referenceType: 'wallet_recharge', referenceId: KEY })], page: 1, limit: 1, total: 3, totalPages: 3 },
-      { items: [row({ _id: 'm2', referenceType: 'topup', referenceId: KEY })], page: 2, limit: 1, total: 3, totalPages: 3 },
+      { items: [row({ _id: 'm0', createdAt: '2020-01-01T00:00:00.000Z' })], page: 2, limit: 1, total: 3, totalPages: 3 },
+      { items: [row({ _id: 'm2', referenceType: 'topup', referenceId: KEY, createdAt: '2020-01-01T00:00:00.000Z' })], page: 3, limit: 1, total: 3, totalPages: 3 },
     ];
-    const read: number[] = [];
-    const sentAt = Date.parse('2026-11-22T10:00:00.000Z');
-    await expect(findAdminTopup(async (p) => { read.push(p); return pages[p - 1]!; }, KEY, sentAt)).resolves.toMatchObject({ _id: 'm2' });
+    await expect(findAdminTopup(async (p) => pages[p - 1]!, KEY)).resolves.toMatchObject({ row: { _id: 'm2' } });
     expect(isAdminTopupRow(row({ referenceType: 'topup', referenceId: 'other' }), KEY)).toBe(false);
-    const old: Page<WalletMovement> = { items: [row({ createdAt: '2026-11-21T00:00:00.000Z' })], page: 1, limit: 1, total: 9, totalPages: 9 };
-    read.length = 0;
-    await expect(findAdminTopup(async (p) => { read.push(p); return old; }, KEY, sentAt)).resolves.toBeNull();
-    expect(read).toEqual([1]);
+  });
+  it('says whether the whole history was searched or only the latest movements (20 pages)', async () => {
+    const full: Page<WalletMovement> = { items: Array.from({ length: 20 }, (_, i) => row({ _id: `x${i}` })), page: 1, limit: 20, total: 900, totalPages: 45 };
+    const read: number[] = [];
+    const r = await findAdminTopup(async (p) => { read.push(p); return full; }, KEY);
+    expect(r).toEqual({ row: null, complete: false, searched: 400 });
+    expect(read).toHaveLength(20);
+    expect(topupNotFoundWords({ complete: false, searched: 400 }, false))
+      .toBe('Only the latest 400 movements were searched; the credit may be older. Ask the tech team before adding money again.');
+    const end = await findAdminTopup(async () => ({ items: [row({})], page: 1, limit: 20, total: 1, totalPages: 1 }), KEY);
+    expect(end).toEqual({ row: null, complete: true, searched: 1 });
+    expect(topupNotFoundWords({ complete: true, searched: 1 }, true)).toContain('Sending the same request again is safe');
+  });
+  it('the exact by-key read: used, none, or unavailable on an older server (then the history is searched)', async () => {
+    const used = setup(() => json(200, { success: true, data: { state: 'credited', transaction: { _id: 'm9', referenceType: 'topup', referenceId: KEY }, wallet: null } }));
+    await expect(adminPharmacyWalletApi(used.client).topupByKey(ID, KEY)).resolves.toMatchObject({ state: 'used', row: { _id: 'm9' } });
+    expect(used.calls[0]!.url).toBe(`https://api.example.test/api/v1/pharmacy-wallet/topups/admin/by-key/${KEY}?pharmacyId=${ID}`);
+    const none = setup(() => json(200, { success: true, data: { state: 'not_found' } }));
+    await expect(adminPharmacyWalletApi(none.client).topupByKey(ID, KEY)).resolves.toEqual({ state: 'none' });
+    const odd = setup(() => json(200, { success: true, data: { state: 'something else' } }));
+    await expect(adminPharmacyWalletApi(odd.client).topupByKey(ID, KEY)).rejects.toBeInstanceOf(ApiError);
+    const old = setup(() => json(404, { success: false, message: 'Route not found' }));
+    await expect(adminPharmacyWalletApi(old.client).topupByKey(ID, KEY)).resolves.toEqual({ state: 'unavailable' });
+    const denied = setup(() => json(403, { error: 403, code: 'FORBIDDEN', message: 'no' }));
+    await expect(adminPharmacyWalletApi(denied.client).topupByKey(ID, KEY)).rejects.toBeInstanceOf(ApiError);
+    await expect(adminPharmacyWalletApi(old.client).topupByKey(ID, 'bad key')).rejects.toThrow();
+  });
+  it('the newest admin credit for the review (two admins do not credit twice)', () => {
+    expect(latestAdminCredit([row({ _id: 'a', referenceType: 'wallet_recharge' }), row({ _id: 'b', referenceType: 'topup', notes: 'support credit' }), row({ _id: 'c', referenceType: 'topup' })]))
+      .toMatchObject({ _id: 'b' });
+    expect(latestAdminCredit([row({ referenceType: 'booking' })])).toBeNull();
   });
   it('says the refusals plainly, and the S6 warning', () => {
     expect(adminTopupRefusal(err(409, 'IDEMPOTENCY_KEY_REUSED'))).toContain('already used with a different amount or note');
     expect(adminTopupRefusal(err(404, 'PHARMACY_NOT_FOUND'))).toBe('This pharmacy was not found. Nothing was added.');
     expect(adminTopupRefusal(err(403))).toBe('Only Jansetu admins can add money to a pharmacy wallet.');
+    // Review L7: a failed read never says "nothing was added".
+    expect(adminWalletReadError(err(404, 'PHARMACY_NOT_FOUND'))).toBe('This pharmacy was not found.');
+    expect(adminWalletReadError(err(400, 'VALIDATION_ERROR'))).not.toContain('Nothing was added');
+    expect(adminWalletReadError(err(500))).not.toContain('Nothing was added');
     expect(ADMIN_TOPUP_WARNING).toBe('Do not use this to make up for a card top-up that never arrived. Ask the tech team to run the top-up check instead, or the pharmacy could be paid twice.');
   });
 });

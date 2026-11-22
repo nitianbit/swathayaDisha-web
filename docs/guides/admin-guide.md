@@ -206,8 +206,10 @@ If someone else changed the same thing while you were typing, nothing is saved a
 
 - If the wallet owes Jansetu, the money added clears that first.
 - A pharmacy with no wallet yet gets one when you add money.
-- "The outcome of this request is not known yet": tap **Send the same request again**. The money is never added twice. Or tap **Check whether it was recorded**: it looks for this credit in the wallet history.
-- After a page reload, an unconfirmed credit can only be checked in the history, not sent again. Check before adding money again.
+- The review also shows the **last money added by an admin** to this wallet (amount, time and note). If it is the same credit, do not add it again.
+- "The outcome of this request is not known yet": tap **Send the same request again**. The money is never added twice. Or tap **Check whether it was recorded**: it looks for exactly this credit.
+- After a page reload, an unconfirmed credit can only be checked, not sent again. If you see "Only the latest … movements were searched", the credit may be older: ask the tech team before adding money again.
+- **Forget it** needs you to tick "I understand the money may already have been added to this wallet". Forgetting does not undo a credit that was made.
 - An admin credit can never be withdrawn by the pharmacy.
 
 ---

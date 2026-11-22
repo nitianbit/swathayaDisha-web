@@ -223,6 +223,8 @@ export interface WalletMovement {
   referenceType?: string;
   /** For an admin credit (`referenceType: 'topup'`): the Idempotency-Key it was made with. */
   referenceId?: string;
+  /** r6: who posted it (`{ kind: 'admin', id }` on an admin credit). */
+  actor?: { kind: string; id: string };
   status?: string;
   createdAt?: string;
 }
@@ -277,8 +279,25 @@ export function pharmacyCustomersApi(c: ApiClient) {
   return {
     setTypedName: (id: string, typedName: string) =>
       c.put<TypedNameAnswer>(`/pharmacy-customers/${idOf(id, 'customer')}/typed-name`, { body: { typedName: cleanName(typedName) } }),
+    /**
+     * WQ13 review L3: the name STORED on this pharmacy's link (`typedName`), for checking an unconfirmed edit. The list
+     * (`GET /pharmacy-customers`, newest first) answers each link's raw `typedName`; it is paged by link id or user id
+     * WITHOUT `search`, so no name ever goes into an address. `found: false` after `maxPages` pages proves nothing.
+     */
+    storedTypedName: async (id: string, maxPages = 10): Promise<{ found: true; typedName: string | null } | { found: false }> => {
+      const want = idOf(id, 'customer').toLowerCase();
+      for (let page = 1; page <= maxPages; page++) {
+        const p = await c.page<CustomerLinkRow>('/pharmacy-customers', { query: { page, limit: 100 } });
+        const hit = p.items.find((r) => String(r._id).toLowerCase() === want || String(r.userId?._id ?? '').toLowerCase() === want);
+        if (hit) return { found: true, typedName: typeof hit.typedName === 'string' ? hit.typedName : null };
+        if (page >= p.totalPages || p.items.length === 0) break;
+      }
+      return { found: false };
+    },
   };
 }
+/** A row of `GET /pharmacy-customers` (only what the check reads). */
+interface CustomerLinkRow { _id: string; typedName?: string | null; userId?: { _id?: string } | null }
 
 /** `/pharmacy-wallet` and the payment proof routes for the pharmacy's own Razorpay top-ups. */
 export function pharmacyWalletApi(c: ApiClient) {
@@ -418,20 +437,24 @@ export function typedNameProblem(text: string): string | null {
   return null;
 }
 /** What the typed-name edit changes on this booking: the holder's link `id`, the name shown for the holder now, and whether the patient is a family member. */
-export interface TypedNameTarget { id: string; name: string | null; family: boolean }
+export interface TypedNameTarget {
+  id: string; name: string | null; family: boolean;
+  /** The id the unconfirmed edit is remembered under on this device: the link id (r6) or the booking id, never the patient's account id. */
+  markerId: string;
+}
 /**
  * The edit renames the ACCOUNT HOLDER (the phone's owner) for this pharmacy, never a family member (their name is on the
  * patient's own account). r6: `holder.pharmacyCustomerId` (null = no link: no edit), also on a family member's booking.
  * Before r6 (q16): the booking's `userId`, only on the holder's own booking, where `patientName` is the holder's name.
  */
-export function typedNameTarget(b: Pick<BookedConsultation, 'userId' | 'dependentId' | 'patientName' | 'holder'>): TypedNameTarget | null {
+export function typedNameTarget(b: Pick<BookedConsultation, '_id' | 'userId' | 'dependentId' | 'patientName' | 'holder'>): TypedNameTarget | null {
   if (b.holder) {
     const id = String(b.holder.pharmacyCustomerId ?? '');
-    return hex.test(id) ? { id: id.toLowerCase(), name: b.holder.name ?? null, family: !!b.dependentId } : null;
+    return hex.test(id) ? { id: id.toLowerCase(), name: b.holder.name ?? null, family: !!b.dependentId, markerId: id.toLowerCase() } : null;
   }
   if (b.dependentId) return null;
   const id = String(b.userId ?? '');
-  return hex.test(id) ? { id: id.toLowerCase(), name: b.patientName ?? null, family: false } : null;
+  return hex.test(id) ? { id: id.toLowerCase(), name: b.patientName ?? null, family: false, markerId: String(b._id).toLowerCase() } : null;
 }
 
 /** How the patient joins, in plain words, for the confirmation and the list. */

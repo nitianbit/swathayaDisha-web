@@ -282,7 +282,7 @@ Booking for patients may not be switched on for your pharmacy yet. Then the page
   - "Too late: the consultation has already started": it can no longer be moved.
   - "The outcome of this request is not known yet": tap **Send the same request again**. It is never moved twice. Or tap **Check whether it was recorded**.
 - **Correct the name**: if you typed the patient's name wrong when booking, tap **Correct the name**, type it right and tap **Save the name**. This only changes the name **your pharmacy** sees for this patient. It never changes the patient's own Jansetu account. If the patient chose your pharmacy themselves (by ordering from it), you keep seeing the name on their own account.
-  - For a booking for a **family member**, tap **Correct the name of the phone's owner** to correct the name of the account holder. The family member's own name is on the patient's account: only the patient can change it, in their Jansetu app.
+  - For a booking for a **family member**, tap **Correct the name of the phone's owner** to correct the name of the account holder. The family member's own name is on the phone owner's account: only the phone's owner can change it, in their Jansetu app.
   - The button is not shown when your pharmacy has no link to this patient.
 
 ---

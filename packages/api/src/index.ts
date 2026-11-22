@@ -180,10 +180,11 @@ export {
 } from './assisted.ts';
 export type { RescheduleAnswer, RescheduleRefusalKind, RescheduleRequest, TypedNameAnswer, TypedNameTarget } from './assisted.ts';
 export {
-  ADMIN_TOPUP_KEY_PATTERN, ADMIN_TOPUP_PAGE_SIZE, ADMIN_TOPUP_WARNING, adminPharmacyWalletApi, adminTopupForm, adminTopupRefusal, findAdminTopup, isAdminTopupRow,
+  ADMIN_TOPUP_BY_KEY_PATH, ADMIN_TOPUP_KEY_PATTERN, ADMIN_TOPUP_PAGE_SIZE, ADMIN_TOPUP_SEARCH_PAGES, ADMIN_TOPUP_WARNING, adminPharmacyWalletApi, adminTopupForm, adminTopupRefusal,
+  adminWalletReadError, findAdminTopup, isAdminTopupRow, latestAdminCredit, topupNotFoundWords,
   MAX_ADMIN_TOPUP_NOTE, MAX_ADMIN_TOPUP_RUPEES, MIN_ADMIN_TOPUP_NOTE,
 } from './adminPharmacyWallet.ts';
-export type { AdminTopupBody } from './adminPharmacyWallet.ts';
+export type { AdminTopupBody, AdminTopupSearch } from './adminPharmacyWallet.ts';
 export type {
   AssistedDoctor, AssistedGender, AssistedPatient, AssistedRelation, BookedConsultation, BookingStatus as AssistedBookingStatus, ByKeyAnswer, CancelAnswer,
   ConsultationReceipt, ConsultationRequest, AssistedMode, DispensingCopy, DoctorQuery, DoctorSlots, DoctorSlotsQuery, AssistedSlot, JoinOn, PatientDraft, PatientLookup, PharmacyWallet,

@@ -76,7 +76,7 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
           <dt>Patient</dt>
           <dd>
             {b.patientName ?? '—'}
-            {assistedRow && b.dependentId && <span className="ws-muted"> (a family member on the patient’s account: only the patient can change this name, in their Jansetu app)</span>}
+            {assistedRow && b.dependentId && <span className="ws-muted"> (a family member on the phone owner’s account: only the phone’s owner can change this name, in their Jansetu app)</span>}
           </dd>
           <dt>Doctor</dt><dd>{b.doctorName ?? '—'}</dd>
           <dt>When</dt><dd>{formatSlotDate(b.bookingDate)}{b.bookingTime ? ` at ${b.bookingTime}` : ''}</dd>

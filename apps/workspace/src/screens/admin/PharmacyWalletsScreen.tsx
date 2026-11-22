@@ -3,8 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  ADMIN_TOPUP_PAGE_SIZE, ADMIN_TOPUP_WARNING, adminPharmacyWalletApi, adminTopupForm, adminTopupRefusal, findAdminTopup, MAX_ADMIN_TOPUP_NOTE,
-  movementLabel, OBJECT_ID_PATTERN, pharmacyAdminApi, signedPaiseOf, walletBalancePaise, walletState, type AdminTopupBody, type PharmacyWallet,
+  ADMIN_TOPUP_PAGE_SIZE, ADMIN_TOPUP_WARNING, adminPharmacyWalletApi, adminTopupForm, adminTopupRefusal, adminWalletReadError, findAdminTopup,
+  latestAdminCredit, MAX_ADMIN_TOPUP_NOTE, movementLabel, topupNotFoundWords, type WalletMovement, OBJECT_ID_PATTERN, pharmacyAdminApi, signedPaiseOf, walletBalancePaise, walletState, type AdminTopupBody, type PharmacyWallet,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -50,7 +50,7 @@ function PickPharmacy({ scopeKey }: { scopeKey: readonly string[] }) {
         <Button type="submit" variant="secondary">Search</Button>
       </form>
       {list.isPending ? <Loading label="Loading pharmacies…" />
-        : list.isError ? <ErrorState message={adminTopupRefusal(list.error)} onRetry={() => void list.refetch()} />
+        : list.isError ? <ErrorState message={adminWalletReadError(list.error)} onRetry={() => void list.refetch()} />
         : list.data.items.length === 0 ? <Empty title={name ? 'No pharmacies match' : 'No pharmacies yet'}>{name ? 'Try another name.' : 'Add pharmacies under Pharmacies.'}</Empty>
         : (
           <>
@@ -94,13 +94,15 @@ export function PharmacyWalletScreen() {
   return <>{back}<WalletDetail key={`${scope.identity}:${pharmacyId}`} scopeKey={scope.key} pharmacyId={pharmacyId.toLowerCase()} /></>;
 }
 
+const movementsKey = (scopeKey: readonly string[], pharmacyId: string, page: number) => [...scopeKey, pharmacyId, 'movements', page];
+
 function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; pharmacyId: string }) {
   const { api } = useSession();
   const wallets = adminPharmacyWalletApi(api);
   const [page, setPage] = useState(1);
   const pharmacy = useQuery({ queryKey: [...scopeKey, pharmacyId, 'pharmacy'], queryFn: () => pharmacyAdminApi(api).get(pharmacyId) });
   const wallet = useQuery({ queryKey: [...scopeKey, pharmacyId, 'wallet'], queryFn: () => wallets.wallet(pharmacyId) });
-  const movements = useQuery({ queryKey: [...scopeKey, pharmacyId, 'movements', page], queryFn: () => wallets.movements(pharmacyId, page) });
+  const movements = useQuery({ queryKey: movementsKey(scopeKey, pharmacyId, page), queryFn: () => wallets.movements(pharmacyId, page) });
   const name = pharmacy.data?.name ?? 'this pharmacy';
 
   return (
@@ -108,12 +110,12 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
       <PageHeading title={pharmacy.data ? `Wallet: ${pharmacy.data.name}` : 'Pharmacy wallet'}>
         {pharmacy.data ? [pharmacy.data.city, pharmacy.data.phone].filter(Boolean).join(' · ') : null}
       </PageHeading>
-      {pharmacy.isError && <ErrorState message={adminTopupRefusal(pharmacy.error)} onRetry={() => void pharmacy.refetch()} />}
+      {pharmacy.isError && <ErrorState message={adminWalletReadError(pharmacy.error)} onRetry={() => void pharmacy.refetch()} />}
 
       <section className="ws-section" aria-labelledby="bal-h">
         <h2 id="bal-h">Balance</h2>
         {wallet.isPending ? <Loading label="Loading the wallet…" />
-          : wallet.isError ? <ErrorState message={adminTopupRefusal(wallet.error)} onRetry={() => void wallet.refetch()} />
+          : wallet.isError ? <ErrorState message={adminWalletReadError(wallet.error)} onRetry={() => void wallet.refetch()} />
           : <Balance w={wallet.data} />}
       </section>
 
@@ -127,7 +129,7 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
       <section className="ws-section" aria-labelledby="hist-h">
         <h2 id="hist-h">Recent money in and out</h2>
         {movements.isPending ? <Loading label="Loading the history…" />
-          : movements.isError ? <ErrorState message={adminTopupRefusal(movements.error)} onRetry={() => void movements.refetch()} />
+          : movements.isError ? <ErrorState message={adminWalletReadError(movements.error)} onRetry={() => void movements.refetch()} />
           : movements.data.items.length === 0 ? <Empty title="No money in or out yet">Top-ups, booking payments, refunds and admin credits of {name} are listed here.</Empty>
           : (
             <>
@@ -210,6 +212,9 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
   const [resendError, setResendError] = useState<string | null>(null);
 
   const reread = () => queryClient.invalidateQueries({ queryKey: [...scopeKey, pharmacyId] });
+  // Review L6: the newest page of the history, read again when the review opens, for the last admin credit.
+  const recent = useQuery({ queryKey: movementsKey(scopeKey, pharmacyId, 1), queryFn: () => wallets.movements(pharmacyId, 1) });
+  const lastCredit = latestAdminCredit(recent.data?.items ?? []);
   const added = (body: AdminTopupBody, w: PharmacyWallet | null, again: boolean) => {
     setReview(null);
     setAmount('');
@@ -227,6 +232,7 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
     if (!f.value) return;
     // The key is made now, with the reviewed body; confirming sends exactly this.
     setReview({ requestKey: newRequestKey(), body: { pharmacyId, ...f.value }, pharmacyName });
+    void recent.refetch();
   }
 
   async function sendTopup(p: PendingOp<PendingTopup>) {
@@ -234,6 +240,19 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
     if (r.kind === 'stale') return;
     if (r.kind === 'ok') { added(p.body.body, r.value, p.attempts > 0); return; }
     if (r.kind === 'refused') { setReview(null); setRefused(adminTopupRefusal(r.error)); void reread(); }
+    // Review L7: the outcome is not known: read the history again (the credit may show there).
+    if (r.kind === 'unknown') void reread();
+  }
+
+  /**
+   * Review M1: the exact by-key read first (backend r7); on an older server, the history, newest first, up to 20 pages and
+   * with no time cut-off. Answers the row it made, or what was searched.
+   */
+  async function findCredit(key: string): Promise<{ row: WalletMovement } | { row: null; complete: boolean; searched: number }> {
+    const exact = await wallets.topupByKey(pharmacyId, key);
+    if (exact.state === 'used') return { row: exact.row };
+    if (exact.state === 'none') return { row: null, complete: true, searched: 0 };
+    return findAdminTopup((page) => wallets.movements(pharmacyId, page, ADMIN_TOPUP_PAGE_SIZE), key);
   }
 
   if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
@@ -243,24 +262,23 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
         {resendError && <Alert>{resendError}</Alert>}
         <CheckPanel label="Unconfirmed money added"
           onCheck={async () => {
-            const row = await findAdminTopup((page) => wallets.movements(pharmacyId, page, ADMIN_TOPUP_PAGE_SIZE), op.requestKey, op.firstAttemptAt);
+            const found = await findCredit(op.requestKey);
             void reread();
-            if (row) {
+            if (found.row) {
               settle(op.requestKey);
               setReview(null);
-              setDone(`It was added: ${formatRupees(signedPaiseOf(row) / 100)} on ${formatDateTime(row.createdAt)}. Nothing was added twice.`);
+              setDone(`It was added: ${formatRupees(signedPaiseOf(found.row) / 100)} on ${formatDateTime(found.row.createdAt)}. Nothing was added twice.`);
               return null;
             }
-            return restored
-              ? 'Not found in the wallet history so far. It may still be on its way. Look at the history again in a minute before adding money again.'
-              : 'Not added so far. It may still be on its way. Sending the same request again is safe: the money is never added twice.';
+            return topupNotFoundWords(found, !restored);
           }}
           resend={restored ? undefined : {
             label: 'Send the same request again', busy,
             onClick: () => { setResendError(null); void sendTopup(op).catch((err: unknown) => setResendError(adminTopupRefusal(err))); },
           }}
           forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget: () => settle(op.requestKey),
-            consequence: 'If the earlier request still arrives, the money is added. Look at the wallet history before adding money again.' }}>
+            acknowledge: 'I understand the money may already have been added to this wallet.',
+            consequence: 'The money may already have been added, or may still arrive. Forgetting it does not undo it. Check the wallet history, or ask the tech team, before adding money again: otherwise the pharmacy could be paid twice.' }}>
           <Alert tone="warn">
             {restored
               ? 'Money added earlier on this device (before the page was reloaded) was not confirmed. Its details are not kept here. Check the wallet history for it.'
@@ -295,6 +313,13 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
           </div>
           <ul className="ws-list">
             <li>Note: <strong>{review.body.notes}</strong></li>
+            <li>
+              {recent.isFetching && !recent.data ? 'Reading the last money added by an admin…'
+                : lastCredit
+                  ? <>Last money added by {String(lastCredit.actor?.id ?? '').toLowerCase() === admin.id.toLowerCase() ? 'you' : 'an admin'}: <strong>{formatRupees(signedPaiseOf(lastCredit) / 100)}</strong> on {formatDateTime(lastCredit.createdAt)}{lastCredit.notes ? ` (“${lastCredit.notes}”)` : ''}. Make sure this is not the same credit.</>
+                  : recent.isError ? 'Could not read the last money added by an admin. Look at the history below.'
+                  : `No money added by an admin in the latest ${ADMIN_TOPUP_PAGE_SIZE} movements.`}
+            </li>
             {owed > 0
               ? <li>{formatRupees(Math.min(owed, review.body.amount * 100) / 100)} of it first clears what the pharmacy owes Jansetu.</li>
               : <li>Balance after: {formatRupees((balance + review.body.amount * 100) / 100)}</li>}

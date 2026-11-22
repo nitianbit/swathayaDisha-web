@@ -54,9 +54,15 @@ export function ChangeTime({ pharmacyId, booking, guard, onChanged, onDone }: {
   }, [slots.data, booking]);
 
   const current = whenOf(booking.bookingDate, booking.bookingTime);
-  const doneWords = (a: RescheduleAnswer, to: string) => (a.replayed
-    ? `It was already moved to ${whenOf(a.booking.bookingDate, a.booking.bookingTime) || to}. Nothing was changed twice.`
-    : `Moved to ${whenOf(a.booking.bookingDate, a.booking.bookingTime) || to}. The patient and the doctor are told the new time.`);
+  const doneWords = (a: RescheduleAnswer, chosen: PendingMove) => {
+    const now = whenOf(a.booking.bookingDate, a.booking.bookingTime) || chosen.to;
+    if (!a.replayed) return `Moved to ${now}. The patient and the doctor are told the new time.`;
+    // Review L1: this key moved it earlier, but the booking holds another slot now (moved again since, e.g. on another device).
+    const elsewhere = a.booking.slotId && String(a.booking.slotId).toLowerCase() !== chosen.slotId.toLowerCase();
+    return elsewhere
+      ? `It was moved to your time (${chosen.to}) earlier, and has since been moved again to ${now}.`
+      : `It was already moved to ${now}. Nothing was changed twice.`;
+  };
 
   function close() { setOpen(false); setChosen(null); setReview(null); }
 
@@ -65,7 +71,7 @@ export function ChangeTime({ pharmacyId, booking, guard, onChanged, onDone }: {
       slotId: b.slotId, requestKey: p.requestKey, ...(b.expectedUpdatedAt ? { expectedUpdatedAt: b.expectedUpdatedAt } : {}),
     })));
     if (r.kind === 'stale') return;
-    if (r.kind === 'ok') { close(); onDone(doneWords(r.value, p.body.to)); onChanged(); return; }
+    if (r.kind === 'ok') { close(); onDone(doneWords(r.value, p.body)); onChanged(); return; }
     if (r.kind === 'refused') {
       const why = rescheduleRefusal(r.error);
       setRefused(why.message);
@@ -90,6 +96,7 @@ export function ChangeTime({ pharmacyId, booking, guard, onChanged, onDone }: {
             const at = whenOf(now.bookingDate, now.bookingTime);
             if (!restored && op.body && String(now.slotId ?? '').toLowerCase() === op.body.slotId.toLowerCase()) {
               settle(op.requestKey);
+              close(); // Review L2: the review of the move that is now settled is not left open.
               onDone(`Moved to ${at}. The patient and the doctor are told the new time.`);
               onChanged();
               return null;
@@ -197,7 +204,8 @@ export function CorrectName({ pharmacyId, booking, target, guard, onChanged }: {
   pharmacyId: string; booking: BookedConsultation; target: TypedNameTarget; guard: BookingGuard; onChanged: () => void;
 }) {
   const { api } = useSession();
-  const { op, send, settle, live } = useOwnedOp<PendingName>(`typed-name:${pharmacyId}:${target.id}`);
+  // Review L5: remembered under the link id or the booking id, never the patient's account id.
+  const { op, send, settle, live } = useOwnedOp<PendingName>(`typed-name:${pharmacyId}:${target.markerId}`);
   const { perform, busy } = guard;
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
@@ -215,9 +223,13 @@ export function CorrectName({ pharmacyId, booking, target, guard, onChanged }: {
     if (r.kind === 'refused') setError(typedNameRefusal(r.error));
   }
 
-  /** r6 answers `shownName`; before it, the booking is read again to learn what the pharmacy is shown now. */
+  /**
+   * r6 answers `shownName`; before it, the booking is read again to learn what the pharmacy is shown now. Review L3: if
+   * that read fails, nothing is claimed about which name is shown (`shown` stays unknown).
+   */
   async function afterSaved(name: string, shownName: string | null | undefined) {
-    const shown = shownName !== undefined ? shownName : holderNameOf(await pharmacyAssistedApi(api).booking(booking._id).catch(() => booking));
+    const shown = shownName !== undefined ? shownName
+      : await pharmacyAssistedApi(api).booking(booking._id).then(holderNameOf, () => undefined);
     if (!live.current) return;
     setSaved({ name, shown });
     onChanged();
@@ -239,11 +251,18 @@ export function CorrectName({ pharmacyId, booking, target, guard, onChanged }: {
         {resendError && <Alert>{resendError}</Alert>}
         <CheckPanel label="Unconfirmed name change"
           onCheck={async () => {
-            const shown = holderNameOf(await pharmacyAssistedApi(api).booking(booking._id));
+            // Review L3: compared with the name STORED on the link (`typedName`), not the name shown (a customer-linked
+            // patient keeps showing the account name whatever is typed).
+            const stored = await pharmacyCustomersApi(api).storedTypedName(target.id);
             onChanged();
-            if (!restored && op.body && shown === op.body.name) { settle(op.requestKey); setSaved({ name: op.body.name, shown }); return null; }
+            if (!stored.found) return 'Could not find this patient in your pharmacy’s customer list just now. Sending the same name again is safe.';
+            if (!restored && op.body && stored.typedName === op.body.name) {
+              settle(op.requestKey);
+              setSaved({ name: op.body.name, shown: undefined });
+              return null;
+            }
             return restored
-              ? `Your pharmacy sees ${who} as “${shown ?? '—'}” now. If that is the name you typed, it was saved.`
+              ? `The name your pharmacy typed for ${who} is “${stored.typedName ?? '—'}” now. If that is the name you typed, it was saved.`
               : 'Not changed so far. Sending the same name again is safe.';
           }}
           resend={restored ? undefined : {
@@ -268,9 +287,11 @@ export function CorrectName({ pharmacyId, booking, target, guard, onChanged }: {
       {target.family && <p>Your pharmacy sees the phone’s owner as <strong>{target.name ?? '—'}</strong>.</p>}
       {saved && (
         <Alert tone="ok">
-          {saved.shown && saved.shown !== saved.name
-            ? `Saved as “${saved.name}”. This patient chose your pharmacy themselves, so your pharmacy is shown the name on their own account (“${saved.shown}”).`
-            : `Saved. Your pharmacy now sees ${who} as “${saved.name}”.`}
+          {saved.shown === undefined
+            ? `Saved. The name your pharmacy typed for ${who} is now “${saved.name}”.`
+            : saved.shown && saved.shown !== saved.name
+              ? `Saved as “${saved.name}”. This patient chose your pharmacy themselves, so your pharmacy is shown the name on their own account (“${saved.shown}”).`
+              : `Saved. Your pharmacy now sees ${who} as “${saved.name}”.`}
         </Alert>
       )}
       {!open ? (

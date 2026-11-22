@@ -1573,7 +1573,8 @@ Backend: `m0/r4-assisted-stage` fb4063c7 (assisted phase 0 + 1a merged on the st
 
 ## WQ13 pharmacy: change a booking's time, correct the typed name; admin pharmacy wallets (2026-11-22, taken autonomously at the owner's request)
 
-Backend: stage line q16-integration 338733f8 plus `m0/r6-small-fixes` 694bfaa9 (design ASSISTED_BOOKING_DESIGN.md §21.2; local, not pushed).
+Backend: the stage line with `m0/r6-small-fixes` 694bfaa9 (design ASSISTED_BOOKING_DESIGN.md §21.2), pushed to stage. Web: 8f892cc, pushed to
+origin/stage after the Opus review.
 
 - **Small fix**: `supportedModes` uses `Object.hasOwn` (inherited names such as `toString` are never a mode). The doctor card's "Next free
   time" is `nextFreeSlot`: shown only when the slot list would show it (in a supported mode, and in the chosen mode); otherwise "Choose to see
@@ -1597,6 +1598,22 @@ Backend: stage line q16-integration 338733f8 plus `m0/r6-small-fixes` 694bfaa9 (
   (the shared client's `idempotencyKey`). The key is the owned PendingOp's, made before sending; a lost answer is resent with the same key and
   body (the server replays; 409 `IDEMPOTENCY_KEY_REUSED` for another body), or found in the history by `referenceType: 'topup'` +
   `referenceId` = the key (also after a reload, when the body is gone and it cannot be resent). The S6 warning is on the form and the review.
+
+### WQ13 review fixes (Opus review of 8f892cc, 2026-11-22; branch `wq13/fixes`)
+
+- M1 (money): "Check" for an unconfirmed admin top-up reads the exact r7 route first (`GET /pharmacy-wallet/topups/admin/by-key/:key?pharmacyId=`
+  → `credited` with the row, or `not_found`; backend `m0/r7-followups`, not committed there yet). On a server without it (the catch-all 404
+  with no code) it searches the history: up to 20 pages of 20, with no time cut-off (the browser clock is not used). When the page limit ends the
+  search: "Only the latest N movements were searched; the credit may be older. Ask the tech team before adding money again." "Forget it" needs
+  a tick ("I understand the money may already have been added to this wallet") and says forgetting undoes nothing.
+- L1: a resend answered `replayed` while the booking holds another slot says it was moved to that time earlier and has since been moved again.
+- L2: a move settled by "Check" closes its review and the time list.
+- L3: the typed-name "Check" compares the name stored on the link (`typedName` from `GET /pharmacy-customers`, paged by id with no `search`, so
+  no name is in an address), not the name shown. Before r6, a failed re-read after saving claims nothing about which name is shown.
+- L4: the family note says the family member is on the phone owner's account and only the phone's owner can change the name.
+- L5: an unconfirmed typed-name edit is remembered under the link id (r6) or the booking id, never the patient's account id.
+- L6: the top-up review shows the newest admin credit in the history (amount, time, note; "you" or "an admin").
+- L7: failed reads on the wallet screens never say "Nothing was added"; an unknown top-up outcome reads the history again.
 
 ## Follow-ups
 
@@ -1627,6 +1644,7 @@ Backend: stage line q16-integration 338733f8 plus `m0/r6-small-fixes` 694bfaa9 (
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-22 | WQ13 review fixes (M1, L1–L7 on 8f892cc) | Against stage (r6 694bfaa9) and r7 `adminTopupByKey` as in its worktree (mocked API). typecheck clean; Vitest 355/355 (+4 tests, several extended: history search with no clock cut-off and its 20-page limit words, the r7 by-key read (credited / not_found / no route / odd answer), the newest admin credit, read errors without "nothing was added", the stored typed name paged by id with no `search`, marker ids); Playwright workspace 744/744 (+16 = 8 journeys x 2: L1 moved again since, L2 check closes the review, L3 stored-name check and a failed re-read, M1 reload + check of a credit on page 8, the 400-movement limit and the Forget tick, the r7 exact read and the L6 last credit, L7; the spec 120/120 with --repeat-each 3; temporary config on port 5337, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-22 | WQ13 (change time, typed name, admin pharmacy wallets, next free time) | Against q16 338733f8 and r6 694bfaa9 (mocked API). typecheck clean; Vitest 351/351 (+19: own-key modes, next free time, reschedule path/body/key checks and resend body, when it is offered, the slots offered, rule words, refusal words incl. SAME_SLOT, typed-name PUT and target (q16 user id, r6 holder link, no link), admin top-up Idempotency-Key header and same body on resend, refusals before sending, wallet reads with pharmacyId, form rules, finding a credit by key, refusal and S6 words); Playwright workspace 728/728 (+24 = 12 journeys x 2 devices, temporary config on port 5331 with `reuseExistingServer: false`; the two affected specs re-run 62/62 after the family-label change); `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-22 | WQ12 review fixes (Opus xhigh review of c1e12b1) | typecheck clean; Vitest 332/332 (+6: supported modes, refused-before-writing codes, assisted rows, consent v2 and its length, language codes, 60 s write time limit); Playwright workspace 704/704 (+10 = 5 journeys x 2 devices: give up leaves no review and a resend of an abandoned key books nothing, with chat-only times hidden; 429 and coded 503 at create are not booked and each retry is a new key, consent v2 sent; coupon price note and no `join.phone` for video, Assamese sent; a reload mid top-up keeps it listed and the check settles it; Checkout that does not load takes no money and keeps nothing pending, an unpaid top-up removed from the list); `VITE_API_SAME_ORIGIN=true` build. Port 5298, temporary config with `reuseExistingServer: false`, not committed. |
 | 2026-11-22 | WQ12 (assisted booking, booked consultations, wallet) | Against backend `m0/r4-assisted-stage` fb4063c7 (mocked API). typecheck clean; Vitest 326/326 (+23: phone canonical form, ApiError `limit`/`details`, lookup phone in the body only, verify without `module`, doctor slots path, cursor list, every documented refusal in words incl. switch off (503 / code-less 404), limits with the wait, PRICE_CHANGED price, wallet balance/state/sign/labels, patient step rules and bodies, family booked before, booker cancel rule, top-up amount); Playwright workspace 694/694 (+28 = 14 journeys x 2 devices: book for the owner with the required tick, nothing about the patient in storage or URLs; new number typed twice + family member; family member booked before sent by id; top-up inside the booking (verify, no module) then pay; insufficient balance, price changed (new key), slot taken, frozen, owing, unverified doctor; wallet on hold/owing blocks paying; coupon priced by the server; lookup limit and switch off (503 and 404); lost answer resent once (one booking, one charge) and checked by key; list, join, cancel with refund; dispensing copy PDF and an order from it; wallet history labels and a closed Checkout settled by the check; an unanswered check kept and settled by “Check my top-up”); `VITE_API_SAME_ORIGIN=true` build. Port 5297, temporary config with `reuseExistingServer: false`, not committed. Not yet run against a real backend or reviewed. |
