@@ -28,6 +28,12 @@ interface Backend {
   receivableMinor: number;
   /** Book, then drop the answer (the outcome is unknown to the page). */
   loseNextCreateAnswer: boolean;
+  /** Drop the next create before it reaches the server (nothing recorded; the page cannot tell). */
+  dropNextCreate: boolean;
+  /** Keys given up on the server (a later send with one is 409 REQUEST_ABANDONED). */
+  abandoned: Set<string>;
+  /** The next top-up check finds no capture. */
+  checkUnpaid: boolean;
   /** Refuse the next create with this answer, before anything is recorded. */
   refuseNextCreate: { status: number; body: Json } | null;
   /** The lookup's answer is this refusal. */
@@ -43,7 +49,7 @@ interface Backend {
 async function mockBackend(page: Page, init: Partial<Pick<Backend, 'walletPaise' | 'frozen' | 'receivableMinor' | 'bookings'>> = {}): Promise<Backend> {
   const state: Backend = {
     calls: [], creates: [], keys: {}, walletPaise: init.walletPaise ?? 200_000, frozen: init.frozen ?? false, receivableMinor: init.receivableMinor ?? 0,
-    loseNextCreateAnswer: false, refuseNextCreate: null, lookupRefusal: null, bookings: init.bookings ?? [], cancels: [], orders: [], topups: {}, verifies: [], checks: [],
+    loseNextCreateAnswer: false, dropNextCreate: false, abandoned: new Set(), checkUnpaid: false, refuseNextCreate: null, lookupRefusal: null, bookings: init.bookings ?? [], cancels: [], orders: [], topups: {}, verifies: [], checks: [],
   };
   let live = false;
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -62,6 +68,8 @@ async function mockBackend(page: Page, init: Partial<Pick<Backend, 'walletPaise'
     ...(date ? { slots: [
       { slotId: SLOT1, date, startTime: '10:30', endTime: '10:45', startsAt: '2026-11-23T05:00:00.000Z', modes: ['video', 'call'] },
       { slotId: SLOT2, date, startTime: '11:00', endTime: '11:15', startsAt: '2026-11-23T05:30:00.000Z', modes: ['in-person'] },
+      // A chat-only time: the booking cannot use chat, so it is not offered.
+      { slotId: '53'.repeat(12), date, startTime: '11:30', endTime: '11:45', startsAt: '2026-11-23T06:00:00.000Z', modes: ['chat'] },
     ] } : {}),
   });
   const viewOf = (b: Json): Json => ({
@@ -76,6 +84,7 @@ async function mockBackend(page: Page, init: Partial<Pick<Backend, 'walletPaise'
     body: `window.Razorpay = function (o) {
       this.on = function () {};
       this.open = function () { setTimeout(function () {
+        if (window.__rzHang) return;
         if (window.__rzClose) o.modal.ondismiss();
         else o.handler({ razorpay_payment_id: 'pay_TEST1', razorpay_order_id: o.order_id, razorpay_signature: 'sig_TEST' });
       }, 10); };
@@ -122,6 +131,8 @@ async function mockBackend(page: Page, init: Partial<Pick<Backend, 'walletPaise'
       const key = String(body!.requestKey);
       const hash = JSON.stringify({ ...body, requestKey: undefined });
       const prior = state.keys[key];
+      if (state.dropNextCreate) { state.dropNextCreate = false; return route.abort('connectionreset'); }
+      if (state.abandoned.has(key)) return refuse(route, 409, 'REQUEST_ABANDONED', 'This request was cancelled before it was recorded; make a new one');
       if (prior) {
         if (prior.hash !== hash) return refuse(route, 409, 'IDEMPOTENCY_KEY_REUSED', 'This request key was already used for a different booking');
         return json(route, 200, { success: true, data: { ...(prior.receipt as Json), replayed: true } });
@@ -148,7 +159,8 @@ async function mockBackend(page: Page, init: Partial<Pick<Backend, 'walletPaise'
     const byKey = /^\/pharmacy-assisted\/bookings\/by-key\/([A-Za-z0-9_-]+)(\/abandon)?$/.exec(path);
     if (byKey) {
       const k = state.keys[byKey[1]!];
-      return json(route, 200, { success: true, data: k ? { state: 'used', booking: k.view } : byKey[2] ? { state: 'abandoned' } : { state: 'unknown' } });
+      if (!k && byKey[2]) state.abandoned.add(byKey[1]!);
+      return json(route, 200, { success: true, data: k ? { state: 'used', booking: k.view } : state.abandoned.has(byKey[1]!) ? { state: 'abandoned' } : { state: 'unknown' } });
     }
     const cancel = /^\/pharmacy-assisted\/bookings\/(\w{24})\/cancel$/.exec(path);
     if (cancel && method === 'POST') {
@@ -203,6 +215,7 @@ async function mockBackend(page: Page, init: Partial<Pick<Backend, 'walletPaise'
       state.checks.push(check[1]!);
       const t = state.topups[check[1]!];
       if (!t) return refuse(route, 404, 'PAYMENT_RECORD_NOT_FOUND', 'Payment record not found');
+      if (state.checkUnpaid) return json(route, 200, { success: true, data: { state: 'unpaid', wallet: wallet() } });
       // The patient paid on the Razorpay page before closing it (the capture is found by the server).
       credit(check[1]!);
       return json(route, 200, { success: true, data: { state: 'credited', wallet: wallet() } });
@@ -557,4 +570,122 @@ test('wallet: a top-up whose check got no answer stays listed, and “Check my t
   expect(b.checks).toEqual([TOPUP]);
   const stored = await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }));
   expect(stored).not.toContain('t1');
+});
+
+test('WQ12 fixes: a request given up leaves no review behind, and a resend of an abandoned key books nothing', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page, 'Book consultation');
+  await findPatient(page);
+  await ownerAgreed(page);
+  await chooseDoctorAndTime(page);
+  await expect(page.getByRole('button', { name: /^11:30/ })).toHaveCount(0); // chat-only time hidden
+  b.dropNextCreate = true;
+  await page.getByRole('button', { name: 'Pay ₹500.00 from wallet' }).click();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  await page.getByRole('button', { name: 'Give this up' }).click();
+  await expect(page.getByText('Given up: nothing was booked or charged with that request')).toBeVisible();
+  // The old review (and its abandoned key) is gone: nothing to pay with it.
+  await expect(page.getByRole('button', { name: /^Pay ₹/ })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '3. Check and pay' })).toHaveCount(0);
+
+  // Book again; this time the key is given up elsewhere (another tab) while the answer is lost, then resent.
+  await page.getByRole('button', { name: 'Next: check the price' }).click();
+  b.dropNextCreate = true;
+  await page.getByRole('button', { name: 'Pay ₹500.00 from wallet' }).click();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  b.abandoned.add(String(b.creates[b.creates.length - 1]?.requestKey ?? ''));
+  const lastKey = [...b.abandoned].pop()!;
+  expect(lastKey).not.toBe('');
+  await page.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(page.getByText('This booking was given up earlier, so nothing was booked or charged with it.')).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Pay ₹/ })).toHaveCount(0);
+  expect(b.keys).toEqual({});
+  expect(b.walletPaise).toBe(200_000);
+});
+
+test('WQ12 fixes: a 429 or a coded 503 at create is "not booked" (no unknown panel); paying again is a new request', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page, 'Book consultation');
+  await findPatient(page);
+  await ownerAgreed(page);
+  await chooseDoctorAndTime(page);
+  b.refuseNextCreate = { status: 429, body: { error: 429, code: 'ASSISTED_LIMIT_REACHED', message: 'Too many', limit: 'bookings_per_phone', retryAfter: 3600 } };
+  await page.getByRole('button', { name: 'Pay ₹500.00 from wallet' }).click();
+  await expect(page.getByText('This phone number already has the most bookings allowed today. Try again tomorrow.')).toBeVisible();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toHaveCount(0);
+  b.refuseNextCreate = { status: 503, body: { error: 503, code: 'INDEXES_OUTDATED', message: 'The database needs an update' } };
+  await page.getByRole('button', { name: 'Pay ₹500.00 from wallet' }).click();
+  await expect(page.getByText('The server needs an update before this can be used. Please ask the Jansetu team.')).toBeVisible();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toHaveCount(0);
+  await page.getByRole('button', { name: 'Pay ₹500.00 from wallet' }).click();
+  await expect(page.getByRole('heading', { name: 'Booked' })).toBeVisible();
+  const keys = b.creates.map((c) => c.requestKey);
+  expect(new Set(keys).size).toBe(3);
+  expect(b.creates[0]!.consent).toEqual({ agreed: true, statementVersion: 'web-pharmacy-v2', statementLanguage: 'en' });
+});
+
+test('WQ12 fixes: with a coupon the price is said to be before the coupon; join.phone only for a phone call', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page, 'Book consultation');
+  await findPatient(page);
+  await ownerAgreed(page);
+  await page.getByRole('button', { name: 'Choose Dr Meera Rao' }).click();
+  await page.getByRole('button', { name: '10:30–10:45' }).click();
+  await page.getByLabel('Phone call').check();
+  await page.getByLabel('On the patient’s own phone').check();
+  await page.getByLabel('Number the doctor should call (optional)').fill('9000011111');
+  await page.getByLabel('Video call').check(); // the number field is no longer shown, so it is not sent
+  await page.getByLabel('Language the patient speaks').selectOption('as');
+  await page.getByLabel('Coupon code (optional)').fill('SAVE10');
+  await page.getByRole('button', { name: 'Next: check the price' }).click();
+  await expect(page.getByText('Price before the coupon; the coupon is checked when you pay.')).toBeVisible();
+  await page.getByRole('button', { name: 'Pay ₹500.00 from wallet' }).click();
+  await page.getByRole('button', { name: 'Use the new price (₹450.00)' }).click();
+  await expect(page.getByText('Price before the coupon; the coupon is checked when you pay.')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Pay ₹450.00 from wallet' }).click();
+  await expect(page.getByRole('heading', { name: 'Booked' })).toBeVisible();
+  expect(b.creates[1]).toMatchObject({ consultationMode: 'video', join: { on: 'patient_phone' }, preferredLanguage: 'as' });
+  expect((b.creates[1]!.join as Json).phone).toBeUndefined();
+});
+
+test('WQ12 fixes: a reload in the middle of a top-up keeps it listed; “Check my top-up” settles it', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page, 'Wallet');
+  await page.evaluate(() => { (window as unknown as { __rzHang: boolean }).__rzHang = true; });
+  const started = page.waitForRequest((r) => r.url().endsWith('/pharmacy-wallet/topup'));
+  await page.getByLabel('Amount to add (₹)').fill('700');
+  await page.getByRole('button', { name: 'Top up', exact: true }).click();
+  await started;
+  await expect.poll(() => page.evaluate(() => Object.keys(sessionStorage).some((k) => k.includes('wallet-topups:')))).toBe(true);
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Top-ups not confirmed yet' })).toBeVisible();
+  await expect(page.getByText('A top-up started earlier on this device')).toBeVisible();
+  await page.getByRole('button', { name: 'Check my top-up' }).click();
+  await expect(page.getByText('The top-up was added to your wallet.')).toBeVisible();
+  expect(b.checks).toEqual([TOPUP]);
+  expect(b.walletPaise).toBe(270_000);
+});
+
+test('WQ12 fixes: Checkout that does not load says no money was taken; an unpaid top-up can be removed from the list', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page, 'Wallet');
+  const fail = (route: Route) => route.abort('connectionrefused');
+  await page.route('https://checkout.razorpay.com/v1/checkout.js', fail);
+  await page.getByLabel('Amount to add (₹)').fill('100');
+  await page.getByRole('button', { name: 'Top up', exact: true }).click();
+  await expect(page.getByText('The payment page didn’t open. No money was taken.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Top-ups not confirmed yet' })).toHaveCount(0);
+  expect(b.checks).toEqual([]);
+
+  await page.unroute('https://checkout.razorpay.com/v1/checkout.js', fail);
+  b.checkUnpaid = true;
+  await page.evaluate(() => { (window as unknown as { __rzClose: boolean }).__rzClose = true; });
+  await page.getByLabel('Amount to add (₹)').fill('100');
+  await page.getByRole('button', { name: 'Top up', exact: true }).click();
+  await expect(page.getByText(/The payment was not completed, so no money was added/)).toBeVisible();
+  await page.getByRole('button', { name: 'Check my top-up' }).click();
+  await expect(page.getByText(/Not paid yet\. If you paid, wait a minute and check again/)).toBeVisible();
+  await page.getByRole('button', { name: 'Remove from this list' }).click();
+  await expect(page.getByRole('heading', { name: 'Top-ups not confirmed yet' })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => Object.keys(sessionStorage).some((k) => k.includes('wallet-topups:')))).toBe(false);
 });

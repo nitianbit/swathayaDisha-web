@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft, FileText } from 'lucide-react';
 import {
-  ApiError, assistedRefusal, bookingStatusLabel, canBookerCancel, formatSlotDate, joinWords, MAX_BOOKER_CANCEL_REASON, medicineName,
+  ApiError, assistedRefusal, bookingStatusLabel, canBookerCancel, isAssistedBooking, formatSlotDate, joinWords, MAX_BOOKER_CANCEL_REASON, medicineName,
   PATIENT_LANGUAGES, pharmacyAssistedApi, pharmacyStockApi, requestKeysApi, rxOrderProblems, type BookedConsultation, type CancelAnswer,
   type Medicine, type RxMedicine, type RxOrderRequest,
 } from '@jansetu/api';
@@ -55,6 +55,7 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
   if (q.isPending) return <Loading label="Loading the consultation…" />;
   if (q.isError) return <ErrorState message={assistedRefusal(q.error).message} onRetry={() => void q.refetch()} />;
   const b = q.data;
+  const assistedRow = isAssistedBooking(b);
   const joinUrl = b.virtualMeeting?.joinUrl && /^https:\/\//.test(b.virtualMeeting.joinUrl) ? b.virtualMeeting.joinUrl : null;
 
   return (
@@ -68,8 +69,8 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
           <dt>Doctor</dt><dd>{b.doctorName ?? '—'}</dd>
           <dt>When</dt><dd>{formatSlotDate(b.bookingDate)}{b.bookingTime ? ` at ${b.bookingTime}` : ''}</dd>
           <dt>How</dt><dd>{modeWords(b.consultationMode)}</dd>
-          {b.status !== 'cancelled' && <><dt>How the patient joins</dt><dd>{joinWords(String(b.consultationMode ?? ''), b.assisted?.join?.on)}</dd></>}
-          {typeof b.price === 'number' && <><dt>Paid from your wallet</dt><dd>{formatRupees(b.price)}</dd></>}
+          {assistedRow && b.status !== 'cancelled' && <><dt>How the patient joins</dt><dd>{joinWords(String(b.consultationMode ?? ''), b.assisted?.join?.on)}</dd></>}
+          {assistedRow && typeof b.price === 'number' && <><dt>Paid from your wallet</dt><dd>{formatRupees(b.price)}</dd></>}
           {b.assisted?.preferredLanguage && <><dt>Language</dt><dd>{languageWords(b.assisted.preferredLanguage)}</dd></>}
           {b.primaryConcern && <><dt>Problem</dt><dd>{b.primaryConcern}</dd></>}
           {b.status === 'cancelled' && <><dt>Cancelled</dt><dd>{b.cancellationCause === 'patient' ? 'By the patient' : b.cancellationCause === 'booker' ? 'By your pharmacy' : b.cancellationCause === 'doctor' ? 'By the doctor' : b.cancellationCause === 'admin' ? 'By Jansetu' : '—'}{b.cancellationReason ? `: ${b.cancellationReason}` : ''}</dd></>}
@@ -327,9 +328,11 @@ function RxOrder({ pharmacyId, booking, medicines }: { pharmacyId: string; booki
     setResendError(null);
     try {
       const r = await perform(() => keys.abandon('pharmacy_rx_order', p.requestKey));
+      if (r.state === 'used' && r.record?._id) { settle(p.requestKey); finished(r.record._id, 'The order was made. Nothing was ordered twice.'); return; }
+      // Only `abandoned` means given up; any other answer leaves it unknown (the panel stays).
+      if (r.state !== 'abandoned') { setResendError('It could not be given up yet. Check whether it was recorded, then try again.'); return; }
       settle(p.requestKey);
-      if (r.state === 'used' && r.record?._id) finished(r.record._id, 'The order was made. Nothing was ordered twice.');
-      else setRefused('Given up: that order was not made and can never be made now. You can make the order again.');
+      setRefused('Given up: that order was not made and can never be made now. You can make the order again.');
     } catch (err) {
       setResendError(assistedRefusal(err).message);
     } finally {

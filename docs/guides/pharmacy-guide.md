@@ -246,11 +246,11 @@ Booking for patients may not be switched on for your pharmacy yet. Then the page
    - **The phone’s owner**, and type the patient’s full name; or
    - a family member you booked for before (shown by name); or
    - **A family member**: type their name and choose the **Relation**. Gender and date of birth are optional.
-4. Ask the patient. If they agree, tick **Patient agreed to this booking**. You cannot book without it. There is no code to type.
+4. Read the sentence under the tick to the patient: you book for them, an account is made for a new number, their name, number and problem go to Jansetu and the doctor, and you can see the prescription (not the diagnosis) for 90 days. If they agree, tick **Patient agreed to this booking**. You cannot book without it. There is no code to type.
 5. Tap **Next: choose the doctor**. Doctors near your pharmacy are shown first (**Near you**, then **Same city**). Use **Speciality**, **How** and **From day** to narrow the list.
 6. Tap **Choose** next to a doctor, then tap a free time.
 7. Choose how the consultation happens: **Video call**, **Phone call** or **At the clinic**. For video or phone, choose where the patient joins: **on this pharmacy’s device** or **on the patient’s own phone**.
-8. Choose the **Language the patient speaks**. A coupon and a few words about the problem are optional.
+8. Choose the **Language the patient speaks**. A coupon and a few words about the problem are optional. With a coupon, the price shown first is before the coupon; the coupon is checked when you pay, and you then see the price with it.
 9. Tap **Next: check the price**. Check the details, the price and your wallet balance with the patient.
 10. Tap **Pay … from wallet**. You see **Booked** with a **booking reference**. Collect the amount from the patient.
 
@@ -284,7 +284,7 @@ Booking for patients may not be switched on for your pharmacy yet. Then the page
 **Wallet** shows the money in your Jansetu wallet. Bookings for patients are paid from it. Refunds of cancelled bookings come back to it.
 
 - **Add money**: type the **Amount to add (₹)** and tap **Top up**. Pay by card or UPI on the Razorpay page. When it is done you see "… was added to your wallet."
-- If you closed the payment page or lost the connection, the top-up shows under **Top-ups not confirmed yet**. Tap **Check my top-up**. If you paid, the money is added once.
+- If you closed the payment page or lost the connection, the top-up shows under **Top-ups not confirmed yet**. Tap **Check my top-up**. If you paid, the money is added once. If it says "Not paid yet" and you did not pay, tap **Remove from this list**. If the payment page did not open at all, no money was taken: just try again.
 - **Wallet history** shows every top-up, booking payment and refund. Money in shows with **+**, money out with **−**.
 - **On hold**: the wallet cannot pay for bookings. Money can still be added. Contact Jansetu support.
 - **Owed to Jansetu**: a card payment was disputed. The next money you add clears this first. Contact Jansetu support.

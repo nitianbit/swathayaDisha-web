@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
   ASSISTED_GENDERS, ASSISTED_MODE_LABEL, ASSISTED_RELATIONS, assistedRefusal, canonicalPhone, CONSENT_STATEMENT, CONSENT_STATEMENT_LANGUAGE,
-  CONSENT_STATEMENT_VERSION, EMPTY_PATIENT, familyBookedBefore, formatSlotDate, isAssistedLimit, isSwitchedOff, istToday, joinWords,
+  CONSENT_STATEMENT_VERSION, EMPTY_PATIENT, familyBookedBefore, formatSlotDate, isSwitchedOff, istToday, joinWords, refusedBeforeWriting, supportedModes,
   MAX_CONCERN, MAX_PERSON_NAME, PATIENT_LANGUAGES, patientBody, patientProblems, pharmacyAssistedApi, SWITCHED_OFF_MESSAGE, walletBalancePaise,
   walletState, type AssistedDoctor, type AssistedGender, type AssistedMode, type AssistedRelation, type AssistedSlot, type BookedConsultation,
   type ConsultationReceipt, type ConsultationRequest, type JoinOn, type PatientDraft, type PatientLookup, type Refusal,
@@ -37,7 +37,9 @@ export function BookConsultationScreen() {
 }
 
 /** What the screen shows about a booking being sent (kept in session memory with the request, never in storage). */
-interface Summary { patient: string; doctor: string; date: string; time: string; mode: AssistedMode; joinOn?: JoinOn; priceMinor: number; couponCode?: string }
+interface Summary { patient: string; doctor: string; date: string; time: string; mode: AssistedMode; joinOn?: JoinOn; priceMinor: number; couponCode?: string;
+  /** The price came from the server's answer with the coupon applied (PRICE_CHANGED), not from the doctor's fee. */
+  couponChecked?: boolean }
 interface PendingBooking { request: ConsultationRequest; summary: Summary }
 interface Done { summary: Summary; ref?: string; paidMinor?: number; replayed: boolean; newAccount?: boolean }
 
@@ -198,15 +200,16 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   const slot: AssistedSlot | null = (doctor && slots.data?.slots.find((s) => s.slotId === slotId)) || null;
   const slotDays = useMemo(() => {
     const days = new Map<string, AssistedSlot[]>();
-    for (const s of slots.data?.slots ?? []) days.set(s.date, [...(days.get(s.date) ?? []), s]);
+    // A time offered only in a mode the booking cannot use (e.g. chat) is not shown.
+    for (const s of slots.data?.slots ?? []) if (supportedModes(s.modes, modeFilter).length) days.set(s.date, [...(days.get(s.date) ?? []), s]);
     return [...days];
-  }, [slots.data]);
-  const modes: AssistedMode[] = slot ? slot.modes.filter((m) => !modeFilter || m === modeFilter) : [];
+  }, [slots.data, modeFilter]);
+  const modes: AssistedMode[] = slot ? supportedModes(slot.modes, modeFilter) : [];
 
   function chooseDoctor(id: string) { setDoctorId(id); setSlotId(null); setMode(''); setJoinOn(''); setVisitErrors({}); setRefused(null); }
   function chooseSlot(s: AssistedSlot) {
     setSlotId(s.slotId);
-    const m = s.modes.filter((x) => !modeFilter || x === modeFilter);
+    const m = supportedModes(s.modes, modeFilter);
     setMode(m.length === 1 ? m[0]! : '');
     setVisitErrors({});
     setRefused(null);
@@ -221,7 +224,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     else if (!mode) errs.mode = 'Choose how the consultation happens.';
     if (mode && mode !== 'in-person') {
       if (!joinOn) errs.joinOn = 'Choose where the patient joins.';
-      if (joinOn === 'patient_phone' && joinPhone.trim() && !canonicalPhone(joinPhone)) errs.joinPhone = 'Enter a valid 10-digit mobile number, or leave it empty.';
+      if (mode === 'call' && joinOn === 'patient_phone' && joinPhone.trim() && !canonicalPhone(joinPhone)) errs.joinPhone = 'Enter a valid 10-digit mobile number, or leave it empty.';
     }
     if (!language) errs.language = 'Choose the language the patient speaks.';
     if (concern.trim().length > MAX_CONCERN) errs.concern = `Use at most ${MAX_CONCERN} characters.`;
@@ -232,7 +235,8 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     // The fee as the doctor's own slot read says (fresher than the list); the server still fences it (PRICE_CHANGED).
     const price = priceMinor ?? slots.data?.doctor.feeMinor ?? doctor.feeMinor;
     const join = mode === 'in-person' ? undefined
-      : { on: joinOn as JoinOn, ...(joinOn === 'patient_phone' && joinPhone.trim() ? { phone: canonicalPhone(joinPhone)! } : {}) };
+      // The "number to call" field is shown (and sent) only for a phone call on the patient's phone.
+      : { on: joinOn as JoinOn, ...(mode === 'call' && joinOn === 'patient_phone' && joinPhone.trim() ? { phone: canonicalPhone(joinPhone)! } : {}) };
     const requestKey = newRequestKey();
     const request: ConsultationRequest = {
       requestKey, phone: lookup.phone, ...patientBody({ ...patient, phone: lookup.phone }),
@@ -271,10 +275,14 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
       setNotice('This booking was given up earlier, so nothing was booked or charged with it. Book again if the patient still wants it.');
       return;
     }
-    // A limit refused the only attempt before anything was written (§19.2 item 9): nothing was booked.
-    if (r.kind === 'unknown' && sole && isAssistedLimit(r.error)) {
+    // A limit, the switch, the indexes or customer linking refused the only attempt before any booking write
+    // (`refusedBeforeWriting`): nothing was booked. Paying again later is a new request.
+    if (r.kind === 'unknown' && sole && refusedBeforeWriting(r.error)) {
       settle(p.requestKey);
-      setRefused(assistedRefusal(r.error));
+      const why = assistedRefusal(r.error);
+      if (why.kind === 'off') { setOff(true); setReview(null); return; }
+      setRefused(why);
+      rotateKey();
       return;
     }
     if (r.kind === 'refused') {
@@ -290,11 +298,16 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
       // 'price', 'topup', 'wallet': the review stays, with what to do next; paying again is a new request (a new key).
       if (why.kind === 'topup' || why.kind === 'wallet') {
         void queryClient.invalidateQueries({ queryKey: ['pharmacy-wallet', pharmacyId] });
-        const requestKey = newRequestKey();
-        setReview((v) => (v ? { ...v, requestKey, request: { ...v.request, requestKey } } : v));
+        rotateKey();
       }
     }
   }
+
+  /** The review stays, but paying again is a new request (a new key). */
+  const rotateKey = () => {
+    const requestKey = newRequestKey();
+    setReview((v) => (v ? { ...v, requestKey, request: { ...v.request, requestKey } } : v));
+  };
 
   async function pay() {
     if (!review) return;
@@ -312,7 +325,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     if (!review) return;
     const requestKey = newRequestKey();
     setRefused(null);
-    setReview({ requestKey, request: { ...review.request, requestKey, acceptedPriceMinor: priceMinor }, summary: { ...review.summary, priceMinor } });
+    setReview({ requestKey, request: { ...review.request, requestKey, acceptedPriceMinor: priceMinor }, summary: { ...review.summary, priceMinor, couponChecked: true } });
   }
 
   async function giveUp(p: PendingOp<PendingBooking>) {
@@ -327,7 +340,10 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
         refreshAfterBooking();
         return;
       }
+      // Only `abandoned` means given up; any other answer leaves it unknown (the panel stays).
+      if (r.state !== 'abandoned') { setResendError('It could not be given up yet. Check whether it was recorded, then try again.'); return; }
       settle(p.requestKey);
+      setReview(null);
       setNotice('Given up: nothing was booked or charged with that request, and it can never be booked now. You can book again.');
     } catch (err) {
       setResendError(assistedRefusal(err).message);
@@ -354,6 +370,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
             }
             if (r.state === 'abandoned') {
               settle(op.requestKey);
+              setReview(null);
               setNotice('That booking was given up, so nothing was booked or charged with it. You can book again.');
               return null;
             }
@@ -459,13 +476,13 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
               {lookup.result.exists && family.isPending && <span className="ws-muted">Looking for family members you booked for before…</span>}
 
               {patient.who === 'self' && (
-                <TextField label="Patient’s full name" value={patient.name} maxLength={MAX_PERSON_NAME} error={patientErrors.name}
+                <TextField label="Patient’s full name" autoComplete="off" value={patient.name} maxLength={MAX_PERSON_NAME} error={patientErrors.name}
                   hint="Type the name the patient tells you." onChange={(e) => set('name', e.target.value)} />
               )}
               {patient.who === 'family' && (
                 <>
                   <div className="rx-form-row">
-                    <TextField label="Family member’s full name" value={patient.name} maxLength={MAX_PERSON_NAME} error={patientErrors.name}
+                    <TextField label="Family member’s full name" autoComplete="off" value={patient.name} maxLength={MAX_PERSON_NAME} error={patientErrors.name}
                       onChange={(e) => set('name', e.target.value)} />
                     <div className="j-field">
                       <label htmlFor="pt-relation">Relation to the phone’s owner</label>
@@ -493,7 +510,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
                 </>
               )}
               {patient.who !== 'self' && (
-                <TextField label="Phone owner’s name (optional)" value={patient.holderName} maxLength={MAX_PERSON_NAME} error={patientErrors.holderName}
+                <TextField label="Phone owner’s name (optional)" autoComplete="off" value={patient.holderName} maxLength={MAX_PERSON_NAME} error={patientErrors.holderName}
                   hint="Only used the first time your pharmacy books on this number." onChange={(e) => set('holderName', e.target.value)} />
               )}
 
@@ -634,7 +651,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
                     <TextField label="Coupon code (optional)" value={coupon} error={visitErrors.coupon} maxLength={50}
                       hint="Only if the patient has one." onChange={(e) => setCoupon(e.target.value)} />
                   </div>
-                  <TextArea label="What is the problem? (optional)" value={concern} maxLength={MAX_CONCERN} error={visitErrors.concern}
+                  <TextArea label="What is the problem? (optional)" autoComplete="off" value={concern} maxLength={MAX_CONCERN} error={visitErrors.concern}
                     hint="A few words for the doctor, for example “fever for 3 days”." onChange={(e) => setConcern(e.target.value)} />
                 </>
               )}
@@ -676,6 +693,7 @@ function ReviewAndPay({ pharmacyId, review, busy, refused, onPay, onBack, onNewP
       <h2 id="pay-h">3. Check and pay</h2>
       <div className="confirm" role="group" aria-label="Check and pay">
         <SummaryList s={s} />
+        {s.couponCode && !s.couponChecked && <p className="ws-muted">Price before the coupon; the coupon is checked when you pay.</p>}
         <p><strong>How the patient joins:</strong> {joinWords(s.mode, s.joinOn)}</p>
         {wallet.isPending ? <Loading label="Reading your wallet…" />
           : wallet.isError ? <ErrorState message={assistedRefusal(wallet.error).message} onRetry={() => void wallet.refetch()} />

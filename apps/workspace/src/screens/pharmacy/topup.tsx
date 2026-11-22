@@ -84,8 +84,9 @@ async function payTopup(api: ApiClient, order: TopupOrder): Promise<TopupOutcome
   let result: CheckoutResult;
   try {
     result = await checkout(order);
-  } catch (err) {
-    return { kind: 'unknown', message: err instanceof Error ? err.message : 'Could not open the payment page.' };
+  } catch {
+    // The Checkout script did not load, so the payment page never opened: nothing can have been paid on it.
+    return { kind: 'closed', message: NOT_OPENED };
   }
   if (result.kind === 'paid') {
     try {
@@ -97,6 +98,8 @@ async function payTopup(api: ApiClient, order: TopupOrder): Promise<TopupOutcome
   return checkTopup(api, order.paymentTransactionId);
 }
 
+const NOT_OPENED = 'The payment page didn’t open. No money was taken.';
+const UNPAID_WORDS = 'Not paid yet. If you paid, wait a minute and check again. If you did not pay, you can remove it from this list.';
 const pendingSlot = (pharmacyId: string) => `wallet-topups:${pharmacyId}`;
 const infoSlot = (pharmacyId: string) => `wallet-topup-info:${pharmacyId}`;
 type TopupInfo = Record<string, { amount: number; at: number }>;
@@ -169,7 +172,7 @@ export function TopUpForm({ pharmacyId, suggested, onCredited }: { pharmacyId: s
           setAmount('');
           setNote({ tone: 'ok', text: `${formatRupees(rupees)} was added to your wallet.` });
           onCredited?.();
-        } else if (outcome.kind === 'closed') setNote({ tone: 'error', text: outcome.message });
+        } else if (outcome.kind === 'closed') setNote({ tone: outcome.message === NOT_OPENED ? 'warn' : 'error', text: outcome.message });
         else if (outcome.kind === 'unpaid') {
           setNote({ tone: 'warn', text: 'The payment was not completed, so no money was added. If you did pay, tap “Check my top-up” below in a minute.' });
         } else {
@@ -213,7 +216,7 @@ function PendingTopups({ pharmacyId, pending }: { pharmacyId: string; pending: R
         if (outcome.kind === 'credited' || outcome.kind === 'closed') pending.remove(id);
         setNotes((n) => ({ ...n, [id]: outcome.kind === 'credited' ? { tone: 'ok', text: `${amount ? formatRupees(amount) : 'The top-up'} was added to your wallet.` }
           : outcome.kind === 'closed' ? { tone: 'error', text: outcome.message }
-          : outcome.kind === 'unpaid' ? { tone: 'warn', text: 'Not paid yet. If you paid, wait a minute and check again.' }
+          : outcome.kind === 'unpaid' ? { tone: 'warn', text: UNPAID_WORDS }
           : { tone: 'warn', text: `Could not check just now: ${outcome.message}` } }));
       });
     } catch (err) {
@@ -235,6 +238,13 @@ function PendingTopups({ pharmacyId, pending }: { pharmacyId: string; pending: R
               <span>{info ? `${formatRupees(info.amount)}, started ${formatDateTime(new Date(info.at).toISOString())}` : 'A top-up started earlier on this device'}</span>
               <Button variant="secondary" busy={checking === id} disabled={busy && checking !== id} onClick={() => void check(id)}>Check my top-up</Button>
               {notes[id] && <Alert tone={notes[id].tone}>{notes[id].text}</Alert>}
+              {notes[id]?.text === UNPAID_WORDS && (
+                // Not paid when checked: it may be dropped from this device. A payment captured later is still found and
+                // credited by Jansetu's own payment check (the recovery sweep), so nothing is lost by removing it here.
+                <Button variant="ghost" disabled={busy} onClick={() => { pending.remove(id); setNotes((n) => { const { [id]: _gone, ...rest } = n; return rest; }); }}>
+                  Remove from this list
+                </Button>
+              )}
             </li>
           );
         })}

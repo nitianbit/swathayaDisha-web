@@ -42,16 +42,19 @@ export const PATIENT_LANGUAGES: readonly { code: string; label: string }[] = [
   { code: 'hi', label: 'Hindi' }, { code: 'en', label: 'English' }, { code: 'bn', label: 'Bengali' }, { code: 'mr', label: 'Marathi' },
   { code: 'te', label: 'Telugu' }, { code: 'ta', label: 'Tamil' }, { code: 'gu', label: 'Gujarati' }, { code: 'kn', label: 'Kannada' },
   { code: 'ml', label: 'Malayalam' }, { code: 'or', label: 'Odia' }, { code: 'pa', label: 'Punjabi' },
+  // The owner's list (design §11.1): codes of 2–3 letters, as `preferredLanguage` requires. Nagamese has no code yet.
+  { code: 'as', label: 'Assamese' }, { code: 'lus', label: 'Mizo' }, { code: 'mni', label: 'Manipuri' }, { code: 'kha', label: 'Khasi' },
+  { code: 'grt', label: 'Garo' }, { code: 'ne', label: 'Nepali' }, { code: 'brx', label: 'Bodo' }, { code: 'trp', label: 'Kokborok' },
 ];
 
 /**
  * The consent the pharmacy attests (`consent: { agreed, statementVersion, statementLanguage }`). The version names the
  * exact sentence shown next to the tick, so a later change of words is a new version.
  */
-export const CONSENT_STATEMENT_VERSION = 'web-pharmacy-v1';
+export const CONSENT_STATEMENT_VERSION = 'web-pharmacy-v2';
 export const CONSENT_STATEMENT_LANGUAGE = 'en';
 export const CONSENT_STATEMENT =
-  'The patient (or the family member with them) agreed that this pharmacy books this consultation for them, and that their name and phone number are shared with Jansetu and the doctor.';
+  'The patient (or a family member with them) agreed that this pharmacy books this consultation for them on Jansetu; that an account is made for this number if it has none; that their name, phone number and the problem they describe are shared with Jansetu and the doctor; and that this pharmacy can see the prescription (medicines, advice and tests, not the diagnosis) for 90 days.';
 
 // ── Shapes (assisted/pharmacyCommands, consultations, bookerView; pharmacyWallet/services) ──
 
@@ -216,7 +219,7 @@ export function pharmacyAssistedApi(c: ApiClient) {
     /** One doctor's bookable times over `days` days (default 7) from `from` (default today). 404 DOCTOR_NOT_FOUND when not bookable. */
     doctorSlots: (doctorId: string, q: DoctorSlotsQuery = {}) =>
       c.get<DoctorSlots>(`/pharmacy-assisted/doctors/${idOf(doctorId, 'doctor')}/slots`, { query: { ...q } }),
-    book: (body: ConsultationRequest) => c.post<ConsultationReceipt>('/pharmacy-assisted/consultations', { body }),
+    book: (body: ConsultationRequest) => c.post<ConsultationReceipt>('/pharmacy-assisted/consultations', { body, timeoutMs: SLOW_WRITE_TIMEOUT_MS }),
     byKey: (key: string) => c.get<ByKeyAnswer>(`/pharmacy-assisted/bookings/by-key/${keyOf(key)}`),
     abandon: (key: string) => c.post<ByKeyAnswer>(`/pharmacy-assisted/bookings/by-key/${keyOf(key)}/abandon`),
     cancel: (id: string, body: { reason?: string; expectedUpdatedAt?: string }) =>
@@ -228,7 +231,7 @@ export function pharmacyAssistedApi(c: ApiClient) {
     /** The dispensing copy PDF, fetched with the pharmacy token. */
     file: (storedUrl: string, signal?: AbortSignal) => c.blob('/file/fetch', { query: { url: fetchableFileUrl(storedUrl) }, signal }),
     /** Phase 0 (§18.3): a medicine order from the booking's prescription, exactly once per request key. */
-    orderFromPrescription: (body: RxOrderRequest) => c.post<RxOrderAnswer>('/pharmacy-orders', { body }),
+    orderFromPrescription: (body: RxOrderRequest) => c.post<RxOrderAnswer>('/pharmacy-orders', { body, timeoutMs: SLOW_WRITE_TIMEOUT_MS }),
   };
 }
 
@@ -314,8 +317,16 @@ export function movementLabel(m: WalletMovement): string {
 }
 
 /** Whether the booking pharmacy may cancel it now: an assisted booking that is booked and has not started (§8.7). */
+/** An assisted booking (phase 1a): the booker view marks it with `source: 'pharmacy_assisted'` and its `assisted` block. */
+export const isAssistedBooking = (b: BookedConsultation) => b.source === 'pharmacy_assisted' || !!b.assisted?.shortRef;
+
+/** The modes the create accepts (`consultationMode`); a slot may also list others (e.g. chat), which are left out. */
+export function supportedModes(modes: readonly string[] | undefined, only?: AssistedMode | ''): AssistedMode[] {
+  return (modes ?? []).filter((m): m is AssistedMode => m in ASSISTED_MODE_LABEL && (!only || m === only));
+}
+
 export function canBookerCancel(b: BookedConsultation, now = new Date()): boolean {
-  if (b.source !== 'pharmacy_assisted' && !b.assisted?.shortRef) return false;
+  if (!isAssistedBooking(b)) return false;
   if (b.status !== 'confirmed' && b.status !== 'pending') return false;
   const at = appointmentInstant(String(b.bookingDate ?? ''), String(b.bookingTime ?? ''));
   return !!at && at.at.getTime() > now.getTime();
@@ -432,6 +443,19 @@ export function assistedRefusal(err: unknown): Refusal {
  * (`definitelyNotRecorded`) leaves every 429 unknown, so the booking screen settles this one case itself.
  */
 export const isAssistedLimit = (err: unknown) => err instanceof ApiError && err.status === 429 && err.code === 'ASSISTED_LIMIT_REACHED';
+
+/**
+ * Refusals the create answers before any booking write (r4 `createPharmacyConsultation`): the switch
+ * (`assertPharmacyAssistedOn`, first line), the indexes (`assertAssistedIndexes`, before the replay read), customer
+ * linking (`customerPhoneIndexReady`, before the transaction), and the limits. For a sole first attempt each one means
+ * "not booked". A 503 without one of these codes (a proxy, a timeout) stays unknown.
+ */
+const REFUSED_BEFORE_WRITING_503 = ['ASSISTED_BOOKING_DISABLED', 'INDEXES_OUTDATED', 'CUSTOMER_LINKING_UNAVAILABLE'];
+export const refusedBeforeWriting = (err: unknown) =>
+  isAssistedLimit(err) || (err instanceof ApiError && err.status === 503 && REFUSED_BEFORE_WRITING_503.includes(err.code ?? ''));
+
+/** The create and the order from a prescription do more work than a read: a longer client time limit. */
+export const SLOW_WRITE_TIMEOUT_MS = 60_000;
 
 // ── The booking form ──
 

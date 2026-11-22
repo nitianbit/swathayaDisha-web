@@ -170,7 +170,7 @@ export type {
 export {
   ASSISTED_GENDERS, ASSISTED_KEY_PATTERN, ASSISTED_RELATIONS, assistedRefusal, BOOKING_STATUS_LABEL, bookingStatusLabel, canBookerCancel, canonicalPhone,
   CONSENT_STATEMENT, CONSENT_STATEMENT_LANGUAGE, CONSENT_STATEMENT_VERSION, ASSISTED_MODE_LABEL, EMPTY_PATIENT, familyBookedBefore, formatSlotDate,
-  isAssistedLimit, isSwitchedOff, joinWords, MAX_BOOKER_CANCEL_REASON, MAX_CONCERN, MAX_PERSON_NAME, movementLabel, PATIENT_LANGUAGES,
+  isAssistedBooking, isAssistedLimit, isSwitchedOff, refusedBeforeWriting, SLOW_WRITE_TIMEOUT_MS, supportedModes, joinWords, MAX_BOOKER_CANCEL_REASON, MAX_CONCERN, MAX_PERSON_NAME, movementLabel, PATIENT_LANGUAGES,
   patientBody, patientProblems, pharmacyAssistedApi, pharmacyWalletApi, rxOrderProblems, signedPaiseOf, SWITCHED_OFF_MESSAGE, walletBalancePaise, walletState,
 } from './assisted.ts';
 export type {

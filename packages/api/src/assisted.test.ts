@@ -1,5 +1,6 @@
 import { ApiError, createApiClient } from './client.ts';
 import {
+  CONSENT_STATEMENT, CONSENT_STATEMENT_VERSION, isAssistedBooking, PATIENT_LANGUAGES, refusedBeforeWriting, SLOW_WRITE_TIMEOUT_MS, supportedModes,
   assistedRefusal, canBookerCancel, canonicalPhone, EMPTY_PATIENT, familyBookedBefore, formatSlotDate, isAssistedLimit, isSwitchedOff, joinWords,
   movementLabel, patientBody, patientProblems, pharmacyAssistedApi, pharmacyWalletApi, rxOrderProblems, signedPaiseOf, SWITCHED_OFF_MESSAGE,
   walletBalancePaise, walletState, type BookedConsultation, type PatientDraft,
@@ -208,5 +209,49 @@ describe('booked consultations', () => {
     expect(rxOrderProblems([{ medicineId: '', qty: '' }])).toContain('at least one');
     expect(rxOrderProblems([{ medicineId: 'm', qty: '0' }])).toContain('whole number');
     expect(rxOrderProblems([{ medicineId: 'm', qty: '2' }, { medicineId: '', qty: '' }])).toBeNull();
+  });
+});
+
+describe('WQ12 fixes', () => {
+  it('offers only the modes the create accepts (chat is left out), within the filter', () => {
+    expect(supportedModes(['chat', 'video', 'call'])).toEqual(['video', 'call']);
+    expect(supportedModes(['chat'])).toEqual([]);
+    expect(supportedModes(['video', 'in-person'], 'in-person')).toEqual(['in-person']);
+    expect(supportedModes(undefined)).toEqual([]);
+  });
+  it('a sole first attempt refused by a limit or a coded 503 recorded nothing; a code-less 503 stays unknown', () => {
+    expect(refusedBeforeWriting(new ApiError(429, 'x', 'ASSISTED_LIMIT_REACHED'))).toBe(true);
+    for (const code of ['ASSISTED_BOOKING_DISABLED', 'INDEXES_OUTDATED', 'CUSTOMER_LINKING_UNAVAILABLE']) {
+      expect(refusedBeforeWriting(new ApiError(503, 'x', code))).toBe(true);
+    }
+    expect(refusedBeforeWriting(new ApiError(503, 'x'))).toBe(false);
+    expect(refusedBeforeWriting(new ApiError(502, 'x', 'INDEXES_OUTDATED'))).toBe(false);
+    expect(refusedBeforeWriting(new ApiError(0, 'x', 'NETWORK'))).toBe(false);
+  });
+  it('marks assisted rows by source or their assisted block', () => {
+    expect(isAssistedBooking({ _id: '1', status: 'confirmed', source: 'pharmacy_assisted' })).toBe(true);
+    expect(isAssistedBooking({ _id: '1', status: 'confirmed', source: 'self', assisted: { shortRef: 'K7QXM2PA' } })).toBe(true);
+    expect(isAssistedBooking({ _id: '1', status: 'confirmed', source: 'self' })).toBe(false);
+  });
+  it('consent v2 names the account, the shared details and the 90-day prescription view', () => {
+    expect(CONSENT_STATEMENT_VERSION).toBe('web-pharmacy-v2');
+    expect(CONSENT_STATEMENT_VERSION.length).toBeLessThanOrEqual(40); // backend statementVersion max 40
+    expect(CONSENT_STATEMENT).toContain('an account is made for this number if it has none');
+    expect(CONSENT_STATEMENT).toContain('for 90 days');
+  });
+  it('every patient language code is one the backend accepts (2–3 lower-case letters), once each', () => {
+    const codes = PATIENT_LANGUAGES.map((l) => l.code);
+    expect(codes.every((c) => /^[a-z]{2,3}$/.test(c))).toBe(true);
+    expect(new Set(codes).size).toBe(codes.length);
+    for (const c of ['as', 'lus', 'mni', 'ne', 'bn', 'or', 'kha', 'grt', 'brx']) expect(codes).toContain(c);
+  });
+  it('the create and the order from a prescription get a 60 s time limit', async () => {
+    let signal: AbortSignal | undefined;
+    const client = createApiClient({ baseUrl: '', getToken: () => 't', timeoutMs: 5,
+      fetchImpl: (_i, init) => { signal = init?.signal ?? undefined; return new Promise((r) => setTimeout(() => r(json(201, { success: true, data: {} })), 30)); } });
+    await expect(pharmacyAssistedApi(client).book({} as never)).resolves.toEqual({});
+    expect(signal?.aborted).toBe(false);
+    await expect(pharmacyAssistedApi(client).orderFromPrescription({} as never)).resolves.toEqual({});
+    expect(SLOW_WRITE_TIMEOUT_MS).toBe(60_000);
   });
 });
