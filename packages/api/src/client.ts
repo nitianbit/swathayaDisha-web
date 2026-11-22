@@ -11,12 +11,18 @@ export class ApiError extends Error {
   readonly code: string | undefined;
   /** Seconds to wait before trying again (429 `Retry-After`), when the server says. */
   readonly retryAfter: number | undefined;
-  constructor(status: number, message: string, code?: string, retryAfter?: number) {
+  /** WQ12: which limit was hit (429 `ASSISTED_LIMIT_REACHED` names it), when the server says. */
+  readonly limit: string | undefined;
+  /** WQ12: the safe details some refusals carry (409 `PRICE_CHANGED`: the current price in paise). */
+  readonly details: Record<string, unknown> | undefined;
+  constructor(status: number, message: string, code?: string, retryAfter?: number, extra?: { limit?: string; details?: Record<string, unknown> }) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.retryAfter = retryAfter;
+    this.limit = extra?.limit;
+    this.details = extra?.details;
   }
 }
 
@@ -157,14 +163,16 @@ export function createApiClient(options: ApiClientOptions) {
         }
         if (res.status === 401 && token) options.onUnauthorized?.(token);
         const text = await res.text().catch((err: unknown) => { throw translate(err); });
-        const body = parseJson(text) as { message?: unknown; code?: unknown; retryAfter?: unknown } | null;
+        const body = parseJson(text) as { message?: unknown; code?: unknown; retryAfter?: unknown; limit?: unknown; details?: unknown } | null;
         const message = typeof body?.message === 'string' && body.message ? body.message : `Request failed (${res.status})`;
         // A cross-origin build cannot read Retry-After (not CORS-exposed): the JSON body carries the same wait.
         const header = Number(res.headers.get('retry-after'));
         const fromBody = typeof body?.retryAfter === 'number' ? body.retryAfter : NaN;
         const wait = Number.isFinite(header) && header > 0 ? header : fromBody;
+        const details = body?.details && typeof body.details === 'object' && !Array.isArray(body.details) ? body.details as Record<string, unknown> : undefined;
         throw new ApiError(res.status, message, typeof body?.code === 'string' ? body.code : undefined,
-          res.status === 429 && Number.isFinite(wait) && wait > 0 ? Math.ceil(wait) : undefined);
+          res.status === 429 && Number.isFinite(wait) && wait > 0 ? Math.ceil(wait) : undefined,
+          { ...(typeof body?.limit === 'string' ? { limit: body.limit } : {}), ...(details ? { details } : {}) });
       }
       try {
         return await read(res);

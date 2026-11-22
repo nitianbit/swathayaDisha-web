@@ -49,7 +49,8 @@ function storage(): Storage | null {
  * WQ11d: session-memory slots that may survive a reload as a list of record ids only (nothing else: no names, no
  * patient data), e.g. the import previews discarded on this device.
  */
-export const ID_LIST_SLOTS = ['stock-import-discarded:'] as const;
+// WQ12: the pharmacy's own unfinished wallet top-ups (payment record ids only), so "Check my top-up" survives a reload.
+export const ID_LIST_SLOTS = ['stock-import-discarded:', 'wallet-topups:'] as const;
 export const isIdListSlot = (slot: string) => ID_LIST_SLOTS.some((p) => slot.startsWith(p));
 const IDS_PREFIX = 'sd:ids:';
 const OBJECT_ID = /^[0-9a-fA-F]{24}$/;

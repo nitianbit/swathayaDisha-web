@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { Banknote, Landmark, Wallet } from 'lucide-react';
 import { CalendarSearch, Store } from 'lucide-react';
+import { CalendarPlus } from 'lucide-react';
 import { hasGlobalScope, holdsAny, type PartnerKind, type PartnerPermission } from '@jansetu/api';
 import type { StaffRole, StaffUser } from './session.tsx';
 import { AdminLabBookingsScreen } from './screens/admin/AdminLabBookingsScreen.tsx';
@@ -46,6 +47,10 @@ import { AddStockScreen } from './screens/pharmacy/AddStockScreen.tsx';
 import { ImportScreen } from './screens/pharmacy/ImportScreen.tsx';
 import { ImportStockScreen } from './screens/pharmacy/ImportStockScreen.tsx';
 import { SuppliersScreen } from './screens/pharmacy/SuppliersScreen.tsx';
+import { BookConsultationScreen } from './screens/pharmacy/BookConsultationScreen.tsx';
+import { BookedConsultationScreen } from './screens/pharmacy/BookedConsultationScreen.tsx';
+import { BookedConsultationsScreen } from './screens/pharmacy/BookedConsultationsScreen.tsx';
+import { WalletScreen } from './screens/pharmacy/WalletScreen.tsx';
 import { Truck } from 'lucide-react';
 import { PartnerFinanceScreen } from './screens/finance/PartnerFinanceScreen.tsx';
 import { PayoutsQueueScreen } from './screens/finance/PayoutsQueueScreen.tsx';
@@ -108,6 +113,20 @@ export const PAGES: readonly WorkspacePage[] = [
   {
     path: '/doctor/earnings', roles: ['specialist'], element: <EarningsScreen />,
     nav: { label: 'Earnings', icon: Wallet, section: 'Doctor' },
+  },
+  // WQ12: assisted booking for walk-in patients (`/pharmacy-assisted`, `/pharmacy-bookings`) and the wallet (`/pharmacy-wallet`).
+  {
+    path: '/pharmacy/book', roles: ['pharmacy'], element: <BookConsultationScreen />,
+    nav: { label: 'Book consultation', icon: CalendarPlus, section: 'Pharmacy' },
+  },
+  {
+    path: '/pharmacy/consultations', roles: ['pharmacy'], element: <BookedConsultationsScreen />,
+    nav: { label: 'Booked consultations', icon: CalendarCheck, section: 'Pharmacy' },
+  },
+  { path: '/pharmacy/consultations/:bookingId', roles: ['pharmacy'], element: <BookedConsultationScreen /> },
+  {
+    path: '/pharmacy/wallet', roles: ['pharmacy'], element: <WalletScreen />,
+    nav: { label: 'Wallet', icon: Wallet, section: 'Pharmacy' },
   },
   {
     path: '/pharmacy/orders', roles: ['pharmacy'], element: <OrdersScreen />,

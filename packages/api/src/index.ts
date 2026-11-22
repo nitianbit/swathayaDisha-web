@@ -166,3 +166,15 @@ export {
 export type {
   InstantMode as CustomerInstantMode, InstantPayment, InstantQuote, InstantSpeciality, InstantRequest, InstantStatus, InstantTarget, MoneySplit, NewInstantRequest, OnlineDoctor,
 } from './instantConsult.ts';
+// WQ12: assisted booking for walk-in patients (pharmacy), the booked list with the dispensing copy, and the wallet.
+export {
+  ASSISTED_GENDERS, ASSISTED_KEY_PATTERN, ASSISTED_RELATIONS, assistedRefusal, BOOKING_STATUS_LABEL, bookingStatusLabel, canBookerCancel, canonicalPhone,
+  CONSENT_STATEMENT, CONSENT_STATEMENT_LANGUAGE, CONSENT_STATEMENT_VERSION, ASSISTED_MODE_LABEL, EMPTY_PATIENT, familyBookedBefore, formatSlotDate,
+  isAssistedLimit, isSwitchedOff, joinWords, MAX_BOOKER_CANCEL_REASON, MAX_CONCERN, MAX_PERSON_NAME, movementLabel, PATIENT_LANGUAGES,
+  patientBody, patientProblems, pharmacyAssistedApi, pharmacyWalletApi, rxOrderProblems, signedPaiseOf, SWITCHED_OFF_MESSAGE, walletBalancePaise, walletState,
+} from './assisted.ts';
+export type {
+  AssistedDoctor, AssistedGender, AssistedPatient, AssistedRelation, BookedConsultation, BookingStatus as AssistedBookingStatus, ByKeyAnswer, CancelAnswer,
+  ConsultationReceipt, ConsultationRequest, AssistedMode, DispensingCopy, DoctorQuery, DoctorSlots, DoctorSlotsQuery, AssistedSlot, JoinOn, PatientDraft, PatientLookup, PharmacyWallet,
+  Refusal, RefusalKind, RxMedicine, RxOrderAnswer, RxOrderItem, RxOrderRequest, TopupCheck, TopupOrder, WalletMovement,
+} from './assisted.ts';

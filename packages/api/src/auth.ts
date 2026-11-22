@@ -157,7 +157,9 @@ export const EMAIL_NOT_REGISTERED_STAFF_MESSAGE =
   'No account uses this email. Sign in with your mobile number. To use email sign-in, ask the Jansetu team to add it to your account.';
 
 /** D4: once-only operations whose outcome a reloaded page never saw. */
-export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_create' | 'pharmacy_checkout' | 'lab_booking_create' | 'instant_request_create';
+export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_create' | 'pharmacy_checkout' | 'lab_booking_create' | 'instant_request_create'
+  // WQ12 (assisted phase 0, §18.2 item 9): a medicine order made from a booking's prescription.
+  | 'pharmacy_rx_order';
 
 /**
  * Abandons an unresolved request key on the server: afterwards the old request can never be performed, so a new one

@@ -1,6 +1,6 @@
 # Jansetu Workspace: Pharmacy Guide
 
-**What you can do here:** handle medicine orders, check prescriptions, add and import stock, look after your stock batches and suppliers, see what is running low, deal with held or recalled stock, and set your pharmacist.
+**What you can do here:** book doctor consultations for walk-in patients and pay from your Jansetu wallet, handle medicine orders, check prescriptions, add and import stock, look after your stock batches and suppliers, see what is running low, deal with held or recalled stock, and set your pharmacist.
 
 Website: **https://staff.swasthadisha.etryx.in**
 
@@ -16,7 +16,7 @@ Website: **https://staff.swasthadisha.etryx.in**
 
 No code? Wait for the timer, then tap **Resend code**. Typed the wrong number? Tap **Change number or email**.
 
-The menu is on the left, under **Pharmacy**: **Orders**, **Prescription review**, **Stock**, **Suppliers**, **Low stock**, **Quality** and **Settings**. To leave, tap **Sign out** at the bottom of the menu.
+The menu is on the left, under **Pharmacy**: **Book consultation**, **Booked consultations**, **Wallet**, **Orders**, **Prescription review**, **Stock**, **Suppliers**, **Low stock**, **Quality** and **Settings**. To leave, tap **Sign out** at the bottom of the menu.
 
 ---
 
@@ -232,6 +232,65 @@ Use **Show** to see **Active**, **Archived** or **All** suppliers.
 
 ---
 
+## 9. Book a consultation for a walk-in patient
+
+Many patients have no app or phone of their own. You can book a doctor for them at your counter. Jansetu takes the fee from your **Wallet**. You collect the same amount from the patient.
+
+Booking for patients may not be switched on for your pharmacy yet. Then the page says "Booking for patients is not switched on yet."
+
+1. Open **Book consultation**.
+2. Type the **Patient’s mobile number** and tap **Find**. One number can be shared by a whole family.
+   - If the number is on Jansetu, you see part of the account holder’s name (for example "Rina K."). This protects the patient.
+   - If the number is new, type it again in **Type the number again**.
+3. Under **Who is the patient?**, choose:
+   - **The phone’s owner**, and type the patient’s full name; or
+   - a family member you booked for before (shown by name); or
+   - **A family member**: type their name and choose the **Relation**. Gender and date of birth are optional.
+4. Ask the patient. If they agree, tick **Patient agreed to this booking**. You cannot book without it. There is no code to type.
+5. Tap **Next: choose the doctor**. Doctors near your pharmacy are shown first (**Near you**, then **Same city**). Use **Speciality**, **How** and **From day** to narrow the list.
+6. Tap **Choose** next to a doctor, then tap a free time.
+7. Choose how the consultation happens: **Video call**, **Phone call** or **At the clinic**. For video or phone, choose where the patient joins: **on this pharmacy’s device** or **on the patient’s own phone**.
+8. Choose the **Language the patient speaks**. A coupon and a few words about the problem are optional.
+9. Tap **Next: check the price**. Check the details, the price and your wallet balance with the patient.
+10. Tap **Pay … from wallet**. You see **Booked** with a **booking reference**. Collect the amount from the patient.
+
+**How the patient joins**
+- Video on your device: open **Booked consultations**, open the booking, and tap **Join call**. It appears 10 minutes before the time.
+- Video on the patient’s phone: the patient signs in to the Jansetu app with the booked number and taps Join.
+- Phone call: the doctor calls your pharmacy, or the patient’s number.
+- At the clinic: the patient goes to the doctor’s clinic at the booked time.
+
+**If something goes wrong**
+- "Your Jansetu wallet does not have enough money": tap **Top up now**, add money, then pay again.
+- "The price has changed": tell the patient the new price, then tap **Use the new price**.
+- "This time was just taken": choose another time.
+- "Your Jansetu wallet is on hold" or "owes money": contact Jansetu support.
+- "You have looked up many patients this hour": wait, then try again.
+- "The outcome of this request is not known yet": tap **Send the same request again**. The patient is never booked or charged twice.
+
+### Booked consultations
+
+**Booked consultations** lists everything you booked, newest first. Use **Status** to show one kind. Tap **Open** to see one booking.
+
+- **Cancel**: tap **Cancel this consultation**, then **Yes, cancel it**. You can cancel any time before it starts. The full amount comes back to your wallet. Give the patient their money back.
+- **Cancelled by patient**: the patient cancelled it. The money is back in your wallet.
+- **Prescription**: after the consultation you see the medicines, advice and tests. The diagnosis is never shown to pharmacies. Tap **Open the prescription copy** to see or print it.
+- **Make a medicine order from this prescription**: for each medicine, tap **Search**, **Choose** the one you will give and type the **Units**. Leave out any you do not have. Tap **Check the order**, then **Make the order**. It appears in **Orders**, for pickup and payment at your counter.
+
+---
+
+## 10. Wallet
+
+**Wallet** shows the money in your Jansetu wallet. Bookings for patients are paid from it. Refunds of cancelled bookings come back to it.
+
+- **Add money**: type the **Amount to add (₹)** and tap **Top up**. Pay by card or UPI on the Razorpay page. When it is done you see "… was added to your wallet."
+- If you closed the payment page or lost the connection, the top-up shows under **Top-ups not confirmed yet**. Tap **Check my top-up**. If you paid, the money is added once.
+- **Wallet history** shows every top-up, booking payment and refund. Money in shows with **+**, money out with **−**.
+- **On hold**: the wallet cannot pay for bookings. Money can still be added. Contact Jansetu support.
+- **Owed to Jansetu**: a card payment was disputed. The next money you add clears this first. Contact Jansetu support.
+
+---
+
 ## Good to know
 
 - Only the Jansetu team can create a pharmacy account or change your registered mobile number or email.
@@ -266,6 +325,9 @@ Find it in **Stock** and tap **Release…**.
 
 **How do I add a new supplier or new stock?**
 Suppliers: open **Suppliers** and tap **Add a supplier**. Stock: open **Stock** and tap **Add stock**, or **Import stock from a file** for many medicines at once.
+
+**The patient has no phone. Can I still book?**
+Yes. Use the number of a family member who came with them, choose **A family member**, and book the video call on your pharmacy’s device.
 
 **I was signed out suddenly.**
 Your session ended. You may have been idle a long time, or someone else signed in on this browser. Just sign in again.
