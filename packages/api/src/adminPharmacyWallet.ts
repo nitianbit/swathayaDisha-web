@@ -120,12 +120,12 @@ export async function findAdminTopup(fetchPage: (page: number) => Promise<Page<W
 export const latestAdminCredit = (rows: readonly WalletMovement[]): WalletMovement | null =>
   rows.find((m) => m.referenceType === 'topup') ?? null;
 
-/** The words when the fallback search did not find the credit. */
-export function topupNotFoundWords(s: { complete: boolean; searched: number }, canResend: boolean): string {
+/** The words when the credit was not found: by the exact by-key read (`exact`, WQ14 W3(c)), or by the fallback search. */
+export function topupNotFoundWords(s: { complete: boolean; searched: number; exact?: boolean }, canResend: boolean): string {
   if (!s.complete) return `Only the latest ${s.searched} movements were searched; the credit may be older. Ask the tech team before adding money again.`;
   return canResend
     ? 'Not added so far. It may still be on its way. Sending the same request again is safe: the money is never added twice.'
-    : 'Not found in the wallet history so far. It may still be on its way. Look at the history again in a minute before adding money again.';
+    : `Not found${s.exact ? '' : ' in the wallet history'} so far. It may still be on its way. Look at the history again in a minute before adding money again.`;
 }
 
 const TOPUP_WORDS: Readonly<Record<string, string>> = {

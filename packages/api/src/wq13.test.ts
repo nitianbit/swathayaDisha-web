@@ -134,22 +134,6 @@ describe('the typed-name edit (§17.4)', () => {
       .toEqual({ id: link, name: 'Rina K.', family: true, markerId: link });
     expect(typedNameTarget({ _id: BK, userId: ID, dependentId: null, patientName: 'Rina K.', holder: { pharmacyCustomerId: null, name: 'Rina K.' } })).toBeNull();
   });
-  it('review L3: reads the stored typed name by paging the list by id, never with the name in the address', async () => {
-    let n = 0;
-    const { client, calls } = setup(() => {
-      n += 1;
-      return n === 1
-        ? json(200, { success: true, data: [{ _id: 'f'.repeat(24), typedName: 'Other', userId: { _id: 'd'.repeat(24) } }], pagination: { page: 1, limit: 100, total: 2, totalPages: 2 } })
-        : json(200, { success: true, data: [{ _id: 'c'.repeat(24), typedName: 'Rina Kumari', userId: { _id: ID } }], pagination: { page: 2, limit: 100, total: 2, totalPages: 2 } });
-    });
-    await expect(pharmacyCustomersApi(client).storedTypedName(ID)).resolves.toEqual({ found: true, typedName: 'Rina Kumari' });
-    expect(calls.map((c) => c.url)).toEqual([
-      'https://api.example.test/api/v1/pharmacy-customers?page=1&limit=100',
-      'https://api.example.test/api/v1/pharmacy-customers?page=2&limit=100',
-    ]);
-    const none = setup(() => json(200, { success: true, data: [], pagination: { page: 1, limit: 100, total: 0, totalPages: 0 } }));
-    await expect(pharmacyCustomersApi(none.client).storedTypedName(ID)).resolves.toEqual({ found: false });
-  });
   it('says the refusals plainly', () => {
     expect(typedNameRefusal(err(404, 'CUSTOMER_NOT_LINKED'))).toBe('This patient is not linked to your pharmacy, so the name cannot be changed here.');
     expect(typedNameRefusal(err(400, 'VALIDATION_ERROR'))).toBe('Type a name of 1 to 200 characters.');

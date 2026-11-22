@@ -49,8 +49,12 @@ interface PharmacyBackend {
   accountNameShown: string | null;
   /** The next read of one booking fails (500). */
   failNextBookingRead: boolean;
-  /** Addresses of the customer-list reads (the stored typed-name check). */
+  /** Addresses of the customer-list reads (WQ13's typed-name check; WQ14 W2: never read). */
   customerReads: string[];
+  /** WQ14: how many times one booking was read (`GET /pharmacy-bookings/:id`). */
+  bookingReads: number;
+  /** r8 B6: `holder.typedName` (this pharmacy's own typed name) is in the booking; otherwise the key is absent (older backend). */
+  r8: boolean;
   slotReads: URL[];
   /** The doctor list's next slot is chat-only. */
   chatOnlyNext: boolean;
@@ -75,7 +79,7 @@ const SLOTS: Json[] = [
 async function mockPharmacy(page: Page, bookings: Json[] = [row()]): Promise<PharmacyBackend> {
   let seq = 0;
   const b: PharmacyBackend = {
-    bookings, moves: [], moveKeys: {}, loseNextMoveAnswer: false, refuseNextMove: null, names: [], nameIds: [], typed: {}, loseNextNameAnswer: false, accountNameShown: null, failNextBookingRead: false, customerReads: [], slotReads: [],
+    bookings, moves: [], moveKeys: {}, loseNextMoveAnswer: false, refuseNextMove: null, names: [], nameIds: [], typed: {}, loseNextNameAnswer: false, accountNameShown: null, failNextBookingRead: false, customerReads: [], bookingReads: 0, r8: false, slotReads: [],
     chatOnlyNext: false,
     bump: () => { b.bookings[0]!.updatedAt = new Date(Date.UTC(2026, 10, 22, 6, 0, 0, ++seq)).toISOString(); },
   };
@@ -83,7 +87,7 @@ async function mockPharmacy(page: Page, bookings: Json[] = [row()]): Promise<Pha
   const holderName = (x: Json) => b.accountNameShown ?? b.typed[String(x.userId)];
   const view = (x: Json): Json => ({
     ...x, patientName: x.dependentId ? x.patientName : holderName(x) ?? x.patientName,
-    ...(x.holder ? { holder: { ...(x.holder as Json), name: holderName(x) ?? (x.holder as Json).name } } : {}),
+    ...(x.holder ? { holder: { ...(x.holder as Json), name: holderName(x) ?? (x.holder as Json).name, ...(b.r8 ? { typedName: b.typed[USER] ?? null } : {}) } } : {}),
   });
   await page.route('**/api/v1/**', async (route) => {
     const req = route.request();
@@ -158,6 +162,7 @@ async function mockPharmacy(page: Page, bookings: Json[] = [row()]): Promise<Pha
     if (path === '/pharmacy-bookings') return json(route, 200, { success: true, data: b.bookings.map(view), pagination: { total: b.bookings.length, nextCursor: null } });
     const one = /^\/pharmacy-bookings\/(\w{24})$/.exec(path);
     if (one) {
+      b.bookingReads += 1;
       if (b.failNextBookingRead) { b.failNextBookingRead = false; return refuse(route, 500, 'INTERNAL', 'Something broke'); }
       const x = b.bookings.find((r) => r._id === one[1]);
       return x ? json(route, 200, { success: true, data: view(x) }) : refuse(route, 404, 'BOOKING_NOT_FOUND', 'Booking not found');
@@ -378,16 +383,38 @@ interface AdminBackend {
   byKeyReads: number;
   /** Adds `n` newer booking movements on top (so an older credit moves down the pages). */
   addNewer: (n: number) => void;
+  /** WQ14: the next credit is still finishing on the server (no answer, not committed) until `commitHeld`. */
+  holdNextTopup: boolean;
+  held: { key: string; body: Json } | null;
+  /** The held credit commits now, as the server would (same key and body: nothing more; another body: nothing). */
+  commitHeld: () => void;
+  /** WQ14: the by-key read answers this status (503 INDEXES_OUTDATED, 500) instead. */
+  byKeyFails: number | null;
 }
 
 async function mockAdmin(page: Page, init: Partial<Pick<AdminBackend, 'receivableMinor'>> = {}): Promise<AdminBackend> {
   const b: AdminBackend = {
     calls: [], walletPaise: 120_000, receivableMinor: init.receivableMinor ?? 0, credits: {}, loseNextTopupAnswer: false, noWalletFor: P2, byKeyRoute: false, byKeyReads: 0,
+    holdNextTopup: false, held: null, byKeyFails: null,
+    commitHeld: () => { const h = b.held!; b.held = null; credit(h.key, h.body); },
     addNewer: (n) => { for (let i = 0; i < n; i++) b.movements.unshift({ _id: `n${b.movements.length}`, transactionType: 'debit', movementType: 'booking_debit', signedAmountPaise: -100, amountPaise: 100, balanceAfterPaise: b.walletPaise, createdAt: '2026-11-22T12:00:00.000Z', status: 'completed' }); },
     movements: [
       { _id: 'm1', transactionType: 'debit', movementType: 'booking_debit', signedAmountPaise: -50_000, amountPaise: 50_000, balanceAfterPaise: 120_000, createdAt: '2026-11-21T10:00:00.000Z', status: 'completed' },
     ],
   };
+  /** The server's credit: one per key; the same key with another amount or note credits nothing. */
+  function credit(key: string, body: Json): 'credited' | 'replayed' | 'reused' {
+    const hash = JSON.stringify({ amount: body.amount, notes: body.notes ?? null });
+    if (b.credits[key]) return b.credits[key] === hash ? 'replayed' : 'reused';
+    const paise = Math.round(Number(body.amount) * 100);
+    const setoff = Math.min(paise, b.receivableMinor);
+    b.receivableMinor -= setoff;
+    b.walletPaise += paise - setoff;
+    b.credits[key] = hash;
+    b.movements.unshift({ _id: `m${b.movements.length + 1}`, transactionType: 'credit', movementType: 'credit', signedAmountPaise: paise, amountPaise: paise,
+      balanceAfterPaise: b.walletPaise, referenceType: 'topup', referenceId: key, notes: body.notes, description: 'Admin top-up', createdAt: new Date().toISOString(), status: 'completed' });
+    return 'credited';
+  }
   let live = false;
   const pharmacies = [
     { _id: P1, name: 'Asha Medicals', phone: '9000000001', city: 'Pune', isVerified: true, isActive: true },
@@ -438,24 +465,15 @@ async function mockAdmin(page: Page, init: Partial<Pick<AdminBackend, 'receivabl
       if (!b.byKeyRoute) return json(route, 404, { success: false, message: 'Route not found' });
       if (pid !== P1) return refuse(route, 400, 'VALIDATION_ERROR');
       b.byKeyReads += 1;
+      if (b.byKeyFails) return refuse(route, b.byKeyFails, b.byKeyFails === 503 ? 'INDEXES_OUTDATED' : 'INTERNAL');
       const transaction = b.movements.find((m) => m.referenceType === 'topup' && m.referenceId === byKey[1]);
       return json(route, 200, { success: true, data: transaction ? { state: 'credited', transaction, wallet: wallet() } : { state: 'not_found' } });
     }
     if (path === '/pharmacy-wallet/topup' && method === 'POST') {
       const key = req.headers()['idempotency-key'];
       if (!key) return refuse(route, 400, 'IDEMPOTENCY_KEY_REQUIRED');
-      const hash = JSON.stringify({ amount: body!.amount, notes: body!.notes ?? null });
-      if (b.credits[key]) {
-        if (b.credits[key] !== hash) return refuse(route, 409, 'IDEMPOTENCY_KEY_REUSED');
-        return json(route, 200, { success: true, message: 'Wallet topped up', data: wallet() });
-      }
-      const paise = Math.round(Number(body!.amount) * 100);
-      const setoff = Math.min(paise, b.receivableMinor);
-      b.receivableMinor -= setoff;
-      b.walletPaise += paise - setoff;
-      b.credits[key] = hash;
-      b.movements.unshift({ _id: `m${b.movements.length + 1}`, transactionType: 'credit', movementType: 'credit', signedAmountPaise: paise, amountPaise: paise,
-        balanceAfterPaise: b.walletPaise, referenceType: 'topup', referenceId: key, notes: body!.notes, description: 'Admin top-up', createdAt: new Date().toISOString(), status: 'completed' });
+      if (b.holdNextTopup) { b.holdNextTopup = false; b.held = { key, body: body! }; return; }
+      if (credit(key, body!) === 'reused') return refuse(route, 409, 'IDEMPOTENCY_KEY_REUSED');
       if (b.loseNextTopupAnswer) { b.loseNextTopupAnswer = false; return route.abort('connectionreset'); }
       return json(route, 200, { success: true, message: 'Wallet topped up', data: wallet() });
     }
@@ -609,6 +627,7 @@ test('review L2: a move settled by “Check” closes its review and the time li
 
 test('review L3: “Check” compares the stored typed name (a customer-linked patient keeps the account name shown); no address carries the name', async ({ page }) => {
   const b = await mockPharmacy(page, [row({ holder: { pharmacyCustomerId: LINK, name: 'Rina K.' } })]);
+  b.r8 = true;
   await openBooking(page);
   b.accountNameShown = 'Rina Kumari Sharma';
   await page.getByRole('button', { name: 'Correct the name' }).click();
@@ -616,10 +635,13 @@ test('review L3: “Check” compares the stored typed name (a customer-linked p
   b.loseNextNameAnswer = true;
   await page.getByRole('button', { name: 'Save the name' }).click();
   await expect(page.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  const before = b.bookingReads;
   await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
   await expect(page.getByText('Saved. The name your pharmacy typed for this patient is now “Rina Kumari”.')).toBeVisible();
   expect(b.names).toHaveLength(1);
-  expect(b.customerReads).toEqual(['?page=1&limit=100', '?page=2&limit=100']);
+  // WQ14 W2: the check reads the booking once (`holder.typedName`); then the page shows it again, as before. No customer list.
+  await expect.poll(() => b.bookingReads - before).toBe(2);
+  expect(b.customerReads).toEqual([]);
   // Review L5: the unconfirmed edit was remembered under the link id, never the patient's account id.
   const stored = await page.evaluate(() => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }));
   expect(stored).not.toContain(USER);
@@ -709,4 +731,154 @@ test('review L7: an unknown outcome reads the history again; read errors never s
   await page.goto(`/#/admin/pharmacy-wallets/${'a9'.repeat(12)}`);
   await expect(page.getByText('This pharmacy was not found.').first()).toBeVisible();
   await expect(page.getByText(/Nothing was added/)).toHaveCount(0);
+});
+
+// ── WQ14 (before production) ──
+
+/** Sends a credit that is still finishing on the server, reloads, and checks it: the exact read answers not_found. */
+async function reloadMidCredit(page: Page, b: AdminBackend) {
+  b.byKeyRoute = true;
+  await openAdminWallet(page);
+  await page.getByLabel('Amount to add (₹)').fill('250');
+  await page.getByLabel('Why is the money added?').fill('stage testing');
+  await page.getByRole('button', { name: 'Next: check before adding' }).click();
+  b.holdNextTopup = true;
+  await page.getByRole('button', { name: 'Yes, add ₹250.00' }).click();
+  await expect.poll(() => b.held).not.toBeNull();
+  await page.reload();
+  await expect(page.getByText(/Money added earlier on this device \(before the page was reloaded\) was not confirmed/)).toBeVisible();
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Not found so far. It may still be on its way. Look at the history again in a minute before adding money again.')).toBeVisible();
+}
+
+async function forgetAndAdd(page: Page, amount: string, note: string) {
+  await page.getByLabel('I understand the money may already have been added to this wallet.').check();
+  await page.getByRole('button', { name: 'Forget it' }).click();
+  await page.getByRole('button', { name: 'Yes, forget it' }).click();
+  await addMoney(page, amount, note);
+}
+
+async function addMoney(page: Page, amount: string, note: string) {
+  await page.getByLabel('Amount to add (₹)').fill(amount);
+  await page.getByLabel('Why is the money added?').fill(note);
+  await page.getByRole('button', { name: 'Next: check before adding' }).click();
+  await page.getByRole('button', { name: `Yes, add ₹${amount}.00` }).click();
+}
+
+test('WQ14 W1: after a reload and a not-found check, the next credit reuses the old key; the late original adds nothing more', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await reloadMidCredit(page, b);
+  const first = b.held!.key;
+  await forgetAndAdd(page, '250', 'stage testing');
+  await expect(page.getByText(/₹250.00 was added to the wallet of Asha Medicals/)).toBeVisible();
+  expect(topups(b).map((c) => c.key)).toEqual([first, first]);
+  // The original request still commits on the server: the same key and body, so nothing more is added.
+  b.commitHeld();
+  expect(b.walletPaise).toBe(145_000);
+  expect(Object.keys(b.credits)).toEqual([first]);
+  // That request settled: the next credit has a new key.
+  await addMoney(page, '100', 'support credit');
+  await expect(page.getByText(/₹100.00 was added to the wallet of Asha Medicals/)).toBeVisible();
+  expect(topups(b)[2]!.key).not.toBe(first);
+  expect(b.walletPaise).toBe(155_000);
+  const stored = await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }));
+  expect(stored).not.toContain('stage testing');
+});
+
+test('WQ14 W1: the reused key with another amount is refused (409): the earlier credit exists, nothing more is added, the next credit has a new key', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await reloadMidCredit(page, b);
+  const first = b.held!.key;
+  b.commitHeld(); // the original lands after the check
+  await forgetAndAdd(page, '300', 'support credit');
+  await expect(page.getByText('Not added: This request was already used with a different amount or note, so nothing more was added. Look at the history below before adding money again.')).toBeVisible();
+  expect(topups(b).map((c) => c.key)).toEqual([first, first]);
+  expect(b.walletPaise).toBe(145_000);
+  await addMoney(page, '300', 'support credit');
+  await expect(page.getByText(/₹300.00 was added to the wallet of Asha Medicals/)).toBeVisible();
+  expect(topups(b)[2]!.key).not.toBe(first);
+  expect(b.walletPaise).toBe(175_000);
+});
+
+test('WQ14 W1: going back from the review keeps the old key for the next credit', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await reloadMidCredit(page, b);
+  const first = b.held!.key;
+  await page.getByLabel('I understand the money may already have been added to this wallet.').check();
+  await page.getByRole('button', { name: 'Forget it' }).click();
+  await page.getByRole('button', { name: 'Yes, forget it' }).click();
+  await page.getByLabel('Amount to add (₹)').fill('400');
+  await page.getByLabel('Why is the money added?').fill('stage testing');
+  await page.getByRole('button', { name: 'Next: check before adding' }).click();
+  await page.getByRole('button', { name: 'Back' }).click();
+  await addMoney(page, '250', 'stage testing');
+  await expect(page.getByText(/₹250.00 was added to the wallet of Asha Medicals/)).toBeVisible();
+  expect(topups(b).map((c) => c.key)).toEqual([first, first]);
+});
+
+test('WQ14 W3(b): a later check that fails hides “Forget it” again until a check succeeds', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await reloadMidCredit(page, b);
+  await expect(page.getByRole('button', { name: 'Forget it' })).toBeVisible();
+  b.byKeyFails = 503;
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText(/^Could not check: /)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Forget it' })).toHaveCount(0);
+  await expect(page.getByText(/^Not found/)).toHaveCount(0);
+  b.byKeyFails = null;
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByRole('button', { name: 'Forget it' })).toBeVisible();
+});
+
+test('WQ14 W2: “Check” reads the booking’s holder.typedName, never the customer list; a different name is not settled', async ({ page }) => {
+  const b = await mockPharmacy(page, [row({ holder: { pharmacyCustomerId: LINK, name: 'Rina K.' } })]);
+  b.r8 = true;
+  b.typed[USER] = 'Rina K.';
+  await openBooking(page);
+  await page.getByRole('button', { name: 'Correct the name' }).click();
+  await page.getByLabel('Patient’s name as your pharmacy writes it').fill('  Rina   Kumari ');
+  await page.route('**/api/v1/pharmacy-customers/*/typed-name', (route) => route.abort('connectionreset')); // not stored this time
+  await page.getByRole('button', { name: 'Save the name' }).click();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  const before = b.bookingReads;
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Not changed so far. Sending the same name again is safe.')).toBeVisible();
+  await expect.poll(() => b.bookingReads - before).toBe(2); // the check's one read, then the page's usual refresh
+  expect(b.customerReads).toEqual([]);
+  await page.unroute('**/api/v1/pharmacy-customers/*/typed-name');
+  await page.getByRole('button', { name: 'Send the same name again' }).click();
+  await expect(page.getByText('Saved. Your pharmacy now sees this patient as “Rina Kumari”.')).toBeVisible();
+  expect(b.customerReads).toEqual([]);
+});
+
+test('WQ14 W2: on an older backend (no holder.typedName) “Check” says it is not known yet; the same name sent again settles it', async ({ page }) => {
+  const b = await mockPharmacy(page, [row({ holder: { pharmacyCustomerId: LINK, name: 'Rina K.' } })]);
+  await openBooking(page);
+  await page.getByRole('button', { name: 'Correct the name' }).click();
+  await page.getByLabel('Patient’s name as your pharmacy writes it').fill('Rina Kumari');
+  b.loseNextNameAnswer = true;
+  await page.getByRole('button', { name: 'Save the name' }).click();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('The outcome of this request is not known yet. Sending the same name again is safe.')).toBeVisible();
+  expect(b.customerReads).toEqual([]);
+  await page.getByRole('button', { name: 'Send the same name again' }).click();
+  await expect(page.getByText('Saved. Your pharmacy now sees this patient as “Rina Kumari”.')).toBeVisible();
+  expect(b.names).toEqual([{ typedName: 'Rina Kumari' }, { typedName: 'Rina Kumari' }]);
+  expect(b.customerReads).toEqual([]);
+});
+
+test('WQ14 W2: after a reload “Check” says the typed name from the booking', async ({ page }) => {
+  const b = await mockPharmacy(page, [row({ holder: { pharmacyCustomerId: LINK, name: 'Rina K.' } })]);
+  b.r8 = true;
+  await openBooking(page);
+  await page.getByRole('button', { name: 'Correct the name' }).click();
+  await page.getByLabel('Patient’s name as your pharmacy writes it').fill('Rina Kumari');
+  b.loseNextNameAnswer = true;
+  await page.getByRole('button', { name: 'Save the name' }).click();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('The name your pharmacy typed for this patient is “Rina Kumari” now. If that is the name you typed, it was saved.')).toBeVisible();
+  expect(b.customerReads).toEqual([]);
 });

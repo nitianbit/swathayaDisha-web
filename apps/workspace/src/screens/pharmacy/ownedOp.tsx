@@ -96,7 +96,8 @@ export function CheckPanel({ label, children, onCheck, resend, giveUp, forget }:
       if (!live.current) return;
       if (left) { setNote({ tone: 'warn', text: left }); setChecked(true); }
     } catch (err) {
-      if (live.current) setNote({ tone: 'error', text: `Could not check: ${messageOf(err)}` });
+      // WQ14 W3(b): a failed check hides "forget" again until a check succeeds.
+      if (live.current) { setNote({ tone: 'error', text: `Could not check: ${messageOf(err)}` }); setChecked(false); }
     } finally {
       if (live.current) setChecking(false);
     }

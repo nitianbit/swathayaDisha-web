@@ -1615,6 +1615,24 @@ origin/stage after the Opus review.
 - L6: the top-up review shows the newest admin credit in the history (amount, time, note; "you" or "an admin").
 - L7: failed reads on the wallet screens never say "Nothing was added"; an unknown top-up outcome reads the history again.
 
+## WQ14 before production: admin top-up key after a reload, typed-name check (2026-11-23, branch `wq14/before-production`)
+
+Backend: r7 `e90952cc` (`m0/r7-followups`: the admin top-up by-key read, design §21.3) is committed and on stage (origin/stage). This round
+builds on r8 (`m0/r8-before-production`, design §21.4, local): B6 `dd8971b0` adds `holder.typedName` to the booker view. No visible change
+except W3(c).
+
+- W1 (money): after a reload, an unconfirmed admin credit that "Check" did not find and that was then forgotten (the tick and confirm are
+  unchanged) may still be finishing on the server. Its key is kept in session memory for that admin and pharmacy, and the next credit
+  reuses it with the new amount and note: the same body is replayed, another body is 409 `IDEMPOTENCY_KEY_REUSED` (shown with the existing
+  "already used" words: the earlier credit exists), and a credit that never landed is added once. Once that request is sent, the stored
+  request owns the key; only a refusal other than 409 `IDEMPOTENCY_KEY_REUSED` gives it back. After that, new keys.
+- W2: the typed-name "Check" reads the booking once (`GET /pharmacy-bookings/:id`) and compares `holder.typedName` (r8 B6) with the cleaned
+  name; the `/pharmacy-customers` paging is gone. Without `holder.typedName` (an older backend) the check says the outcome is not known yet,
+  and sending the same name again (an idempotent PUT) settles it.
+- W3: a 503 or 500 from the by-key read is thrown (unit test), never "not found" or "unavailable"; a check that fails hides "Forget it" again
+  until a check succeeds; after the exact by-key read answers `not_found` the words are "Not found so far. …" (was "Not found in the wallet
+  history so far. …"; the history search keeps its words).
+
 ## Follow-ups
 
 - WQ11d: the desk rows (`deskView`) do not carry their slot's seats or end, so the desk knows an appointment is in a
@@ -1644,6 +1662,7 @@ origin/stage after the Opus review.
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-23 | WQ14 before production (W1–W3 on 3d26b8c) | Against stage (r7 e90952cc) and r8 B6 dd8971b0 `holder.typedName` (mocked API). typecheck clean; Vitest 356/356 (+2 in wq14.test.ts: a 503/500 by-key read is thrown, the exact-read "Not found" words; −1: the removed customer-list typed-name read); Playwright workspace 758/758 (+14 = 7 journeys x 2: W1 reload mid-credit then the old key reused, the 409 path, Back keeps the key; W3(b) a failed check hides Forget; W2 one booking read and no customer list, an older backend, after a reload; the L3 check test now reads `holder.typedName`; temporary config on port 5351, `reuseExistingServer: false`, deleted); screenshots of Pharmacy wallets and the booked consultation before/after identical except the W3(c) sentence; `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-22 | WQ13 review fixes (M1, L1–L7 on 8f892cc) | Against stage (r6 694bfaa9) and r7 `adminTopupByKey` as in its worktree (mocked API). typecheck clean; Vitest 355/355 (+4 tests, several extended: history search with no clock cut-off and its 20-page limit words, the r7 by-key read (credited / not_found / no route / odd answer), the newest admin credit, read errors without "nothing was added", the stored typed name paged by id with no `search`, marker ids); Playwright workspace 744/744 (+16 = 8 journeys x 2: L1 moved again since, L2 check closes the review, L3 stored-name check and a failed re-read, M1 reload + check of a credit on page 8, the 400-movement limit and the Forget tick, the r7 exact read and the L6 last credit, L7; the spec 120/120 with --repeat-each 3; temporary config on port 5337, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-22 | WQ13 (change time, typed name, admin pharmacy wallets, next free time) | Against q16 338733f8 and r6 694bfaa9 (mocked API). typecheck clean; Vitest 351/351 (+19: own-key modes, next free time, reschedule path/body/key checks and resend body, when it is offered, the slots offered, rule words, refusal words incl. SAME_SLOT, typed-name PUT and target (q16 user id, r6 holder link, no link), admin top-up Idempotency-Key header and same body on resend, refusals before sending, wallet reads with pharmacyId, form rules, finding a credit by key, refusal and S6 words); Playwright workspace 728/728 (+24 = 12 journeys x 2 devices, temporary config on port 5331 with `reuseExistingServer: false`; the two affected specs re-run 62/62 after the family-label change); `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-22 | WQ12 review fixes (Opus xhigh review of c1e12b1) | typecheck clean; Vitest 332/332 (+6: supported modes, refused-before-writing codes, assisted rows, consent v2 and its length, language codes, 60 s write time limit); Playwright workspace 704/704 (+10 = 5 journeys x 2 devices: give up leaves no review and a resend of an abandoned key books nothing, with chat-only times hidden; 429 and coded 503 at create are not booked and each retry is a new key, consent v2 sent; coupon price note and no `join.phone` for video, Assamese sent; a reload mid top-up keeps it listed and the check settles it; Checkout that does not load takes no money and keeps nothing pending, an unpaid top-up removed from the list); `VITE_API_SAME_ORIGIN=true` build. Port 5298, temporary config with `reuseExistingServer: false`, not committed. |

@@ -252,17 +252,18 @@ export function CorrectName({ pharmacyId, booking, target, guard, onChanged }: {
         <CheckPanel label="Unconfirmed name change"
           onCheck={async () => {
             // Review L3: compared with the name STORED on the link (`typedName`), not the name shown (a customer-linked
-            // patient keeps showing the account name whatever is typed).
-            const stored = await pharmacyCustomersApi(api).storedTypedName(target.id);
+            // patient keeps showing the account name whatever is typed). WQ14 W2: read from the booking (r8 B6
+            // `holder.typedName`), one read; an older backend does not say it, so it is not known yet.
+            const typed = (await pharmacyAssistedApi(api).booking(booking._id)).holder?.typedName;
             onChanged();
-            if (!stored.found) return 'Could not find this patient in your pharmacy’s customer list just now. Sending the same name again is safe.';
-            if (!restored && op.body && stored.typedName === op.body.name) {
+            if (typed !== null && typeof typed !== 'string') return 'The outcome of this request is not known yet. Sending the same name again is safe.';
+            if (!restored && op.body && typed === op.body.name) {
               settle(op.requestKey);
               setSaved({ name: op.body.name, shown: undefined });
               return null;
             }
             return restored
-              ? `The name your pharmacy typed for ${who} is “${stored.typedName ?? '—'}” now. If that is the name you typed, it was saved.`
+              ? `The name your pharmacy typed for ${who} is “${typed ?? '—'}” now. If that is the name you typed, it was saved.`
               : 'Not changed so far. Sending the same name again is safe.';
           }}
           resend={restored ? undefined : {

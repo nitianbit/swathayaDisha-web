@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  ADMIN_TOPUP_PAGE_SIZE, ADMIN_TOPUP_WARNING, adminPharmacyWalletApi, adminTopupForm, adminTopupRefusal, adminWalletReadError, findAdminTopup,
+  ADMIN_TOPUP_PAGE_SIZE, ADMIN_TOPUP_WARNING, adminPharmacyWalletApi, ApiError, adminTopupForm, adminTopupRefusal, adminWalletReadError, findAdminTopup,
   latestAdminCredit, MAX_ADMIN_TOPUP_NOTE, movementLabel, topupNotFoundWords, type WalletMovement, OBJECT_ID_PATTERN, pharmacyAdminApi, signedPaiseOf, walletBalancePaise, walletState, type AdminTopupBody, type PharmacyWallet,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
@@ -197,11 +197,17 @@ interface PendingTopup { body: AdminTopupBody; pharmacyName: string }
  * the history by its key.
  */
 function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: readonly string[]; pharmacyId: string; pharmacyName: string; wallet: PharmacyWallet | null }) {
-  const { api } = useSession();
+  const { api, memory } = useSession();
   const admin = useStaff();
   const queryClient = useQueryClient();
   const wallets = adminPharmacyWalletApi(api);
   const { op, send, settle } = useOwnedOp<PendingTopup>(`admin-wallet-topup:${admin.id}:${pharmacyId}`);
+  /**
+   * WQ14 W1: the key of a credit restored after a reload, checked (not found so far) and then forgotten. It may still be
+   * finishing on the server, so the next credit to this pharmacy reuses it: the same body is replayed, another body is
+   * 409 IDEMPOTENCY_KEY_REUSED (so it was added), and if it never landed it is added once. Session memory only.
+   */
+  const carrySlot = `admin-wallet-topup-carry:${admin.id}:${pharmacyId}`;
   const { perform, busy } = useOneAtATime('wallet');
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
@@ -231,15 +237,21 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
     setErrors({ amount: f.amount, notes: f.notes });
     if (!f.value) return;
     // The key is made now, with the reviewed body; confirming sends exactly this.
-    setReview({ requestKey: newRequestKey(), body: { pharmacyId, ...f.value }, pharmacyName });
+    setReview({ requestKey: memory.get<string>(carrySlot) ?? newRequestKey(), body: { pharmacyId, ...f.value }, pharmacyName });
     void recent.refetch();
   }
 
   async function sendTopup(p: PendingOp<PendingTopup>) {
-    const r = await perform(() => send(p, (b) => wallets.topup(b.body, p.requestKey)));
+    // WQ14 W1: once sent, the stored request owns a carried key; only a refusal that does not prove the earlier credit
+    // (anything but 409 IDEMPOTENCY_KEY_REUSED) gives it back to the next credit.
+    const carried = memory.get<string>(carrySlot) === p.requestKey;
+    const r = await perform(() => { if (carried) memory.delete(carrySlot); return send(p, (b) => wallets.topup(b.body, p.requestKey)); });
     if (r.kind === 'stale') return;
     if (r.kind === 'ok') { added(p.body.body, r.value, p.attempts > 0); return; }
-    if (r.kind === 'refused') { setReview(null); setRefused(adminTopupRefusal(r.error)); void reread(); }
+    if (r.kind === 'refused') {
+      if (carried && !(r.error instanceof ApiError && r.error.code === 'IDEMPOTENCY_KEY_REUSED')) memory.set(carrySlot, p.requestKey);
+      setReview(null); setRefused(adminTopupRefusal(r.error)); void reread();
+    }
     // Review L7: the outcome is not known: read the history again (the credit may show there).
     if (r.kind === 'unknown') void reread();
   }
@@ -248,10 +260,10 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
    * Review M1: the exact by-key read first (backend r7); on an older server, the history, newest first, up to 20 pages and
    * with no time cut-off. Answers the row it made, or what was searched.
    */
-  async function findCredit(key: string): Promise<{ row: WalletMovement } | { row: null; complete: boolean; searched: number }> {
+  async function findCredit(key: string): Promise<{ row: WalletMovement } | { row: null; complete: boolean; searched: number; exact?: boolean }> {
     const exact = await wallets.topupByKey(pharmacyId, key);
     if (exact.state === 'used') return { row: exact.row };
-    if (exact.state === 'none') return { row: null, complete: true, searched: 0 };
+    if (exact.state === 'none') return { row: null, complete: true, searched: 0, exact: true };
     return findAdminTopup((page) => wallets.movements(pharmacyId, page, ADMIN_TOPUP_PAGE_SIZE), key);
   }
 
@@ -276,7 +288,8 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
             label: 'Send the same request again', busy,
             onClick: () => { setResendError(null); void sendTopup(op).catch((err: unknown) => setResendError(adminTopupRefusal(err))); },
           }}
-          forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget: () => settle(op.requestKey),
+          forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it',
+            onForget: () => { if (restored) memory.set(carrySlot, op.requestKey); settle(op.requestKey); },
             acknowledge: 'I understand the money may already have been added to this wallet.',
             consequence: 'The money may already have been added, or may still arrive. Forgetting it does not undo it. Check the wallet history, or ask the tech team, before adding money again: otherwise the pharmacy could be paid twice.' }}>
           <Alert tone="warn">

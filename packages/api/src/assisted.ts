@@ -149,9 +149,10 @@ export interface BookedConsultation {
   slotId?: string;
   /**
    * r6 (`m0/r6-small-fixes` 694bfaa9, design §21.2; not on q16 338733f8): the account holder (the phone's owner) as this
-   * pharmacy sees it, and THIS pharmacy's own link to them (null: no link, so no typed-name edit).
+   * pharmacy sees it, and THIS pharmacy's own link to them (null: no link, so no typed-name edit). r8 B6 (dd8971b0):
+   * `typedName`, the name THIS pharmacy typed on its own link as stored (null: none); absent on an older backend.
    */
-  holder?: { pharmacyCustomerId: string | null; name: string | null };
+  holder?: { pharmacyCustomerId: string | null; name: string | null; typedName?: string | null };
   patientName?: string | null;
   dependentId?: string | null;
   contactNo?: string;
@@ -279,25 +280,8 @@ export function pharmacyCustomersApi(c: ApiClient) {
   return {
     setTypedName: (id: string, typedName: string) =>
       c.put<TypedNameAnswer>(`/pharmacy-customers/${idOf(id, 'customer')}/typed-name`, { body: { typedName: cleanName(typedName) } }),
-    /**
-     * WQ13 review L3: the name STORED on this pharmacy's link (`typedName`), for checking an unconfirmed edit. The list
-     * (`GET /pharmacy-customers`, newest first) answers each link's raw `typedName`; it is paged by link id or user id
-     * WITHOUT `search`, so no name ever goes into an address. `found: false` after `maxPages` pages proves nothing.
-     */
-    storedTypedName: async (id: string, maxPages = 10): Promise<{ found: true; typedName: string | null } | { found: false }> => {
-      const want = idOf(id, 'customer').toLowerCase();
-      for (let page = 1; page <= maxPages; page++) {
-        const p = await c.page<CustomerLinkRow>('/pharmacy-customers', { query: { page, limit: 100 } });
-        const hit = p.items.find((r) => String(r._id).toLowerCase() === want || String(r.userId?._id ?? '').toLowerCase() === want);
-        if (hit) return { found: true, typedName: typeof hit.typedName === 'string' ? hit.typedName : null };
-        if (page >= p.totalPages || p.items.length === 0) break;
-      }
-      return { found: false };
-    },
   };
 }
-/** A row of `GET /pharmacy-customers` (only what the check reads). */
-interface CustomerLinkRow { _id: string; typedName?: string | null; userId?: { _id?: string } | null }
 
 /** `/pharmacy-wallet` and the payment proof routes for the pharmacy's own Razorpay top-ups. */
 export function pharmacyWalletApi(c: ApiClient) {
