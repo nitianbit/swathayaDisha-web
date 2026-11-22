@@ -15,6 +15,7 @@ import { ConsultationsScreen } from './screens/admin/ConsultationsScreen.tsx';
 import { NewPharmacyScreen } from './screens/admin/NewPharmacyScreen.tsx';
 import { PharmaciesScreen } from './screens/admin/PharmaciesScreen.tsx';
 import { PharmacyScreen } from './screens/admin/PharmacyScreen.tsx';
+import { PharmacyWalletScreen, PharmacyWalletsScreen } from './screens/admin/PharmacyWalletsScreen.tsx';
 import { NewPartnerScreen } from './screens/admin/NewPartnerScreen.tsx';
 import { PartnerScreen } from './screens/admin/PartnerScreen.tsx';
 import { PartnersScreen } from './screens/admin/PartnersScreen.tsx';
@@ -239,6 +240,12 @@ export const PAGES: readonly WorkspacePage[] = [
   },
   { path: '/admin/pharmacies/new', roles: ['admin'], element: <NewPharmacyScreen /> },
   { path: '/admin/pharmacies/:pharmacyId', roles: ['admin'], element: <PharmacyScreen /> },
+  // WQ13: a pharmacy's wallet and the admin's manual credit (`/pharmacy-wallet?pharmacyId=`, `POST /pharmacy-wallet/topup` + Idempotency-Key).
+  {
+    path: '/admin/pharmacy-wallets', roles: ['admin'], element: <PharmacyWalletsScreen />,
+    nav: { label: 'Pharmacy wallets', icon: Wallet, section: 'Admin' },
+  },
+  { path: '/admin/pharmacy-wallets/:pharmacyId', roles: ['admin'], element: <PharmacyWalletScreen /> },
   {
     path: '/admin/consultations', roles: ['admin'], element: <ConsultationsScreen />,
     nav: { label: 'Consultations', icon: CalendarSearch, section: 'Admin' },

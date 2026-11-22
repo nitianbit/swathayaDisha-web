@@ -143,6 +143,15 @@ export interface BookedConsultation {
   bookingTime?: string;
   doctorName?: string;
   specialistId?: string;
+  /** The account the booking is on (the phone's holder); `PUT /pharmacy-customers/:id/typed-name` takes it as `id`. */
+  userId?: string;
+  /** The slot the booking holds now (a reschedule moves it). */
+  slotId?: string;
+  /**
+   * r6 (`m0/r6-small-fixes` 694bfaa9, design §21.2; not on q16 338733f8): the account holder (the phone's owner) as this
+   * pharmacy sees it, and THIS pharmacy's own link to them (null: no link, so no typed-name edit).
+   */
+  holder?: { pharmacyCustomerId: string | null; name: string | null };
   patientName?: string | null;
   dependentId?: string | null;
   contactNo?: string;
@@ -160,6 +169,16 @@ export interface BookedConsultation {
   /** Only for `join.on = partner_device`, from 10 minutes before the start to the end. */
   virtualMeeting?: { joinUrl: string };
   prescription?: DispensingCopy;
+}
+
+/** `POST /pharmacy-assisted/bookings/:id/reschedule` (P9): the booker view after the move; `replayed` = this key moved it before. */
+export interface RescheduleAnswer { booking: BookedConsultation; replayed: boolean }
+export interface RescheduleRequest { slotId: string; requestKey: string; expectedUpdatedAt?: string }
+/** `PUT /pharmacy-customers/:id/typed-name` (§17.4): the pharmacy's link to the account, with the name it typed. */
+export interface TypedNameAnswer {
+  _id: string; userId: string; typedName: string;
+  /** r6: what this pharmacy's screens now show for the holder (the account name on a `customer_order` link, else the typed name). */
+  shownName?: string | null;
 }
 
 export type ByKeyAnswer = { state: 'used'; booking: BookedConsultation } | { state: 'abandoned' } | { state: 'unknown' };
@@ -199,7 +218,11 @@ export interface WalletMovement {
   balanceAfter?: number;
   balanceAfterPaise?: number;
   description?: string;
+  /** An admin credit's note (`notes` on the top-up). */
+  notes?: string;
   referenceType?: string;
+  /** For an admin credit (`referenceType: 'topup'`): the Idempotency-Key it was made with. */
+  referenceId?: string;
   status?: string;
   createdAt?: string;
 }
@@ -224,6 +247,16 @@ export function pharmacyAssistedApi(c: ApiClient) {
     abandon: (key: string) => c.post<ByKeyAnswer>(`/pharmacy-assisted/bookings/by-key/${keyOf(key)}/abandon`),
     cancel: (id: string, body: { reason?: string; expectedUpdatedAt?: string }) =>
       c.post<CancelAnswer>(`/pharmacy-assisted/bookings/${idOf(id, 'booking')}/cancel`, { body }),
+    /**
+     * WQ13 (P9, `rescheduleByBooker`): the same doctor and price, before the start, once per request key. The same key and
+     * slot again answer `replayed: true` (checked before the version fence, so a resend is safe); the same key with
+     * another slot is 409 IDEMPOTENCY_KEY_REUSED.
+     */
+    reschedule: (id: string, body: RescheduleRequest) =>
+      c.post<RescheduleAnswer>(`/pharmacy-assisted/bookings/${idOf(id, 'booking')}/reschedule`, {
+        body: { slotId: idOf(body.slotId, 'slot'), requestKey: keyOf(body.requestKey), ...(body.expectedUpdatedAt ? { expectedUpdatedAt: body.expectedUpdatedAt } : {}) },
+        timeoutMs: SLOW_WRITE_TIMEOUT_MS,
+      }),
     /** Newest first, cursor-paged (`pagination.nextCursor`), 1–50 a page. */
     bookings: (q: { status?: BookingStatus; cursor?: string; limit?: number } = {}) =>
       c.page<BookedConsultation>('/pharmacy-bookings', { query: { ...q } }),
@@ -232,6 +265,18 @@ export function pharmacyAssistedApi(c: ApiClient) {
     file: (storedUrl: string, signal?: AbortSignal) => c.blob('/file/fetch', { query: { url: fetchableFileUrl(storedUrl) }, signal }),
     /** Phase 0 (§18.3): a medicine order from the booking's prescription, exactly once per request key. */
     orderFromPrescription: (body: RxOrderRequest) => c.post<RxOrderAnswer>('/pharmacy-orders', { body, timeoutMs: SLOW_WRITE_TIMEOUT_MS }),
+  };
+}
+
+/**
+ * WQ13: `/pharmacy-customers` (§17.4). `setTypedName` changes only the name THIS pharmacy typed for the account holder
+ * (its own link row, audited); the patient's account is never changed. `id` is the link id or the holder's user id.
+ * Another pharmacy's link, or none, is 404 CUSTOMER_NOT_LINKED. A PUT of the same name is idempotent.
+ */
+export function pharmacyCustomersApi(c: ApiClient) {
+  return {
+    setTypedName: (id: string, typedName: string) =>
+      c.put<TypedNameAnswer>(`/pharmacy-customers/${idOf(id, 'customer')}/typed-name`, { body: { typedName: cleanName(typedName) } }),
   };
 }
 
@@ -322,7 +367,16 @@ export const isAssistedBooking = (b: BookedConsultation) => b.source === 'pharma
 
 /** The modes the create accepts (`consultationMode`); a slot may also list others (e.g. chat), which are left out. */
 export function supportedModes(modes: readonly string[] | undefined, only?: AssistedMode | ''): AssistedMode[] {
-  return (modes ?? []).filter((m): m is AssistedMode => m in ASSISTED_MODE_LABEL && (!only || m === only));
+  // Own keys only: `m in …` would also accept inherited names such as "toString" or "constructor".
+  return (modes ?? []).filter((m): m is AssistedMode => Object.hasOwn(ASSISTED_MODE_LABEL, m) && (!only || m === only));
+}
+
+/**
+ * The doctor card's "Next free time", only when the slot list would show that time: a next slot offered only in modes
+ * the booking cannot use (e.g. chat), or not in the chosen mode, is not shown (the list hides it too).
+ */
+export function nextFreeSlot(d: Pick<AssistedDoctor, 'nextSlot'>, only?: AssistedMode | ''): AssistedSlot | null {
+  return d.nextSlot && supportedModes(d.nextSlot.modes, only).length ? d.nextSlot : null;
 }
 
 export function canBookerCancel(b: BookedConsultation, now = new Date()): boolean {
@@ -330,6 +384,54 @@ export function canBookerCancel(b: BookedConsultation, now = new Date()): boolea
   if (b.status !== 'confirmed' && b.status !== 'pending') return false;
   const at = appointmentInstant(String(b.bookingDate ?? ''), String(b.bookingTime ?? ''));
   return !!at && at.at.getTime() > now.getTime();
+}
+
+/**
+ * Whether the booking pharmacy may move it now (P9, `rescheduleWithHolds`): the same rule as its cancel (an assisted
+ * booking, waiting or booked, before the start), and the doctor is known (the new time must be one of theirs).
+ */
+export function canBookerReschedule(b: BookedConsultation, now = new Date()): boolean {
+  return canBookerCancel(b, now) && hex.test(String(b.specialistId ?? ''));
+}
+
+/** The rule the reschedule enforces, in plain words (shown next to "Change time"). */
+export const RESCHEDULE_RULE =
+  'You can move this consultation to another free time of the same doctor, any time before it starts. The price stays the same: nothing more is taken from your wallet and nothing is refunded. It stays a {mode}. The patient and the doctor are told the new time.';
+export const rescheduleRuleText = (mode: string | undefined) =>
+  RESCHEDULE_RULE.replace('{mode}', mode === 'in-person' ? 'visit at the clinic' : mode === 'call' ? 'phone call' : 'video call');
+
+/** The times a booking may move to: the doctor's free times in the booking's own mode, without the time it holds now. */
+export function rescheduleSlots(slots: readonly AssistedSlot[], b: Pick<BookedConsultation, 'slotId' | 'consultationMode' | 'bookingDate' | 'bookingTime'>): AssistedSlot[] {
+  const mode = supportedModes([String(b.consultationMode ?? '')])[0];
+  if (!mode) return [];
+  return slots.filter((s) => supportedModes(s.modes, mode).length
+    && String(s.slotId).toLowerCase() !== String(b.slotId ?? '').toLowerCase()
+    && !(s.date === b.bookingDate && s.startTime === b.bookingTime));
+}
+
+/** The holder's name as this pharmacy typed it (`typedNameSchema`: 1–200 characters after trimming). */
+export const MAX_TYPED_NAME = 200;
+export function typedNameProblem(text: string): string | null {
+  const name = cleanName(text);
+  if (!name) return 'Type the patient’s name.';
+  if (name.length > MAX_TYPED_NAME) return `Use at most ${MAX_TYPED_NAME} characters.`;
+  return null;
+}
+/** What the typed-name edit changes on this booking: the holder's link `id`, the name shown for the holder now, and whether the patient is a family member. */
+export interface TypedNameTarget { id: string; name: string | null; family: boolean }
+/**
+ * The edit renames the ACCOUNT HOLDER (the phone's owner) for this pharmacy, never a family member (their name is on the
+ * patient's own account). r6: `holder.pharmacyCustomerId` (null = no link: no edit), also on a family member's booking.
+ * Before r6 (q16): the booking's `userId`, only on the holder's own booking, where `patientName` is the holder's name.
+ */
+export function typedNameTarget(b: Pick<BookedConsultation, 'userId' | 'dependentId' | 'patientName' | 'holder'>): TypedNameTarget | null {
+  if (b.holder) {
+    const id = String(b.holder.pharmacyCustomerId ?? '');
+    return hex.test(id) ? { id: id.toLowerCase(), name: b.holder.name ?? null, family: !!b.dependentId } : null;
+  }
+  if (b.dependentId) return null;
+  const id = String(b.userId ?? '');
+  return hex.test(id) ? { id: id.toLowerCase(), name: b.patientName ?? null, family: false } : null;
 }
 
 /** How the patient joins, in plain words, for the confirmation and the list. */
@@ -435,6 +537,38 @@ export function assistedRefusal(err: unknown): Refusal {
   if (known) return known;
   if (err.status === 403) return { kind: 'other', message: err.message || 'Your account is not allowed to do this.' };
   return { kind: 'other', message: err.message || 'Something went wrong. Please try again.' };
+}
+
+export type RescheduleRefusalKind = 'slot' | 'doctor' | 'changed' | 'late' | 'other';
+const RESCHEDULE_WORDS: Readonly<Record<string, { kind: RescheduleRefusalKind; message: string }>> = {
+  SLOT_NOT_AVAILABLE: { kind: 'slot', message: 'This time was just taken, or is no longer free. Choose another time.' },
+  SAME_SLOT: { kind: 'slot', message: 'The consultation is already at this time. Choose another time.' },
+  SLOT_STARTED: { kind: 'slot', message: 'This time has already started. Choose a later time.' },
+  SLOT_NOT_THIS_DOCTOR: { kind: 'slot', message: 'This time belongs to another doctor. Choose one of this doctor’s times.' },
+  DOCTOR_BUSY: { kind: 'slot', message: 'The doctor is not free at that time. Choose another time.' },
+  DOCTOR_NOT_AVAILABLE: { kind: 'doctor', message: 'This doctor is not taking bookings now, so the time cannot be changed. You can cancel instead.' },
+  DOCTOR_NOT_FOUND: { kind: 'doctor', message: 'This doctor is not taking bookings now, so the time cannot be changed. You can cancel instead.' },
+  BOOKING_CHANGED: { kind: 'changed', message: 'This booking changed since you opened it (perhaps on another device). Look at it again, then choose the time again.' },
+  BOOKING_ALREADY_STARTED: { kind: 'late', message: 'Too late: the consultation has already started, so its time can no longer be changed.' },
+  BOOKING_NOT_RESCHEDULABLE: { kind: 'late', message: 'This consultation is cancelled or finished, so its time can no longer be changed.' },
+  BOOKING_NOT_FOUND: { kind: 'late', message: 'This booking was not found.' },
+  INSTANT_CONSULT_COMMAND_REQUIRED: { kind: 'late', message: 'A “Consult now” consultation has no booked time, so it cannot be moved.' },
+  CLINIC_APPOINTMENT: { kind: 'late', message: 'This is a clinic appointment. Ask the clinic to change it.' },
+  IDEMPOTENCY_KEY_REUSED: { kind: 'changed', message: 'This change was already sent with another time. Look at the booking again, then choose the time again.' },
+};
+
+/** One plain sentence for a refusal of the reschedule (or of the slot read behind it), and what the screen should do. */
+export function rescheduleRefusal(err: unknown): { kind: RescheduleRefusalKind; message: string } {
+  if (isSwitchedOff(err)) return { kind: 'other', message: SWITCHED_OFF_MESSAGE };
+  const known = err instanceof ApiError && err.code ? RESCHEDULE_WORDS[err.code] : undefined;
+  return known ?? { kind: 'other', message: assistedRefusal(err).message };
+}
+
+/** One plain sentence for a refusal of the typed-name edit. */
+export function typedNameRefusal(err: unknown): string {
+  if (err instanceof ApiError && err.code === 'CUSTOMER_NOT_LINKED') return 'This patient is not linked to your pharmacy, so the name cannot be changed here.';
+  if (err instanceof ApiError && err.code === 'VALIDATION_ERROR') return `Type a name of 1 to ${MAX_TYPED_NAME} characters.`;
+  return assistedRefusal(err).message;
 }
 
 /**

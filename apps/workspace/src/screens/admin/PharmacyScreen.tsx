@@ -71,6 +71,7 @@ function PharmacyDetail({ pharmacyId, scopeKey }: { pharmacyId: string; scopeKey
     <>
       <Link className="ws-back" to="/admin/pharmacies"><ArrowLeft size={16} aria-hidden="true" /> Back to pharmacies</Link>
       <PageHeading title={p?.name ?? 'Pharmacy'}>{p ? [p.ownerName, p.city].filter(Boolean).join(' · ') || null : null}</PageHeading>
+      <div><Link to={`/admin/pharmacy-wallets/${pharmacyId}`}>Wallet and adding money</Link></div>
       {q.isPending ? <Loading label="Loading pharmacy…" />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : (

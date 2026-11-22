@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft, FileText } from 'lucide-react';
 import {
-  ApiError, assistedRefusal, bookingStatusLabel, canBookerCancel, isAssistedBooking, formatSlotDate, joinWords, MAX_BOOKER_CANCEL_REASON, medicineName,
+  ApiError, assistedRefusal, bookingStatusLabel, canBookerCancel, canBookerReschedule, isAssistedBooking, typedNameTarget, formatSlotDate, joinWords, MAX_BOOKER_CANCEL_REASON, medicineName,
   PATIENT_LANGUAGES, pharmacyAssistedApi, pharmacyStockApi, requestKeysApi, rxOrderProblems, type BookedConsultation, type CancelAnswer,
   type Medicine, type RxMedicine, type RxOrderRequest,
 } from '@jansetu/api';
@@ -14,10 +14,14 @@ import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requ
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { BookingBadges, modeWords } from './BookedConsultationsScreen.tsx';
+import { ChangeTime, CorrectName, type BookingGuard } from './BookingChanges.tsx';
 import { sniffDocument } from './documents.ts';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 
-/** WQ12: one consultation this pharmacy booked (`GET /pharmacy-bookings/:id`): join, cancel, the dispensing copy, an order. */
+/**
+ * WQ12: one consultation this pharmacy booked (`GET /pharmacy-bookings/:id`): join, cancel, the dispensing copy, an order.
+ * WQ13: change its time (same doctor) and correct the name the pharmacy typed for the patient.
+ */
 export function BookedConsultationScreen() {
   const { bookingId = '' } = useParams();
   const pharmacyId = usePharmacyId();
@@ -44,6 +48,9 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
   });
   // Kept here: once cancelled, the re-read booking no longer offers the cancel section that said so.
   const [cancelNote, setCancelNote] = useState<string | null>(null);
+  const [moveNote, setMoveNote] = useState<string | null>(null);
+  // One change of this booking at a time: cancel, change time and the name share this guard.
+  const guard: BookingGuard = useOneAtATime('booking');
   const changed = () => {
     void queryClient.invalidateQueries({ queryKey: ['pharmacy-bookings', pharmacyId] });
     void queryClient.invalidateQueries({ queryKey: ['pharmacy-wallet', pharmacyId] });
@@ -56,6 +63,7 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
   if (q.isError) return <ErrorState message={assistedRefusal(q.error).message} onRetry={() => void q.refetch()} />;
   const b = q.data;
   const assistedRow = isAssistedBooking(b);
+  const nameTarget = typedNameTarget(b);
   const joinUrl = b.virtualMeeting?.joinUrl && /^https:\/\//.test(b.virtualMeeting.joinUrl) ? b.virtualMeeting.joinUrl : null;
 
   return (
@@ -65,7 +73,11 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
         <dl className="ws-dl">
           {b.assisted?.shortRef && <><dt>Reference</dt><dd>{b.assisted.shortRef}</dd></>}
           <dt>Status</dt><dd>{bookingStatusLabel(b.status)}<BookingBadges b={b} /></dd>
-          <dt>Patient</dt><dd>{b.patientName ?? '—'}</dd>
+          <dt>Patient</dt>
+          <dd>
+            {b.patientName ?? '—'}
+            {assistedRow && b.dependentId && <span className="ws-muted"> (a family member on the patient’s account: only the patient can change this name, in their Jansetu app)</span>}
+          </dd>
           <dt>Doctor</dt><dd>{b.doctorName ?? '—'}</dd>
           <dt>When</dt><dd>{formatSlotDate(b.bookingDate)}{b.bookingTime ? ` at ${b.bookingTime}` : ''}</dd>
           <dt>How</dt><dd>{modeWords(b.consultationMode)}</dd>
@@ -83,8 +95,13 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
         )}
       </section>
 
+      {assistedRow && nameTarget && <CorrectName pharmacyId={pharmacyId} booking={b} target={nameTarget} guard={guard} onChanged={changed} />}
+
+      {moveNote && !cancelNote && <Alert tone="ok">{moveNote}</Alert>}
+      {canBookerReschedule(b) && !cancelNote && <ChangeTime pharmacyId={pharmacyId} booking={b} guard={guard} onChanged={changed} onDone={setMoveNote} />}
+
       {cancelNote && <Alert tone="ok">{cancelNote}</Alert>}
-      {canBookerCancel(b) && !cancelNote && <CancelBooking pharmacyId={pharmacyId} booking={b} onChanged={changed} onDone={setCancelNote} />}
+      {canBookerCancel(b) && !cancelNote && <CancelBooking pharmacyId={pharmacyId} booking={b} guard={guard} onChanged={changed} onDone={(w) => { setMoveNote(null); setCancelNote(w); }} />}
 
       <Prescription pharmacyId={pharmacyId} booking={b} onRetry={() => void q.refetch()} />
     </>
@@ -99,13 +116,13 @@ interface PendingCancel { bookingId: string; reason?: string; expectedUpdatedAt?
  * `POST /pharmacy-assisted/bookings/:id/cancel`: any time before the start, full refund to the wallet. Sending it again
  * is safe (a cancelled booking answers `alreadyCancelled`, before any version check), so an unknown outcome is resent.
  */
-function CancelBooking({ pharmacyId, booking, onChanged, onDone }: {
-  pharmacyId: string; booking: BookedConsultation; onChanged: () => void; onDone: (words: string) => void;
+function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone }: {
+  pharmacyId: string; booking: BookedConsultation; guard: BookingGuard; onChanged: () => void; onDone: (words: string) => void;
 }) {
   const { api } = useSession();
   const assisted = pharmacyAssistedApi(api);
   const { op, send, settle } = useOwnedOp<PendingCancel>(`assisted-cancel:${pharmacyId}:${booking._id}`);
-  const { perform, busy } = useOneAtATime('booking');
+  const { perform, busy } = guard;
   const [resendError, setResendError] = useState<string | null>(null);
 
   const doneWords = (a: CancelAnswer) => (a.alreadyCancelled

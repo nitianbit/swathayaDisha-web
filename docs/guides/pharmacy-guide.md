@@ -276,6 +276,14 @@ Booking for patients may not be switched on for your pharmacy yet. Then the page
 - **Cancelled by patient**: the patient cancelled it. The money is back in your wallet.
 - **Prescription**: after the consultation you see the medicines, advice and tests. The diagnosis is never shown to pharmacies. Tap **Open the prescription copy** to see or print it.
 - **Make a medicine order from this prescription**: for each medicine, tap **Search**, **Choose** the one you will give and type the **Units**. Leave out any you do not have. Tap **Check the order**, then **Make the order**. It appears in **Orders**, for pickup and payment at your counter.
+- **Change time**: you can move the consultation to another free time of the **same doctor**, any time before it starts. Tap **Change time**, choose a **From day** and a new time, tap **Next: check the new time**, read it, then tap **Yes, move it**. The price stays the same: nothing more is taken from your wallet and nothing is refunded. The way it happens (video, phone call or at the clinic) stays the same, and so does the join link. The patient and the doctor are told the new time. Tell the patient too.
+  - "This time was just taken": choose another time.
+  - "This booking changed since you opened it": the page reads it again; choose the time again.
+  - "Too late: the consultation has already started": it can no longer be moved.
+  - "The outcome of this request is not known yet": tap **Send the same request again**. It is never moved twice. Or tap **Check whether it was recorded**.
+- **Correct the name**: if you typed the patient's name wrong when booking, tap **Correct the name**, type it right and tap **Save the name**. This only changes the name **your pharmacy** sees for this patient. It never changes the patient's own Jansetu account. If the patient chose your pharmacy themselves (by ordering from it), you keep seeing the name on their own account.
+  - For a booking for a **family member**, tap **Correct the name of the phone's owner** to correct the name of the account holder. The family member's own name is on the patient's account: only the patient can change it, in their Jansetu app.
+  - The button is not shown when your pharmacy has no link to this patient.
 
 ---
 

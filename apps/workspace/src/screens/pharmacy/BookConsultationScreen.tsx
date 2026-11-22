@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
   ASSISTED_GENDERS, ASSISTED_MODE_LABEL, ASSISTED_RELATIONS, assistedRefusal, canonicalPhone, CONSENT_STATEMENT, CONSENT_STATEMENT_LANGUAGE,
-  CONSENT_STATEMENT_VERSION, EMPTY_PATIENT, familyBookedBefore, formatSlotDate, isSwitchedOff, istToday, joinWords, refusedBeforeWriting, supportedModes,
+  CONSENT_STATEMENT_VERSION, EMPTY_PATIENT, familyBookedBefore, formatSlotDate, isSwitchedOff, istToday, joinWords, nextFreeSlot, refusedBeforeWriting, supportedModes,
   MAX_CONCERN, MAX_PERSON_NAME, PATIENT_LANGUAGES, patientBody, patientProblems, pharmacyAssistedApi, SWITCHED_OFF_MESSAGE, walletBalancePaise,
   walletState, type AssistedDoctor, type AssistedGender, type AssistedMode, type AssistedRelation, type AssistedSlot, type BookedConsultation,
   type ConsultationReceipt, type ConsultationRequest, type JoinOn, type PatientDraft, type PatientLookup, type Refusal,
@@ -68,6 +68,13 @@ function doneFromView(b: BookedConsultation, summary: Summary | undefined): Done
     mode: (b.consultationMode as AssistedMode) ?? 'video', joinOn: b.assisted?.join?.on, priceMinor: Math.round(Number(b.price ?? 0) * 100),
   };
   return { summary: s, ref: b.assisted?.shortRef, paidMinor: typeof b.price === 'number' ? Math.round(b.price * 100) : undefined, replayed: true };
+}
+
+/** The doctor card's next time: only one the time list would show (a chat-only next time is left out, as in the list). */
+function nextWords(d: AssistedDoctor, modeFilter: AssistedMode | ''): string {
+  const next = nextFreeSlot(d, modeFilter);
+  if (next) return `Next free time: ${formatSlotDate(next.date)} at ${next.startTime}`;
+  return d.nextSlot ? 'Choose to see the free times' : 'No free times soon';
 }
 
 /** Plain refusal words, adjusted when a coupon explains the new price. */
@@ -576,7 +583,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
                             .filter(Boolean).join(' · ')}
                         </div>
                         <div className="ws-actions">
-                          <span>{d.nextSlot ? `Next free time: ${formatSlotDate(d.nextSlot.date)} at ${d.nextSlot.startTime}` : 'No free times soon'}</span>
+                          <span>{nextWords(d, modeFilter)}</span>
                           {doctorId === d.doctorId ? <Badge tone="ok">Chosen</Badge>
                             : <Button variant="secondary" aria-label={`Choose ${d.name}`} onClick={() => chooseDoctor(d.doctorId)}>Choose</Button>}
                         </div>

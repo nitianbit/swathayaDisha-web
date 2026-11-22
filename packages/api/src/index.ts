@@ -173,6 +173,17 @@ export {
   isAssistedBooking, isAssistedLimit, isSwitchedOff, refusedBeforeWriting, SLOW_WRITE_TIMEOUT_MS, supportedModes, joinWords, MAX_BOOKER_CANCEL_REASON, MAX_CONCERN, MAX_PERSON_NAME, movementLabel, PATIENT_LANGUAGES,
   patientBody, patientProblems, pharmacyAssistedApi, pharmacyWalletApi, rxOrderProblems, signedPaiseOf, SWITCHED_OFF_MESSAGE, walletBalancePaise, walletState,
 } from './assisted.ts';
+// WQ13: booker reschedule, the typed-name edit, the doctor card's next free time; admin wallet credits.
+export {
+  canBookerReschedule, MAX_TYPED_NAME, nextFreeSlot, pharmacyCustomersApi, RESCHEDULE_RULE, rescheduleRefusal, rescheduleRuleText, rescheduleSlots,
+  typedNameProblem, typedNameRefusal, typedNameTarget,
+} from './assisted.ts';
+export type { RescheduleAnswer, RescheduleRefusalKind, RescheduleRequest, TypedNameAnswer, TypedNameTarget } from './assisted.ts';
+export {
+  ADMIN_TOPUP_KEY_PATTERN, ADMIN_TOPUP_PAGE_SIZE, ADMIN_TOPUP_WARNING, adminPharmacyWalletApi, adminTopupForm, adminTopupRefusal, findAdminTopup, isAdminTopupRow,
+  MAX_ADMIN_TOPUP_NOTE, MAX_ADMIN_TOPUP_RUPEES, MIN_ADMIN_TOPUP_NOTE,
+} from './adminPharmacyWallet.ts';
+export type { AdminTopupBody } from './adminPharmacyWallet.ts';
 export type {
   AssistedDoctor, AssistedGender, AssistedPatient, AssistedRelation, BookedConsultation, BookingStatus as AssistedBookingStatus, ByKeyAnswer, CancelAnswer,
   ConsultationReceipt, ConsultationRequest, AssistedMode, DispensingCopy, DoctorQuery, DoctorSlots, DoctorSlotsQuery, AssistedSlot, JoinOn, PatientDraft, PatientLookup, PharmacyWallet,

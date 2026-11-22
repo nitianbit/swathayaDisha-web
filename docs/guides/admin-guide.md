@@ -18,6 +18,7 @@ Your menu is on the left, under **Admin**:
 - **Labs and clinics**
 - **Lab bookings**
 - **Pharmacies**
+- **Pharmacy wallets**
 - **Consultations**
 - **Order cancellations**
 - **Refunds needing attention**
@@ -191,6 +192,23 @@ Tap its name.
 - **Details**: change the name, owner, address, licences, pickup and delivery, then tap **Save details**. To remove an optional detail, empty its field and save. The name cannot be removed.
 
 If someone else changed the same thing while you were typing, nothing is saved and the form shows what is saved now. Check it and save again.
+
+### Pharmacy wallets
+
+**Pharmacy wallets** (also **Wallet and adding money** on a pharmacy's page) shows a pharmacy's Jansetu wallet and lets you add money to it, for stage testing or a support credit.
+
+1. Type part of the pharmacy's name, tap **Search**, then **Open wallet**.
+2. You see the **Money in the wallet**, whether it is **on hold** or **owes Jansetu** (after a disputed card payment), and recent money in and out, with the note of each admin credit.
+3. Under **Add money**, type the **Amount to add (₹)** (whole rupees, 1 or more) and **Why is the money added?** (required, for example "stage testing" or "support credit").
+4. Tap **Next: check before adding**, read the amount, the pharmacy and the note, then tap **Yes, add ₹…**.
+
+**Do not use this to make up for a card top-up that never arrived. Ask the tech team to run the top-up check instead, or the pharmacy could be paid twice.**
+
+- If the wallet owes Jansetu, the money added clears that first.
+- A pharmacy with no wallet yet gets one when you add money.
+- "The outcome of this request is not known yet": tap **Send the same request again**. The money is never added twice. Or tap **Check whether it was recorded**: it looks for this credit in the wallet history.
+- After a page reload, an unconfirmed credit can only be checked in the history, not sent again. Check before adding money again.
+- An admin credit can never be withdrawn by the pharmacy.
 
 ---
 
