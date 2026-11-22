@@ -1633,6 +1633,19 @@ except W3(c).
   until a check succeeds; after the exact by-key read answers `not_found` the words are "Not found so far. …" (was "Not found in the wallet
   history so far. …"; the history search keeps its words).
 
+### WQ14b follow-ups (review of 183a756, 2026-11-23; branch `wq14b/followups`)
+
+- M1 (money): the carried key is kept in the pending-marker shape (`{requestKey, attempts: 0, firstAttemptAt, lastAttemptAt}`), so it
+  survives a reload or signing in again as an opaque key only (no amount, no note). It has its own slot, so it is never shown as an
+  unconfirmed credit.
+- M2 (money): any unconfirmed credit that was checked and then forgotten carries its key, not only one restored after a reload (safer default
+  chosen after review; owner informed).
+- L1: "Forget it" hides while a check runs; a check that finds the credit drops a key kept for it.
+- L2: the carried key does not expire. A later credit with the same amount and note is replayed and shown as added (nothing new is added);
+  a different amount or note is refused once (409 `IDEMPOTENCY_KEY_REUSED`, "already used" words), and the credit after that has a new key.
+- The Forget tick is cleared whenever "Forget it" hides after a check. On an older backend, a restored name change (which cannot be sent again)
+  says only "The outcome of this request is not known yet."
+
 ## Follow-ups
 
 - WQ11d: the desk rows (`deskView`) do not carry their slot's seats or end, so the desk knows an appointment is in a
@@ -1662,6 +1675,7 @@ except W3(c).
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-23 | WQ14b follow-ups (M1, M2, L1–L3, nits on 183a756) | Mocked API as WQ14. typecheck clean; Vitest 356/356; Playwright workspace 774/774 (+16 = 8 journeys x 2: carried key survives a reload as an opaque marker, a current-page forgotten credit carries its key, Forget hidden during a check, a found credit drops its kept key, a 400 gives the key back, a late original with another body adds nothing, the tick cleared, the restored older-backend name words; 6 of them failed before the fix, the two L3 ones cover existing behaviour; temporary config on port 5361, `reuseExistingServer: false`, deleted); screenshots of Pharmacy wallets and the booked consultation identical to 183a756; `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-23 | WQ14 before production (W1–W3 on 3d26b8c) | Against stage (r7 e90952cc) and r8 B6 dd8971b0 `holder.typedName` (mocked API). typecheck clean; Vitest 356/356 (+2 in wq14.test.ts: a 503/500 by-key read is thrown, the exact-read "Not found" words; −1: the removed customer-list typed-name read); Playwright workspace 758/758 (+14 = 7 journeys x 2: W1 reload mid-credit then the old key reused, the 409 path, Back keeps the key; W3(b) a failed check hides Forget; W2 one booking read and no customer list, an older backend, after a reload; the L3 check test now reads `holder.typedName`; temporary config on port 5351, `reuseExistingServer: false`, deleted); screenshots of Pharmacy wallets and the booked consultation before/after identical except the W3(c) sentence; `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-22 | WQ13 review fixes (M1, L1–L7 on 8f892cc) | Against stage (r6 694bfaa9) and r7 `adminTopupByKey` as in its worktree (mocked API). typecheck clean; Vitest 355/355 (+4 tests, several extended: history search with no clock cut-off and its 20-page limit words, the r7 by-key read (credited / not_found / no route / odd answer), the newest admin credit, read errors without "nothing was added", the stored typed name paged by id with no `search`, marker ids); Playwright workspace 744/744 (+16 = 8 journeys x 2: L1 moved again since, L2 check closes the review, L3 stored-name check and a failed re-read, M1 reload + check of a credit on page 8, the 400-movement limit and the Forget tick, the r7 exact read and the L6 last credit, L7; the spec 120/120 with --repeat-each 3; temporary config on port 5337, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-22 | WQ13 (change time, typed name, admin pharmacy wallets, next free time) | Against q16 338733f8 and r6 694bfaa9 (mocked API). typecheck clean; Vitest 351/351 (+19: own-key modes, next free time, reschedule path/body/key checks and resend body, when it is offered, the slots offered, rule words, refusal words incl. SAME_SLOT, typed-name PUT and target (q16 user id, r6 holder link, no link), admin top-up Idempotency-Key header and same body on resend, refusals before sending, wallet reads with pharmacyId, form rules, finding a credit by key, refusal and S6 words); Playwright workspace 728/728 (+24 = 12 journeys x 2 devices, temporary config on port 5331 with `reuseExistingServer: false`; the two affected specs re-run 62/62 after the family-label change); `VITE_API_SAME_ORIGIN=true` workspace build clean. |

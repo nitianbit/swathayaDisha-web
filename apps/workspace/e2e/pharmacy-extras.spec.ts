@@ -390,12 +390,18 @@ interface AdminBackend {
   commitHeld: () => void;
   /** WQ14: the by-key read answers this status (503 INDEXES_OUTDATED, 500) instead. */
   byKeyFails: number | null;
+  /** WQ14b: the next credit's answer is lost at once, but it is still finishing on the server (not committed) until `commitHeld`. */
+  loseAndHoldNextTopup: boolean;
+  /** WQ14b: the next credit is refused before anything is recorded. */
+  refuseNextTopup: { status: number; code: string } | null;
+  /** WQ14b: the by-key read waits for this first. */
+  byKeyWait: Promise<void> | null;
 }
 
 async function mockAdmin(page: Page, init: Partial<Pick<AdminBackend, 'receivableMinor'>> = {}): Promise<AdminBackend> {
   const b: AdminBackend = {
     calls: [], walletPaise: 120_000, receivableMinor: init.receivableMinor ?? 0, credits: {}, loseNextTopupAnswer: false, noWalletFor: P2, byKeyRoute: false, byKeyReads: 0,
-    holdNextTopup: false, held: null, byKeyFails: null,
+    holdNextTopup: false, held: null, byKeyFails: null, loseAndHoldNextTopup: false, refuseNextTopup: null, byKeyWait: null,
     commitHeld: () => { const h = b.held!; b.held = null; credit(h.key, h.body); },
     addNewer: (n) => { for (let i = 0; i < n; i++) b.movements.unshift({ _id: `n${b.movements.length}`, transactionType: 'debit', movementType: 'booking_debit', signedAmountPaise: -100, amountPaise: 100, balanceAfterPaise: b.walletPaise, createdAt: '2026-11-22T12:00:00.000Z', status: 'completed' }); },
     movements: [
@@ -465,6 +471,7 @@ async function mockAdmin(page: Page, init: Partial<Pick<AdminBackend, 'receivabl
       if (!b.byKeyRoute) return json(route, 404, { success: false, message: 'Route not found' });
       if (pid !== P1) return refuse(route, 400, 'VALIDATION_ERROR');
       b.byKeyReads += 1;
+      if (b.byKeyWait) await b.byKeyWait;
       if (b.byKeyFails) return refuse(route, b.byKeyFails, b.byKeyFails === 503 ? 'INDEXES_OUTDATED' : 'INTERNAL');
       const transaction = b.movements.find((m) => m.referenceType === 'topup' && m.referenceId === byKey[1]);
       return json(route, 200, { success: true, data: transaction ? { state: 'credited', transaction, wallet: wallet() } : { state: 'not_found' } });
@@ -473,6 +480,8 @@ async function mockAdmin(page: Page, init: Partial<Pick<AdminBackend, 'receivabl
       const key = req.headers()['idempotency-key'];
       if (!key) return refuse(route, 400, 'IDEMPOTENCY_KEY_REQUIRED');
       if (b.holdNextTopup) { b.holdNextTopup = false; b.held = { key, body: body! }; return; }
+      if (b.loseAndHoldNextTopup) { b.loseAndHoldNextTopup = false; b.held = { key, body: body! }; return route.abort('connectionreset'); }
+      if (b.refuseNextTopup) { const r = b.refuseNextTopup; b.refuseNextTopup = null; return refuse(route, r.status, r.code); }
       if (credit(key, body!) === 'reused') return refuse(route, 409, 'IDEMPOTENCY_KEY_REUSED');
       if (b.loseNextTopupAnswer) { b.loseNextTopupAnswer = false; return route.abort('connectionreset'); }
       return json(route, 200, { success: true, message: 'Wallet topped up', data: wallet() });
@@ -881,4 +890,147 @@ test('WQ14 W2: after a reload “Check” says the typed name from the booking',
   await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
   await expect(page.getByText('The name your pharmacy typed for this patient is “Rina Kumari” now. If that is the name you typed, it was saved.')).toBeVisible();
   expect(b.customerReads).toEqual([]);
+});
+
+// ── WQ14b follow-ups ──
+
+const ACK = 'I understand the money may already have been added to this wallet.';
+async function forgetIt(page: Page) {
+  await page.getByLabel(ACK).check();
+  await page.getByRole('button', { name: 'Forget it' }).click();
+  await page.getByRole('button', { name: 'Yes, forget it' }).click();
+}
+
+test('WQ14b M1: the carried key survives a reload (an opaque key only), is not shown as unconfirmed, and is sent with the next credit', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await reloadMidCredit(page, b);
+  const first = b.held!.key;
+  await forgetIt(page);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Next: check before adding' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Unconfirmed money added' })).toHaveCount(0);
+  const stored = await page.evaluate(() => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }));
+  expect(stored).toContain(first);
+  expect(stored).not.toContain('stage testing');
+  expect(stored).not.toContain('250');
+  await addMoney(page, '250', 'stage testing');
+  await expect(page.getByText(/₹250.00 was added to the wallet of Asha Medicals/)).toBeVisible();
+  expect(topups(b).map((c) => c.key)).toEqual([first, first]);
+  b.commitHeld();
+  expect(b.walletPaise).toBe(145_000);
+  // Settled: the kept key is gone from storage and the next credit has a new one.
+  expect(await page.evaluate(() => JSON.stringify({ ...sessionStorage }))).not.toContain(first);
+  await addMoney(page, '100', 'support credit');
+  await expect(page.getByText(/₹100.00 was added/)).toBeVisible();
+  expect(topups(b)[2]!.key).not.toBe(first);
+});
+
+test('WQ14b M2: a lost answer on this page, checked and forgotten, carries its key; the late original adds nothing more', async ({ page }) => {
+  const b = await mockAdmin(page);
+  b.byKeyRoute = true;
+  await openAdminWallet(page);
+  await page.getByLabel('Amount to add (₹)').fill('250');
+  await page.getByLabel('Why is the money added?').fill('stage testing');
+  await page.getByRole('button', { name: 'Next: check before adding' }).click();
+  b.loseAndHoldNextTopup = true;
+  await page.getByRole('button', { name: 'Yes, add ₹250.00' }).click();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  const first = b.held!.key;
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText(/^Not added so far/)).toBeVisible();
+  await forgetIt(page);
+  // The review of the lost credit is still open (as before): go back and add it again.
+  await page.getByRole('button', { name: 'Back' }).click();
+  await addMoney(page, '250', 'stage testing');
+  await expect(page.getByText(/₹250.00 was added to the wallet of Asha Medicals/)).toBeVisible();
+  expect(topups(b).map((c) => c.key)).toEqual([first, first]);
+  b.commitHeld();
+  expect(b.walletPaise).toBe(145_000);
+  expect(Object.keys(b.credits)).toEqual([first]);
+});
+
+test('WQ14b L1: “Forget it” is hidden while a check is running', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await reloadMidCredit(page, b);
+  await expect(page.getByRole('button', { name: 'Forget it' })).toBeVisible();
+  let release!: () => void;
+  b.byKeyWait = new Promise((r) => { release = r; });
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect.poll(() => b.byKeyReads).toBe(2);
+  await expect(page.getByRole('button', { name: 'Forget it' })).toHaveCount(0);
+  release();
+  await expect(page.getByRole('button', { name: 'Forget it' })).toBeVisible();
+});
+
+test('WQ14b L1: a check that finds the credit drops a key kept for it; the next credit has a new key', async ({ page }) => {
+  const b = await mockAdmin(page);
+  b.byKeyRoute = true;
+  await openAdminWallet(page);
+  const K = 'k1'.repeat(16);
+  // The credit landed; this device still holds it as unconfirmed, and its key is also kept for the next credit.
+  b.held = { key: K, body: { pharmacyId: P1, amount: 250, notes: 'stage testing' } };
+  b.commitHeld();
+  await page.evaluate(([admin, p, k]) => {
+    const m = JSON.stringify({ requestKey: k, attempts: 1, firstAttemptAt: 1, lastAttemptAt: 1 });
+    sessionStorage.setItem(`sd:pend:workspace:${admin}:admin-wallet-topup:${admin}:${p}`, m);
+    sessionStorage.setItem(`sd:pend:workspace:${admin}:admin-wallet-topup-carry:${admin}:${p}`, m);
+  }, [ADMIN, P1, K]);
+  await page.reload();
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText(/It was added: ₹250.00 on .*Nothing was added twice\./)).toBeVisible();
+  await addMoney(page, '300', 'support credit');
+  await expect(page.getByText(/₹300.00 was added to the wallet of Asha Medicals/)).toBeVisible();
+  expect(topups(b)[0]!.key).not.toBe(K);
+});
+
+test('WQ14b L3: a refusal other than 409 gives the kept key back to the next credit', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await reloadMidCredit(page, b);
+  const first = b.held!.key;
+  await forgetIt(page);
+  b.refuseNextTopup = { status: 400, code: 'VALIDATION_ERROR' };
+  await addMoney(page, '250', 'stage testing');
+  await expect(page.getByText('Not added: Check the amount (a whole number of rupees, 1 or more) and the note. Nothing was added.')).toBeVisible();
+  await addMoney(page, '250', 'stage testing');
+  await expect(page.getByText(/₹250.00 was added to the wallet of Asha Medicals/)).toBeVisible();
+  expect(topups(b).map((c) => c.key)).toEqual([first, first, first]);
+  b.commitHeld();
+  expect(b.walletPaise).toBe(145_000);
+});
+
+test('WQ14b L3: the late original with another body lands after the reused-key credit: exactly one credit', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await reloadMidCredit(page, b);
+  const first = b.held!.key;
+  await forgetIt(page);
+  await addMoney(page, '300', 'support credit');
+  await expect(page.getByText(/₹300.00 was added to the wallet of Asha Medicals/)).toBeVisible();
+  b.commitHeld(); // 250 "stage testing" with the same key: refused by the server, nothing added
+  expect(b.walletPaise).toBe(150_000);
+  expect(b.movements.filter((m) => m.referenceType === 'topup')).toHaveLength(1);
+  expect(topups(b).map((c) => c.key)).toEqual([first, first]);
+});
+
+test('WQ14b nit: the Forget tick is cleared when “Forget it” hides', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await reloadMidCredit(page, b);
+  await page.getByLabel(ACK).check();
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByRole('button', { name: 'Forget it' })).toBeVisible();
+  await expect(page.getByLabel(ACK)).not.toBeChecked();
+  await expect(page.getByRole('button', { name: 'Forget it' })).toBeDisabled();
+});
+
+test('WQ14b nit: a restored name change on an older backend does not offer to send the name again', async ({ page }) => {
+  const b = await mockPharmacy(page, [row({ holder: { pharmacyCustomerId: LINK, name: 'Rina K.' } })]);
+  await openBooking(page);
+  await page.getByRole('button', { name: 'Correct the name' }).click();
+  await page.getByLabel('Patient’s name as your pharmacy writes it').fill('Rina Kumari');
+  b.loseNextNameAnswer = true;
+  await page.getByRole('button', { name: 'Save the name' }).click();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('The outcome of this request is not known yet.', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Sending the same name again is safe/)).toHaveCount(0);
 });

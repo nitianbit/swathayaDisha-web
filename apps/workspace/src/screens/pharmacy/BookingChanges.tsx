@@ -256,7 +256,8 @@ export function CorrectName({ pharmacyId, booking, target, guard, onChanged }: {
             // `holder.typedName`), one read; an older backend does not say it, so it is not known yet.
             const typed = (await pharmacyAssistedApi(api).booking(booking._id)).holder?.typedName;
             onChanged();
-            if (typed !== null && typeof typed !== 'string') return 'The outcome of this request is not known yet. Sending the same name again is safe.';
+            // WQ14b: a restored change cannot be sent again from here (no body), so that is not offered in words either.
+            if (typed !== null && typeof typed !== 'string') return `The outcome of this request is not known yet.${restored ? '' : ' Sending the same name again is safe.'}`;
             if (!restored && op.body && typed === op.body.name) {
               settle(op.requestKey);
               setSaved({ name: op.body.name, shown: undefined });

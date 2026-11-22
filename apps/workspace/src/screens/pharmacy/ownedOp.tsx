@@ -88,16 +88,20 @@ export function CheckPanel({ label, children, onCheck, resend, giveUp, forget }:
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
 
+  /** WQ14b: "forget" (and its tick) hides while a check runs, and after one fails, until a check finds nothing. */
+  const unchecked = () => { setChecked(false); setAcknowledged(false); };
+
   async function check() {
     setChecking(true);
     setNote(null);
+    unchecked();
     try {
       const left = await onCheck();
       if (!live.current) return;
       if (left) { setNote({ tone: 'warn', text: left }); setChecked(true); }
     } catch (err) {
       // WQ14 W3(b): a failed check hides "forget" again until a check succeeds.
-      if (live.current) { setNote({ tone: 'error', text: `Could not check: ${messageOf(err)}` }); setChecked(false); }
+      if (live.current) { setNote({ tone: 'error', text: `Could not check: ${messageOf(err)}` }); unchecked(); }
     } finally {
       if (live.current) setChecking(false);
     }
