@@ -1646,8 +1646,51 @@ except W3(c).
 - The Forget tick is cleared whenever "Forget it" hides after a check. On an older backend, a restored name change (which cannot be sent again)
   says only "The outcome of this request is not known yet."
 
+## WQ15 close a card top-up already paid by hand; clinic sign-in refusal (2026-11-23, branch `wq15/close-compensated`)
+
+Backend: r9 (`m0/r9-owner-decisions` 0ca329aa, design ASSISTED_BOOKING_DESIGN.md §22; on origin/stage). Web base: origin/stage
+0cbc4a2. One UI addition (the section below) and one new message with its "Choose another workspace" way on; nothing else on the
+wallet page or the sign-in changes.
+
+- **Admin › Pharmacy wallets › Card top-ups not credited** (bottom of a pharmacy's wallet page): the pharmacy's rows of
+  `GET /admin/wallet-recharges/uncredited` (no query: every pharmacy, filtered here by `pharmacyId`; at most 200 paid-not-credited
+  plus 200 never-checked attempts, the last 30 days unless the sweep date is set). Each row: when, amount (`amountMinor`), state
+  (`paid_not_credited` "Paid, not credited" / `not_checked_with_gateway` "Not checked with Razorpay") and the payment reference.
+  The r9 row carries no Razorpay order id, so the reference is the payment record id (`paymentTransactionId`); a
+  `razorpayOrderId` is shown if a server adds one (follow-up below).
+- **Mark as already paid by hand**: a required reason (1–500 after trimming), a confirm step with the owner wording ("Use this only
+  when Jansetu support already paid this amount to the pharmacy another way. The top-up can then never be credited."), then
+  `POST /admin/wallet-payments/:paymentRecordId/close-compensated {reason, requestKey}` (always the record id, so never
+  `PAYMENT_AMBIGUOUS` in practice). The key (32 letters and digits, `^[A-Za-z0-9_-]{8,100}$`) is the owned PendingOp's, made at the
+  review, stored before sending. A lost answer: "Send the same request again" (same key and body; the server answers the
+  closure, `replayed`), or "Check whether it was recorded" (`GET /admin/wallet-payments/close-compensated/by-key/:key` → `closed` /
+  `not_found`; anything else, a 503 included, is a failed check). After a reload only the key is kept: check, or forget. Forgetting is
+  safe: a top-up already closed answers its closure to any key.
+- **Answers**: 200 closed / replayed. 409 `TOPUP_ALREADY_CREDITED` "This top-up was already credited, nothing to close.",
+  `TOPUP_REFUNDED` (a backend follow-up: "This top-up was already refunded to the card, nothing to close."), `TOPUP_BLOCKED`, `IDEMPOTENCY_KEY_REUSED`, `PAYMENT_AMBIGUOUS`, `WALLET_CHANGED`; 404 `TOPUP_NOT_FOUND`; 503 `INDEXES_OUTDATED` or
+  the admin tools switch (`ASSISTED_BOOKING_DISABLED`, or a server without the route). Credited, blocked and not-a-top-up settle the
+  close on any attempt (the server answers an earlier successful close as its closure first). The two coded 503s settle a sole first
+  attempt (refused before any write); an uncoded 503 stays unknown.
+- **Clinic sign-in**: 403 `CLINIC_OWNER_DOCTOR_NOT_VERIFIED` (and `CLINIC_DOCTOR_NOT_VERIFIED`, its name after a backend follow-up;
+  both are recognised) from partner verify, partner select or any partner call says "Your doctor
+  account is not verified or not active, so this clinic workspace is closed for you. Contact the Jansetu team." (`messageOf`).
+  Not retried. A refused select has spent its one-use ticket, so the screen goes back to the code step (a new code, then another
+  workspace). On a partner call (the profile read after a reload included), the API client's new `onForbidden` hook lets the session
+  end it like a 401 for the current token: `signOut` with that message, which also logs the cookie/native session out on the server
+  (logout and refresh carry no partner check), so a reload shows the plain sign-in and nothing loops. When the same refusal ends the
+  session during a sign-in, the message is shown once. Review of the 403 handling: the web otherwise signs out only on a 401, and
+  a 403 from the profile read after a reload used to leave the person signed out silently; for this code the hook ends the session
+  with the message first, and the reload path itself also sets the message (never a silent sign-out). There is no "Sign out" to
+  offer: the session is already ended on the server. "Choose another workspace" is offered instead: on the sign-in screen after the
+  session ended it picks "Lab or clinic staff" and puts the cursor on the number; after a refused choice it sends a new code to the
+  same number or email (after the resend wait), whose answer offers the workspaces again. Not offered after a refused verify (one
+  workspace only: verify answers a choice when there are several).
+
 ## Follow-ups
 
+- WQ15: the r9 `uncredited` row has no Razorpay order id (`uncreditedTopups` selects `razorpayPaymentId` but sends neither). For
+  the backend: add `razorpayOrderId` to each row; the section shows it when present. The list is global (no `pharmacyId` query), so
+  a pharmacy's rows can be cut off by the 200-row limit across all pharmacies.
 - WQ11d: the desk rows (`deskView`) do not carry their slot's seats or end, so the desk knows an appointment is in a
   session with several seats only while that session is still listed with a free seat (the doctor's page reads its own
   slots and always knows). Otherwise the one-patient rule is offered and the server's 409 APPOINTMENT_NOT_STARTED is said
@@ -1675,6 +1718,7 @@ except W3(c).
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-23 | WQ15 close a card top-up already paid by hand; clinic sign-in refusal (on 0cbc4a2) | Against r9 0ca329aa (design §22; mocked API). typecheck clean; Vitest 365/365 (+9: wq15.test.ts 8 (close refusal words incl. TOPUP_REFUNDED, the refused-before-writing 503s, the any-attempt final refusals, the reason rule and owner wording, the list filter, the close and by-key requests, both clinic codes, the client's 403 hook), errors.test.ts 1); Playwright workspace 788/788 (+14 = 7 journeys x 2: list and mark with a reason and a confirm step; a lost answer checked by key, resent with the same key and body, and checked after a reload; the 409 credited case and Forget; clinic refusal at verify, at select (then "Choose another workspace" with a new code), on a partner call (session ended on the server, the message, no loop on reload, the follow-up code name) and on a reload (the profile read); the two session-end journeys failed with the hook disabled; temporary config on port 5371, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-23 | WQ14b follow-ups (M1, M2, L1–L3, nits on 183a756) | Mocked API as WQ14. typecheck clean; Vitest 356/356; Playwright workspace 774/774 (+16 = 8 journeys x 2: carried key survives a reload as an opaque marker, a current-page forgotten credit carries its key, Forget hidden during a check, a found credit drops its kept key, a 400 gives the key back, a late original with another body adds nothing, the tick cleared, the restored older-backend name words; 6 of them failed before the fix, the two L3 ones cover existing behaviour; temporary config on port 5361, `reuseExistingServer: false`, deleted); screenshots of Pharmacy wallets and the booked consultation identical to 183a756; `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-23 | WQ14 before production (W1–W3 on 3d26b8c) | Against stage (r7 e90952cc) and r8 B6 dd8971b0 `holder.typedName` (mocked API). typecheck clean; Vitest 356/356 (+2 in wq14.test.ts: a 503/500 by-key read is thrown, the exact-read "Not found" words; −1: the removed customer-list typed-name read); Playwright workspace 758/758 (+14 = 7 journeys x 2: W1 reload mid-credit then the old key reused, the 409 path, Back keeps the key; W3(b) a failed check hides Forget; W2 one booking read and no customer list, an older backend, after a reload; the L3 check test now reads `holder.typedName`; temporary config on port 5351, `reuseExistingServer: false`, deleted); screenshots of Pharmacy wallets and the booked consultation before/after identical except the W3(c) sentence; `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-22 | WQ13 review fixes (M1, L1–L7 on 8f892cc) | Against stage (r6 694bfaa9) and r7 `adminTopupByKey` as in its worktree (mocked API). typecheck clean; Vitest 355/355 (+4 tests, several extended: history search with no clock cut-off and its 20-page limit words, the r7 by-key read (credited / not_found / no route / odd answer), the newest admin credit, read errors without "nothing was added", the stored typed name paged by id with no `search`, marker ids); Playwright workspace 744/744 (+16 = 8 journeys x 2: L1 moved again since, L2 check closes the review, L3 stored-name check and a failed re-read, M1 reload + check of a credit on page 8, the 400-movement limit and the Forget tick, the r7 exact read and the L6 last credit, L7; the spec 120/120 with --repeat-each 3; temporary config on port 5337, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build clean. |

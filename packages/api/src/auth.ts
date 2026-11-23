@@ -156,6 +156,18 @@ export const EMAIL_NOT_REGISTERED_MESSAGE = 'No account uses this email. Sign in
 export const EMAIL_NOT_REGISTERED_STAFF_MESSAGE =
   'No account uses this email. Sign in with your mobile number. To use email sign-in, ask the Jansetu team to add it to your account.';
 
+/**
+ * r9 (design §22.2): a lab/clinic member linked to a doctor who is not verified and active is refused with 403
+ * `CLINIC_OWNER_DOCTOR_NOT_VERIFIED` at partner verify, at partner select and on every partner API call
+ * (`assertMemberDoctorEligible`). A backend follow-up renames it `CLINIC_DOCTOR_NOT_VERIFIED`: both are recognised.
+ * Not retried; on an API call the session ends.
+ */
+export const CLINIC_DOCTOR_NOT_VERIFIED_CODES: readonly string[] = ['CLINIC_OWNER_DOCTOR_NOT_VERIFIED', 'CLINIC_DOCTOR_NOT_VERIFIED'];
+export const isClinicDoctorNotVerified = (err: unknown) =>
+  err instanceof ApiError && err.status === 403 && CLINIC_DOCTOR_NOT_VERIFIED_CODES.includes(err.code ?? '');
+export const CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE =
+  'Your doctor account is not verified or not active, so this clinic workspace is closed for you. Contact the Jansetu team.';
+
 /** D4: once-only operations whose outcome a reloaded page never saw. */
 export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_create' | 'pharmacy_checkout' | 'lab_booking_create' | 'instant_request_create'
   // WQ12 (assisted phase 0, §18.2 item 9): a medicine order made from a booking's prescription.

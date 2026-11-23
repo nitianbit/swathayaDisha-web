@@ -1,6 +1,6 @@
 export { ApiError, createApiClient } from './client.ts';
 export type { ApiClient, ApiClientOptions, Page, QueryValue, RequestOptions } from './client.ts';
-export { authApi, EMAIL_NOT_REGISTERED_MESSAGE, EMAIL_NOT_REGISTERED_STAFF_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, normalizeEmail, OTP_PATTERN, parseLoginIdentifier, partnerSelectionOf, PHONE_PATTERN, requestKeysApi, targetKey, targetKind } from './auth.ts';
+export { authApi, CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, EMAIL_NOT_REGISTERED_MESSAGE, EMAIL_NOT_REGISTERED_STAFF_MESSAGE, isClinicDoctorNotVerified, isEmailNotRegistered, maskTarget, MAX_EMAIL, normalizeEmail, OTP_PATTERN, parseLoginIdentifier, partnerSelectionOf, PHONE_PATTERN, requestKeysApi, targetKey, targetKind } from './auth.ts';
 export type { OnceOnlyKind, PartnerChoice, PartnerSelection, SignInMode, VerifyAnswer } from './auth.ts';
 export type { NativeApp, NativeRefreshed, NativeSignedIn, NativeTokens, OtpTarget, Profile, SessionRefreshed, SessionSignedIn, SignedIn, UserType } from './auth.ts';
 export {
@@ -183,8 +183,9 @@ export {
   ADMIN_TOPUP_BY_KEY_PATH, ADMIN_TOPUP_KEY_PATTERN, ADMIN_TOPUP_PAGE_SIZE, ADMIN_TOPUP_SEARCH_PAGES, ADMIN_TOPUP_WARNING, adminPharmacyWalletApi, adminTopupForm, adminTopupRefusal,
   adminWalletReadError, findAdminTopup, isAdminTopupRow, latestAdminCredit, topupNotFoundWords,
   MAX_ADMIN_TOPUP_NOTE, MAX_ADMIN_TOPUP_RUPEES, MIN_ADMIN_TOPUP_NOTE,
+  CLOSE_COMPENSATED_EXPLAIN, closeCompensatedFinal, closeCompensatedRefusal, closeReasonProblem, closeRefusedBeforeWriting, MAX_CLOSE_REASON, uncreditedOf,
 } from './adminPharmacyWallet.ts';
-export type { AdminTopupBody, AdminTopupSearch } from './adminPharmacyWallet.ts';
+export type { AdminTopupBody, AdminTopupSearch, CompensatedClose, UncreditedTopup } from './adminPharmacyWallet.ts';
 export type {
   AssistedDoctor, AssistedGender, AssistedPatient, AssistedRelation, BookedConsultation, BookingStatus as AssistedBookingStatus, ByKeyAnswer, CancelAnswer,
   ConsultationReceipt, ConsultationRequest, AssistedMode, DispensingCopy, DoctorQuery, DoctorSlots, DoctorSlotsQuery, AssistedSlot, JoinOn, PatientDraft, PatientLookup, PharmacyWallet,

@@ -212,6 +212,22 @@ If someone else changed the same thing while you were typing, nothing is saved a
 - **Forget it** needs you to tick "I understand the money may already have been added to this wallet". Forgetting does not undo a credit that was made.
 - An admin credit can never be withdrawn by the pharmacy.
 
+#### Card top-ups not credited
+
+At the bottom of a pharmacy's wallet page, **Card top-ups not credited** lists that pharmacy's card top-ups that never reached the wallet: when, the amount, the state (**Paid, not credited**, or **Not checked with Razorpay**) and the payment reference.
+
+**Use this only when Jansetu support already paid this amount to the pharmacy another way. The top-up can then never be credited.**
+
+1. On the top-up's row, tap **Mark as already paid by hand**.
+2. Type **Why is it closed?** (required, for example who at Jansetu support paid the pharmacy, how and when).
+3. Tap **Next: check before closing**, read the amount, the date and the pharmacy, then tap **Yes, mark as already paid**.
+
+- The top-up leaves the list and is never credited to the wallet, also not by a later card check.
+- "This top-up was already credited, nothing to close": the money is in the wallet already. If support also paid by hand, ask the tech team.
+- "This top-up was already refunded to the card, nothing to close": the pharmacy got its money back; nothing more to do.
+- "The outcome of this request is not known yet": tap **Send the same request again** (it is closed only once), or **Check whether it was recorded**. After a page reload you can only check. **Forget it** is safe: a top-up already closed is never closed twice.
+- "The admin tools are switched off on this server" or "The server needs an update": nothing was changed; ask the tech team.
+
 ---
 
 ## 10. Consultations

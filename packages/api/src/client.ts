@@ -77,6 +77,11 @@ export interface ApiClientOptions {
   /** A request that carried `token` got 401. The session decides whether that token is still the current one. */
   onUnauthorized?: (token: string) => void;
   /**
+   * WQ15: a request that carried `token` got 403 (`error` has the server's code). The session decides whether it ends
+   * the session (r9 403 CLINIC_OWNER_DOCTOR_NOT_VERIFIED on a partner call) and whether `token` is still current.
+   */
+  onForbidden?: (token: string, error: ApiError) => void;
+  /**
    * D4: called once when a request with `token` gets 401. Returns a renewed token for the SAME signed-in person, or
    * null. With a token, the request is sent once more unchanged (same body, same request key).
    */
@@ -170,9 +175,11 @@ export function createApiClient(options: ApiClientOptions) {
         const fromBody = typeof body?.retryAfter === 'number' ? body.retryAfter : NaN;
         const wait = Number.isFinite(header) && header > 0 ? header : fromBody;
         const details = body?.details && typeof body.details === 'object' && !Array.isArray(body.details) ? body.details as Record<string, unknown> : undefined;
-        throw new ApiError(res.status, message, typeof body?.code === 'string' ? body.code : undefined,
+        const error = new ApiError(res.status, message, typeof body?.code === 'string' ? body.code : undefined,
           res.status === 429 && Number.isFinite(wait) && wait > 0 ? Math.ceil(wait) : undefined,
           { ...(typeof body?.limit === 'string' ? { limit: body.limit } : {}), ...(details ? { details } : {}) });
+        if (res.status === 403 && token) options.onForbidden?.(token, error);
+        throw error;
       }
       try {
         return await read(res);

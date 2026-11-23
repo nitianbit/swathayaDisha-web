@@ -1603,3 +1603,135 @@ test('WQ11b/Q16b: an owner’s sign-in email is changed by an admin only; owners
   await expect(page.getByLabel('Email (optional)')).toHaveCount(0);
   await expect(page.getByText(/An owner’s sign-in email is added by the Jansetu team/)).toBeVisible();
 });
+
+// ── WQ15 (backend r9, design §22.2): a clinic member whose doctor account is not verified or not active ──
+
+const CLOSED_FOR_YOU = 'Your doctor account is not verified or not active, so this clinic workspace is closed for you. Contact the Jansetu team.';
+const SERVER_WORDS = 'Your doctor account is not verified or not active, so this clinic workspace is closed to you; contact Jansetu support';
+const notVerified = (route: Route, code: string) => route.fulfill({ status: 403, contentType: 'application/json',
+  body: JSON.stringify({ error: 403, code, message: SERVER_WORDS }) });
+
+/**
+ * The server's session rules on top of `mockBackend`: the cookie session lives from the partner sign-in until a logout
+ * (refresh answers it, then 401); with `refused`, every partner call (the profile included) answers 403, as r9's
+ * `admitPartnerToken` does, while refresh and logout (no partner check) still work.
+ */
+async function doctorSession(page: Page) {
+  /** r9's code, or the follow-up's new name for it. */
+  const s = { live: false, refused: false, code: 'CLINIC_OWNER_DOCTOR_NOT_VERIFIED', logouts: 0, refreshes: 0 };
+  await page.route('**/api/v1/**', async (route) => {
+    const path = new URL(route.request().url()).pathname.replace('/api/v1', '');
+    if (path === '/auth/session/refresh') {
+      s.refreshes += 1;
+      return s.live ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true,
+        data: { token: 't1', expiresIn: 900, principal: { userId: OWNER, userType: 'partner', sid: 's1' } } }) })
+        : route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 401, code: 'SESSION_ENDED', message: 'Please sign in again' }) });
+    }
+    if (path === '/auth/session/logout') {
+      s.logouts += 1;
+      s.live = false;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { signedOut: true } }) });
+    }
+    if (path === '/auth/partner/verify' || path === '/auth/partner/select') {
+      if (s.refused) return notVerified(route, s.code);
+      s.live = true;
+      return route.fallback();
+    }
+    if (s.refused && route.request().headers().authorization === 'Bearer t1') return notVerified(route, s.code);
+    return route.fallback();
+  });
+  return s;
+}
+const profileReads = (b: Backend) => b.calls.filter((c) => c.path === '/auth/profile').length;
+/** No sign-in loop: once the sign-in screen is up, no more refreshes are made. */
+async function settled(page: Page, s: { refreshes: number }) {
+  await page.waitForTimeout(700);
+  const after = s.refreshes;
+  await page.waitForTimeout(1500);
+  expect(s.refreshes).toBe(after);
+}
+
+test('WQ15: a clinic sign-in refused at verify says why in plain words and opens nothing', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const s = await doctorSession(page);
+  s.refused = true;
+  await signInPartner(page);
+  await expect(page.getByText(CLOSED_FOR_YOU)).toBeVisible();
+  await expect(page.getByText(SERVER_WORDS)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Verify and sign in' })).toBeVisible();
+  expect(profileReads(backend)).toBe(0);
+});
+
+test('WQ15: a workspace choice refused at select says why; the spent choice asks for a new code (not resent)', async ({ page }) => {
+  await page.clock.install();
+  const backend = await mockBackend(page, ownerMe, { multi: true });
+  const s = await doctorSession(page);
+  await signInPartner(page);
+  await expect(page.getByRole('radio')).toHaveCount(2);
+  s.refused = true;
+  await page.getByLabel(/Sunrise Clinic/).check();
+  await page.getByRole('button', { name: 'Open workspace' }).click();
+  await expect(page.getByText(CLOSED_FOR_YOU)).toBeVisible();
+  await expect(page.getByLabel('6-digit code')).toHaveValue('');
+  await expect(page.getByRole('button', { name: /Resend code/ })).toBeVisible();
+  expect(backend.calls.filter((c) => c.path === '/auth/partner/select')).toHaveLength(0); // refused here, never reached the mock
+  expect(profileReads(backend)).toBe(0);
+
+  // "Choose another workspace": a new code to the same number (after the resend wait), then the choice again.
+  s.refused = false;
+  await page.clock.fastForward(31_000);
+  await page.getByRole('button', { name: 'Choose another workspace' }).click();
+  await expect(page.getByRole('button', { name: 'Choose another workspace' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Resend code in \d+s$/ })).toBeVisible(); // the new code was sent
+  expect(backend.calls.filter((c) => c.path === '/auth/partner/send')).toHaveLength(2);
+  await page.getByLabel('6-digit code').fill('123456');
+  await page.getByRole('button', { name: 'Verify and sign in' }).click();
+  await page.getByLabel(/City Lab/).check();
+  await page.getByRole('button', { name: 'Open workspace' }).click();
+  await expect(page.getByText('Lab · City Lab')).toBeVisible();
+});
+
+test('WQ15: refused on a partner call, the session ends (signed out on the server too) with the reason; a reload does not loop', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const s = await doctorSession(page);
+  await signInPartner(page);
+  await expect(page.getByRole('heading', { name: 'Welcome, Ravi Owner' })).toBeVisible();
+  s.refused = true;
+  s.code = 'CLINIC_DOCTOR_NOT_VERIFIED'; // the follow-up's name says the same
+  await nav(page).getByRole('link', { name: 'Staff' }).click();
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+  await expect(page.getByText(CLOSED_FOR_YOU)).toHaveCount(1);
+  await expect(page.getByText('Your session has ended. Please sign in again.')).toHaveCount(0);
+  await expect.poll(() => s.logouts).toBe(1);
+  await page.getByLabel('Pharmacy staff').check();
+  await page.getByRole('button', { name: 'Choose another workspace' }).click();
+  await expect(page.getByLabel('Lab or clinic staff')).toBeChecked();
+  await expect(page.getByLabel('Mobile number or email')).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Choose another workspace' })).toHaveCount(0);
+  const reads = profileReads(backend);
+
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+  await expect(page.getByLabel('Mobile number or email')).toBeVisible();
+  await settled(page, s);
+  expect(profileReads(backend)).toBe(reads);
+  expect(s.logouts).toBe(1);
+});
+
+test('WQ15: a reload while the session is live but refused ends it once with the reason; the next reload shows the plain sign-in', async ({ page }) => {
+  const backend = await mockBackend(page);
+  const s = await doctorSession(page);
+  await signInPartner(page);
+  await expect(page.getByRole('heading', { name: 'Welcome, Ravi Owner' })).toBeVisible();
+  s.refused = true;
+  await page.reload();
+  await expect(page.getByText(CLOSED_FOR_YOU)).toBeVisible();
+  await expect.poll(() => s.logouts).toBe(1);
+  const reads = profileReads(backend);
+  await page.reload();
+  await expect(page.getByLabel('Mobile number or email')).toBeVisible();
+  await expect(page.getByText(CLOSED_FOR_YOU)).toHaveCount(0);
+  await settled(page, s);
+  expect(profileReads(backend)).toBe(reads);
+  expect(s.logouts).toBe(1);
+});

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  ALL_PARTNER_PERMISSIONS, ApiError, authApi, clearSignOutPending, clearWebSignOutPending, createApiClient, isTransientSessionError, markSignOutPending,
+  ALL_PARTNER_PERMISSIONS, ApiError, authApi, clearSignOutPending, CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, clearWebSignOutPending, createApiClient, isClinicDoctorNotVerified, isTransientSessionError, markSignOutPending,
   isIdListSlot, markWebSignOutPending, markerStore, nativeSecureStore, nativeSignOut, OBJECT_ID_PATTERN, PARTNER_KIND_LABEL, partnerSelectionOf, refreshTokenKey,
   rotateNative, isSignedOutAnswer, samePrincipal, sessionChannel, signOutState, webSignOutState, withSessionLock,
   type ApiClient, type NativeSignedIn, type OtpTarget, type PartnerKind, type PartnerPermission, type PartnerSelection, type PendingMarker,
@@ -325,6 +325,11 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     onUnauthorized: (sent) => {
       if (sent === token.current) signOut('Your session has ended. Please sign in again.');
     },
+    // WQ15 (r9): a clinic member whose doctor account is not verified or not active is refused on every partner call.
+    // The session ends like a 401 (signed out on the server too, so a reload does not resume it), with the reason.
+    onForbidden: (sent, err) => {
+      if (sent === token.current && isClinicDoctorNotVerified(err)) signOut(CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE);
+    },
   }), [baseUrl, signOut]);
 
   const auth = useMemo(() => authApi(api), [api]);
@@ -417,7 +422,9 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
           setStartReconnecting(true);
           return;
         }
-        setState((s) => (s.status === 'restoring' ? { status: 'signed_out', ...(unfinished ? { notice: SIGNED_OUT_HERE } : {}) } : s));
+        // WQ15: the clinic refusal is never a silent sign-out (the forbidden hook normally ends the session first, with it).
+        const why = unfinished ? SIGNED_OUT_HERE : isClinicDoctorNotVerified(err) ? CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE : undefined;
+        setState((s) => (s.status === 'restoring' ? { status: 'signed_out', ...(why ? { notice: why } : {}) } : s));
       }
       if (unfinished) finishWebSignOut(null, true);
     }

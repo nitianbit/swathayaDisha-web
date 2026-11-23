@@ -5,6 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 import {
   ADMIN_TOPUP_PAGE_SIZE, ADMIN_TOPUP_WARNING, adminPharmacyWalletApi, ApiError, adminTopupForm, adminTopupRefusal, adminWalletReadError, findAdminTopup,
   latestAdminCredit, MAX_ADMIN_TOPUP_NOTE, movementLabel, topupNotFoundWords, type PendingMarker, type WalletMovement, OBJECT_ID_PATTERN, pharmacyAdminApi, signedPaiseOf, walletBalancePaise, walletState, type AdminTopupBody, type PharmacyWallet,
+  CLOSE_COMPENSATED_EXPLAIN, closeCompensatedFinal, closeCompensatedRefusal, closeReasonProblem, closeRefusedBeforeWriting, MAX_CLOSE_REASON, type CompensatedClose, type UncreditedTopup,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -166,6 +167,11 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
               )}
             </>
           )}
+      </section>
+
+      <section className="ws-section" aria-labelledby="uncredited-h">
+        <h2 id="uncredited-h">Card top-ups not credited</h2>
+        <UncreditedTopups scopeKey={scopeKey} pharmacyId={pharmacyId} pharmacyName={name} />
       </section>
     </>
   );
@@ -354,5 +360,187 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
         </div>
       )}
     </form>
+  );
+}
+
+interface PendingClose { row: UncreditedTopup; reason: string }
+
+const UNCREDITED_STATE: Readonly<Record<string, string>> = {
+  paid_not_credited: 'Paid, not credited',
+  not_checked_with_gateway: 'Not checked with Razorpay',
+};
+const topupWords = (r: UncreditedTopup) => `${formatRupees(r.amountMinor / 100)} top-up of ${formatDateTime(r.createdAt)}`;
+
+/**
+ * WQ15 (backend r9, design §22): the pharmacy's card top-ups that were never credited (`GET /admin/wallet-recharges/uncredited`,
+ * its rows only), and "Mark as already paid by hand": a reason, a confirm step, then one send with an owned PendingOp
+ * (`POST /admin/wallet-payments/:paymentId/close-compensated {reason, requestKey}`). A lost answer is sent again with the
+ * same key and body (the server answers the closure again), or checked by key (`.../close-compensated/by-key/:key`).
+ * Closing is once per top-up whatever the key, so forgetting an unconfirmed close is safe: closing again is replayed.
+ */
+function UncreditedTopups({ scopeKey, pharmacyId, pharmacyName }: { scopeKey: readonly string[]; pharmacyId: string; pharmacyName: string }) {
+  const { api } = useSession();
+  const admin = useStaff();
+  const queryClient = useQueryClient();
+  const wallets = adminPharmacyWalletApi(api);
+  const list = useQuery({ queryKey: [...scopeKey, pharmacyId, 'uncredited'], queryFn: () => wallets.uncredited(pharmacyId) });
+  const { op, send, settle } = useOwnedOp<PendingClose>(`admin-wallet-close:${admin.id}:${pharmacyId}`);
+  const { perform, busy } = useOneAtATime('top-up');
+  const [chosen, setChosen] = useState<UncreditedTopup | null>(null);
+  const [reason, setReason] = useState('');
+  const [reasonError, setReasonError] = useState<string | undefined>();
+  const [review, setReview] = useState<({ requestKey: string } & PendingClose) | null>(null);
+  const [refused, setRefused] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const [resendError, setResendError] = useState<string | null>(null);
+  const reread = () => queryClient.invalidateQueries({ queryKey: [...scopeKey, pharmacyId] });
+
+  /** `how`: answered to the first send, to a resend of the same request, or found by "Check". */
+  const closed = (c: CompensatedClose, row: UncreditedTopup | null, how: 'sent' | 'resent' | 'checked') => {
+    setChosen(null);
+    setReview(null);
+    setReason('');
+    const what = `the ${row ? topupWords(row) : `${formatRupees(c.amountPaise / 100)} top-up`}`;
+    setDone(how === 'checked' ? `It was closed: ${what} will never be credited to the wallet.`
+      : how === 'sent' && c.replayed ? `${what.replace(/^t/, 'T')} was already closed as paid by hand. Nothing more was changed.`
+      : `Marked as already paid by hand: ${what} will never be credited to the wallet.${how === 'resent' ? ' It was closed once, even though it was sent more than once.' : ''}`);
+    void reread();
+  };
+  const refuse = (err: unknown) => { setChosen(null); setReview(null); setRefused(closeCompensatedRefusal(err)); void reread(); };
+
+  function start(row: UncreditedTopup) {
+    setDone(null);
+    setRefused(null);
+    setReview(null);
+    setReason('');
+    setReasonError(undefined);
+    setChosen(row);
+  }
+
+  function check(e: FormEvent) {
+    e.preventDefault();
+    if (!chosen) return;
+    const problem = closeReasonProblem(reason);
+    setReasonError(problem);
+    if (problem) return;
+    // The key is made now, with the reviewed body; confirming sends exactly this.
+    setReview({ requestKey: newRequestKey(), row: chosen, reason: reason.trim().replace(/\s+/g, ' ') });
+  }
+
+  async function sendClose(p: PendingOp<PendingClose>) {
+    const sole = p.attempts === 0 && !p.uncertain;
+    const r = await perform(() => send(p, (b) => wallets.closeCompensated(b.row.paymentTransactionId, { reason: b.reason, requestKey: p.requestKey })));
+    if (r.kind === 'stale') return;
+    if (r.kind === 'ok') { closed(r.value, p.body.row, p.attempts > 0 ? 'resent' : 'sent'); return; }
+    // The switch or the indexes refused the only attempt before any write; or the top-up can never be closed (credited,
+    // blocked, not a top-up), which an earlier attempt that did close it would have been answered as its closure instead.
+    if (r.kind === 'unknown' && ((sole && closeRefusedBeforeWriting(r.error)) || closeCompensatedFinal(r.error))) {
+      settle(p.requestKey);
+      refuse(r.error);
+      return;
+    }
+    if (r.kind === 'refused') { refuse(r.error); return; }
+    void reread();
+  }
+
+  if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
+    const restored = !!op.restored || !op.body;
+    return (
+      <>
+        <p>{CLOSE_COMPENSATED_EXPLAIN}</p>
+        {resendError && <Alert>{resendError}</Alert>}
+        <CheckPanel label="Unconfirmed close"
+          onCheck={async () => {
+            const found = await wallets.closeCompensatedByKey(op.requestKey);
+            void reread();
+            if (found.state === 'closed') {
+              settle(op.requestKey);
+              closed(found.close, restored ? null : op.body.row, 'checked');
+              return null;
+            }
+            return restored
+              ? 'Not closed so far. It may still be on its way. Read the list again in a minute before closing it again.'
+              : 'Not closed so far. It may still be on its way. Sending the same request again is safe: it is closed only once.';
+          }}
+          resend={restored ? undefined : {
+            label: 'Send the same request again', busy,
+            onClick: () => { setResendError(null); void sendClose(op).catch((err: unknown) => setResendError(closeCompensatedRefusal(err))); },
+          }}
+          forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget: () => settle(op.requestKey),
+            consequence: 'The top-up may already be closed, or may still be closed. Forgetting it does not undo that. Read the list again before closing it again: a top-up already closed is never closed twice.' }}>
+          <Alert tone="warn">
+            {restored
+              ? 'A top-up marked as already paid by hand earlier on this device (before the page was reloaded) was not confirmed. Its details are not kept here. Check whether it was recorded.'
+              : `The outcome of this request is not known yet${op.error ? ` (${op.error})` : ''}. The ${topupWords(op.body.row)} may already be closed. Sending the same request again is safe: it is closed only once.`}
+          </Alert>
+        </CheckPanel>
+      </>
+    );
+  }
+
+  const rows = list.data ?? [];
+  return (
+    <>
+      <p>{CLOSE_COMPENSATED_EXPLAIN}</p>
+      {done && <Alert tone="ok">{done}</Alert>}
+      {refused && <Alert>Not closed: {refused}</Alert>}
+      {list.isPending ? <Loading label="Loading card top-ups…" />
+        : list.isError ? <ErrorState message={adminWalletReadError(list.error)} onRetry={() => void list.refetch()} />
+        : rows.length === 0 ? <Empty title="No card top-ups waiting">Card top-ups of {pharmacyName} that were not credited to the wallet are listed here.</Empty>
+        : (
+          <div className="ws-table-wrap">
+            <table className="j-table">
+              <caption className="j-sr-only">Card top-ups not credited, oldest first</caption>
+              <thead><tr><th scope="col">When</th><th scope="col">Amount</th><th scope="col">State</th><th scope="col">Payment reference</th><th scope="col"><span className="j-sr-only">Action</span></th></tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.paymentTransactionId}>
+                    <td>{formatDateTime(r.createdAt)}</td>
+                    <td>{formatRupees(r.amountMinor / 100)}</td>
+                    <td><Badge tone={r.state === 'paid_not_credited' ? 'warn' : undefined}>{UNCREDITED_STATE[r.state] ?? r.state}</Badge></td>
+                    <td>{r.razorpayOrderId ? `Razorpay order ${r.razorpayOrderId}` : `Record ${r.paymentTransactionId}`}</td>
+                    <td>
+                      <Button variant="secondary" disabled={busy || (!!review && chosen?.paymentTransactionId !== r.paymentTransactionId)}
+                        aria-label={`Mark the ${topupWords(r)} as already paid by hand`} onClick={() => start(r)}>Mark as already paid by hand</Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      {chosen && (
+        <form className="rx-form" noValidate onSubmit={check} aria-label="Mark as already paid by hand">
+          <p>The <strong>{topupWords(chosen)}</strong>{chosen.razorpayOrderId ? ` (Razorpay order ${chosen.razorpayOrderId})` : ''}.</p>
+          <fieldset className="ws-frozen" disabled={!!review || busy}>
+            <TextArea label="Why is it closed?" value={reason} maxLength={MAX_CLOSE_REASON} error={reasonError}
+              hint="Required. For example who at Jansetu support paid the pharmacy, how and when." onChange={(e) => setReason(e.target.value)} />
+          </fieldset>
+          {!review ? (
+            <div className="confirm-actions">
+              <Button type="submit">Next: check before closing</Button>
+              <Button variant="ghost" onClick={() => setChosen(null)}>Cancel</Button>
+            </div>
+          ) : (
+            <div className="confirm" role="group" aria-label="Close this top-up">
+              <div className="confirm-text">
+                Mark the <strong>{topupWords(review.row)}</strong> of <strong>{pharmacyName}</strong> as already paid by hand?
+              </div>
+              <ul className="ws-list">
+                <li>Reason: <strong>{review.reason}</strong></li>
+                <li>{CLOSE_COMPENSATED_EXPLAIN}</li>
+              </ul>
+              <div className="confirm-actions">
+                <Button busy={busy} onClick={() => {
+                  const { requestKey, ...pending } = review;
+                  void sendClose(startOp(requestKey, pending)).catch((err: unknown) => refuse(err));
+                }}>Yes, mark as already paid</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>Back</Button>
+              </div>
+            </div>
+          )}
+        </form>
+      )}
+    </>
   );
 }

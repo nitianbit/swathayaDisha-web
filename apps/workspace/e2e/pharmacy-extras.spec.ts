@@ -19,6 +19,9 @@ const SLOT5 = '55'.repeat(12);
 const LINK = 'c3'.repeat(12);
 const P1 = 'a1'.repeat(12);
 const P2 = 'a2'.repeat(12);
+const REC1 = 'f5'.repeat(12);
+const REC2 = 'f6'.repeat(12);
+const REC3 = 'f7'.repeat(12);
 const PHONE = '9876543210';
 
 type Json = Record<string, unknown>;
@@ -396,12 +399,26 @@ interface AdminBackend {
   refuseNextTopup: { status: number; code: string } | null;
   /** WQ14b: the by-key read waits for this first. */
   byKeyWait: Promise<void> | null;
+  /** WQ15 (r9): `GET /admin/wallet-recharges/uncredited` rows (every pharmacy). */
+  uncredited: Json[];
+  /** WQ15: payment record id → its closure (`compensation`: the key and the reason). */
+  closes: Record<string, { key: string; reason: string }>;
+  /** WQ15: records credited to the wallet meanwhile (the close answers 409 TOPUP_ALREADY_CREDITED). */
+  creditedRecords: Set<string>;
+  /** WQ15: the next close commits but its answer is lost on the network. */
+  loseNextCloseAnswer: boolean;
 }
 
 async function mockAdmin(page: Page, init: Partial<Pick<AdminBackend, 'receivableMinor'>> = {}): Promise<AdminBackend> {
   const b: AdminBackend = {
     calls: [], walletPaise: 120_000, receivableMinor: init.receivableMinor ?? 0, credits: {}, loseNextTopupAnswer: false, noWalletFor: P2, byKeyRoute: false, byKeyReads: 0,
     holdNextTopup: false, held: null, byKeyFails: null, loseAndHoldNextTopup: false, refuseNextTopup: null, byKeyWait: null,
+    uncredited: [
+      { paymentTransactionId: REC1, pharmacyId: P1, amountMinor: 50_000, createdAt: '2026-11-20T04:30:00.000Z', state: 'paid_not_credited' },
+      { paymentTransactionId: REC2, pharmacyId: P1, amountMinor: 20_000, createdAt: '2026-11-21T04:30:00.000Z', state: 'not_checked_with_gateway' },
+      { paymentTransactionId: REC3, pharmacyId: P2, amountMinor: 99_900, createdAt: '2026-11-21T04:30:00.000Z', state: 'paid_not_credited' },
+    ],
+    closes: {}, creditedRecords: new Set(), loseNextCloseAnswer: false,
     commitHeld: () => { const h = b.held!; b.held = null; credit(h.key, h.body); },
     addNewer: (n) => { for (let i = 0; i < n; i++) b.movements.unshift({ _id: `n${b.movements.length}`, transactionType: 'debit', movementType: 'booking_debit', signedAmountPaise: -100, amountPaise: 100, balanceAfterPaise: b.walletPaise, createdAt: '2026-11-22T12:00:00.000Z', status: 'completed' }); },
     movements: [
@@ -475,6 +492,37 @@ async function mockAdmin(page: Page, init: Partial<Pick<AdminBackend, 'receivabl
       if (b.byKeyFails) return refuse(route, b.byKeyFails, b.byKeyFails === 503 ? 'INDEXES_OUTDATED' : 'INTERNAL');
       const transaction = b.movements.find((m) => m.referenceType === 'topup' && m.referenceId === byKey[1]);
       return json(route, 200, { success: true, data: transaction ? { state: 'credited', transaction, wallet: wallet() } : { state: 'not_found' } });
+    }
+    // WQ15 (r9): uncredited card top-ups, the close as already compensated and its by-key read (this admin's keys).
+    const closure = (id: string, replayed: boolean) => {
+      const r = b.uncredited.find((x) => x.paymentTransactionId === id)!;
+      return { closed: true, credited: false, replayed, paymentRecordId: id, pharmacyId: r.pharmacyId, amountPaise: r.amountMinor, compensatedAt: '2026-11-23T05:00:00.000Z', status: 'failed' };
+    };
+    if (path === '/admin/wallet-recharges/uncredited' && method === 'GET') {
+      return json(route, 200, { success: true, data: b.uncredited.filter((r) => !b.closes[r.paymentTransactionId as string] && !b.creditedRecords.has(r.paymentTransactionId as string)) });
+    }
+    const closeByKey = /^\/admin\/wallet-payments\/close-compensated\/by-key\/([A-Za-z0-9_-]+)$/.exec(path);
+    if (closeByKey && method === 'GET') {
+      const id = Object.keys(b.closes).find((k) => b.closes[k]!.key === closeByKey[1]);
+      return json(route, 200, { success: true, data: id ? { state: 'closed', ...closure(id, true) } : { state: 'not_found' } });
+    }
+    const close = /^\/admin\/wallet-payments\/(\w+)\/close-compensated$/.exec(path);
+    if (close && method === 'POST') {
+      const key = String(body?.requestKey ?? '');
+      const reason = String(body?.reason ?? '').trim();
+      if (!/^[A-Za-z0-9_-]{8,100}$/.test(key) || !reason || reason.length > 500) return refuse(route, 400, 'VALIDATION_ERROR');
+      const id = close[1]!;
+      const prior = Object.keys(b.closes).find((k) => b.closes[k]!.key === key);
+      if (prior) {
+        if (prior !== id || b.closes[prior]!.reason !== reason) return refuse(route, 409, 'IDEMPOTENCY_KEY_REUSED');
+        return json(route, 200, { success: true, data: closure(id, true) });
+      }
+      if (!b.uncredited.some((r) => r.paymentTransactionId === id)) return refuse(route, 404, 'TOPUP_NOT_FOUND', 'Top-up not found');
+      if (b.closes[id]) return json(route, 200, { success: true, data: closure(id, true) });
+      if (b.creditedRecords.has(id)) return refuse(route, 409, 'TOPUP_ALREADY_CREDITED', 'This top-up was already credited to the wallet; there is nothing to close');
+      b.closes[id] = { key, reason };
+      if (b.loseNextCloseAnswer) { b.loseNextCloseAnswer = false; return route.abort('connectionreset'); }
+      return json(route, 200, { success: true, data: closure(id, false) });
     }
     if (path === '/pharmacy-wallet/topup' && method === 'POST') {
       const key = req.headers()['idempotency-key'];
@@ -1033,4 +1081,121 @@ test('WQ14b nit: a restored name change on an older backend does not offer to se
   await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
   await expect(page.getByText('The outcome of this request is not known yet.', { exact: true })).toBeVisible();
   await expect(page.getByText(/Sending the same name again is safe/)).toHaveCount(0);
+});
+
+// ── WQ15: card top-ups not credited, marked as already paid by hand (backend r9, design §22) ──
+
+const closes = (b: AdminBackend) => b.calls.filter((c) => c.method === 'POST' && /\/close-compensated$/.test(c.path));
+const EXPLAIN = 'Use this only when Jansetu support already paid this amount to the pharmacy another way. The top-up can then never be credited.';
+/** "₹500.00 top-up of <date and time>" (the date as the browser formats it). */
+const topup = (rupees: string) => `₹${rupees.replace('.', '\\.')} top-up of [^.]+?`;
+const words = (pattern: string) => new RegExp(`^${pattern}$`);
+const markButton = (rupees: string) => words(`Mark the ${topup(rupees)} as already paid by hand`);
+
+async function markPaidByHand(page: Page, rupees = '500.00', reason = 'Paid by support over UPI on 22 Nov') {
+  await page.getByRole('button', { name: markButton(rupees) }).click();
+  await page.getByLabel('Why is it closed?').fill(reason);
+  await page.getByRole('button', { name: 'Next: check before closing' }).click();
+  const review = page.getByRole('group', { name: 'Close this top-up' });
+  await expect(review.getByText(EXPLAIN)).toBeVisible();
+  await review.getByRole('button', { name: 'Yes, mark as already paid' }).click();
+}
+
+test('WQ15: the pharmacy’s uncredited card top-ups are listed; marking one needs a reason and a confirm step, then it is closed once', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await openAdminWallet(page);
+  const section = page.getByRole('region', { name: 'Card top-ups not credited' });
+  await expect(section.getByText(EXPLAIN)).toBeVisible();
+  const table = section.getByRole('table', { name: 'Card top-ups not credited, oldest first' });
+  await expect(table.getByRole('row')).toHaveCount(3); // the header and this pharmacy's two rows (not P2's)
+  await expect(table.getByRole('row').nth(1)).toContainText('₹500.00');
+  await expect(table.getByRole('row').nth(1)).toContainText('Paid, not credited');
+  await expect(table.getByRole('row').nth(1)).toContainText(`Record ${REC1}`);
+  await expect(table.getByRole('row').nth(2)).toContainText('Not checked with Razorpay');
+  await expect(table).not.toContainText('₹999.00');
+
+  await page.getByRole('button', { name: markButton('500.00') }).click();
+  await page.getByRole('button', { name: 'Next: check before closing' }).click();
+  await expect(page.getByText('Write why this top-up is closed, for example who paid the pharmacy and how.')).toBeVisible();
+  await page.getByLabel('Why is it closed?').fill('  Paid by support   over UPI ');
+  await page.getByRole('button', { name: 'Next: check before closing' }).click();
+  const review = page.getByRole('group', { name: 'Close this top-up' });
+  await expect(review).toContainText(words(`Mark the ${topup('500.00')} of Asha Medicals as already paid by hand\\?.*`));
+  await expect(review.getByText('Paid by support over UPI')).toBeVisible();
+  expect(closes(b)).toHaveLength(0);
+  await review.getByRole('button', { name: 'Yes, mark as already paid' }).click();
+  await expect(section.getByText(words(`Marked as already paid by hand: the ${topup('500.00')} will never be credited to the wallet\\.`))).toBeVisible();
+  await expect(table.getByRole('row')).toHaveCount(2);
+
+  const sent = closes(b);
+  expect(sent).toHaveLength(1);
+  expect(sent[0]!.path).toBe(`/admin/wallet-payments/${REC1}/close-compensated`);
+  expect(sent[0]!.body).toEqual({ reason: 'Paid by support over UPI', requestKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,100}$/) as unknown });
+  expect(b.closes[REC1]).toEqual({ key: sent[0]!.body!.requestKey, reason: 'Paid by support over UPI' });
+  const stored = await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }));
+  expect(stored).not.toContain('Paid by support');
+});
+
+test('WQ15: a lost answer is checked by key, or sent again with the same key and body (closed once); after a reload only “Check” is offered', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await openAdminWallet(page);
+  const section = page.getByRole('region', { name: 'Card top-ups not credited' });
+  b.loseNextCloseAnswer = true;
+  await markPaidByHand(page);
+  await expect(section.getByText(new RegExp(`The outcome of this request is not known yet.*The ${topup('500.00')} may already be closed`))).toBeVisible();
+  await section.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(section.getByText(words(`It was closed: the ${topup('500.00')} will never be credited to the wallet\\.`))).toBeVisible();
+
+  // The other row, this time sent again: the server replays the first close.
+  b.loseNextCloseAnswer = true;
+  await markPaidByHand(page, '200.00', 'Paid in cash at the branch');
+  await expect(section.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  await section.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(section.getByText(words(`Marked as already paid by hand: the ${topup('200.00')} will never be credited to the wallet\\. It was closed once, even though it was sent more than once\\.`))).toBeVisible();
+  const sent = closes(b);
+  expect(sent).toHaveLength(3);
+  expect(sent[2]!.path).toBe(sent[1]!.path);
+  expect(sent[2]!.body).toEqual(sent[1]!.body);
+  expect(Object.keys(b.closes).sort()).toEqual([REC1, REC2].sort());
+  await expect(section.getByText('No card top-ups waiting')).toBeVisible();
+
+  // A lost answer, then a reload: only the key is kept; "Check" reads it by key.
+  b.uncredited.push({ paymentTransactionId: 'f8'.repeat(12), pharmacyId: P1, amountMinor: 30_000, createdAt: '2026-11-22T04:30:00.000Z', state: 'paid_not_credited' });
+  await page.reload();
+  b.loseNextCloseAnswer = true;
+  await markPaidByHand(page, '300.00', 'Paid by bank transfer');
+  await expect(section.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  await page.reload();
+  await expect(section.getByText(/marked as already paid by hand earlier on this device \(before the page was reloaded\) was not confirmed/)).toBeVisible();
+  await expect(section.getByRole('button', { name: 'Send the same request again' })).toHaveCount(0);
+  await section.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(section.getByText('It was closed: the ₹300.00 top-up will never be credited to the wallet.')).toBeVisible();
+  const byKey = b.calls.filter((c) => c.path.startsWith('/admin/wallet-payments/close-compensated/by-key/'));
+  expect(byKey.at(-1)!.path).toBe(`/admin/wallet-payments/close-compensated/by-key/${String(closes(b).at(-1)!.body!.requestKey)}`);
+  expect(closes(b)).toHaveLength(4);
+  const stored = await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }));
+  expect(stored).not.toContain('Paid by bank transfer');
+});
+
+test('WQ15: a top-up credited meanwhile is refused 409 in plain words and nothing is closed; a check that finds nothing offers Forget', async ({ page }) => {
+  const b = await mockAdmin(page);
+  await openAdminWallet(page);
+  const section = page.getByRole('region', { name: 'Card top-ups not credited' });
+  await expect(section.getByRole('table').getByRole('row')).toHaveCount(3);
+  b.creditedRecords.add(REC1);
+  await markPaidByHand(page);
+  await expect(section.getByText('Not closed: This top-up was already credited, nothing to close.')).toBeVisible();
+  await expect(section.getByRole('table').getByRole('row')).toHaveCount(2);
+  expect(b.closes).toEqual({});
+  await expect(section.getByRole('group', { name: 'Unconfirmed close' })).toHaveCount(0);
+
+  // An answer lost before anything was recorded: "Check" says not closed so far; Forget is behind a confirm step.
+  await page.route('**/api/v1/admin/wallet-payments/*/close-compensated', (route) => route.abort('connectionreset'), { times: 1 });
+  await markPaidByHand(page, '200.00', 'Paid in cash');
+  await section.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(section.getByText('Not closed so far. It may still be on its way. Sending the same request again is safe: it is closed only once.')).toBeVisible();
+  await section.getByRole('button', { name: 'Forget it' }).click();
+  await section.getByRole('button', { name: 'Yes, forget it' }).click();
+  await expect(section.getByRole('button', { name: markButton('200.00') })).toBeVisible();
+  expect(b.closes).toEqual({});
 });

@@ -1,5 +1,5 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
-import { assistedRefusal, type PharmacyWallet, type WalletMovement } from './assisted.ts';
+import { assistedRefusal, isSwitchedOff, type PharmacyWallet, type WalletMovement } from './assisted.ts';
 
 /**
  * WQ13 admin: a pharmacy's Jansetu wallet and the admin's manual credit (backend `src1/modules/pharmacyWallet`, q16
@@ -60,6 +60,32 @@ export function adminPharmacyWalletApi(c: ApiClient) {
         if (err instanceof ApiError && ((err.status === 404 && !err.code) || err.status === 405)) return { state: 'unavailable' };
         throw err;
       }
+    },
+    /**
+     * WQ15: `GET /admin/wallet-recharges/uncredited` (no query; every pharmacy): paid card top-ups with no wallet credit,
+     * then attempts nobody checked with Razorpay (`uncreditedTopups`, at most 200 of each). Rows of `pharmacyId` only.
+     */
+    uncredited: async (pharmacyId: string): Promise<UncreditedTopup[]> =>
+      uncreditedOf(await c.get<unknown>('/admin/wallet-recharges/uncredited'), pharmacyIdOf(pharmacyId)),
+    /**
+     * r9 (design §22.2): `POST /admin/wallet-payments/:paymentId/close-compensated { reason, requestKey }`: support
+     * already paid this top-up by hand, so it is closed and never credited. Once per (admin, key); the same key and body
+     * answer the closure again (`replayed`). `paymentId` here is always the payment record id.
+     */
+    closeCompensated: (paymentRecordId: string, body: { reason: string; requestKey: string }) => {
+      if (!hex.test(paymentRecordId)) throw new Error('Invalid payment id');
+      if (!ADMIN_TOPUP_KEY_PATTERN.test(body.requestKey)) throw new Error('Invalid request key');
+      const reason = cleanNote(body.reason);
+      if (closeReasonProblem(reason)) throw new Error('Invalid reason');
+      return c.post<CompensatedClose>(`/admin/wallet-payments/${paymentRecordId.toLowerCase()}/close-compensated`, { body: { reason, requestKey: body.requestKey } });
+    },
+    /** r9: did this admin's close with `key` happen? 'closed' with the closure, or 'not_found'. Anything else is thrown. */
+    closeCompensatedByKey: async (key: string): Promise<{ state: 'closed'; close: CompensatedClose } | { state: 'not_found' }> => {
+      if (!ADMIN_TOPUP_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
+      const r = await c.get<{ state?: string } & Partial<CompensatedClose> | null>(`/admin/wallet-payments/close-compensated/by-key/${key}`);
+      if (r?.state === 'closed' && r.closed === true) return { state: 'closed', close: r as CompensatedClose };
+      if (r?.state === 'not_found') return { state: 'not_found' };
+      throw new ApiError(502, 'The answer about this top-up could not be read.');
     },
     /** The admin credit: the key in the `Idempotency-Key` header, the same body on every resend. Answers the wallet. */
     topup: (body: AdminTopupBody, idempotencyKey: string) => {
@@ -154,3 +180,80 @@ export function adminTopupRefusal(err: unknown): string {
 /** S6: the warning shown on the form and its review (owner wording). */
 export const ADMIN_TOPUP_WARNING =
   'Do not use this to make up for a card top-up that never arrived. Ask the tech team to run the top-up check instead, or the pharmacy could be paid twice.';
+
+// ── WQ15: card top-ups not credited, closed as already paid by hand (backend r9, design §22) ──
+
+/** One row of `GET /admin/wallet-recharges/uncredited` (`uncreditedTopups`). The record id is what the close names. */
+export interface UncreditedTopup {
+  paymentTransactionId: string;
+  pharmacyId: string;
+  amountMinor: number;
+  createdAt: string;
+  /** `paid_not_credited`: the card payment was taken; `not_checked_with_gateway`: an attempt nobody checked with Razorpay. */
+  state: 'paid_not_credited' | 'not_checked_with_gateway' | string;
+  /** Not in the r9 row: shown only if a server adds it. */
+  razorpayOrderId?: string;
+}
+
+/** The rows of one pharmacy, in the server's order, dropping anything malformed. */
+export function uncreditedOf(data: unknown, pharmacyId: string): UncreditedTopup[] {
+  if (!Array.isArray(data)) return [];
+  const id = pharmacyId.toLowerCase();
+  return data.filter((r): r is UncreditedTopup => !!r && typeof r === 'object'
+    && hex.test(String((r as UncreditedTopup).paymentTransactionId)) && String((r as UncreditedTopup).pharmacyId ?? '').toLowerCase() === id
+    && Number.isSafeInteger((r as UncreditedTopup).amountMinor));
+}
+
+/** 200 of the close and the `closed` by-key read (`closedView`). */
+export interface CompensatedClose {
+  closed: true; credited: false; replayed: boolean; paymentRecordId: string; pharmacyId: string; amountPaise: number;
+  compensatedAt: string; status: string; message?: string;
+}
+
+/** `closeCompensatedSchema.reason`: 1–500 characters after trimming. */
+export const MAX_CLOSE_REASON = 500;
+export function closeReasonProblem(text: string): string | undefined {
+  const r = cleanNote(text);
+  if (!r) return 'Write why this top-up is closed, for example who paid the pharmacy and how.';
+  if (r.length > MAX_CLOSE_REASON) return `Use at most ${MAX_CLOSE_REASON} characters.`;
+  return undefined;
+}
+
+/** Owner wording: shown on the section and on the confirm step. */
+export const CLOSE_COMPENSATED_EXPLAIN =
+  'Use this only when Jansetu support already paid this amount to the pharmacy another way. The top-up can then never be credited.';
+
+const CLOSE_WORDS: Readonly<Record<string, string>> = {
+  TOPUP_ALREADY_CREDITED: 'This top-up was already credited, nothing to close.',
+  TOPUP_REFUNDED: 'This top-up was already refunded to the card, nothing to close.',
+  TOPUP_BLOCKED: 'This top-up was already blocked after a lost card dispute. It is never credited, so there is nothing to close.',
+  IDEMPOTENCY_KEY_REUSED: 'This request was already used for another top-up or another reason, so nothing was changed. Read the list again, then try again.',
+  PAYMENT_AMBIGUOUS: 'More than one top-up carries this payment id, so nothing was changed. Ask the tech team.',
+  TOPUP_NOT_FOUND: 'This top-up was not found (it is not a pharmacy card top-up). Nothing was changed.',
+  TOPUP_NOT_FOUND_BY_PAYMENT_ID: 'This top-up was not found (it is not a pharmacy card top-up). Nothing was changed.',
+  INDEXES_OUTDATED: 'The server needs an update before top-ups can be closed. Nothing was changed. Please ask the Jansetu team.',
+  WALLET_CHANGED: 'This top-up changed while it was being closed. Read the list again, then try again.',
+  VALIDATION_ERROR: `Write a reason of 1 to ${MAX_CLOSE_REASON} characters. Nothing was changed.`,
+};
+
+/** One plain sentence for a refusal of the close (or of its by-key read). */
+export function closeCompensatedRefusal(err: unknown): string {
+  if (err instanceof ApiError && err.code && CLOSE_WORDS[err.code]) return CLOSE_WORDS[err.code]!;
+  if (isSwitchedOff(err)) return 'The admin tools are switched off on this server, so top-ups cannot be closed here. Nothing was changed.';
+  if (err instanceof ApiError && err.status === 403) return 'Only Jansetu admins can close a top-up.';
+  return assistedRefusal(err).message;
+}
+
+/**
+ * The close refuses these before any write (`assertAdminToolsOn`, then `assertUniqueIndex`): for a sole first attempt
+ * nothing was closed. A 503 without one of these codes (a proxy, a timeout) stays unknown.
+ */
+export const closeRefusedBeforeWriting = (err: unknown) =>
+  err instanceof ApiError && err.status === 503 && (err.code === 'ASSISTED_BOOKING_DISABLED' || err.code === 'INDEXES_OUTDATED');
+
+/**
+ * Answers that settle the close on ANY attempt: the top-up can never be closed (credited, blocked after a dispute, or
+ * not a pharmacy top-up). An earlier attempt that did close it would be answered as its closure (`replayed`) instead.
+ */
+export const closeCompensatedFinal = (err: unknown) => err instanceof ApiError && (err.status === 409 || err.status === 404)
+  && ['TOPUP_ALREADY_CREDITED', 'TOPUP_BLOCKED', 'TOPUP_NOT_FOUND'].includes(err.code ?? '');
