@@ -43,6 +43,8 @@ interface Backend {
   pendingLimit: boolean;
   /** WQ16c: Razorpay holds the payment authorized, not captured: verify 400 PAYMENT_NOT_COMPLETED, reconcile unpaid. */
   authorizedOnly: boolean;
+  /** WQ16d (r10e): another payment already paid the booking: verify of this one is 409 DUPLICATE_PAYMENT_REFUNDED. */
+  duplicate: boolean;
 }
 
 const view = (o: Json = {}): Json => ({
@@ -54,7 +56,7 @@ const view = (o: Json = {}): Json => ({
 async function mockPharmacy(page: Page, init: { bookings?: Json[]; cardOn?: boolean } = {}): Promise<Backend> {
   const b: Backend = {
     calls: [], creates: [], verifies: [], reconciles: [], cancels: [], bookings: init.bookings ?? [], keys: {}, record: { status: 'none', captured: false },
-    cardOn: init.cardOn ?? true, orderFailsOnce: false, loseNextVerify: false, late: false, pendingLimit: false, authorizedOnly: false,
+    cardOn: init.cardOn ?? true, orderFailsOnce: false, loseNextVerify: false, late: false, pendingLimit: false, authorizedOnly: false, duplicate: false,
   };
   let live = false;
   const booking = (id: string) => b.bookings.find((x) => x._id === id);
@@ -163,6 +165,11 @@ async function mockPharmacy(page: Page, init: { bookings?: Json[]; cardOn?: bool
     if (path === '/payments/verify') {
       b.verifies.push(body!);
       if (b.authorizedOnly) return refuse(route, 400, 'PAYMENT_NOT_COMPLETED', 'Razorpay payment is not completed. Current status: authorized');
+      if (b.duplicate) {
+        b.record = { status: 'paid', captured: true };
+        Object.assign(booking(BK)!, { status: 'confirmed', paymentStatus: 'paid' });
+        return refuse(route, 409, 'DUPLICATE_PAYMENT_REFUNDED', 'This booking was already paid with another payment; this payment is being refunded');
+      }
       b.record.captured = true;
       if (b.loseNextVerify) { b.loseNextVerify = false; return route.abort('connectionreset'); }
       return json(route, 200, { success: true, message: 'Payment verified successfully', data: apply() });
@@ -362,10 +369,10 @@ test('a booking not made on this device: no refund choice, neutral words; the an
 // ── Admin: card refunds that need a person ──
 
 async function mockAdmin(page: Page, init: { pending?: boolean } = {}) {
-  const b = { calls: [] as { method: string; path: string; body: Json | null }[], loseNextMove: false, moved: false, pending: false, marked: false, loseNextMark: false, dropNextMark: false, recheckFails: false };
+  const b = { calls: [] as { method: string; path: string; body: Json | null }[], loseNextMove: false, moved: false, pending: false, marked: false, loseNextMark: false, dropNextMark: false, recheckFails: false, noReadRoute: false, cause: 'booker' };
   b.pending = !!init.pending;
   let live = false;
-  const row = (): Json => ({ refundId: RF, bookingId: BK, paymentRecordId: REC, amountMinor: 50_000, cause: 'booker', method: b.moved ? 'wallet' : 'card',
+  const row = (): Json => ({ refundId: RF, bookingId: BK, paymentRecordId: REC, amountMinor: 50_000, cause: b.cause, method: b.moved ? 'wallet' : 'card',
     state: b.moved ? 'processed' : b.pending && !b.marked ? 'pending' : 'failed',
     lastError: b.moved ? null : b.marked ? 'MARKED_FAILED_BY_ADMIN' : b.pending ? 'GATEWAY_UNREACHABLE' : 'BAD_REQUEST_ERROR', attempts: 3, razorpayRefundId: null, processedAt: null,
     createdAt: '2026-11-22T04:30:00.000Z', updatedAt: '2026-11-22T05:30:00.000Z', pharmacyId: 'a1'.repeat(12), pharmacyName: 'Asha Medicals' });
@@ -391,7 +398,10 @@ async function mockAdmin(page: Page, init: { pending?: boolean } = {}) {
       const r = row();
       return json(route, 200, { success: true, data: (state ? r.state === state : ['failed', 'manual_review', 'pending'].includes(String(r.state))) ? [r] : [] });
     }
-    if (path === `/admin/assisted/card-refunds/${RF}` && method === 'GET') return json(route, 200, { success: true, data: { refund: row() } }); // r10d
+    if (path === `/admin/assisted/card-refunds/${RF}` && method === 'GET') {
+      if (b.noReadRoute) return json(route, 404, { error: 404, message: 'Route not found' }); // a server before r10e
+      return json(route, 200, { success: true, data: row() }); // r10e: the row itself
+    }
     if (path === `/admin/assisted/card-refunds/${RF}/recheck`) {
       if (b.recheckFails) return refuse(route, 502, 'GATEWAY_LOOKUP_FAILED', 'Razorpay could not be asked about this payment refunds; try again');
       return json(route, 200, { success: true, data: { refund: row(), gateway: [] } });
@@ -626,4 +636,36 @@ test('fixes 7 and 8: a recheck 502 is "not known"; forgetting an unconfirmed mar
   await expect(section.getByRole('table', { name: 'Card refunds that need a person, oldest change first' })).toBeVisible();
   await expect(section.getByRole('group', { name: 'Mark this refund failed' })).toHaveCount(0);
   await expect(section.getByLabel('Why is it marked failed?')).toHaveCount(0);
+});
+
+// ── WQ16d: backend r10e ──
+
+test('r10e: a second payment on a booking already paid is refunded; the booking is shown paid only after it is read again', async ({ page }) => {
+  const b = await mockPharmacy(page);
+  await signIn(page, 'Book consultation');
+  await toCheckAndPay(page);
+  b.duplicate = true;
+  await payByCard(page);
+  await expect(page.getByText('The consultation is booked and paid by card or UPI.')).toBeVisible();
+  await expect(page.getByText('This booking was already paid with another payment. This payment is being refunded to the card or UPI.')).toBeVisible();
+  expect(b.reconciles).toHaveLength(0);
+  expect(b.calls.some((c) => c.path.startsWith('/pharmacy-assisted/bookings/by-key/'))).toBe(true);
+});
+
+test('r10e: an extra capture is labelled; on a server without the read by id the check says so and stays unknown', async ({ page }) => {
+  const b = await mockAdmin(page);
+  b.cause = 'extra_capture';
+  const section = await openAdminQueue(page);
+  const table = section.getByRole('table', { name: 'Card refunds that need a person, oldest change first' });
+  await expect(table.getByText('Second payment, refunded')).toBeVisible();
+  await table.getByRole('button', { name: /^Move the ₹500\.00 card refund/ }).click();
+  await section.getByLabel('The pharmacy’s agreement').fill('Owner agreed on a call');
+  await section.getByRole('button', { name: 'Next: check before moving' }).click();
+  b.loseNextMove = true;
+  b.noReadRoute = true;
+  await section.getByRole('button', { name: 'Yes, move to wallet' }).click();
+  await section.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(section.getByText('Could not check: Not available on this server yet. The outcome is not known.')).toBeVisible();
+  await expect(section.getByRole('button', { name: 'Send the same request again' })).toBeVisible();
+  expect(b.calls.some((c) => c.path.endsWith('/recheck'))).toBe(false);
 });

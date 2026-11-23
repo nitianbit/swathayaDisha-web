@@ -82,7 +82,8 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
   busy: boolean;
   /** Open Checkout once as soon as the panel shows (right after the booking was made, on the create's own order). */
   autoOpen?: boolean;
-  onPaid: (booking: Partial<BookedConsultation> | null) => void;
+  /** `note`: WQ16d, said with it (another payment of this booking is being refunded). */
+  onPaid: (booking: Partial<BookedConsultation> | null, note?: string) => void;
   onEnded: (words: string) => void;
 }) {
   const { api } = useSession();
@@ -107,8 +108,18 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
   const canPay = !!order || !!requestKey;
   const payOffered = canPay && !late && !held;
 
-  function apply(step: CardStep, o: AssistedCardPayment | null, didReport = false) {
+  async function apply(step: CardStep, o: AssistedCardPayment | null, didReport = false) {
     if (!live.current) return;
+    // WQ16d (r10e): this payment was a second one on a booking already paid; it goes back to the card. Never "paid" by
+    // itself: the booking is read again, and shown paid only if the server says so.
+    if (step.kind === 'duplicate') {
+      setHeld(true);
+      setNote({ tone: 'warn', text: step.message });
+      const b = requestKey ? await pharmacyAssistedApi(api).byKey(requestKey).then((r) => (r.state === 'used' ? r.booking : null))
+        : await pharmacyAssistedApi(api).booking(bookingId);
+      if (live.current && b?.status === 'confirmed' && b.paymentStatus === 'paid') onPaid(b, step.message);
+      return;
+    }
     if (didReport) reported.current = true;
     const dueWords = payByWords(o?.payBy || due);
     const stillOpen = canPay && payNowOpen(o?.payBy || due);
@@ -164,7 +175,7 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
         if (!o) return;
         if (!payNowOpen(o.payBy || due)) { setNow(Date.now()); setNote({ tone: 'warn', text: 'It is too late to open the payment page now. If you paid, tap “Check payment”.' }); return; }
         const r = await payCardOrder(api, o);
-        apply(r.step, o, r.reported);
+        await apply(r.step, o, r.reported);
       });
     } catch (err) {
       if (live.current) setNote({ tone: 'error', text: assistedRefusal(err).message });
@@ -177,7 +188,7 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
       await perform(async () => {
         const id = order?.paymentTransactionId ?? paymentTransactionId ?? (requestKey ? (await freshOrder())?.paymentTransactionId : undefined);
         if (!id) { if (live.current && !requestKey) setNote({ tone: 'warn', text: NO_ORDER_WORDS }); return; }
-        apply(await checkCardPayment(api, id), order);
+        await apply(await checkCardPayment(api, id), order);
       });
     } catch (err) {
       if (live.current) setNote({ tone: 'error', text: assistedRefusal(err).message });

@@ -180,10 +180,10 @@ describe('admin: card refunds that need a person', () => {
       await expect(a.toWallet(RF, 'ok')).rejects.toMatchObject({ status: 502 });
     }
     // WQ16c: the check reads the row by id (not the list, cut at 200 rows).
-    answer = json(200, { success: true, data: { refund: refund({ method: 'wallet', state: 'processed' }) } });
+    answer = json(200, { success: true, data: refund({ method: 'wallet', state: 'processed' }) }); // r10e: the row as `data`
     await expect(findMovedRefund(c, RF)).resolves.toMatchObject({ refundId: RF });
     expect(calls.at(-1)!.url).toBe(`/api/v1/admin/assisted/card-refunds/${RF}`);
-    answer = json(200, { success: true, data: { refund: refund({ state: 'processed' }) } }); // processed to the card: not a move
+    answer = json(200, { success: true, data: refund({ state: 'processed' }) }); // processed to the card: not a move
     await expect(findMovedRefund(c, RF)).resolves.toBeNull();
   });
 });

@@ -44,7 +44,7 @@ interface Summary { patient: string; doctor: string; date: string; time: string;
   /** The price came from the server's answer with the coupon applied (PRICE_CHANGED), not from the doctor's fee. */
   couponChecked?: boolean }
 interface PendingBooking { request: ConsultationRequest; summary: Summary }
-interface Done { summary: Summary; ref?: string; paidMinor?: number; replayed: boolean; newAccount?: boolean; paidBy?: 'wallet' | 'card' }
+interface Done { summary: Summary; ref?: string; paidMinor?: number; replayed: boolean; newAccount?: boolean; paidBy?: 'wallet' | 'card'; note?: string }
 /** WQ16: a card booking held until it is paid (or its time is released). */
 interface CardDue { bookingId: string; requestKey: string; order: AssistedCardPayment | null; summary: Summary; ref?: string; newAccount?: boolean; autoOpen: boolean }
 type PayMethod = ConsultationRequest['paymentMethod'];
@@ -506,7 +506,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
         <SummaryList s={due.summary} />
         <CardPaymentPanel key={due.bookingId} bookingId={due.bookingId} requestKey={due.requestKey} order={due.order} amountMinor={due.summary.priceMinor} perform={perform} busy={busy}
           autoOpen={due.autoOpen}
-          onPaid={() => { setCardDue(null); setDone({ summary: due.summary, ref: due.ref, paidMinor: due.order?.amountMinor ?? due.summary.priceMinor, replayed: false, newAccount: due.newAccount, paidBy: 'card' }); refreshAfterBooking(); }}
+          onPaid={(_b, note) => { setCardDue(null); setDone({ summary: due.summary, ref: due.ref, paidMinor: due.order?.amountMinor ?? due.summary.priceMinor, replayed: false, newAccount: due.newAccount, paidBy: 'card', ...(note ? { note } : {}) }); refreshAfterBooking(); }}
           onEnded={(words) => { cards.forget(due.bookingId); setCardDue(null); setEnded(words); refreshAfterBooking(); }} />
         {due.newAccount && <p className="ws-muted">This number was new to Jansetu. An account was made for it; the patient can sign in with this number later.</p>}
         <div className="ws-actions">
@@ -527,6 +527,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
             : byCard ? 'The consultation is booked and paid by card or UPI.' : 'The consultation is booked and paid from your wallet.'}
           {done.ref ? <> Booking reference: <strong>{done.ref}</strong>.</> : null}
         </Alert>
+        {done.note && <Alert tone="warn">{done.note}</Alert>}
         <SummaryList s={done.summary} />
         {done.paidMinor !== undefined && <p>{byCard ? 'Paid by card or UPI' : 'Paid from your wallet'}: <strong>{formatRupees(done.paidMinor / 100)}</strong>. Collect this from the patient.</p>}
         <p><strong>How the patient joins:</strong> {joinWords(done.summary.mode, done.summary.joinOn)}</p>

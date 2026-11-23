@@ -53,6 +53,8 @@ export type CardOutcome =
    * completed, or the order has an authorized / created payment): never invite a second payment then.
    */
   | { kind: 'unpaid'; inFlight?: true }
+  /** WQ16d (r10e): this payment was another one on a booking already paid: it is being refunded (final, never paid). */
+  | { kind: 'duplicate'; message: string }
   | { kind: 'failed'; message: string }
   | { kind: 'blocked'; message: string }
   | { kind: 'unknown'; message: string };
@@ -72,6 +74,7 @@ export function outcomeOfAnswer(a: CardPaymentAnswer | ReconcileAnswer | null | 
 
 export const CARD_BLOCKED_WORDS =
   'Your pharmacy account is not active or not verified, so the payment cannot be checked here. If you paid, Jansetu checks it with Razorpay: the booking is confirmed, or the money goes back to the card or UPI.';
+export const DUPLICATE_WORDS = 'This booking was already paid with another payment. This payment is being refunded to the card or UPI.';
 const CARD_FAILED_WORDS = 'This payment failed, so the booking is not paid. If the time is released, book again.';
 
 /** A refusal of verify or reconcile, read for what it settles (`null`: nothing; try the next step or check again). */
@@ -79,6 +82,7 @@ export function outcomeOfError(err: unknown): CardOutcome | null {
   if (!(err instanceof ApiError)) return null;
   if (err.code === 'PAYMENT_REFUNDED') return { kind: 'refunded' };
   if (err.code === 'PAYMENT_FAILED') return { kind: 'failed', message: CARD_FAILED_WORDS };
+  if (err.code === 'DUPLICATE_PAYMENT_REFUNDED') return { kind: 'duplicate', message: DUPLICATE_WORDS };
   // r10b: a card dispute recorded on this payment: said as it is (never paid, never "not booked").
   if (err.code === 'PAYMENT_DISPUTED') return { kind: 'blocked', message: 'A card dispute was recorded on this booking payment. Please contact Jansetu support.' };
   if (err.status === 403) return { kind: 'blocked', message: CARD_BLOCKED_WORDS };
@@ -222,6 +226,7 @@ export const CARD_REFUND_STATE_LABEL: Readonly<Record<string, string>> = {
 export const CARD_REFUND_CAUSE_LABEL: Readonly<Record<string, string>> = {
   booker: 'Cancelled by the pharmacy', patient: 'Cancelled by the patient', doctor: 'Cancelled by the doctor', admin: 'Cancelled by Jansetu',
   late_capture: 'Paid after the booking was released',
+  extra_capture: 'Second payment, refunded',
 };
 /** `cardRefundToWalletSchema.agreement`: 1–500 characters after trimming. */
 export const MAX_REFUND_AGREEMENT = 500;
@@ -299,18 +304,20 @@ export function recheckWords(r: CardRefundRecheck): string {
 }
 
 /**
- * WQ16c: one refund row as it is now: `GET /admin/assisted/card-refunds/:id` (r10d), or on an older server (code-less 404
- * or 405) `POST …/:id/recheck`, which answers the row too. Never the list (it is cut at 200 rows).
+ * WQ16c/d: one refund row as it is now: `GET /admin/assisted/card-refunds/:id` (r10e `cardRefundById`: the queue row, with
+ * the pharmacy, as `data`; 404 REFUND_NOT_FOUND). Never the list (cut at 200 rows), and never recheck (it can send the
+ * refund): on an older server without the route the outcome stays unknown.
  */
-export async function readCardRefund(api: ApiClient, refundId: string): Promise<CardRefund> {
+export async function readCardRefund(api: ApiClient, refundId: string): Promise<AdminCardRefund> {
   if (!hex.test(refundId)) throw new Error('Invalid refund id');
   try {
-    const r = await api.get<{ refund?: CardRefund } & Partial<CardRefund> | null>(`/admin/assisted/card-refunds/${refundId.toLowerCase()}`);
-    const row = r?.refund ?? (r && hex.test(String(r.refundId)) ? r as CardRefund : null);
-    if (!row) throw new ApiError(502, 'The answer about this refund could not be read.');
-    return row;
+    const r = await api.get<AdminCardRefund | null>(`/admin/assisted/card-refunds/${refundId.toLowerCase()}`);
+    if (!r || !hex.test(String(r.refundId)) || typeof r.state !== 'string') throw new ApiError(502, 'The answer about this refund could not be read.');
+    return r;
   } catch (err) {
-    if (err instanceof ApiError && ((err.status === 404 && !err.code) || err.status === 405)) return (await adminCardRefundsApi(api).recheck(refundId)).refund;
+    if (err instanceof ApiError && ((err.status === 404 && !err.code) || err.status === 405)) {
+      throw new ApiError(err.status, 'Not available on this server yet. The outcome is not known.', 'ROUTE_NOT_AVAILABLE');
+    }
     throw err;
   }
 }

@@ -69,20 +69,15 @@ describe('fix 3: Razorpay reported a payment: never an invitation to pay again',
 });
 
 describe('fix 4: the admin check reads the refund by id, not the list', () => {
-  it('GET …/card-refunds/:id; an older server (code-less 404) falls back to recheck', async () => {
-    const read = fn<(c: api.ApiClient, id: string) => Promise<unknown>>('readCardRefund');
+  it('GET …/card-refunds/:id (r10e: the row as `data`); an older server is not known, with no recheck', async () => {
     const row = { refundId: RF, method: 'wallet', state: 'processed', amountMinor: 50_000 };
     let older = false;
-    const { c, calls } = client((x) => (x.method === 'GET'
-      ? (older ? json(404, { error: 404, message: 'Route not found' }) : json(200, { success: true, data: { refund: row } }))
-      : json(200, { success: true, data: { refund: { ...row, state: 'failed', lastError: 'MARKED_FAILED_BY_ADMIN' }, gateway: [] } })));
-    await expect(read(c, RF)).resolves.toMatchObject({ state: 'processed' });
+    const { c, calls } = client(() => (older ? json(404, { error: 404, message: 'Route not found' }) : json(200, { success: true, data: row })));
+    await expect(api.readCardRefund(c, RF)).resolves.toMatchObject({ state: 'processed' });
     await expect(api.findMovedRefund(c, RF)).resolves.toMatchObject({ refundId: RF });
-    expect(calls.map((x) => `${x.method} ${x.url}`)).toEqual([`GET /api/v1/admin/assisted/card-refunds/${RF}`, `GET /api/v1/admin/assisted/card-refunds/${RF}`]);
     older = true;
-    await expect(api.findMarkedFailed(c, RF)).resolves.toMatchObject({ lastError: 'MARKED_FAILED_BY_ADMIN' });
-    expect(calls.at(-1)).toEqual({ method: 'POST', url: `/api/v1/admin/assisted/card-refunds/${RF}/recheck` });
-    expect(calls.some((x) => x.url.includes('?state='))).toBe(false);
+    await expect(api.findMarkedFailed(c, RF)).rejects.toMatchObject({ message: 'Not available on this server yet. The outcome is not known.' });
+    expect(calls.every((x) => x.method === 'GET' && x.url === `/api/v1/admin/assisted/card-refunds/${RF}`)).toBe(true);
   });
 });
 

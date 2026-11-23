@@ -106,10 +106,10 @@ describe('admin: recheck and mark failed (r10b), the pharmacy on each row (r10c)
     expect(markFailedRefusal(err(409, 'REFUND_BUSY'))).toBe('This refund is being worked on right now. Nothing was changed. Try again in a few minutes.');
     expect(markFailedRefusal(err(409, 'REFUND_NOT_PENDING'))).toBe('Only a card refund still in progress can be marked failed. Read the list again.');
     // WQ16c: read by id.
-    answer = json(200, { success: true, data: { refund: row({ state: 'failed', lastError: 'MARKED_FAILED_BY_ADMIN' }) } });
+    answer = json(200, { success: true, data: row({ state: 'failed', lastError: 'MARKED_FAILED_BY_ADMIN' }) }); // r10e: the row as `data`
     await expect(findMarkedFailed(c, RF)).resolves.toMatchObject({ refundId: RF });
     expect(calls.at(-1)!.url).toBe(`/api/v1/admin/assisted/card-refunds/${RF}`);
-    answer = json(200, { success: true, data: { refund: row({ state: 'failed', lastError: 'BAD_REQUEST_ERROR' }) } });
+    answer = json(200, { success: true, data: row({ state: 'failed', lastError: 'BAD_REQUEST_ERROR' }) });
     await expect(findMarkedFailed(c, RF)).resolves.toBeNull();
   });
 });

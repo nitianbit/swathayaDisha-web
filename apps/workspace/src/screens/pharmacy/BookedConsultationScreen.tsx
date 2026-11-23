@@ -119,7 +119,7 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
           {cardKey || recordId ? (
             <CardPaymentPanel bookingId={b._id} requestKey={cardKey} paymentTransactionId={recordId} order={orderFromBooking(b)} payBy={payBy} amountMinor={typeof b.price === 'number' ? Math.round(b.price * 100) : undefined}
               perform={guard.perform} busy={guard.busy}
-              onPaid={() => { setPayNote({ tone: 'ok', text: 'Paid. The consultation is booked. The patient and the doctor are told.' }); changed(); void q.refetch(); }}
+              onPaid={(_b, note) => { setPayNote({ tone: 'ok', text: `Paid. The consultation is booked. The patient and the doctor are told.${note ? ` ${note}` : ''}` }); changed(); void q.refetch(); }}
               onEnded={(words) => { cards.forget(b._id); setPayNote({ tone: 'error', text: words }); changed(); void q.refetch(); }} />
           ) : (
             <Alert tone="warn">
