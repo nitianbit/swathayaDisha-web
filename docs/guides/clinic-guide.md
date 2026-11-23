@@ -16,7 +16,7 @@ Website: **https://staff.swasthadisha.etryx.in**. Patients can also book your do
 
 **Doctors linked to the clinic** sign in the same way: choose **Lab or clinic staff** and use your mobile number, or an email the owner has set for you. Your doctor tools (Consult now, Appointments, Schedule) are under the **Doctor** sign-in instead.
 
-A clinic member linked to a doctor (a doctor's own practice, or a clinic's doctor) can use the clinic workspace only while that doctor account is verified and active. Otherwise sign-in, or the open workspace, says "Your doctor account is not verified or not active, so this clinic workspace is closed for you. Contact the Jansetu team." and you are signed out. If your number has other workspaces, tap **Choose another workspace**, then sign in again and choose another one.
+A clinic member linked to a doctor (a doctor's own practice, or a clinic's doctor) can use the clinic workspace only while that doctor account is verified and active. Otherwise sign-in, or the open workspace, says "Your doctor account is not verified or not active, so this clinic workspace is closed for you. Contact the Jansetu team." and you are signed out. If your number has other workspaces, tap **Choose another workspace**, then sign in again and choose another one. If it is said when you choose a workspace, choose another one from the same list.
 
 A new clinic shows "…is waiting for verification by Jansetu". The workspace opens once Jansetu has verified it. This includes a clinic a doctor created for themselves.
 

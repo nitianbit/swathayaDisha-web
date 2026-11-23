@@ -36,7 +36,7 @@ describe('close as already paid by hand: refusals in plain words', () => {
   });
 
   it('credited, blocked and not-a-top-up settle any attempt; a reused key or a changed top-up does not', () => {
-    for (const [s, c] of [[409, 'TOPUP_ALREADY_CREDITED'], [409, 'TOPUP_BLOCKED'], [404, 'TOPUP_NOT_FOUND']] as const) expect(closeCompensatedFinal(err(s, c))).toBe(true);
+    for (const [s, c] of [[409, 'TOPUP_ALREADY_CREDITED'], [409, 'TOPUP_REFUNDED'], [409, 'TOPUP_BLOCKED'], [404, 'TOPUP_NOT_FOUND']] as const) expect(closeCompensatedFinal(err(s, c))).toBe(true);
     for (const [s, c] of [[409, 'IDEMPOTENCY_KEY_REUSED'], [409, 'WALLET_CHANGED'], [409, 'PAYMENT_AMBIGUOUS'], [503, 'INDEXES_OUTDATED']] as const) {
       expect(closeCompensatedFinal(err(s, c))).toBe(false);
     }
@@ -72,8 +72,13 @@ describe('close as already paid by hand: requests', () => {
     const w = adminPharmacyWalletApi(c);
     await expect(w.closeCompensated(REC.toUpperCase(), { reason: '  paid   by UPI ', requestKey: KEY })).resolves.toMatchObject({ closed: true, replayed: false });
     expect(calls[0]).toEqual({ url: `/api/v1/admin/wallet-payments/${REC}/close-compensated`, method: 'POST', body: { reason: 'paid by UPI', requestKey: KEY } });
-    expect(() => w.closeCompensated(REC, { reason: 'x', requestKey: 'short' })).toThrow('Invalid request key');
-    expect(() => w.closeCompensated('order_123', { reason: 'x', requestKey: KEY })).toThrow('Invalid payment id');
+    await expect(w.closeCompensated(REC, { reason: 'x', requestKey: 'short' })).rejects.toThrow('Invalid request key');
+    await expect(w.closeCompensated('order_123', { reason: 'x', requestKey: KEY })).rejects.toThrow('Invalid payment id');
+    // WQ15b L1: a 200 that is not a closure is never read as closed (the request stays unknown).
+    for (const data of [null, {}, { closed: false }, { state: 'not_found' }]) {
+      answer = json(200, { success: true, data });
+      await expect(w.closeCompensated(REC, { reason: 'x', requestKey: KEY })).rejects.toMatchObject({ status: 502 });
+    }
 
     answer = json(200, { success: true, data: { state: 'closed', closed: true, credited: false, replayed: true, paymentRecordId: REC, pharmacyId: P1, amountPaise: 50_000, compensatedAt: '2026-11-23T10:00:00.000Z', status: 'failed' } });
     await expect(w.closeCompensatedByKey(KEY)).resolves.toMatchObject({ state: 'closed', close: { paymentRecordId: REC } });

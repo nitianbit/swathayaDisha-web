@@ -1674,17 +1674,29 @@ wallet page or the sign-in changes.
 - **Clinic sign-in**: 403 `CLINIC_OWNER_DOCTOR_NOT_VERIFIED` (and `CLINIC_DOCTOR_NOT_VERIFIED`, its name after a backend follow-up;
   both are recognised) from partner verify, partner select or any partner call says "Your doctor
   account is not verified or not active, so this clinic workspace is closed for you. Contact the Jansetu team." (`messageOf`).
-  Not retried. A refused select has spent its one-use ticket, so the screen goes back to the code step (a new code, then another
-  workspace). On a partner call (the profile read after a reload included), the API client's new `onForbidden` hook lets the session
+  Not retried. A refused select keeps the workspace choice on screen (WQ15b L3: since r9b the ticket stays valid, so another
+  workspace can be opened from the same list; on an older backend the next select answers 401 `SELECTION_EXPIRED`, which asks for
+  a new code). On a partner call (the profile read after a reload included), the API client's new `onForbidden` hook lets the session
   end it like a 401 for the current token: `signOut` with that message, which also logs the cookie/native session out on the server
   (logout and refresh carry no partner check), so a reload shows the plain sign-in and nothing loops. When the same refusal ends the
   session during a sign-in, the message is shown once. Review of the 403 handling: the web otherwise signs out only on a 401, and
   a 403 from the profile read after a reload used to leave the person signed out silently; for this code the hook ends the session
   with the message first, and the reload path itself also sets the message (never a silent sign-out). There is no "Sign out" to
   offer: the session is already ended on the server. "Choose another workspace" is offered instead: on the sign-in screen after the
-  session ended it picks "Lab or clinic staff" and puts the cursor on the number; after a refused choice it sends a new code to the
-  same number or email (after the resend wait), whose answer offers the workspaces again. Not offered after a refused verify (one
-  workspace only: verify answers a choice when there are several).
+  session ended it picks "Lab or clinic staff" and puts the cursor on the number; after a refused choice the list itself stays to
+  choose from. Not offered after a refused verify (one workspace only: verify answers a choice when there are several).
+
+### WQ15b follow-ups (Opus xhigh review of e5d0e1c, 2026-11-23; branch `wq15b/followups`)
+
+Backend r9b `9be7d0a7` (on stage): `selectPartner` keeps the ticket on a refusal; the code is now `CLINIC_DOCTOR_NOT_VERIFIED` (the
+old name stays recognised).
+
+- L1 (money wording): the close answer is checked: a 200 without `closed: true` is a 502, so the request stays unknown (check or
+  resend) and is never said to be closed.
+- L3: a refused workspace choice keeps the choice step and its list (no new code needed); see above.
+- N1: `TOPUP_REFUNDED` settles the close on any attempt, like credited and blocked.
+- N2: a replayed answer (`replayed: true`, also to a resend) says "This top-up was already closed as paid by hand: … Nothing more
+  was changed.", never that this admin closed it once.
 
 ## Follow-ups
 
@@ -1718,6 +1730,7 @@ wallet page or the sign-in changes.
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-23 | WQ15b follow-ups (L1, L3, N1, N2 on e5d0e1c) | Against r9b 9be7d0a7 (mocked API). typecheck clean; Vitest 365/365 (no new tests; extended in wq15.test.ts: a 200 that is not a closure is a 502 (L1), TOPUP_REFUNDED is final (N1); both failed before the fix); Playwright workspace 788/788 (the select-refusal journey rewritten for L3: the choice stays, the same ticket opens another workspace, no new code; the resend journey now expects the N2 "already closed" words; both failed before the fix; temporary config on port 5372, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-23 | WQ15 close a card top-up already paid by hand; clinic sign-in refusal (on 0cbc4a2) | Against r9 0ca329aa (design §22; mocked API). typecheck clean; Vitest 365/365 (+9: wq15.test.ts 8 (close refusal words incl. TOPUP_REFUNDED, the refused-before-writing 503s, the any-attempt final refusals, the reason rule and owner wording, the list filter, the close and by-key requests, both clinic codes, the client's 403 hook), errors.test.ts 1); Playwright workspace 788/788 (+14 = 7 journeys x 2: list and mark with a reason and a confirm step; a lost answer checked by key, resent with the same key and body, and checked after a reload; the 409 credited case and Forget; clinic refusal at verify, at select (then "Choose another workspace" with a new code), on a partner call (session ended on the server, the message, no loop on reload, the follow-up code name) and on a reload (the profile read); the two session-end journeys failed with the hook disabled; temporary config on port 5371, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-23 | WQ14b follow-ups (M1, M2, L1–L3, nits on 183a756) | Mocked API as WQ14. typecheck clean; Vitest 356/356; Playwright workspace 774/774 (+16 = 8 journeys x 2: carried key survives a reload as an opaque marker, a current-page forgotten credit carries its key, Forget hidden during a check, a found credit drops its kept key, a 400 gives the key back, a late original with another body adds nothing, the tick cleared, the restored older-backend name words; 6 of them failed before the fix, the two L3 ones cover existing behaviour; temporary config on port 5361, `reuseExistingServer: false`, deleted); screenshots of Pharmacy wallets and the booked consultation identical to 183a756; `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-23 | WQ14 before production (W1–W3 on 3d26b8c) | Against stage (r7 e90952cc) and r8 B6 dd8971b0 `holder.typedName` (mocked API). typecheck clean; Vitest 356/356 (+2 in wq14.test.ts: a 503/500 by-key read is thrown, the exact-read "Not found" words; −1: the removed customer-list typed-name read); Playwright workspace 758/758 (+14 = 7 journeys x 2: W1 reload mid-credit then the old key reused, the 409 path, Back keeps the key; W3(b) a failed check hides Forget; W2 one booking read and no customer list, an older backend, after a reload; the L3 check test now reads `holder.typedName`; temporary config on port 5351, `reuseExistingServer: false`, deleted); screenshots of Pharmacy wallets and the booked consultation before/after identical except the W3(c) sentence; `VITE_API_SAME_ORIGIN=true` workspace build clean. |

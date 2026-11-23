@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import {
-  ApiError, CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, EMAIL_NOT_REGISTERED_MESSAGE, EMAIL_NOT_REGISTERED_STAFF_MESSAGE, isClinicDoctorNotVerified, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, PARTNER_KIND_LABEL, parseLoginIdentifier,
+  ApiError, CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, EMAIL_NOT_REGISTERED_MESSAGE, EMAIL_NOT_REGISTERED_STAFF_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, PARTNER_KIND_LABEL, parseLoginIdentifier,
   targetKey, targetKind, type OtpTarget, type PartnerSelection,
 } from '@jansetu/api';
 import { Alert, Button, TextField, useCooldowns } from '@jansetu/ui';
@@ -31,8 +31,6 @@ export function LoginScreen({ notice }: { notice?: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
-  // WQ15: a workspace choice refused because the member's doctor is not verified: another one needs a new code.
-  const [chooseAnother, setChooseAnother] = useState(false);
   // O1 limits are per destination: each one keeps its own wait (A → B → A keeps A's), in memory only.
   const cooldowns = useCooldowns();
   const typed = parseLoginIdentifier(identifier);
@@ -58,7 +56,6 @@ export function LoginScreen({ notice }: { notice?: string }) {
   async function send(e?: FormEvent) {
     e?.preventDefault();
     setError(null);
-    setChooseAnother(false);
     // The role is captured with the destination (the role choice is frozen while sending).
     const next = step === 'identify' ? (typed ? { role, target: typed } : null) : sent;
     if (!next) { setFieldError('Enter a 10-digit mobile number or an email address.'); focusOn('identifier'); return; }
@@ -83,7 +80,6 @@ export function LoginScreen({ notice }: { notice?: string }) {
   async function verify(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    setChooseAnother(false);
     if (!OTP_PATTERN.test(otp)) { setFieldError('Enter the 6-digit code.'); focusOn('code'); return; }
     if (!sent) { setStep('identify'); return; }
     setFieldError(null);
@@ -132,13 +128,9 @@ export function LoginScreen({ notice }: { notice?: string }) {
         setSelection(null);
         setStep('code');
         setError('This sign-in has expired. Request a new code to continue.');
-      } else if (isClinicDoctorNotVerified(err)) {
-        // WQ15 (r9): the select spent the one-use ticket before refusing: another workspace needs a new code.
-        setSelection(null);
-        setStep('code');
-        setError(messageOf(err));
-        setChooseAnother(true);
       } else {
+        // WQ15b L3: a refusal (the clinic one included) keeps the choice: since r9b the ticket stays valid, so another
+        // workspace can be opened from the same list. An older backend answers the next select 401 SELECTION_EXPIRED (above).
         setError(messageOf(err));
       }
       setBusy(false);
@@ -153,17 +145,10 @@ export function LoginScreen({ notice }: { notice?: string }) {
         {notice && <Alert tone="warn">{notice}</Alert>}
         {/* WQ15: a refusal that also ended the session is said once (as the notice). */}
         {error && error !== notice && <Alert>{error}</Alert>}
-        {/* WQ15: after the clinic refusal, the way to another workspace: a lab or clinic sign-in, or a new code to choose again. */}
+        {/* WQ15: after the clinic refusal ended the session, the way to another workspace: a lab or clinic sign-in. */}
         {step === 'identify' && notice === CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE && role !== 'partner' && (
           <div className="login-actions">
             <Button variant="secondary" onClick={() => { setRole('partner'); setError(null); focusOn('identifier'); }}>Choose another workspace</Button>
-          </div>
-        )}
-        {step === 'code' && chooseAnother && sent?.role === 'partner' && (
-          <div className="login-actions">
-            <Button variant="secondary" busy={busy} disabled={waiting} onClick={() => void send()}>
-              {waiting ? `Choose another workspace in ${cooldown}s` : 'Choose another workspace'}
-            </Button>
           </div>
         )}
 

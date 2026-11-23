@@ -72,12 +72,16 @@ export function adminPharmacyWalletApi(c: ApiClient) {
      * already paid this top-up by hand, so it is closed and never credited. Once per (admin, key); the same key and body
      * answer the closure again (`replayed`). `paymentId` here is always the payment record id.
      */
-    closeCompensated: (paymentRecordId: string, body: { reason: string; requestKey: string }) => {
+    closeCompensated: async (paymentRecordId: string, body: { reason: string; requestKey: string }): Promise<CompensatedClose> => {
       if (!hex.test(paymentRecordId)) throw new Error('Invalid payment id');
       if (!ADMIN_TOPUP_KEY_PATTERN.test(body.requestKey)) throw new Error('Invalid request key');
       const reason = cleanNote(body.reason);
       if (closeReasonProblem(reason)) throw new Error('Invalid reason');
-      return c.post<CompensatedClose>(`/admin/wallet-payments/${paymentRecordId.toLowerCase()}/close-compensated`, { body: { reason, requestKey: body.requestKey } });
+      const r = await c.post<Partial<CompensatedClose> | null>(`/admin/wallet-payments/${paymentRecordId.toLowerCase()}/close-compensated`,
+        { body: { reason, requestKey: body.requestKey } });
+      // WQ15b L1: only a closure is a close; anything else (a 502 here) leaves the request unknown, never claimed closed.
+      if (r?.closed !== true) throw new ApiError(502, 'The answer about this top-up could not be read.');
+      return r as CompensatedClose;
     },
     /** r9: did this admin's close with `key` happen? 'closed' with the closure, or 'not_found'. Anything else is thrown. */
     closeCompensatedByKey: async (key: string): Promise<{ state: 'closed'; close: CompensatedClose } | { state: 'not_found' }> => {
@@ -252,8 +256,8 @@ export const closeRefusedBeforeWriting = (err: unknown) =>
   err instanceof ApiError && err.status === 503 && (err.code === 'ASSISTED_BOOKING_DISABLED' || err.code === 'INDEXES_OUTDATED');
 
 /**
- * Answers that settle the close on ANY attempt: the top-up can never be closed (credited, blocked after a dispute, or
- * not a pharmacy top-up). An earlier attempt that did close it would be answered as its closure (`replayed`) instead.
+ * Answers that settle the close on ANY attempt: the top-up can never be closed (credited, refunded to the card, blocked
+ * after a dispute, or not a pharmacy top-up). An earlier attempt that did close it would be answered as its closure (`replayed`) instead.
  */
 export const closeCompensatedFinal = (err: unknown) => err instanceof ApiError && (err.status === 409 || err.status === 404)
-  && ['TOPUP_ALREADY_CREDITED', 'TOPUP_BLOCKED', 'TOPUP_NOT_FOUND'].includes(err.code ?? '');
+  && ['TOPUP_ALREADY_CREDITED', 'TOPUP_REFUNDED', 'TOPUP_BLOCKED', 'TOPUP_NOT_FOUND'].includes(err.code ?? '');

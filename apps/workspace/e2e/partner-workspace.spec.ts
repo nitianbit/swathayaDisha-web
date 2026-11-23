@@ -1662,33 +1662,28 @@ test('WQ15: a clinic sign-in refused at verify says why in plain words and opens
   expect(profileReads(backend)).toBe(0);
 });
 
-test('WQ15: a workspace choice refused at select says why; the spent choice asks for a new code (not resent)', async ({ page }) => {
-  await page.clock.install();
+test('WQ15b L3: a workspace choice refused at select says why and keeps the choice (r9b: the ticket stays valid); another one opens', async ({ page }) => {
   const backend = await mockBackend(page, ownerMe, { multi: true });
   const s = await doctorSession(page);
   await signInPartner(page);
   await expect(page.getByRole('radio')).toHaveCount(2);
   s.refused = true;
+  s.code = 'CLINIC_DOCTOR_NOT_VERIFIED'; // r9b's name
   await page.getByLabel(/Sunrise Clinic/).check();
   await page.getByRole('button', { name: 'Open workspace' }).click();
   await expect(page.getByText(CLOSED_FOR_YOU)).toBeVisible();
-  await expect(page.getByLabel('6-digit code')).toHaveValue('');
-  await expect(page.getByRole('button', { name: /Resend code/ })).toBeVisible();
-  expect(backend.calls.filter((c) => c.path === '/auth/partner/select')).toHaveLength(0); // refused here, never reached the mock
+  await expect(page.getByText('Which one do you want to open?')).toBeVisible();
+  await expect(page.getByRole('radio')).toHaveCount(2);
+  await expect(page.getByLabel('6-digit code')).toHaveCount(0);
   expect(profileReads(backend)).toBe(0);
 
-  // "Choose another workspace": a new code to the same number (after the resend wait), then the choice again.
+  // The same ticket opens another workspace; no new code is sent.
   s.refused = false;
-  await page.clock.fastForward(31_000);
-  await page.getByRole('button', { name: 'Choose another workspace' }).click();
-  await expect(page.getByRole('button', { name: 'Choose another workspace' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /^Resend code in \d+s$/ })).toBeVisible(); // the new code was sent
-  expect(backend.calls.filter((c) => c.path === '/auth/partner/send')).toHaveLength(2);
-  await page.getByLabel('6-digit code').fill('123456');
-  await page.getByRole('button', { name: 'Verify and sign in' }).click();
   await page.getByLabel(/City Lab/).check();
   await page.getByRole('button', { name: 'Open workspace' }).click();
   await expect(page.getByText('Lab · City Lab')).toBeVisible();
+  expect(backend.calls.filter((c) => c.path === '/auth/partner/select').map((c) => c.body)).toEqual([{ ticket: 'ticket-1', partnerId: LAB, session: 'cookie' }]);
+  expect(backend.calls.filter((c) => c.path === '/auth/partner/send')).toHaveLength(1);
 });
 
 test('WQ15: refused on a partner call, the session ends (signed out on the server too) with the reason; a reload does not loop', async ({ page }) => {

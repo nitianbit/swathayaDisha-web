@@ -1151,7 +1151,9 @@ test('WQ15: a lost answer is checked by key, or sent again with the same key and
   await markPaidByHand(page, '200.00', 'Paid in cash at the branch');
   await expect(section.getByText(/The outcome of this request is not known yet/)).toBeVisible();
   await section.getByRole('button', { name: 'Send the same request again' }).click();
-  await expect(section.getByText(words(`Marked as already paid by hand: the ${topup('200.00')} will never be credited to the wallet\\. It was closed once, even though it was sent more than once\\.`))).toBeVisible();
+  // WQ15b N2: a replayed answer says it was already closed, never that this admin closed it once.
+  await expect(section.getByText(words(`This top-up was already closed as paid by hand: the ${topup('200.00')} will never be credited to the wallet\\. Nothing more was changed\\.`))).toBeVisible();
+  await expect(section.getByText(/It was closed once/)).toHaveCount(0);
   const sent = closes(b);
   expect(sent).toHaveLength(3);
   expect(sent[2]!.path).toBe(sent[1]!.path);

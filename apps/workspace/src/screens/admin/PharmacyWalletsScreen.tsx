@@ -401,8 +401,9 @@ function UncreditedTopups({ scopeKey, pharmacyId, pharmacyName }: { scopeKey: re
     setReview(null);
     setReason('');
     const what = `the ${row ? topupWords(row) : `${formatRupees(c.amountPaise / 100)} top-up`}`;
+    // WQ15b N2: a replayed answer (this key's earlier attempt, or a close under another key) never claims this admin closed it.
     setDone(how === 'checked' ? `It was closed: ${what} will never be credited to the wallet.`
-      : how === 'sent' && c.replayed ? `${what.replace(/^t/, 'T')} was already closed as paid by hand. Nothing more was changed.`
+      : c.replayed ? `This top-up was already closed as paid by hand: ${what} will never be credited to the wallet. Nothing more was changed.`
       : `Marked as already paid by hand: ${what} will never be credited to the wallet.${how === 'resent' ? ' It was closed once, even though it was sent more than once.' : ''}`);
     void reread();
   };
