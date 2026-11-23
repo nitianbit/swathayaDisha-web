@@ -140,7 +140,7 @@ describe('refunds of card-paid bookings in plain words', () => {
     const base: CancelAnswer = { booking: { _id: BK, status: 'cancelled' }, refundedMinor: 50_000, alreadyCancelled: false };
     expect(cancelWords(base)).toBe('Cancelled. ₹500.00 is back in your Jansetu wallet. The patient and the doctor are told.');
     expect(cancelWords({ ...base, refundedMinor: 0, refund: refund() })).toMatch(/^Cancelled\. Refund of ₹500.00 to the card or UPI: in progress\./);
-    expect(cancelWords({ ...base, refundedMinor: 0, refund: null })).toBe('Cancelled. It was not paid, so nothing is refunded.');
+    expect(cancelWords({ ...base, refundedMinor: 0, refund: null })).toBe('Cancelled. It was not paid, so nothing is refunded. If a payment arrives later, it goes back to the card.');
     expect(cancelWords({ ...base, alreadyCancelled: true, refund: refund() })).toBe('It was already cancelled. Nothing was refunded twice.');
   });
 });
@@ -156,7 +156,7 @@ describe('admin: card refunds that need a person', () => {
     expect(moveRefundRefusal(err(409, 'CHARGEBACK_RECORDED'))).toBe('A card dispute was recorded on this payment: the bank already took the money back. Nothing was moved.');
     expect(moveRefundRefusal(err(404, 'REFUND_NOT_FOUND'))).toBe('This refund was not found. Nothing was changed.');
     expect(moveRefundRefusal(err(503, 'ASSISTED_BOOKING_DISABLED'))).toMatch(/^The admin tools are switched off/);
-    expect(moveRefundRefusal(err(404))).toMatch(/^The admin tools are switched off/);
+    expect(moveRefundRefusal(err(404))).toBe('Not available on this server yet. Nothing was changed.'); // WQ16c
     expect(moveRefundRefusal(err(403, 'FORBIDDEN'))).toBe('Only Jansetu admins can move a refund.');
     expect(moveRefusedBeforeWriting(err(503, 'ASSISTED_BOOKING_DISABLED'))).toBe(true);
     expect(moveRefusedBeforeWriting(err(503))).toBe(false);
@@ -179,10 +179,11 @@ describe('admin: card refunds that need a person', () => {
       answer = json(200, { success: true, data });
       await expect(a.toWallet(RF, 'ok')).rejects.toMatchObject({ status: 502 });
     }
-    answer = json(200, { success: true, data: [refund({ method: 'wallet', state: 'processed' })] });
+    // WQ16c: the check reads the row by id (not the list, cut at 200 rows).
+    answer = json(200, { success: true, data: { refund: refund({ method: 'wallet', state: 'processed' }) } });
     await expect(findMovedRefund(c, RF)).resolves.toMatchObject({ refundId: RF });
-    expect(calls.at(-1)!.url).toBe('/api/v1/admin/assisted/card-refunds?state=processed&limit=200');
-    answer = json(200, { success: true, data: [refund({ state: 'processed' })] }); // processed to the card: not a move
+    expect(calls.at(-1)!.url).toBe(`/api/v1/admin/assisted/card-refunds/${RF}`);
+    answer = json(200, { success: true, data: { refund: refund({ state: 'processed' }) } }); // processed to the card: not a move
     await expect(findMovedRefund(c, RF)).resolves.toBeNull();
   });
 });

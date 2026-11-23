@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import {
   adminCardRefundsApi, adminWalletReadError, agreementProblem, isSwitchedOff, CARD_REFUND_CAUSE_LABEL, CARD_REFUND_STATE_LABEL, findMarkedFailed, findMovedRefund,
   markFailedFinal, markFailedRefusal, markFailedRefusedBeforeWriting, MAX_REFUND_AGREEMENT, moveRefundFinal, moveRefundRefusal, moveRefusedBeforeWriting,
-  recheckWords, type AdminCardRefund, type CardRefund,
+  recheckRefusal, recheckWords, type AdminCardRefund, type CardRefund,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea } from '@jansetu/ui';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
@@ -73,7 +73,7 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
     }
     void reread();
   };
-  const refuse = (action: Action, err: unknown) => { setChosen(null); setReview(null); setRefused(refusalOf(action, err)); void reread(); };
+  const refuse = (action: Action, err: unknown) => { setChosen(null); setReview(null); setRefused(`Not done: ${refusalOf(action, err)}`); void reread(); };
 
   function start(action: Action, row: AdminCardRefund) {
     setDone(null); setRefused(null); setReview(null); setText(''); setTextError(undefined); setChosen({ action, row });
@@ -110,7 +110,7 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
       const r = await perform(() => refunds.recheck(row.refundId));
       setDone(`${refundWords(row)} of ${pharmacyOf(row)}. ${recheckWords(r)}`);
     } catch (err) {
-      setRefused(markFailedRefusal(err));
+      setRefused(recheckRefusal(err));
     } finally {
       setRechecking(null);
       void reread();
@@ -127,6 +127,7 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
         <CheckPanel label={restored ? 'Unconfirmed refund change' : w.label}
           onCheck={async () => {
             if (restored) return 'Its details are not kept on this device after a reload. Read the list again to see where the refund is.';
+            // WQ16c: the row is read by id (r10d), or rechecked on an older server: never the 200-row list.
             const found = op.body.action === 'move' ? await findMovedRefund(api, op.body.row.refundId) : await findMarkedFailed(api, op.body.row.refundId);
             void reread();
             if (found) { settle(op.requestKey); finished(op.body, 'checked'); return null; }
@@ -136,7 +137,7 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
             label: 'Send the same request again', busy,
             onClick: () => { setResendError(null); void sendAction(op).catch((err: unknown) => setResendError(refusalOf(op.body.action, err))); },
           }}
-          forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget: () => settle(op.requestKey),
+          forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget: () => { settle(op.requestKey); setReview(null); setChosen(null); setText(''); },
             consequence: 'The change may already be done, or may still be. Forgetting it does not undo that. Read the list again before doing it again: a refund is never moved twice.' }}>
           <Alert tone="warn">
             {restored
@@ -153,7 +154,7 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
     <>
       <p className="ws-muted">Card and UPI refunds of consultations booked by pharmacies that did not go through on their own. One still in progress is listed after 20 failures or a day.</p>
       {done && <Alert tone="ok">{done}</Alert>}
-      {refused && <Alert>Not done: {refused}</Alert>}
+      {refused && <Alert>{refused}</Alert>}
       {list.isPending ? <Loading label="Loading card refunds…" />
         : list.isError ? (isSwitchedOff(list.error) ? <p className="ws-muted">Card refunds of bookings are not available on this server yet.</p>
           : <ErrorState message={adminWalletReadError(list.error)} onRetry={() => void list.refetch()} />)

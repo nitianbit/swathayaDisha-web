@@ -61,7 +61,7 @@ describe('new refusals (r10b)', () => {
   it('a bad signature leaves the booking payable: the server’s check decides (unpaid here)', async () => {
     const { c, calls } = client((x) => (x.url.endsWith('/verify') ? json(400, { error: 400, code: 'PAYMENT_SIGNATURE_INVALID', message: 'bad' })
       : json(200, { success: true, data: { state: 'unpaid', gatewayStatuses: ['authorized'] } })));
-    await expect(settleCardPayment(c, REC, { razorpayOrderId: 'order_1', razorpayPaymentId: 'pay_1', razorpaySignature: 'x' })).resolves.toEqual({ kind: 'unpaid' });
+    await expect(settleCardPayment(c, REC, { razorpayOrderId: 'order_1', razorpayPaymentId: 'pay_1', razorpaySignature: 'x' })).resolves.toEqual({ kind: 'unpaid', inFlight: true }); // WQ16c: Checkout reported it
     expect(calls.map((x) => x.url)).toEqual(['/api/v1/payments/verify', '/api/v1/payments/reconcile']);
   });
 
@@ -105,10 +105,11 @@ describe('admin: recheck and mark failed (r10b), the pharmacy on each row (r10c)
     expect(markFailedRefusal(err(409, 'REFUND_AT_GATEWAY'))).toBe('Razorpay already has a refund of this payment, done or on its way, so it was not marked failed. Tap “Recheck” to see it.');
     expect(markFailedRefusal(err(409, 'REFUND_BUSY'))).toBe('This refund is being worked on right now. Nothing was changed. Try again in a few minutes.');
     expect(markFailedRefusal(err(409, 'REFUND_NOT_PENDING'))).toBe('Only a card refund still in progress can be marked failed. Read the list again.');
-    answer = json(200, { success: true, data: [row({ state: 'failed', lastError: 'MARKED_FAILED_BY_ADMIN' })] });
+    // WQ16c: read by id.
+    answer = json(200, { success: true, data: { refund: row({ state: 'failed', lastError: 'MARKED_FAILED_BY_ADMIN' }) } });
     await expect(findMarkedFailed(c, RF)).resolves.toMatchObject({ refundId: RF });
-    expect(calls.at(-1)!.url).toBe('/api/v1/admin/assisted/card-refunds?state=failed&limit=200');
-    answer = json(200, { success: true, data: [row({ state: 'failed', lastError: 'BAD_REQUEST_ERROR' })] });
+    expect(calls.at(-1)!.url).toBe(`/api/v1/admin/assisted/card-refunds/${RF}`);
+    answer = json(200, { success: true, data: { refund: row({ state: 'failed', lastError: 'BAD_REQUEST_ERROR' }) } });
     await expect(findMarkedFailed(c, RF)).resolves.toBeNull();
   });
 });

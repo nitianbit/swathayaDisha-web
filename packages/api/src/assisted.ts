@@ -111,6 +111,8 @@ export interface ConsultationRequest {
 export type AssistedPaymentMethod = 'wallet' | 'razorpay';
 export interface BookingPayment {
   method: AssistedPaymentMethod; state: 'pending' | 'captured' | 'refunded' | 'not_paid' | 'forfeited' | string; payBy: string | null; paymentTransactionId?: string | null;
+  /** r10d: the open order while a card booking waits (null when none is open yet). */
+  razorpayOrderId?: string | null; razorpayKeyId?: string | null;
 }
 
 /**

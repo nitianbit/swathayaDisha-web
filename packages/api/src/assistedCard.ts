@@ -1,5 +1,5 @@
 import { ApiError, type ApiClient } from './client.ts';
-import { assistedRefusal, type BookedConsultation, type CancelAnswer, type CardRefund } from './assisted.ts';
+import { assistedRefusal, type AssistedCardPayment, type BookedConsultation, type CancelAnswer, type CardRefund } from './assisted.ts';
 
 /**
  * WQ16: assisted booking phase 1b, a pharmacy pays a walk-in consultation by card or UPI (backend r10
@@ -48,7 +48,11 @@ export function bookingPaymentApi(c: ApiClient) {
 export type CardOutcome =
   | { kind: 'paid'; booking: Partial<BookedConsultation> | null }
   | { kind: 'refunded' }
-  | { kind: 'unpaid' }
+  /**
+   * WQ16c: `inFlight` = Razorpay reported a payment that is not captured yet (Checkout said paid, verify said not
+   * completed, or the order has an authorized / created payment): never invite a second payment then.
+   */
+  | { kind: 'unpaid'; inFlight?: true }
   | { kind: 'failed'; message: string }
   | { kind: 'blocked'; message: string }
   | { kind: 'unknown'; message: string };
@@ -56,7 +60,9 @@ export type CardOutcome =
 /** A verify answer, or a reconcile answer that found the capture. `null` = the answer does not settle anything. */
 export function outcomeOfAnswer(a: CardPaymentAnswer | ReconcileAnswer | null | undefined): CardOutcome | null {
   if (!a || typeof a !== 'object') return null;
-  if ('state' in a && a.state === 'unpaid') return { kind: 'unpaid' };
+  if ('state' in a && a.state === 'unpaid') {
+    return (a.gatewayStatuses ?? []).some((s) => s === 'authorized' || s === 'created') ? { kind: 'unpaid', inFlight: true } : { kind: 'unpaid' };
+  }
   const r = a as CardPaymentAnswer;
   const status = r.paymentRecord?.status;
   if (status === 'paid') return { kind: 'paid', booking: r.entity ?? null };
@@ -105,7 +111,9 @@ export async function settleCardPayment(api: ApiClient, paymentTransactionId: st
       // Anything else (a bad signature, a lost answer, Razorpay not answering): the server's own check decides.
     }
   }
-  return checkCardPayment(api, paymentTransactionId);
+  const checked = await checkCardPayment(api, paymentTransactionId);
+  // WQ16c: Checkout reported a payment: "not captured yet" is a payment on its way, never an invitation to pay again.
+  return proof && checked.kind === 'unpaid' ? { kind: 'unpaid', inFlight: true } : checked;
 }
 
 /** `POST /payments/reconcile` for one card booking payment. Never throws. */
@@ -129,6 +137,33 @@ export function payByClock(payBy: string | undefined | null): string | null {
 }
 
 /**
+ * WQ16c: whether the money was taken, from the server's `payment.state` (captured, refunded or forfeited); an older
+ * server without the field: every booking not waiting was paid (as before).
+ */
+export function bookingWasPaid(b: Pick<BookedConsultation, 'status' | 'paymentStatus' | 'payment'>): boolean {
+  if (!b.payment) return !(b.status === 'pending' && b.paymentStatus === 'pending');
+  return ['captured', 'refunded', 'forfeited'].includes(b.payment.state);
+}
+/** WQ16c (r10d): the open order of a waiting card booking from its booker view, for Checkout on any device; null when none. */
+export function orderFromBooking(b: Pick<BookedConsultation, 'payment' | 'price'>): AssistedCardPayment | null {
+  const p = b.payment;
+  if (!p || p.method !== 'razorpay' || p.state !== 'pending' || !p.razorpayOrderId || !p.razorpayKeyId || !p.paymentTransactionId || typeof b.price !== 'number') return null;
+  return { paymentRequired: true, paymentTransactionId: p.paymentTransactionId, razorpayOrderId: p.razorpayOrderId, razorpayKeyId: p.razorpayKeyId,
+    amount: b.price, amountMinor: Math.round(b.price * 100), currency: 'INR', payBy: p.payBy ?? '' };
+}
+/** WQ16c: "Pay now" stops 2 minutes before the pay-by time (the page could not finish in time); only "Check payment" then. */
+export const PAY_NOW_MARGIN_MS = 2 * 60_000;
+export function payNowOpen(payBy: string | undefined | null, now = Date.now()): boolean {
+  const t = payBy ? Date.parse(payBy) : NaN;
+  return !Number.isFinite(t) || now < t - PAY_NOW_MARGIN_MS;
+}
+/** Seconds Checkout may stay open so that it closes itself before the cut-off (Razorpay's `timeout` option). */
+export function checkoutSeconds(payBy: string | undefined | null, now = Date.now()): number | undefined {
+  const t = payBy ? Date.parse(payBy) : NaN;
+  return Number.isFinite(t) ? Math.max(0, Math.floor((t - PAY_NOW_MARGIN_MS - now) / 1000)) : undefined;
+}
+
+/**
  * An assisted booking waiting for its card payment. r10c: the booker view's `payment` says so; an older server has no
  * field, and there a pending booking is a card one (a wallet booking is paid at create).
  */
@@ -144,6 +179,8 @@ export function bookingPayBy(b: Pick<BookedConsultation, 'payment' | 'createdAt'
   return Number.isFinite(t) ? new Date(t + 30 * 60_000).toISOString() : undefined;
 }
 
+/** WQ16c: said whenever a card booking is cancelled (or released) before it was paid. */
+export const LATE_PAYMENT_BACK = 'If a payment arrives later, it goes back to the card.';
 export const LATE_CAPTURE_WORDS =
   'The payment came after the booking could no longer take it (the time was released, it was cancelled, or the doctor is not available). The amount is being refunded to the card or UPI it was paid with. Nothing is booked: book again if the patient still wants it.';
 
@@ -171,7 +208,7 @@ export function cancelWords(a: CancelAnswer): string {
   if (a.alreadyCancelled) return 'It was already cancelled. Nothing was refunded twice.';
   // r10: `refund` is present only for a card booking (null: cancelled before it was paid).
   if (!('refund' in a)) return `Cancelled. ${rupees(a.refundedMinor)} is back in your Jansetu wallet. The patient and the doctor are told.`;
-  if (!a.refund) return 'Cancelled. It was not paid, so nothing is refunded.';
+  if (!a.refund) return `Cancelled. It was not paid, so nothing is refunded. ${LATE_PAYMENT_BACK}`;
   return `Cancelled. ${cardRefundWords(a.refund)} The patient and the doctor are told.`;
 }
 
@@ -261,16 +298,33 @@ export function recheckWords(r: CardRefundRecheck): string {
   return `Checked with Razorpay: ${state}. ${held}`;
 }
 
-/** Marked failed already? The row among the failed ones, marked by an admin (at most 200, oldest change first). */
-export async function findMarkedFailed(api: ApiClient, refundId: string): Promise<CardRefund | null> {
-  const rows = await adminCardRefundsApi(api).queue({ state: 'failed', limit: 200 });
-  return rows.find((r) => r.refundId.toLowerCase() === refundId.toLowerCase() && r.lastError === 'MARKED_FAILED_BY_ADMIN') ?? null;
+/**
+ * WQ16c: one refund row as it is now: `GET /admin/assisted/card-refunds/:id` (r10d), or on an older server (code-less 404
+ * or 405) `POST …/:id/recheck`, which answers the row too. Never the list (it is cut at 200 rows).
+ */
+export async function readCardRefund(api: ApiClient, refundId: string): Promise<CardRefund> {
+  if (!hex.test(refundId)) throw new Error('Invalid refund id');
+  try {
+    const r = await api.get<{ refund?: CardRefund } & Partial<CardRefund> | null>(`/admin/assisted/card-refunds/${refundId.toLowerCase()}`);
+    const row = r?.refund ?? (r && hex.test(String(r.refundId)) ? r as CardRefund : null);
+    if (!row) throw new ApiError(502, 'The answer about this refund could not be read.');
+    return row;
+  } catch (err) {
+    if (err instanceof ApiError && ((err.status === 404 && !err.code) || err.status === 405)) return (await adminCardRefundsApi(api).recheck(refundId)).refund;
+    throw err;
+  }
 }
 
-/** Moved to the wallet already? Looks for the row among the processed ones (at most 200, oldest change first). */
+/** Marked failed already? Read by id: failed, marked by an admin. */
+export async function findMarkedFailed(api: ApiClient, refundId: string): Promise<CardRefund | null> {
+  const r = await readCardRefund(api, refundId);
+  return r.state === 'failed' && r.lastError === 'MARKED_FAILED_BY_ADMIN' ? r : null;
+}
+
+/** Moved to the wallet already? Read by id (WQ16c: not the list, which is cut at 200 rows). */
 export async function findMovedRefund(api: ApiClient, refundId: string): Promise<CardRefund | null> {
-  const rows = await adminCardRefundsApi(api).queue({ state: 'processed', limit: 200 });
-  return rows.find((r) => r.refundId.toLowerCase() === refundId.toLowerCase() && r.method === 'wallet' && r.state === 'processed') ?? null;
+  const r = await readCardRefund(api, refundId);
+  return r.method === 'wallet' && r.state === 'processed' ? r : null;
 }
 
 const MOVE_WORDS: Readonly<Record<string, string>> = {
@@ -286,7 +340,8 @@ const MOVE_WORDS: Readonly<Record<string, string>> = {
 /** One plain sentence for a refusal of "Move to wallet". */
 export function moveRefundRefusal(err: unknown): string {
   if (err instanceof ApiError && err.code && MOVE_WORDS[err.code]) return MOVE_WORDS[err.code]!;
-  if (err instanceof ApiError && (err.code === 'ASSISTED_BOOKING_DISABLED' || ((err.status === 404 || err.status === 503) && !err.code))) {
+  if (err instanceof ApiError && err.status === 404 && !err.code) return 'Not available on this server yet. Nothing was changed.';
+  if (err instanceof ApiError && (err.code === 'ASSISTED_BOOKING_DISABLED' || (err.status === 503 && !err.code))) {
     return 'The admin tools are switched off on this server, so refunds cannot be moved here. Nothing was changed.';
   }
   if (err instanceof ApiError && err.status === 403) return 'Only Jansetu admins can move a refund.';
@@ -326,3 +381,12 @@ export const markFailedRefusedBeforeWriting = (err: unknown) => err instanceof A
  */
 export const markFailedFinal = (err: unknown) => err instanceof ApiError
   && ((err.status === 409 && err.code === 'REFUND_AT_GATEWAY') || (err.status === 404 && err.code === 'REFUND_NOT_FOUND'));
+
+/** WQ16c: a refusal of "Recheck". A 5xx (Razorpay not answering included) may come after the refund was sent: not known. */
+export function recheckRefusal(err: unknown): string {
+  if (err instanceof ApiError && (err.status >= 500 || err.status === 0) && err.status !== 503) {
+    return 'Razorpay could not be asked just now. The outcome is not known: tap “Recheck” again in a minute.';
+  }
+  if (err instanceof ApiError && err.code === 'REFUND_BUSY') return 'This refund is being worked on right now. Try again in a few minutes.';
+  return markFailedRefusal(err);
+}

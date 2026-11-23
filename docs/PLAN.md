@@ -1773,11 +1773,32 @@ Backend r10b/r10c (`m0/r10b-phase1b-fixes` 6b223644, design §23.3 and §23.6; i
   wallet adds 409 `REFUND_AT_GATEWAY` (final) and 502 `GATEWAY_LOOKUP_FAILED` (refused before writing for a sole attempt). The
   row's count reads "failures" (r10b counts real failures only).
 
+### WQ16c review fixes (review of 398accb, 2026-11-23; branch `wq16c/fixes`)
+
+Backend r10d (`m0/r10d-phase1b` a7ae19bb: `payment.razorpayOrderId` / `razorpayKeyId` while waiting). The refund read by id
+(`GET /admin/assisted/card-refunds/:id`) is not on r10d yet: used when present, else `POST …/recheck` (which answers the row).
+
+- 1 (M): "paid" labels only when `payment.state` is captured, refunded or forfeited; `not_paid` shows "Price … (not paid)";
+  cancellation cause `payment_timeout` reads "Payment was not completed in time".
+- 2 (M): **Pay now** re-reads the order first (by the create's key, else the booking's r10d `payment`, so any device on r10d),
+  is hidden from 2 minutes before `payBy` (a timer flips it while the page is open; "The time to pay is almost over…"), and
+  Checkout gets Razorpay's `timeout` so it closes itself before then. The create's own order is still opened at once.
+- 3 (M): after Checkout reported a payment, a verify 400 `PAYMENT_NOT_COMPLETED`, a reconcile `unpaid` with an `authorized` or
+  `created` gateway payment, or an unknown outcome, only **Check payment** is offered: "Razorpay reported the payment; it is
+  being confirmed. Do not pay again." (`CardOutcome` `unpaid` carries `inFlight`).
+- 4 (L/M): the admin Check reads the refund by id (r10d route; a code-less 404 or 405 falls back to recheck), never the 200-row list.
+- 5 (L): a booking with no order (502 at create, found after a reload) says "The card payment for this booking could not be
+  started. Tap “Check payment”, or cancel this booking … and book again."
+- 6 (L): a restored cancellation of a card booking says "refunded the way chosen"; cancelling (or the answer for) a booking
+  waiting for payment adds "If a payment arrives later, it goes back to the card."
+- 7 (L): Forget on an unconfirmed refund change clears its review and form.
+- 8 (L): "Tap Pay now" only where the button is offered; a recheck 5xx says "The outcome is not known"; a code-less 404 on the
+  admin refund actions says "Not available on this server yet".
+
 ## Follow-ups
 
-- WQ16b: done in r10c (booker view `payment`, refund rows' pharmacy). Still open: "Pay now" from another tab or device needs
-  the open Razorpay order, which only the create's key gives back. For the backend: a read of the open order by booking id (or
-  `razorpayOrderId` and the key id in the booker view's `payment` while it waits).
+- WQ16c: the admin refund read by id (`GET /admin/assisted/card-refunds/:id`) is assumed to answer `{ refund }` or the row;
+  re-check its shape when r10d's final API lands (until then the recheck fallback is used on servers without it).
 
 - WQ15: the r9 `uncredited` row has no Razorpay order id (`uncreditedTopups` selects `razorpayPaymentId` but sends neither). For
   the backend: add `razorpayOrderId` to each row; the section shows it when present. The list is global (no `pharmacyId` query), so
@@ -1809,6 +1830,7 @@ Backend r10b/r10c (`m0/r10b-phase1b-fixes` 6b223644, design §23.3 and §23.6; i
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-23 | WQ16c review fixes 1–8 (review of 398accb) | Against r10d a7ae19bb (mocked API; the refund read by id as assumed). typecheck clean; Vitest 395/395 (+8 in wq16c.test.ts, all 8 failed before: paid only for captured/refunded/forfeited, the 2-minute Pay-now cut-off and Checkout timeout, the r10d order from `payment`, `inFlight` after a reported payment and for authorized/created gateway payments, the read by id with the recheck fallback and no list, the unpaid-cancel and recheck/404 words; 5 older assertions updated to the new behaviour); Playwright workspace 831/832 then the failed one 10/10 on rerun (+14 = 7 journeys x 2, all failing before, plus the two admin Check journeys changed to the read by id, failing before: not-paid label and payment timeout, any-device Pay now with a re-read and Checkout timeout, no Pay now near payBy, no second payment after a reported one, the 502 order after a reload, the unpaid-cancel words, recheck 502 and Forget clearing the form). The one failure is an existing time-dependent check in pharmacy-extras WQ14b M1 (`not.toContain('250')` matched the marker's millisecond timestamp), not this change. Temporary configs on ports 5395/5397, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-23 | WQ16b booker view payment, admin recheck and mark failed, new refusals (on 75e6c45) | Against r10b/r10c 6b223644 (§23.3, §23.6; mocked API). typecheck clean; Vitest 387/387 (+8 in wq16b.test.ts: paid-by and waiting from `payment`, the server's payBy and the older-server fallback, pending_card_bookings words, PAYMENT_DISPUTED, bad signature falls back to reconcile (pin; passed before), REFUND_AT_GATEWAY / GATEWAY_LOOKUP_FAILED for the move, recheck request and words, mark-failed request, its 502 on an odd answer, final and before-writing refusals and the check; 7 of 8 failed before the change); Playwright workspace 818/818 (+10 = 5 journeys x 2: another device waits with the server's pay-by and Check payment finds it paid; another device's card-paid booking gets the refund choice; a wallet booking gets wallet words and no refundTo; the pending card bookings limit; admin pharmacy name, Recheck, Mark failed with a lost answer checked, then Move to wallet offered; all 5 failed on 75e6c45; temporary config on port 5393, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-23 | WQ16 assisted booking phase 1b: card or UPI booking, refund choice, admin card refund queue (on 72a9b27) | Against r10 9f2a1807 (design §23.3; mocked API). typecheck clean; Vitest 379/379 (+14 in wq16.test.ts: verify/reconcile answers and refusals read for paid / refunded / unpaid / failed / blocked / unknown, verify without `module` and reconcile with the record id only, a lost verify falls back to reconcile, a late capture is never paid, pay-by words in India time, the card create refusals (switch off, nothing to pay, no gateway keys; the 502 stays unknown), `refundTo` and by-key `payment`, refund and cancel words per state, admin agreement rule, queue rows, move request and its 502 on an odd answer, final and before-writing refusals, the processed-row check); Playwright workspace 808/808 (+20 = 10 journeys x 2: card pay success, Checkout closed then Pay now from Booked consultations on the same order, lost verify then reconcile, late capture refunded, 502 order failure resent, switch off then wallet with a new key, cancel refund to card, cancel refund to wallet, a booking not made here (no choice, neutral words), admin move to wallet with a lost answer checked; temporary config on port 5391, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-23 | WQ15b follow-ups (L1, L3, N1, N2 on e5d0e1c) | Against r9b 9be7d0a7 (mocked API). typecheck clean; Vitest 365/365 (no new tests; extended in wq15.test.ts: a 200 that is not a closure is a 502 (L1), TOPUP_REFUNDED is final (N1); both failed before the fix); Playwright workspace 788/788 (the select-refusal journey rewritten for L3: the choice stays, the same ticket opens another workspace, no new code; the resend journey now expects the N2 "already closed" words; both failed before the fix; temporary config on port 5372, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build clean. |

@@ -192,6 +192,7 @@ export {
   cancelWords, cardCheckProblem, cardRefundRowsOf, cardRefundWords, checkCardPayment, findMovedRefund, LATE_CAPTURE_WORDS, MAX_REFUND_AGREEMENT, moveRefundFinal,
   moveRefundRefusal, moveRefusedBeforeWriting, outcomeOfAnswer, outcomeOfError, payByClock, payByWords, settleCardPayment,
   bookingPaidBy, bookingPayBy, findMarkedFailed, markFailedFinal, markFailedRefusal, markFailedRefusedBeforeWriting, recheckWords,
+  bookingWasPaid, checkoutSeconds, LATE_PAYMENT_BACK, orderFromBooking, PAY_NOW_MARGIN_MS, payNowOpen, readCardRefund, recheckRefusal,
 } from './assistedCard.ts';
 export type { AdminCardRefund, CardOutcome, CardPaymentAnswer, CardProof, CardRefundMove, CardRefundRecheck, CardRefundState, ReconcileAnswer } from './assistedCard.ts';
 export type {
