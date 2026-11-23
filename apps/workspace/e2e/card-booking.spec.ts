@@ -39,6 +39,8 @@ interface Backend {
   loseNextVerify: boolean;
   /** The booking expired before the capture: verify returns it to the card. */
   late: boolean;
+  /** r10b: the next card create is refused: too many card bookings waiting for payment. */
+  pendingLimit: boolean;
 }
 
 const view = (o: Json = {}): Json => ({
@@ -50,7 +52,7 @@ const view = (o: Json = {}): Json => ({
 async function mockPharmacy(page: Page, init: { bookings?: Json[]; cardOn?: boolean } = {}): Promise<Backend> {
   const b: Backend = {
     calls: [], creates: [], verifies: [], reconciles: [], cancels: [], bookings: init.bookings ?? [], keys: {}, record: { status: 'none', captured: false },
-    cardOn: init.cardOn ?? true, orderFailsOnce: false, loseNextVerify: false, late: false,
+    cardOn: init.cardOn ?? true, orderFailsOnce: false, loseNextVerify: false, late: false, pendingLimit: false,
   };
   let live = false;
   const booking = (id: string) => b.bookings.find((x) => x._id === id);
@@ -124,6 +126,7 @@ async function mockPharmacy(page: Page, init: { bookings?: Json[]; cardOn?: bool
           split: { listMinor: 50_000, discountMinor: 0, couponCode: null }, newAccount: false, replayed: false } });
       }
       if (!b.cardOn) return refuse(route, 400, 'PAYMENT_METHOD_UNAVAILABLE', 'Card and UPI payment of assisted bookings is not switched on; pay from the wallet');
+      if (b.pendingLimit) return json(route, 429, { error: 429, code: 'ASSISTED_LIMIT_REACHED', message: 'Too many', limit: 'pending_card_bookings' });
       b.keys[key] = { hash, bookingId: BK };
       b.bookings.unshift(view());
       if (b.orderFailsOnce) {
@@ -352,12 +355,14 @@ test('a booking not made on this device: no refund choice, neutral words; the an
 
 // ── Admin: card refunds that need a person ──
 
-async function mockAdmin(page: Page) {
-  const b = { calls: [] as { method: string; path: string; body: Json | null }[], loseNextMove: false, moved: false };
+async function mockAdmin(page: Page, init: { pending?: boolean } = {}) {
+  const b = { calls: [] as { method: string; path: string; body: Json | null }[], loseNextMove: false, moved: false, pending: false, marked: false, loseNextMark: false };
+  b.pending = !!init.pending;
   let live = false;
   const row = (): Json => ({ refundId: RF, bookingId: BK, paymentRecordId: REC, amountMinor: 50_000, cause: 'booker', method: b.moved ? 'wallet' : 'card',
-    state: b.moved ? 'processed' : 'failed', lastError: b.moved ? null : 'BAD_REQUEST_ERROR', attempts: 3, razorpayRefundId: null, processedAt: null,
-    createdAt: '2026-11-22T04:30:00.000Z', updatedAt: '2026-11-22T05:30:00.000Z' });
+    state: b.moved ? 'processed' : b.pending && !b.marked ? 'pending' : 'failed',
+    lastError: b.moved ? null : b.marked ? 'MARKED_FAILED_BY_ADMIN' : b.pending ? 'GATEWAY_UNREACHABLE' : 'BAD_REQUEST_ERROR', attempts: 3, razorpayRefundId: null, processedAt: null,
+    createdAt: '2026-11-22T04:30:00.000Z', updatedAt: '2026-11-22T05:30:00.000Z', pharmacyId: 'a1'.repeat(12), pharmacyName: 'Asha Medicals' });
   await page.route('**/api/v1/**', async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -378,7 +383,14 @@ async function mockAdmin(page: Page) {
     if (path === '/admin/assisted/card-refunds') {
       const state = url.searchParams.get('state');
       const r = row();
-      return json(route, 200, { success: true, data: (state ? r.state === state : ['failed', 'manual_review'].includes(String(r.state))) ? [r] : [] });
+      return json(route, 200, { success: true, data: (state ? r.state === state : ['failed', 'manual_review', 'pending'].includes(String(r.state))) ? [r] : [] });
+    }
+    if (path === `/admin/assisted/card-refunds/${RF}/recheck`) return json(route, 200, { success: true, data: { refund: row(), gateway: [] } });
+    if (path === `/admin/assisted/card-refunds/${RF}/mark-failed`) {
+      if (b.marked) return refuse(route, 409, 'REFUND_NOT_PENDING', 'Only a pending card refund can be marked failed');
+      b.marked = true;
+      if (b.loseNextMark) { b.loseNextMark = false; return route.abort('connectionreset'); }
+      return json(route, 200, { success: true, data: { refund: row() } });
     }
     if (path === `/admin/assisted/card-refunds/${RF}/to-wallet`) {
       const replayed = b.moved;
@@ -389,6 +401,17 @@ async function mockAdmin(page: Page) {
     return refuse(route, 404, 'NOT_MOCKED', `Not mocked: ${method} ${path}`);
   });
   return b;
+}
+
+async function openAdminQueue(page: Page) {
+  await page.goto('/');
+  await page.getByLabel('Admin').check();
+  await page.getByLabel('Mobile number').fill('9876543210');
+  await page.getByRole('button', { name: 'Send code' }).click();
+  await page.getByLabel('6-digit code').fill('123456');
+  await page.getByRole('button', { name: 'Verify and sign in' }).click();
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Pharmacy wallets' }).click();
+  return page.getByRole('region', { name: 'Card refunds of bookings that need a person' });
 }
 
 test('admin: a failed card refund is moved to the wallet with the pharmacy’s agreement; a lost answer is checked', async ({ page }) => {
@@ -419,4 +442,78 @@ test('admin: a failed card refund is moved to the wallet with the pharmacy’s a
   const moves = b.calls.filter((c) => c.method === 'POST' && c.path.startsWith('/admin/'));
   expect(moves).toEqual([{ method: 'POST', path: `/admin/assisted/card-refunds/${RF}/to-wallet`, body: { agreement: 'Owner agreed on a call, 23 Nov' } }]);
   expect(b.calls.some((c) => c.path === '/admin/assisted/card-refunds?state=processed&limit=200')).toBe(true);
+});
+
+// ── WQ16b: the booker view's `payment` (r10c), the new refusals and admin actions (r10b) ──
+
+const SERVER_PAY_BY = new Date(Date.parse(CREATED) + 17 * 60_000).toISOString(); // not createdAt + 30: the server's own time
+
+test('another device: the server’s payment says it waits, with its pay-by time; Check payment finds it paid', async ({ page }) => {
+  const b = await mockPharmacy(page, { bookings: [view({ payment: { method: 'razorpay', state: 'pending', payBy: SERVER_PAY_BY, paymentTransactionId: REC } })] });
+  b.record = { status: 'created', captured: true }; // paid on the device that booked it; not applied yet
+  await signIn(page, 'Booked consultations');
+  await page.getByRole('link', { name: /Pay now for the consultation of Rina Kumari/ }).click();
+  await expect(page.getByText(`Pay before ${hhmm(SERVER_PAY_BY)} or the time is released.`)).toBeVisible();
+  await expect(page.getByText(/The payment page opens only in the browser tab where this booking was made/)).toBeVisible();
+  await page.getByRole('button', { name: 'Check payment' }).click();
+  await expect(page.getByText('Paid. The consultation is booked. The patient and the doctor are told.')).toBeVisible();
+  expect(b.reconciles).toEqual([{ paymentTransactionId: REC }]);
+});
+
+test('another device: a card-paid booking (server’s payment) offers the refund choice and sends refundTo', async ({ page }) => {
+  const b = await mockPharmacy(page, { bookings: [view({ status: 'confirmed', paymentStatus: 'paid', payment: { method: 'razorpay', state: 'captured', payBy: null, paymentTransactionId: REC } })] });
+  await signIn(page, 'Booked consultations');
+  await page.getByRole('link', { name: /Open the consultation of Rina Kumari/ }).click();
+  await expect(page.getByText('Paid by card or UPI', { exact: true })).toBeVisible();
+  await page.getByLabel(/^Refund to wallet/).check();
+  await page.getByRole('button', { name: 'Cancel this consultation' }).click();
+  await page.getByRole('button', { name: 'Yes, cancel it' }).click();
+  await expect(page.getByText(/^Cancelled\. ₹500\.00 is back in your Jansetu wallet\./)).toBeVisible();
+  expect(b.cancels).toEqual([{ expectedUpdatedAt: CREATED, refundTo: 'wallet' }]);
+});
+
+test('a wallet-paid booking (server’s payment): wallet words, no refund choice, no refundTo', async ({ page }) => {
+  const b = await mockPharmacy(page, { bookings: [view({ status: 'confirmed', paymentStatus: 'paid', payment: { method: 'wallet', state: 'captured', payBy: null } })] });
+  await signIn(page, 'Booked consultations');
+  await page.getByRole('link', { name: /Open the consultation of Rina Kumari/ }).click();
+  await expect(page.getByText('Paid from your wallet', { exact: true })).toBeVisible();
+  await expect(page.getByText('The full amount goes back to your Jansetu wallet.')).toBeVisible();
+  await expect(page.getByLabel(/^Refund to wallet/)).toHaveCount(0);
+  await page.getByRole('button', { name: 'Cancel this consultation' }).click();
+  await page.getByRole('button', { name: 'Yes, cancel it' }).click();
+  expect(b.cancels).toEqual([{ expectedUpdatedAt: CREATED }]);
+});
+
+test('too many card bookings waiting for payment: said in words; the review stays', async ({ page }) => {
+  const b = await mockPharmacy(page);
+  await signIn(page, 'Book consultation');
+  await toCheckAndPay(page);
+  b.pendingLimit = true;
+  await payByCard(page);
+  await expect(page.getByText('Too many bookings are waiting for payment. Pay or cancel one of them first.')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Check and pay' })).toBeVisible();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toHaveCount(0);
+});
+
+test('admin: the pharmacy is named; Recheck asks Razorpay; Mark failed with a reason (lost answer checked), then Move to wallet', async ({ page }) => {
+  const b = await mockAdmin(page, { pending: true });
+  const section = await openAdminQueue(page);
+  const table = section.getByRole('table', { name: 'Card refunds that need a person, oldest change first' });
+  await expect(table.getByRole('cell', { name: 'Asha Medicals' })).toBeVisible();
+  await table.getByRole('button', { name: /^Recheck the ₹500\.00 card refund/ }).click();
+  await expect(section.getByText(/Checked with Razorpay: Refund to card in progress\. Razorpay holds no refund of this payment yet\./)).toBeVisible();
+  await expect(table.getByRole('button', { name: /^Move the / })).toHaveCount(0);
+  await table.getByRole('button', { name: /^Mark the ₹500\.00 card refund of .* failed$/ }).click();
+  await section.getByRole('button', { name: 'Next: check before marking' }).click();
+  await expect(section.getByText('Write why it is marked failed.')).toBeVisible();
+  await section.getByLabel('Why is it marked failed?').fill(' Razorpay support:  refund cannot be sent ');
+  await section.getByRole('button', { name: 'Next: check before marking' }).click();
+  await expect(section.getByText('Reason: Razorpay support: refund cannot be sent')).toBeVisible();
+  b.loseNextMark = true;
+  await section.getByRole('button', { name: 'Yes, mark failed' }).click();
+  await section.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(section.getByText(/^It was marked failed: the ₹500\.00 card refund of .* of Asha Medicals\./)).toBeVisible();
+  await expect(table.getByRole('button', { name: /^Move the ₹500\.00 card refund/ })).toBeVisible();
+  expect(b.calls.filter((c) => c.path.endsWith('/mark-failed'))).toEqual([{ method: 'POST', path: `/admin/assisted/card-refunds/${RF}/mark-failed`, body: { reason: 'Razorpay support: refund cannot be sent' } }]);
+  expect(b.calls.some((c) => c.path === '/admin/assisted/card-refunds?state=failed&limit=200')).toBe(true);
 });

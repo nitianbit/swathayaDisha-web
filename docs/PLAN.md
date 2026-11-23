@@ -1750,14 +1750,34 @@ option, the server refuses it before anything, and the option is then disabled w
   every paid booking review; the admin Pharmacy wallets list page has the new section. The shared Checkout loader in `topup.tsx`
   now takes the amount in paise (top-ups pass `amount × 100`, as before).
 
+### WQ16b the booker view's payment, admin recheck and mark failed (2026-11-23, branch `wq16b/payment-field`)
+
+Backend r10b/r10c (`m0/r10b-phase1b-fixes` 6b223644, design §23.3 and §23.6; in review). On 75e6c45.
+
+- **Booker view `payment`** (`{ method, state, payBy, paymentTransactionId? }`, own pharmacy only): "Waiting for payment" needs
+  `method: 'razorpay', state: 'pending'`; the pay-by time is the server's `payBy`; **Check payment** reconciles the
+  `paymentTransactionId` from any device; the label says "Paid from your wallet" or "Paid by card or UPI" again; the refund
+  choice is offered for a card booking the server says was captured (any device), and a wallet booking gets the wallet words and
+  no `refundTo`. **Pay now** still needs the order, which only the create's key gives back (replay or by-key; no read by booking
+  or record id), so it opens only in the tab that booked it; elsewhere the page says so and offers Check payment. The device
+  marker stays for that, and for the refund choice on an older server (no field: the WQ16 behaviour).
+- **New refusals**: 429 `ASSISTED_LIMIT_REACHED` `limit: 'pending_card_bookings'` "Too many bookings are waiting for payment. Pay
+  or cancel one of them first." (refused before any write, the review stays, a new key); 409 `PAYMENT_DISPUTED` on verify or
+  reconcile is said ("A card dispute was recorded on this booking payment…"), never paid or "not booked"; a bad signature
+  (400, record left payable) already fell back to reconcile, so the booking stays pending (pinned by a test).
+- **Admin queue**: each row names its pharmacy (`pharmacyName`). **Recheck** (`POST …/:id/recheck`, any row not processed; no
+  money moves; the answer is said: the row's state and Razorpay's refunds). **Mark failed** (pending card rows): a reason
+  (1–500), a confirm step, an owned request (`POST …/:id/mark-failed {reason}`); a lost answer is resent (an earlier success is
+  then 409 `REFUND_NOT_PENDING`, left unknown) or checked among `?state=failed` rows marked by an admin. 409 `REFUND_AT_GATEWAY`
+  and 404 settle any attempt; 502 `GATEWAY_LOOKUP_FAILED` and the switch settle a sole first one; `REFUND_BUSY` refuses. Move to
+  wallet adds 409 `REFUND_AT_GATEWAY` (final) and 502 `GATEWAY_LOOKUP_FAILED` (refused before writing for a sole attempt). The
+  row's count reads "failures" (r10b counts real failures only).
+
 ## Follow-ups
 
-- WQ16: the booker view (`bookerView.ts`) does not say how a booking was paid (`assisted.funding.method`), so a card booking made in
-  another tab or device gets no refund choice and neutral words, and its "Pay now" is only where it was booked (the open order is
-  read by request key). For the backend: add the method (and, for a pending card booking, `payBy`) to the booker view, or a read of
-  the open order by booking id.
-- WQ16: the card refund rows (`cardRefundView`) do not carry the pharmacy (`payerId`), and the admin booking page does not show the
-  booker, so the admin cannot see whose agreement to ask for. For the backend: add `payerId` (and its name) to each row.
+- WQ16b: done in r10c (booker view `payment`, refund rows' pharmacy). Still open: "Pay now" from another tab or device needs
+  the open Razorpay order, which only the create's key gives back. For the backend: a read of the open order by booking id (or
+  `razorpayOrderId` and the key id in the booker view's `payment` while it waits).
 
 - WQ15: the r9 `uncredited` row has no Razorpay order id (`uncreditedTopups` selects `razorpayPaymentId` but sends neither). For
   the backend: add `razorpayOrderId` to each row; the section shows it when present. The list is global (no `pharmacyId` query), so
@@ -1789,6 +1809,7 @@ option, the server refuses it before anything, and the option is then disabled w
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-23 | WQ16b booker view payment, admin recheck and mark failed, new refusals (on 75e6c45) | Against r10b/r10c 6b223644 (§23.3, §23.6; mocked API). typecheck clean; Vitest 387/387 (+8 in wq16b.test.ts: paid-by and waiting from `payment`, the server's payBy and the older-server fallback, pending_card_bookings words, PAYMENT_DISPUTED, bad signature falls back to reconcile (pin; passed before), REFUND_AT_GATEWAY / GATEWAY_LOOKUP_FAILED for the move, recheck request and words, mark-failed request, its 502 on an odd answer, final and before-writing refusals and the check; 7 of 8 failed before the change); Playwright workspace 818/818 (+10 = 5 journeys x 2: another device waits with the server's pay-by and Check payment finds it paid; another device's card-paid booking gets the refund choice; a wallet booking gets wallet words and no refundTo; the pending card bookings limit; admin pharmacy name, Recheck, Mark failed with a lost answer checked, then Move to wallet offered; all 5 failed on 75e6c45; temporary config on port 5393, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-23 | WQ16 assisted booking phase 1b: card or UPI booking, refund choice, admin card refund queue (on 72a9b27) | Against r10 9f2a1807 (design §23.3; mocked API). typecheck clean; Vitest 379/379 (+14 in wq16.test.ts: verify/reconcile answers and refusals read for paid / refunded / unpaid / failed / blocked / unknown, verify without `module` and reconcile with the record id only, a lost verify falls back to reconcile, a late capture is never paid, pay-by words in India time, the card create refusals (switch off, nothing to pay, no gateway keys; the 502 stays unknown), `refundTo` and by-key `payment`, refund and cancel words per state, admin agreement rule, queue rows, move request and its 502 on an odd answer, final and before-writing refusals, the processed-row check); Playwright workspace 808/808 (+20 = 10 journeys x 2: card pay success, Checkout closed then Pay now from Booked consultations on the same order, lost verify then reconcile, late capture refunded, 502 order failure resent, switch off then wallet with a new key, cancel refund to card, cancel refund to wallet, a booking not made here (no choice, neutral words), admin move to wallet with a lost answer checked; temporary config on port 5391, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-23 | WQ15b follow-ups (L1, L3, N1, N2 on e5d0e1c) | Against r9b 9be7d0a7 (mocked API). typecheck clean; Vitest 365/365 (no new tests; extended in wq15.test.ts: a 200 that is not a closure is a 502 (L1), TOPUP_REFUNDED is final (N1); both failed before the fix); Playwright workspace 788/788 (the select-refusal journey rewritten for L3: the choice stays, the same ticket opens another workspace, no new code; the resend journey now expects the N2 "already closed" words; both failed before the fix; temporary config on port 5372, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-23 | WQ15 close a card top-up already paid by hand; clinic sign-in refusal (on 0cbc4a2) | Against r9 0ca329aa (design §22; mocked API). typecheck clean; Vitest 365/365 (+9: wq15.test.ts 8 (close refusal words incl. TOPUP_REFUNDED, the refused-before-writing 503s, the any-attempt final refusals, the reason rule and owner wording, the list filter, the close and by-key requests, both clinic codes, the client's 403 hook), errors.test.ts 1); Playwright workspace 788/788 (+14 = 7 journeys x 2: list and mark with a reason and a confirm step; a lost answer checked by key, resent with the same key and body, and checked after a reload; the 409 credited case and Forget; clinic refusal at verify, at select (then "Choose another workspace" with a new code), on a partner call (session ended on the server, the message, no loop on reload, the follow-up code name) and on a reload (the profile read); the two session-end journeys failed with the hook disabled; temporary config on port 5371, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build clean. |

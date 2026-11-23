@@ -109,6 +109,9 @@ export interface ConsultationRequest {
 }
 
 export type AssistedPaymentMethod = 'wallet' | 'razorpay';
+export interface BookingPayment {
+  method: AssistedPaymentMethod; state: 'pending' | 'captured' | 'refunded' | 'not_paid' | 'forfeited' | string; payBy: string | null; paymentTransactionId?: string | null;
+}
 
 /**
  * WQ16 (r10 `cardPayments.ts` `CardPaymentView`): the one open Razorpay order of a card booking. `amountMinor` is what
@@ -183,6 +186,11 @@ export interface BookedConsultation {
   assisted?: { shortRef?: string; bookedBy?: { name?: string }; join?: { on: JoinOn }; preferredLanguage?: string; disputed?: { state: string } };
   /** Only for `join.on = partner_device`, from 10 minutes before the start to the end. */
   virtualMeeting?: { joinUrl: string };
+  /**
+   * WQ16b (r10c `bookerView.ts`, §23.3): how the booking is paid, for its own pharmacy only (absent on an older server).
+   * `payBy` only while a card booking waits for its payment; `paymentTransactionId` (card) is the record to check.
+   */
+  payment?: BookingPayment;
   prescription?: DispensingCopy;
 }
 
@@ -508,6 +516,8 @@ const LIMIT_WORDS: Readonly<Record<string, (wait: string) => string>> = {
   new_accounts: () => 'Your pharmacy has added the most new patients allowed today. Try again tomorrow, or book for a patient already on Jansetu.',
   bookings_per_phone: () => 'This phone number already has the most bookings allowed today. Try again tomorrow.',
   booker_cancellations: () => 'Your pharmacy cancelled many bookings today, so new bookings are paused until tomorrow. You can still cancel.',
+  // WQ16b (r10b): card bookings of one pharmacy waiting for payment at once (ASSISTED_LIMIT_PENDING_CARD_BOOKINGS).
+  pending_card_bookings: () => 'Too many bookings are waiting for payment. Pay or cancel one of them first.',
 };
 
 const CODE_WORDS: Readonly<Record<string, Refusal>> = {

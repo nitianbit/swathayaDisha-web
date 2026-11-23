@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router';
 import { ArrowLeft, FileText } from 'lucide-react';
 import {
   ApiError, assistedRefusal, cancelWords, canBookerCancel, canBookerReschedule, isAssistedBooking, typedNameTarget, formatSlotDate, joinWords, MAX_BOOKER_CANCEL_REASON, medicineName,
-  PATIENT_LANGUAGES, payByTime, payByWords, pharmacyAssistedApi, pharmacyStockApi, requestKeysApi, rxOrderProblems, type BookedConsultation,
+  bookingPaidBy, bookingPayBy, PATIENT_LANGUAGES, payByWords, pharmacyAssistedApi, pharmacyStockApi, requestKeysApi, rxOrderProblems, type BookedConsultation,
   type Medicine, type RefundTo, type RxMedicine, type RxOrderRequest,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextField } from '@jansetu/ui';
@@ -70,11 +70,14 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
   const assistedRow = isAssistedBooking(b);
   const nameTarget = typedNameTarget(b);
   const joinUrl = b.virtualMeeting?.joinUrl && /^https:\/\//.test(b.virtualMeeting.joinUrl) ? b.virtualMeeting.joinUrl : null;
-  // WQ16: the booker view does not say how a booking was paid; a card booking made on this device is remembered by its key.
+  // WQ16b: how it was paid comes from the booker view's `payment` (r10c); on an older server, a card booking made on this
+  // device is known by its remembered key. The key also gives the open order back for "Pay now".
   const waiting = assistedRow && waitingForCard(b);
   const cardKey = assistedRow ? cards.keyOf(b._id) : null;
-  const paidBy: 'card' | 'unknown' = cardKey ? 'card' : 'unknown';
-  const payBy = payByTime(b.createdAt)?.toISOString();
+  const fromServer = bookingPaidBy(b);
+  const paidBy: 'card' | 'wallet' | 'unknown' = fromServer !== 'unknown' ? fromServer : cardKey ? 'card' : 'unknown';
+  const payBy = bookingPayBy(b);
+  const recordId = b.payment?.paymentTransactionId ?? null;
 
   return (
     <>
@@ -94,7 +97,7 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
           {assistedRow && b.status !== 'cancelled' && <><dt>How the patient joins</dt><dd>{joinWords(String(b.consultationMode ?? ''), b.assisted?.join?.on)}</dd></>}
           {assistedRow && typeof b.price === 'number' && (waiting
             ? <><dt>Price</dt><dd>{formatRupees(b.price)} (not paid yet)</dd></>
-            : <><dt>{paidBy === 'card' ? 'Paid by card or UPI' : 'Amount paid'}</dt><dd>{formatRupees(b.price)}</dd></>)}
+            : <><dt>{paidBy === 'card' ? 'Paid by card or UPI' : paidBy === 'wallet' ? 'Paid from your wallet' : 'Amount paid'}</dt><dd>{formatRupees(b.price)}</dd></>)}
           {b.assisted?.preferredLanguage && <><dt>Language</dt><dd>{languageWords(b.assisted.preferredLanguage)}</dd></>}
           {b.primaryConcern && <><dt>Problem</dt><dd>{b.primaryConcern}</dd></>}
           {b.status === 'cancelled' && <><dt>Cancelled</dt><dd>{b.cancellationCause === 'patient' ? 'By the patient' : b.cancellationCause === 'booker' ? 'By your pharmacy' : b.cancellationCause === 'doctor' ? 'By the doctor' : b.cancellationCause === 'admin' ? 'By Jansetu' : '—'}{b.cancellationReason ? `: ${b.cancellationReason}` : ''}</dd></>}
@@ -111,8 +114,8 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
       {waiting && !cancelNote && (
         <section className="ws-section" aria-labelledby="pay-h">
           <h2 id="pay-h">Payment</h2>
-          {cardKey ? (
-            <CardPaymentPanel requestKey={cardKey} order={null} payBy={payBy} amountMinor={typeof b.price === 'number' ? Math.round(b.price * 100) : undefined}
+          {cardKey || recordId ? (
+            <CardPaymentPanel requestKey={cardKey} paymentTransactionId={recordId} order={null} payBy={payBy} amountMinor={typeof b.price === 'number' ? Math.round(b.price * 100) : undefined}
               perform={guard.perform} busy={guard.busy}
               onPaid={() => { setPayNote({ tone: 'ok', text: 'Paid. The consultation is booked. The patient and the doctor are told.' }); changed(); void q.refetch(); }}
               onEnded={(words) => { cards.forget(b._id); setPayNote({ tone: 'error', text: words }); changed(); void q.refetch(); }} />
@@ -132,6 +135,7 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
 
       {cancelNote && <Alert tone="ok">{cancelNote}</Alert>}
       {canBookerCancel(b) && !cancelNote && <CancelBooking pharmacyId={pharmacyId} booking={b} guard={guard} onChanged={changed} paidBy={paidBy} waiting={waiting}
+        captured={!b.payment || b.payment.state === 'captured'}
         onDone={(w) => { setMoveNote(null); setPayNote(null); setCancelNote(w); if (cardKey) cards.forget(b._id); }} />}
 
       <Prescription pharmacyId={pharmacyId} booking={b} onRetry={() => void q.refetch()} />
@@ -147,10 +151,12 @@ interface PendingCancel { bookingId: string; reason?: string; expectedUpdatedAt?
  * `POST /pharmacy-assisted/bookings/:id/cancel`: any time before the start, full refund to the wallet. Sending it again
  * is safe (a cancelled booking answers `alreadyCancelled`, before any version check), so an unknown outcome is resent.
  */
-function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, waiting }: {
+function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, waiting, captured }: {
   pharmacyId: string; booking: BookedConsultation; guard: BookingGuard; onChanged: () => void; onDone: (words: string) => void;
-  /** WQ16: `card` when this device knows the booking was paid by card or UPI; otherwise it is not known here. */
-  paidBy: 'card' | 'unknown';
+  /** WQ16b: from the booker view's `payment` (r10c); `unknown` only on an older server for a booking not made on this device. */
+  paidBy: 'card' | 'wallet' | 'unknown';
+  /** The server says the money was taken (`payment.state: 'captured'`; assumed on an older server). */
+  captured: boolean;
   /** WQ16: a card booking not paid yet: nothing is refunded. */
   waiting: boolean;
 }) {
@@ -161,7 +167,7 @@ function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, 
   const [resendError, setResendError] = useState<string | null>(null);
   // WQ16 (r10 C2): a card-paid booking's money goes back to the card by default, or to the wallet on the pharmacy's choice.
   const [refundTo, setRefundTo] = useState<RefundTo>('card');
-  const choose = paidBy === 'card' && !waiting;
+  const choose = paidBy === 'card' && !waiting && captured;
   const amount = typeof booking.price === 'number' ? formatRupees(booking.price) : 'The amount';
 
   async function sendCancel(p: PendingOp<PendingCancel>) {
@@ -186,6 +192,7 @@ function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, 
               onDone(waiting ? 'Cancelled. It was not paid, so nothing is refunded.'
                 : op.body?.refundTo === 'wallet' ? 'Cancelled. The amount goes back to your Jansetu wallet. See it under Wallet.'
                 : paidBy === 'card' ? 'Cancelled. The amount goes back to the card or UPI it was paid with.'
+                : paidBy === 'wallet' ? 'Cancelled. The amount is back in your Jansetu wallet.'
                 : 'Cancelled. The amount goes back the way it was paid: to your Jansetu wallet, or to the card or UPI.');
               onChanged();
               return null;
@@ -215,6 +222,7 @@ function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, 
         You can cancel any time before the consultation starts.{' '}
         {waiting ? 'It is not paid yet, so nothing is refunded; the time is released.'
           : choose ? 'The full amount goes back to the card or UPI it was paid with, or to your Jansetu wallet if you choose.'
+          : paidBy === 'wallet' ? 'The full amount goes back to your Jansetu wallet.'
           : 'The full amount goes back the way it was paid: to your Jansetu wallet, or to the card or UPI.'}
       </p>
       {choose && (
@@ -235,6 +243,7 @@ function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, 
         consequence={`The consultation on ${formatSlotDate(booking.bookingDate)} at ${booking.bookingTime} is cancelled. ${
           waiting ? 'It was not paid, so nothing is refunded. The time is released.'
             : choose ? `${amount} goes back to ${refundTo === 'wallet' ? 'your Jansetu wallet' : 'the card or UPI it was paid with'}; give the patient their money back. The patient and the doctor are told.`
+            : paidBy === 'wallet' ? `${amount} goes back to your wallet; give the patient their money back. The patient and the doctor are told.`
             : `${amount} goes back the way it was paid (your wallet, or the card or UPI); give the patient their money back. The patient and the doctor are told.`}`}
         onConfirm={async (reason) => {
           await sendCancel(startOp(newRequestKey(), { bookingId: booking._id, ...(reason.trim() ? { reason: reason.trim() } : {}),

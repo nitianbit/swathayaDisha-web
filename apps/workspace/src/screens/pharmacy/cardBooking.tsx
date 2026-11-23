@@ -15,8 +15,9 @@ import { NOT_OPENED, openCheckout } from './topup.tsx';
  *
  * Card bookings made on this device are remembered by their request key only (a body-less reload marker, D4: no amount,
  * no names), per pharmacy and booking: `GET /pharmacy-assisted/bookings/by-key/:key` then gives the open order back, so
- * "Pay now" works from the booked consultation too, also after a reload. The marker also tells the cancel step that the
- * booking was paid by card (the booker view does not say how a booking was paid).
+ * "Pay now" works from the booked consultation too, also after a reload. WQ16b: the booker view's `payment` (r10c) says how
+ * a booking is paid, its pay-by time and its record ("Check payment" from any device); the marker remains for "Pay now"
+ * (no read gives the open order without the key) and, on an older server, for the cancel step's refund choice.
  */
 const cardSlot = (pharmacyId: string, bookingId: string) => `assisted-card:${pharmacyId}:${bookingId.toLowerCase()}`;
 
@@ -54,8 +55,11 @@ type Note = { tone: 'ok' | 'warn' | 'error'; text: string };
  * "Check payment". `onPaid` runs once the server says paid; `onEnded` once it says the payment can never pay this booking
  * (a late capture refunded to the card, a failed payment, the booking no longer payable).
  */
-export function CardPaymentPanel({ requestKey, order: initial, amountMinor, payBy, perform, busy, autoOpen, onPaid, onEnded }: {
+export function CardPaymentPanel({ requestKey, order: initial, amountMinor, payBy, paymentTransactionId, perform, busy, autoOpen, onPaid, onEnded }: {
+  /** The create's key (this device): it gives the open order back for "Pay now". Without it only "Check payment" works. */
   requestKey: string | null;
+  /** WQ16b (r10c booker view `payment`): the record to check from any device. */
+  paymentTransactionId?: string | null;
   order: AssistedCardPayment | null;
   amountMinor?: number;
   /** Until the order is read: the booking's own pay-by time (its creation + 30 minutes, the server's rule). */
@@ -119,9 +123,10 @@ export function CardPaymentPanel({ requestKey, order: initial, amountMinor, payB
     setNote(null);
     try {
       await perform(async () => {
-        const o = await currentOrder();
-        if (!o) return;
-        apply(await checkCardPayment(api, o.paymentTransactionId), o);
+        const o = paymentTransactionId && !order ? null : await currentOrder();
+        const id = o?.paymentTransactionId ?? paymentTransactionId;
+        if (!id) return;
+        apply(await checkCardPayment(api, id), o);
       });
     } catch (err) {
       if (live.current) setNote({ tone: 'error', text: assistedRefusal(err).message });
@@ -141,9 +146,14 @@ export function CardPaymentPanel({ requestKey, order: initial, amountMinor, payB
         <strong>Waiting for payment.</strong> {payByWords(order?.payBy ?? payBy)} The time is held for the patient until then. The patient and the doctor are told once it is paid.
       </Alert>
       {note && <Alert tone={note.tone}>{note.text}</Alert>}
+      {!order && !requestKey && (
+        <p className="ws-muted">
+          The payment page opens only in the browser tab where this booking was made (Razorpay’s order is kept there). If it was paid there, tap “Check payment”.
+        </p>
+      )}
       <div className="confirm-actions">
-        <Button busy={busy} onClick={() => void payNow()}>Pay now{price !== undefined ? ` ${formatRupees(price / 100)}` : ''}</Button>
-        <Button variant="secondary" disabled={busy} onClick={() => void check()}>Check payment</Button>
+        {(order || requestKey) && <Button busy={busy} onClick={() => void payNow()}>Pay now{price !== undefined ? ` ${formatRupees(price / 100)}` : ''}</Button>}
+        <Button variant={order || requestKey ? 'secondary' : 'primary'} disabled={busy} onClick={() => void check()}>Check payment</Button>
       </div>
     </div>
   );

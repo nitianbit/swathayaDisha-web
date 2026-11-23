@@ -73,6 +73,8 @@ export function outcomeOfError(err: unknown): CardOutcome | null {
   if (!(err instanceof ApiError)) return null;
   if (err.code === 'PAYMENT_REFUNDED') return { kind: 'refunded' };
   if (err.code === 'PAYMENT_FAILED') return { kind: 'failed', message: CARD_FAILED_WORDS };
+  // r10b: a card dispute recorded on this payment: said as it is (never paid, never "not booked").
+  if (err.code === 'PAYMENT_DISPUTED') return { kind: 'blocked', message: 'A card dispute was recorded on this booking payment. Please contact Jansetu support.' };
   if (err.status === 403) return { kind: 'blocked', message: CARD_BLOCKED_WORDS };
   return null;
 }
@@ -126,8 +128,21 @@ export function payByClock(payBy: string | undefined | null): string | null {
   return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Kolkata' }).format(d);
 }
 
-/** An assisted booking waiting for its card payment: a wallet booking is never pending (it is paid at create). */
-export const awaitingCardPayment = (b: Pick<BookedConsultation, 'status' | 'paymentStatus'>) => b.status === 'pending' && b.paymentStatus === 'pending';
+/**
+ * An assisted booking waiting for its card payment. r10c: the booker view's `payment` says so; an older server has no
+ * field, and there a pending booking is a card one (a wallet booking is paid at create).
+ */
+export const awaitingCardPayment = (b: Pick<BookedConsultation, 'status' | 'paymentStatus' | 'payment'>) => b.status === 'pending' && b.paymentStatus === 'pending'
+  && (!b.payment || (b.payment.method === 'razorpay' && b.payment.state === 'pending'));
+/** r10c: how the booking was paid, from the booker view (`unknown` on an older server). */
+export const bookingPaidBy = (b: Pick<BookedConsultation, 'payment'>): 'card' | 'wallet' | 'unknown' =>
+  b.payment?.method === 'razorpay' ? 'card' : b.payment?.method === 'wallet' ? 'wallet' : 'unknown';
+/** When a waiting card booking is released: the server's `payBy`; on an older server its creation + 30 minutes (the server's rule). */
+export function bookingPayBy(b: Pick<BookedConsultation, 'payment' | 'createdAt'>): string | undefined {
+  if (b.payment) return b.payment.payBy ?? undefined;
+  const t = b.createdAt ? Date.parse(b.createdAt) : NaN;
+  return Number.isFinite(t) ? new Date(t + 30 * 60_000).toISOString() : undefined;
+}
 
 export const LATE_CAPTURE_WORDS =
   'The payment came after the booking could no longer take it (the time was released, it was cancelled, or the doctor is not available). The amount is being refunded to the card or UPI it was paid with. Nothing is booked: book again if the patient still wants it.';
@@ -190,6 +205,10 @@ export function cardRefundRowsOf(data: unknown): CardRefund[] {
 }
 
 export interface CardRefundMove { refund: CardRefund; replayed: boolean }
+/** r10c: admin rows name the paying pharmacy. */
+export type AdminCardRefund = CardRefund & { pharmacyId?: string | null; pharmacyName?: string | null };
+/** r10b `recheckCardRefund`: the row after asking Razorpay, and every refund Razorpay holds for the payment. */
+export interface CardRefundRecheck { refund: AdminCardRefund; gateway: { id: string; status: string; amountMinor: number; ours: boolean }[] }
 
 export function adminCardRefundsApi(c: ApiClient) {
   return {
@@ -197,7 +216,7 @@ export function adminCardRefundsApi(c: ApiClient) {
      * `GET /admin/assisted/card-refunds?state&limit` (1–200, default 50): with no state, the rows that need a person
      * (failed, held for a check, and pending ones over 20 attempts or older than 24 h), oldest change first.
      */
-    queue: async (q: { state?: CardRefundState; limit?: number } = {}): Promise<CardRefund[]> =>
+    queue: async (q: { state?: CardRefundState; limit?: number } = {}): Promise<AdminCardRefund[]> =>
       cardRefundRowsOf(await c.get<unknown>('/admin/assisted/card-refunds', { query: { ...(q.state ? { state: q.state } : {}), ...(q.limit ? { limit: q.limit } : {}) } })),
     /**
      * `POST /admin/assisted/card-refunds/:id/to-wallet { agreement }` (admin tools switch): a failed or held card refund
@@ -212,7 +231,40 @@ export function adminCardRefundsApi(c: ApiClient) {
       if (!r?.refund || r.refund.method !== 'wallet' || r.refund.state !== 'processed') throw new ApiError(502, 'The answer about this refund could not be read.');
       return { refund: r.refund, replayed: r.replayed === true };
     },
+    /** r10b `POST …/:id/recheck`: asks Razorpay now (a pending row may be sent or settled); moves no wallet money. */
+    recheck: async (refundId: string): Promise<CardRefundRecheck> => {
+      if (!hex.test(refundId)) throw new Error('Invalid refund id');
+      const r = await c.post<Partial<CardRefundRecheck> | null>(`/admin/assisted/card-refunds/${refundId.toLowerCase()}/recheck`);
+      if (!r?.refund || !Array.isArray(r.gateway)) throw new ApiError(502, 'The answer about this refund could not be read.');
+      return { refund: r.refund, gateway: r.gateway };
+    },
+    /**
+     * r10b `POST …/:id/mark-failed { reason }` (admin tools switch): a pending card refund marked failed after Razorpay was
+     * read (then it may be moved to the wallet). Only an answer showing it failed counts; anything else is a 502.
+     */
+    markFailed: async (refundId: string, reason: string): Promise<{ refund: AdminCardRefund }> => {
+      if (!hex.test(refundId)) throw new Error('Invalid refund id');
+      const why = clean(reason);
+      if (!why || why.length > MAX_REFUND_AGREEMENT) throw new Error('Invalid reason');
+      const r = await c.post<{ refund?: AdminCardRefund } | null>(`/admin/assisted/card-refunds/${refundId.toLowerCase()}/mark-failed`, { body: { reason: why } });
+      if (!r?.refund || r.refund.state !== 'failed') throw new ApiError(502, 'The answer about this refund could not be read.');
+      return { refund: r.refund };
+    },
   };
+}
+
+/** The words for a recheck answer: the row's state and what Razorpay holds. */
+export function recheckWords(r: CardRefundRecheck): string {
+  const state = CARD_REFUND_STATE_LABEL[r.refund.state] ?? r.refund.state;
+  const held = r.gateway.length === 0 ? 'Razorpay holds no refund of this payment yet.'
+    : `Razorpay holds ${r.gateway.length} refund${r.gateway.length === 1 ? '' : 's'} of this payment (${r.gateway.map((g) => g.status).join(', ')}).`;
+  return `Checked with Razorpay: ${state}. ${held}`;
+}
+
+/** Marked failed already? The row among the failed ones, marked by an admin (at most 200, oldest change first). */
+export async function findMarkedFailed(api: ApiClient, refundId: string): Promise<CardRefund | null> {
+  const rows = await adminCardRefundsApi(api).queue({ state: 'failed', limit: 200 });
+  return rows.find((r) => r.refundId.toLowerCase() === refundId.toLowerCase() && r.lastError === 'MARKED_FAILED_BY_ADMIN') ?? null;
 }
 
 /** Moved to the wallet already? Looks for the row among the processed ones (at most 200, oldest change first). */
@@ -226,6 +278,8 @@ const MOVE_WORDS: Readonly<Record<string, string>> = {
   CHARGEBACK_RECORDED: 'A card dispute was recorded on this payment: the bank already took the money back. Nothing was moved.',
   REFUND_NOT_FOUND: 'This refund was not found. Nothing was changed.',
   REFUND_CHANGED: 'This refund changed while it was being moved. Read the list again, then try again.',
+  REFUND_AT_GATEWAY: 'Razorpay already has a refund of this payment, done or on its way, so nothing was moved. Tap “Recheck” to see it.',
+  GATEWAY_LOOKUP_FAILED: 'Razorpay could not be asked about this payment just now. Nothing was moved. Try again in a minute.',
   VALIDATION_ERROR: `Write the agreement in 1 to ${MAX_REFUND_AGREEMENT} characters. Nothing was changed.`,
 };
 
@@ -240,10 +294,35 @@ export function moveRefundRefusal(err: unknown): string {
 }
 
 /** Refused before any write (`assertAdminToolsOn` is the first line): for a sole first attempt nothing was moved. */
-export const moveRefusedBeforeWriting = (err: unknown) => err instanceof ApiError && err.status === 503 && err.code === 'ASSISTED_BOOKING_DISABLED';
+// r10b: Razorpay is asked before the transaction (502 GATEWAY_LOOKUP_FAILED): nothing written by that attempt.
+export const moveRefusedBeforeWriting = (err: unknown) => err instanceof ApiError
+  && ((err.status === 503 && err.code === 'ASSISTED_BOOKING_DISABLED') || (err.status === 502 && err.code === 'GATEWAY_LOOKUP_FAILED'));
 /**
  * Answers that settle the move on ANY attempt: an earlier attempt that did move it would be answered `replayed` (checked
  * first), so these mean it was not, and cannot be, moved.
  */
-export const moveRefundFinal = (err: unknown) => err instanceof ApiError && ((err.status === 409 && ['REFUND_NOT_FAILED', 'CHARGEBACK_RECORDED'].includes(err.code ?? ''))
+export const moveRefundFinal = (err: unknown) => err instanceof ApiError && ((err.status === 409 && ['REFUND_NOT_FAILED', 'CHARGEBACK_RECORDED', 'REFUND_AT_GATEWAY'].includes(err.code ?? ''))
   || (err.status === 404 && err.code === 'REFUND_NOT_FOUND'));
+
+const MARK_WORDS: Readonly<Record<string, string>> = {
+  REFUND_AT_GATEWAY: 'Razorpay already has a refund of this payment, done or on its way, so it was not marked failed. Tap “Recheck” to see it.',
+  REFUND_BUSY: 'This refund is being worked on right now. Nothing was changed. Try again in a few minutes.',
+  REFUND_NOT_PENDING: 'Only a card refund still in progress can be marked failed. Read the list again.',
+  GATEWAY_LOOKUP_FAILED: 'Razorpay could not be asked about this payment just now. Nothing was changed. Try again in a minute.',
+  REFUND_NOT_FOUND: 'This refund was not found. Nothing was changed.',
+  VALIDATION_ERROR: `Write a reason of 1 to ${MAX_REFUND_AGREEMENT} characters. Nothing was changed.`,
+};
+/** One plain sentence for a refusal of "Mark failed" or "Recheck". */
+export function markFailedRefusal(err: unknown): string {
+  if (err instanceof ApiError && err.code && MARK_WORDS[err.code]) return MARK_WORDS[err.code]!;
+  return moveRefundRefusal(err).replace('Only Jansetu admins can move a refund.', 'Only Jansetu admins can change a refund.');
+}
+/** Refused before any change (switch, Razorpay not answering: the row is freed): for a sole first attempt nothing was marked. */
+export const markFailedRefusedBeforeWriting = (err: unknown) => err instanceof ApiError
+  && ((err.status === 503 && err.code === 'ASSISTED_BOOKING_DISABLED') || (err.status === 502 && err.code === 'GATEWAY_LOOKUP_FAILED'));
+/**
+ * Settles mark-failed on ANY attempt: a live refund at Razorpay, or no such refund. Not REFUND_NOT_PENDING: an earlier
+ * attempt that did mark it is answered that way.
+ */
+export const markFailedFinal = (err: unknown) => err instanceof ApiError
+  && ((err.status === 409 && err.code === 'REFUND_AT_GATEWAY') || (err.status === 404 && err.code === 'REFUND_NOT_FOUND'));

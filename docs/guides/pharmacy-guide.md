@@ -283,9 +283,10 @@ Booking for patients may not be switched on for your pharmacy yet. Then the page
 
 **Booked consultations** lists everything you booked, newest first. Use **Status** to show one kind. Tap **Open** to see one booking.
 
-- **Waiting for payment**: a booking paid by card or UPI that is not paid yet. Tap **Pay now** in the list, then **Pay now** on the booking. This works in the browser tab where you booked it (also after a reload). It shows when to pay by; after that the time is released.
+- **Waiting for payment**: a booking paid by card or UPI that is not paid yet. Tap **Pay now** in the list, then **Pay now** on the booking. It shows when to pay by; after that the time is released. The payment page opens only in the browser tab where you booked it (also after a reload); on any other device or tab you can tap **Check payment** to see whether it was paid.
+- "Too many bookings are waiting for payment": pay or cancel one of them first.
 - **Cancel**: tap **Cancel this consultation**, then **Yes, cancel it**. You can cancel any time before it starts. The full amount goes back the way it was paid: to your wallet, or to the card or UPI. Give the patient their money back.
-  - For a booking you paid by card or UPI in this tab, choose **Refund to card (default)** (it usually reaches the card in 5 to 7 working days) or **Refund to wallet** (at once; this money pays for bookings but cannot be withdrawn). After cancelling you see where the refund is: in progress, refunded, did not go through, or held for a check by Jansetu (Jansetu then contacts you).
+  - For a booking paid by card or UPI, choose **Refund to card (default)** (it usually reaches the card in 5 to 7 working days) or **Refund to wallet** (at once; this money pays for bookings but cannot be withdrawn). After cancelling you see where the refund is: in progress, refunded, did not go through, or held for a check by Jansetu (Jansetu then contacts you).
   - A card booking cancelled before it was paid refunds nothing.
 - **Cancelled by patient**: the patient cancelled it. The money is back in your wallet.
 - **Prescription**: after the consultation you see the medicines, advice and tests. The diagnosis is never shown to pharmacies. Tap **Open the prescription copy** to see or print it.

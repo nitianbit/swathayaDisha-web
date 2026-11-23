@@ -191,10 +191,11 @@ export {
   adminCardRefundsApi, agreementProblem, awaitingCardPayment, bookingPaymentApi, CARD_BLOCKED_WORDS, CARD_REFUND_CAUSE_LABEL, CARD_REFUND_STATE_LABEL, CARD_REFUND_STATES,
   cancelWords, cardCheckProblem, cardRefundRowsOf, cardRefundWords, checkCardPayment, findMovedRefund, LATE_CAPTURE_WORDS, MAX_REFUND_AGREEMENT, moveRefundFinal,
   moveRefundRefusal, moveRefusedBeforeWriting, outcomeOfAnswer, outcomeOfError, payByClock, payByWords, settleCardPayment,
+  bookingPaidBy, bookingPayBy, findMarkedFailed, markFailedFinal, markFailedRefusal, markFailedRefusedBeforeWriting, recheckWords,
 } from './assistedCard.ts';
-export type { CardOutcome, CardPaymentAnswer, CardProof, CardRefundMove, CardRefundState, ReconcileAnswer } from './assistedCard.ts';
+export type { AdminCardRefund, CardOutcome, CardPaymentAnswer, CardProof, CardRefundMove, CardRefundRecheck, CardRefundState, ReconcileAnswer } from './assistedCard.ts';
 export type {
-  AssistedCardPayment, AssistedPaymentMethod, CardRefund, RefundTo,
+  AssistedCardPayment, AssistedPaymentMethod, BookingPayment as AssistedBookingPayment, CardRefund, RefundTo,
   AssistedDoctor, AssistedGender, AssistedPatient, AssistedRelation, BookedConsultation, BookingStatus as AssistedBookingStatus, ByKeyAnswer, CancelAnswer,
   ConsultationReceipt, ConsultationRequest, AssistedMode, DispensingCopy, DoctorQuery, DoctorSlots, DoctorSlotsQuery, AssistedSlot, JoinOn, PatientDraft, PatientLookup, PharmacyWallet,
   Refusal, RefusalKind, RxMedicine, RxOrderAnswer, RxOrderItem, RxOrderRequest, TopupCheck, TopupOrder, WalletMovement,

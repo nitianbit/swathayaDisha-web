@@ -232,7 +232,9 @@ At the bottom of a pharmacy's wallet page, **Card top-ups not credited** lists t
 
 #### Card refunds of bookings that need a person
 
-At the bottom of the **Pharmacy wallets** page, **Card refunds of bookings that need a person** lists card or UPI refunds of consultations booked by pharmacies that did not go through on their own: when, the amount, why (who cancelled, or "Paid after the booking was released"), the state (**Refund to card failed**, **Held for a check**, or **Refund to card in progress** when it is still trying after 20 tries or a day) and a link to the booking. The rows do not name the pharmacy, and the booking page does not show it yet: ask the tech team which pharmacy paid before you contact it.
+At the bottom of the **Pharmacy wallets** page, **Card refunds of bookings that need a person** lists card or UPI refunds of consultations booked by pharmacies that did not go through on their own: when, the amount, why (who cancelled, or "Paid after the booking was released"), the state (**Refund to card failed**, **Held for a check**, or **Refund to card in progress** when it is still trying after 20 tries or a day) the pharmacy that paid, and a link to the booking. **Recheck** asks Razorpay about the refund now and says what Razorpay holds (no wallet money moves).
+
+**Mark failed**: only for a card refund still in progress that Razorpay cannot complete. Tap **Mark failed**, write **Why is it marked failed?**, tap **Next: check before marking**, then **Yes, mark failed**. Jansetu reads Razorpay first: "Razorpay already has a refund of this payment" means the money is already going back to the card, so nothing changes. After it is marked failed you can move it to the wallet (below).
 
 **Move to wallet**: only when the card refund cannot go through and the pharmacy agreed to take the money in its Jansetu wallet instead.
 1. On the refund's row, tap **Move to wallet**.
@@ -240,6 +242,7 @@ At the bottom of the **Pharmacy wallets** page, **Card refunds of bookings that 
 3. Tap **Next: check before moving**, read it, then tap **Yes, move to wallet**.
 - The money is added to the pharmacy's wallet at once (it cannot be withdrawn) and the card refund is closed. A refund is never moved twice.
 - "A card dispute was recorded on this payment": the bank already took the money back; it is never refunded.
+- "Razorpay already has a refund of this payment": tap **Recheck**; the card refund is on its way, so nothing is moved.
 - "The outcome of this request is not known yet": tap **Send the same request again** (it is moved only once), or **Check whether it was recorded**.
 - Recording a lost card dispute on a booking payment is not in this workspace yet: ask the tech team.
 
