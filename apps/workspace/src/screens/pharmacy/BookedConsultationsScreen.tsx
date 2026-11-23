@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  ASSISTED_MODE_LABEL, assistedRefusal, bookingStatusLabel, formatSlotDate, isSwitchedOff, pharmacyAssistedApi, SWITCHED_OFF_MESSAGE,
+  ASSISTED_MODE_LABEL, assistedRefusal, awaitingCardPayment, bookingStatusLabel, isAssistedBooking, formatSlotDate, isSwitchedOff, pharmacyAssistedApi, SWITCHED_OFF_MESSAGE,
   type AssistedBookingStatus, type AssistedMode, type BookedConsultation,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading } from '@jansetu/ui';
@@ -31,6 +31,11 @@ const STATUS_FILTERS: { value: AssistedBookingStatus | ''; label: string }[] = [
 const PAGE_SIZE = 20;
 
 export const modeWords = (m: string | undefined) => (m && m in ASSISTED_MODE_LABEL ? ASSISTED_MODE_LABEL[m as AssistedMode] : m ?? '—');
+
+/** WQ16: an assisted booking held for its card or UPI payment (a wallet booking is never pending). */
+export const waitingForCard = (b: BookedConsultation) => isAssistedBooking(b) && awaitingCardPayment(b);
+/** The status in words; "Waiting for payment" for a card booking not paid yet. */
+export const statusWords = (b: BookedConsultation) => (waitingForCard(b) ? 'Waiting for payment' : bookingStatusLabel(b.status));
 
 /** Badges next to the status: cancelled by the patient, reported as "not mine", a prescription to read. */
 export function BookingBadges({ b }: { b: BookedConsultation }) {
@@ -87,8 +92,12 @@ function BookedList({ pharmacyId }: { pharmacyId: string }) {
                       <td>{b.patientName ?? '—'}</td>
                       <td>{b.doctorName ?? '—'}</td>
                       <td>{modeWords(b.consultationMode)}</td>
-                      <td>{bookingStatusLabel(b.status)}<BookingBadges b={b} /></td>
-                      <td><Link to={`/pharmacy/consultations/${b._id}`} aria-label={`Open the consultation of ${b.patientName ?? 'the patient'} with ${b.doctorName ?? 'the doctor'}`}>Open</Link></td>
+                      <td>{statusWords(b)}<BookingBadges b={b} /></td>
+                      <td>
+                        {waitingForCard(b)
+                          ? <Link to={`/pharmacy/consultations/${b._id}`} aria-label={`Pay now for the consultation of ${b.patientName ?? 'the patient'} with ${b.doctorName ?? 'the doctor'}`}>Pay now</Link>
+                          : <Link to={`/pharmacy/consultations/${b._id}`} aria-label={`Open the consultation of ${b.patientName ?? 'the patient'} with ${b.doctorName ?? 'the doctor'}`}>Open</Link>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

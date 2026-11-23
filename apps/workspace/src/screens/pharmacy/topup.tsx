@@ -35,18 +35,21 @@ function loadCheckout(): Promise<RazorpayCtor> {
   return loading;
 }
 
-type CheckoutResult = { kind: 'paid'; razorpayPaymentId: string; razorpayOrderId: string; razorpaySignature: string } | { kind: 'closed' };
+export type CheckoutResult = { kind: 'paid'; razorpayPaymentId: string; razorpayOrderId: string; razorpaySignature: string } | { kind: 'closed' };
+/** What Checkout needs: the server's order (WQ16: also a card booking's, with `amountMinor` from its answer). */
+export interface CheckoutOrder { razorpayKeyId: string; razorpayOrderId: string; amountMinor: number; currency: string; description: string }
 
-async function checkout(order: TopupOrder): Promise<CheckoutResult> {
+/** Opens Razorpay Checkout on one order. Rejects only when the Checkout script cannot load (nothing was opened). */
+export async function openCheckout(order: CheckoutOrder): Promise<CheckoutResult> {
   const Razorpay = await loadCheckout();
   return new Promise<CheckoutResult>((resolve) => {
     const rz = new Razorpay({
       key: order.razorpayKeyId,
       order_id: order.razorpayOrderId,
-      amount: Math.round(order.amount * 100),
+      amount: order.amountMinor,
       currency: order.currency,
       name: 'Jansetu',
-      description: 'Jansetu wallet top-up',
+      description: order.description,
       theme: { color: '#0b6e70' },
       handler: (r: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) =>
         resolve({ kind: 'paid', razorpayPaymentId: r.razorpay_payment_id, razorpayOrderId: r.razorpay_order_id, razorpaySignature: r.razorpay_signature }),
@@ -83,7 +86,8 @@ export async function checkTopup(api: ApiClient, paymentTransactionId: string): 
 async function payTopup(api: ApiClient, order: TopupOrder): Promise<TopupOutcome> {
   let result: CheckoutResult;
   try {
-    result = await checkout(order);
+    result = await openCheckout({ razorpayKeyId: order.razorpayKeyId, razorpayOrderId: order.razorpayOrderId, amountMinor: Math.round(order.amount * 100),
+      currency: order.currency, description: 'Jansetu wallet top-up' });
   } catch {
     // The Checkout script did not load, so the payment page never opened: nothing can have been paid on it.
     return { kind: 'closed', message: NOT_OPENED };
@@ -98,7 +102,7 @@ async function payTopup(api: ApiClient, order: TopupOrder): Promise<TopupOutcome
   return checkTopup(api, order.paymentTransactionId);
 }
 
-const NOT_OPENED = 'The payment page didn’t open. No money was taken.';
+export const NOT_OPENED = 'The payment page didn’t open. No money was taken.';
 const UNPAID_WORDS = 'Not paid yet. If you paid, wait a minute and check again. If you did not pay, you can remove it from this list.';
 const pendingSlot = (pharmacyId: string) => `wallet-topups:${pharmacyId}`;
 const infoSlot = (pharmacyId: string) => `wallet-topup-info:${pharmacyId}`;

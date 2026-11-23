@@ -230,6 +230,19 @@ At the bottom of a pharmacy's wallet page, **Card top-ups not credited** lists t
 
 ---
 
+#### Card refunds of bookings that need a person
+
+At the bottom of the **Pharmacy wallets** page, **Card refunds of bookings that need a person** lists card or UPI refunds of consultations booked by pharmacies that did not go through on their own: when, the amount, why (who cancelled, or "Paid after the booking was released"), the state (**Refund to card failed**, **Held for a check**, or **Refund to card in progress** when it is still trying after 20 tries or a day) and a link to the booking. The rows do not name the pharmacy, and the booking page does not show it yet: ask the tech team which pharmacy paid before you contact it.
+
+**Move to wallet**: only when the card refund cannot go through and the pharmacy agreed to take the money in its Jansetu wallet instead.
+1. On the refund's row, tap **Move to wallet**.
+2. Type **The pharmacy’s agreement**: who agreed, how and when. It is kept with the refund.
+3. Tap **Next: check before moving**, read it, then tap **Yes, move to wallet**.
+- The money is added to the pharmacy's wallet at once (it cannot be withdrawn) and the card refund is closed. A refund is never moved twice.
+- "A card dispute was recorded on this payment": the bank already took the money back; it is never refunded.
+- "The outcome of this request is not known yet": tap **Send the same request again** (it is moved only once), or **Check whether it was recorded**.
+- Recording a lost card dispute on a booking payment is not in this workspace yet: ask the tech team.
+
 ## 10. Consultations
 
 This lists doctor consultation bookings, latest appointment first. Filter by **Status**, by doctor (type part of the name, tap **Find doctor**, then choose them), and by **Appointments from** and **Appointments to**.

@@ -14,6 +14,7 @@ import { useSession, useStaff } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { CheckPanel, useOwnedOp } from '../pharmacy/ownedOp.tsx';
 import { useAdminScope } from './adminScope.ts';
+import { CardRefundsQueue } from './CardRefunds.tsx';
 import { PharmacyBadges } from './PharmaciesScreen.tsx';
 
 /**
@@ -28,6 +29,11 @@ export function PharmacyWalletsScreen() {
     <>
       <PageHeading title="Pharmacy wallets">See a pharmacy’s Jansetu wallet and add money to it (for stage testing or a support credit).</PageHeading>
       <PickPharmacy key={scope.identity} scopeKey={scope.key} />
+      {/* WQ16: card refunds of consultations booked by pharmacies (every pharmacy; the rows do not name one). */}
+      <section className="ws-section" aria-labelledby="card-refunds-h">
+        <h2 id="card-refunds-h">Card refunds of bookings that need a person</h2>
+        <CardRefundsQueue key={scope.identity} scopeKey={scope.key} />
+      </section>
     </>
   );
 }

@@ -1698,7 +1698,66 @@ old name stays recognised).
 - N2: a replayed answer (`replayed: true`, also to a resend) says "This top-up was already closed as paid by hand: … Nothing more
   was changed.", never that this admin closed it once.
 
+## WQ16 assisted booking phase 1b: a pharmacy pays a walk-in booking by card or UPI (2026-11-23, branch `wq16/card-booking`)
+
+Backend: r10 (`m0/r10-phase1b` 9f2a1807, design ASSISTED_BOOKING_DESIGN.md §23; local, not on stage yet). Web base: origin/stage
+72a9b27. Behind the backend's own switch `ASSISTED_CARD_PAYMENT_ENABLED` (off by default): with it off the screens offer the card
+option, the server refuses it before anything, and the option is then disabled with "Card payment is not switched on yet."
+
+- **Book consultation › Check and pay**: "How do you pay?" with **Pay from wallet** (the default; the wallet path is unchanged) or
+  **Pay by card or UPI**. Not offered for a free consultation (wallet only). Card sends the same body with
+  `paymentMethod: 'razorpay'` under the same owned PendingOp and key (`assisted-book:<pharmacy>`); an unknown outcome is resent with
+  the same key and body, or checked by key. The 201/200 answer's `payment` opens Razorpay Checkout at once (`key = razorpayKeyId`,
+  `order_id = razorpayOrderId`, `amount = amountMinor`, `currency`); the proof goes to `POST /payments/verify {paymentTransactionId,
+  razorpayOrderId, razorpayPaymentId, razorpaySignature}` (no `module`), and when it settles nothing (closed Checkout, lost answer, a
+  bad signature, Razorpay not answering) to `POST /payments/reconcile {paymentTransactionId}`. Only `paymentRecord.status` decides:
+  `paid` → **Booked** "paid by card or UPI"; `refunded` (also 400 `PAYMENT_REFUNDED`) → **Not booked**, "the amount is being refunded
+  to the card or UPI"; `unpaid` → "Not paid yet"; 400 `PAYMENT_FAILED` → not booked; 403 (pharmacy not operational) → said, nothing
+  claimed; anything else → "We could not confirm the payment yet … tap Check payment".
+- **Booking held: waiting for payment**: "Pay before HH:MM or the time is released." (`payBy`, India time), **Pay now** (the SAME order:
+  the one held, else `GET …/bookings/by-key/:key` → `payment`; there is no second order, C10) and **Check payment** (reconcile).
+- **Create refusals**: 400 `PAYMENT_METHOD_UNAVAILABLE` and 503 `RAZORPAY_NOT_CONFIGURED` disable the card option (said next to
+  it); 400 `NOTHING_TO_PAY` switches to the wallet; each keeps the review with a new key. 503 `RAZORPAY_NOT_CONFIGURED` joins the
+  refused-before-writing 503s (r10 `assertCardGatewayReady` runs before the transaction). 502 `RAZORPAY_ORDER_CREATION_FAILED`
+  leaves the request unknown with "The booking is held, but the card payment could not be started. Send the same request again";
+  the replay makes the order. Other 503s stay unknown as before.
+- **Card bookings on this device**: remembered per pharmacy and booking by their request key only, as a body-less reload marker
+  (slot `assisted-card:<pharmacy>:<booking>`, D4: no amount, names or tokens). It gives "Pay now" to the booked consultation (also
+  after a reload, in the same tab) and tells the cancel step the booking was paid by card. The booker view does not say how a
+  booking was paid (follow-up below).
+- **Booked consultations**: a card booking not paid yet (assisted, `pending`/`pending`) shows "Waiting for payment" and a
+  **Pay now** link; the booking shows "Price … (not paid yet)" and the payment panel (or, from another tab, the pay-by time and
+  that it can be paid only where it was booked).
+- **Cancel**: for a booking paid by card in this tab, **Refund to card (default)** or **Refund to wallet**, sent as `refundTo`. The
+  answer's `refund` is said in plain words: card `pending` "in progress, usually 5 to 7 working days", `processed` "refunded",
+  `failed` "did not go through, Jansetu will contact you", `manual_review` "held for a check"; wallet "back in your Jansetu wallet
+  … cannot be withdrawn"; `refund: null` "It was not paid, so nothing is refunded". A booking whose way of payment is not known here
+  is cancelled with no `refundTo` (the server's default: back the way it was paid), with neutral words.
+- **Admin › Pharmacy wallets › Card refunds of bookings that need a person** (bottom of the list page; every pharmacy):
+  `GET /admin/assisted/card-refunds` (no query: failed, held, and stuck pending rows). **Move to wallet** (failed or held rows, not after
+  a recorded dispute): the pharmacy's agreement (1–500 characters, required), a confirm step, then
+  `POST /admin/assisted/card-refunds/:id/to-wallet {agreement}` with an owned PendingOp (local key; the move is once per refund).
+  A lost answer: send the same request again (answered `replayed`), or **Check whether it was recorded** (`?state=processed&limit=200`,
+  the row moved to the wallet). 409 `REFUND_NOT_FAILED` / `CHARGEBACK_RECORDED` and 404 `REFUND_NOT_FOUND` settle any attempt; 503
+  `ASSISTED_BOOKING_DISABLED` (admin tools switch) settles a sole first attempt. Only an answer with the refund processed to the
+  wallet counts (anything else is a 502, left unknown).
+- **Not built**: recording a card chargeback on a booking payment (`POST /admin/assisted-payments/:paymentId/chargeback`): it
+  takes any assisted payment id (not a queue row), has no read to check a lost answer by, and changes no money (C4); skipped as
+  not trivial in this UI.
+- **Visible changes outside these features**: the Book consultation intro now says "You pay Jansetu from your wallet, or by card or
+  UPI"; on a booked consultation the wallet label "Paid from your wallet" became "Amount paid" (or "Paid by card or UPI" when known),
+  and the cancel words say the money goes back the way it was paid; the "Pay from wallet" radio shows above the wallet lines on
+  every paid booking review; the admin Pharmacy wallets list page has the new section. The shared Checkout loader in `topup.tsx`
+  now takes the amount in paise (top-ups pass `amount × 100`, as before).
+
 ## Follow-ups
+
+- WQ16: the booker view (`bookerView.ts`) does not say how a booking was paid (`assisted.funding.method`), so a card booking made in
+  another tab or device gets no refund choice and neutral words, and its "Pay now" is only where it was booked (the open order is
+  read by request key). For the backend: add the method (and, for a pending card booking, `payBy`) to the booker view, or a read of
+  the open order by booking id.
+- WQ16: the card refund rows (`cardRefundView`) do not carry the pharmacy (`payerId`), and the admin booking page does not show the
+  booker, so the admin cannot see whose agreement to ask for. For the backend: add `payerId` (and its name) to each row.
 
 - WQ15: the r9 `uncredited` row has no Razorpay order id (`uncreditedTopups` selects `razorpayPaymentId` but sends neither). For
   the backend: add `razorpayOrderId` to each row; the section shows it when present. The list is global (no `pharmacyId` query), so
@@ -1730,6 +1789,7 @@ old name stays recognised).
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-23 | WQ16 assisted booking phase 1b: card or UPI booking, refund choice, admin card refund queue (on 72a9b27) | Against r10 9f2a1807 (design §23.3; mocked API). typecheck clean; Vitest 379/379 (+14 in wq16.test.ts: verify/reconcile answers and refusals read for paid / refunded / unpaid / failed / blocked / unknown, verify without `module` and reconcile with the record id only, a lost verify falls back to reconcile, a late capture is never paid, pay-by words in India time, the card create refusals (switch off, nothing to pay, no gateway keys; the 502 stays unknown), `refundTo` and by-key `payment`, refund and cancel words per state, admin agreement rule, queue rows, move request and its 502 on an odd answer, final and before-writing refusals, the processed-row check); Playwright workspace 808/808 (+20 = 10 journeys x 2: card pay success, Checkout closed then Pay now from Booked consultations on the same order, lost verify then reconcile, late capture refunded, 502 order failure resent, switch off then wallet with a new key, cancel refund to card, cancel refund to wallet, a booking not made here (no choice, neutral words), admin move to wallet with a lost answer checked; temporary config on port 5391, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-23 | WQ15b follow-ups (L1, L3, N1, N2 on e5d0e1c) | Against r9b 9be7d0a7 (mocked API). typecheck clean; Vitest 365/365 (no new tests; extended in wq15.test.ts: a 200 that is not a closure is a 502 (L1), TOPUP_REFUNDED is final (N1); both failed before the fix); Playwright workspace 788/788 (the select-refusal journey rewritten for L3: the choice stays, the same ticket opens another workspace, no new code; the resend journey now expects the N2 "already closed" words; both failed before the fix; temporary config on port 5372, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-23 | WQ15 close a card top-up already paid by hand; clinic sign-in refusal (on 0cbc4a2) | Against r9 0ca329aa (design §22; mocked API). typecheck clean; Vitest 365/365 (+9: wq15.test.ts 8 (close refusal words incl. TOPUP_REFUNDED, the refused-before-writing 503s, the any-attempt final refusals, the reason rule and owner wording, the list filter, the close and by-key requests, both clinic codes, the client's 403 hook), errors.test.ts 1); Playwright workspace 788/788 (+14 = 7 journeys x 2: list and mark with a reason and a confirm step; a lost answer checked by key, resent with the same key and body, and checked after a reload; the 409 credited case and Forget; clinic refusal at verify, at select (then "Choose another workspace" with a new code), on a partner call (session ended on the server, the message, no loop on reload, the follow-up code name) and on a reload (the profile read); the two session-end journeys failed with the hook disabled; temporary config on port 5371, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build clean. |
 | 2026-11-23 | WQ14b follow-ups (M1, M2, L1–L3, nits on 183a756) | Mocked API as WQ14. typecheck clean; Vitest 356/356; Playwright workspace 774/774 (+16 = 8 journeys x 2: carried key survives a reload as an opaque marker, a current-page forgotten credit carries its key, Forget hidden during a check, a found credit drops its kept key, a 400 gives the key back, a late original with another body adds nothing, the tick cleared, the restored older-backend name words; 6 of them failed before the fix, the two L3 ones cover existing behaviour; temporary config on port 5361, `reuseExistingServer: false`, deleted); screenshots of Pharmacy wallets and the booked consultation identical to 183a756; `VITE_API_SAME_ORIGIN=true` workspace build clean. |

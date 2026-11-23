@@ -104,7 +104,19 @@ export interface ConsultationRequest {
   couponCode?: string;
   acceptedPriceMinor: number;
   primaryConcern?: string;
-  paymentMethod: 'wallet';
+  /** WQ16 (r10 phase 1b, §23.3): `razorpay` = paid by card or UPI on a Razorpay order; the same body otherwise. */
+  paymentMethod: AssistedPaymentMethod;
+}
+
+export type AssistedPaymentMethod = 'wallet' | 'razorpay';
+
+/**
+ * WQ16 (r10 `cardPayments.ts` `CardPaymentView`): the one open Razorpay order of a card booking. `amountMinor` is what
+ * Checkout takes; `payBy` (ISO) is when the booking expires and its time is released if no payment arrived.
+ */
+export interface AssistedCardPayment {
+  paymentRequired: true; paymentTransactionId: string; razorpayOrderId: string; razorpayKeyId: string;
+  amount: number; amountMinor: number; currency: string; payBy: string;
 }
 
 export interface ConsultationReceipt {
@@ -113,8 +125,10 @@ export interface ConsultationReceipt {
     doctorName?: string; consultationMode: AssistedMode; dependentId?: string | null; price?: number; originalPrice?: number; updatedAt?: string;
     createdAt?: string; assisted?: { shortRef?: string; preferredLanguage?: string; join?: { on: JoinOn }; bookedBy?: { name?: string } };
   };
-  funding: { method: string; amountMinor: number; state: string; walletEntryId: string | null };
+  funding: { method: string; amountMinor: number; state: string; walletEntryId: string | null; paymentTransactionId?: string | null };
   split: { listMinor: number; discountMinor: number; couponCode: string | null };
+  /** WQ16: card bookings only: the open order while it waits for payment, else null (paid, cancelled or expired). */
+  payment?: AssistedCardPayment | null;
   newAccount: boolean;
   replayed: boolean;
 }
@@ -182,8 +196,21 @@ export interface TypedNameAnswer {
   shownName?: string | null;
 }
 
-export type ByKeyAnswer = { state: 'used'; booking: BookedConsultation } | { state: 'abandoned' } | { state: 'unknown' };
-export interface CancelAnswer { booking: BookedConsultation; refundedMinor: number; alreadyCancelled: boolean }
+/** WQ16: `payment` only for a card booking: its open order (read only), null when none is open. */
+export type ByKeyAnswer = { state: 'used'; booking: BookedConsultation; payment?: AssistedCardPayment | null } | { state: 'abandoned' } | { state: 'unknown' };
+/**
+ * WQ16 (r10 `cardRefunds.ts` `cardRefundView`): the refund of a card-paid booking: to the card, or to the pharmacy
+ * wallet. `state` is the server's (only `processed` means done).
+ */
+export interface CardRefund {
+  refundId: string; bookingId: string; paymentRecordId: string; amountMinor: number; cause: string;
+  method: 'card' | 'wallet'; state: 'pending' | 'processed' | 'failed' | 'manual_review' | string;
+  lastError: string | null; attempts: number; razorpayRefundId: string | null; processedAt: string | null; createdAt: string; updatedAt: string;
+  resolution?: { by: string; at: string };
+}
+/** `refund` is present for card bookings only (null: cancelled before it was paid). */
+export interface CancelAnswer { booking: BookedConsultation; refundedMinor: number; alreadyCancelled: boolean; refund?: CardRefund | null }
+export type RefundTo = 'card' | 'wallet';
 
 export interface RxOrderItem { medicineId: string; medicineName?: string; orderedQty: number }
 export interface RxOrderRequest {
@@ -248,7 +275,8 @@ export function pharmacyAssistedApi(c: ApiClient) {
     book: (body: ConsultationRequest) => c.post<ConsultationReceipt>('/pharmacy-assisted/consultations', { body, timeoutMs: SLOW_WRITE_TIMEOUT_MS }),
     byKey: (key: string) => c.get<ByKeyAnswer>(`/pharmacy-assisted/bookings/by-key/${keyOf(key)}`),
     abandon: (key: string) => c.post<ByKeyAnswer>(`/pharmacy-assisted/bookings/by-key/${keyOf(key)}/abandon`),
-    cancel: (id: string, body: { reason?: string; expectedUpdatedAt?: string }) =>
+    /** WQ16: `refundTo` (card-paid bookings; ignored by the server for wallet-paid ones), default `card`. */
+    cancel: (id: string, body: { reason?: string; expectedUpdatedAt?: string; refundTo?: RefundTo }) =>
       c.post<CancelAnswer>(`/pharmacy-assisted/bookings/${idOf(id, 'booking')}/cancel`, { body }),
     /**
      * WQ13 (P9, `rescheduleByBooker`): the same doctor and price, before the start, once per request key. The same key and
@@ -456,7 +484,8 @@ export function joinWords(mode: string | undefined, on: JoinOn | undefined): str
 
 // ── Refusals in plain words ──
 
-export type RefusalKind = 'off' | 'topup' | 'wallet' | 'price' | 'slot' | 'doctor' | 'limit' | 'patient' | 'coupon' | 'other';
+/** WQ16: `card` = card or UPI cannot pay for this booking (switch off, nothing to pay, no gateway keys): pay from the wallet. */
+export type RefusalKind = 'off' | 'topup' | 'wallet' | 'price' | 'slot' | 'doctor' | 'limit' | 'patient' | 'coupon' | 'card' | 'other';
 export interface Refusal { kind: RefusalKind; message: string; priceMinor?: number }
 
 const rupees = (paise: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(paise / 100);
@@ -497,7 +526,9 @@ const CODE_WORDS: Readonly<Record<string, Refusal>> = {
   INVALID_COUPON: { kind: 'coupon', message: 'This coupon code does not work for this booking. Remove it or check the code.' },
   COUPON_NOT_FOR_ASSISTED: { kind: 'coupon', message: 'This coupon cannot be used on a booking made for a patient. Remove it.' },
   COUPON_EXHAUSTED: { kind: 'coupon', message: 'This coupon has been fully used. Remove it.' },
-  PAYMENT_METHOD_UNAVAILABLE: { kind: 'other', message: 'For now bookings can only be paid from the Jansetu wallet.' },
+  // WQ16 (r10 §23.3): the card switch is off; a free consultation (nothing to pay) is booked with the wallet method.
+  PAYMENT_METHOD_UNAVAILABLE: { kind: 'card', message: 'Card payment is not switched on yet. Pay from your Jansetu wallet.' },
+  NOTHING_TO_PAY: { kind: 'card', message: 'There is nothing to pay for this consultation, so it cannot be paid by card. Book it with the wallet: nothing is taken from it.' },
   IDEMPOTENCY_KEY_REUSED: { kind: 'other', message: 'This booking request was already used with other details. Start the booking again.' },
   REQUEST_ABANDONED: { kind: 'other', message: 'This booking was given up earlier, so it was not made. Start the booking again.' },
   CUSTOMER_LINKING_UNAVAILABLE: { kind: 'other', message: 'Booking for patients is not ready on the server yet. Try again later.' },
@@ -522,7 +553,7 @@ const CODE_WORDS: Readonly<Record<string, Refusal>> = {
   PAYMENT_REFUNDED: { kind: 'other', message: 'This payment was refunded to your card or UPI. No money was added.' },
   PAYMENT_RECORD_NOT_FOUND: { kind: 'other', message: 'This top-up was not found.' },
   PAYMENT_SERVICE_UNAVAILABLE: { kind: 'other', message: 'Card and UPI payments are not available right now. Try again later.' },
-  RAZORPAY_NOT_CONFIGURED: { kind: 'other', message: 'Card and UPI payments are not set up on this server yet.' },
+  RAZORPAY_NOT_CONFIGURED: { kind: 'card', message: 'Card and UPI payments are not set up on this server yet.' },
 };
 
 /** One plain sentence for a refusal of the booking, cancel, order or wallet routes, and what the screen should offer. */
@@ -591,7 +622,8 @@ export const isAssistedLimit = (err: unknown) => err instanceof ApiError && err.
  * linking (`customerPhoneIndexReady`, before the transaction), and the limits. For a sole first attempt each one means
  * "not booked". A 503 without one of these codes (a proxy, a timeout) stays unknown.
  */
-const REFUSED_BEFORE_WRITING_503 = ['ASSISTED_BOOKING_DISABLED', 'INDEXES_OUTDATED', 'CUSTOMER_LINKING_UNAVAILABLE'];
+// WQ16: r10 `assertCardGatewayReady` (no Razorpay keys) runs before the transaction too (card bookings only).
+const REFUSED_BEFORE_WRITING_503 = ['ASSISTED_BOOKING_DISABLED', 'INDEXES_OUTDATED', 'CUSTOMER_LINKING_UNAVAILABLE', 'RAZORPAY_NOT_CONFIGURED'];
 export const refusedBeforeWriting = (err: unknown) =>
   isAssistedLimit(err) || (err instanceof ApiError && err.status === 503 && REFUSED_BEFORE_WRITING_503.includes(err.code ?? ''));
 

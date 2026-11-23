@@ -1,6 +1,6 @@
 # Jansetu Workspace: Pharmacy Guide
 
-**What you can do here:** book doctor consultations for walk-in patients and pay from your Jansetu wallet, handle medicine orders, check prescriptions, add and import stock, look after your stock batches and suppliers, see what is running low, deal with held or recalled stock, and set your pharmacist.
+**What you can do here:** book doctor consultations for walk-in patients and pay from your Jansetu wallet or by card or UPI, handle medicine orders, check prescriptions, add and import stock, look after your stock batches and suppliers, see what is running low, deal with held or recalled stock, and set your pharmacist.
 
 Website: **https://staff.swasthadisha.etryx.in**
 
@@ -234,7 +234,7 @@ Use **Show** to see **Active**, **Archived** or **All** suppliers.
 
 ## 9. Book a consultation for a walk-in patient
 
-Many patients have no app or phone of their own. You can book a doctor for them at your counter. Jansetu takes the fee from your **Wallet**. You collect the same amount from the patient.
+Many patients have no app or phone of their own. You can book a doctor for them at your counter. You pay Jansetu the fee from your **Wallet**, or by card or UPI. You collect the same amount from the patient.
 
 Booking for patients may not be switched on for your pharmacy yet. Then the page says "Booking for patients is not switched on yet."
 
@@ -252,7 +252,18 @@ Booking for patients may not be switched on for your pharmacy yet. Then the page
 7. Choose how the consultation happens: **Video call**, **Phone call** or **At the clinic**. For video or phone, choose where the patient joins: **on this pharmacy’s device** or **on the patient’s own phone**.
 8. Choose the **Language the patient speaks**. A coupon and a few words about the problem are optional. With a coupon, the price shown first is before the coupon; the coupon is checked when you pay, and you then see the price with it.
 9. Tap **Next: check the price**. Check the details, the price and your wallet balance with the patient.
-10. Tap **Pay … from wallet**. You see **Booked** with a **booking reference**. Collect the amount from the patient.
+10. Under **How do you pay?**, **Pay from wallet** is chosen. Tap **Pay … from wallet**. You see **Booked** with a **booking reference**. Collect the amount from the patient.
+
+**Pay by card or UPI instead**
+1. At step 10, choose **Pay by card or UPI** and tap **Pay … by card or UPI**. The time is held for the patient, and the Razorpay page opens.
+2. Pay on the Razorpay page. You see **Booked** and "The consultation is booked and paid by card or UPI." Collect the amount from the patient.
+3. If you close the Razorpay page without paying, you see **Booking held: waiting for payment** and "Pay before HH:MM or the time is released." Tap **Pay now** to open the same payment again. If you did pay, wait a minute and tap **Check payment**.
+4. If it is not paid in time, the time is released and nothing is booked. Book again if the patient still wants it.
+- The patient and the doctor are told only once it is paid.
+- "Card payment is not switched on yet": pay from the wallet for now.
+- A free consultation (nothing to pay) is always booked with the wallet; nothing is taken from it.
+- "The payment came after the booking could no longer take it": the money goes back to the card or UPI it was paid with. Nothing is booked.
+- "The booking is held, but the card payment could not be started": tap **Send the same request again**. It is never booked twice.
 
 **How the patient joins**
 - Video on your device: open **Booked consultations**, open the booking, and tap **Join call**. It appears 10 minutes before the time.
@@ -272,7 +283,10 @@ Booking for patients may not be switched on for your pharmacy yet. Then the page
 
 **Booked consultations** lists everything you booked, newest first. Use **Status** to show one kind. Tap **Open** to see one booking.
 
-- **Cancel**: tap **Cancel this consultation**, then **Yes, cancel it**. You can cancel any time before it starts. The full amount comes back to your wallet. Give the patient their money back.
+- **Waiting for payment**: a booking paid by card or UPI that is not paid yet. Tap **Pay now** in the list, then **Pay now** on the booking. This works in the browser tab where you booked it (also after a reload). It shows when to pay by; after that the time is released.
+- **Cancel**: tap **Cancel this consultation**, then **Yes, cancel it**. You can cancel any time before it starts. The full amount goes back the way it was paid: to your wallet, or to the card or UPI. Give the patient their money back.
+  - For a booking you paid by card or UPI in this tab, choose **Refund to card (default)** (it usually reaches the card in 5 to 7 working days) or **Refund to wallet** (at once; this money pays for bookings but cannot be withdrawn). After cancelling you see where the refund is: in progress, refunded, did not go through, or held for a check by Jansetu (Jansetu then contacts you).
+  - A card booking cancelled before it was paid refunds nothing.
 - **Cancelled by patient**: the patient cancelled it. The money is back in your wallet.
 - **Prescription**: after the consultation you see the medicines, advice and tests. The diagnosis is never shown to pharmacies. Tap **Open the prescription copy** to see or print it.
 - **Make a medicine order from this prescription**: for each medicine, tap **Search**, **Choose** the one you will give and type the **Units**. Leave out any you do not have. Tap **Check the order**, then **Make the order**. It appears in **Orders**, for pickup and payment at your counter.
@@ -289,7 +303,7 @@ Booking for patients may not be switched on for your pharmacy yet. Then the page
 
 ## 10. Wallet
 
-**Wallet** shows the money in your Jansetu wallet. Bookings for patients are paid from it. Refunds of cancelled bookings come back to it.
+**Wallet** shows the money in your Jansetu wallet. Bookings for patients are paid from it (or by card or UPI). Refunds of cancelled wallet bookings come back to it, and refunds of card bookings when you choose **Refund to wallet**.
 
 - **Add money**: type the **Amount to add (₹)** and tap **Top up**. Pay by card or UPI on the Razorpay page. When it is done you see "… was added to your wallet."
 - If you closed the payment page or lost the connection, the top-up shows under **Top-ups not confirmed yet**. Tap **Check my top-up**. If you paid, the money is added once. If it says "Not paid yet" and you did not pay, tap **Remove from this list**. If the payment page did not open at all, no money was taken: just try again.
