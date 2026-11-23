@@ -120,6 +120,24 @@ export async function settleCardPayment(api: ApiClient, paymentTransactionId: st
   return proof && checked.kind === 'unpaid' ? { kind: 'unpaid', inFlight: true } : checked;
 }
 
+/**
+ * card-last: asked before Checkout is opened again on a held order. An `authorized` payment at Razorpay is on its way, so
+ * Checkout is not opened (`settled`, in flight); a `created` (unfinished) attempt still opens it, with `created` set so the
+ * screen keeps its warning. A paid, refunded or refused answer settles it; no usable answer is unknown. Never throws.
+ */
+export async function beforeCheckout(api: ApiClient, paymentTransactionId: string): Promise<{ kind: 'open'; created: boolean } | { kind: 'settled'; outcome: CardOutcome }> {
+  try {
+    const a = await bookingPaymentApi(api).reconcile(paymentTransactionId);
+    if (a && a.state === 'unpaid') {
+      const s = a.gatewayStatuses ?? [];
+      return s.includes('authorized') ? { kind: 'settled', outcome: { kind: 'unpaid', inFlight: true } } : { kind: 'open', created: s.includes('created') };
+    }
+    return { kind: 'settled', outcome: outcomeOfAnswer(a) ?? { kind: 'unknown', message: 'The answer about this payment could not be read.' } };
+  } catch (err) {
+    return { kind: 'settled', outcome: outcomeOfError(err) ?? { kind: 'unknown', message: cardCheckProblem(err) } };
+  }
+}
+
 /** `POST /payments/reconcile` for one card booking payment. Never throws. */
 export async function checkCardPayment(api: ApiClient, paymentTransactionId: string): Promise<CardOutcome> {
   try {
@@ -164,7 +182,8 @@ export function payNowOpen(payBy: string | undefined | null, now = Date.now()): 
 /** Seconds Checkout may stay open so that it closes itself before the cut-off (Razorpay's `timeout` option). */
 export function checkoutSeconds(payBy: string | undefined | null, now = Date.now()): number | undefined {
   const t = payBy ? Date.parse(payBy) : NaN;
-  return Number.isFinite(t) ? Math.max(0, Math.floor((t - PAY_NOW_MARGIN_MS - now) / 1000)) : undefined;
+  // card-last: at least about a minute, so a page opened close to the cut-off is not closed at once.
+  return Number.isFinite(t) ? Math.max(60, Math.floor((t - PAY_NOW_MARGIN_MS - now) / 1000)) : undefined;
 }
 
 /**
@@ -325,7 +344,8 @@ export async function readCardRefund(api: ApiClient, refundId: string): Promise<
 /** Marked failed already? Read by id: failed, marked by an admin. */
 export async function findMarkedFailed(api: ApiClient, refundId: string): Promise<CardRefund | null> {
   const r = await readCardRefund(api, refundId);
-  return r.state === 'failed' && r.lastError === 'MARKED_FAILED_BY_ADMIN' ? r : null;
+  // card-last: whatever its state now (a row marked failed may since have been moved to the wallet).
+  return r.lastError === 'MARKED_FAILED_BY_ADMIN' ? r : null;
 }
 
 /** Moved to the wallet already? Read by id (WQ16c: not the list, which is cut at 200 rows). */

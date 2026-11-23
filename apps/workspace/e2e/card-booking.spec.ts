@@ -45,6 +45,12 @@ interface Backend {
   authorizedOnly: boolean;
   /** WQ16d (r10e): another payment already paid the booking: verify of this one is 409 DUPLICATE_PAYMENT_REFUNDED. */
   duplicate: boolean;
+  /** card-last: what Razorpay holds on the order while nothing is captured (reconcile's `gatewayStatuses`). */
+  gatewayStatuses: string[];
+  /** card-last: the next by-key read fails (no answer). */
+  failNextByKey: boolean;
+  /** card-last: the next cancel never reaches the server. */
+  dropNextCancel: boolean;
 }
 
 const view = (o: Json = {}): Json => ({
@@ -56,7 +62,7 @@ const view = (o: Json = {}): Json => ({
 async function mockPharmacy(page: Page, init: { bookings?: Json[]; cardOn?: boolean } = {}): Promise<Backend> {
   const b: Backend = {
     calls: [], creates: [], verifies: [], reconciles: [], cancels: [], bookings: init.bookings ?? [], keys: {}, record: { status: 'none', captured: false },
-    cardOn: init.cardOn ?? true, orderFailsOnce: false, loseNextVerify: false, late: false, pendingLimit: false, authorizedOnly: false, duplicate: false,
+    cardOn: init.cardOn ?? true, orderFailsOnce: false, loseNextVerify: false, late: false, pendingLimit: false, authorizedOnly: false, duplicate: false, gatewayStatuses: [], failNextByKey: false, dropNextCancel: false,
   };
   let live = false;
   const booking = (id: string) => b.bookings.find((x) => x._id === id);
@@ -142,6 +148,7 @@ async function mockPharmacy(page: Page, init: { bookings?: Json[]; cardOn?: bool
       return json(route, 201, { success: true, data: receipt(false) });
     }
     const byKey = /^\/pharmacy-assisted\/bookings\/by-key\/([A-Za-z0-9_-]+)$/.exec(path);
+    if (byKey && b.failNextByKey) { b.failNextByKey = false; return route.abort('connectionreset'); }
     if (byKey) {
       const k = b.keys[byKey[1]!];
       return json(route, 200, { success: true, data: k ? { state: 'used', booking: booking(k.bookingId), payment: order() } : { state: 'unknown' } });
@@ -149,6 +156,7 @@ async function mockPharmacy(page: Page, init: { bookings?: Json[]; cardOn?: bool
     const cancel = /^\/pharmacy-assisted\/bookings\/(\w{24})\/cancel$/.exec(path);
     if (cancel) {
       b.cancels.push(body!);
+      if (b.dropNextCancel) { b.dropNextCancel = false; return route.abort('connectionreset'); }
       const bk = booking(cancel[1]!)!;
       const unpaid = bk.status === 'pending';
       Object.assign(bk, { status: 'cancelled', cancellationCause: 'booker' });
@@ -177,7 +185,7 @@ async function mockPharmacy(page: Page, init: { bookings?: Json[]; cardOn?: bool
     if (path === '/payments/reconcile') {
       b.reconciles.push(body!);
       if (b.record.status === 'refunded') return refuse(route, 400, 'PAYMENT_REFUNDED', 'Payment is already marked as refunded');
-      if (!b.record.captured) return json(route, 200, { success: true, data: { state: 'unpaid', gatewayStatuses: [] } });
+      if (!b.record.captured) return json(route, 200, { success: true, data: { state: 'unpaid', gatewayStatuses: b.gatewayStatuses } });
       return json(route, 200, { success: true, data: { state: 'paid', ...apply() } });
     }
     if (path === '/pharmacy-wallet') return json(route, 200, { success: true, data: { _id: 'w1', pharmacyId: ME, balance: 2000, balancePaise: 200_000, isActive: true, frozen: false, receivableMinor: 0 } });
@@ -668,4 +676,68 @@ test('r10e: an extra capture is labelled; on a server without the read by id the
   await expect(section.getByText('Could not check: Not available on this server yet. The outcome is not known.')).toBeVisible();
   await expect(section.getByRole('button', { name: 'Send the same request again' })).toBeVisible();
   expect(b.calls.some((c) => c.path.endsWith('/recheck'))).toBe(false);
+});
+
+// ── wq16d/card-last ──
+
+const opened = (page: Page) => page.evaluate(() => (window as unknown as { __rzOpened?: number }).__rzOpened ?? 0);
+
+test('card-last 1: Razorpay holds an authorized payment: Pay now asks the server first and never opens Checkout', async ({ page }) => {
+  const b = await mockPharmacy(page, { bookings: [r10dWaiting(PAY_BY)] });
+  b.record = { status: 'created', captured: false };
+  b.gatewayStatuses = ['authorized'];
+  await signIn(page, 'Booked consultations');
+  await page.getByRole('link', { name: /Pay now for the consultation of Rina Kumari/ }).click();
+  await page.getByRole('button', { name: 'Pay now ₹500.00' }).click();
+  await expect(page.getByText('Razorpay reported the payment; it is being confirmed. Do not pay again. Tap “Check payment” in a minute.')).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Pay now/ })).toHaveCount(0);
+  expect(await opened(page)).toBe(0);
+  expect(b.reconciles).toEqual([{ paymentTransactionId: REC }]);
+});
+
+test('card-last 1: a created (unfinished) attempt at Razorpay: Pay now still opens Checkout', async ({ page }) => {
+  const b = await mockPharmacy(page, { bookings: [r10dWaiting(PAY_BY)] });
+  b.record = { status: 'created', captured: false };
+  b.gatewayStatuses = ['created'];
+  await signIn(page, 'Booked consultations');
+  await page.getByRole('link', { name: /Pay now for the consultation of Rina Kumari/ }).click();
+  await page.getByRole('button', { name: 'Pay now ₹500.00' }).click();
+  await expect(page.getByText('Paid. The consultation is booked. The patient and the doctor are told.')).toBeVisible();
+  expect(await opened(page)).toBe(1);
+});
+
+test('card-last 2: while the payment is being confirmed the "pay it from there" line is not shown', async ({ page }) => {
+  const b = await mockPharmacy(page);
+  await signIn(page, 'Book consultation');
+  await toCheckAndPay(page);
+  b.authorizedOnly = true;
+  await payByCard(page);
+  await expect(page.getByText(/Do not pay again/)).toBeVisible();
+  await expect(page.getByText('You can also pay it from there, on this device.')).toHaveCount(0);
+});
+
+test('card-last 5: a duplicate payment whose re-read fails keeps the duplicate sentence', async ({ page }) => {
+  const b = await mockPharmacy(page);
+  await signIn(page, 'Book consultation');
+  await toCheckAndPay(page);
+  b.duplicate = true;
+  b.failNextByKey = true;
+  await payByCard(page);
+  await expect(page.getByText('This booking was already paid with another payment. This payment is being refunded to the card or UPI.')).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Pay now/ })).toHaveCount(0);
+});
+
+test('card-last 6: a cancellation restored after a reload says the money goes back the way chosen', async ({ page }) => {
+  const b = await mockPharmacy(page, { bookings: [view({ status: 'confirmed', paymentStatus: 'paid', payment: { method: 'razorpay', state: 'captured', payBy: null, paymentTransactionId: REC } })] });
+  await signIn(page, 'Booked consultations');
+  await page.getByRole('link', { name: /Open the consultation of Rina Kumari/ }).click();
+  b.dropNextCancel = true;
+  await page.getByRole('button', { name: 'Cancel this consultation' }).click();
+  await page.getByRole('button', { name: 'Yes, cancel it' }).click();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  await page.reload();
+  await expect(page.getByText(/A cancellation made earlier on this device was not confirmed/)).toBeVisible();
+  Object.assign(b.bookings[0]!, { status: 'cancelled', cancellationCause: 'booker' }); // the earlier request arrived after all
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Cancelled. The amount goes back the way chosen.')).toBeVisible();
 });

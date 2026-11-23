@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  assistedRefusal, checkCardPayment, checkoutSeconds, LATE_CAPTURE_WORDS, orderFromBooking, PAY_NOW_MARGIN_MS, payByWords, payNowOpen, pharmacyAssistedApi,
+  assistedRefusal, beforeCheckout, checkCardPayment, checkoutSeconds, LATE_CAPTURE_WORDS, orderFromBooking, PAY_NOW_MARGIN_MS, payByWords, payNowOpen, pharmacyAssistedApi,
   settleCardPayment, type ApiClient, type AssistedCardPayment, type BookedConsultation, type CardOutcome, type PendingMarker,
 } from '@jansetu/api';
 import { Alert, Button, formatRupees } from '@jansetu/ui';
@@ -67,7 +67,7 @@ export const NO_ORDER_WORDS = 'The card payment for this booking could not be st
  * "Check payment". `onPaid` runs once the server says paid; `onEnded` once it says the payment can never pay this booking
  * (a late capture refunded to the card, a failed payment, the booking no longer payable).
  */
-export function CardPaymentPanel({ bookingId, requestKey, order: initial, amountMinor, payBy, paymentTransactionId, perform, busy, autoOpen, onPaid, onEnded }: {
+export function CardPaymentPanel({ bookingId, requestKey, order: initial, amountMinor, payBy, paymentTransactionId, perform, busy, autoOpen, onHeld, onPaid, onEnded }: {
   bookingId: string;
   /** The create's key (this device): it gives the open order back for "Pay now" on any server. */
   requestKey: string | null;
@@ -82,6 +82,8 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
   busy: boolean;
   /** Open Checkout once as soon as the panel shows (right after the booking was made, on the create's own order). */
   autoOpen?: boolean;
+  /** card-last: told whenever the payment is (or stops being) held for confirmation. */
+  onHeld?: (held: boolean) => void;
   /** `note`: WQ16d, said with it (another payment of this booking is being refunded). */
   onPaid: (booking: Partial<BookedConsultation> | null, note?: string) => void;
   onEnded: (words: string) => void;
@@ -92,6 +94,7 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
   /** Razorpay reported a payment, or the outcome is unknown: "Pay now" is not offered again (only "Check payment"). */
   const [held, setHeld] = useState(false);
   const reported = useRef(false);
+  useEffect(() => { onHeld?.(held); }, [held]);
   const [now, setNow] = useState(() => Date.now());
   const live = useRef(true);
   const opened = useRef(false);
@@ -115,8 +118,9 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
     if (step.kind === 'duplicate') {
       setHeld(true);
       setNote({ tone: 'warn', text: step.message });
-      const b = requestKey ? await pharmacyAssistedApi(api).byKey(requestKey).then((r) => (r.state === 'used' ? r.booking : null))
-        : await pharmacyAssistedApi(api).booking(bookingId);
+      // card-last: a failed re-read leaves the duplicate sentence on screen.
+      const b = await (requestKey ? pharmacyAssistedApi(api).byKey(requestKey).then((r) => (r.state === 'used' ? r.booking : null))
+        : pharmacyAssistedApi(api).booking(bookingId)).catch(() => null);
       if (live.current && b?.status === 'confirmed' && b.paymentStatus === 'paid') onPaid(b, step.message);
       return;
     }
@@ -167,13 +171,19 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
   }
 
   async function payNow(first = false) {
-    setNote(null);
     try {
       await perform(async () => {
         // The create's own order is used as answered; a reopen reads the order again first.
         const o = first && order ? order : await freshOrder();
         if (!o) return;
         if (!payNowOpen(o.payBy || due)) { setNow(Date.now()); setNote({ tone: 'warn', text: 'It is too late to open the payment page now. If you paid, tap “Check payment”.' }); return; }
+        // card-last: a reopen asks the server first (also after the panel was shown again): an authorized payment at
+        // Razorpay is on its way, so no second payment page; an unfinished (created) attempt opens it, keeping any warning.
+        if (!first) {
+          const pre = await beforeCheckout(api, o.paymentTransactionId);
+          if (pre.kind === 'settled') { await apply(pre.outcome, o); return; }
+          if (!pre.created) setNote(null);
+        } else setNote(null);
         const r = await payCardOrder(api, o);
         await apply(r.step, o, r.reported);
       });

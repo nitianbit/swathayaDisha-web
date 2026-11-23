@@ -41,7 +41,7 @@ describe('fix 2: Pay now before the cut-off only; the order from the booker view
     expect(open(payBy, Date.parse('2026-11-23T09:57:59.000Z'))).toBe(true);
     expect(open(payBy, Date.parse('2026-11-23T09:58:00.000Z'))).toBe(false);
     expect(secs(payBy, Date.parse('2026-11-23T09:50:00.000Z'))).toBe(480);
-    expect(secs(payBy, Date.parse('2026-11-23T09:59:00.000Z'))).toBe(0);
+    expect(secs(payBy, Date.parse('2026-11-23T09:59:00.000Z'))).toBe(60); // card-last: at least about a minute
   });
 
   it('the open order from `payment` while it waits; none without the order fields', () => {

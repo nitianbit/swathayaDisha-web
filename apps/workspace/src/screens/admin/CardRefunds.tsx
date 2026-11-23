@@ -127,7 +127,8 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
         <CheckPanel label={restored ? 'Unconfirmed refund change' : w.label}
           onCheck={async () => {
             if (restored) return 'Its details are not kept on this device after a reload. Read the list again to see where the refund is.';
-            // WQ16c: the row is read by id (r10d), or rechecked on an older server: never the 200-row list.
+            // The row is read by id (r10e `GET …/card-refunds/:id`); never the 200-row list, never recheck (it can send the
+            // refund). A server without the route fails the check: the outcome stays unknown.
             const found = op.body.action === 'move' ? await findMovedRefund(api, op.body.row.refundId) : await findMarkedFailed(api, op.body.row.refundId);
             void reread();
             if (found) { settle(op.requestKey); finished(op.body, 'checked'); return null; }

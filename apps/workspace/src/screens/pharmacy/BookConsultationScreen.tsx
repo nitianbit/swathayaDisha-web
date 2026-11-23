@@ -110,6 +110,8 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   /** Why card or UPI cannot pay (the switch is off, no gateway keys): the card option is then disabled. */
   const [cardOff, setCardOff] = useState<string | null>(null);
   const [cardDue, setCardDue] = useState<CardDue | null>(null);
+  /** card-last: the card payment is being confirmed (only "Check payment" is offered then). */
+  const [cardHeld, setCardHeld] = useState(false);
   /** The booking could not be made or paid after all (a late payment refunded, the time released): said once. */
   const [ended, setEnded] = useState<string | null>(null);
   /** 502 RAZORPAY_ORDER_CREATION_FAILED: the booking is held; the same request again gets the payment page. */
@@ -505,13 +507,13 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
         <p>Pay by card or UPI on the Razorpay page.{due.ref ? <> Booking reference: <strong>{due.ref}</strong>.</> : null}</p>
         <SummaryList s={due.summary} />
         <CardPaymentPanel key={due.bookingId} bookingId={due.bookingId} requestKey={due.requestKey} order={due.order} amountMinor={due.summary.priceMinor} perform={perform} busy={busy}
-          autoOpen={due.autoOpen}
+          autoOpen={due.autoOpen} onHeld={setCardHeld}
           onPaid={(_b, note) => { setCardDue(null); setDone({ summary: due.summary, ref: due.ref, paidMinor: due.order?.amountMinor ?? due.summary.priceMinor, replayed: false, newAccount: due.newAccount, paidBy: 'card', ...(note ? { note } : {}) }); refreshAfterBooking(); }}
           onEnded={(words) => { cards.forget(due.bookingId); setCardDue(null); setEnded(words); refreshAfterBooking(); }} />
         {due.newAccount && <p className="ws-muted">This number was new to Jansetu. An account was made for it; the patient can sign in with this number later.</p>}
         <div className="ws-actions">
           <Link to="/pharmacy/consultations">See booked consultations</Link>
-          <span className="ws-muted">You can also pay it from there, on this device.</span>
+          {!cardHeld && <span className="ws-muted">You can also pay it from there, on this device.</span>}
         </div>
       </section>
     );

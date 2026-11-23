@@ -193,7 +193,7 @@ function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, 
               settle(op.requestKey);
               // WQ16c: a restored cancellation's choice is not kept here, so no destination is named.
               onDone(waiting ? `Cancelled. It was not paid, so nothing is refunded. ${LATE_PAYMENT_BACK}`
-                : restored && paidBy === 'card' ? 'Cancelled. The amount is refunded the way chosen.'
+                : restored && paidBy === 'card' ? 'Cancelled. The amount goes back the way chosen.'
                 : op.body?.refundTo === 'wallet' ? 'Cancelled. The amount goes back to your Jansetu wallet. See it under Wallet.'
                 : paidBy === 'card' ? 'Cancelled. The amount goes back to the card or UPI it was paid with.'
                 : paidBy === 'wallet' ? 'Cancelled. The amount is back in your Jansetu wallet.'
