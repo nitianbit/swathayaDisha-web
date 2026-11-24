@@ -31,6 +31,9 @@ interface Backend {
   loseVerifyAndCheck?: boolean;
   /** The next admin credit is made, then its answer is lost. */
   loseAdminAfter?: boolean;
+  /** WQ20c: the partner record (`GET /partner-workspace/me`) cannot be read. */
+  meDown?: boolean;
+  members?: Rec[];
   /** WQ20b: the next top-up order is made, then its answer is lost. */
   loseStartAfter?: boolean;
   /** WQ20b: verify answers paid but not credited (the server's check then adds it). */
@@ -175,7 +178,15 @@ async function mockBackend(page: Page, me: Me): Promise<Backend> {
     if (path === '/admin/wallet-recharges/uncredited') return ok(route, []);
     if (/^\/partner-workspace\/admin\/[0-9a-f]{24}$/.test(path)) return ok(route, partners.find((p) => path.endsWith(p._id as string)));
     const ws = /^\/partner-workspace(\/.*)$/.exec(path);
-    if (ws && ws[1] === '/me') return ok(route, partners.find((p) => p._id === b.me.partnerId));
+    if (ws && ws[1] === '/me') return b.meDown ? fail(route, 500, 'INTERNAL', 'Something went wrong') : ok(route, partners.find((p) => p._id === b.me.partnerId));
+    if (ws && ws[1] === '/members' && method === 'GET') return ok(route, b.members ?? []);
+    const mem = ws && /^\/members\/([0-9a-f]{24})(\/permissions)?$/.exec(ws[1]!);
+    if (mem) {
+      const m = (b.members ?? []).find((x) => x._id === mem[1]);
+      if (!m) return fail(route, 404, 'MEMBER_NOT_FOUND', 'Member not found');
+      if (!mem[2]) return ok(route, m);
+      if (method === 'PUT') { Object.assign(m, { permissions: (body as Rec).permissions, updatedAt: '2026-11-25T04:40:00.000Z' }); return ok(route, m); }
+    }
     if (ws && ws[1] === '/branches') return ok(route, []);
     return fail(route, 404, 'NOT_FOUND', 'Not found');
   });
@@ -338,4 +349,29 @@ test('WQ20b: a lost order answer: "Top up" asks again with the same key and amou
   expect(backend.calls.slice(after).some((c) => c.path.endsWith('/check'))).toBe(true);
   expect(backend.entries).toHaveLength(1);
   await expect(page.getByLabel('Amount to add (₹)')).toBeEnabled();
+});
+
+test('WQ20c: a lab member’s permissions cannot be saved until the lab is read, so the wallet access is never dropped', async ({ page }) => {
+  const backend = await mockBackend(page, owner());
+  backend.members = [
+    { _id: OWNER, partnerId: LAB, name: 'Ravi Owner', phone: '9000000001', role: 'owner', permissions: ALL, branchIds: [], isActive: true, updatedAt: NOW.toISOString() },
+    { _id: STAFF, partnerId: LAB, name: 'Sita Staff', phone: '9000000002', role: 'staff', permissions: ['bookings.view', 'wallet.view'], branchIds: [], isActive: true,
+      updatedAt: NOW.toISOString() },
+  ];
+  backend.meDown = true;
+  await signIn(page);
+  await page.goto('/#/partner/staff');
+  await page.getByRole('row').filter({ hasText: 'Sita Staff' }).getByRole('button', { name: 'Edit permissions' }).click();
+  const editor = page.getByRole('region', { name: 'Permissions for Sita Staff' });
+  await expect(editor.getByRole('button', { name: 'Save permissions' })).toBeDisabled();
+  await expect(editor.getByRole('checkbox')).toHaveCount(0);
+  backend.meDown = false;
+  // The read is retried on its own (or by "Try again" once it has failed for good).
+  const retry = editor.getByRole('button', { name: 'Try again' });
+  if (await retry.isVisible()) await retry.click();
+  await expect(editor.getByLabel('View the wallet')).toBeChecked({ timeout: 15_000 });
+  await editor.getByLabel('Manage bookings').check();
+  await editor.getByRole('button', { name: 'Save permissions' }).click();
+  await expect.poll(() => backend.calls.find((c) => c.method === 'PUT' && c.path === `/partner-workspace/members/${STAFF}/permissions`)?.body)
+    .toMatchObject({ permissions: expect.arrayContaining(['bookings.view', 'bookings.manage', 'wallet.view']) });
 });
