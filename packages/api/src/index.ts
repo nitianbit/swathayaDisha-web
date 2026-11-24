@@ -183,7 +183,7 @@ export {
   ADMIN_TOPUP_BY_KEY_PATH, ADMIN_TOPUP_KEY_PATTERN, ADMIN_TOPUP_PAGE_SIZE, ADMIN_TOPUP_SEARCH_PAGES, ADMIN_TOPUP_WARNING, adminTopupWarning, adminPharmacyWalletApi, adminTopupForm, adminTopupRefusal,
   adminWalletReadError, findAdminTopup, isAdminTopupRow, latestAdminCredit, topupNotFoundWords,
   MAX_ADMIN_TOPUP_NOTE, MAX_ADMIN_TOPUP_RUPEES, MIN_ADMIN_TOPUP_NOTE,
-  CLOSE_COMPENSATED_EXPLAIN, closeCompensatedFinal, closeCompensatedRefusal, closeReasonProblem, closeRefusedBeforeWriting, MAX_CLOSE_REASON, uncreditedOf,
+  closeCompensatedExplain, closeCompensatedFinal, closeCompensatedRefusal, closeReasonProblem, closeRefusedBeforeWriting, MAX_CLOSE_REASON, uncreditedOf,
 } from './adminPharmacyWallet.ts';
 export type { AdminTopupBody, AdminTopupSearch, CompensatedClose, UncreditedTopup } from './adminPharmacyWallet.ts';
 // WQ16: assisted booking phase 1b: a booking paid by card or UPI, its refund, and the admin card refund queue.
@@ -225,10 +225,14 @@ export {
 export type { DeskBookingRequest, DeskByKey, DeskCancelAnswer, DeskCollector, DeskReceipt } from './labDesk.ts';
 // WQ20: the lab wallet (r13), shown with the pharmacy wallet's screens.
 export {
-  adminLabWalletApi, asMovement, asPharmacyWallet, LAB_ADMIN_TOPUP_MAX_MINOR, LAB_TOPUP_MAX_MINOR, LAB_TOPUP_MIN_MINOR, LAB_TOPUP_STATE_LABEL,
-  LAB_WALLET_SWITCHED_OFF_MESSAGE, labTopupCheckable, labWalletApi, labWalletRefusal,
+  asMovement, asPharmacyWallet, LAB_ADMIN_TOPUP_MAX_MINOR, LAB_TOPUP_MAX_MINOR, LAB_TOPUP_MIN_MINOR, LAB_TOPUP_STATE_LABEL,
+  LAB_WALLET_SWITCHED_OFF_MESSAGE, labTopupCheckable, labWalletApi,
+  // WQ23: the doctor's wallet (r20) on the same routes and shapes.
+  adminOwnerWalletApi, DOCTOR_WALLET_CLOSED_MESSAGE, DOCTOR_WALLET_SWITCHED_OFF_MESSAGE, doctorWalletApi, isDoctorWalletClosed, ownerWalletRefusal,
 } from './labWallet.ts';
-export type { LabTopupOrder, LabTopupRow, LabTopupState, LabWalletEntry, LabWalletLot, LabWalletView } from './labWallet.ts';
+export type {
+  LabTopupOrder, LabTopupRow, LabTopupState, LabWalletEntry, LabWalletLot, LabWalletView, OwnWalletApi, WalletOwner, WalletOwnerKind,
+} from './labWallet.ts';
 // WQ22: the pharmacy's "Consult now" (r17): an instant consultation for a walk-in, paid from the wallet.
 export {
   bookerInstantBody, changedQuote, INSTANT_ACTIVITY_MS, INSTANT_DESK_MODES, INSTANT_POLL_MS, INSTANT_SWITCHED_OFF_MESSAGE, instantBookerRefusal, instantStage,

@@ -5,7 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 import {
   ADMIN_TOPUP_PAGE_SIZE, adminTopupWarning, adminPharmacyWalletApi, ApiError, adminTopupForm, adminTopupRefusal, adminWalletReadError, findAdminTopup,
   latestAdminCredit, MAX_ADMIN_TOPUP_NOTE, topupNotFoundWords, type PendingMarker, type WalletMovement, OBJECT_ID_PATTERN, pharmacyAdminApi, signedPaiseOf, walletBalancePaise, walletState, type ApiClient, type Page, type PharmacyWallet,
-  CLOSE_COMPENSATED_EXPLAIN, closeCompensatedFinal, closeCompensatedRefusal, closeReasonProblem, closeRefusedBeforeWriting, MAX_CLOSE_REASON, type CompensatedClose, type UncreditedTopup,
+  closeCompensatedExplain, closeCompensatedFinal, closeCompensatedRefusal, closeReasonProblem, closeRefusedBeforeWriting, MAX_CLOSE_REASON, type CompensatedClose, type UncreditedTopup, type WalletOwner,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -161,9 +161,12 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
   );
 }
 
-/** WQ20: a pharmacy's or a lab's wallet as an admin sees it (`owner` names it). */
-export function Balance({ w, owner }: { w: PharmacyWallet | null; owner: 'pharmacy' | 'lab' }) {
-  if (!w) return <p>This {owner} has no wallet yet. It is made when the {owner} opens its wallet, or when money is added here.</p>;
+/** WQ20: a pharmacy's, a lab's or (WQ23) a doctor's wallet as an admin sees it (`owner` names it). */
+export function Balance({ w, owner }: { w: PharmacyWallet | null; owner: WalletOwner }) {
+  if (!w) {
+    // r20: reading a doctor's wallet makes none; the first money added (by the doctor or here) does.
+    return <p>This {owner} has no wallet yet. {owner === 'doctor' ? 'It is made when money is first added, by the doctor or here.' : `It is made when the ${owner} opens its wallet, or when money is added here.`}</p>;
+  }
   const state = walletState(w);
   const owed = Number(w.receivableMinor ?? 0);
   return (
@@ -171,7 +174,7 @@ export function Balance({ w, owner }: { w: PharmacyWallet | null; owner: 'pharma
       <dl className="fin-cards" aria-label="Wallet">
         <div className="fin-card fin-card--main"><dt>Money in the wallet</dt><dd>{formatRupees(walletBalancePaise(w) / 100)}</dd></div>
         {owed > 0 && <div className="fin-card"><dt>Owed to Jansetu</dt><dd>{formatRupees(owed / 100)}</dd></div>}
-        {owner === 'lab' && <div className="fin-card"><dt>Card money (withdrawals coming later)</dt><dd>{formatRupees(Number(w.withdrawableMinor ?? 0) / 100)}</dd></div>}
+        {owner !== 'pharmacy' && <div className="fin-card"><dt>Card money (withdrawals coming later)</dt><dd>{formatRupees(Number(w.withdrawableMinor ?? 0) / 100)}</dd></div>}
       </dl>
       {state === 'owing' && <Alert tone="warn">The wallet owes {formatRupees(owed / 100)} to Jansetu after a disputed card payment. It cannot pay for bookings. Money added clears this first.</Alert>}
       {state !== 'owing' && w.frozen === true && <Alert tone="warn">The wallet is on hold{w.frozenReason ? ` (${w.frozenReason})` : ''}, so it cannot pay for bookings. Money can still be added.</Alert>}
@@ -192,7 +195,7 @@ export interface AdminTopupTarget {
   /** The memory slots' owner part (a pharmacy's id as before; a lab's `lab-<id>`). */
   ownerKey: string;
   ownerName: string;
-  owner: 'pharmacy' | 'lab';
+  owner: WalletOwner;
   /** Read again after every answer. */
   queryKey: readonly unknown[];
   /** The newest history page (for the last admin credit on the review). */
@@ -390,7 +393,7 @@ const topupWords = (r: UncreditedTopup) => `${formatRupees(r.amountMinor / 100)}
  * Closing is once per top-up whatever the key, so forgetting an unconfirmed close is safe: closing again is replayed.
  */
 export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pharmacyName, owner }: {
-  scopeKey: readonly string[]; ownerId: string; ownerName: string; owner: 'pharmacy' | 'lab';
+  scopeKey: readonly string[]; ownerId: string; ownerName: string; owner: WalletOwner;
 }) {
   const { api } = useSession();
   const admin = useStaff();
@@ -434,7 +437,7 @@ export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pha
   function check(e: FormEvent) {
     e.preventDefault();
     if (!chosen) return;
-    const problem = closeReasonProblem(reason);
+    const problem = closeReasonProblem(reason, owner);
     setReasonError(problem);
     if (problem) return;
     // The key is made now, with the reviewed body; confirming sends exactly this.
@@ -461,7 +464,7 @@ export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pha
     const restored = !!op.restored || !op.body;
     return (
       <>
-        <p>{CLOSE_COMPENSATED_EXPLAIN}</p>
+        <p>{closeCompensatedExplain(owner)}</p>
         {resendError && <Alert>{resendError}</Alert>}
         <CheckPanel label="Unconfirmed close"
           onCheck={async () => {
@@ -495,7 +498,7 @@ export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pha
   const rows = list.data ?? [];
   return (
     <>
-      <p>{CLOSE_COMPENSATED_EXPLAIN}</p>
+      <p>{closeCompensatedExplain(owner)}</p>
       {done && <Alert tone="ok">{done}</Alert>}
       {refused && <Alert>Not closed: {refused}</Alert>}
       {list.isPending ? <Loading label="Loading card top-ups…" />
@@ -542,7 +545,7 @@ export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pha
               </div>
               <ul className="ws-list">
                 <li>Reason: <strong>{review.reason}</strong></li>
-                <li>{CLOSE_COMPENSATED_EXPLAIN}</li>
+                <li>{closeCompensatedExplain(owner)}</li>
               </ul>
               <div className="confirm-actions">
                 <Button busy={busy} onClick={() => {

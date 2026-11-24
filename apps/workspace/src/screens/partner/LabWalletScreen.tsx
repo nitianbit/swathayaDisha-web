@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { holdsAny, LAB_TOPUP_MAX_MINOR, LAB_TOPUP_STATE_LABEL, labTopupCheckable, labWalletApi, labWalletRefusal } from '@jansetu/api';
+import { holdsAny, LAB_TOPUP_STATE_LABEL, labTopupCheckable, labWalletApi } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { useSession } from '../../session.tsx';
-import { CHECK_LABEL, TopUpForm, UNPAID_CHECK_AGAIN, useTopupCheck, type TopupSource } from '../pharmacy/topup.tsx';
+import { CHECK_LABEL, ownerTopupSource, TopUpForm, UNPAID_CHECK_AGAIN, useTopupCheck, type TopupSource } from '../pharmacy/topup.tsx';
 import { CursorPager, useCursorPages } from '../pharmacy/cursorList.tsx';
 import { WalletBalance, WalletHistory } from '../pharmacy/WalletScreen.tsx';
 import { LabOnly } from './labs.tsx';
@@ -39,11 +39,7 @@ function Wallet({ ctx }: { ctx: ScopeContext }) {
   const wallet = useQuery({ queryKey: [...key, 'balance'], queryFn: () => w.wallet() });
   const history = useCursorPages();
   const entries = useQuery({ queryKey: [...key, 'entries', history.cursor], queryFn: () => w.entries(history.cursor || undefined) });
-  const source: TopupSource = {
-    owner: `lab-${scopeIdentity(ctx)}`, queryKey: key, maxRupees: LAB_TOPUP_MAX_MINOR / 100,
-    start: (rupees, requestKey) => w.startTopup(Math.round(rupees * 100), requestKey),
-    verify: (p) => w.verify(p), check: (id) => w.checkTopup(id), refusal: labWalletRefusal, rememberOnDevice: false, keyed: true,
-  };
+  const source = ownerTopupSource(w, 'lab', scopeIdentity(ctx), key);
   return (
     <>
       <WalletBalance wallet={wallet} cardMoney />

@@ -493,8 +493,8 @@ test('a doctor signs in: doctor pages only, a status card on Home, and no partne
   expect(backend.calls.find((c) => c.path === '/auth/specialist/verify')?.body).toMatchObject({ phone: '9000000020', otp: '123456', session: 'cookie' });
   await expect(page.getByRole('heading', { name: 'Welcome, Dr Meera Rao', level: 1 })).toBeVisible();
   await expect(page.getByText('Doctor · Cardiology')).toBeVisible();
-  for (const label of ['Home', 'Consult now', 'Appointments', 'Schedule', 'Clinics', 'Earnings']) await expect(nav(page).getByRole('link', { name: label, exact: true })).toBeVisible();
-  await expect(nav(page).getByRole('link')).toHaveCount(6);
+  for (const label of ['Home', 'Consult now', 'Appointments', 'Schedule', 'Clinics', 'Earnings', 'Wallet']) await expect(nav(page).getByRole('link', { name: label, exact: true })).toBeVisible();
+  await expect(nav(page).getByRole('link')).toHaveCount(7);
   const status = page.getByRole('region', { name: 'Your status' });
   await expect(status).toContainText('Verified');
   await expect(status).toContainText('Off'); // read from the server (Q13 GET /me/presence)

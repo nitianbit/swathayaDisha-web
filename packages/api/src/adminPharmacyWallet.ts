@@ -1,5 +1,6 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import { assistedRefusal, isSwitchedOff, type PharmacyWallet, type WalletMovement } from './assisted.ts';
+import type { WalletOwner } from './labWallet.ts';
 
 /**
  * WQ13 admin: a pharmacy's Jansetu wallet and the admin's manual credit (backend `src1/modules/pharmacyWallet`, q16
@@ -76,7 +77,7 @@ export function adminPharmacyWalletApi(c: ApiClient) {
       if (!hex.test(paymentRecordId)) throw new Error('Invalid payment id');
       if (!ADMIN_TOPUP_KEY_PATTERN.test(body.requestKey)) throw new Error('Invalid request key');
       const reason = cleanNote(body.reason);
-      if (closeReasonProblem(reason)) throw new Error('Invalid reason');
+      if (closeReasonFault(reason)) throw new Error('Invalid reason');
       const r = await c.post<Partial<CompensatedClose> | null>(`/admin/wallet-payments/${paymentRecordId.toLowerCase()}/close-compensated`,
         { body: { reason, requestKey: body.requestKey } });
       // WQ15b L1: only a closure is a close; anything else (a 502 here) leaves the request unknown, never claimed closed.
@@ -183,7 +184,7 @@ export function adminTopupRefusal(err: unknown): string {
 
 /** S6: the warning shown on the form and its review (owner wording). */
 /** WQ20: the same words for a lab's wallet. */
-export const adminTopupWarning = (owner: 'pharmacy' | 'lab') =>
+export const adminTopupWarning = (owner: WalletOwner) =>
   `Do not use this to make up for a card top-up that never arrived. Ask the tech team to run the top-up check instead, or the ${owner} could be paid twice.`;
 export const ADMIN_TOPUP_WARNING = adminTopupWarning('pharmacy');
 
@@ -193,9 +194,10 @@ export const ADMIN_TOPUP_WARNING = adminTopupWarning('pharmacy');
 export interface UncreditedTopup {
   paymentTransactionId: string;
   pharmacyId: string;
-  /** r13: a lab's top-up names `walletKind: 'lab'` and its `partnerId` (no `pharmacyId`). */
-  walletKind?: 'pharmacy' | 'lab' | string;
+  /** r13: a lab's top-up names `walletKind: 'lab'` and its `partnerId`; r20: a doctor's `walletKind: 'doctor'` and `specialistId`. */
+  walletKind?: WalletOwner | string;
   partnerId?: string;
+  specialistId?: string;
   amountMinor: number;
   createdAt: string;
   /** `paid_not_credited`: the card payment was taken; `not_checked_with_gateway`: an attempt nobody checked with Razorpay. */
@@ -208,7 +210,7 @@ export interface UncreditedTopup {
 export function uncreditedOf(data: unknown, ownerId: string): UncreditedTopup[] {
   if (!Array.isArray(data)) return [];
   const id = ownerId.toLowerCase();
-  const ownerOf = (r: UncreditedTopup) => (r.walletKind === 'lab' ? r.partnerId : r.pharmacyId);
+  const ownerOf = (r: UncreditedTopup) => (r.walletKind === 'lab' ? r.partnerId : r.walletKind === 'doctor' ? r.specialistId : r.pharmacyId);
   return data.filter((r): r is UncreditedTopup => !!r && typeof r === 'object'
     && hex.test(String((r as UncreditedTopup).paymentTransactionId)) && String(ownerOf(r as UncreditedTopup) ?? '').toLowerCase() === id
     && Number.isSafeInteger((r as UncreditedTopup).amountMinor));
@@ -222,16 +224,17 @@ export interface CompensatedClose {
 
 /** `closeCompensatedSchema.reason`: 1–500 characters after trimming. */
 export const MAX_CLOSE_REASON = 500;
-export function closeReasonProblem(text: string): string | undefined {
-  const r = cleanNote(text);
-  if (!r) return 'Write why this top-up is closed, for example who paid the pharmacy and how.';
-  if (r.length > MAX_CLOSE_REASON) return `Use at most ${MAX_CLOSE_REASON} characters.`;
+const closeReasonFault = (r: string): 'empty' | 'long' | null => (!r ? 'empty' : r.length > MAX_CLOSE_REASON ? 'long' : null);
+export function closeReasonProblem(text: string, owner: WalletOwner): string | undefined {
+  const fault = closeReasonFault(cleanNote(text));
+  if (fault === 'empty') return `Write why this top-up is closed, for example who paid the ${owner} and how.`;
+  if (fault === 'long') return `Use at most ${MAX_CLOSE_REASON} characters.`;
   return undefined;
 }
 
 /** Owner wording: shown on the section and on the confirm step. */
-export const CLOSE_COMPENSATED_EXPLAIN =
-  'Use this only when Jansetu support already paid this amount to the pharmacy another way. The top-up can then never be credited.';
+export const closeCompensatedExplain = (owner: WalletOwner) =>
+  `Use this only when Jansetu support already paid this amount to the ${owner} another way. The top-up can then never be credited.`;
 
 const CLOSE_WORDS: Readonly<Record<string, string>> = {
   TOPUP_ALREADY_CREDITED: 'This top-up was already credited, nothing to close.',

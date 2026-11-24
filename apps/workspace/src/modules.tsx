@@ -30,7 +30,8 @@ import { LabBookingScreen } from './screens/partner/LabBookingScreen.tsx';
 import { LabBookingsScreen } from './screens/partner/LabBookingsScreen.tsx';
 import { LabDeskScreen } from './screens/partner/LabDeskScreen.tsx';
 import { LabWalletScreen } from './screens/partner/LabWalletScreen.tsx';
-import { LabWalletAdminScreen } from './screens/admin/LabWalletAdminScreen.tsx';
+import { DoctorWalletAdminScreen, LabWalletAdminScreen } from './screens/admin/LabWalletAdminScreen.tsx';
+import { DoctorWalletScreen } from './screens/doctor/DoctorWalletScreen.tsx';
 import { SlotsScreen } from './screens/partner/SlotsScreen.tsx';
 import { ClinicDoctorsScreen } from './screens/partner/ClinicDoctorsScreen.tsx';
 import { DeskScreen } from './screens/partner/DeskScreen.tsx';
@@ -123,6 +124,11 @@ export const PAGES: readonly WorkspacePage[] = [
   {
     path: '/doctor/earnings', roles: ['specialist'], element: <EarningsScreen />,
     nav: { label: 'Earnings', icon: Wallet, section: 'Doctor' },
+  },
+  // WQ23 (r20): the doctor's own wallet (`/specialists/me/assisted/wallet*`; a verified, active doctor).
+  {
+    path: '/doctor/wallet', roles: ['specialist'], element: <DoctorWalletScreen />,
+    nav: { label: 'Wallet', icon: Banknote, section: 'Doctor' },
   },
   // WQ12: assisted booking for walk-in patients (`/pharmacy-assisted`, `/pharmacy-bookings`) and the wallet (`/pharmacy-wallet`).
   {
@@ -289,6 +295,8 @@ export const PAGES: readonly WorkspacePage[] = [
     nav: { label: 'Doctors', icon: Stethoscope, section: 'Admin' },
   },
   { path: '/admin/doctors/:doctorId', roles: ['admin'], element: <DoctorScreen /> },
+  // WQ23 (r20): a doctor's wallet for admins (`/admin/doctors/:specialistId/wallet*`).
+  { path: '/admin/doctors/:doctorId/wallet', roles: ['admin'], element: <DoctorWalletAdminScreen /> },
   {
     path: '/admin/consultations', roles: ['admin'], element: <ConsultationsScreen />,
     nav: { label: 'Consultations', icon: CalendarSearch, section: 'Admin' },

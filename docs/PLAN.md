@@ -2111,6 +2111,43 @@ API gaps: none blocking.
 - L4: one QUOTE_CHANGED parser (`changedQuote`, used by `instantBookerRefusal`); the assisted refusals share one paise formatter
   (`rupees` in `assisted.ts`; the desk's copy is gone too).
 
+## WQ23 doctor wallet: the doctor's own wallet and the admin's doctor wallet tools (2026-11-25, branch `wq23/doctor-wallet`)
+
+Backend: r20 (`m0/r20-phase3a` d3f89855, design ASSISTED_BOOKING_DESIGN.md §25.12; local, under review). Web base: WQ22b 7c76251.
+Behind `ASSISTED_BOOKING_ENABLED_DOCTOR` (off: a new top-up answers 503, said as "Adding money to your wallet is not switched on
+yet."; reads, the check and verify keep working). Pharmacy and lab screens unchanged.
+
+- **Doctor › Wallet** (`/doctor/wallet`): the shared balance (with the card money), **Add money** by Razorpay on a keyed order
+  (`POST /specialists/me/assisted/wallet/topups`; after a lost answer "Top up" asks again with the same key and amount, WQ20b),
+  the proof to the existing `/payments/verify`, else the server's check; no top-up list for doctors (r20 E7), so an unconfirmed
+  top-up is kept on this device by its record id only, with "Check my top-up" (as the pharmacy's); the history in cursor pages.
+  A doctor who is not verified and active (403 `SPECIALIST_NOT_VERIFIED`) sees only "Your wallet opens once Jansetu has verified
+  your account and it is active."
+- **Admin › Doctors › a doctor › Wallet** (`/admin/doctors/:id/wallet`, linked from WQ18's doctor page): the admin lab wallet page,
+  generalised to its owner (`kind: 'lab' | 'doctor'`, `/admin/labs|doctors/:id/wallet*`): balance, hold and release, Add money
+  (Idempotency-Key, exact by-key read), history with notes, card top-ups with the dispute flag, card top-ups not credited with
+  the existing close (the uncredited list's doctor rows by `specialistId`).
+- **Shared, not copied**: the wallet API builds the lab's and the doctor's own routes from one function (`ownWalletApi`) and the
+  admin routes from one (`adminOwnerWalletApi`); one refusal mapper per owner (`ownerWalletRefusal`); the owner unions of the
+  admin pieces and the top-up warning take `'doctor'`.
+
+API gaps: none blocking. Doctors have no top-up list (by design, E7): a top-up whose answer was lost after a reload or on another
+device is not listed (the server's sweep credits it).
+
+### WQ23b review follow-ups (2026-11-25, same branch)
+
+- **A failed read keeps the page**: Add money (with its answer) and the history stay once the wallet was read; only the
+  server's "closed" (403 `SPECIALIST_NOT_VERIFIED`) replaces them.
+- **A closed wallet still checks this device's top-ups** (r20 E8): the closed note, then "Top-ups not confirmed yet" with
+  "Check my top-up", kept in place while the wallet is read again.
+- **Words name the owner**: the close as already paid by hand (`closeCompensatedExplain(owner)`, and the missing-reason words
+  `closeReasonProblem(text, owner)`); a doctor with no wallet yet: "It is made when money is first added, by the doctor or
+  here" (r20 makes none on a read); the admin's balance shows a doctor's card money as the doctor sees it.
+- **No duplication**: one keyed top-up source for a lab and a doctor (`ownerTopupSource` in `topup.tsx`); one
+  `WalletOwner = 'pharmacy' | WalletOwnerKind`; no `OWNER_WORD`; one owner tools object (`w`, `refusal`) on the admin
+  owner page; `adminLabWalletApi`, `adminDoctorWalletApi`, `labWalletRefusal` and `doctorWalletRefusal` removed (tests use
+  `adminOwnerWalletApi(c, kind)` and `ownerWalletRefusal(err, kind)`); the admin routes take `ownerId`.
+
 ## Follow-ups
 
 
@@ -2145,6 +2182,9 @@ API gaps: none blocking.
 | Date | Packet | Checks |
 |---|---|---|
 
+
+| 2026-11-25 | WQ23b review follow-ups (on 0b14df3) | typecheck clean; Vitest 443/443 (doctorWallet.test.ts and labWallet.test.ts on `adminOwnerWalletApi(c, kind)` and `ownerWalletRefusal(err, kind)`; wq15.test.ts: the close words and the missing-reason words name the owner); Playwright doctor-wallet + lab-wallet + pharmacy-extras + admin + admin-doctors 130/130 (doctor-wallet +4 = 2 journeys x 2: a failed wallet read after a top-up keeps Add money, its answer and the history; a doctor whose wallet closed after a reload still checks this device's top-up and is told it was added; extended: the admin's balance shows a doctor's card money) on a temporary config (port 5496, deleted); release build with VITE_API_SAME_ORIGIN=true. |
+| 2026-11-25 | WQ23 doctor wallet (on 7c76251, then WQ22c merged) | Against r20 d3f89855 (§25.12; mocked API). typecheck clean; Vitest 443/443 (+3 in doctorWallet.test.ts: the doctor's own routes and the existing /payments/verify, the admin routes under /admin/doctors with bad ids refused before any request, the words: wallet closed for an unverified doctor, switched off per owner, doctor not found, uncredited doctor rows by specialistId, the warning names the doctor); Playwright workspace 952/954 then doctor-tools + doctor-wallet 62/62 (+8 = 4 journeys x 2: a doctor adds money and sees it in the history, a lost order answer then "Top up" asks again with the same key and amount, an unverified doctor sees only the plain words and a switched-off server says so, the admin adds money after a lost answer (the check finds it by key) and holds and releases the wallet; the 2 failures were the doctor nav count, now 7 with Wallet) on a temporary config (port 5496, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ22c review follow-ups (L1–L4 on 7c76251) | typecheck clean; Vitest 440/440 (assistedInstant.test.ts extended: a 404 with no code is "not switched on", a coded 404 keeps its words, an unreadable QUOTE_CHANGED names no price); Playwright consult-now + assisted-booking + lab-desk 74/74 (consult-now +2 = 1 journey x 2: a server without the routes says not switched on; extended: no activity for three minutes after the offer ran out, activity again after asking again (failing before the fix), the refund words name the amount the server refunded) on a temporary config (port 5497, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ22b waiting requests listed (on da0015d) | typecheck clean; Vitest 440/440; Playwright consult-now 16/16 (+2 = 1 journey x 2: after a reload the waiting request is listed, opens the waiting view and is cancelled and refunded there; nothing about the patient kept in the browser; the list is gone after "Start another") on a temporary config (port 5495, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ22 pharmacy Consult now (on 97b2449 + origin/stage f089b46, then WQ20b and WQ20c) | Against r17 02b4a0e0 (§25.12; mocked API). typecheck clean; Vitest 440/440 (+4 in assistedInstant.test.ts: the routes with the phone only in a body and the speciality trimmed, chat and bad ids/keys/versions refused before any request, where a request stands (waiting, offer ran out, accepted, refunded), the changed quote with the payable the server names, no doctor online, the switch, the wallet words); Playwright workspace 940/940 before WQ20c (+14 = 7 journeys x 2: request and accept with activity and the Join call, a changed quote paid again as a new request, no doctor online, cancel and refund on the version shown, ask any available doctor after the offer ran out, a lost answer checked by key, switched off), then lab-wallet + partner-workspace + consult-now 140/140 after merging WQ20c, on a temporary config (port 5492, deleted); release build with VITE_API_SAME_ORIGIN=true. |
