@@ -13,6 +13,7 @@ import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { useAssistedCreate } from './assistedCreate.ts';
+import { CursorPager, useCursorPages } from './cursorList.tsx';
 import { ConsultExtras, consultExtrasProblems, couponOf, EMPTY_EXTRAS, EMPTY_JOIN, JoinFields, joinOf, joinProblems, type ConsultExtrasDraft, type JoinDraft } from './bookingFields.tsx';
 import { JoinCall } from './BookedConsultationScreen.tsx';
 import { usePharmacyId } from './ownedOp.tsx';
@@ -106,6 +107,8 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
   function resetAll() {
     pt.reset(); setMode('video'); setSpeciality(''); setDoctorId(''); setJoin(EMPTY_JOIN); setExtras(EMPTY_EXTRAS); setErrors({});
     setReview(null); setRefused(null); setNotice(null); setNewQuote(null); setActive(null);
+    // The waiting list is read again (the request just followed may have been accepted or refunded meanwhile).
+    create.refresh();
   }
 
   async function next(e: FormEvent) {
@@ -169,6 +172,7 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
   return (
     <>
       {notice && <Alert tone="ok">{notice}</Alert>}
+      <OpenRequests pharmacyId={pharmacyId} onOpen={setActive} />
       <PatientSection step={pt} busy={busy} frozen={patientDone || frozen} locked={frozen} nextLabel="Next: choose the doctor" />
       {patientDone && (
         <section className="ws-section" aria-labelledby="cn-h">
@@ -239,6 +243,35 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
 }
 
 /**
+ * WQ22b: this pharmacy's requests still waiting for a doctor (`GET /requests?status=offered`, newest first), shown only when
+ * there are some: after a reload or on another device a waiting request is found here (its id is kept in session memory
+ * only), so it is followed, refunded or asked again rather than requested a second time.
+ */
+function OpenRequests({ pharmacyId, onOpen }: { pharmacyId: string; onOpen: (id: string) => void }) {
+  const { api } = useSession();
+  const pages = useCursorPages();
+  const list = useQuery({
+    queryKey: ['assisted-instant', pharmacyId, 'open', pages.cursor],
+    queryFn: () => pharmacyInstantApi(api).requests({ status: 'offered', limit: 20, ...(pages.cursor ? { cursor: pages.cursor } : {}) }),
+  });
+  if (!list.data || (list.data.items.length === 0 && pages.page === 1)) return null;
+  return (
+    <section className="ws-section" aria-labelledby="open-h">
+      <h2 id="open-h">Waiting for a doctor</h2>
+      <ul className="ws-list" aria-label="Requests waiting for a doctor">
+        {list.data.items.map((r) => (
+          <li key={r._id} className="ws-actions">
+            <span>{r.patientName ?? 'A patient'} · {r.specialization} · {INSTANT_MODE_LABEL[r.mode] ?? r.mode}{r.money ? ` · ${formatRupees(r.money.paidMinor / 100)}` : ''}</span>
+            <Button variant="secondary" aria-label={`Open the request for ${r.patientName ?? 'the patient'}`} onClick={() => onOpen(r._id)}>Open</Button>
+          </li>
+        ))}
+      </ul>
+      <CursorPager pages={pages} nextCursor={list.data.nextCursor} label="Waiting request pages" />
+    </section>
+  );
+}
+
+/**
  * The request waiting for a doctor (`GET /requests/:id`, read every few seconds). While it waits the screen tells the
  * server the pharmacy is still here (`POST …/activity`; without it the money comes back 30 minutes later). "Ask again"
  * offers it again (to the same choice, or to any doctor), "Cancel and refund" returns the money before a doctor accepts;
@@ -282,6 +315,7 @@ function Waiting({ pharmacyId, requestId, onAnother }: { pharmacyId: string; req
       setOutcome({ tone: definitelyNotRecorded(err) ? 'error' : 'warn', text: definitelyNotRecorded(err) ? why.message : `Not confirmed: ${why.message} It is shown as it is now.` });
     } finally {
       await settleRead();
+      void queryClient.invalidateQueries({ queryKey: ['assisted-instant', pharmacyId, 'open'] });
       void queryClient.invalidateQueries({ queryKey: ['pharmacy-wallet', pharmacyId] });
     }
   });

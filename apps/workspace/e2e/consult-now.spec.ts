@@ -74,6 +74,11 @@ async function mockBackend(page: Page): Promise<Backend> {
       const d = doctors.find((x) => x.doctorId === url.searchParams.get('doctorId'));
       return ok(route, { quotedAmountMinor: d ? d.instantFeeMinor : 50000, doctors: d ? 1 : 2 });
     }
+    if (path === `${base}/requests` && method === 'GET') {
+      const st = url.searchParams.get('status');
+      const rows = b.request && (!st || b.request.status === st) ? [b.request] : [];
+      return json(route, 200, { success: true, data: rows, pagination: { total: rows.length, nextCursor: null } });
+    }
     if (path === `${base}/requests` && method === 'POST') {
       const x = body as Json;
       const key = String(x.requestKey);
@@ -260,4 +265,29 @@ test('switched off: said once; nothing is requested', async ({ page }) => {
   await page.getByRole('button', { name: 'Next: choose the doctor' }).click();
   await expect(page.getByText('Consult now for patients is not switched on yet.', { exact: false })).toBeVisible();
   expect(requests(backend)).toHaveLength(0);
+});
+
+test('WQ22b: after a reload a waiting request is listed; it opens the waiting view and is cancelled and refunded there', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await expect(page.getByRole('region', { name: 'Waiting for a doctor' })).toHaveCount(0);
+  await patientAndDoctor(page);
+  await page.getByRole('button', { name: 'Pay ₹500.00 from wallet and request' }).click();
+  await expect(page.getByRole('heading', { name: 'Waiting for a doctor' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+  await page.goto('/#/pharmacy/consult-now');
+  const open = page.getByRole('region', { name: 'Waiting for a doctor' });
+  await expect(open).toContainText('Ravi Kumar · General Physician · Video call · ₹500.00');
+  await open.getByRole('button', { name: 'Open the request for Ravi Kumar' }).click();
+  await expect(page.getByText('Offered to 2 doctors online.', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel and refund' }).click();
+  await page.getByRole('button', { name: 'Yes, cancel and refund' }).click();
+  await expect(page.getByText('Cancelled. ₹500.00 is back in your wallet; give the patient their money back.')).toBeVisible();
+  expect(backend.balanceMinor).toBe(200_000);
+  expect(requests(backend)).toHaveLength(1);
+  // Nothing about the patient was kept in the browser to find it: the server's list did.
+  expect(await stored(page)).not.toMatch(new RegExp(`${PHONE}|Ravi`));
+  await page.getByRole('button', { name: 'Start another' }).click();
+  await expect(page.getByRole('region', { name: 'Waiting for a doctor' })).toHaveCount(0);
 });

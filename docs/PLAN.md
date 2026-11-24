@@ -2061,8 +2061,12 @@ origin/stage f089b46 (WQ17c) merged first, then WQ20b and WQ20c. Behind `ASSISTE
   panel; "Where does the patient join?", the language/coupon/problem fields and their rules moved to `bookingFields.tsx`
   (Book consultation uses them); the Join call is exported from the booked consultation page.
 
-API gaps: none blocking. `GET /requests` (the open requests list) is not shown; after a reload the request is found again only
-from Booked consultations once accepted (an unaccepted one is refunded 30 minutes after the pharmacy left).
+- **WQ22b: Waiting for a doctor** (shown only when there are some): this pharmacy's requests still offered (`GET …/requests?status=offered`,
+  newest first, WQ17's cursor pager), each with **Open** = the waiting view (activity, Cancel and refund, Ask again). After a reload
+  or on another device a waiting request is found here, so it is not requested a second time. It is read again after every command
+  and when "Start another" is pressed.
+
+API gaps: none blocking.
 
 ## Follow-ups
 
@@ -2097,6 +2101,7 @@ from Booked consultations once accepted (an unaccepted one is refunded 30 minute
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ22b waiting requests listed (on da0015d) | typecheck clean; Vitest 440/440; Playwright consult-now 16/16 (+2 = 1 journey x 2: after a reload the waiting request is listed, opens the waiting view and is cancelled and refunded there; nothing about the patient kept in the browser; the list is gone after "Start another") on a temporary config (port 5495, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ22 pharmacy Consult now (on 97b2449 + origin/stage f089b46, then WQ20b and WQ20c) | Against r17 02b4a0e0 (§25.12; mocked API). typecheck clean; Vitest 440/440 (+4 in assistedInstant.test.ts: the routes with the phone only in a body and the speciality trimmed, chat and bad ids/keys/versions refused before any request, where a request stands (waiting, offer ran out, accepted, refunded), the changed quote with the payable the server names, no doctor online, the switch, the wallet words); Playwright workspace 940/940 before WQ20c (+14 = 7 journeys x 2: request and accept with activity and the Join call, a changed quote paid again as a new request, no doctor online, cancel and refund on the version shown, ask any available doctor after the offer ran out, a lost answer checked by key, switched off), then lab-wallet + partner-workspace + consult-now 140/140 after merging WQ20c, on a temporary config (port 5492, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ20c the permission editor waits for the partner's kind (on eebb19f) | typecheck clean; Vitest 432/432; Playwright lab-wallet 14/14 (+2 = 1 journey x 2: while the lab cannot be read, Save is off and nothing is listed; once read, the member's wallet access is kept on save; failing before the fix), partner-workspace + clinic-desk 164/164, on a temporary config (port 5494, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ20b review follow-ups (L1–L4 on 97b2449) | typecheck clean; Vitest 432/432 (labWallet.test.ts extended: wallet permissions for labs only, a clinic owner never offered them; partners.test.ts: a lab owner grants everything); Playwright lab-wallet + pharmacy-extras + admin + partner-workspace + assisted-booking + card-booking 306/306 (+2 = 1 journey x 2: a lost order answer, then "Top up" asks again with the same key and amount (one order), and a verify that says paid but not credited is settled by the server's check) on a temporary config (port 5493, deleted); release build with VITE_API_SAME_ORIGIN=true. |
