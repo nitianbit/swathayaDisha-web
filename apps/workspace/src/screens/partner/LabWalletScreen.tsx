@@ -1,12 +1,10 @@
-import { useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { holdsAny, LAB_TOPUP_MAX_MINOR, LAB_TOPUP_STATE_LABEL, labTopupCheckable, labWalletApi, labWalletRefusal, type LabTopupRow } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
-import { messageOf } from '../../errors.ts';
 import { useSession } from '../../session.tsx';
-import { useOneAtATime } from '../finance/finance.tsx';
-import { CHECK_LABEL, checkTopup, TopUpForm, UNPAID_CHECK_AGAIN, type TopupSource } from '../pharmacy/topup.tsx';
-import { PagerNav, useCursorPages, WalletBalance, WalletHistory } from '../pharmacy/WalletScreen.tsx';
+import { CHECK_LABEL, TopUpForm, UNPAID_CHECK_AGAIN, useTopupCheck, type TopupSource } from '../pharmacy/topup.tsx';
+import { CursorPager, useCursorPages } from '../pharmacy/cursorList.tsx';
+import { WalletBalance, WalletHistory } from '../pharmacy/WalletScreen.tsx';
 import { LabOnly } from './labs.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
@@ -40,11 +38,11 @@ function Wallet({ ctx }: { ctx: ScopeContext }) {
   const key = [...ctx.key, 'lab-wallet'];
   const wallet = useQuery({ queryKey: [...key, 'balance'], queryFn: () => w.wallet() });
   const history = useCursorPages();
-  const entries = useQuery({ queryKey: [...key, 'entries', history.cursor], queryFn: () => w.entries(history.cursor) });
+  const entries = useQuery({ queryKey: [...key, 'entries', history.cursor], queryFn: () => w.entries(history.cursor || undefined) });
   const source: TopupSource = {
     owner: `lab-${scopeIdentity(ctx)}`, queryKey: key, maxRupees: LAB_TOPUP_MAX_MINOR / 100,
     start: (rupees, requestKey) => w.startTopup(Math.round(rupees * 100), requestKey),
-    verify: (p) => w.verify(p), check: (id) => w.checkTopup(id), refusal: labWalletRefusal, rememberOnDevice: false,
+    verify: (p) => w.verify(p), check: (id) => w.checkTopup(id), refusal: labWalletRefusal, rememberOnDevice: false, keyed: true,
   };
   return (
     <>
@@ -56,7 +54,8 @@ function Wallet({ ctx }: { ctx: ScopeContext }) {
         </section>
       )}
       <Topups ctx={ctx} source={source} />
-      <WalletHistory q={entries} empty="Top-ups and bookings paid from the wallet are listed here." pager={history.pager(entries.data?.nextCursor)} />
+      <WalletHistory q={entries} empty="Top-ups and bookings paid from the wallet are listed here." first={history.page === 1}
+        pager={<CursorPager pages={history} nextCursor={entries.data?.nextCursor} label="Wallet history pages" />} />
     </>
   );
 }
@@ -67,38 +66,15 @@ function Wallet({ ctx }: { ctx: ScopeContext }) {
  */
 function Topups({ ctx, source }: { ctx: ScopeContext; source: TopupSource }) {
   const { api } = useSession();
-  const queryClient = useQueryClient();
   const pages = useCursorPages();
-  const list = useQuery({ queryKey: [...source.queryKey, 'topups', pages.cursor], queryFn: () => labWalletApi(api, ctx.scope).topups(pages.cursor) });
-  const { perform, busy } = useOneAtATime('top-up check');
-  const [checking, setChecking] = useState<string | null>(null);
-  const [notes, setNotes] = useState<Record<string, { tone: 'ok' | 'warn' | 'error'; text: string }>>({});
-
-  async function check(r: LabTopupRow) {
-    setChecking(r.paymentTransactionId);
-    try {
-      await perform(async () => {
-        const outcome = await checkTopup(source, r.paymentTransactionId);
-        void queryClient.invalidateQueries({ queryKey: source.queryKey });
-        setNotes((n) => ({ ...n, [r.paymentTransactionId]: outcome.kind === 'credited' ? { tone: 'ok', text: `${formatRupees(r.amountMinor / 100)} was added to your wallet.` }
-          : outcome.kind === 'closed' ? { tone: 'error', text: outcome.message }
-          : outcome.kind === 'unpaid' ? { tone: 'warn', text: UNPAID_CHECK_AGAIN }
-          : { tone: 'warn', text: `Could not check just now: ${outcome.message}` } }));
-      });
-    } catch (err) {
-      setNotes((n) => ({ ...n, [r.paymentTransactionId]: { tone: 'error', text: messageOf(err) } }));
-    } finally {
-      setChecking(null);
-    }
-  }
-
-  const pager = pages.pager(list.data?.nextCursor);
+  const list = useQuery({ queryKey: [...source.queryKey, 'topups', pages.cursor], queryFn: () => labWalletApi(api, ctx.scope).topups(pages.cursor || undefined) });
+  const { busy, checking, notes, check } = useTopupCheck(source, UNPAID_CHECK_AGAIN);
   return (
     <section className="ws-section" aria-labelledby="topups-h">
       <h2 id="topups-h">Top-ups</h2>
       {list.isPending ? <Loading label="Loading top-ups…" />
         : list.isError ? <ErrorState message={source.refusal(list.error).message} onRetry={() => void list.refetch()} />
-        : list.data.items.length === 0 && !pager.newer ? <Empty title="No top-ups yet">Money added by card or UPI is listed here.</Empty>
+        : list.data.items.length === 0 && pages.page === 1 ? <Empty title="No top-ups yet">Money added by card or UPI is listed here.</Empty>
         : (
           <>
             <div className="ws-table-wrap">
@@ -114,7 +90,7 @@ function Topups({ ctx, source }: { ctx: ScopeContext; source: TopupSource }) {
                       <td>
                         {labTopupCheckable(r.state) && (
                           <Button variant="secondary" busy={checking === r.paymentTransactionId} disabled={busy && checking !== r.paymentTransactionId}
-                            aria-label={`${CHECK_LABEL}: ${formatRupees(r.amountMinor / 100)} of ${formatDateTime(r.createdAt)}`} onClick={() => void check(r)}>{CHECK_LABEL}</Button>
+                            aria-label={`${CHECK_LABEL}: ${formatRupees(r.amountMinor / 100)} of ${formatDateTime(r.createdAt)}`} onClick={() => void check(r.paymentTransactionId, r.amountMinor / 100)}>{CHECK_LABEL}</Button>
                         )}
                         {notes[r.paymentTransactionId] && <Alert tone={notes[r.paymentTransactionId]!.tone}>{notes[r.paymentTransactionId]!.text}</Alert>}
                       </td>
@@ -123,7 +99,7 @@ function Topups({ ctx, source }: { ctx: ScopeContext; source: TopupSource }) {
                 </tbody>
               </table>
             </div>
-            <PagerNav pager={pager} label="Top-up pages" />
+            <CursorPager pages={pages} nextCursor={list.data.nextCursor} label="Top-up pages" />
           </>
         )}
     </section>

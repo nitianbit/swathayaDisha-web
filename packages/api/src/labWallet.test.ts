@@ -2,7 +2,7 @@ import { ApiError, createApiClient } from './client.ts';
 import { adminLabWalletApi, asMovement, asPharmacyWallet, LAB_WALLET_SWITCHED_OFF_MESSAGE, labTopupCheckable, labWalletApi, labWalletRefusal } from './labWallet.ts';
 import { movementLabel, signedPaiseOf, walletBalancePaise, walletState } from './assisted.ts';
 import { adminTopupWarning, ADMIN_TOPUP_WARNING, uncreditedOf } from './adminPharmacyWallet.ts';
-import { ALL_PARTNER_PERMISSIONS } from './partners.ts';
+import { ALL_PARTNER_PERMISSIONS, grantablePermissions, permissionsForKind } from './partners.ts';
 
 const LAB = 'a1'.repeat(12);
 const PAY = 'b1'.repeat(12);
@@ -124,6 +124,12 @@ describe('WQ20 lab wallet (r13 /partner-workspace/assisted, /admin/labs)', () =>
     // A pharmacy and a lab never share an id; a lab's rows are matched by `partnerId` only.
     expect(uncreditedOf(rows, LAB).map((r) => r.amountMinor)).toEqual([500, 700]);
     expect(ALL_PARTNER_PERMISSIONS).toEqual(expect.arrayContaining(['wallet.view', 'wallet.manage']));
+    // WQ20b: offered to labs only (a clinic, or a kind not read yet, is never offered them).
+    expect(permissionsForKind('lab')).toEqual(expect.arrayContaining(['wallet.view', 'wallet.manage']));
+    expect(permissionsForKind('clinic')).not.toContain('wallet.view');
+    expect(permissionsForKind(undefined)).not.toContain('wallet.manage');
+    expect(grantablePermissions({ role: 'owner', permissions: [] }, 'clinic')).not.toContain('wallet.view');
+    expect(grantablePermissions({ role: 'staff', permissions: ['wallet.view', 'bookings.view'] }, 'lab')).toEqual(['bookings.view', 'wallet.view']);
     expect(adminTopupWarning('lab')).toContain('or the lab could be paid twice');
     expect(ADMIN_TOPUP_WARNING).toContain('or the pharmacy could be paid twice');
   });

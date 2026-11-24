@@ -372,8 +372,14 @@ export function holdsAny(a: Pick<PartnerActorView, 'role' | 'permissions'>, anyO
 }
 
 /** Delegation ceiling: an owner may grant anything; staff only what they hold. */
-export function grantablePermissions(a: Pick<PartnerActorView, 'role' | 'permissions'>): PartnerPermission[] {
-  return a.role === 'owner' ? [...ALL_PARTNER_PERMISSIONS] : ALL_PARTNER_PERMISSIONS.filter((p) => a.permissions.includes(p));
+/** WQ20b: the wallet permissions are a lab's (r13); a clinic is never offered them. Unknown kind: none of them. */
+export const WALLET_PERMISSIONS: readonly PartnerPermission[] = ['wallet.view', 'wallet.manage'];
+export const permissionsForKind = (kind: PartnerKind | undefined): PartnerPermission[] =>
+  ALL_PARTNER_PERMISSIONS.filter((p) => kind === 'lab' || !WALLET_PERMISSIONS.includes(p));
+
+export function grantablePermissions(a: Pick<PartnerActorView, 'role' | 'permissions'>, kind?: PartnerKind): PartnerPermission[] {
+  const offered = permissionsForKind(kind);
+  return a.role === 'owner' ? offered : offered.filter((p) => a.permissions.includes(p));
 }
 
 /** Q8: only owners (and admins) change the partner profile (`updateOwnProfile`). */

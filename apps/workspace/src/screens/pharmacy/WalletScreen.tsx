@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import {
   movementLabel, pharmacyWalletApi, signedPaiseOf, walletBalancePaise, walletState, type Page, type PharmacyWallet, type WalletMovement,
@@ -59,9 +59,13 @@ function Wallet({ pharmacyId }: { pharmacyId: string }) {
         <TopUpForm pharmacyId={pharmacyId} />
       </section>
 
-      <WalletHistory q={movements} empty="Top-ups, booking payments and refunds are listed here."
-        pager={{ label: `Page ${page} of ${movements.data?.totalPages ?? 1}`, newer: page > 1 ? () => setPage(page - 1) : null,
-          older: page < (movements.data?.totalPages ?? 1) ? () => setPage(page + 1) : null }} />
+      <WalletHistory q={movements} empty="Top-ups, booking payments and refunds are listed here." pager={movements.data && movements.data.totalPages > 1 && (
+        <nav className="ws-pager" aria-label="Wallet history pages">
+          <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Newer</Button>
+          <span>Page {page} of {movements.data.totalPages}</span>
+          <Button variant="secondary" disabled={page >= movements.data.totalPages} onClick={() => setPage(page + 1)}>Older</Button>
+        </nav>
+      )} />
     </>
   );
 }
@@ -93,56 +97,25 @@ export function WalletBalance({ wallet, cardMoney = false }: { wallet: UseQueryR
   );
 }
 
-/** Newer / older through a wallet's history (page numbers for the pharmacy, cursors for a lab). */
-export interface HistoryPager { label: string; newer: (() => void) | null; older: (() => void) | null }
-
 /** WQ20: the wallet history every wallet screen shows (the table, its states and its pager). */
-export function WalletHistory({ q, empty, pager, notes = false }: {
-  q: UseQueryResult<Page<WalletMovement>>; empty: string; pager: HistoryPager; notes?: boolean;
+export function WalletHistory({ q, empty, pager, first = true, notes = false }: {
+  /** `pager`: the pharmacy's page numbers, or a lab's `CursorPager`; `first`: on the first page (an empty one says so). */
+  q: UseQueryResult<Page<WalletMovement>>; empty: string; pager: ReactNode; first?: boolean; notes?: boolean;
 }) {
   return (
     <section className="ws-section" aria-labelledby="hist-h">
       <h2 id="hist-h">Wallet history</h2>
       {q.isPending ? <Loading label="Loading wallet history…" />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : q.data.items.length === 0 && !pager.newer ? <Empty title="No money in or out yet">{empty}</Empty>
+        : q.data.items.length === 0 && first ? <Empty title="No money in or out yet">{empty}</Empty>
         : (
           <>
             <MovementsTable rows={q.data.items} notes={notes} />
-            <PagerNav pager={pager} label="Wallet history pages" />
+            {pager}
           </>
         )}
     </section>
   );
-}
-
-/** Newer / older buttons, when there is another page either way. */
-export function PagerNav({ pager, label }: { pager: HistoryPager; label: string }) {
-  if (!pager.newer && !pager.older) return null;
-  return (
-    <nav className="ws-pager" aria-label={label}>
-      <Button variant="secondary" disabled={!pager.newer} onClick={() => pager.newer?.()}>Newer</Button>
-      <span>{pager.label}</span>
-      <Button variant="secondary" disabled={!pager.older} onClick={() => pager.older?.()}>Older</Button>
-    </nav>
-  );
-}
-
-/**
- * WQ20: a newest-first history read by cursors (`nextCursor`): the cursors of the pages seen, so "Newer" goes back
- * exactly. `cursor` is the current page's (undefined on the first).
- */
-export function useCursorPages() {
-  const [stack, setStack] = useState<(string | undefined)[]>([undefined]);
-  const cursor = stack[stack.length - 1];
-  return {
-    cursor,
-    pager: (next: string | null | undefined): HistoryPager => ({
-      label: `Page ${stack.length}`,
-      newer: stack.length > 1 ? () => setStack((s) => s.slice(0, -1)) : null,
-      older: next ? () => setStack((s) => [...s, next]) : null,
-    }),
-  };
 }
 
 /**

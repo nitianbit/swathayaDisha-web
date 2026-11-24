@@ -173,7 +173,8 @@ describe('partner rules mirrored from the backend service', () => {
   const wideStaff: PartnerActorView = { ...staff, branchIds: [] };
 
   it('delegation ceiling: owners grant everything, staff only what they hold; only owners add owners or edit permissions', () => {
-    expect(grantablePermissions(owner)).toEqual([...ALL_PARTNER_PERMISSIONS]);
+    // WQ20b: a lab owner grants everything; the wallet permissions are a lab's only.
+    expect(grantablePermissions(owner, 'lab')).toEqual([...ALL_PARTNER_PERMISSIONS]);
     expect(grantablePermissions(staff)).toEqual(['staff.manage', 'bookings.view']);
     expect(canAddOwner(owner)).toBe(true);
     expect(canAddOwner(staff)).toBe(false);

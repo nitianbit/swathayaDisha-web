@@ -31,6 +31,10 @@ interface Backend {
   loseVerifyAndCheck?: boolean;
   /** The next admin credit is made, then its answer is lost. */
   loseAdminAfter?: boolean;
+  /** WQ20b: the next top-up order is made, then its answer is lost. */
+  loseStartAfter?: boolean;
+  /** WQ20b: verify answers paid but not credited (the server's check then adds it). */
+  verifyNotCredited?: boolean;
 }
 
 const view = (b: Backend) => ({ ...b.wallet, updatedAt: NOW.toISOString() });
@@ -107,6 +111,7 @@ async function mockBackend(page: Page, me: Me): Promise<Backend> {
         const t = prior ?? { paymentTransactionId: `ab${String(++seq).padStart(22, '0')}`, amountMinor: x.amountMinor, state: 'awaiting_payment', status: 'created',
           memberId: b.me._id, razorpayOrderId: `order_${seq}`, createdAt: NOW.toISOString(), paidAt: null, requestKey: x.requestKey };
         if (!prior) b.topups.unshift(t);
+        if (b.loseStartAfter) { b.loseStartAfter = false; return route.abort('failed'); }
         return ok(route, { paymentTransactionId: t.paymentTransactionId, razorpayOrderId: t.razorpayOrderId, razorpayKeyId: 'rzp_test_1', amountMinor: t.amountMinor,
           currency: 'INR', state: t.state, replayed: !!prior });
       }
@@ -114,6 +119,10 @@ async function mockBackend(page: Page, me: Me): Promise<Backend> {
         const t = b.topups.find((y) => y.paymentTransactionId === (body as Rec).paymentTransactionId);
         if (!t) return fail(route, 404, 'PAYMENT_RECORD_NOT_FOUND', 'Payment record not found');
         if (b.loseVerifyAndCheck) { t.state = 'paid_not_credited'; t.status = 'paid'; return route.abort('failed'); }
+        if (b.verifyNotCredited) {
+          b.verifyNotCredited = false; t.state = 'paid_not_credited'; t.status = 'paid';
+          return ok(route, { context: 'wallet_recharge', paymentRecord: { _id: t.paymentTransactionId, status: 'paid', credited: false }, entity: view(b) });
+        }
         creditTopup(t);
         return ok(route, { context: 'wallet_recharge', paymentRecord: { _id: t.paymentTransactionId, status: 'paid', credited: true }, entity: view(b) });
       }
@@ -306,4 +315,27 @@ test('admin: the credit is once per key, a lost answer is resent with the same k
   expect(backend.calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toEqual([
     { frozen: true, reason: 'Card dispute under review' }, { frozen: false, reason: 'Resolved with the bank' },
   ]);
+});
+
+test('WQ20b: a lost order answer: "Top up" asks again with the same key and amount (one order); paid but not credited is checked first', async ({ page }) => {
+  const backend = await mockBackend(page, owner());
+  backend.loseStartAfter = true;
+  await signIn(page);
+  await page.goto('/#/partner/wallet');
+  await page.getByLabel('Amount to add (₹)').fill('600');
+  await page.getByRole('button', { name: 'Top up' }).click();
+  await expect(page.getByText('“Top up” asks for the same ₹600.00 again (never a second order).', { exact: false })).toBeVisible();
+  await expect(page.getByLabel('Amount to add (₹)')).toBeDisabled();
+  backend.verifyNotCredited = true;
+  await page.getByRole('button', { name: 'Top up' }).click();
+  await expect(page.getByText('₹600.00 was added to your wallet.')).toBeVisible();
+  const orders = backend.calls.filter((c) => c.method === 'POST' && c.path === '/partner-workspace/assisted/wallet/topups');
+  expect(orders).toHaveLength(2);
+  expect(orders[1]!.body).toEqual(orders[0]!.body);
+  expect(backend.topups).toHaveLength(1);
+  // Verify said paid but not credited: the server's check ran and added it once.
+  const after = backend.calls.findIndex((c) => c.path.endsWith('/payments/verify'));
+  expect(backend.calls.slice(after).some((c) => c.path.endsWith('/check'))).toBe(true);
+  expect(backend.entries).toHaveLength(1);
+  await expect(page.getByLabel('Amount to add (₹)')).toBeEnabled();
 });
