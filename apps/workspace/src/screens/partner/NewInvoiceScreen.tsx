@@ -423,7 +423,7 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
         <div className="rx-form-row">
           <TextField label="Customer name" value={d.name} maxLength={MAX_NAME} error={errors.name} readOnly={!!d.link?.nameFixed}
             onChange={(e) => set({ name: e.target.value })} />
-          <TextField label={d.link?.kind === 'lab_booking' ? 'Mobile number' : 'Mobile number (optional)'} inputMode="tel" value={d.phone} error={errors.phone} readOnly={!!d.link?.phoneFixed}
+          <TextField label={d.link?.kind === 'lab_booking' ? 'Mobile number' : 'Mobile number (optional)'} inputMode="tel" value={d.phone} error={errors.phone} readOnly={d.link?.kind === 'appointment' || !!d.link?.phoneFixed}
             onChange={(e) => set({ phone: e.target.value })} />
           <TextField label="Age (optional)" inputMode="numeric" value={d.age} error={errors.age} onChange={(e) => set({ age: e.target.value.replace(/\D/g, '') })} />
           <div className="j-field">

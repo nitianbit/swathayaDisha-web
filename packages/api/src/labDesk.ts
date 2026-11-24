@@ -1,5 +1,5 @@
 import { ApiError, type ApiClient } from './client.ts';
-import { ASSISTED_KEY_PATTERN, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type PatientLookup, type Refusal } from './assisted.ts';
+import { keyOf, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type PatientLookup, type Refusal } from './assisted.ts';
 import { labRefusal, labTotalMinor, type LabAddress } from './assistedLab.ts';
 import type { LabBooking } from './partnerLabs.ts';
 import { checkId, partnerWorkspaceBase, type PartnerScope } from './partners.ts';
@@ -43,7 +43,6 @@ export interface DeskReceipt { booking: LabBooking; patient: { name: string }; n
 export type DeskByKey = { state: 'used'; booking: LabBooking | null } | { state: 'abandoned' } | { state: 'unknown' };
 export interface DeskCancelAnswer { booking: LabBooking; alreadyCancelled: boolean }
 
-const keyOf = (v: string) => { if (!ASSISTED_KEY_PATTERN.test(v)) throw new Error('Invalid request key'); return v; };
 
 export function labDeskApi(c: ApiClient, scope: PartnerScope) {
   const base = () => `${partnerWorkspaceBase(scope)}/lab-desk`;

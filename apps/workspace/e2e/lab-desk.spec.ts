@@ -39,6 +39,8 @@ interface Backend {
   off?: boolean;
   /** The next create is made, then its answer is lost. */
   loseAfter?: boolean;
+  /** WQ19b: the next desk cancel is lost before it reaches the server (the booking stays confirmed). */
+  loseCancelBefore?: boolean;
   /** The lab changes this test's price just before the next create is decided. */
   bumpPrice?: { itemId: string; priceMinor: number };
 }
@@ -161,6 +163,7 @@ async function mockBackend(page: Page, me: Me = owner): Promise<Backend> {
     }
     const cancel = /^\/lab-desk\/bookings\/([0-9a-f]{24})\/cancel$/.exec(sub);
     if (cancel && method === 'POST') {
+      if (b.loseCancelBefore) { b.loseCancelBefore = false; return route.abort('failed'); }
       const bk = b.bookings.find((y) => y._id === cancel[1]);
       if (!bk || bk.source !== 'lab_desk' || !inScope(bk.branchId)) return fail(route, 404, 'LAB_BOOKING_NOT_FOUND', 'Booking not found');
       if (bk.status === 'cancelled') return ok(route, { booking: bk, alreadyCancelled: true });
@@ -426,6 +429,26 @@ test('cancel a desk booking: confirmed with the version it was opened on; no mon
   expect(sent.map((c) => c.path)).toEqual([`/partner-workspace/lab-desk/bookings/${'e1'.repeat(12)}/cancel`]);
   expect(sent[0]!.body).toEqual({ reason: 'Patient left', expectedVersion: 0 });
   await expect(page.getByRole('button', { name: 'Cancel this booking' })).toHaveCount(0);
+});
+
+test('WQ19b: a desk cancel lost before the server is checked while the booking is still confirmed: never said to be cancelled', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await page.goto(`/#/partner/lab-bookings/${'e1'.repeat(12)}`);
+  const cancel = page.getByRole('region', { name: 'Cancel' });
+  backend.loseCancelBefore = true;
+  await cancel.getByRole('button', { name: 'Cancel this booking' }).click();
+  await cancel.getByRole('button', { name: 'Yes, cancel it' }).click();
+  const panel = page.getByRole('group', { name: 'Unconfirmed cancellation' });
+  await expect(panel).toContainText('The booking may already be cancelled.');
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panel.getByText('Not cancelled so far.', { exact: false })).toBeVisible();
+  await expect(page.getByText('The booking is cancelled.')).toHaveCount(0);
+  await expect(page.getByText('Cancelled at the front desk', { exact: false })).toHaveCount(0);
+  expect(backend.bookings.find((x) => x._id === 'e1'.repeat(12))!.status).toBe('confirmed');
+  // Sending the same request again cancels it once.
+  await panel.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(page.getByText('Cancelled. The patient is told; nothing was paid through Jansetu, so nothing is refunded.')).toBeVisible();
 });
 
 test('switched off: the lookup says the front desk is not switched on yet', async ({ page }) => {

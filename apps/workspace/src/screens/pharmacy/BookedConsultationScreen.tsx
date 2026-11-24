@@ -170,7 +170,7 @@ function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, 
   const amount = typeof booking.price === 'number' ? formatRupees(booking.price) : 'The amount';
 
   return (
-    <OwnedCancel<PendingCancel, CancelAnswer> slot={`assisted-cancel:${pharmacyId}:${booking._id}`} label="Cancel this consultation"
+    <OwnedCancel<PendingCancel, CancelAnswer, BookedConsultation> slot={`assisted-cancel:${pharmacyId}:${booking._id}`} label="Cancel this consultation"
       perform={guard.perform} busy={guard.busy} version={booking.updatedAt}
       intro={<>
         You can cancel any time before the consultation starts.{' '}

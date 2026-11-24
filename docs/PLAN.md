@@ -1961,6 +1961,15 @@ API gaps:
 - No desk list of family members booked before (the lab never sees the account's family); family members are typed.
 - The bill page does not show its `labBookingId` (Q14 shows an appointment); left as it is.
 
+### WQ19b review fix (2026-11-25, same branch)
+
+- M1: the desk cancel's check read "cancelled" as true/false while the shared `OwnedCancel` (WQ17b) settles on "the booking, or
+  null": a lost cancel checked while the booking was still confirmed was said to be cancelled. Now it answers the booking when
+  cancelled, else null; `OwnedCancel`'s `V` is `extends object` with no default, so a true/false fails typecheck (every caller
+  names its booking type).
+- L1: the bill form's mobile stays read-only for every clinic appointment bill, as before; only a lab booking's may be typed.
+- L2: `labDesk.ts` uses `keyOf` from `assisted.ts` (no local copy).
+
 ## Follow-ups
 
 
@@ -1994,6 +2003,7 @@ API gaps:
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ19b review fix (M1, L1, L2 on e981104) | typecheck clean (a true/false `isCancelled` no longer compiles); Vitest 425/425; Playwright lab-desk 18/18 (+2 = 1 journey x 2: a desk cancel lost before the server, checked while the booking is still confirmed, says "Not cancelled so far" and is then resent once; failing before the fix), clinic-desk + partner-invoices + lab-booking + assisted-booking + card-booking 242/242 on a temporary config (port 5481, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ19 after merging WQ17b + WQ18 (24019c4): the desk on `useAssistedCreate` | typecheck clean; Vitest 425/425; Playwright workspace 902 run (temporary config, port 5481): 901 passed, 1 failed = pharmacy-extras.spec.ts:952 (tablet), whose check that storage holds no "250" matched the stored timestamp 1795552507312 (unrelated; 6/6 alone); lab-desk + lab-booking 38/38; release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ17b review fixes (M1, D1, D2, L1–L4 on 3c1960e) | Against r11 f5f171c9 (mocked API). typecheck clean; Vitest 406/406 (no change: D1/D2 are moves covered by the journeys); Playwright workspace 868/868 (+6 = 3 journeys x 2: L1 a lost accept not claimed after a cancel, L2 a refused accept said and read again, L3 a found cancel says what was done with the money; the reload journey now checks no price is shown (M1) and the list journey the Visited filter (L4); all five failed on 3c1960e; the consultation specs pass unchanged on the shared create hook). Temporary config on port 5471, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ19 lab front desk (on 0aca6c3 + WQ17 3c1960e) | Against r12 e304dabe (§24.12; mocked API). typecheck clean; Vitest 413/413 (+7 in labDesk.test.ts: member and admin paths with the phone only in bodies, refusals before any request, desk tests and total, switch/price/slot words, desk cancel and bill rules, steps on desk rows and walk-ins, the list `source` and the bill `labBookingId`); Playwright workspace 878 run on a temporary config (port 5481, no server reuse): 874 passed, 4 failed = 2 clinic-desk journeys x 2 that asserted a lab has no "Front desk" link (labs now have their own); updated to check that the link is the lab desk, then those and lab-desk.spec.ts 18/18 (+16 = 8 journeys x 2: walk-in, lab visit with a changed price, home collection with a collector, by-key after a reload, Make bill, desk cancel, switched off, branch scope); release build with VITE_API_SAME_ORIGIN=true. |

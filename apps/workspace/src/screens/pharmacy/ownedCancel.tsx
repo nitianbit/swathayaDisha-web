@@ -12,7 +12,7 @@ import { CheckPanel, useOwnedOp } from './ownedOp.tsx';
  * the check (the booking read again), the same request again (safe: a cancelled booking answers `alreadyCancelled`), or
  * forget. The booking-specific words and request come from the caller.
  */
-export function OwnedCancel<B, R, V = unknown>({ slot, label, intro, extra, consequence, version, perform, busy, makeBody, send, doneWords, refusalWords, onChanged,
+export function OwnedCancel<B, R, V extends object>({ slot, label, intro, extra, consequence, version, perform, busy, makeBody, send, doneWords, refusalWords, onChanged,
   isCancelled, checkedWords, forgetConsequence, onDone }: {
   /** The memory slot of this booking's cancel (per pharmacy and booking). */
   slot: string;
@@ -32,7 +32,7 @@ export function OwnedCancel<B, R, V = unknown>({ slot, label, intro, extra, cons
   refusalWords: (err: unknown) => string;
   /** After any answer that may have changed the booking (done, refused, found cancelled). */
   onChanged?: () => void;
-  /** Reads the booking again: the booking when it is cancelled, else null. */
+  /** Reads the booking again: the booking when it is cancelled, else null (never a true/false: `V` is an object). */
   isCancelled: () => Promise<V | null>;
   /** Said once the check found it cancelled (`body` is gone after a reload; `found`: the booking as read). */
   checkedWords: (body: B | undefined, restored: boolean, found: V) => string;

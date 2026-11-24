@@ -952,7 +952,7 @@ function DeskParts({ ctx, booking: b, disabled, perform, onNotice, reread, readN
         )}
       </section>
       {manage && canDeskCancel(b) && (
-        <OwnedCancel<{ reason?: string; expectedVersion: number }, DeskCancelAnswer> slot={`lab-desk-cancel:${scopeIdentity(ctx)}:${b._id}`}
+        <OwnedCancel<{ reason?: string; expectedVersion: number }, DeskCancelAnswer, LabBooking> slot={`lab-desk-cancel:${scopeIdentity(ctx)}:${b._id}`}
           label="Cancel this booking" intro="Booked at your front desk: cancelling moves no money. The patient is told." version={b.statusVersion}
           consequence={`Cancel ${b.patient.name}’s booking for ${slotLabel(b.slot)}? ${b.slot.walkIn ? '' : 'Its seat is freed. '}This cannot be undone. A bill already made is not cancelled with it.`}
           perform={perform} busy={disabled}
@@ -961,7 +961,7 @@ function DeskParts({ ctx, booking: b, disabled, perform, onNotice, reread, readN
           doneWords={(a) => (a.alreadyCancelled ? 'This booking was already cancelled: nothing more was done.' : 'Cancelled. The patient is told; nothing was paid through Jansetu, so nothing is refunded.')}
           refusalWords={(err) => deskRefusal(err).message}
           onChanged={reread}
-          isCancelled={async () => (await readNow()).status === 'cancelled'}
+          isCancelled={async () => { const now = await readNow(); return now.status === 'cancelled' ? now : null; }}
           checkedWords={() => 'The booking is cancelled.'}
           forgetConsequence="The booking may already be cancelled, or may still be. Forgetting it does not undo that. The booking shown is as it is saved now."
           onDone={onNotice} />
