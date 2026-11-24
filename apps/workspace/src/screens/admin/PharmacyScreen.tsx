@@ -6,7 +6,7 @@ import {
   isPharmacyEmailTaken, isPharmacyPhoneTaken, normalizeEmail, OBJECT_ID_PATTERN, pharmacyAdminApi, pharmacyBody, pharmacyForm,
   pharmacyHolds, pharmacyState, signsPharmacyOut, type PharmacyAccount, type PharmacyForm, type PharmacyUpdate,
 } from '@jansetu/api';
-import { Alert, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
+import { Alert, Button, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { changedFields, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
@@ -14,6 +14,7 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime, type Perform } from '../finance/finance.tsx';
+import { NoSuchRecord } from './accountList.tsx';
 import { useAdminScope } from './adminScope.ts';
 import { EMAIL_TAKEN, PHONE_TAKEN } from './NewPharmacyScreen.tsx';
 import { PharmacyBadges } from './PharmaciesScreen.tsx';
@@ -27,19 +28,9 @@ import { DetailFields, SignInFields } from './pharmacyFields.tsx';
 export function PharmacyScreen() {
   const { pharmacyId = '' } = useParams();
   const scope = useAdminScope('pharmacies');
-  if (!OBJECT_ID_PATTERN.test(pharmacyId)) return <NoSuchPharmacy />;
+  if (!OBJECT_ID_PATTERN.test(pharmacyId)) return <NoSuchRecord back="/admin/pharmacies" backLabel="Back to pharmacies" title="Pharmacy">Open it from the pharmacy list.</NoSuchRecord>;
   // One subtree per admin and pharmacy: a half-typed form never follows the admin to another pharmacy.
   return <PharmacyDetail key={`${scope.identity}:${pharmacyId}`} pharmacyId={pharmacyId} scopeKey={scope.key} />;
-}
-
-function NoSuchPharmacy() {
-  return (
-    <>
-      <Link className="ws-back" to="/admin/pharmacies"><ArrowLeft size={16} aria-hidden="true" /> Back to pharmacies</Link>
-      <PageHeading title="Pharmacy" />
-      <Empty title="No such pharmacy">Open it from the pharmacy list.</Empty>
-    </>
-  );
 }
 
 /** The fields of the details form (the sign-in contacts have their own, confirmed, change). */

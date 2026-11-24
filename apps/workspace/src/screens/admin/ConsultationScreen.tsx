@@ -17,9 +17,10 @@ import { formatYmd, useTicker } from '../doctor/doctor.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { formatDay } from '../partner/labs.tsx';
 import { useAdminScope } from './adminScope.ts';
+import { BookingCloseSection } from './BookingClose.tsx';
 import { consultationKind, consultationTone, paymentLabel } from './ConsultationsScreen.tsx';
 
-/** Admin: one consultation booking, its no-show history, and the one move of a no-show (Q14, WQ10b). */
+/** Admin: one consultation booking, its no-show history, the one move of a no-show (Q14, WQ10b), and close and refund (WQ18, S5c). */
 export function ConsultationScreen() {
   const { bookingId = '' } = useParams();
   const scope = useAdminScope('consultations');
@@ -84,6 +85,10 @@ function Consultation({ bookingId, identity, scopeKey }: { bookingId: string; id
                 {q.data.createdAt && <><dt>Booked</dt><dd>{formatDateTime(q.data.createdAt)}</dd></>}
               </dl>
             </section>
+            {/* WQ18 (S5c): close and refund a consultation whose doctor is not verified and active. */}
+            <BookingCloseSection b={q.data} bookingId={bookingId} scopeKey={scopeKey} perform={guard.perform} busy={guard.busy || q.isFetching}
+              readNow={async () => { const fresh = await consultationAdminApi(api).get(bookingId); queryClient.setQueryData(key, fresh); return fresh; }}
+              reread={reread} />
             <section className="ws-section" aria-labelledby="ns-h">
               <h2 id="ns-h">No-show</h2>
               <NoShowHistory b={q.data} />
