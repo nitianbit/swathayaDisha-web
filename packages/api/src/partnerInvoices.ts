@@ -168,6 +168,8 @@ export interface Invoice {
   doctorId?: string;
   /** Q14: the clinic appointment (booking id) this bill is for; part of the issued document. */
   appointmentId?: string;
+  /** r12: the lab front-desk booking this bill is for. */
+  labBookingId?: string;
   items: InvoiceLine[];
   totals: InvoiceTotals;
   lifecycleState: InvoiceState;
@@ -223,6 +225,12 @@ export interface NewInvoice {
    * APPOINTMENT_ALREADY_BILLED, 400 APPOINTMENT_BRANCH_MISMATCH / APPOINTMENT_DOCTOR_MISMATCH, 409 APPOINTMENT_CANCELLED).
    */
   appointmentId?: string;
+  /**
+   * r12 `labBookingId`: the lab front-desk booking this bill is for (not with `appointmentId`; one open bill per booking:
+   * 409 LAB_BOOKING_ALREADY_BILLED; 404 LAB_BOOKING_NOT_FOUND, 400 LAB_BOOKING_BRANCH_MISMATCH, 409 LAB_BOOKING_CUSTOMER_MISMATCH
+   * / LAB_BOOKING_CANCELLED).
+   */
+  labBookingId?: string;
   items: NewInvoiceLine[];
   idempotencyKey: string;
 }
@@ -497,6 +505,8 @@ export function partnerBillingApi(c: ApiClient, scope: PartnerScope) {
     /** Once-only by `body.idempotencyKey`: the same key with the same request answers the bill already issued. */
     createInvoice: (body: NewInvoice) => {
       if (body.appointmentId !== undefined) checkId(body.appointmentId, 'appointment');
+      if (body.labBookingId !== undefined) checkId(body.labBookingId, 'lab booking');
+      if (body.appointmentId !== undefined && body.labBookingId !== undefined) throw new Error('A bill is for one appointment or one lab booking');
       return c.post<Invoice>(`${base()}/invoices`, { body });
     },
     /** The bill's PDF as of lifecycle `version` (0 = as issued; default = now), read with the session's token. */

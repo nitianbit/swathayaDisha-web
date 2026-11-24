@@ -217,3 +217,9 @@ export {
   fenceHolds, isAlreadyCancelled, isFenceMismatch, MAX_DOCTOR_NAME_SEARCH, verifyFenceOf,
 } from './adminDoctors.ts';
 export type { AdminDoctor, AdminDoctorQuery, BookingClose, CloseRefundTarget, BookingCloseAnswer, BookingCloseBody, DoctorStateBody, VerifyFence } from './adminDoctors.ts';
+// WQ19: the lab front desk (r12): walk-in, lab visit and home collection booked by the lab, paid at the lab.
+export {
+  canBillDesk, canDeskCancel, deskItems, deskRefusal, deskTotalMinor, isDeskBooking, LAB_DESK_CONSENT_STATEMENT, LAB_DESK_CONSENT_VERSION,
+  LAB_DESK_SWITCHED_OFF_MESSAGE, labDeskApi,
+} from './labDesk.ts';
+export type { DeskBookingRequest, DeskByKey, DeskCancelAnswer, DeskCollector, DeskReceipt } from './labDesk.ts';

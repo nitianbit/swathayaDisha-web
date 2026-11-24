@@ -14,9 +14,15 @@ import type { Perform } from '../finance/finance.tsx';
  * who the patient is (the owner, a family member booked before, a new family member), the "patient agreed" tick. The
  * phone stays in this state and in POST bodies: never in the address, storage or logs.
  */
-export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onChangePhone }: {
+export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onChangePhone, lookupPatient }: {
+  /** The booker's identity (the pharmacy's id, or for the WQ19 lab desk the workspace's identity). */
   pharmacyId: string;
   perform: Perform;
+  /**
+   * WQ19: another booker's lookup (the lab desk's `POST /lab-desk/patients/lookup`). With it, family members booked before
+   * are not offered (only a pharmacy has that list): a family member is typed by name.
+   */
+  lookupPatient?: (phone: string) => Promise<PatientLookup>;
   /** Before a lookup (clears the page's notice). */
   onFind?: () => void;
   /** The lookup answered that booking for patients is switched off. */
@@ -49,7 +55,7 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
     if (!phone) { setPhoneError('Enter a valid 10-digit mobile number.'); return; }
     setPhoneError(null);
     try {
-      const result = await perform(() => assisted.lookup(phone));
+      const result = await perform(() => (lookupPatient ?? assisted.lookup)(phone));
       setLookup({ phone, result });
       setPatient({ ...EMPTY_PATIENT, phone });
       setPatientErrors({});
@@ -72,7 +78,7 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
       const second = first.nextCursor ? await assisted.bookings({ limit: 50, cursor: first.nextCursor }) : null;
       return [...first.items, ...(second?.items ?? [])];
     },
-    enabled: !!lookup?.result.exists,
+    enabled: !!lookup?.result.exists && !lookupPatient,
     staleTime: 60_000,
   });
   const knownFamily = useMemo(() => (lookup && family.data ? familyBookedBefore(family.data, lookup.phone) : []), [lookup, family.data]);
@@ -101,9 +107,12 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
 
 export type PatientStep = ReturnType<typeof usePatientStep>;
 
-/** Step 1 of an assisted booking. `frozen`: the step cannot change now; `locked`: "Change patient details" is off. */
-export function PatientSection({ step, busy, frozen, locked, nextLabel = 'Next: choose the doctor' }: {
-  step: PatientStep; busy: boolean; frozen: boolean; locked: boolean; nextLabel?: string;
+/**
+ * Step 1 of an assisted booking. `frozen`: the step cannot change now; `locked`: "Change patient details" is off.
+ * WQ19: `booker` names who books ("pharmacy" or "lab") and `consent` the statement the tick attests.
+ */
+export function PatientSection({ step, busy, frozen, locked, nextLabel = 'Next: choose the doctor', booker = 'pharmacy', consent = CONSENT_STATEMENT }: {
+  step: PatientStep; busy: boolean; frozen: boolean; locked: boolean; nextLabel?: string; booker?: 'pharmacy' | 'lab'; consent?: string;
 }) {
   const {
     phoneText, setPhoneText, phoneError, lookup, patient, setPatient, set, patientErrors, agreed, setAgreed, agreeError, setAgreeError,
@@ -195,7 +204,7 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = 'Next: 
             )}
             {patient.who !== 'self' && (
               <TextField label="Phone owner’s name (optional)" autoComplete="off" value={patient.holderName} maxLength={MAX_PERSON_NAME} error={patientErrors.holderName}
-                hint="Only used the first time your pharmacy books on this number." onChange={(e) => set('holderName', e.target.value)} />
+                hint={`Only used the first time your ${booker} books on this number.`} onChange={(e) => set('holderName', e.target.value)} />
             )}
 
             <label className="rx-ack">
@@ -203,7 +212,7 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = 'Next: 
                 onChange={(e) => { setAgreed(e.target.checked); if (e.target.checked) setAgreeError(null); }} />
               Patient agreed to this booking
             </label>
-            <span id="agree-text" className="j-field__hint">{CONSENT_STATEMENT}</span>
+            <span id="agree-text" className="j-field__hint">{consent}</span>
             {agreeError && <span id="agree-err" className="j-field__error" role="alert">{agreeError}</span>}
           </fieldset>
           {patientDone ? (

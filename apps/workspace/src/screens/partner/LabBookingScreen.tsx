@@ -7,6 +7,7 @@ import {
   istDateOf, isUploadFailed, LAB_BOOKING_STATUS_LABEL, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, labActions, labNoShowMove, MAX_COLLECTOR_NAME,
   MAX_LAB_REASON, MIN_LAB_REASON, noShowMovedOnce, OBJECT_ID_PATTERN, releaseOf, REPORT_ACCEPT, REPORT_MAX_BYTES, reportFileName, reportFileProblem,
   labBookingsAdminApi, type LabAction, type LabActionOffer, type LabBooking, type LabLifecycleKey, type LabSlot, type PartnerMember,
+  canBillDesk, canDeskCancel, deskRefusal, INVOICE_STATE_LABEL, isDeskBooking, labDeskApi, type DeskCancelAnswer,
 } from '@jansetu/api';
 import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
@@ -16,9 +17,10 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
-import { money } from './billing.tsx';
+import { BILL_READERS, BillLink, money } from './billing.tsx';
+import { OwnedCancel } from '../pharmacy/ownedCancel.tsx';
 import {
-  formatDay, LabOnly, labStatusTone, ReportPreview, slotLabel, useNow, useReportViewer, ViewFileButton,
+  formatDay, LabOnly, LabPayment, labStatusTone, ReportPreview, slotLabel, useNow, useReportViewer, ViewFileButton,
 } from './labs.tsx';
 import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
@@ -31,6 +33,8 @@ const CANCEL_REASON: Record<string, string> = {
   timeout: 'Not paid in time', customer: 'Cancelled by the customer', lab_reject: 'Rejected by the lab',
   // Q16a: an admin cancels a booking moved after a no-show, with or without a refund (`cancellation.refund`).
   admin_no_show: 'Cancelled by the Jansetu team after a no-show move',
+  // r11 / r12: the pharmacy that booked it, or the lab's own front desk.
+  partner: 'Cancelled by the pharmacy that booked it', desk: 'Cancelled at the front desk',
 };
 
 /**
@@ -141,7 +145,7 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
         {failure && <Alert>{failure}</Alert>}
         <div className="ws-actions">
           <Badge tone={labStatusTone(b.status)}>{LAB_BOOKING_STATUS_LABEL[b.status] ?? b.status}</Badge>
-          <Badge tone={b.paymentStatus === 'paid' ? 'ok' : b.paymentStatus === 'refunded' ? 'danger' : 'warn'}>{LAB_PAYMENT_STATUS_LABEL[b.paymentStatus] ?? b.paymentStatus}</Badge>
+          <LabPayment b={b} />
           {b.reschedule?.pending && <Badge tone="warn">New time proposed</Badge>}
         </div>
         {b.status === 'pending_payment' && (
@@ -207,7 +211,9 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
               ))}
             {offer('complete') && (
               <ConfirmAction label="Complete booking" disabled={disabled} confirmLabel="Complete booking" version={b.statusVersion}
-                consequence={<>Complete this booking? It ends here: no more reports can be uploaded or released, and the lab’s earning of {money(Math.max(0, b.pricing.subtotalMinor - b.pricing.discountMinor))} is recorded.</>}
+                consequence={isDeskBooking(b)
+                  ? <>Complete this booking? It ends here: no more reports can be uploaded or released. It was paid at the lab, so nothing is recorded through Jansetu.</>
+                  : <>Complete this booking? It ends here: no more reports can be uploaded or released, and the lab’s earning of {money(Math.max(0, b.pricing.subtotalMinor - b.pricing.discountMinor))} is recorded.</>}
                 onConfirm={(_r, v) => confirmed('complete', () => ctx.labs.complete(b._id, v as number), 'Booking completed.')} />
             )}
             {offer('assign') && <AssignCollector ctx={ctx} booking={b} disabled={disabled} perform={perform} />}
@@ -238,6 +244,11 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
             })} />
         )}
       </section>
+
+      {isDeskBooking(b) && <DeskParts ctx={ctx} booking={b} disabled={disabled}
+        perform={(run) => guarded('desk_cancel', run)} onNotice={(t) => { setFailure(null); setNotice(t); }}
+        reread={() => { void queryClient.invalidateQueries({ queryKey: key, exact: true }); void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'lab-bookings'] }); }}
+        readNow={() => ctx.labs.booking(b._id)} />}
 
       <Reports ctx={ctx} booking={b} offers={offers} disabled={disabled} perform={perform} />
 
@@ -381,7 +392,7 @@ function Step({ offer, label, disabled, busy, onClick }: { offer: LabActionOffer
 
 type Perform = (action: LabAction, run: () => Promise<LabBooking>, done: string) => Promise<void>;
 /** A step on this booking: the WQ3 transitions, and Q14's one move of a no-show. */
-type Step = LabAction | 'reschedule_no_show';
+type Step = LabAction | 'reschedule_no_show' | 'desk_cancel';
 
 /** Q14: the no-show this booking was moved after (when, from which slot, to which). */
 function NoShowHistory({ booking: b }: { booking: LabBooking }) {
@@ -907,5 +918,54 @@ function Timeline({ booking: b }: { booking: LabBooking }) {
         </ol>
       )}
     </section>
+  );
+}
+
+/**
+ * WQ19 (r12): a booking made at this lab's front desk, paid at the lab. Its bill (`labBookingId`): the number with a link,
+ * or "Make bill" (the new-bill form with the booking prefilled; the member enters the account holder's mobile). The desk's
+ * own cancel while it is confirmed (`POST /lab-desk/bookings/:id/cancel`, no money moves) with the version it was
+ * confirmed on, through the shared owned cancel (check, resend or forget an unconfirmed one).
+ */
+function DeskParts({ ctx, booking: b, disabled, perform, onNotice, reread, readNow }: {
+  ctx: ScopeContext; booking: LabBooking; disabled: boolean; perform: <T>(run: () => Promise<T>) => Promise<T>;
+  onNotice: (text: string) => void; reread: () => void; readNow: () => Promise<LabBooking>;
+}) {
+  const { api, memory } = useSession();
+  const desk = labDeskApi(api, ctx.scope);
+  const manage = holdsAny(ctx.actor, ['bookings.manage']);
+  return (
+    <>
+      <section className="ws-section" aria-labelledby="lb-bill-h">
+        <h2 id="lb-bill-h">Bill</h2>
+        <p className="ws-muted">Booked at your front desk: the patient pays at the lab, and the lab makes its own bill.</p>
+        {b.bill ? (
+          <p>
+            Bill: {holdsAny(ctx.actor, BILL_READERS) ? <Link to={`${ctx.link('invoices')}/${b.bill.invoiceId}`}>{b.bill.serial}</Link> : b.bill.serial}
+            {' · '}{INVOICE_STATE_LABEL[b.bill.state as keyof typeof INVOICE_STATE_LABEL] ?? b.bill.state}
+          </p>
+        ) : <p>No bill yet.</p>}
+        {canBillDesk(b) && (
+          <BillLink ctx={ctx} memory={memory} label="Make bill" prefill={{
+            link: { kind: 'lab_booking', id: b._id }, branchId: b.branchId, doctorId: '', name: '', phone: '', label: `${b.patient.name}, ${slotLabel(b.slot)}`,
+          }} />
+        )}
+      </section>
+      {manage && canDeskCancel(b) && (
+        <OwnedCancel<{ reason?: string; expectedVersion: number }, DeskCancelAnswer, LabBooking> slot={`lab-desk-cancel:${scopeIdentity(ctx)}:${b._id}`}
+          label="Cancel this booking" intro="Booked at your front desk: cancelling moves no money. The patient is told." version={b.statusVersion}
+          consequence={`Cancel ${b.patient.name}’s booking for ${slotLabel(b.slot)}? ${b.slot.walkIn ? '' : 'Its seat is freed. '}This cannot be undone. A bill already made is not cancelled with it.`}
+          perform={perform} busy={disabled}
+          makeBody={(reason) => ({ ...(reason ? { reason } : {}), expectedVersion: b.statusVersion })}
+          send={(body) => desk.cancel(b._id, body)}
+          doneWords={(a) => (a.alreadyCancelled ? 'This booking was already cancelled: nothing more was done.' : 'Cancelled. The patient is told; nothing was paid through Jansetu, so nothing is refunded.')}
+          refusalWords={(err) => deskRefusal(err).message}
+          onChanged={reread}
+          isCancelled={async () => { const now = await readNow(); return now.status === 'cancelled' ? now : null; }}
+          checkedWords={() => 'The booking is cancelled.'}
+          forgetConsequence="The booking may already be cancelled, or may still be. Forgetting it does not undo that. The booking shown is as it is saved now."
+          onDone={onNotice} />
+      )}
+    </>
   );
 }

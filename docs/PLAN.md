@@ -1967,6 +1967,52 @@ Backend r16 (`m0/r16-phase3d` 8e5337f4, design §25.12.4; local). On WQ17c f089b
   link on the waiting rows of Booked lab tests, as in Booked consultations.
 - Built against the r16b shape (the 3d review moved the load from `GET …/:code?phone=` to a POST body); mocked until r16b lands.
 
+## WQ19 lab front desk: book a walk-in, a lab visit or a home collection, paid at the lab (2026-11-25, branch `wq19/lab-desk`)
+
+Backend: r12 (`m0/r12-phase2c` e304dabe, design ASSISTED_BOOKING_DESIGN.md §24.12; local). Web base: stage 0aca6c3 + WQ17
+(`wq17/pharmacy-lab-booking`, merged first; merged again at 24019c4 with WQ17b and WQ18). Behind the backend's `LAB_DESK_ENABLED` (off: lookup and create answer 503
+`ASSISTED_BOOKING_DISABLED`, shown as "The lab front desk is not switched on yet.").
+
+- **Lab › Front desk** (`/partner/lab-desk`; labs, `bookings.manage`; admins at `/admin/partners/:id/lab-desk`, linked from the
+  partner page). The shared patient step (WQ12/WQ17) with the desk's lookup (`POST /lab-desk/patients/lookup`: masked holder
+  only; no "booked before" family list, a family member is typed) and the desk's consent sentence (`web-lab-desk-v1`); then one
+  form: Walk-in now / Lab visit at a time / Home collection, the branch (the member's branches offering the visit; chosen at once
+  when one), the tests (`GET /catalogue`: active tests and packages offered for the visit, with the total), a time (`GET /slots`,
+  open seats after now, the shared day picker; none for a walk-in), the address and an optional collector (name, mobile) for a
+  home collection, the language. One primary action, **Book**, then "Check the total" → `POST /lab-desk/bookings` (no `notes`;
+  `acceptedTotalMinor` = Σ catalogue prices). Owned PendingOp; a lost answer uses the shared unconfirmed panel (check by key,
+  same request again, give up; after a reload only the key). `PRICE_CHANGED`: the tests are read again and the new total said;
+  booking again is a new key. A sole first attempt refused before writing (switch, indexes, linking, lookup limit) is settled.
+- **After booking**: "Open the booking" (the existing lab booking page) and **Make bill**: the existing new-bill form with the
+  lab booking prefilled (session memory handover, as the clinic's Create bill): branch fixed, the account holder's mobile fixed
+  (only known right after booking; from the booking page later the member types it: the lab view carries no phone), body
+  `labBookingId`.
+- **Lab bookings**: desk rows show **Pay at lab** and the bill's number when linked (list and page). The page's steps run for desk
+  rows (`payAtLab`, never `paid`): a walk-in offers only Mark visited (no no-show, no new time); a desk row is never rejected
+  for a refund; Complete says nothing is recorded through Jansetu. A Bill section (number, or Make bill) and the desk's
+  **Cancel this booking** (the shared owned cancel; `POST /lab-desk/bookings/:id/cancel {reason?, expectedVersion}`; no money).
+- **Shared, not copied**: the keyed create is WQ17b's `useAssistedCreate` (now with an optional wallet key and `charged: false`;
+  the desk passes no price to accept, it re-reads the tests); `usePatientStep`/`PatientSection` take a lookup and the booker's
+  words; `UnconfirmedBooking` takes `charged`; the language select and the home address moved to `pharmacy/bookingFields.tsx` (Book consultation and Book lab
+  test use them); the bill handover is generic (`BillPrefill.link` = appointment or lab booking; `BillLink` and `BILL_READERS`
+  moved from the clinic desk to `partner/billing.tsx`); `LabPayment` badge in `partner/labs.tsx`; `checkId` exported from
+  `partners.ts` (as WQ18b).
+
+API gaps:
+- The lab booking view carries no phone, so Make bill from the booking page (not right after booking) asks for the account
+  holder's mobile (409 `LAB_BOOKING_CUSTOMER_MISMATCH` if it is another number).
+- No desk list of family members booked before (the lab never sees the account's family); family members are typed.
+- The bill page does not show its `labBookingId` (Q14 shows an appointment); left as it is.
+
+### WQ19b review fix (2026-11-25, same branch)
+
+- M1: the desk cancel's check read "cancelled" as true/false while the shared `OwnedCancel` (WQ17b) settles on "the booking, or
+  null": a lost cancel checked while the booking was still confirmed was said to be cancelled. Now it answers the booking when
+  cancelled, else null; `OwnedCancel`'s `V` is `extends object` with no default, so a true/false fails typecheck (every caller
+  names its booking type).
+- L1: the bill form's mobile stays read-only for every clinic appointment bill, as before; only a lab booking's may be typed.
+- L2: `labDesk.ts` uses `keyOf` from `assisted.ts` (no local copy).
+
 ## Follow-ups
 
 
@@ -2002,7 +2048,10 @@ Backend r16 (`m0/r16-phase3d` 8e5337f4, design §25.12.4; local). On WQ17c f089b
 |---|---|---|
 | 2026-11-25 | WQ21 recommended-tests code (phase 3d web) + L1/L2 on f089b46 | Against r16 8e5337f4 with the r16b POST lookup (mocked; §25.12.4). typecheck clean; Vitest 429/429 (+7: wq21.test.ts 4 (cleaning and printing the code, the POST body with no code or number in the URL and no malformed code sent, exact-name ticks, refusal words and the switch-off rule), wq21b.test.ts 3 (`routeCardAnswer` for both kinds, the held-without-order case, `isCardAnswer`)); Playwright workspace 902/902 (+6 = 3 journeys x 2: load and pre-tick with the unmatched name said and nothing new on create and nothing stored or in a URL; typo, not found and switch off; the booked consultation's code; the lab card journey now opens from the list's Pay now link (L2)). Temporary config on port 5473, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ17c lab tests by card or UPI (phase 2b) on 24019c4 | Against r14 77594d72 (§24.14; mocked API). typecheck clean; Vitest 422/422 (+4 in wq17c.test.ts: card state by kind, the lab view's order without an amount, cancel words by who is told and the waiting lab cancel, `refundTo` and `status=pending_payment`; the lab card switch-off words now the consultation's); Playwright workspace 895 passed of 896 (+10 = 5 journeys x 2: lab card pay, Checkout closed then Pay now after asking the server, another device with an authorized payment gets no second Checkout, cancel to the card, cancel to the wallet; the consultation card and wallet specs pass unchanged on the shared pieces). The one failure is the known load-timing check in stock-supply.spec.ts:1277 (as in WQ18b): 6/6 on its own afterwards. Temporary config on port 5472, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
+| 2026-11-25 | WQ19b review fix (M1, L1, L2 on e981104) | typecheck clean (a true/false `isCancelled` no longer compiles); Vitest 425/425; Playwright lab-desk 18/18 (+2 = 1 journey x 2: a desk cancel lost before the server, checked while the booking is still confirmed, says "Not cancelled so far" and is then resent once; failing before the fix), clinic-desk + partner-invoices + lab-booking + assisted-booking + card-booking 242/242 on a temporary config (port 5481, deleted); release build with VITE_API_SAME_ORIGIN=true. |
+| 2026-11-25 | WQ19 after merging WQ17b + WQ18 (24019c4): the desk on `useAssistedCreate` | typecheck clean; Vitest 425/425; Playwright workspace 902 run (temporary config, port 5481): 901 passed, 1 failed = pharmacy-extras.spec.ts:952 (tablet), whose check that storage holds no "250" matched the stored timestamp 1795552507312 (unrelated; 6/6 alone); lab-desk + lab-booking 38/38; release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ17b review fixes (M1, D1, D2, L1–L4 on 3c1960e) | Against r11 f5f171c9 (mocked API). typecheck clean; Vitest 406/406 (no change: D1/D2 are moves covered by the journeys); Playwright workspace 868/868 (+6 = 3 journeys x 2: L1 a lost accept not claimed after a cancel, L2 a refused accept said and read again, L3 a found cancel says what was done with the money; the reload journey now checks no price is shown (M1) and the list journey the Visited filter (L4); all five failed on 3c1960e; the consultation specs pass unchanged on the shared create hook). Temporary config on port 5471, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
+| 2026-11-25 | WQ19 lab front desk (on 0aca6c3 + WQ17 3c1960e) | Against r12 e304dabe (§24.12; mocked API). typecheck clean; Vitest 413/413 (+7 in labDesk.test.ts: member and admin paths with the phone only in bodies, refusals before any request, desk tests and total, switch/price/slot words, desk cancel and bill rules, steps on desk rows and walk-ins, the list `source` and the bill `labBookingId`); Playwright workspace 878 run on a temporary config (port 5481, no server reuse): 874 passed, 4 failed = 2 clinic-desk journeys x 2 that asserted a lab has no "Front desk" link (labs now have their own); updated to check that the link is the lab desk, then those and lab-desk.spec.ts 18/18 (+16 = 8 journeys x 2: walk-in, lab visit with a changed price, home collection with a collector, by-key after a reload, Make bill, desk cancel, switched off, branch scope); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ17 pharmacy lab-test booking (phase 2a) on 0aca6c3 | Against r11 f5f171c9 (§24.11; mocked API). typecheck clean; Vitest 406/406 (+5 in assistedLab.test.ts: lab, catalogue and slot paths and queries, ids and keys checked before sending, the cursor list, by-key, abandon, cancel with `expectedVersion`, accept with the proposal version, the 1-hour cancel rule, the tests' total, branches by visit, status and refusal words); Playwright workspace 862/862 (+16 = 8 journeys x 2: book with the shared patient step and pay from the wallet (no note offered), home collection with its address, a lost answer and a reload then Check by key, price changed then not enough money, list and cancel with the version, accept a new time, open a released report and no cancel within the hour, another pharmacy's booking not found and the switch off); the consultation specs pass unchanged on the shared components. A first full run had 6 timeouts in doctor-tools and admin-pharmacies (load); both specs then passed 88/88 and a second full run passed 862/862. Temporary config on port 5403, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ18b no duplicated code and review follow-ups (O1–O3, L2–L4 on 62e94b3) | Mocked API as WQ18. typecheck clean; Vitest 413/413 (wq18.test.ts updated: no open-consultations read, the close reason checked with the admin-cancel rule, refund targets incl. the card being refunded); Playwright workspace 864 run (+4 = 2 journeys x 2: a resend refused for a fence mismatch is settled and shown, no Verify without a name; a card-paid pharmacy booking's close says the refund is on its way to the card; the close journeys moved to ConfirmAction and the doctor page's links to Consultations): 863 passed, 1 timing failure in the untouched pharmacy stock-import spec (stock-supply.spec.ts:1277, tablet, under a 14-minute loaded run), passing 6/6 on its own; temporary config on port 5462, deleted; release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ18 admin doctors: verify with the S5 fence, unverify; close and refund (on 0aca6c3) | Against stage q16-integration f81c8f3b (routes unchanged at f5f171c9; mocked API). typecheck clean; Vitest 413/413 (+12 in wq18.test.ts: list/get/open-consultation paths and filters, verify body with the trimmed fence and unverify without one, fence holds/mismatch, eligibility, close body/key/version checks before any request, a 200 without this key's close is a 502, when close is offered, final vs before-writing answers, refund words, close by key); Playwright workspace 860/860 (+14 = 7 journeys x 2: list filters and verify OK, fence mismatch shows reviewed vs saved and verifies on the new values, lost verify checked by reading the doctor and unverify, close and refund with reason/key/version and nothing in storage or the address, lost close found by key and a resend replayed once, BOOKING_CHANGED and ALREADY_CANCELLED refusals and no close for a verified doctor, a pharmacy cannot reach the pages) on a temporary config (port 5461, no server reuse), admin specs 84/84 rerun on the final code; release build with VITE_API_SAME_ORIGIN=true. |

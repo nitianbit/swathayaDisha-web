@@ -5,10 +5,14 @@ import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requ
 import type { Perform } from '../finance/finance.tsx';
 import { useOwnedOp, type SendResult } from './ownedOp.tsx';
 
-/** What both assisted creates keep while one is checked and sent: the request (with its key and price) and its summary. */
+/**
+ * What every assisted create keeps while one is checked and sent: the request (with its key, and for the pharmacy's
+ * creates the price it accepts) and its summary. WQ19: the lab desk fences its own total and re-reads it instead.
+ */
 export interface PendingCreate {
-  request: { requestKey: string; acceptedPriceMinor: number };
-  summary: { priceMinor: number; couponChecked?: boolean };
+  request: { requestKey: string; acceptedPriceMinor?: number };
+  /** The pharmacy's creates show `priceMinor` (and `couponChecked` once a coupon was priced). */
+  summary: object;
 }
 
 /**
@@ -23,8 +27,10 @@ export function useAssistedCreate<P extends PendingCreate, R, A extends { state:
   book: (request: P['request']) => Promise<R>;
   abandon: (key: string) => Promise<A>;
   refusal: (err: unknown) => Refusal;
-  /** The pharmacy's wallet (read again after a wallet refusal) and the lists a booking changes. */
-  walletKey: readonly unknown[];
+  /** The pharmacy's wallet (read again after a wallet refusal; WQ19: none for the lab desk) and the lists a booking changes. */
+  walletKey?: readonly unknown[];
+  /** WQ19: false when nothing is charged through Jansetu (the lab desk: paid at the lab). */
+  charged?: boolean;
   refreshKeys: readonly (readonly unknown[])[];
   /** The create answered (also a replay). */
   onReceipt: (answer: R, p: PendingOp<P>) => void;
@@ -46,7 +52,8 @@ export function useAssistedCreate<P extends PendingCreate, R, A extends { state:
   const [resendError, setResendError] = useState<string | null>(null);
   const [givingUp, setGivingUp] = useState(false);
 
-  const refresh = () => { for (const queryKey of [o.walletKey, ...o.refreshKeys]) void queryClient.invalidateQueries({ queryKey }); };
+  const refresh = () => { for (const queryKey of [...(o.walletKey ? [o.walletKey] : []), ...o.refreshKeys]) void queryClient.invalidateQueries({ queryKey }); };
+  const nothing = o.charged === false ? 'nothing was booked' : 'nothing was booked or charged';
 
   /** The review stays, but paying again is a new request (a new key). */
   const rotateKey = () => {
@@ -69,7 +76,7 @@ export function useAssistedCreate<P extends PendingCreate, R, A extends { state:
     if (r.kind === 'unknown' && wasAbandoned(r.error)) {
       settle(p.requestKey);
       setReview(null);
-      o.onNotice('This booking was given up earlier, so nothing was booked or charged with it. Book again if the patient still wants it.');
+      o.onNotice(`This booking was given up earlier, so ${nothing} with it. Book again if the patient still wants it.`);
       return;
     }
     // A limit, the switch, the indexes or customer linking refused the only attempt before any booking write
@@ -91,7 +98,7 @@ export function useAssistedCreate<P extends PendingCreate, R, A extends { state:
       if (why.kind === 'patient' || why.kind === 'coupon' || why.kind === 'other' || why.kind === 'limit') setReview(null);
       // 'price', 'topup', 'wallet': the review stays, with what to do next; paying again is a new request (a new key).
       if (why.kind === 'topup' || why.kind === 'wallet') {
-        void queryClient.invalidateQueries({ queryKey: o.walletKey });
+        if (o.walletKey) void queryClient.invalidateQueries({ queryKey: o.walletKey });
         rotateKey();
       }
     }
@@ -132,7 +139,7 @@ export function useAssistedCreate<P extends PendingCreate, R, A extends { state:
       if (r.state !== 'abandoned') { setResendError('It could not be given up yet. Check whether it was recorded, then try again.'); return; }
       settle(p.requestKey);
       setReview(null);
-      o.onNotice('Given up: nothing was booked or charged with that request, and it can never be booked now. You can book again.');
+      o.onNotice(`Given up: ${nothing} with that request, and it can never be booked now. You can book again.`);
     } catch (err) {
       setResendError(o.refusal(err).message);
     } finally {
@@ -144,7 +151,7 @@ export function useAssistedCreate<P extends PendingCreate, R, A extends { state:
   function abandonedByCheck(requestKey: string) {
     settle(requestKey);
     setReview(null);
-    o.onNotice('That booking was given up, so nothing was booked or charged with it. You can book again.');
+    o.onNotice(`That booking was given up, so ${nothing} with it. You can book again.`);
   }
 
   return { op, settle, review, setReview, refused, setRefused, resendError, setResendError, givingUp, send: sendCreate, pay, payAtNewPrice, giveUp, rotateKey,

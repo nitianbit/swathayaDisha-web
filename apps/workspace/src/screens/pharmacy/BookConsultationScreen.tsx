@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import {
   ASSISTED_MODE_LABEL, assistedRefusal, isCardAnswer, routeCardAnswer, canonicalPhone, CONSENT_STATEMENT_LANGUAGE,
   CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday, joinWords, nextFreeSlot, supportedModes,
-  MAX_CONCERN, PATIENT_LANGUAGES, patientBody, pharmacyAssistedApi, SWITCHED_OFF_MESSAGE, type AssistedCardPayment, type AssistedDoctor, type AssistedMode, type AssistedSlot, type BookedConsultation,
+  MAX_CONCERN, patientBody, pharmacyAssistedApi, SWITCHED_OFF_MESSAGE, type AssistedCardPayment, type AssistedDoctor, type AssistedMode, type AssistedSlot, type BookedConsultation,
   type ByKeyAnswer, type ConsultationReceipt, type ConsultationRequest, type JoinOn, type Refusal,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
@@ -15,6 +15,7 @@ import { useOneAtATime } from '../finance/finance.tsx';
 import {
   CardDueSection, CardPaymentPanel, consultationCardSource, isOrderFailed, NOT_PAYABLE_WORDS, NotBooked, ORDER_FAILED_WORDS, useCardBookings, useCardChoice,
 } from './cardBooking.tsx';
+import { LanguageSelect } from './bookingFields.tsx';
 import { PatientSection, usePatientStep } from './patientStep.tsx';
 import { SlotDays } from './slotDays.tsx';
 import { useAssistedCreate } from './assistedCreate.ts';
@@ -436,15 +437,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
                       hint="Leave empty to use the patient’s mobile number above." onChange={(e) => setJoinPhone(e.target.value)} />
                   )}
                   <div className="rx-form-row">
-                    <div className="j-field">
-                      <label htmlFor="pt-lang">Language the patient speaks</label>
-                      <select id="pt-lang" value={language} aria-invalid={visitErrors.language ? true : undefined}
-                        aria-describedby={visitErrors.language ? 'pt-lang-err' : undefined} onChange={(e) => setLanguage(e.target.value)}>
-                        <option value="">Choose…</option>
-                        {PATIENT_LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
-                      </select>
-                      {visitErrors.language && <span id="pt-lang-err" className="j-field__error" role="alert">{visitErrors.language}</span>}
-                    </div>
+                    <LanguageSelect id="pt-lang" value={language} error={visitErrors.language} onChange={setLanguage} />
                     <TextField label="Coupon code (optional)" value={coupon} error={visitErrors.coupon} maxLength={50}
                       hint="Only if the patient has one." onChange={(e) => setCoupon(e.target.value)} />
                   </div>

@@ -151,7 +151,7 @@ describe('WQ8 review: a keyed payment refused for good on any attempt; a bill ha
   });
 
   it('a prefill is taken only by the navigation whose route state names its token', () => {
-    const prefill = { appointmentId: 'a', branchId: 'b', doctorId: 'd', name: 'Asha', phone: '9800000001', label: 'x' };
+    const prefill = { link: { kind: 'appointment' as const, id: 'a' }, branchId: 'b', doctorId: 'd', name: 'Asha', phone: '9800000001', label: 'x' };
     expect(takeHandover({ token: 't1', prefill }, { prefillToken: 't1' })).toEqual(prefill);
     expect(takeHandover({ token: 't1', prefill }, null)).toBeUndefined();
     expect(takeHandover({ token: 't1', prefill }, { prefillToken: 't2' })).toBeUndefined();
