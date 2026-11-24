@@ -2026,6 +2026,32 @@ API gaps:
   is not offered separately: the lot's names the same top-up).
 - Withdrawals are off (O2): the withdrawable amount is shown only.
 
+## WQ22 pharmacy "Consult now": an instant consultation for a walk-in, paid from the wallet (2026-11-25, branch `wq22/consult-now`)
+
+Backend: r17 (`m0/r17-phase3e` 02b4a0e0, design ASSISTED_BOOKING_DESIGN.md §25.12; local, under review). Web base: WQ20 97b2449,
+origin/stage f089b46 (WQ17c) merged first, then WQ20b. Behind `ASSISTED_INSTANT_ENABLED` and `ASSISTED_BOOKING_ENABLED_PHARMACY`
+(off: the reads and new requests answer 503, said as "Consult now for patients is not switched on yet.").
+
+- **Pharmacy › Consult now** (`/pharmacy/consult-now`, next to Book consultation): the shared patient step; then video or phone
+  call, the speciality (`GET /pharmacy-assisted/instant/specialities`: only those with doctors online, with the count; none:
+  "book a time instead"), any available doctor or a chosen one (`GET …/doctors`, nearest first, with the fee), where the patient
+  joins, the language, a coupon and a few words for the doctor; "Next: check the price" reads `GET …/quote`; then the shared
+  wallet pay ("Pay ₹X from wallet and request") and one keyed request (`POST …/requests`, the shared `useAssistedCreate`;
+  `acceptedQuoteMinor` / `acceptedPayableMinor`). `QUOTE_CHANGED` names the new price ("Use the new price" = a new request with
+  the server's quote and discount); `NO_DOCTOR_ONLINE` / `DOCTOR_NOT_ONLINE` send the person back to the doctor choice.
+- **Waiting**: the request read every 5 seconds while it waits; activity (`POST …/activity`) at once and every minute while the
+  screen is open (the money comes back 30 minutes after the pharmacy leaves); the offer's countdown; **Cancel and refund**
+  (`POST …/refund {expectedStatusVersion}`, confirmed); when the offer ran out, **Ask again** (the same choice) or **Ask any
+  available doctor** (`POST …/reoffer {target, expectedStatusVersion}`). A command's lost answer is settled by reading the
+  request. Once a doctor accepts: what came back of the quote, the booking's **Join call** (the booked consultation's own) and
+  **Open the booking**. The request's id (only) is kept in session memory, so leaving and coming back finds it.
+- **Shared, not copied**: the keyed create, the patient step, the wallet pay (it takes the button's words), the unconfirmed
+  panel; "Where does the patient join?", the language/coupon/problem fields and their rules moved to `bookingFields.tsx`
+  (Book consultation uses them); the Join call is exported from the booked consultation page.
+
+API gaps: none blocking. `GET /requests` (the open requests list) is not shown; after a reload the request is found again only
+from Booked consultations once accepted (an unaccepted one is refunded 30 minutes after the pharmacy left).
+
 ## Follow-ups
 
 

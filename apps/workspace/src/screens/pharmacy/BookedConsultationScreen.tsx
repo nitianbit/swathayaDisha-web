@@ -69,7 +69,6 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
   const b = q.data;
   const assistedRow = isAssistedBooking(b);
   const nameTarget = typedNameTarget(b);
-  const joinUrl = b.virtualMeeting?.joinUrl && /^https:\/\//.test(b.virtualMeeting.joinUrl) ? b.virtualMeeting.joinUrl : null;
   // WQ16b: how it was paid comes from the booker view's `payment` (r10c); on an older server, a card booking made on this
   // device is known by its remembered key. The key also gives the open order back for "Pay now".
   const waiting = assistedRow && waitingForCard(b);
@@ -107,9 +106,7 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
         {b.assisted?.disputed?.state === 'open' && (
           <Alert tone="warn">The account holder told Jansetu this booking is not theirs. Jansetu is looking into it.</Alert>
         )}
-        {joinUrl && (
-          <p><a className="j-btn j-btn--primary" href={joinUrl} target="_blank" rel="noopener noreferrer">Join call</a> Open it on this device with the patient next to you.</p>
-        )}
+        <JoinCall b={b} />
       </section>
 
       {payNote && <Alert tone={payNote.tone}>{payNote.text}</Alert>}
@@ -441,4 +438,11 @@ function RxLine({ pharmacyId, prescribed, line, onChange }: { pharmacyId: string
       )}
     </fieldset>
   );
+}
+
+/** The booking's Join call (an https link only, while the server gives one): also shown by Consult now once a doctor accepts. */
+export function JoinCall({ b }: { b: Pick<BookedConsultation, 'virtualMeeting'> }) {
+  const joinUrl = b.virtualMeeting?.joinUrl && /^https:\/\//.test(b.virtualMeeting.joinUrl) ? b.virtualMeeting.joinUrl : null;
+  if (!joinUrl) return null;
+  return <p><a className="j-btn j-btn--primary" href={joinUrl} target="_blank" rel="noopener noreferrer">Join call</a> Open it on this device with the patient next to you.</p>;
 }

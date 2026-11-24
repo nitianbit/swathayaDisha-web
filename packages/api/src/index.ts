@@ -228,3 +228,9 @@ export {
   LAB_WALLET_SWITCHED_OFF_MESSAGE, labTopupCheckable, labWalletApi, labWalletRefusal,
 } from './labWallet.ts';
 export type { LabTopupOrder, LabTopupRow, LabTopupState, LabWalletEntry, LabWalletLot, LabWalletView } from './labWallet.ts';
+// WQ22: the pharmacy's "Consult now" (r17): an instant consultation for a walk-in, paid from the wallet.
+export {
+  bookerInstantBody, changedQuote, INSTANT_ACTIVITY_MS, INSTANT_DESK_MODES, INSTANT_POLL_MS, INSTANT_SWITCHED_OFF_MESSAGE, instantBookerRefusal, instantStage,
+  offerCountdown, pharmacyInstantApi,
+} from './assistedInstant.ts';
+export type { InstantBookerByKey, InstantBookerReceipt, InstantBookerRequest, InstantBookerStatus, InstantBookerView, InstantDeskMode, InstantDoctor } from './assistedInstant.ts';

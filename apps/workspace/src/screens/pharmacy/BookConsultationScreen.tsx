@@ -15,7 +15,7 @@ import { useOneAtATime } from '../finance/finance.tsx';
 import {
   CardDueSection, CardPaymentPanel, consultationCardSource, isOrderFailed, NOT_PAYABLE_WORDS, NotBooked, ORDER_FAILED_WORDS, useCardBookings, useCardChoice,
 } from './cardBooking.tsx';
-import { LanguageSelect } from './bookingFields.tsx';
+import { ConsultExtras, consultExtrasProblems, couponOf, EMPTY_EXTRAS, EMPTY_JOIN, JoinFields, joinOf, joinProblems, type ConsultExtrasDraft, type JoinDraft } from './bookingFields.tsx';
 import { PatientSection, usePatientStep } from './patientStep.tsx';
 import { SlotDays } from './slotDays.tsx';
 import { useAssistedCreate } from './assistedCreate.ts';
@@ -146,19 +146,16 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   const [doctorId, setDoctorId] = useState<string | null>(null);
   const [slotId, setSlotId] = useState<string | null>(null);
   const [mode, setMode] = useState<AssistedMode | ''>('');
-  const [joinOn, setJoinOn] = useState<JoinOn | ''>('');
-  const [joinPhone, setJoinPhone] = useState('');
-  const [language, setLanguage] = useState('');
-  const [concern, setConcern] = useState('');
-  const [coupon, setCoupon] = useState('');
+  const [join, setJoin] = useState<JoinDraft>(EMPTY_JOIN);
+  const [extras, setExtras] = useState<ConsultExtrasDraft>(EMPTY_EXTRAS);
   const [visitErrors, setVisitErrors] = useState<Record<string, string>>({});
 
   // Step 3: check and pay.
   const [done, setDone] = useState<Done | null>(null);
 
   function resetAll() {
-    pt.reset(); setDoctorId(null); setSlotId(null); setMode(''); setJoinOn(''); setJoinPhone(''); setLanguage(''); setConcern('');
-    setCoupon(''); setVisitErrors({}); setReview(null); setRefused(null); setDone(null); setNotice(null);
+    pt.reset(); setDoctorId(null); setSlotId(null); setMode(''); setJoin(EMPTY_JOIN); setExtras(EMPTY_EXTRAS);
+    setVisitErrors({}); setReview(null); setRefused(null); setDone(null); setNotice(null);
     setCardDue(null); setEnded(null); setMethod('wallet');
   }
 
@@ -194,7 +191,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   }, [slots.data, modeFilter]);
   const modes: AssistedMode[] = slot ? supportedModes(slot.modes, modeFilter) : [];
 
-  function chooseDoctor(id: string) { setDoctorId(id); setSlotId(null); setMode(''); setJoinOn(''); setVisitErrors({}); setRefused(null); }
+  function chooseDoctor(id: string) { setDoctorId(id); setSlotId(null); setMode(''); setJoin(EMPTY_JOIN); setVisitErrors({}); setRefused(null); }
   function chooseSlot(s: AssistedSlot) {
     setSlotId(s.slotId);
     const m = supportedModes(s.modes, modeFilter);
@@ -210,32 +207,27 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     if (!doctor) errs.doctor = 'Choose a doctor.';
     else if (!slot) errs.slot = 'Choose a time.';
     else if (!mode) errs.mode = 'Choose how the consultation happens.';
-    if (mode && mode !== 'in-person') {
-      if (!joinOn) errs.joinOn = 'Choose where the patient joins.';
-      if (mode === 'call' && joinOn === 'patient_phone' && joinPhone.trim() && !canonicalPhone(joinPhone)) errs.joinPhone = 'Enter a valid 10-digit mobile number, or leave it empty.';
-    }
-    if (!language) errs.language = 'Choose the language the patient speaks.';
-    if (concern.trim().length > MAX_CONCERN) errs.concern = `Use at most ${MAX_CONCERN} characters.`;
-    const code = coupon.trim().toUpperCase();
-    if (code && !/^[A-Z0-9_-]{2,50}$/.test(code)) errs.coupon = 'Check the coupon code (letters and numbers only).';
+    if (mode) Object.assign(errs, joinProblems(mode, join));
+    Object.assign(errs, consultExtrasProblems(extras));
+    const code = couponOf(extras);
     setVisitErrors(errs);
     if (Object.keys(errs).length || !doctor || !slot || !mode || !lookup) return;
     // The fee as the doctor's own slot read says (fresher than the list); the server still fences it (PRICE_CHANGED).
     const price = priceMinor ?? slots.data?.doctor.feeMinor ?? doctor.feeMinor;
-    const join = mode === 'in-person' ? undefined
-      // The "number to call" field is shown (and sent) only for a phone call on the patient's phone.
-      : { on: joinOn as JoinOn, ...(mode === 'call' && joinOn === 'patient_phone' && joinPhone.trim() ? { phone: canonicalPhone(joinPhone)! } : {}) };
+    // The "number to call" field is shown (and sent) only for a phone call on the patient's phone.
+    const joinBody = joinOf(mode, join);
+    const concern = extras.concern;
     const requestKey = newRequestKey();
     const request: ConsultationRequest = {
       requestKey, phone: lookup.phone, ...patientBody({ ...patient, phone: lookup.phone }),
       consent: { agreed: true, statementVersion: CONSENT_STATEMENT_VERSION, statementLanguage: CONSENT_STATEMENT_LANGUAGE },
-      preferredLanguage: language, slotId: slot.slotId, consultationMode: mode, ...(join ? { join } : {}),
+      preferredLanguage: extras.language, slotId: slot.slotId, consultationMode: mode, ...(joinBody ? { join: joinBody } : {}),
       ...(code ? { couponCode: code } : {}), acceptedPriceMinor: price, ...(concern.trim() ? { primaryConcern: concern.trim() } : {}),
       paymentMethod: 'wallet',
     };
     setReview({
       requestKey, request,
-      summary: { patient: patientLabel(), doctor: doctor.name, date: slot.date, time: slot.startTime, mode, ...(join ? { joinOn: join.on } : {}), priceMinor: price,
+      summary: { patient: patientLabel(), doctor: doctor.name, date: slot.date, time: slot.startTime, mode, ...(joinBody ? { joinOn: joinBody.on } : {}), priceMinor: price,
         ...(code ? { couponCode: code } : {}) },
     });
   }
@@ -425,37 +417,14 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
                     <legend>How does the consultation happen?</legend>
                     {modes.map((m) => (
                       <label key={m} className="ws-check">
-                        <input type="radio" name="mode" checked={mode === m} onChange={() => { setMode(m); if (m === 'in-person') setJoinOn(''); }} />
+                        <input type="radio" name="mode" checked={mode === m} onChange={() => { setMode(m); if (m === 'in-person') setJoin(EMPTY_JOIN); }} />
                         {ASSISTED_MODE_LABEL[m]}
                       </label>
                     ))}
                     {visitErrors.mode && <span className="j-field__error" role="alert">{visitErrors.mode}</span>}
                   </fieldset>
-                  {mode && mode !== 'in-person' && (
-                    <fieldset className="ws-checks">
-                      <legend>Where does the patient join?</legend>
-                      <label className="ws-check">
-                        <input type="radio" name="join" checked={joinOn === 'partner_device'} onChange={() => setJoinOn('partner_device')} />
-                        {mode === 'call' ? 'The doctor calls this pharmacy (the patient stays with you)' : 'On this pharmacy’s device'}
-                      </label>
-                      <label className="ws-check">
-                        <input type="radio" name="join" checked={joinOn === 'patient_phone'} onChange={() => setJoinOn('patient_phone')} />
-                        On the patient’s own phone
-                      </label>
-                      {visitErrors.joinOn && <span className="j-field__error" role="alert">{visitErrors.joinOn}</span>}
-                    </fieldset>
-                  )}
-                  {mode === 'call' && joinOn === 'patient_phone' && (
-                    <TextField label="Number the doctor should call (optional)" inputMode="tel" autoComplete="off" value={joinPhone} error={visitErrors.joinPhone}
-                      hint="Leave empty to use the patient’s mobile number above." onChange={(e) => setJoinPhone(e.target.value)} />
-                  )}
-                  <div className="rx-form-row">
-                    <LanguageSelect id="pt-lang" value={language} error={visitErrors.language} onChange={setLanguage} />
-                    <TextField label="Coupon code (optional)" value={coupon} error={visitErrors.coupon} maxLength={50}
-                      hint="Only if the patient has one." onChange={(e) => setCoupon(e.target.value)} />
-                  </div>
-                  <TextArea label="What is the problem? (optional)" autoComplete="off" value={concern} maxLength={MAX_CONCERN} error={visitErrors.concern}
-                    hint="A few words for the doctor, for example “fever for 3 days”." onChange={(e) => setConcern(e.target.value)} />
+                  <JoinFields mode={mode} value={join} errors={visitErrors} onChange={setJoin} />
+                  <ConsultExtras value={extras} errors={visitErrors} onChange={setExtras} />
                 </>
               )}
             </fieldset>
