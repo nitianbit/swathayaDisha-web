@@ -180,7 +180,7 @@ export {
 } from './assisted.ts';
 export type { RescheduleAnswer, RescheduleRefusalKind, RescheduleRequest, TypedNameAnswer, TypedNameTarget } from './assisted.ts';
 export {
-  ADMIN_TOPUP_BY_KEY_PATH, ADMIN_TOPUP_KEY_PATTERN, ADMIN_TOPUP_PAGE_SIZE, ADMIN_TOPUP_SEARCH_PAGES, ADMIN_TOPUP_WARNING, adminPharmacyWalletApi, adminTopupForm, adminTopupRefusal,
+  ADMIN_TOPUP_BY_KEY_PATH, ADMIN_TOPUP_KEY_PATTERN, ADMIN_TOPUP_PAGE_SIZE, ADMIN_TOPUP_SEARCH_PAGES, ADMIN_TOPUP_WARNING, adminTopupWarning, adminPharmacyWalletApi, adminTopupForm, adminTopupRefusal,
   adminWalletReadError, findAdminTopup, isAdminTopupRow, latestAdminCredit, topupNotFoundWords,
   MAX_ADMIN_TOPUP_NOTE, MAX_ADMIN_TOPUP_RUPEES, MIN_ADMIN_TOPUP_NOTE,
   CLOSE_COMPENSATED_EXPLAIN, closeCompensatedFinal, closeCompensatedRefusal, closeReasonProblem, closeRefusedBeforeWriting, MAX_CLOSE_REASON, uncreditedOf,
@@ -222,3 +222,9 @@ export {
   LAB_DESK_SWITCHED_OFF_MESSAGE, labDeskApi,
 } from './labDesk.ts';
 export type { DeskBookingRequest, DeskByKey, DeskCancelAnswer, DeskCollector, DeskReceipt } from './labDesk.ts';
+// WQ20: the lab wallet (r13), shown with the pharmacy wallet's screens.
+export {
+  adminLabWalletApi, asMovement, asPharmacyWallet, LAB_ADMIN_TOPUP_MAX_MINOR, LAB_TOPUP_MAX_MINOR, LAB_TOPUP_MIN_MINOR, LAB_TOPUP_STATE_LABEL,
+  LAB_WALLET_SWITCHED_OFF_MESSAGE, labTopupCheckable, labWalletApi, labWalletRefusal,
+} from './labWallet.ts';
+export type { LabTopupOrder, LabTopupRow, LabTopupState, LabWalletEntry, LabWalletLot, LabWalletView } from './labWallet.ts';

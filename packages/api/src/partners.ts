@@ -25,7 +25,10 @@ export type PartnerPermission =
   | 'invoices.create'
   | 'invoices.cancel'
   | 'payments.record'
-  | 'finance.view';
+  | 'finance.view'
+  /** r13 (§24.13): the lab wallet: read it; add money to it. */
+  | 'wallet.view'
+  | 'wallet.manage';
 
 /** Backend `ALL_PERMISSIONS`, in its order, with the words shown to people. */
 export const PARTNER_PERMISSIONS: readonly { value: PartnerPermission; label: string }[] = [
@@ -41,6 +44,8 @@ export const PARTNER_PERMISSIONS: readonly { value: PartnerPermission; label: st
   { value: 'invoices.cancel', label: 'Cancel invoices' },
   { value: 'payments.record', label: 'Record payments' },
   { value: 'finance.view', label: 'View finance' },
+  { value: 'wallet.view', label: 'View the wallet' },
+  { value: 'wallet.manage', label: 'Add money to the wallet' },
 ];
 export const ALL_PARTNER_PERMISSIONS: readonly PartnerPermission[] = PARTNER_PERMISSIONS.map((p) => p.value);
 export const PERMISSION_LABEL: Record<PartnerPermission, string> =

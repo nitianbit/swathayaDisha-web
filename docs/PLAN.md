@@ -1970,6 +1970,38 @@ API gaps:
 - L1: the bill form's mobile stays read-only for every clinic appointment bill, as before; only a lab booking's may be typed.
 - L2: `labDesk.ts` uses `keyOf` from `assisted.ts` (no local copy).
 
+## WQ20 lab wallet: the lab's own wallet and the admin's lab wallet tools (2026-11-25, branch `wq20/lab-wallet`)
+
+Backend: r13 (`m0/r13-phase2d` 215556e2, design ASSISTED_BOOKING_DESIGN.md §24.13; local). Web base: WQ19 e981104 + WQ19b
+12f0321. Behind `ASSISTED_BOOKING_ENABLED_LAB` (off: a new top-up answers 503, said as "Adding money to the lab wallet is not
+switched on yet."; reads, checks and verify keep working). Kept minimal; the pharmacy wallet's own pieces show both wallets.
+
+- **Lab › Wallet** (`/partner/wallet`; labs, `wallet.view` or `wallet.manage`): the balance (with "Card money (withdrawals coming
+  later)" = `withdrawableMinor`, and the hold/owing words), **Add money** (`wallet.manage` only) by Razorpay: `POST
+  /partner-workspace/assisted/wallet/topups {amountMinor, requestKey}` (₹1–₹50,000), Checkout, `…/payments/verify`, else the
+  server's `…/wallet/topups/:id/check`; **Top-ups** as the server lists them (`GET …/wallet/topups`, state words; **Check my
+  top-up** on one not paid or not added yet: a lost answer is found here, nothing is kept on the device), and the history
+  (`GET …/wallet/entries`, cursor pages). `WALLET_LIMIT_REACHED` names the most and what can still be added (paise `details`).
+- **Admin › Labs and clinics › a lab › Wallet** (`/admin/partners/:id/wallet`): the balance, **Put on hold / Release the hold**
+  (`PUT /admin/labs/:id/wallet/freeze {frozen, reason}`, confirmed with a reason; a lost answer is settled by reading the
+  wallet), **Add money** (the admin pharmacy credit form: Idempotency-Key from an owned PendingOp, review with the last admin
+  credit, resend the same request, exact by-key read `GET …/topups/by-key/:key`; at most ₹2,00,000), the history with notes,
+  **Card top-ups** (lots) with **Record a card dispute** (`POST /admin/wallet-lots/:lotId/chargeback`; a lab's is flag only:
+  nothing is taken, the money stops being withdrawable), and **Card top-ups not credited** with the existing "Mark as already
+  paid by hand" (the uncredited list's lab rows, `walletKind: 'lab'`, by `partnerId`).
+- **Shared, not copied**: the top-up form takes a `TopupSource` (the pharmacy's routes by default; the lab's keyed order); the
+  balance, history table, pager and cursor pages are shared (`pharmacy/WalletScreen.tsx`; the admin pharmacy wallet uses the
+  same table); the admin credit form, balance and uncredited close take their owner (`AdminTopupTarget`, `owner: 'pharmacy' |
+  'lab'`; the pharmacy's slots, routes and fallback search are unchanged); the lab's paise answers are read into the
+  pharmacy's shapes (`asPharmacyWallet`, `asMovement`). The partner permissions gain `wallet.view` and `wallet.manage`.
+
+API gaps:
+- No admin mirror of the lab's own wallet routes (`/partner-workspace/admin/:id/workspace/assisted/*`); admins use
+  `/admin/labs/:id/wallet*` (no Razorpay top-up for an admin, as for pharmacies).
+- The lots read has no top-up record id link to the Top-ups list (a dispute is recorded per lot; `POST /admin/wallet-payments/:id/chargeback`
+  is not offered separately: the lot's names the same top-up).
+- Withdrawals are off (O2): the withdrawable amount is shown only.
+
 ## Follow-ups
 
 
@@ -2003,6 +2035,7 @@ API gaps:
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ20 lab wallet (on WQ19b 12f0321) | Against r13 215556e2 (§24.13; mocked API). typecheck clean; Vitest 432/432 (+7: labWallet.test.ts 6 (member and admin paths, the keyed order read into the pharmacy shape, refusals before any request, the Idempotency-Key and the exact by-key read, freeze and lot chargeback bodies, paise into balance/hold/owing and signed history rows, the wallet limit from its details, the switch, checkable states, a lab's uncredited rows, the wallet permissions, the owner in the warning) and topup.test.ts +1 (the ₹50,000 lab cap)); Playwright workspace 914/914 (+10 = 5 journeys x 2: top-up by Razorpay, a lost answer found under Top-ups and checked once, the wallet limit and the switch, wallet.view without Add money and a clinic with no wallet page, the admin credit resent after a lost answer with the same key and added once plus the hold and its release) on a temporary config (port 5491, no server reuse, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ19b review fix (M1, L1, L2 on e981104) | typecheck clean (a true/false `isCancelled` no longer compiles); Vitest 425/425; Playwright lab-desk 18/18 (+2 = 1 journey x 2: a desk cancel lost before the server, checked while the booking is still confirmed, says "Not cancelled so far" and is then resent once; failing before the fix), clinic-desk + partner-invoices + lab-booking + assisted-booking + card-booking 242/242 on a temporary config (port 5481, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ19 after merging WQ17b + WQ18 (24019c4): the desk on `useAssistedCreate` | typecheck clean; Vitest 425/425; Playwright workspace 902 run (temporary config, port 5481): 901 passed, 1 failed = pharmacy-extras.spec.ts:952 (tablet), whose check that storage holds no "250" matched the stored timestamp 1795552507312 (unrelated; 6/6 alone); lab-desk + lab-booking 38/38; release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ17b review fixes (M1, D1, D2, L1–L4 on 3c1960e) | Against r11 f5f171c9 (mocked API). typecheck clean; Vitest 406/406 (no change: D1/D2 are moves covered by the journeys); Playwright workspace 868/868 (+6 = 3 journeys x 2: L1 a lost accept not claimed after a cancel, L2 a refused accept said and read again, L3 a found cancel says what was done with the money; the reload journey now checks no price is shown (M1) and the list journey the Visited filter (L4); all five failed on 3c1960e; the consultation specs pass unchanged on the shared create hook). Temporary config on port 5471, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |

@@ -64,6 +64,7 @@ function PartnerDetail({ partnerId }: { partnerId: string }) {
                 {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/lab-bookings`}><FlaskConical size={22} aria-hidden="true" /><span>Lab bookings</span></Link></li>}
                 {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/slots`}><CalendarClock size={22} aria-hidden="true" /><span>Slots</span></Link></li>}
                 {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/lab-desk`}><CalendarPlus size={22} aria-hidden="true" /><span>Front desk</span></Link></li>}
+                {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/wallet`}><Wallet size={22} aria-hidden="true" /><span>Wallet</span></Link></li>}
                 <li><Link className="home-link" to={`${root}/finance`}><Wallet size={22} aria-hidden="true" /><span>Finance</span></Link></li>
                 {p!.kind === 'clinic' && <li><Link className="home-link" to={`${root}/desk`}><CalendarCheck size={22} aria-hidden="true" /><span>Front desk</span></Link></li>}
                 {p!.kind === 'clinic' && <li><Link className="home-link" to={`${root}/clinic-doctors`}><Stethoscope size={22} aria-hidden="true" /><span>Doctors</span></Link></li>}
