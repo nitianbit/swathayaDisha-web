@@ -30,9 +30,11 @@ export function RefusalAlert({ refused, couponCode, onNewPrice }: { refused: Ref
   );
 }
 
-export function WalletPay({ pharmacyId, priceMinor, couponCode, refused, busy, onPay, onBack, onNewPrice }: {
+export function WalletPay({ pharmacyId, priceMinor, couponCode, refused, busy, onPay, onBack, onNewPrice, payLabel }: {
   pharmacyId: string; priceMinor: number; couponCode?: string; refused: Refusal | null; busy: boolean;
   onPay: () => void; onBack: () => void; onNewPrice: (priceMinor: number) => void;
+  /** WQ22: the pay button's words (default "Pay ₹X from wallet"). */
+  payLabel?: (amount: string) => string;
 }) {
   const wallet = useWallet(pharmacyId);
   const balance = walletBalancePaise(wallet.data);
@@ -62,7 +64,9 @@ export function WalletPay({ pharmacyId, priceMinor, couponCode, refused, busy, o
       {showTopUp && <TopUpForm pharmacyId={pharmacyId} suggested={Math.max(1, (priceMinor - balance) / 100)} onCredited={() => void wallet.refetch()} />}
       <span className="ws-muted">Collect {formatRupees(priceMinor / 100)} from the patient at your counter. If the booking is cancelled, the money comes back to your wallet.</span>
       <div className="confirm-actions">
-        <Button busy={busy} disabled={!!hold || short || (refused?.kind === 'price')} onClick={onPay}>Pay {formatRupees(priceMinor / 100)} from wallet</Button>
+        <Button busy={busy} disabled={!!hold || short || (refused?.kind === 'price')} onClick={onPay}>
+          {payLabel ? payLabel(formatRupees(priceMinor / 100)) : `Pay ${formatRupees(priceMinor / 100)} from wallet`}
+        </Button>
         <Button variant="ghost" disabled={busy} onClick={onBack}>Back</Button>
       </div>
     </>

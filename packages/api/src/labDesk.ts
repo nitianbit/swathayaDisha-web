@@ -1,6 +1,6 @@
 import { ApiError, type ApiClient } from './client.ts';
 import { recommendationLookup } from './assistedLab.ts';
-import { keyOf, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type PatientLookup, type Refusal } from './assisted.ts';
+import { keyOf, rupees, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type PatientLookup, type Refusal } from './assisted.ts';
 import { labRefusal, labTotalMinor, type LabAddress } from './assistedLab.ts';
 import type { LabBooking } from './partnerLabs.ts';
 import { checkId, partnerWorkspaceBase, type PartnerScope } from './partners.ts';
@@ -105,7 +105,6 @@ export function deskRefusal(err: unknown): Refusal {
   const known = err instanceof ApiError && err.code ? DESK_WORDS[err.code] : undefined;
   return known ?? shared;
 }
-const rupees = (paise: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(paise / 100);
 
 /** A desk row (paid at the lab: no Jansetu money, the lab bills it). */
 export const isDeskBooking = (b: Pick<LabBooking, 'source' | 'payAtLab'> | null | undefined) => !!b && (b.payAtLab === true || b.source === 'lab_desk');

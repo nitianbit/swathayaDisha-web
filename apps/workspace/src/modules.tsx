@@ -57,6 +57,7 @@ import { SuppliersScreen } from './screens/pharmacy/SuppliersScreen.tsx';
 import { BookLabTestScreen } from './screens/pharmacy/BookLabTestScreen.tsx';
 import { BookedLabTestScreen, BookedLabTestsScreen } from './screens/pharmacy/BookedLabTestsScreen.tsx';
 import { BookConsultationScreen } from './screens/pharmacy/BookConsultationScreen.tsx';
+import { PharmacyConsultNowScreen } from './screens/pharmacy/ConsultNowScreen.tsx';
 import { BookedConsultationScreen } from './screens/pharmacy/BookedConsultationScreen.tsx';
 import { BookedConsultationsScreen } from './screens/pharmacy/BookedConsultationsScreen.tsx';
 import { WalletScreen } from './screens/pharmacy/WalletScreen.tsx';
@@ -127,6 +128,11 @@ export const PAGES: readonly WorkspacePage[] = [
   {
     path: '/pharmacy/book', roles: ['pharmacy'], element: <BookConsultationScreen />,
     nav: { label: 'Book consultation', icon: CalendarPlus, section: 'Pharmacy' },
+  },
+  // WQ22 (r17): an instant consultation for a walk-in, paid from the wallet (`/pharmacy-assisted/instant/*`).
+  {
+    path: '/pharmacy/consult-now', roles: ['pharmacy'], element: <PharmacyConsultNowScreen />,
+    nav: { label: 'Consult now', icon: Video, section: 'Pharmacy' },
   },
   {
     path: '/pharmacy/consultations', roles: ['pharmacy'], element: <BookedConsultationsScreen />,

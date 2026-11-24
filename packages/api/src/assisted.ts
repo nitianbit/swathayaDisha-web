@@ -506,7 +506,8 @@ export function joinWords(mode: string | undefined, on: JoinOn | undefined): str
 export type RefusalKind = 'off' | 'topup' | 'wallet' | 'price' | 'slot' | 'doctor' | 'limit' | 'patient' | 'coupon' | 'card' | 'other';
 export interface Refusal { kind: RefusalKind; message: string; priceMinor?: number }
 
-const rupees = (paise: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(paise / 100);
+/** Integer paise in rupee words ("₹1,234.50"): the one formatter the assisted refusals share. */
+export const rupees = (paise: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(paise / 100);
 const waitWords = (seconds: number | undefined) =>
   !seconds ? 'later' : seconds < 90 ? 'in a minute' : seconds < 3600 ? `in about ${Math.ceil(seconds / 60)} minutes` : `in about ${Math.ceil(seconds / 3600)} hours`;
 

@@ -1967,6 +1967,7 @@ Backend r16 (`m0/r16-phase3d` 8e5337f4, design §25.12.4; local). On WQ17c f089b
   link on the waiting rows of Booked lab tests, as in Booked consultations.
 - Built against the r16b shape (the 3d review moved the load from `GET …/:code?phone=` to a POST body); mocked until r16b lands.
 
+
 ## WQ19 lab front desk: book a walk-in, a lab visit or a home collection, paid at the lab (2026-11-25, branch `wq19/lab-desk`)
 
 Backend: r12 (`m0/r12-phase2c` e304dabe, design ASSISTED_BOOKING_DESIGN.md §24.12; local). Web base: stage 0aca6c3 + WQ17
@@ -2070,6 +2071,46 @@ API gaps:
 - WQ20c: the permission editor shows its checklist and allows Save only once the partner's kind is read (loading and error as
   elsewhere): a save before then would have dropped a lab member's wallet access that was not offered yet.
 
+
+## WQ22 pharmacy "Consult now": an instant consultation for a walk-in, paid from the wallet (2026-11-25, branch `wq22/consult-now`)
+
+Backend: r17 (`m0/r17-phase3e` 02b4a0e0, design ASSISTED_BOOKING_DESIGN.md §25.12; local, under review). Web base: WQ20 97b2449,
+origin/stage f089b46 (WQ17c) merged first, then WQ20b and WQ20c. Behind `ASSISTED_INSTANT_ENABLED` and `ASSISTED_BOOKING_ENABLED_PHARMACY`
+(off: the reads and new requests answer 503, said as "Consult now for patients is not switched on yet.").
+
+- **Pharmacy › Consult now** (`/pharmacy/consult-now`, next to Book consultation): the shared patient step; then video or phone
+  call, the speciality (`GET /pharmacy-assisted/instant/specialities`: only those with doctors online, with the count; none:
+  "book a time instead"), any available doctor or a chosen one (`GET …/doctors`, nearest first, with the fee), where the patient
+  joins, the language, a coupon and a few words for the doctor; "Next: check the price" reads `GET …/quote`; then the shared
+  wallet pay ("Pay ₹X from wallet and request") and one keyed request (`POST …/requests`, the shared `useAssistedCreate`;
+  `acceptedQuoteMinor` / `acceptedPayableMinor`). `QUOTE_CHANGED` names the new price ("Use the new price" = a new request with
+  the server's quote and discount); `NO_DOCTOR_ONLINE` / `DOCTOR_NOT_ONLINE` send the person back to the doctor choice.
+- **Waiting**: the request read every 5 seconds while it waits; activity (`POST …/activity`) at once and every minute while the
+  screen is open (the money comes back 30 minutes after the pharmacy leaves); the offer's countdown; **Cancel and refund**
+  (`POST …/refund {expectedStatusVersion}`, confirmed); when the offer ran out, **Ask again** (the same choice) or **Ask any
+  available doctor** (`POST …/reoffer {target, expectedStatusVersion}`). A command's lost answer is settled by reading the
+  request. Once a doctor accepts: what came back of the quote, the booking's **Join call** (the booked consultation's own) and
+  **Open the booking**. The request's id (only) is kept in session memory, so leaving and coming back finds it.
+- **Shared, not copied**: the keyed create, the patient step, the wallet pay (it takes the button's words), the unconfirmed
+  panel; "Where does the patient join?", the language/coupon/problem fields and their rules moved to `bookingFields.tsx`
+  (Book consultation uses them); the Join call is exported from the booked consultation page.
+
+- **WQ22b: Waiting for a doctor** (shown only when there are some): this pharmacy's requests still offered (`GET …/requests?status=offered`,
+  newest first, WQ17's cursor pager), each with **Open** = the waiting view (activity, Cancel and refund, Ask again). After a reload
+  or on another device a waiting request is found here, so it is not requested a second time. It is read again after every command
+  and when "Start another" is pressed.
+
+API gaps: none blocking.
+
+### WQ22c review follow-ups (2026-11-25, same branch)
+
+- L1 (money held): activity is sent only while an offer is open; once it ran out ("No doctor accepted"), nothing is sent, so the
+  30-minute inactivity refund starts even with the tab open. "Ask again" opens a new offer, and activity with it.
+- L2: "Cancel and refund" says the amount the server refunded (`refundedMinor` of its answer).
+- L3: a server without the r17 routes (404 with no code) is said as "not switched on yet", never "Route not found".
+- L4: one QUOTE_CHANGED parser (`changedQuote`, used by `instantBookerRefusal`); the assisted refusals share one paise formatter
+  (`rupees` in `assisted.ts`; the desk's copy is gone too).
+
 ## Follow-ups
 
 
@@ -2103,6 +2144,10 @@ API gaps:
 
 | Date | Packet | Checks |
 |---|---|---|
+
+| 2026-11-25 | WQ22c review follow-ups (L1–L4 on 7c76251) | typecheck clean; Vitest 440/440 (assistedInstant.test.ts extended: a 404 with no code is "not switched on", a coded 404 keeps its words, an unreadable QUOTE_CHANGED names no price); Playwright consult-now + assisted-booking + lab-desk 74/74 (consult-now +2 = 1 journey x 2: a server without the routes says not switched on; extended: no activity for three minutes after the offer ran out, activity again after asking again (failing before the fix), the refund words name the amount the server refunded) on a temporary config (port 5497, deleted); release build with VITE_API_SAME_ORIGIN=true. |
+| 2026-11-25 | WQ22b waiting requests listed (on da0015d) | typecheck clean; Vitest 440/440; Playwright consult-now 16/16 (+2 = 1 journey x 2: after a reload the waiting request is listed, opens the waiting view and is cancelled and refunded there; nothing about the patient kept in the browser; the list is gone after "Start another") on a temporary config (port 5495, deleted); release build with VITE_API_SAME_ORIGIN=true. |
+| 2026-11-25 | WQ22 pharmacy Consult now (on 97b2449 + origin/stage f089b46, then WQ20b and WQ20c) | Against r17 02b4a0e0 (§25.12; mocked API). typecheck clean; Vitest 440/440 (+4 in assistedInstant.test.ts: the routes with the phone only in a body and the speciality trimmed, chat and bad ids/keys/versions refused before any request, where a request stands (waiting, offer ran out, accepted, refunded), the changed quote with the payable the server names, no doctor online, the switch, the wallet words); Playwright workspace 940/940 before WQ20c (+14 = 7 journeys x 2: request and accept with activity and the Join call, a changed quote paid again as a new request, no doctor online, cancel and refund on the version shown, ask any available doctor after the offer ran out, a lost answer checked by key, switched off), then lab-wallet + partner-workspace + consult-now 140/140 after merging WQ20c, on a temporary config (port 5492, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ20c the permission editor waits for the partner's kind (on eebb19f) | typecheck clean; Vitest 432/432; Playwright lab-wallet 14/14 (+2 = 1 journey x 2: while the lab cannot be read, Save is off and nothing is listed; once read, the member's wallet access is kept on save; failing before the fix), partner-workspace + clinic-desk 164/164, on a temporary config (port 5494, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ21b recommended-tests code at the lab front desk (after merging wq19/lab-desk 12f0321) | Mocked API (r16b desk route). typecheck clean; Vitest 437/437 (+1 in wq21.test.ts: the desk and admin-mirror POST paths with the code and number in the body, the 403 codes hiding the field); Playwright lab-desk, lab-booking and clinic-desk 110/110 (+4 = 2 journeys x 2: the desk loads a code and ticks its own tests, says the unmatched name, sends nothing new and stores nothing; an unknown code said plainly). Temporary config on port 5474, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ21 recommended-tests code (phase 3d web) + L1/L2 on f089b46 | Against r16 8e5337f4 with the r16b POST lookup (mocked; §25.12.4). typecheck clean; Vitest 429/429 (+7: wq21.test.ts 4 (cleaning and printing the code, the POST body with no code or number in the URL and no malformed code sent, exact-name ticks, refusal words and the switch-off rule), wq21b.test.ts 3 (`routeCardAnswer` for both kinds, the held-without-order case, `isCardAnswer`)); Playwright workspace 902/902 (+6 = 3 journeys x 2: load and pre-tick with the unmatched name said and nothing new on create and nothing stored or in a URL; typo, not found and switch off; the booked consultation's code; the lab card journey now opens from the list's Pay now link (L2)). Temporary config on port 5473, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
