@@ -88,5 +88,10 @@ describe('WQ22 pharmacy Consult now (r17 /pharmacy-assisted/instant)', () => {
     expect(instantBookerRefusal(new ApiError(503, 'x', 'ASSISTED_BOOKING_DISABLED'))).toEqual({ kind: 'off', message: INSTANT_SWITCHED_OFF_MESSAGE });
     expect(instantBookerRefusal(new ApiError(409, 'x', 'INSUFFICIENT_BALANCE')).kind).toBe('topup');
     expect(instantBookerRefusal(new ApiError(409, 'x', 'INSTANT_REQUEST_CHANGED')).message).toContain('changed meanwhile');
+    // WQ22c L3: a server without these routes (404, no code) is "not switched on"; a coded 404 keeps its own words.
+    expect(instantBookerRefusal(new ApiError(404, 'Route not found'))).toEqual({ kind: 'off', message: INSTANT_SWITCHED_OFF_MESSAGE });
+    expect(instantBookerRefusal(new ApiError(404, 'x', 'INSTANT_REQUEST_NOT_FOUND')).message).toBe('This request was not found.');
+    // WQ22c L4: one parser: a QUOTE_CHANGED without readable details names no price.
+    expect(instantBookerRefusal(new ApiError(409, 'x', 'QUOTE_CHANGED')).priceMinor).toBeUndefined();
   });
 });
