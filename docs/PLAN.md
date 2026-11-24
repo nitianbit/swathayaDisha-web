@@ -1834,20 +1834,22 @@ list, one doctor page, the close on the existing consultation page; existing com
 - **Doctor page** (`/admin/doctors/:id`): status, name, registration number, speciality, degree, sign-in contacts. **Verify**
   (existing ConfirmAction, closed if the doctor changes while open) names the reviewed name and registration number and sends
   `PUT /specialists/:id {isVerified: true, expectedName, expectedRegistrationNumber}` (trimmed; a missing number is ''). 409
-  `SPECIALIST_CHANGED_SINCE_REVIEW`: nothing changed; the doctor is read again and "You reviewed … / Saved now …" is shown; the
-  admin verifies again on what is shown. `expectedUpdatedAt` is not sent: the brief names the two identity fields, and a version
+  `SPECIALIST_CHANGED_SINCE_REVIEW` (final on any attempt, a resend included): nothing changed; the doctor is read again and
+  "You reviewed … / Saved now …" is shown; the admin verifies again on what is shown. A doctor with no name is not offered Verify. `expectedUpdatedAt` is not sent: the brief names the two identity fields, and a version
   fence would also trip on unrelated edits. **Unverify** (`{isVerified: false}`, no fence on the server) says what the doctor
   loses and that their bookings stay. Both go through an owned PendingOp (`admin-doctor-state:<admin>:<doctor>`) under
   `useOneAtATime`; a lost answer is checked by reading the doctor (both only set `isVerified`) or sent again unchanged; a sole
   first attempt refused 503 `INDEXES_OUTDATED` (the audit check, before any write) is settled as refused.
-- **Open consultations** on the doctor page: `GET /bookings?bookingType=consultation&specialistId=&status=pending|confirmed`
-  (first 20 of each), each linking to its consultation page.
+- **Open consultations**: the doctor page links to the existing Consultations list filtered by that doctor and status
+  (`/admin/consultations?doctor=<id>&status=pending|confirmed`); each opens its consultation page.
 - **Close and refund** (consultation page, S5c): offered for a pending or confirmed scheduled consultation, not moved after a
   no-show (unless clinic-paid), whose doctor is not verified and active or no longer exists (`canCloseAndRefund`; the doctor is
-  read with `GET /specialists/:id`). Internal reason (3–500, the patient never sees it), a review, then
-  `POST /specialists/admin/bookings/:id/close {reason, requestKey, expectedUpdatedAt}` with an owned PendingOp
-  (`admin-booking-close:<admin>:<booking>`), key made at the review. The answer is said as the server gives it: `refunded` (rupees)
-  to the patient's wallet, or to the pharmacy for an assisted booking, or nothing; `replayed` says nothing more changed. A lost
+  read with `GET /specialists/:id`). The existing ConfirmAction (danger, required internal reason 3–500 as the moved no-show's
+  admin cancel, the patient never sees it; holds the booking version it was opened on), then
+  `POST /specialists/admin/bookings/:id/close {reason, requestKey, expectedUpdatedAt: <version opened on>}` with an owned PendingOp
+  (`admin-booking-close:<admin>:<booking>`), key made at the confirm. The answer is said as the server gives it: `refunded` (rupees)
+  to the patient's wallet; for an assisted booking to the pharmacy's wallet, or, paid by card (`assisted.funding.method:
+  'razorpay'`), "is being refunded" to that card (queued); or nothing; `replayed` says nothing more changed. A lost
   answer: send the same request again (replayed), or check: the booking is read first, then its closes
   (`GET /specialists/admin/bookings/:id/close`): this key there = closed; the booking cancelled without it = closed another way
   (a cancelled booking can never be closed later); completed/no-show = can no longer be closed; else still unknown. Final on any
@@ -1865,6 +1867,17 @@ API gaps (no route; nothing invented):
 - No admin activate/deactivate concept beyond `isActive` on the same PUT; not offered here (out of scope).
 - Second-opinion bookings: the close accepts them, but the workspace has no admin list of them (consultations only).
 - Doctor documents are stored URLs; no admin file view is built here.
+
+### WQ18b no duplicated code, review follow-ups (2026-11-25, same branch)
+
+- O1: the doctor page's own open-consultations table and `openConsultations` are gone: two links to the Consultations list
+  (`?doctor=<id>&status=pending|confirmed`).
+- O2: Close and refund uses the existing ConfirmAction (required reason, danger, version fence) instead of its own form; a re-read
+  while it is open closes it and says so, never silently wiping the reason.
+- O3: `adminDoctors.ts` imports `checkId` (now exported from `partners.ts`, on `OBJECT_ID_PATTERN`) and `REQUEST_KEY_PATTERN`, and
+  checks the close reason with `MIN/MAX_ADMIN_CANCEL_REASON`; `bookingCloseReasonProblem` is gone.
+- L2: a fence mismatch settles the verify on any attempt (re-read, shown). L3: no Verify without a name (no false "outcome
+  unknown"). L4: a card-paid assisted booking's close says the refund "is being refunded" to the card.
 
 ## Follow-ups
 
@@ -1899,6 +1912,7 @@ API gaps (no route; nothing invented):
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ18b no duplicated code and review follow-ups (O1–O3, L2–L4 on 62e94b3) | Mocked API as WQ18. typecheck clean; Vitest 413/413 (wq18.test.ts updated: no open-consultations read, the close reason checked with the admin-cancel rule, refund targets incl. the card being refunded); Playwright workspace 864 run (+4 = 2 journeys x 2: a resend refused for a fence mismatch is settled and shown, no Verify without a name; a card-paid pharmacy booking's close says the refund is on its way to the card; the close journeys moved to ConfirmAction and the doctor page's links to Consultations): 863 passed, 1 timing failure in the untouched pharmacy stock-import spec (stock-supply.spec.ts:1277, tablet, under a 14-minute loaded run), passing 6/6 on its own; temporary config on port 5462, deleted; release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ18 admin doctors: verify with the S5 fence, unverify; close and refund (on 0aca6c3) | Against stage q16-integration f81c8f3b (routes unchanged at f5f171c9; mocked API). typecheck clean; Vitest 413/413 (+12 in wq18.test.ts: list/get/open-consultation paths and filters, verify body with the trimmed fence and unverify without one, fence holds/mismatch, eligibility, close body/key/version checks before any request, a 200 without this key's close is a 502, when close is offered, final vs before-writing answers, refund words, close by key); Playwright workspace 860/860 (+14 = 7 journeys x 2: list filters and verify OK, fence mismatch shows reviewed vs saved and verifies on the new values, lost verify checked by reading the doctor and unverify, close and refund with reason/key/version and nothing in storage or the address, lost close found by key and a resend replayed once, BOOKING_CHANGED and ALREADY_CANCELLED refusals and no close for a verified doctor, a pharmacy cannot reach the pages) on a temporary config (port 5461, no server reuse), admin specs 84/84 rerun on the final code; release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-23 | WQ16d card-last (items 1–7 on 244bbf7) | Against r10e d1ed6d24 (mocked API). typecheck clean; Vitest 401/401 (+3 in wq16dLast.test.ts, all failing before: the server asked before Checkout (authorized not opened, created opened), the 60-second minimum, marked-failed in any state; the wq16c timeout case moved to 60); Playwright workspace 846/846 (+10 = 5 journeys x 2: authorized never opens Checkout, created opens it (a guard, passed before), the "pay it from there" line hidden while confirming, the duplicate sentence kept when its re-read fails, a restored cancellation says "goes back the way chosen"; the four others failed before; temporary config on port 5401, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-23 | WQ16d alignment with r10e d1ed6d24 (refund read by id, DUPLICATE_PAYMENT_REFUNDED, extra_capture) | typecheck clean; Vitest 398/398 (+3 in wq16d.test.ts, all failing before; 4 older assertions moved to the r10e envelope and the no-recheck rule); Playwright affected specs (card-booking, assisted-booking, pharmacy-extras) 162/162 (+4 = 2 journeys x 2, both failing before: a duplicate payment refunded and the booking shown paid after a re-read; the extra-capture label and the not-available check without recheck); temporary config on port 5399, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |

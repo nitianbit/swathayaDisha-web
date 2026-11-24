@@ -15,6 +15,7 @@ const BK1 = 'e1'.repeat(12);
 const BK2 = 'e2'.repeat(12);
 const BK3 = 'e3'.repeat(12);
 const BK4 = 'e4'.repeat(12);
+const BK5 = 'e5'.repeat(12);
 const NOW = new Date('2026-11-25T04:30:00.000Z'); // Wed 25 Nov 2026, 10:00 in India
 const V0 = '2026-11-20T06:00:00.000Z';
 const V1 = '2026-11-25T04:31:00.000Z';
@@ -29,6 +30,8 @@ interface Backend {
   renameOnNextPut?: string;
   /** The next PUT /specialists/:id is made, then its answer is lost. */
   losePutAfter?: boolean;
+  /** The next PUT /specialists/:id is lost before it reaches the server. */
+  losePutBefore?: boolean;
   /** The next close is made, then its answer is lost. */
   loseCloseAfter?: boolean;
   /** The next close finds the booking cancelled by another admin just before. */
@@ -62,6 +65,8 @@ async function mockBackend(page: Page): Promise<Backend> {
       booking(BK2, { status: 'pending', paymentStatus: 'pending', bookingDate: '20261127', patientName: 'Meena Kumar' }),
       booking(BK3, { specialistId: DOC3, doctorName: 'Dr Meera Iyer' }),
       booking(BK4, { bookingDate: '20261128', bookingTime: '11:00' }),
+      // Phase 1b: booked by a pharmacy and paid by card: an admin close queues the refund back to that card.
+      booking(BK5, { bookingDate: '20261129', bookingTime: '12:00', price: 600, assisted: { funding: { method: 'razorpay', state: 'captured' } } }),
     ],
     closes: [],
   };
@@ -106,6 +111,7 @@ async function mockBackend(page: Page): Promise<Backend> {
     }
     if (sp && method === 'PUT') {
       if (!isAdmin) return fail(route, 403, 'FORBIDDEN', 'Admin access is required');
+      if (b.losePutBefore) { b.losePutBefore = false; return route.abort('failed'); }
       const d = b.doctors.find((x) => x._id === sp[1]);
       if (!d) return fail(route, 404, 'SPECIALIST_NOT_FOUND', 'Specialist not found');
       if (b.renameOnNextPut) { d.name = b.renameOnNextPut; d.updatedAt = '2026-11-25T04:20:00.000Z'; b.renameOnNextPut = undefined; }
@@ -271,27 +277,28 @@ test('a verify whose answer is lost is checked by reading the doctor; unverify i
   ]);
 });
 
-test('close and refund: an unverified doctor’s open consultations are listed; one is closed with a reason, a key and the version read', async ({ page }) => {
+test('close and refund: an unverified doctor’s consultations open from the doctor page; one is closed with a reason, a key and the version read', async ({ page }) => {
   const backend = await mockBackend(page);
   await signIn(page);
   await page.goto(`/#/admin/doctors/${DOC2}`);
-  const open = page.getByRole('region', { name: 'Open consultations' });
-  await expect(open).toContainText('3 open consultations');
-  await expect(open).toContainText('cannot attend these');
-  await open.getByRole('link', { name: 'Thu, 26 Nov, 2026, 10:00' }).click();
+  await expect(page.getByText('this doctor cannot attend them', { exact: false })).toBeVisible();
+  // The doctor's open consultations are the Consultations list, filtered by doctor and status.
+  await page.getByRole('link', { name: 'Confirmed', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Consultations', level: 1 })).toBeVisible();
+  await expect(page.getByLabel('Status')).toHaveValue('confirmed');
+  await page.getByRole('link', { name: 'Thu, 26 Nov, 2026, 10:00' }).click();
   await expect(page.getByRole('heading', { name: 'Consultation on Thu, 26 Nov, 2026, 10:00' })).toBeVisible();
   const section = page.getByRole('region', { name: 'Close and refund' });
   await expect(section).toContainText('Not verified');
   await section.getByRole('button', { name: 'Close and refund' }).click();
-  const form = section.getByRole('form', { name: 'Close and refund' });
-  await form.getByLabel('Reason (only the Jansetu team sees it)').fill('ab');
-  await form.getByRole('button', { name: 'Next: check before closing' }).click();
-  await expect(form.getByText('Give a reason (at least 3 characters).')).toBeVisible();
-  await form.getByLabel('Reason (only the Jansetu team sees it)').fill('  Doctor   left Jansetu ');
-  await form.getByRole('button', { name: 'Next: check before closing' }).click();
-  const review = form.getByRole('group', { name: 'Close this consultation' });
-  await expect(review).toContainText('Your reason is not shown to them: Doctor left Jansetu');
-  await review.getByRole('button', { name: 'Yes, close and refund' }).click();
+  const confirm = section.getByRole('group', { name: 'Close and refund' });
+  await expect(confirm).toContainText('Close the appointment on Thu, 26 Nov, 2026, 10:00 with Dr Kiran Rao and refund it in full?');
+  await expect(confirm).toContainText('Your reason is not shown to them.');
+  await confirm.getByLabel('Reason (only the Jansetu team sees it)').fill('ab');
+  await confirm.getByRole('button', { name: 'Yes, close and refund' }).click();
+  await expect(confirm.getByText('Give a reason (at least 3 characters).')).toBeVisible();
+  await confirm.getByLabel('Reason (only the Jansetu team sees it)').fill('  Doctor left Jansetu ');
+  await confirm.getByRole('button', { name: 'Yes, close and refund' }).click();
   await expect(section.getByText('Closed: the appointment on Thu, 26 Nov, 2026, 10:00 is cancelled. ₹800.00 was refunded to the patient’s Jansetu wallet.', { exact: false })).toBeVisible();
   await expect(section.getByRole('list', { name: 'Closes by the Jansetu team' })).toContainText('Reason (internal): Doctor left Jansetu');
   await expect(page.getByRole('region', { name: 'Booking' })).toContainText('Cancelled');
@@ -312,7 +319,6 @@ test('a lost close answer: the check finds this key’s close; another lost one 
   backend.loseCloseAfter = true;
   await section.getByRole('button', { name: 'Close and refund' }).click();
   await section.getByLabel('Reason (only the Jansetu team sees it)').fill('Doctor left');
-  await section.getByRole('button', { name: 'Next: check before closing' }).click();
   await section.getByRole('button', { name: 'Yes, close and refund' }).click();
   await expect(section.getByRole('group', { name: 'Unconfirmed close' })).toContainText('may already be closed and refunded');
   await section.getByRole('button', { name: 'Check whether it was recorded' }).click();
@@ -323,7 +329,6 @@ test('a lost close answer: the check finds this key’s close; another lost one 
   backend.loseCloseAfter = true;
   await section.getByRole('button', { name: 'Close and refund' }).click();
   await section.getByLabel('Reason (only the Jansetu team sees it)').fill('Doctor left');
-  await section.getByRole('button', { name: 'Next: check before closing' }).click();
   await section.getByRole('button', { name: 'Yes, close and refund' }).click();
   await section.getByRole('button', { name: 'Send the same request again' }).click();
   await expect(section.getByText('This close was already recorded: the appointment on Sat, 28 Nov, 2026, 11:00 is cancelled. ₹800.00 was refunded', { exact: false })).toBeVisible();
@@ -341,8 +346,7 @@ test('close refusals: a changed booking and one cancelled another way are said i
   const section = page.getByRole('region', { name: 'Close and refund' });
   await section.getByRole('button', { name: 'Close and refund' }).click();
   await section.getByLabel('Reason (only the Jansetu team sees it)').fill('Doctor left');
-  await section.getByRole('button', { name: 'Next: check before closing' }).click();
-  // The booking changes on the server while the review is open.
+  // The booking changes on the server while the confirmation is open.
   backend.bookings.find((x) => x._id === BK1)!.updatedAt = '2026-11-25T04:25:00.000Z';
   await section.getByRole('button', { name: 'Yes, close and refund' }).click();
   await expect(section.getByText('Not closed: The booking changed since you read it, so nothing was done.', { exact: false })).toBeVisible();
@@ -351,7 +355,6 @@ test('close refusals: a changed booking and one cancelled another way are said i
   backend.cancelledElsewhere = true;
   await section.getByRole('button', { name: 'Close and refund' }).click();
   await section.getByLabel('Reason (only the Jansetu team sees it)').fill('Doctor left');
-  await section.getByRole('button', { name: 'Next: check before closing' }).click();
   await section.getByRole('button', { name: 'Yes, close and refund' }).click();
   await expect(section.getByText('Not closed by this request: This booking is already cancelled, so nothing more was done.', { exact: false })).toBeVisible();
   await expect(section.getByText('Cancelled, but not with Close and refund.')).toBeVisible();
@@ -374,4 +377,41 @@ test('a non-admin cannot reach the doctor pages or close a booking', async ({ pa
   await page.goto(`/#/admin/consultations/${BK1}`);
   await expect(page.getByText('Page not found')).toBeVisible();
   expect(backend.calls.filter((c) => c.path.startsWith('/specialists') || c.path.startsWith('/bookings'))).toEqual([]);
+});
+
+test('WQ18b: a resend refused for a fence mismatch is final (settled, read again); a doctor with no name is not offered Verify', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await page.goto(`/#/admin/doctors/${DOC1}`);
+  const section = page.getByRole('region', { name: 'Verification' });
+  backend.losePutBefore = true;
+  await section.getByRole('button', { name: 'Verify', exact: true }).click();
+  await section.getByRole('button', { name: 'Verify Dr Asha Mehta' }).click();
+  await expect(section.getByRole('group', { name: 'Unconfirmed change' })).toBeVisible();
+  backend.renameOnNextPut = 'Dr A. Mehta';
+  await section.getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(section.getByText('Dr Asha Mehta was not verified', { exact: false })).toBeVisible();
+  await expect(section.getByRole('group', { name: 'What changed' })).toContainText('Saved now: name Dr A. Mehta');
+  await expect(section.getByRole('group', { name: 'Unconfirmed change' })).toHaveCount(0);
+  expect(puts(backend)).toHaveLength(2);
+
+  backend.doctors.find((d) => d._id === DOC2)!.name = '  ';
+  await page.goto(`/#/admin/doctors/${DOC2}`);
+  const unnamed = page.getByRole('region', { name: 'Verification' });
+  await expect(unnamed.getByText('No name is on record, so this doctor cannot be verified until they add one.')).toBeVisible();
+  await expect(unnamed.getByRole('button', { name: 'Verify', exact: true })).toHaveCount(0);
+  expect(puts(backend)).toHaveLength(2);
+});
+
+test('WQ18b: closing a pharmacy booking paid by card says the refund is on its way to that card', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await page.goto(`/#/admin/consultations/${BK5}`);
+  const section = page.getByRole('region', { name: 'Close and refund' });
+  await section.getByRole('button', { name: 'Close and refund' }).click();
+  await section.getByLabel('Reason (only the Jansetu team sees it)').fill('Doctor left');
+  await section.getByRole('button', { name: 'Yes, close and refund' }).click();
+  await expect(section.getByText('₹600.00 is being refunded to the card or UPI the pharmacy paid with.', { exact: false }).first()).toBeVisible();
+  await expect(section.getByRole('list', { name: 'Closes by the Jansetu team' })).toContainText('is being refunded to the card or UPI the pharmacy paid with.');
+  expect(closesSent(backend)).toHaveLength(1);
 });

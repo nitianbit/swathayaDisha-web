@@ -3,26 +3,24 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  CONSULTATION_STATUS_LABEL, doctorAdminListApi, doctorEligibility, doctorStateRefusal, doctorStateRefusedBeforeWriting, isFenceMismatch, OBJECT_ID_PATTERN,
-  verifyFenceOf, type AdminConsultation, type AdminDoctor, type VerifyFence,
+  doctorAdminListApi, doctorEligibility, doctorStateRefusal, doctorStateRefusedBeforeWriting, isFenceMismatch, OBJECT_ID_PATTERN, verifyFenceOf,
+  type AdminDoctor, type VerifyFence,
 } from '@jansetu/api';
-import { Alert, Badge, ErrorState, Loading } from '@jansetu/ui';
+import { Alert, ErrorState, Loading } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
-import { formatYmd } from '../doctor/doctor.tsx';
 import { useOneAtATime, type Perform } from '../finance/finance.tsx';
 import { CheckPanel, useOwnedOp } from '../pharmacy/ownedOp.tsx';
 import { NoSuchRecord } from './accountList.tsx';
 import { useAdminScope } from './adminScope.ts';
-import { consultationTone, paymentLabel, patientLabel } from './ConsultationsScreen.tsx';
 import { DoctorBadges } from './DoctorsScreen.tsx';
 
 /**
  * WQ18 admin: one doctor. Verify (S5: with the reviewed name and registration number as the fence) or take the
- * verification away, and the doctor's open consultations, each closed with a full refund from its own page (S5c).
+ * verification away; links to the doctor's open consultations, each closed with a full refund from its own page (S5c).
  */
 export function DoctorScreen() {
   const { doctorId = '' } = useParams();
@@ -60,7 +58,13 @@ function DoctorDetail({ doctorId, scopeKey }: { doctorId: string; scopeKey: read
         : (
           <>
             <VerificationSection d={q.data} doctorId={doctorId} perform={guard.perform} busy={guard.busy || q.isFetching} reread={reread} readNow={readNow} />
-            <OpenConsultations d={q.data} doctorId={doctorId} scopeKey={scopeKey} />
+            {/* The doctor's open consultations are the Consultations list filtered by doctor and status (closed there, S5c). */}
+            <p>
+              Consultations with this doctor:{' '}
+              <Link to={`/admin/consultations?doctor=${doctorId}&status=pending`}>Waiting</Link>{' · '}
+              <Link to={`/admin/consultations?doctor=${doctorId}&status=confirmed`}>Confirmed</Link>
+              {!doctorEligibility(q.data).eligible && <span className="ws-muted"> (this doctor cannot attend them: open one to close it with a full refund)</span>}
+            </p>
           </>
         )}
     </>
@@ -106,8 +110,11 @@ function VerificationSection({ d, doctorId, perform, busy, reread, readNow }: {
     const r = await perform(() => send(p, (b) => (b.to === 'verify' ? doctors.verify(doctorId, b.fence!) : doctors.unverify(doctorId))));
     if (r.kind === 'stale') return;
     if (r.kind === 'ok') { say('ok', doneWords(p.body, r.value?.isActive === true)); void reread(); return; }
-    // The verification audit's collection check (503 INDEXES_OUTDATED) runs before anything is written.
-    const refusedFirst = r.kind === 'refused' || (sole && doctorStateRefusedBeforeWriting(r.error));
+    // Settled as refused: the sole first attempt refused; the verification audit's collection check (503 INDEXES_OUTDATED),
+    // which runs before anything is written, on a sole first attempt; or a fence mismatch on any attempt (the server checks
+    // the fence only while the doctor is not verified, so this request has not verified them, and the identity it carries
+    // no longer matches: no attempt of it can).
+    const refusedFirst = r.kind === 'refused' || (r.kind === 'unknown' && ((sole && doctorStateRefusedBeforeWriting(r.error)) || isFenceMismatch(r.error)));
     if (refusedFirst) {
       if (r.kind === 'unknown') settle(p.requestKey);
       if (isFenceMismatch(r.error) && p.body.fence) {
@@ -183,7 +190,8 @@ function VerificationSection({ d, doctorId, perform, busy, reread, readNow }: {
       </dl>
       {!s.active && <p className="ws-muted">This doctor is inactive: patients cannot book them even when verified. Making a doctor active again is not done here.</p>}
       <div className="ws-actions">
-        {!s.verified && (
+        {!s.verified && !fence.expectedName && <p className="ws-muted">No name is on record, so this doctor cannot be verified until they add one.</p>}
+        {!s.verified && !!fence.expectedName && (
           <ConfirmAction key="verify" label="Verify" confirmLabel={`Verify ${d.name}`} disabled={busy} version={d.updatedAt}
             consequence={(
               <>
@@ -207,60 +215,12 @@ function VerificationSection({ d, doctorId, perform, busy, reread, readNow }: {
             consequence={(
               <>
                 <p><strong>{d.name}</strong> is no longer verified: patients cannot find or book them, and they cannot open times, take consultations or prescribe. They no longer see their patients’ contact details.</p>
-                <p>Their bookings stay as they are. Close each open one with a full refund from its consultation page (listed below).</p>
+                <p>Their bookings stay as they are. Close each open one with a full refund from its consultation page (linked below).</p>
               </>
             )}
             onConfirm={() => change(startOp(newRequestKey(), { to: 'unverify', name: d.name }))} />
         )}
       </div>
-    </section>
-  );
-}
-
-/**
- * The doctor's pending and confirmed consultations (`GET /bookings?specialistId=&status=`, first 20 of each). A doctor who
- * is not verified and active cannot attend them: each is closed with a full refund from its consultation page (S5c).
- */
-function OpenConsultations({ d, doctorId, scopeKey }: { d: AdminDoctor; doctorId: string; scopeKey: readonly string[] }) {
-  const { api } = useSession();
-  const doctors = doctorAdminListApi(api);
-  const pending = useQuery({ queryKey: [...scopeKey, 'open', doctorId, 'pending'], queryFn: () => doctors.openConsultations(doctorId, 'pending') });
-  const confirmed = useQuery({ queryKey: [...scopeKey, 'open', doctorId, 'confirmed'], queryFn: () => doctors.openConsultations(doctorId, 'confirmed') });
-  const s = doctorEligibility(d);
-  const rows: AdminConsultation[] = [...(confirmed.data?.items ?? []), ...(pending.data?.items ?? [])]
-    .sort((x, y) => `${y.bookingDate}${y.bookingTime}`.localeCompare(`${x.bookingDate}${x.bookingTime}`));
-  const total = (pending.data?.total ?? 0) + (confirmed.data?.total ?? 0);
-  const failed = pending.isError ? pending.error : confirmed.isError ? confirmed.error : null;
-  return (
-    <section className="ws-section" aria-labelledby="dr-open-h">
-      <h2 id="dr-open-h">Open consultations</h2>
-      {!s.eligible && (
-        <p className="ws-muted">This doctor is not verified and active, so they cannot attend these. Open one to close it with a full refund.</p>
-      )}
-      {pending.isPending || confirmed.isPending ? <Loading label="Loading consultations…" />
-        : failed ? <ErrorState message={messageOf(failed)} onRetry={() => { void pending.refetch(); void confirmed.refetch(); }} />
-        : rows.length === 0 ? <p className="ws-muted">No waiting or confirmed consultations.</p>
-        : (
-          <>
-            <p className="ws-count">{total} open {total === 1 ? 'consultation' : 'consultations'}{total > rows.length ? ` (the latest ${rows.length} shown; see Consultations for all)` : ''}</p>
-            <div className="ws-table-wrap">
-              <table className="j-table">
-                <caption className="j-sr-only">Open consultations, latest appointment first</caption>
-                <thead><tr><th scope="col">Appointment</th><th scope="col">Patient</th><th scope="col">Status</th><th scope="col">Payment</th></tr></thead>
-                <tbody>
-                  {rows.map((b) => (
-                    <tr key={b._id}>
-                      <td><Link to={`/admin/consultations/${b._id}`}>{formatYmd(b.bookingDate)}, {b.bookingTime}</Link></td>
-                      <td>{patientLabel(b)}</td>
-                      <td><Badge tone={consultationTone(b.status)}>{CONSULTATION_STATUS_LABEL[b.status] ?? b.status}</Badge></td>
-                      <td>{paymentLabel(b)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
     </section>
   );
 }

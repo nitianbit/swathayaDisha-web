@@ -1,5 +1,6 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
-import type { AdminConsultation } from './adminConsultations.ts';
+import { MAX_ADMIN_CANCEL_REASON, MIN_ADMIN_CANCEL_REASON, type AdminConsultation } from './adminConsultations.ts';
+import { checkId, REQUEST_KEY_PATTERN } from './partners.ts';
 import { noShowMovedOnce } from './noShows.ts';
 
 /**
@@ -18,12 +19,6 @@ import { noShowMovedOnce } from './noShows.ts';
  *   (`isEligibleDoctor`); an ineligible doctor cannot be booked, open slots, prescribe or see patients' details.
  */
 
-const OBJECT_ID = /^[0-9a-fA-F]{24}$/;
-const REQUEST_KEY = /^[A-Za-z0-9_-]{8,100}$/;
-function checkId(id: string, what: string): string {
-  if (!OBJECT_ID.test(id)) throw new Error(`Invalid ${what} id`);
-  return id;
-}
 
 /** A doctor as an admin reads it (`ISpecialist`, the fields shown). */
 export interface AdminDoctor {
@@ -115,23 +110,10 @@ export function doctorAdminListApi(c: ApiClient) {
     },
     /** Take the verification away (no fence on the server: it only reduces what the doctor can do). */
     unverify: (id: string) => c.put<AdminDoctor>(`/specialists/${checkId(id, 'doctor')}`, { body: { isVerified: false } satisfies DoctorStateBody }),
-    /** The doctor's open (pending or confirmed) consultations, latest appointment first, one status a page. */
-    openConsultations: (id: string, status: 'pending' | 'confirmed') =>
-      c.page<AdminConsultation>('/bookings', { query: { bookingType: 'consultation', status, specialistId: checkId(id, 'doctor'), page: 1, limit: 20 } }),
   };
 }
 
 // ── S5c admin close and refund ──
-
-/** `adminCloseSchema.reason`: trimmed, 3 to 500 characters (internal: the patient never sees it, S5d). */
-export const MIN_BOOKING_CLOSE_REASON = 3;
-export const MAX_BOOKING_CLOSE_REASON = 500;
-export function bookingCloseReasonProblem(reason: string): string | undefined {
-  const r = reason.trim();
-  if (r.length < MIN_BOOKING_CLOSE_REASON) return `Give a reason (at least ${MIN_BOOKING_CLOSE_REASON} characters).`;
-  if (r.length > MAX_BOOKING_CLOSE_REASON) return `Use at most ${MAX_BOOKING_CLOSE_REASON} characters.`;
-  return undefined;
-}
 
 export interface BookingCloseBody { reason: string; requestKey: string; expectedUpdatedAt?: string }
 
@@ -202,21 +184,32 @@ export const isAlreadyCancelled = (err: unknown) => err instanceof ApiError && e
 export const bookingCloseRefusedBeforeWriting = (err: unknown) => err instanceof ApiError && err.status === 503 && err.code === 'INDEXES_OUTDATED';
 
 /**
- * Where the refund of a close went (`refunded` in rupees, as the server answers it): an assisted (pharmacy-booked) booking
- * refunds the pharmacy that paid, never the patient (`adminCloseHandler`). `money` formats rupees (the screen's `formatRupees`).
+ * Where a close's refund goes (`adminCloseHandler`; `settleAssistedFundingIn`): the patient's wallet; for an assisted
+ * (pharmacy-booked) booking, back to the pharmacy that paid: to its wallet in the cancel transaction, or, for one paid by
+ * card or UPI (`assisted.funding.method: 'razorpay'`), queued back to that card (it is being refunded, not done yet).
  */
-export function closeRefundWords(refunded: number, assisted: boolean, money: (rupees: number) => string): string {
+export type CloseRefundTarget = 'patient' | 'pharmacy_wallet' | 'pharmacy_card';
+export function closeRefundTarget(b: { assisted?: unknown } | null | undefined): CloseRefundTarget {
+  const a = b?.assisted as { funding?: { method?: unknown } } | null | undefined;
+  if (!a) return 'patient';
+  return a.funding?.method === 'razorpay' ? 'pharmacy_card' : 'pharmacy_wallet';
+}
+
+/** The refund of a close as the server answered it (`refunded` in rupees). `money` formats rupees (the screen's `formatRupees`). */
+export function closeRefundWords(refunded: number, to: CloseRefundTarget, money: (rupees: number) => string): string {
   if (!(refunded > 0)) return 'Nothing was refunded: no money was held for it through Jansetu.';
-  return assisted ? `${money(refunded)} was refunded to the pharmacy that booked it.` : `${money(refunded)} was refunded to the patient’s Jansetu wallet.`;
+  if (to === 'pharmacy_card') return `${money(refunded)} is being refunded to the card or UPI the pharmacy paid with.`;
+  return to === 'pharmacy_wallet' ? `${money(refunded)} was refunded to the pharmacy that booked it.` : `${money(refunded)} was refunded to the patient’s Jansetu wallet.`;
 }
 
 export function bookingCloseApi(c: ApiClient) {
   return {
     /** S5c: close a consultation with a full refund; once per (admin, requestKey); `expectedUpdatedAt` = the version reviewed. */
     close: async (bookingId: string, body: BookingCloseBody): Promise<BookingCloseAnswer> => {
+      // `adminCloseSchema.reason`: trimmed, 3 to 500 characters (the same rule as the admin cancel of a moved no-show).
       const reason = body.reason.trim();
-      if (bookingCloseReasonProblem(reason)) throw new Error('Invalid reason');
-      if (!REQUEST_KEY.test(body.requestKey)) throw new Error('Invalid request key');
+      if (reason.length < MIN_ADMIN_CANCEL_REASON || reason.length > MAX_ADMIN_CANCEL_REASON) throw new Error('Invalid reason');
+      if (!REQUEST_KEY_PATTERN.test(body.requestKey)) throw new Error('Invalid request key');
       if (body.expectedUpdatedAt !== undefined && Number.isNaN(Date.parse(body.expectedUpdatedAt))) throw new Error('Invalid version');
       const answer = await c.post<BookingCloseAnswer>(`/specialists/admin/bookings/${checkId(bookingId, 'booking')}/close`, {
         body: { reason, requestKey: body.requestKey, ...(body.expectedUpdatedAt !== undefined ? { expectedUpdatedAt: body.expectedUpdatedAt } : {}) },

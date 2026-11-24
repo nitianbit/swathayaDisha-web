@@ -1,7 +1,7 @@
 import { ApiError, createApiClient } from './client.ts';
 import {
-  bookingCloseApi, bookingCloseFinal, bookingCloseReasonProblem, bookingCloseRefusal, bookingCloseRefusedBeforeWriting, canCloseAndRefund, closeByKey,
-  closeRefundWords, doctorAdminListApi, doctorEligibility, doctorStateRefusal, doctorStateRefusedBeforeWriting, fenceHolds, isAlreadyCancelled,
+  bookingCloseApi, bookingCloseFinal, bookingCloseRefusal, bookingCloseRefusedBeforeWriting, canCloseAndRefund, closeByKey,
+  closeRefundTarget, closeRefundWords, doctorAdminListApi, doctorEligibility, doctorStateRefusal, doctorStateRefusedBeforeWriting, fenceHolds, isAlreadyCancelled,
   isFenceMismatch, verifyFenceOf, type BookingClose,
 } from './adminDoctors.ts';
 import type { AdminConsultation } from './adminConsultations.ts';
@@ -39,12 +39,10 @@ describe('WQ18 admin doctors (specialists routes as an admin)', () => {
     expect(() => api.list({ name: 'x'.repeat(101) })).toThrow('Invalid search');
     expect(() => api.get('not-an-id')).toThrow('Invalid doctor id');
     await api.get(DOC);
-    await api.openConsultations(DOC, 'confirmed');
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       'GET /specialists?name=Mehta&isVerified=false&isActive=true&sortBy=createdAt&sortOrder=desc&page=2&limit=20',
       'GET /specialists?sortBy=createdAt&sortOrder=desc&page=1&limit=20',
       `GET /specialists/${DOC}`,
-      `GET /bookings?bookingType=consultation&status=confirmed&specialistId=${DOC}&page=1&limit=20`,
     ]);
   });
 
@@ -112,10 +110,8 @@ describe('WQ18 S5c admin close and refund', () => {
     await expect(api.close(BK, { reason: 'Doctor left', requestKey: 'short' })).rejects.toThrow('Invalid request key');
     await expect(api.close(BK, { reason: 'Doctor left', requestKey: KEY, expectedUpdatedAt: 'yesterday' })).rejects.toThrow('Invalid version');
     await expect(api.close('nope', { reason: 'Doctor left', requestKey: KEY })).rejects.toThrow('Invalid booking id');
+    await expect(api.close(BK, { reason: 'x'.repeat(501), requestKey: KEY })).rejects.toThrow('Invalid reason');
     expect(calls).toHaveLength(0);
-    expect(bookingCloseReasonProblem('ab')).toContain('at least 3');
-    expect(bookingCloseReasonProblem('x'.repeat(501))).toContain('at most 500');
-    expect(bookingCloseReasonProblem('   abc  ')).toBeUndefined();
   });
 
   it('a 200 that is not this key’s recorded close is not proof of a close (502, stays unknown)', async () => {
@@ -153,11 +149,15 @@ describe('WQ18 S5c admin close and refund', () => {
     expect(bookingCloseRefusal(new ApiError(409, 'Server words', 'SOMETHING_NEW'))).toBe('Server words');
   });
 
-  it('the refund is said as the server answered it: patient wallet, the booking pharmacy, or nothing', () => {
+  it('the refund is said as the server answered it: patient wallet, the pharmacy’s wallet, queued to its card, or nothing', () => {
     const money = (n: number) => `Rs ${n}`;
-    expect(closeRefundWords(800, false, money)).toBe('Rs 800 was refunded to the patient’s Jansetu wallet.');
-    expect(closeRefundWords(500, true, money)).toBe('Rs 500 was refunded to the pharmacy that booked it.');
-    expect(closeRefundWords(0, false, money)).toBe('Nothing was refunded: no money was held for it through Jansetu.');
+    expect(closeRefundTarget({})).toBe('patient');
+    expect(closeRefundTarget({ assisted: { funding: { method: 'wallet' } } })).toBe('pharmacy_wallet');
+    expect(closeRefundTarget({ assisted: { funding: { method: 'razorpay' } } })).toBe('pharmacy_card');
+    expect(closeRefundWords(800, 'patient', money)).toBe('Rs 800 was refunded to the patient’s Jansetu wallet.');
+    expect(closeRefundWords(500, 'pharmacy_wallet', money)).toBe('Rs 500 was refunded to the pharmacy that booked it.');
+    expect(closeRefundWords(500, 'pharmacy_card', money)).toBe('Rs 500 is being refunded to the card or UPI the pharmacy paid with.');
+    expect(closeRefundWords(0, 'patient', money)).toBe('Nothing was refunded: no money was held for it through Jansetu.');
   });
 
   it('finds this key’s close among the booking’s closes, exactly', () => {
