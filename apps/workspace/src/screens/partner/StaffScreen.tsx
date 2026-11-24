@@ -230,7 +230,7 @@ function AddMember({ ctx, branches, branchesError, admin, onCancel, onAdded }: {
   onCancel: () => void; onAdded: (m: PartnerMember) => Promise<void>;
 }) {
   const wide = hasGlobalScope(ctx.actor);
-  const grantable = grantablePermissions(ctx.actor);
+  const grantable = grantablePermissions(ctx.actor, useWorkspacePartner(ctx).data?.kind);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -450,13 +450,18 @@ function EditPermissions({ ctx, member, onClose, onSaved }:
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const grantable = grantablePermissions(ctx.actor);
+  // WQ20c: what may be granted depends on the partner's kind (the wallet permissions are a lab's). Until the kind is read,
+  // nothing is saved: a save then would drop a lab member's wallet access that is simply not offered yet.
+  const partner = useWorkspacePartner(ctx);
+  const kind = partner.data?.kind;
+  const grantable = grantablePermissions(ctx.actor, kind);
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
 
   async function save(e: FormEvent) {
     e.preventDefault();
     setError(null); setNotice(null);
+    if (!kind) return;
     if (!changedFields(d.current()).permissions) { setNotice('Nothing has changed.'); return; }
     setBusy(true);
     try {
@@ -477,14 +482,18 @@ function EditPermissions({ ctx, member, onClose, onSaved }:
     <section className="ws-section" aria-labelledby="perm-h">
       <h2 id="perm-h">Permissions for {member.name}</h2>
       <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
-        <fieldset className="ws-frozen" disabled={busy}>
-          <PermissionChecklist legend="Permissions" allowed={grantable} value={d.draft.permissions} onChange={(v) => d.set('permissions', v)} />
-        </fieldset>
+        {partner.isPending ? <Loading label="Loading the permissions this partner can give…" />
+          : partner.isError ? <ErrorState message={messageOf(partner.error)} onRetry={() => void partner.refetch()} />
+          : (
+            <fieldset className="ws-frozen" disabled={busy}>
+              <PermissionChecklist legend="Permissions" allowed={grantable} value={d.draft.permissions} onChange={(v) => d.set('permissions', v)} />
+            </fieldset>
+          )}
         {stale && <Alert tone="warn">{stale}</Alert>}
         {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}
         <div className="ws-actions">
-          <Button type="submit" busy={busy}>Save permissions</Button>
+          <Button type="submit" busy={busy} disabled={!kind}>Save permissions</Button>
           <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
         </div>
       </form>

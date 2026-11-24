@@ -67,7 +67,8 @@ function literalsOf(file: string, text: string): Hit[] {
     if (ts.isJsxAttribute(node)) {
       const name = node.name.getText(sf);
       const init = node.initializer;
-      if (init && ts.isStringLiteral(init) && !TECHNICAL.has(name) && !name.startsWith('data-') && /[A-Za-z]{2,}/.test(init.text)) {
+      // A route or path (`back="/admin/partners"`) is not words.
+      if (init && ts.isStringLiteral(init) && !TECHNICAL.has(name) && !name.startsWith('data-') && /[A-Za-z]{2,}/.test(init.text) && !/^[/#]/.test(init.text)) {
         add(init, init.text);
         return;
       }
@@ -106,6 +107,7 @@ describe('no English written into the code', { timeout: 60_000 }, () => {
     expect(count('const a = <p>Book a doctor</p>;')).toBe(1);
     expect(count('const a = <TextField label="Mobile number" />;')).toBe(1);
     expect(count('const a = <Button variant="ghost" className="j-btn" aria-describedby="x-hint" />;')).toBe(0);
+    expect(count('const a = <NoSuchRecord back="/admin/partners" />;')).toBe(0);
     expect(count("const a = 'This time was just taken.';")).toBe(1);
     expect(count('const a = `Send code in ${n}s`;')).toBe(1);
     // A lone capitalised word is found in JSX; as a bare string it is too often a code.

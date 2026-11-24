@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router';
+import { Link } from 'react-router';
 import {
   addDays, ApiError, appointmentAt, appointmentDay, canonicalMobile, CLINIC_APPOINTMENT_STATUS_LABEL, clinicBranchesFor, DESK_GENDERS, DESK_RELATIONS,
   deskActions, deskBookingProblems, doctorsAtBranch, familyMemberProblems, holdsAny, INVOICE_STATE_LABEL, isRealDate, istDateOf, MAX_APPOINTMENTS,
@@ -15,7 +15,7 @@ import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { messageOf } from '../../errors.ts';
 import { afterFailure, beginAttempt, keyedLookup, newRequestKey, ownsKey, resolveStored, startOp, stillCurrent, wasAbandoned } from '../../requests.ts';
 import { useSession, type SessionMemory } from '../../session.tsx';
-import { billPrefillSlot, type BillHandover, type BillPrefill } from './billing.tsx';
+import { BILL_READERS, BillLink, type BillPrefill } from './billing.tsx';
 import {
   appointmentLabel, appointmentTone, ClinicOnly, clinicLink, istTime, useClinicApi, useDoctorList, type ClinicApi,
 } from './clinic.tsx';
@@ -28,7 +28,6 @@ const clock = (raw: string) => {
   const at = appointmentAt({ bookingDate: '20000101', bookingTime: raw });
   return at ? istTime(at) : raw;
 };
-const BILL_READERS = ['invoices.create', 'invoices.cancel', 'payments.record', 'finance.view'] as const;
 const NO_MONEY = 'Nothing is charged or refunded through Jansetu: desk appointments are paid at the clinic.';
 /** Q13 409 BOOKING_CHANGED: the step named the version the person saw, and the appointment had changed since. */
 const isChanged = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'BOOKING_CHANGED';
@@ -490,33 +489,9 @@ function PendingBookingSummary({ body }: { body: DeskPendingBody }) {
   );
 }
 
-/**
- * Q14: the new-bill form for this visit, prefilled with the patient, doctor, branch and appointment (handed over in
- * session memory only, never in the URL), or the bills list for other bill readers.
- */
-function BillLink({ ctx, memory, prefill, label = 'Make a bill for this visit' }: { ctx: ScopeContext; memory: SessionMemory; prefill: BillPrefill; label?: string }) {
-  const navigate = useNavigate();
-  if (holdsAny(ctx.actor, ['invoices.create'])) {
-    const to = `${ctx.link('invoices')}/new`;
-    return (
-      <Link to={to} onClick={(e) => {
-        // A modified click opens another tab (its own session memory): nothing is handed over, the form starts empty.
-        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-        e.preventDefault();
-        // Bound to this navigation: the form takes it only when the route state names this token, once.
-        const token = newRequestKey();
-        memory.set(billPrefillSlot(scopeIdentity(ctx)), { token, prefill } satisfies BillHandover);
-        navigate(to, { state: { prefillToken: token } });
-      }}>{label}</Link>
-    );
-  }
-  if (holdsAny(ctx.actor, BILL_READERS)) return <Link to={ctx.link('invoices')}>Bills</Link>;
-  return null;
-}
-
 /** Q14: the bill's customer is the appointment's account holder (409 APPOINTMENT_CUSTOMER_MISMATCH otherwise), not a family member. */
 const prefillOf = (a: ClinicAppointment): BillPrefill => ({
-  appointmentId: a.bookingId, branchId: a.branchId ?? '', doctorId: a.doctorId,
+  link: { kind: 'appointment', id: a.bookingId }, branchId: a.branchId ?? '', doctorId: a.doctorId,
   name: (a.patient?.relationship ? a.patient.accountName : a.patient?.name) ?? '', phone: a.patient?.phone ?? '',
   label: `${a.doctorName ?? 'the doctor'}, ${appointmentLabel(a)}`,
 });

@@ -10,7 +10,7 @@ type Used = { state: 'used' };
  * or give it up on the server (then it can never be booked). After a reload only the key is kept: check or give up.
  */
 export function UnconfirmedBooking<B, A extends { state: string }>({ op, what, busy, givingUp, resendError, byKey, onUsed, onAbandoned, onResend, onGiveUp,
-  extra, summary }: {
+  extra, summary, charged = true }: {
   op: PendingOp<B>;
   /** "booking", "lab booking". */
   what: string;
@@ -25,8 +25,11 @@ export function UnconfirmedBooking<B, A extends { state: string }>({ op, what, b
   onGiveUp: () => void;
   extra?: ReactNode;
   summary?: ReactNode;
+  /** WQ19: false for a booking paid at the lab (nothing is charged through Jansetu). */
+  charged?: boolean;
 }) {
   const restored = !!op.restored || !op.body;
+  const twice = charged ? 'never booked or charged twice' : 'never booked twice';
   return (
     <>
       {resendError && <Alert>{resendError}</Alert>}
@@ -37,7 +40,7 @@ export function UnconfirmedBooking<B, A extends { state: string }>({ op, what, b
           if (r.state === 'abandoned') { onAbandoned(); return null; }
           return restored
             ? 'Not booked so far. It may still be on its way. Give it up to make sure it never is, then book again.'
-            : 'Not booked so far. It may still be on its way. Sending the same request again is safe: it is never booked or charged twice.';
+            : `Not booked so far. It may still be on its way. Sending the same request again is safe: it is ${twice}.`;
         }}
         resend={restored ? undefined : { label: 'Send the same request again', busy: busy && !givingUp, onClick: onResend }}
         giveUp={{ label: 'Give this up', busy: givingUp, onClick: onGiveUp }}>
@@ -45,7 +48,7 @@ export function UnconfirmedBooking<B, A extends { state: string }>({ op, what, b
         <Alert tone="warn">
           {restored
             ? `A ${what} made earlier on this device (before the page was reloaded, or before you signed out) was not confirmed. Its details are not kept here. Check it, or give it up: then it can never be booked.`
-            : `The outcome of this request is not known yet${op.error ? ` (${op.error})` : ''}. The booking may already be made and paid. Sending the same request again is safe: it is never booked or charged twice. Or give it up: then it can never be booked.`}
+            : `The outcome of this request is not known yet${op.error ? ` (${op.error})` : ''}. The booking may already be made${charged ? ' and paid' : ''}. Sending the same request again is safe: it is ${twice}. Or give it up: then it can never be booked.`}
         </Alert>
         {!restored && summary}
       </CheckPanel>

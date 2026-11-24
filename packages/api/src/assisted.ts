@@ -152,6 +152,8 @@ export interface DispensingCopy {
   testsAdvised?: string[];
   prescribedAt?: string;
   prescribedBySpecialistName?: string;
+  /** WQ21 (r16 phase 3d, §25.12): the recommended-tests code on the prescription (stored without the hyphen), when made. */
+  recommendationCode?: string;
   fileUrls: string[];
   /** The PDF is still being made: read again shortly. */
   copyPending?: boolean;
@@ -504,7 +506,8 @@ export function joinWords(mode: string | undefined, on: JoinOn | undefined): str
 export type RefusalKind = 'off' | 'topup' | 'wallet' | 'price' | 'slot' | 'doctor' | 'limit' | 'patient' | 'coupon' | 'card' | 'other';
 export interface Refusal { kind: RefusalKind; message: string; priceMinor?: number }
 
-const rupees = formatPaise;
+/** Paise as money ("₹1,234.50"); kept as `rupees` for the screens that import it by that name. */
+export const rupees = formatPaise;
 const waitWords = (seconds: number | undefined) =>
   !seconds ? 'later' : seconds < 90 ? 'in a minute' : seconds < 3600 ? `in about ${Math.ceil(seconds / 60)} minutes` : `in about ${Math.ceil(seconds / 3600)} hours`;
 

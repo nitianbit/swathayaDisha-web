@@ -223,7 +223,8 @@ export const LAB_BOOKING_STATUS_LABEL: Record<LabBookingStatus, string> = {
 export type LabPaymentStatus = 'pending' | 'paid' | 'refunded';
 export const LAB_PAYMENT_STATUS_LABEL: Record<LabPaymentStatus, string> = { pending: 'Not paid yet', paid: 'Paid online', refunded: 'Refunded' };
 
-export interface LabBookingSlot { slotId: string; date: string; startTime: string; endTime: string; startsAt: string }
+/** r12: a desk walk-in has no seat: `walkIn`, its IST arrival as `date`/`startTime`, no `slotId` or `endTime`. */
+export interface LabBookingSlot { slotId: string; date: string; startTime: string; endTime: string; startsAt: string; walkIn?: boolean }
 export interface LabBookingItem {
   catalogItemId: string; kind: 'test' | 'package'; name: string; code?: string; priceMinor: number; mrpMinor?: number;
   gstRate: number; sac?: string; reportTatHours?: number;
@@ -258,7 +259,7 @@ export interface LabBooking {
    * Q16a: `admin_no_show` = an admin cancelled a booking moved after a no-show, with `refund` saying whether the patient
    * was refunded (`adminCancelMovedNoShow`).
    */
-  cancellation?: { reason: 'timeout' | 'customer' | 'lab_reject' | 'admin_no_show'; note?: string; by: string; byKind: 'customer' | 'member' | 'admin' | 'system'; at: string; refund?: boolean };
+  cancellation?: { reason: 'timeout' | 'customer' | 'lab_reject' | 'admin_no_show' | 'desk' | 'partner'; note?: string; by: string; byKind: 'customer' | 'member' | 'admin' | 'system'; at: string; refund?: boolean };
   reschedule: { version: number; pending: boolean; previousSlot?: LabBookingSlot; reason?: string; at?: string; by?: string };
   collector?: { memberId?: string; name: string; phone?: string };
   report: { draftFiles: string[]; releasedFiles: string[]; releases: LabReportRelease[] };
@@ -266,6 +267,14 @@ export interface LabBooking {
   /** Q14: the no-show this booking was moved after (at most one; a second no-show is final). */
   noShows?: LabNoShowMove[];
   noShowReschedules?: number;
+  /**
+   * r12 (`deskLabPart`): `lab_desk` rows were booked at the lab's front desk and are paid at the lab (`payAtLab`, no
+   * Jansetu money: `paymentStatus` stays `pending`); `bill` is the lab's bill linked to it (`labBookingId`), or null.
+   */
+  source?: 'self' | 'pharmacy_assisted' | 'lab_desk' | string;
+  payAtLab?: boolean;
+  desk?: { memberId: string; branchId: string; arrivedAt: string | null; preferredLanguage?: string; payAtLab: boolean } | null;
+  bill?: { invoiceId: string; serial: string; number: number; state: string } | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -299,7 +308,11 @@ export type AdminLabBookingRow = Omit<LabBooking, 'report'> & { report?: { draft
  * (`limit` defaults to 50 and is capped at 200 by the service, whatever the schema admits), with the total that match
  * and an exact `nextCursor` (`<slot start ms>_<id>`) for the page after, or null on the last one.
  */
-export interface LabBookingQuery { status?: LabBookingStatus; branchId?: string; from?: string; to?: string; limit?: number; cursor?: string }
+export interface LabBookingQuery {
+  status?: LabBookingStatus; branchId?: string; from?: string; to?: string; limit?: number; cursor?: string;
+  /** r12: only the bookings from one source (`lab_desk` = booked at this lab's front desk). */
+  source?: 'self' | 'pharmacy_assisted' | 'lab_desk';
+}
 /** The most one page holds (`listForPartnerPage` caps `limit` at 200). */
 export const LAB_BOOKINGS_PAGE_MAX = 200;
 /** Q11 cursors are `<ms>_<objectId>` (the service refuses anything else with 400 INVALID_CURSOR). */
@@ -397,20 +410,25 @@ export interface LabActionOffer { action: LabAction; blocked?: string }
  * - `reports.upload`: add draft files while processing or report released; `reports.release`: release a draft then.
  * Unpaid (`pending_payment`) and finished bookings offer nothing.
  */
-export function labActions(b: Pick<LabBooking, 'status' | 'paymentStatus' | 'visitMode' | 'reschedule' | 'slot' | 'report' | 'noShows' | 'noShowReschedules'>,
+export function labActions(b: Pick<LabBooking, 'status' | 'paymentStatus' | 'visitMode' | 'reschedule' | 'slot' | 'report' | 'noShows' | 'noShowReschedules' | 'payAtLab'>,
   actor: Pick<PartnerActorView, 'role' | 'permissions'>, now: Date): LabActionOffer[] {
-  if (b.paymentStatus !== 'paid') return [];
+  // r12: a desk row is paid at the lab (`payAtLab`, never `paid` here); its steps run as for a paid booking, without money.
+  const desk = b.payAtLab === true;
+  if (b.paymentStatus !== 'paid' && !desk) return [];
   const manage = holdsAny(actor, ['bookings.manage']);
   const out: LabActionOffer[] = [];
   const waiting = b.reschedule?.pending ? 'The customer has not answered the new time yet.' : undefined;
   if (b.status === 'confirmed' && manage) {
     if (b.visitMode === 'home') out.push({ action: 'assign' }, { action: 'collect', blocked: waiting });
     else out.push({ action: 'visit', blocked: waiting });
-    const ended = labSlotEnd(b.slot).getTime() <= now.getTime();
-    out.push({ action: 'no_show', blocked: waiting ?? (ended ? undefined : `A no-show can be marked only after the slot has ended (${b.slot.endTime}).`) });
-    // Q14: a booking moved after a no-show is neither moved again the ordinary way (409 NO_SHOW_RESCHEDULE_USED) nor
-    // rejected for a refund (409 NO_SHOW_NOT_REFUNDABLE).
-    if (!noShowMovedOnce(b)) out.push({ action: 'reschedule' }, { action: 'reject' });
+    // r12: a walk-in is tested on arrival: never a no-show (409 WALK_IN_ARRIVED) nor moved (409 WALK_IN_NOT_RESCHEDULABLE).
+    if (!b.slot?.walkIn) {
+      const ended = labSlotEnd(b.slot).getTime() <= now.getTime();
+      out.push({ action: 'no_show', blocked: waiting ?? (ended ? undefined : `A no-show can be marked only after the slot has ended (${b.slot.endTime}).`) });
+      // Q14: a booking moved after a no-show is neither moved again the ordinary way (409 NO_SHOW_RESCHEDULE_USED) nor
+      // rejected for a refund (409 NO_SHOW_NOT_REFUNDABLE). r12: a desk row is cancelled with the desk cancel (no money).
+      if (!noShowMovedOnce(b)) out.push({ action: 'reschedule' }, ...(desk ? [] : [{ action: 'reject' as const }]));
+    }
   }
   if ((b.status === 'sample_collected' || b.status === 'visited') && manage) out.push({ action: 'process' });
   if (b.status === 'processing' || b.status === 'report_ready') {
@@ -500,7 +518,7 @@ export function partnerLabsApi(c: ApiClient, scope: PartnerScope) {
       return c.page<LabBooking>(`${base()}/lab-bookings`, {
         query: {
           status: q.status, branchId: q.branchId === undefined ? undefined : checkId(q.branchId, 'branch'),
-          from: checkDate(q.from, 'from'), to: checkDate(q.to, 'to'), limit: q.limit, cursor: q.cursor,
+          from: checkDate(q.from, 'from'), to: checkDate(q.to, 'to'), limit: q.limit, cursor: q.cursor, source: q.source,
         },
       });
     },

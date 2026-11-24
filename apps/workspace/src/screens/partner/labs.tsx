@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { FileText } from 'lucide-react';
 import {
-  hasGlobalScope, LAB_VISIT_MODES, reportFileName, type Branch, type LabBookingStatus, type VisitMode,
+  hasGlobalScope, isDeskBooking, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODES, reportFileName, type Branch, type LabBooking, type LabBookingStatus, type VisitMode,
 } from '@jansetu/api';
 import { CALENDAR_DAY, formatDateWith } from '@jansetu/i18n';
-import { Alert, Button, Empty, ErrorState, Loading } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { sniffDocument } from '../pharmacy/documents.ts';
 import { useBranches, useWorkspacePartner, type ScopeContext } from './scope.tsx';
@@ -17,7 +17,20 @@ export function formatDay(date: string): string {
 }
 
 /** A slot as staff read it: its India-time day and times. */
-export const slotLabel = (s: { date: string; startTime: string; endTime: string }) => `${formatDay(s.date)}, ${s.startTime}–${s.endTime}`;
+/** r12: a desk walk-in has no seat: its arrival day and time, "walk-in". */
+export const slotLabel = (s: { date: string; startTime: string; endTime?: string; walkIn?: boolean }) =>
+  `${formatDay(s.date)}, ${s.startTime}${s.walkIn || !s.endTime ? ' (walk-in)' : `–${s.endTime}`}`;
+
+/**
+ * How a booking is paid, as a badge: r12 desk rows are paid at the lab ("Pay at lab"; no Jansetu payment), with the
+ * number of the lab's bill once one is linked; online bookings show their payment status.
+ */
+export function LabPayment({ b }: { b: Pick<LabBooking, 'paymentStatus' | 'source' | 'payAtLab' | 'bill'> }) {
+  if (isDeskBooking(b)) {
+    return <><Badge>Pay at lab</Badge>{b.bill ? <> · Bill {b.bill.serial}{b.bill.state === 'cancelled' ? ' (cancelled)' : ''}</> : null}</>;
+  }
+  return <Badge tone={b.paymentStatus === 'paid' ? 'ok' : b.paymentStatus === 'refunded' ? 'danger' : 'warn'}>{LAB_PAYMENT_STATUS_LABEL[b.paymentStatus] ?? b.paymentStatus}</Badge>;
+}
 
 export const labStatusTone = (s: LabBookingStatus): 'ok' | 'warn' | 'danger' | undefined =>
   s === 'completed' || s === 'report_ready' ? 'ok' : s === 'cancelled' || s === 'no_show' ? 'danger' : s === 'pending_payment' ? 'warn' : undefined;

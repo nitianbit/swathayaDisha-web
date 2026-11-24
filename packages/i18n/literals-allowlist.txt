@@ -1,5 +1,5 @@
 # Files that still hold English written into the code (docs/I18N_PLAN.md §4.1). Each extraction round removes
-# its files once their words come from a catalogue; the list is empty after round 6j. Started in 6a: 159 files.
+# its files once their words come from a catalogue; the list is empty after round 6j. Started in 6a: 159 files; 166 with the stage-next (push 1) files.
 apps/customer/src/App.tsx
 apps/customer/src/common.tsx
 apps/customer/src/files.tsx
@@ -53,6 +53,7 @@ apps/workspace/src/screens/admin/ConsultationsScreen.tsx
 apps/workspace/src/screens/admin/DoctorScreen.tsx
 apps/workspace/src/screens/admin/DoctorsScreen.tsx
 apps/workspace/src/screens/admin/ExternalCancellationsScreen.tsx
+apps/workspace/src/screens/admin/LabWalletAdminScreen.tsx
 apps/workspace/src/screens/admin/NewPartnerScreen.tsx
 apps/workspace/src/screens/admin/NewPharmacyScreen.tsx
 apps/workspace/src/screens/admin/OrderCancellationsScreen.tsx
@@ -87,6 +88,8 @@ apps/workspace/src/screens/partner/InvoiceScreen.tsx
 apps/workspace/src/screens/partner/InvoicesScreen.tsx
 apps/workspace/src/screens/partner/LabBookingScreen.tsx
 apps/workspace/src/screens/partner/LabBookingsScreen.tsx
+apps/workspace/src/screens/partner/LabDeskScreen.tsx
+apps/workspace/src/screens/partner/LabWalletScreen.tsx
 apps/workspace/src/screens/partner/NewInvoiceScreen.tsx
 apps/workspace/src/screens/partner/ProfileScreen.tsx
 apps/workspace/src/screens/partner/SlotsScreen.tsx
@@ -118,6 +121,7 @@ apps/workspace/src/screens/pharmacy/SupplierPicker.tsx
 apps/workspace/src/screens/pharmacy/SuppliersScreen.tsx
 apps/workspace/src/screens/pharmacy/WalletScreen.tsx
 apps/workspace/src/screens/pharmacy/assistedCreate.ts
+apps/workspace/src/screens/pharmacy/bookingFields.tsx
 apps/workspace/src/screens/pharmacy/cardBooking.tsx
 apps/workspace/src/screens/pharmacy/cursorList.tsx
 apps/workspace/src/screens/pharmacy/documentViewer.tsx
@@ -125,6 +129,7 @@ apps/workspace/src/screens/pharmacy/orderLabels.ts
 apps/workspace/src/screens/pharmacy/ownedCancel.tsx
 apps/workspace/src/screens/pharmacy/ownedOp.tsx
 apps/workspace/src/screens/pharmacy/patientStep.tsx
+apps/workspace/src/screens/pharmacy/recommendedTests.tsx
 apps/workspace/src/screens/pharmacy/slotDays.tsx
 apps/workspace/src/screens/pharmacy/topup.tsx
 apps/workspace/src/screens/pharmacy/unconfirmedBooking.tsx
@@ -149,6 +154,8 @@ packages/api/src/doctorTools.ts
 packages/api/src/finance.ts
 packages/api/src/instantConsult.ts
 packages/api/src/inventory.ts
+packages/api/src/labDesk.ts
+packages/api/src/labWallet.ts
 packages/api/src/nativeSession.ts
 packages/api/src/noShows.ts
 packages/api/src/partnerInvoices.ts

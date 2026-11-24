@@ -28,6 +28,9 @@ import { InvoiceScreen } from './screens/partner/InvoiceScreen.tsx';
 import { InvoicesScreen } from './screens/partner/InvoicesScreen.tsx';
 import { LabBookingScreen } from './screens/partner/LabBookingScreen.tsx';
 import { LabBookingsScreen } from './screens/partner/LabBookingsScreen.tsx';
+import { LabDeskScreen } from './screens/partner/LabDeskScreen.tsx';
+import { LabWalletScreen } from './screens/partner/LabWalletScreen.tsx';
+import { LabWalletAdminScreen } from './screens/admin/LabWalletAdminScreen.tsx';
 import { SlotsScreen } from './screens/partner/SlotsScreen.tsx';
 import { ClinicDoctorsScreen } from './screens/partner/ClinicDoctorsScreen.tsx';
 import { DeskScreen } from './screens/partner/DeskScreen.tsx';
@@ -205,6 +208,16 @@ export const PAGES: readonly WorkspacePage[] = [
     nav: { label: 'Lab bookings', icon: FlaskConical, section: 'Lab' },
   },
   { path: '/partner/lab-bookings/:bookingId', roles: ['partner'], element: <LabBookingScreen />, partnerPermissions: LAB_READERS, partnerKinds: ['lab'] },
+  // WQ19 (r12): the lab front desk books the lab's own tests for a patient at the counter (`bookings.manage`, labs only).
+  {
+    path: '/partner/lab-desk', roles: ['partner'], element: <LabDeskScreen />, partnerPermissions: ['bookings.manage'], partnerKinds: ['lab'],
+    nav: { label: 'Front desk', icon: CalendarPlus, section: 'Lab' },
+  },
+  // WQ20 (r13): the lab's own wallet (`/partner-workspace/assisted/wallet*`; `wallet.view` reads, `wallet.manage` adds money).
+  {
+    path: '/partner/wallet', roles: ['partner'], element: <LabWalletScreen />, partnerPermissions: ['wallet.view', 'wallet.manage'], partnerKinds: ['lab'],
+    nav: { label: 'Wallet', icon: Wallet, section: 'Lab' },
+  },
   {
     path: '/partner/slots', roles: ['partner'], element: <SlotsScreen />, partnerPermissions: SLOT_READERS, partnerKinds: ['lab'],
     nav: { label: 'Slots', icon: CalendarClock, section: 'Lab' },
@@ -241,6 +254,9 @@ export const PAGES: readonly WorkspacePage[] = [
   { path: '/admin/partners/:partnerId/slots', roles: ['admin'], element: <SlotsScreen /> },
   { path: '/admin/partners/:partnerId/lab-bookings', roles: ['admin'], element: <LabBookingsScreen /> },
   { path: '/admin/partners/:partnerId/lab-bookings/:bookingId', roles: ['admin'], element: <LabBookingScreen /> },
+  { path: '/admin/partners/:partnerId/lab-desk', roles: ['admin'], element: <LabDeskScreen /> },
+  // WQ20 (r13): a lab's wallet for admins (`/admin/labs/:partnerId/wallet*`).
+  { path: '/admin/partners/:partnerId/wallet', roles: ['admin'], element: <LabWalletAdminScreen /> },
   { path: '/admin/partners/:partnerId/finance', roles: ['admin'], element: <PartnerFinanceScreen /> },
   { path: '/admin/partners/:partnerId/desk', roles: ['admin'], element: <DeskScreen /> },
   { path: '/admin/partners/:partnerId/clinic-doctors', roles: ['admin'], element: <ClinicDoctorsScreen /> },

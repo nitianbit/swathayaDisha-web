@@ -182,8 +182,10 @@ export function adminTopupRefusal(err: unknown): string {
 }
 
 /** S6: the warning shown on the form and its review (owner wording). */
-export const ADMIN_TOPUP_WARNING =
-  'Do not use this to make up for a card top-up that never arrived. Ask the tech team to run the top-up check instead, or the pharmacy could be paid twice.';
+/** WQ20: the same words for a lab's wallet. */
+export const adminTopupWarning = (owner: 'pharmacy' | 'lab') =>
+  `Do not use this to make up for a card top-up that never arrived. Ask the tech team to run the top-up check instead, or the ${owner} could be paid twice.`;
+export const ADMIN_TOPUP_WARNING = adminTopupWarning('pharmacy');
 
 // ── WQ15: card top-ups not credited, closed as already paid by hand (backend r9, design §22) ──
 
@@ -191,6 +193,9 @@ export const ADMIN_TOPUP_WARNING =
 export interface UncreditedTopup {
   paymentTransactionId: string;
   pharmacyId: string;
+  /** r13: a lab's top-up names `walletKind: 'lab'` and its `partnerId` (no `pharmacyId`). */
+  walletKind?: 'pharmacy' | 'lab' | string;
+  partnerId?: string;
   amountMinor: number;
   createdAt: string;
   /** `paid_not_credited`: the card payment was taken; `not_checked_with_gateway`: an attempt nobody checked with Razorpay. */
@@ -199,12 +204,13 @@ export interface UncreditedTopup {
   razorpayOrderId?: string;
 }
 
-/** The rows of one pharmacy, in the server's order, dropping anything malformed. */
-export function uncreditedOf(data: unknown, pharmacyId: string): UncreditedTopup[] {
+/** The rows of one pharmacy (or, r13, one lab: `walletKind: 'lab'` by `partnerId`), in the server's order, dropping anything malformed. */
+export function uncreditedOf(data: unknown, ownerId: string): UncreditedTopup[] {
   if (!Array.isArray(data)) return [];
-  const id = pharmacyId.toLowerCase();
+  const id = ownerId.toLowerCase();
+  const ownerOf = (r: UncreditedTopup) => (r.walletKind === 'lab' ? r.partnerId : r.pharmacyId);
   return data.filter((r): r is UncreditedTopup => !!r && typeof r === 'object'
-    && hex.test(String((r as UncreditedTopup).paymentTransactionId)) && String((r as UncreditedTopup).pharmacyId ?? '').toLowerCase() === id
+    && hex.test(String((r as UncreditedTopup).paymentTransactionId)) && String(ownerOf(r as UncreditedTopup) ?? '').toLowerCase() === id
     && Number.isSafeInteger((r as UncreditedTopup).amountMinor));
 }
 

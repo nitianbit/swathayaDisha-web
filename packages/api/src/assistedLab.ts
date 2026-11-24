@@ -157,3 +157,61 @@ export function labRefusal(err: unknown): Refusal {
   const known = err instanceof ApiError && err.code ? LAB_WORDS[err.code] : undefined;
   return known ?? shared;
 }
+
+// ── WQ21: the recommended-tests code (backend r16 phase 3d, design §25.12.4) ──
+
+/** `POST /pharmacy-assisted/recommendations/lookup {code, phone}` (r16b): the test names the doctor advised, and nothing else. */
+export interface TestRecommendation { code: string; status: string; items: { index: number; name: string }[] }
+
+/** The code as typed, made ready to send: spaces and hyphens dropped, upper case (the server reads I/L as 1, O as 0 itself). */
+export function cleanRecommendationCode(text: string): string | null {
+  const c = text.replace(/[\s-]/g, '').toUpperCase();
+  return /^[0-9A-Z]{4,20}$/.test(c) ? c : null;
+}
+/** "ABCD-EFGH", as printed on the prescription. */
+export const formatRecommendationCode = (code: string) => (code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code);
+
+/**
+ * By the code AND the patient's mobile number (the server's one answer for a wrong code or a wrong number). r16b: both
+ * travel in the POST body, never in the URL. `path`: the pharmacy's or the lab desk's lookup route.
+ */
+export function recommendationLookup(c: ApiClient, path: string) {
+  return (code: string, phone: string) => {
+    const clean = cleanRecommendationCode(code);
+    if (!clean) throw new Error('Invalid recommendation code');
+    return c.post<TestRecommendation>(path, { body: { code: clean, phone } });
+  };
+}
+export function pharmacyRecommendationsApi(c: ApiClient) {
+  return { load: recommendationLookup(c, '/pharmacy-assisted/recommendations/lookup') };
+}
+
+const sameName = (n: string) => n.trim().replace(/\s+/g, ' ').toLowerCase();
+/** The catalogue items named exactly as a recommended test (case and spaces aside), and the names this lab does not list. */
+export function matchRecommended(items: readonly { itemId: string; name: string }[], names: readonly string[]): { itemIds: string[]; unmatched: string[] } {
+  const itemIds: string[] = [];
+  const unmatched: string[] = [];
+  for (const name of names) {
+    const hit = items.find((i) => sameName(i.name) === sameName(name));
+    if (hit) { if (!itemIds.includes(hit.itemId)) itemIds.push(hit.itemId); } else unmatched.push(name);
+  }
+  return { itemIds, unmatched };
+}
+
+const REC_WORDS: Readonly<Record<string, string>> = {
+  INVALID_CODE: 'This code is not valid. Check it on the prescription.',
+  VALIDATION_ERROR: 'This code is not valid. Check it on the prescription.',
+  RECOMMENDATION_NOT_FOUND: 'No recommended tests were found for this code and this mobile number. Check both with the patient.',
+  INVALID_PHONE: 'Enter a valid 10-digit mobile number.',
+};
+/**
+ * The field is hidden: the switch is off (503 `RECOMMENDATIONS_DISABLED`, or a server without the route), or (WQ21b, the lab
+ * desk) this workspace may not load them (403 `LAB_PARTNER_REQUIRED`, `PARTNER_NOT_VERIFIED`).
+ */
+export const recommendationsOff = (err: unknown) => err instanceof ApiError
+  && (err.code === 'RECOMMENDATIONS_DISABLED' || ((err.status === 404 || err.status === 503) && !err.code)
+    || (err.status === 403 && (err.code === 'LAB_PARTNER_REQUIRED' || err.code === 'PARTNER_NOT_VERIFIED')));
+export function recommendationRefusal(err: unknown): string {
+  if (err instanceof ApiError && err.code && REC_WORDS[err.code]) return REC_WORDS[err.code]!;
+  return assistedRefusal(err).message;
+}

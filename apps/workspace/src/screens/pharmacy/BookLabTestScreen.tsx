@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  addressErrors, cardBookingState, orderFromBooking, branchesFor, CONSENT_STATEMENT_LANGUAGE, CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday,
-  LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, labRefusal, labTotalMinor, PATIENT_LANGUAGES, patientBody, pharmacyLabApi, type AssistedLabSlot, type LabAddress, type LabBookingRequest, type LabBookingView, type LabByKeyAnswer, type LabReceipt, type AssistedCardPayment, type AssistedPaymentMethod, type OpenCardOrder, type Refusal,
+  addressErrors, isCardAnswer, routeCardAnswer, pharmacyRecommendationsApi, orderFromBooking, branchesFor, CONSENT_STATEMENT_LANGUAGE, CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday,
+  LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, labRefusal, labTotalMinor, patientBody, pharmacyLabApi, type AssistedLabSlot, type LabAddress, type LabBookingRequest, type LabBookingView, type LabByKeyAnswer, type LabReceipt, type AssistedCardPayment, type AssistedPaymentMethod, type OpenCardOrder, type Refusal,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -14,8 +14,10 @@ import { usePharmacyId } from './ownedOp.tsx';
 import { useAssistedCreate } from './assistedCreate.ts';
 import { SlotDays } from './slotDays.tsx';
 import { UnconfirmedBooking } from './unconfirmedBooking.tsx';
+import { AddressFields, EMPTY_ADDRESS, labAddressLine, labAddressOf, LanguageSelect } from './bookingFields.tsx';
 import { PatientSection, usePatientStep } from './patientStep.tsx';
 import { PayChoice } from './walletPay.tsx';
+import { RecommendedTests, useRecommendedTicks } from './recommendedTests.tsx';
 import { CardDueSection, CardPaymentPanel, isOrderFailed, labCardSource, NOT_PAYABLE_WORDS, NotBooked, ORDER_FAILED_WORDS, useCardChoice } from './cardBooking.tsx';
 
 /**
@@ -48,7 +50,6 @@ interface Done { summary: ShownSummary; ref?: string; paidMinor?: number; replay
 interface CardDue { bookingId: string; requestKey: string; order: OpenCardOrder | null; summary: ShownSummary; ref?: string; newAccount?: boolean; autoOpen: boolean }
 
 const SLOT_DAYS = 7;
-const EMPTY_ADDRESS = { line1: '', line2: '', city: '', state: '', pincode: '', landmark: '' };
 
 function SummaryList({ s }: { s: ShownSummary }) {
   return (
@@ -106,35 +107,25 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   });
   const { op, settle, review, setReview, refused, setRefused, resendError, setResendError, givingUp } = create;
 
-  /** A create (or its replay) answered: a wallet booking is done; a card booking waits for its payment (`cardBookingState`). */
+  /** A create (or its replay) answered: as the consultation's (`routeCardAnswer`). */
   function afterReceipt(v: LabReceipt, requestKey: string, summary: Summary) {
     const base: Done = { summary, ref: v.booking.assisted?.shortRef, paidMinor: v.funding?.amountMinor, replayed: v.replayed, newAccount: v.newAccount };
-    if (v.funding?.method !== 'razorpay') { setDone({ ...base, paidBy: 'wallet' }); return; }
-    const state = cardBookingState('lab', v.booking);
-    if (state === 'paid') { setDone({ ...base, paidBy: 'card' }); return; }
-    if (state === 'waiting') {
-      setCardDue({ bookingId: v.booking._id, requestKey, order: v.payment ?? null, summary, ref: v.booking.assisted?.shortRef, newAccount: v.newAccount, autoOpen: !!v.payment });
-      return;
-    }
-    setEnded(NOT_PAYABLE_WORDS);
+    routeCardAnswer('lab', { card: v.funding?.method === 'razorpay', booking: v.booking, order: v.payment ?? null }, null, {
+      done: (card) => setDone({ ...base, paidBy: card ? 'card' : 'wallet' }),
+      due: (order) => setCardDue({ bookingId: v.booking._id, requestKey, order, summary, ref: v.booking.assisted?.shortRef, newAccount: v.newAccount, autoOpen: !!order }),
+      ended: () => setEnded(NOT_PAYABLE_WORDS),
+    });
   }
 
-  /** A by-key answer `used` (check or give-up): as the consultation's (`payment` present = a card booking). */
+  /** A by-key answer `used` (check or give-up): as the consultation's (`routeCardAnswer`). */
   function afterUsed(r: { booking: LabBookingView; payment?: AssistedCardPayment | null }, requestKey: string, summary: Summary | undefined, restored: boolean): string | null {
     const b = r.booking;
-    const card = 'payment' in r || b.payment?.method === 'razorpay';
-    const state = card ? cardBookingState('lab', b) : 'paid';
-    if (card && state === 'waiting' && !r.payment && !restored) return 'The booking is held, but its card payment could not be started. Send the same request again to get the payment page.';
-    settle(requestKey);
-    setReview(null);
-    create.refresh();
-    if (state === 'paid') { setDone(doneFromView(b, summary)); return null; }
-    if (state === 'waiting') {
-      setCardDue({ bookingId: b._id, requestKey, order: r.payment ?? orderFromBooking(b), summary: summaryOf(b, summary), ref: b.assisted?.shortRef, autoOpen: false });
-      return null;
-    }
-    setEnded(NOT_PAYABLE_WORDS);
-    return null;
+    return routeCardAnswer('lab', { card: isCardAnswer(r), booking: b, order: r.payment ?? orderFromBooking(b) }, { restored }, {
+      settle: () => { settle(requestKey); setReview(null); create.refresh(); },
+      done: () => setDone(doneFromView(b, summary)),
+      due: (order) => setCardDue({ bookingId: b._id, requestKey, order, summary: summaryOf(b, summary), ref: b.assisted?.shortRef, autoOpen: false }),
+      ended: () => setEnded(NOT_PAYABLE_WORDS),
+    });
   }
 
   // Step 1: the patient (shared with Book consultation).
@@ -184,6 +175,8 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     return [...days];
   }, [slots.data]);
   const items = catalogue.data ?? [];
+  // WQ21: tests recommended by the doctor (the shared step, `recommendedTests.tsx`); ticked once per lab, visit and code.
+  const recTicks = useRecommendedTicks(catalogue.data ?? null, partnerId ? `${partnerId}:${mode}` : null, setItemIds);
   const priceMinor = labTotalMinor(items, itemIds);
 
   function chooseMode(m: Mode) { setMode(m); setPartnerId(null); setBranchId(null); setItemIds([]); setSlotId(null); setErrors({}); setRefused(null); }
@@ -193,7 +186,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   function resetAll() {
     pt.reset(); setMode('lab'); setPartnerId(null); setBranchId(null); setItemIds([]); setSlotId(null); setAddress(EMPTY_ADDRESS); setLanguage('');
     setCoupon(''); setErrors({}); setReview(null); setRefused(null); setDone(null); setNotice(null);
-    setCardDue(null); setEnded(null); choice.setMethod('wallet');
+    setCardDue(null); setEnded(null); choice.setMethod('wallet'); recTicks.reset();
   }
 
   function visitNext(e: FormEvent) {
@@ -211,11 +204,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     if (code && !/^[A-Z0-9_-]{2,50}$/.test(code)) errs.coupon = 'Check the coupon code (letters and numbers only).';
     setErrors(errs);
     if (Object.keys(errs).length || !lab || !branch || !slot || !lookup) return;
-    const home: LabAddress | undefined = mode === 'home' ? {
-      line1: address.line1.trim(), city: address.city.trim(), pincode: address.pincode.trim(),
-      ...(address.line2.trim() ? { line2: address.line2.trim() } : {}), ...(address.state.trim() ? { state: address.state.trim() } : {}),
-      ...(address.landmark.trim() ? { landmark: address.landmark.trim() } : {}),
-    } : undefined;
+    const home: LabAddress | undefined = mode === 'home' ? labAddressOf(address) : undefined;
     const requestKey = newRequestKey();
     const request: LabBookingRequest = {
       requestKey, phone: lookup.phone, ...patientBody({ ...patient, phone: lookup.phone }),
@@ -229,7 +218,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
       requestKey, request,
       summary: { patient: patientLabel(), lab: lab.name, branch: branch.name, mode, date: slot.date.replace(/-/g, ''), time: slot.startTime,
         tests: items.filter((i) => itemIds.includes(i.itemId)).map((i) => i.name), priceMinor,
-        ...(home ? { address: [home.line1, home.city, home.pincode].join(', ') } : {}), ...(code ? { couponCode: code } : {}) },
+        ...(home ? { address: labAddressLine(home) } : {}), ...(code ? { couponCode: code } : {}) },
     });
   }
 
@@ -290,10 +279,6 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   }
 
   const frozen = !!review || busy;
-  const addr = (k: keyof typeof EMPTY_ADDRESS, label: string, hint?: string) => (
-    <TextField label={label} autoComplete="off" value={address[k]} error={errors[`address.${k}`]} hint={hint} inputMode={k === 'pincode' ? 'numeric' : undefined}
-      onChange={(e) => setAddress((a) => ({ ...a, [k]: e.target.value }))} />
-  );
   return (
     <>
       {notice && <Alert tone="ok">{notice}</Alert>}
@@ -302,6 +287,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
       {patientDone && (
         <section className="ws-section" aria-labelledby="lab-h">
           <h2 id="lab-h">2. Lab, tests and time</h2>
+          {lookup && <RecommendedTests load={pharmacyRecommendationsApi(api).load} phone={lookup.phone} perform={perform} disabled={frozen} ticks={recTicks} />}
           <form className="rx-form" noValidate onSubmit={visitNext}>
             <fieldset className="ws-frozen" disabled={frozen}>
               <fieldset className="ws-checks">
@@ -381,28 +367,12 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
                 </>
               )}
 
-              {mode === 'home' && lab && (
-                <fieldset className="ws-checks">
-                  <legend>Address for the home collection</legend>
-                  {addr('line1', 'House and street')}
-                  {addr('line2', 'Area (optional)')}
-                  <div className="rx-form-row">{addr('city', 'City')}{addr('pincode', 'Pincode')}</div>
-                  <div className="rx-form-row">{addr('state', 'State (optional)')}{addr('landmark', 'Landmark (optional)')}</div>
-                </fieldset>
-              )}
+              {mode === 'home' && lab && <AddressFields value={address} errors={errors} onChange={setAddress} />}
 
               {lab && (
                 <>
                   <div className="rx-form-row">
-                    <div className="j-field">
-                      <label htmlFor="lab-lang">Language the patient speaks</label>
-                      <select id="lab-lang" value={language} aria-invalid={errors.language ? true : undefined}
-                        aria-describedby={errors.language ? 'lab-lang-err' : undefined} onChange={(e) => setLanguage(e.target.value)}>
-                        <option value="">Choose…</option>
-                        {PATIENT_LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
-                      </select>
-                      {errors.language && <span id="lab-lang-err" className="j-field__error" role="alert">{errors.language}</span>}
-                    </div>
+                    <LanguageSelect id="lab-lang" value={language} error={errors.language} onChange={setLanguage} />
                     <TextField label="Coupon code (optional)" value={coupon} error={errors.coupon} maxLength={50} hint="Only if the patient has one." onChange={(e) => setCoupon(e.target.value)} />
                   </div>
                 </>

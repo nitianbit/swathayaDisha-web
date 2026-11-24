@@ -187,6 +187,28 @@ export function cardBookingState(kind: CardBookingKind, b: { status?: string; pa
   if (b.status === 'pending' && b.paymentStatus === 'pending') return 'waiting';
   return b.status === 'confirmed' && b.paymentStatus === 'paid' ? 'paid' : 'ended';
 }
+/** A by-key answer of a card booking carries `payment` (r10/r14); a booker view says how it was paid (r10c). */
+export const isCardAnswer = (r: { booking?: { payment?: { method?: string } } }) => 'payment' in r || r.booking?.payment?.method === 'razorpay';
+export const HELD_NOT_STARTED = 'The booking is held, but its card payment could not be started. Send the same request again to get the payment page.';
+
+/**
+ * WQ21 L1: what a create's answer, or a by-key `used` answer (`byKey`), means for the booking screen — the same for a
+ * consultation and a lab test: a wallet booking is done; a card booking is paid, waits for its payment, or can no longer be
+ * paid. A waiting card booking found by key without its order (502 at create) needs the same request again: the sentence
+ * is answered and nothing is settled (unless only the key is left after a reload).
+ */
+export function routeCardAnswer<O>(kind: CardBookingKind, a: { card: boolean; booking: { status?: string; paymentStatus?: string }; order: O | null },
+  byKey: { restored: boolean } | null, on: { settle?: () => void; done: (card: boolean) => void; due: (order: O | null) => void; ended: () => void }): string | null {
+  if (!a.card) { on.settle?.(); on.done(false); return null; }
+  const state = cardBookingState(kind, a.booking);
+  if (byKey && state === 'waiting' && !a.order && !byKey.restored) return HELD_NOT_STARTED;
+  on.settle?.();
+  if (state === 'paid') on.done(true);
+  else if (state === 'waiting') on.due(a.order);
+  else on.ended();
+  return null;
+}
+
 /** WQ16c: "Pay now" stops 2 minutes before the pay-by time (the page could not finish in time); only "Check payment" then. */
 export const PAY_NOW_MARGIN_MS = 2 * 60_000;
 export function payNowOpen(payBy: string | undefined | null, now = Date.now()): boolean {
