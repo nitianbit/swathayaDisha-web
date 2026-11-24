@@ -204,7 +204,7 @@ function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, 
       doneWords={cancelWords}
       refusalWords={(err) => assistedRefusal(err).message}
       onChanged={onChanged}
-      isCancelled={async () => (await assisted.booking(booking._id)).status === 'cancelled'}
+      isCancelled={async () => { const now = await assisted.booking(booking._id); return now.status === 'cancelled' ? now : null; }}
       // WQ16c: a restored cancellation's choice is not kept here, so no destination is named.
       checkedWords={(body, restored) => (waiting ? `Cancelled. It was not paid, so nothing is refunded. ${LATE_PAYMENT_BACK}`
         : restored && paidBy === 'card' ? 'Cancelled. The amount goes back the way chosen.'

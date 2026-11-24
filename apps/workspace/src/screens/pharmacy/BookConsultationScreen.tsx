@@ -1,24 +1,25 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
   ApiError, ASSISTED_MODE_LABEL, assistedRefusal, canonicalPhone, CONSENT_STATEMENT_LANGUAGE,
-  CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday, joinWords, nextFreeSlot, refusedBeforeWriting, supportedModes,
+  CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday, joinWords, nextFreeSlot, supportedModes,
   MAX_CONCERN, patientBody, pharmacyAssistedApi, SWITCHED_OFF_MESSAGE, type AssistedCardPayment, type AssistedDoctor, type AssistedMode, type AssistedSlot, type BookedConsultation,
-  type ConsultationReceipt, type ConsultationRequest, type JoinOn, type Refusal,
+  type ByKeyAnswer, type ConsultationReceipt, type ConsultationRequest, type JoinOn, type Refusal,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
-import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
+import { newRequestKey, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { CardPaymentPanel, useCardBookings } from './cardBooking.tsx';
 import { LanguageSelect } from './bookingFields.tsx';
 import { PatientSection, usePatientStep } from './patientStep.tsx';
 import { SlotDays } from './slotDays.tsx';
+import { useAssistedCreate } from './assistedCreate.ts';
 import { UnconfirmedBooking } from './unconfirmedBooking.tsx';
 import { RefusalAlert, refusalText, WalletPay } from './walletPay.tsx';
-import { useOwnedOp, usePharmacyId } from './ownedOp.tsx';
+import { usePharmacyId } from './ownedOp.tsx';
 
 /**
  * WQ12: a pharmacy books a doctor consultation for a walk-in patient (assisted booking phase 1a, §19.3):
@@ -93,14 +94,10 @@ function nextWords(d: AssistedDoctor, modeFilter: AssistedMode | ''): string {
 
 function Book({ pharmacyId }: { pharmacyId: string }) {
   const { api } = useSession();
-  const queryClient = useQueryClient();
   const assisted = pharmacyAssistedApi(api);
-  const { op, send, settle } = useOwnedOp<PendingBooking>(`assisted-book:${pharmacyId}`);
   const { perform, busy } = useOneAtATime('booking');
   const [off, setOff] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [resendError, setResendError] = useState<string | null>(null);
-  const [givingUp, setGivingUp] = useState(false);
   // WQ16: card or UPI.
   const cards = useCardBookings(pharmacyId);
   const [method, setMethod] = useState<PayMethod>('wallet');
@@ -113,6 +110,30 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   const [ended, setEnded] = useState<string | null>(null);
   /** 502 RAZORPAY_ORDER_CREATION_FAILED: the booking is held; the same request again gets the payment page. */
   const [orderFailed, setOrderFailed] = useState(false);
+
+  // WQ17b: the keyed create, shared with Book lab test (`assistedCreate.ts`); the card branches plug into its answers.
+  const create = useAssistedCreate<PendingBooking, ConsultationReceipt, ByKeyAnswer>({
+    slot: `assisted-book:${pharmacyId}`, perform, book: (request) => assisted.book(request), abandon: (key) => assisted.abandon(key), refusal: assistedRefusal,
+    walletKey: ['pharmacy-wallet', pharmacyId], refreshKeys: [['pharmacy-bookings', pharmacyId], ['assisted-doctors', pharmacyId]],
+    onReceipt: (r, p) => afterReceipt(r, p.requestKey, p.body.summary),
+    onUsed: (r, p, restored) => afterUsed(r, p, restored),
+    onOff: () => setOff(true),
+    onNotice: setNotice,
+    onResult: (r) => setOrderFailed(r.kind === 'unknown' && r.error instanceof ApiError && r.error.code === 'RAZORPAY_ORDER_CREATION_FAILED'),
+    onRefusedBeforeWriting: (why, err) => { if (why.kind === 'card') cardRefused(err); },
+    onRefused: (why, err) => {
+      // WQ16: card or UPI cannot pay this booking: the review stays, with the wallet; paying again is a new request.
+      if (why.kind === 'card') { cardRefused(err); create.rotateKey(); return; }
+      if (why.kind === 'slot' || why.kind === 'doctor') {
+        setReview(null);
+        setSlotId(null);
+        void doctors.refetch();
+        void slots.refetch();
+      }
+    },
+  });
+  const { op, settle, review, setReview, refused, setRefused, resendError, setResendError, givingUp } = create;
+  const refreshAfterBooking = create.refresh;
 
   // Step 1: the patient (WQ17: the shared step, `patientStep.tsx`).
   const pt = usePatientStep({ pharmacyId, perform, onFind: () => setNotice(null), onSwitchedOff: () => setOff(true),
@@ -134,8 +155,6 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   const [visitErrors, setVisitErrors] = useState<Record<string, string>>({});
 
   // Step 3: check and pay.
-  const [review, setReview] = useState<({ requestKey: string } & PendingBooking) | null>(null);
-  const [refused, setRefused] = useState<Refusal | null>(null);
   const [done, setDone] = useState<Done | null>(null);
 
   function resetAll() {
@@ -222,61 +241,6 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     });
   }
 
-  const refreshAfterBooking = () => {
-    void queryClient.invalidateQueries({ queryKey: ['pharmacy-wallet', pharmacyId] });
-    void queryClient.invalidateQueries({ queryKey: ['pharmacy-bookings', pharmacyId] });
-    void queryClient.invalidateQueries({ queryKey: ['assisted-doctors', pharmacyId] });
-  };
-
-  /** Sends `p` (its key, its request) under the one-at-a-time guard; an unknown outcome stays stored for the panel. */
-  async function sendBooking(p: PendingOp<PendingBooking>) {
-    const sole = p.attempts === 0 && !p.uncertain;
-    const r = await perform(() => send(p, (b) => assisted.book(b.request)));
-    if (r.kind === 'stale') return;
-    setOrderFailed(r.kind === 'unknown' && r.error instanceof ApiError && r.error.code === 'RAZORPAY_ORDER_CREATION_FAILED');
-    if (r.kind === 'ok') {
-      setReview(null);
-      afterReceipt(r.value, p.requestKey, p.body.summary);
-      refreshAfterBooking();
-      return;
-    }
-    if (r.kind === 'unknown' && wasAbandoned(r.error)) {
-      settle(p.requestKey);
-      setReview(null);
-      setNotice('This booking was given up earlier, so nothing was booked or charged with it. Book again if the patient still wants it.');
-      return;
-    }
-    // A limit, the switch, the indexes or customer linking refused the only attempt before any booking write
-    // (`refusedBeforeWriting`): nothing was booked. Paying again later is a new request.
-    if (r.kind === 'unknown' && sole && refusedBeforeWriting(r.error)) {
-      settle(p.requestKey);
-      const why = assistedRefusal(r.error);
-      if (why.kind === 'off') { setOff(true); setReview(null); return; }
-      if (why.kind === 'card') cardRefused(r.error);
-      setRefused(why);
-      rotateKey();
-      return;
-    }
-    if (r.kind === 'refused') {
-      const why = assistedRefusal(r.error);
-      if (why.kind === 'off') { setOff(true); setReview(null); return; }
-      setRefused(why);
-      // WQ16: card or UPI cannot pay this booking: the review stays, with the wallet; paying again is a new request.
-      if (why.kind === 'card') { cardRefused(r.error); rotateKey(); return; }
-      if (why.kind === 'slot' || why.kind === 'doctor') {
-        setReview(null);
-        setSlotId(null);
-        void doctors.refetch();
-        void slots.refetch();
-      } else if (why.kind === 'patient' || why.kind === 'coupon' || why.kind === 'other' || why.kind === 'limit') setReview(null);
-      // 'price', 'topup', 'wallet': the review stays, with what to do next; paying again is a new request (a new key).
-      if (why.kind === 'topup' || why.kind === 'wallet') {
-        void queryClient.invalidateQueries({ queryKey: ['pharmacy-wallet', pharmacyId] });
-        rotateKey();
-      }
-    }
-  }
-
   /** WQ16: the switch is off, or there are no gateway keys: the card option is disabled. "Nothing to pay": wallet only. */
   function cardRefused(err: unknown) {
     setMethod('wallet');
@@ -328,64 +292,18 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     return null;
   }
 
-  /** The review stays, but paying again is a new request (a new key). */
-  const rotateKey = () => {
-    const requestKey = newRequestKey();
-    setReview((v) => (v ? { ...v, requestKey, request: { ...v.request, requestKey } } : v));
-  };
-
-  async function pay() {
-    if (!review) return;
-    const { requestKey, ...rest } = review;
-    // WQ16: the chosen way to pay goes in the same body (a free consultation is always booked with the wallet method).
-    const paymentMethod: PayMethod = method === 'razorpay' && !cardOff && rest.summary.priceMinor > 0 ? 'razorpay' : 'wallet';
-    const pending: PendingBooking = { ...rest, request: { ...rest.request, paymentMethod } };
-    setRefused(null);
-    try {
-      await sendBooking(startOp(requestKey, pending));
-    } catch (err) {
-      setRefused(assistedRefusal(err)); // the one-at-a-time guard refused: nothing was sent
-    }
-  }
-
-  /** A new review at the price the server named (a coupon or a changed fee): a new request with a new key. */
-  function payAtNewPrice(priceMinor: number) {
-    if (!review) return;
-    const requestKey = newRequestKey();
-    setRefused(null);
-    setReview({ requestKey, request: { ...review.request, requestKey, acceptedPriceMinor: priceMinor }, summary: { ...review.summary, priceMinor, couponChecked: true } });
-  }
-
-  async function giveUp(p: PendingOp<PendingBooking>) {
-    setResendError(null);
-    setGivingUp(true);
-    try {
-      const r = await perform(() => assisted.abandon(p.requestKey));
-      if (r.state === 'used') {
-        const left = afterUsed(r, p, !!p.restored || !p.body);
-        if (left) setResendError(left);
-        return;
-      }
-      // Only `abandoned` means given up; any other answer leaves it unknown (the panel stays).
-      if (r.state !== 'abandoned') { setResendError('It could not be given up yet. Check whether it was recorded, then try again.'); return; }
-      settle(p.requestKey);
-      setReview(null);
-      setNotice('Given up: nothing was booked or charged with that request, and it can never be booked now. You can book again.');
-    } catch (err) {
-      setResendError(assistedRefusal(err).message);
-    } finally {
-      setGivingUp(false);
-    }
-  }
+  /** WQ16: the chosen way to pay goes in the same body (a free consultation is always booked with the wallet method). */
+  const pay = () => create.pay((p) => ({ ...p, request: { ...p.request,
+    paymentMethod: method === 'razorpay' && !cardOff && p.summary.priceMinor > 0 ? 'razorpay' : 'wallet' } }));
 
   // An unconfirmed booking stays on screen while it is resent or given up (its first attempt shows the review busy).
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
     return (
       <UnconfirmedBooking op={op} what="booking" busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => assisted.byKey(op.requestKey)}
         onUsed={(r, restored) => afterUsed(r, op, restored)}
-        onAbandoned={() => { settle(op.requestKey); setReview(null); setNotice('That booking was given up, so nothing was booked or charged with it. You can book again.'); }}
-        onResend={() => { setResendError(null); void sendBooking(op).catch((err: unknown) => setResendError(assistedRefusal(err).message)); }}
-        onGiveUp={() => void giveUp(op)}
+        onAbandoned={() => create.abandonedByCheck(op.requestKey)}
+        onResend={() => { setResendError(null); void create.send(op).catch((err: unknown) => setResendError(assistedRefusal(err).message)); }}
+        onGiveUp={() => void create.giveUp(op)}
         extra={orderFailed && (
           <Alert tone="warn">The booking is held, but the card payment could not be started. Send the same request again to get the payment page: it is never booked twice.</Alert>
         )}
@@ -575,7 +493,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
         <ReviewAndPay pharmacyId={pharmacyId} review={review} busy={busy} refused={refused}
           method={method} cardOff={cardOff} onMethod={(m) => { setMethod(m); if (refused?.kind === 'card') setRefused(null); }}
           onPay={() => void pay()} onBack={() => { setReview(null); setRefused(null); }}
-          onNewPrice={payAtNewPrice} />
+          onNewPrice={create.payAtNewPrice} />
       )}
     </>
   );

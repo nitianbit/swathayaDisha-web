@@ -3,15 +3,15 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
   addDays, addressErrors, COLLECTOR_PHONE_PATTERN, CONSENT_STATEMENT_LANGUAGE, deskItems, deskRefusal, deskTotalMinor, isBookable, isSwitchedOff, istDateOf,
-  LAB_DESK_CONSENT_STATEMENT, LAB_DESK_CONSENT_VERSION, LAB_DESK_SWITCHED_OFF_MESSAGE, labDeskApi, MAX_COLLECTOR_NAME, patientBody, refusedBeforeWriting,
-  type DeskBookingRequest, type LabAddress, type LabBooking, type Refusal, type VisitMode,
+  LAB_DESK_CONSENT_STATEMENT, LAB_DESK_CONSENT_VERSION, LAB_DESK_SWITCHED_OFF_MESSAGE, labDeskApi, MAX_COLLECTOR_NAME, patientBody,
+  type DeskBookingRequest, type DeskByKey, type DeskReceipt, type LabAddress, type LabBooking, type VisitMode,
 } from '@jansetu/api';
 import { Alert, Button, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
-import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
+import { newRequestKey } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { AddressFields, EMPTY_ADDRESS, labAddressLine, labAddressOf, LanguageSelect } from '../pharmacy/bookingFields.tsx';
-import { useOwnedOp } from '../pharmacy/ownedOp.tsx';
+import { useAssistedCreate } from '../pharmacy/assistedCreate.ts';
 import { PatientSection, usePatientStep } from '../pharmacy/patientStep.tsx';
 import { SlotDays } from '../pharmacy/slotDays.tsx';
 import { UnconfirmedBooking } from '../pharmacy/unconfirmedBooking.tsx';
@@ -71,15 +71,27 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
   const queryClient = useQueryClient();
   const desk = labDeskApi(api, ctx.scope);
   const identity = scopeIdentity(ctx);
-  const { op, send, settle } = useOwnedOp<PendingDesk>(`lab-desk-book:${identity}`);
   const { perform, busy } = useOneAtATime('booking');
   const [off, setOff] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [resendError, setResendError] = useState<string | null>(null);
-  const [givingUp, setGivingUp] = useState(false);
-  const [review, setReview] = useState<({ requestKey: string } & PendingDesk) | null>(null);
-  const [refused, setRefused] = useState<Refusal | null>(null);
   const [done, setDone] = useState<Done | null>(null);
+  // The keyed create, shared with the pharmacy's assisted bookings (send, refusals, give up); nothing is charged here.
+  const create = useAssistedCreate<PendingDesk, DeskReceipt, DeskByKey>({
+    slot: `lab-desk-book:${identity}`, perform, book: (request) => desk.book(request), abandon: (key) => desk.abandon(key), refusal: deskRefusal,
+    charged: false, refreshKeys: [[...ctx.key, 'lab-bookings'], [...ctx.key, 'slots']],
+    onReceipt: (v, p) => setDone({ booking: v.booking, summary: p.body.summary, bill: p.body.bill, replayed: v.replayed, newAccount: v.newAccount }),
+    onUsed: (r, p) => { settle(p.requestKey); setReview(null); setDone({ booking: r.booking, summary: p.body?.summary, bill: p.body?.bill, replayed: true }); create.refresh(); return null; },
+    onOff: () => setOff(true),
+    onNotice: setNotice,
+    onRefused: (why) => {
+      setReview(null);
+      if (why.kind === 'slot') { setSlotId(null); void slots.refetch(); }
+      else if (why.kind === 'doctor') setBranchId(null);
+      // The lab's prices moved: the tests are read again and the new total is shown; booking again is a new request.
+      else if (why.kind === 'price' || why.kind === 'other') void catalogue.refetch();
+    },
+  });
+  const { op, settle, review, setReview, refused, setRefused, resendError, setResendError, givingUp } = create;
 
   // Step 1: the patient (the shared step, with the desk's own lookup and consent words).
   const pt = usePatientStep({ pharmacyId: identity, perform, lookupPatient: (phone) => desk.lookup(phone),
@@ -169,83 +181,14 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
     });
   }
 
-  const refreshAfterBooking = () => {
-    void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'lab-bookings'] });
-    void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'slots'] });
-  };
-  const rotateKey = () => {
-    const requestKey = newRequestKey();
-    setReview((v) => (v ? { ...v, requestKey, request: { ...v.request, requestKey } } : v));
-  };
-
-  /** Sends `p` (its key, its request) under the one-at-a-time guard; an unknown outcome stays stored for the panel. */
-  async function sendBooking(p: PendingOp<PendingDesk>) {
-    const sole = p.attempts === 0 && !p.uncertain;
-    const r = await perform(() => send(p, (b) => desk.book(b.request)));
-    if (r.kind === 'stale') return;
-    if (r.kind === 'ok') {
-      setReview(null);
-      setDone({ booking: r.value.booking, summary: p.body.summary, bill: p.body.bill, replayed: r.value.replayed, newAccount: r.value.newAccount });
-      refreshAfterBooking();
-      return;
-    }
-    if (r.kind === 'unknown' && wasAbandoned(r.error)) {
-      settle(p.requestKey);
-      setReview(null);
-      setNotice('This booking was given up earlier, so nothing was booked with it. Book again if the patient still wants it.');
-      return;
-    }
-    // The switch, the indexes, customer linking or the lookup limit refused the only attempt before any write: not booked.
-    if (r.kind === 'unknown' && sole && refusedBeforeWriting(r.error)) settle(p.requestKey);
-    if (r.kind === 'refused' || (r.kind === 'unknown' && sole && refusedBeforeWriting(r.error))) {
-      const why = deskRefusal(r.error);
-      if (why.kind === 'off') { setOff(true); setReview(null); return; }
-      setRefused(why);
-      setReview(null);
-      if (why.kind === 'slot') { setSlotId(null); void slots.refetch(); }
-      else if (why.kind === 'doctor') setBranchId(null);
-      // The lab's prices moved: the tests are read again and the new total is shown; booking again is a new request.
-      else if (why.kind === 'price' || why.kind === 'other') void catalogue.refetch();
-      else if (why.kind === 'limit') rotateKey();
-    }
-  }
-
-  async function confirm() {
-    if (!review) return;
-    const { requestKey, ...pending } = review;
-    setRefused(null);
-    try {
-      await sendBooking(startOp(requestKey, pending));
-    } catch (err) {
-      setRefused(deskRefusal(err)); // the one-at-a-time guard refused: nothing was sent
-    }
-  }
-
-  async function giveUp(p: PendingOp<PendingDesk>) {
-    setResendError(null);
-    setGivingUp(true);
-    try {
-      const r = await perform(() => desk.abandon(p.requestKey));
-      if (r.state === 'used') { settle(p.requestKey); setReview(null); setDone({ booking: r.booking, summary: p.body?.summary, bill: p.body?.bill, replayed: true }); refreshAfterBooking(); return; }
-      if (r.state !== 'abandoned') { setResendError('It could not be given up yet. Check whether it was recorded, then try again.'); return; }
-      settle(p.requestKey);
-      setReview(null);
-      setNotice('Given up: nothing was booked with that request, and it can never be booked now. You can book again.');
-    } catch (err) {
-      setResendError(deskRefusal(err).message);
-    } finally {
-      setGivingUp(false);
-    }
-  }
-
   // An unconfirmed booking stays on screen while it is resent or given up (its first attempt shows the review busy).
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
     return (
       <UnconfirmedBooking op={op} what="booking" charged={false} busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => desk.byKey(op.requestKey)}
-        onUsed={(r) => { settle(op.requestKey); setReview(null); setDone({ booking: r.booking, summary: op.body?.summary, bill: op.body?.bill, replayed: true }); refreshAfterBooking(); return null; }}
-        onAbandoned={() => { settle(op.requestKey); setReview(null); setNotice('That booking was given up, so nothing was booked with it. You can book again.'); }}
-        onResend={() => { setResendError(null); void sendBooking(op).catch((err: unknown) => setResendError(deskRefusal(err).message)); }}
-        onGiveUp={() => void giveUp(op)}
+        onUsed={(r) => { settle(op.requestKey); setReview(null); setDone({ booking: r.booking, summary: op.body?.summary, bill: op.body?.bill, replayed: true }); create.refresh(); return null; }}
+        onAbandoned={() => create.abandonedByCheck(op.requestKey)}
+        onResend={() => { setResendError(null); void create.send(op).catch((err: unknown) => setResendError(deskRefusal(err).message)); }}
+        onGiveUp={() => void create.giveUp(op)}
         summary={op.body && <SummaryList s={op.body.summary} />} />
     );
   }
@@ -374,7 +317,7 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
             <SummaryList s={review.summary} />
             {refused && <Alert>{refused.message}</Alert>}
             <div className="confirm-actions">
-              <Button busy={busy} onClick={() => void confirm()}>Yes, book for {money(review.summary.totalMinor)}</Button>
+              <Button busy={busy} onClick={() => void create.pay()}>Yes, book for {money(review.summary.totalMinor)}</Button>
               <Button variant="ghost" disabled={busy} onClick={() => { setReview(null); setRefused(null); }}>Back</Button>
             </div>
           </div>

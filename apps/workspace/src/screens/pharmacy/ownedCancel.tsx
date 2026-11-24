@@ -12,7 +12,7 @@ import { CheckPanel, useOwnedOp } from './ownedOp.tsx';
  * the check (the booking read again), the same request again (safe: a cancelled booking answers `alreadyCancelled`), or
  * forget. The booking-specific words and request come from the caller.
  */
-export function OwnedCancel<B, R>({ slot, label, intro, extra, consequence, version, perform, busy, makeBody, send, doneWords, refusalWords, onChanged,
+export function OwnedCancel<B, R, V = unknown>({ slot, label, intro, extra, consequence, version, perform, busy, makeBody, send, doneWords, refusalWords, onChanged,
   isCancelled, checkedWords, forgetConsequence, onDone }: {
   /** The memory slot of this booking's cancel (per pharmacy and booking). */
   slot: string;
@@ -32,10 +32,10 @@ export function OwnedCancel<B, R>({ slot, label, intro, extra, consequence, vers
   refusalWords: (err: unknown) => string;
   /** After any answer that may have changed the booking (done, refused, found cancelled). */
   onChanged?: () => void;
-  /** Reads the booking again: cancelled or not. */
-  isCancelled: () => Promise<boolean>;
-  /** Said once the check found it cancelled (`body` is gone after a reload). */
-  checkedWords: (body: B | undefined, restored: boolean) => string;
+  /** Reads the booking again: the booking when it is cancelled, else null. */
+  isCancelled: () => Promise<V | null>;
+  /** Said once the check found it cancelled (`body` is gone after a reload; `found`: the booking as read). */
+  checkedWords: (body: B | undefined, restored: boolean, found: V) => string;
   forgetConsequence: string;
   onDone: (words: string) => void;
 }) {
@@ -57,7 +57,8 @@ export function OwnedCancel<B, R>({ slot, label, intro, extra, consequence, vers
         {resendError && <Alert>{resendError}</Alert>}
         <CheckPanel label="Unconfirmed cancellation"
           onCheck={async () => {
-            if (await isCancelled()) { settle(op.requestKey); onDone(checkedWords(restored ? undefined : op.body, restored)); onChanged?.(); return null; }
+            const found = await isCancelled();
+            if (found !== null) { settle(op.requestKey); onDone(checkedWords(restored ? undefined : op.body, restored, found)); onChanged?.(); return null; }
             return 'Not cancelled so far. It may still be on its way. Sending the same cancellation again is safe: the money is never refunded twice.';
           }}
           resend={restored ? undefined : {
