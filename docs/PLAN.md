@@ -1821,6 +1821,38 @@ On stage 244bbf7. No UI change besides the two wording items.
 - 6: a restored card cancellation says "Cancelled. The amount goes back the way chosen."
 - 7: comments and PLAN WQ16c item 4 brought up to date.
 
+## WQ17 pharmacy: book lab tests for walk-in patients (phase 2a) (2026-11-23, branch `wq17/pharmacy-lab-booking`)
+
+Backend r11 (`m0/r11-phase2a` f5f171c9, design ASSISTED_BOOKING_DESIGN.md §24.11; on stage). Web base: stage 0aca6c3.
+
+- **Book lab test** (`/pharmacy/lab-book`, nav "Book lab test"): step 1 is the Book consultation patient step itself, moved
+  unchanged into `patientStep.tsx` (`usePatientStep` + `PatientSection`; Book consultation now uses it too; only the "Next"
+  button label is a prop). Step 2: the visit (at the lab / home collection), labs for that visit (`GET …/labs?visitMode`, nearby
+  first), the branch (picked at once when only one takes the visit), tests (`…/labs/:partnerId/catalogue?visitMode`, checkboxes,
+  1–20), a time (`…/labs/branches/:id/slots?visitMode&from&days=7`), the home address (the customer app's address rules), the
+  language and an optional coupon (no note: see the API gap below). Step 3: the summary, the sum of the chosen tests as `acceptedPriceMinor`, the wallet
+  and pay. One keyed create (`POST …/lab-bookings`, `paymentMethod: 'wallet'`) under an owned PendingOp
+  (`assisted-lab-book:<pharmacy>`): unknown → resend the same body / check by key / give up (by-key abandon); after a reload only
+  the key is kept. `PRICE_CHANGED` offers the server's price as a new request; `INSUFFICIENT_BALANCE` the top-up; the 503 codes
+  (switch, `INDEXES_OUTDATED`, customer linking) and the lookup limit settle a sole first attempt as before. The switch off (503
+  `ASSISTED_BOOKING_DISABLED` on the lab reads) shows "Booking lab tests for patients is not switched on yet."
+- **Booked lab tests** (`/pharmacy/lab-tests`, nav "Booked lab tests"; `/pharmacy/lab-tests/:id`): the list (status filter,
+  cursor pages) and one booking: reference, status, patient (`patientName` as the server sends it), lab and branch, visit,
+  address, time, tests, collector, cancellation. A lab's new time: "Accept new time" (`POST …/accept-reschedule {version}`, owned
+  request, checked by re-reading) or cancel. Cancel (`POST …/cancel {reason?, expectedVersion: statusVersion}`, owned request,
+  resend safe) only while `confirmed` and up to 1 hour before the time (any time while a new time is unanswered); otherwise it
+  says it is too late; the server's refusal is shown. Released report files (`report.releases`) open through `/file/fetch`
+  (the dispensing-copy viewer: PDF or image in the page, anything else as a download). Another pharmacy's booking: 404
+  `LAB_BOOKING_NOT_FOUND` → "Lab test not found".
+- **Shared, not copied** (owner, 25 Nov: no duplicated code). Moved unchanged out of the consultation screens and used by both:
+  `patientStep.tsx` (the patient step), `walletPay.tsx` (balance, hold, refusal with "Use the new price", top-up, pay),
+  `unconfirmedBooking.tsx` (check by key / send again / give up), `slotDays.tsx` (free times by day), `ownedCancel.tsx` (the
+  booker's cancel with its owned request and check), `documentViewer.tsx` (the dispensing copy and the lab report), and
+  `cursorList.tsx` (status filter and Newer/Older pages). The visible consultation screens are unchanged.
+- Not built: card payment (2b), "not mine" (patient app), the lab's own screens for assisted rows.
+- API gap (r11 f5f171c9, now on stage): `notes` on the create is validated and part of the request hash but never stored or
+  shown to the lab, so the screen offers no note and sends none. For the backend: store it and show it to the lab, or drop it.
+
 ## Follow-ups
 
 
@@ -1854,6 +1886,7 @@ On stage 244bbf7. No UI change besides the two wording items.
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ17 pharmacy lab-test booking (phase 2a) on 0aca6c3 | Against r11 f5f171c9 (§24.11; mocked API). typecheck clean; Vitest 406/406 (+5 in assistedLab.test.ts: lab, catalogue and slot paths and queries, ids and keys checked before sending, the cursor list, by-key, abandon, cancel with `expectedVersion`, accept with the proposal version, the 1-hour cancel rule, the tests' total, branches by visit, status and refusal words); Playwright workspace 862/862 (+16 = 8 journeys x 2: book with the shared patient step and pay from the wallet (no note offered), home collection with its address, a lost answer and a reload then Check by key, price changed then not enough money, list and cancel with the version, accept a new time, open a released report and no cancel within the hour, another pharmacy's booking not found and the switch off); the consultation specs pass unchanged on the shared components. A first full run had 6 timeouts in doctor-tools and admin-pharmacies (load); both specs then passed 88/88 and a second full run passed 862/862. Temporary config on port 5403, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-23 | WQ16d card-last (items 1–7 on 244bbf7) | Against r10e d1ed6d24 (mocked API). typecheck clean; Vitest 401/401 (+3 in wq16dLast.test.ts, all failing before: the server asked before Checkout (authorized not opened, created opened), the 60-second minimum, marked-failed in any state; the wq16c timeout case moved to 60); Playwright workspace 846/846 (+10 = 5 journeys x 2: authorized never opens Checkout, created opens it (a guard, passed before), the "pay it from there" line hidden while confirming, the duplicate sentence kept when its re-read fails, a restored cancellation says "goes back the way chosen"; the four others failed before; temporary config on port 5401, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-23 | WQ16d alignment with r10e d1ed6d24 (refund read by id, DUPLICATE_PAYMENT_REFUNDED, extra_capture) | typecheck clean; Vitest 398/398 (+3 in wq16d.test.ts, all failing before; 4 older assertions moved to the r10e envelope and the no-recheck rule); Playwright affected specs (card-booking, assisted-booking, pharmacy-extras) 162/162 (+4 = 2 journeys x 2, both failing before: a duplicate payment refunded and the booking shown paid after a re-read; the extra-capture label and the not-available check without recheck); temporary config on port 5399, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-23 | WQ16c review fixes 1–8 (review of 398accb) | Against r10d a7ae19bb (mocked API; the refund read by id as assumed). typecheck clean; Vitest 395/395 (+8 in wq16c.test.ts, all 8 failed before: paid only for captured/refunded/forfeited, the 2-minute Pay-now cut-off and Checkout timeout, the r10d order from `payment`, `inFlight` after a reported payment and for authorized/created gateway payments, the read by id with the recheck fallback and no list, the unpaid-cancel and recheck/404 words; 5 older assertions updated to the new behaviour); Playwright workspace 831/832 then the failed one 10/10 on rerun (+14 = 7 journeys x 2, all failing before, plus the two admin Check journeys changed to the read by id, failing before: not-paid label and payment timeout, any-device Pay now with a re-read and Checkout timeout, no Pay now near payBy, no second payment after a reported one, the 502 order after a reload, the unpaid-cancel words, recheck 502 and Forget clearing the form). The one failure is an existing time-dependent check in pharmacy-extras WQ14b M1 (`not.toContain('250')` matched the marker's millisecond timestamp), not this change. Temporary configs on ports 5395/5397, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |

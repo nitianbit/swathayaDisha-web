@@ -7,6 +7,7 @@ import {
 import { Banknote, Landmark, Wallet } from 'lucide-react';
 import { CalendarSearch, Store } from 'lucide-react';
 import { CalendarPlus } from 'lucide-react';
+import { TestTube, TestTubes } from 'lucide-react';
 import { hasGlobalScope, holdsAny, type PartnerKind, type PartnerPermission } from '@jansetu/api';
 import type { StaffRole, StaffUser } from './session.tsx';
 import { AdminLabBookingsScreen } from './screens/admin/AdminLabBookingsScreen.tsx';
@@ -48,6 +49,8 @@ import { AddStockScreen } from './screens/pharmacy/AddStockScreen.tsx';
 import { ImportScreen } from './screens/pharmacy/ImportScreen.tsx';
 import { ImportStockScreen } from './screens/pharmacy/ImportStockScreen.tsx';
 import { SuppliersScreen } from './screens/pharmacy/SuppliersScreen.tsx';
+import { BookLabTestScreen } from './screens/pharmacy/BookLabTestScreen.tsx';
+import { BookedLabTestScreen, BookedLabTestsScreen } from './screens/pharmacy/BookedLabTestsScreen.tsx';
 import { BookConsultationScreen } from './screens/pharmacy/BookConsultationScreen.tsx';
 import { BookedConsultationScreen } from './screens/pharmacy/BookedConsultationScreen.tsx';
 import { BookedConsultationsScreen } from './screens/pharmacy/BookedConsultationsScreen.tsx';
@@ -125,6 +128,16 @@ export const PAGES: readonly WorkspacePage[] = [
     nav: { label: 'Booked consultations', icon: CalendarCheck, section: 'Pharmacy' },
   },
   { path: '/pharmacy/consultations/:bookingId', roles: ['pharmacy'], element: <BookedConsultationScreen /> },
+  // WQ17: lab tests for walk-in patients (assisted booking phase 2a, `/pharmacy-assisted/labs*`, `/pharmacy-assisted/lab-bookings*`).
+  {
+    path: '/pharmacy/lab-book', roles: ['pharmacy'], element: <BookLabTestScreen />,
+    nav: { label: 'Book lab test', icon: TestTube, section: 'Pharmacy' },
+  },
+  {
+    path: '/pharmacy/lab-tests', roles: ['pharmacy'], element: <BookedLabTestsScreen />,
+    nav: { label: 'Booked lab tests', icon: TestTubes, section: 'Pharmacy' },
+  },
+  { path: '/pharmacy/lab-tests/:bookingId', roles: ['pharmacy'], element: <BookedLabTestScreen /> },
   {
     path: '/pharmacy/wallet', roles: ['pharmacy'], element: <WalletScreen />,
     nav: { label: 'Wallet', icon: Wallet, section: 'Pharmacy' },

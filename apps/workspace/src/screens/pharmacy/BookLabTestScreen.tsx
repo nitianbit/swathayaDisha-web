@@ -1,0 +1,451 @@
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router';
+import {
+  addressErrors, branchesFor, CONSENT_STATEMENT_LANGUAGE, CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday,
+  LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, labRefusal, labTotalMinor, PATIENT_LANGUAGES, patientBody, pharmacyLabApi, refusedBeforeWriting,
+  type AssistedLabSlot, type LabAddress, type LabBookingRequest, type LabBookingView, type LabReceipt, type Refusal,
+} from '@jansetu/api';
+import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
+import { PageHeading } from '../../PageHeading.tsx';
+import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
+import { useSession } from '../../session.tsx';
+import { useOneAtATime } from '../finance/finance.tsx';
+import { useOwnedOp, usePharmacyId } from './ownedOp.tsx';
+import { SlotDays } from './slotDays.tsx';
+import { UnconfirmedBooking } from './unconfirmedBooking.tsx';
+import { PatientSection, usePatientStep } from './patientStep.tsx';
+import { WalletPay } from './walletPay.tsx';
+
+/**
+ * WQ17: a pharmacy books a lab test for a walk-in patient (assisted booking phase 2a, backend r11, design §24.11): the same
+ * patient step as Book consultation, then the visit (at the lab or home collection), the lab (nearby first,
+ * `GET /pharmacy-assisted/labs`), its branch, the tests (`…/labs/:partnerId/catalogue`), a time (`…/labs/branches/:id/slots`),
+ * the price check and one keyed create paid from the wallet (`POST /pharmacy-assisted/lab-bookings`). The phone and the
+ * address stay in this page's state and in POST bodies: never in the address bar, storage or logs.
+ */
+export function BookLabTestScreen() {
+  const pharmacyId = usePharmacyId();
+  return (
+    <>
+      <PageHeading title="Book lab test">
+        Book a lab test for a patient at your counter. Jansetu takes the price from your wallet; you collect it from the patient.
+      </PageHeading>
+      <Book key={pharmacyId} pharmacyId={pharmacyId} />
+    </>
+  );
+}
+
+type Mode = 'lab' | 'home';
+interface Summary { patient: string; lab: string; branch: string; mode: Mode; date: string; time: string; tests: string[]; address?: string; priceMinor: number; couponCode?: string;
+  couponChecked?: boolean }
+interface PendingLab { request: LabBookingRequest; summary: Summary }
+interface Done { summary: Summary; ref?: string; paidMinor?: number; replayed: boolean; newAccount?: boolean }
+
+const SLOT_DAYS = 7;
+const EMPTY_ADDRESS = { line1: '', line2: '', city: '', state: '', pincode: '', landmark: '' };
+
+function SummaryList({ s }: { s: Summary }) {
+  return (
+    <ul className="ws-list">
+      <li>Patient: <strong>{s.patient}</strong></li>
+      <li>Lab: <strong>{s.lab}</strong>, {s.branch}</li>
+      <li>Visit: <strong>{LAB_VISIT_MODE_LABEL[s.mode]}</strong>{s.address ? ` at ${s.address}` : ''}</li>
+      <li>When: <strong>{formatSlotDate(s.date)} at {s.time}</strong></li>
+      <li>Tests: <strong>{s.tests.join(', ')}</strong></li>
+      <li>Price: <strong>{formatRupees(s.priceMinor / 100)}</strong>{s.couponCode ? ` (coupon ${s.couponCode})` : ''}</li>
+    </ul>
+  );
+}
+
+function doneFromView(b: LabBookingView, summary: Summary | undefined): Done {
+  const s: Summary = summary ?? {
+    patient: b.patientName ?? 'The patient', lab: b.lab?.name ?? 'The lab', branch: b.branch?.name ?? '', mode: (b.visitMode as Mode) ?? 'lab',
+    date: b.slot?.date?.replace(/-/g, '') ?? '', time: b.slot?.startTime ?? '', tests: (b.items ?? []).map((i) => i.name), priceMinor: 0,
+  };
+  return { summary: s, ref: b.assisted?.shortRef, replayed: true };
+}
+
+function Book({ pharmacyId }: { pharmacyId: string }) {
+  const { api } = useSession();
+  const queryClient = useQueryClient();
+  const labsApi = pharmacyLabApi(api);
+  const { op, send, settle } = useOwnedOp<PendingLab>(`assisted-lab-book:${pharmacyId}`);
+  const { perform, busy } = useOneAtATime('booking');
+  const [off, setOff] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [resendError, setResendError] = useState<string | null>(null);
+  const [givingUp, setGivingUp] = useState(false);
+
+  const [review, setReview] = useState<({ requestKey: string } & PendingLab) | null>(null);
+  const [refused, setRefused] = useState<Refusal | null>(null);
+  const [done, setDone] = useState<Done | null>(null);
+
+  // Step 1: the patient (shared with Book consultation).
+  const pt = usePatientStep({ pharmacyId, perform, onFind: () => setNotice(null), onSwitchedOff: () => setOff(true),
+    onChangePhone: () => { setReview(null); setRefused(null); } });
+  const { lookup, patient, patientDone, patientLabel } = pt;
+
+  // Step 2: the visit, lab, branch, tests and time.
+  const [mode, setMode] = useState<Mode>('lab');
+  const [partnerId, setPartnerId] = useState<string | null>(null);
+  const [branchId, setBranchId] = useState<string | null>(null);
+  const [itemIds, setItemIds] = useState<string[]>([]);
+  const [date, setDate] = useState(() => istToday());
+  const [slotId, setSlotId] = useState<string | null>(null);
+  const [address, setAddress] = useState(EMPTY_ADDRESS);
+  const [language, setLanguage] = useState('');
+  const [coupon, setCoupon] = useState('');
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const labs = useQuery({
+    queryKey: ['assisted-labs', pharmacyId, mode],
+    queryFn: () => labsApi.labs({ visitMode: mode, limit: 50 }),
+    enabled: patientDone && !off,
+  });
+  const lab = labs.data?.find((l) => l.partnerId === partnerId) ?? null;
+  const branches = useMemo(() => (lab ? branchesFor(lab, mode) : []), [lab, mode]);
+  const branch = branches.find((b) => b.branchId === branchId) ?? null;
+  const catalogue = useQuery({
+    queryKey: ['assisted-labs', pharmacyId, 'catalogue', partnerId, mode],
+    queryFn: () => labsApi.catalogue(partnerId!, mode),
+    enabled: patientDone && !off && !!partnerId,
+  });
+  const slots = useQuery({
+    queryKey: ['assisted-labs', pharmacyId, 'slots', branchId, mode, date],
+    queryFn: () => labsApi.slots(branchId!, { visitMode: mode, from: date, days: SLOT_DAYS }),
+    enabled: patientDone && !off && !!branchId,
+  });
+  useEffect(() => {
+    if (isSwitchedOff(labs.error) || isSwitchedOff(catalogue.error) || isSwitchedOff(slots.error)) setOff(true);
+  }, [labs.error, catalogue.error, slots.error]);
+  // One branch for this visit: chosen at once.
+  useEffect(() => { if (branches.length === 1 && !branchId) setBranchId(branches[0]!.branchId); }, [branches, branchId]);
+  const slot: AssistedLabSlot | null = slots.data?.find((s) => s.slotId === slotId) ?? null;
+  const slotDays = useMemo(() => {
+    const days = new Map<string, AssistedLabSlot[]>();
+    for (const s of slots.data ?? []) if (s.seatsLeft > 0) days.set(s.date, [...(days.get(s.date) ?? []), s]);
+    return [...days];
+  }, [slots.data]);
+  const items = catalogue.data ?? [];
+  const priceMinor = labTotalMinor(items, itemIds);
+
+  function chooseMode(m: Mode) { setMode(m); setPartnerId(null); setBranchId(null); setItemIds([]); setSlotId(null); setErrors({}); setRefused(null); }
+  function chooseLab(id: string) { setPartnerId(id); setBranchId(null); setItemIds([]); setSlotId(null); setErrors({}); setRefused(null); }
+  function toggleItem(id: string) { setItemIds((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id])); setRefused(null); }
+
+  function resetAll() {
+    pt.reset(); setMode('lab'); setPartnerId(null); setBranchId(null); setItemIds([]); setSlotId(null); setAddress(EMPTY_ADDRESS); setLanguage('');
+    setCoupon(''); setErrors({}); setReview(null); setRefused(null); setDone(null); setNotice(null);
+  }
+
+  function visitNext(e: FormEvent) {
+    e.preventDefault();
+    setRefused(null);
+    const errs: Record<string, string> = {};
+    if (!lab) errs.lab = 'Choose a lab.';
+    else if (!branch) errs.branch = 'Choose a branch.';
+    if (itemIds.length === 0) errs.items = 'Choose at least one test.';
+    else if (itemIds.length > 20) errs.items = 'Choose at most 20 tests.';
+    if (!slot) errs.slot = 'Choose a time.';
+    if (mode === 'home') for (const [k, v] of Object.entries(addressErrors(address))) errs[`address.${k}`] = v;
+    if (!language) errs.language = 'Choose the language the patient speaks.';
+    const code = coupon.trim().toUpperCase();
+    if (code && !/^[A-Z0-9_-]{2,50}$/.test(code)) errs.coupon = 'Check the coupon code (letters and numbers only).';
+    setErrors(errs);
+    if (Object.keys(errs).length || !lab || !branch || !slot || !lookup) return;
+    const home: LabAddress | undefined = mode === 'home' ? {
+      line1: address.line1.trim(), city: address.city.trim(), pincode: address.pincode.trim(),
+      ...(address.line2.trim() ? { line2: address.line2.trim() } : {}), ...(address.state.trim() ? { state: address.state.trim() } : {}),
+      ...(address.landmark.trim() ? { landmark: address.landmark.trim() } : {}),
+    } : undefined;
+    const requestKey = newRequestKey();
+    const request: LabBookingRequest = {
+      requestKey, phone: lookup.phone, ...patientBody({ ...patient, phone: lookup.phone }),
+      consent: { agreed: true, statementVersion: CONSENT_STATEMENT_VERSION, statementLanguage: CONSENT_STATEMENT_LANGUAGE },
+      preferredLanguage: language, partnerId: lab.partnerId, branchId: branch.branchId, visitMode: mode, slotId: slot.slotId, itemIds: [...itemIds],
+      ...(home ? { address: home } : {}), ...(code ? { couponCode: code } : {}), acceptedPriceMinor: priceMinor,
+      // No `notes`: r11 checks it but never stores or shows it (an API gap), so no note is offered here.
+      paymentMethod: 'wallet',
+    };
+    setReview({
+      requestKey, request,
+      summary: { patient: patientLabel(), lab: lab.name, branch: branch.name, mode, date: slot.date.replace(/-/g, ''), time: slot.startTime,
+        tests: items.filter((i) => itemIds.includes(i.itemId)).map((i) => i.name), priceMinor,
+        ...(home ? { address: [home.line1, home.city, home.pincode].join(', ') } : {}), ...(code ? { couponCode: code } : {}) },
+    });
+  }
+
+  const refreshAfterBooking = () => {
+    void queryClient.invalidateQueries({ queryKey: ['pharmacy-wallet', pharmacyId] });
+    void queryClient.invalidateQueries({ queryKey: ['pharmacy-lab-bookings', pharmacyId] });
+    void queryClient.invalidateQueries({ queryKey: ['assisted-labs', pharmacyId] });
+  };
+  const rotateKey = () => {
+    const requestKey = newRequestKey();
+    setReview((v) => (v ? { ...v, requestKey, request: { ...v.request, requestKey } } : v));
+  };
+
+  /** Sends `p` (its key, its request) under the one-at-a-time guard; an unknown outcome stays stored for the panel. */
+  async function sendBooking(p: PendingOp<PendingLab>) {
+    const sole = p.attempts === 0 && !p.uncertain;
+    const r = await perform(() => send(p, (b) => labsApi.book(b.request)));
+    if (r.kind === 'stale') return;
+    if (r.kind === 'ok') {
+      setReview(null);
+      const v: LabReceipt = r.value;
+      setDone({ summary: p.body.summary, ref: v.booking.assisted?.shortRef, paidMinor: v.funding?.amountMinor, replayed: v.replayed, newAccount: v.newAccount });
+      refreshAfterBooking();
+      return;
+    }
+    if (r.kind === 'unknown' && wasAbandoned(r.error)) {
+      settle(p.requestKey);
+      setReview(null);
+      setNotice('This booking was given up earlier, so nothing was booked or charged with it. Book again if the patient still wants it.');
+      return;
+    }
+    // The switch, the indexes, customer linking or the lookup limit refused the only attempt before any write: not booked.
+    if (r.kind === 'unknown' && sole && refusedBeforeWriting(r.error)) {
+      settle(p.requestKey);
+      const why = labRefusal(r.error);
+      if (why.kind === 'off') { setOff(true); setReview(null); return; }
+      setRefused(why);
+      rotateKey();
+      return;
+    }
+    if (r.kind === 'refused') {
+      const why = labRefusal(r.error);
+      if (why.kind === 'off') { setOff(true); setReview(null); return; }
+      setRefused(why);
+      if (why.kind === 'slot') { setReview(null); setSlotId(null); void slots.refetch(); }
+      else if (why.kind === 'doctor') { setReview(null); setPartnerId(null); setBranchId(null); setSlotId(null); void labs.refetch(); }
+      else if (why.kind === 'patient' || why.kind === 'coupon' || why.kind === 'other' || why.kind === 'limit') { setReview(null); void catalogue.refetch(); }
+      // 'price', 'topup', 'wallet': the review stays, with what to do next; paying again is a new request (a new key).
+      if (why.kind === 'topup' || why.kind === 'wallet') { void queryClient.invalidateQueries({ queryKey: ['pharmacy-wallet', pharmacyId] }); rotateKey(); }
+    }
+  }
+
+  async function pay() {
+    if (!review) return;
+    const { requestKey, ...pending } = review;
+    setRefused(null);
+    try {
+      await sendBooking(startOp(requestKey, pending));
+    } catch (err) {
+      setRefused(labRefusal(err)); // the one-at-a-time guard refused: nothing was sent
+    }
+  }
+
+  /** A new review at the price the server named (a coupon or a changed price): a new request with a new key. */
+  function payAtNewPrice(newPrice: number) {
+    if (!review) return;
+    const requestKey = newRequestKey();
+    setRefused(null);
+    setReview({ requestKey, request: { ...review.request, requestKey, acceptedPriceMinor: newPrice }, summary: { ...review.summary, priceMinor: newPrice, couponChecked: true } });
+  }
+
+  async function giveUp(p: PendingOp<PendingLab>) {
+    setResendError(null);
+    setGivingUp(true);
+    try {
+      const r = await perform(() => labsApi.abandon(p.requestKey));
+      if (r.state === 'used') {
+        settle(p.requestKey); setReview(null); setDone(doneFromView(r.booking, p.body?.summary)); refreshAfterBooking();
+        return;
+      }
+      if (r.state !== 'abandoned') { setResendError('It could not be given up yet. Check whether it was recorded, then try again.'); return; }
+      settle(p.requestKey);
+      setReview(null);
+      setNotice('Given up: nothing was booked or charged with that request, and it can never be booked now. You can book again.');
+    } catch (err) {
+      setResendError(labRefusal(err).message);
+    } finally {
+      setGivingUp(false);
+    }
+  }
+
+  // An unconfirmed booking stays on screen while it is resent or given up (its first attempt shows the review busy).
+  if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
+    return (
+      <UnconfirmedBooking op={op} what="lab booking" busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => labsApi.byKey(op.requestKey)}
+        onUsed={(r) => { settle(op.requestKey); setReview(null); setDone(doneFromView(r.booking, op.body?.summary)); refreshAfterBooking(); return null; }}
+        onAbandoned={() => { settle(op.requestKey); setReview(null); setNotice('That booking was given up, so nothing was booked or charged with it. You can book again.'); }}
+        onResend={() => { setResendError(null); void sendBooking(op).catch((err: unknown) => setResendError(labRefusal(err).message)); }}
+        onGiveUp={() => void giveUp(op)}
+        summary={op.body && <SummaryList s={op.body.summary} />} />
+    );
+  }
+
+  if (off) {
+    return <Alert tone="warn">{LAB_SWITCHED_OFF_MESSAGE} Jansetu turns it on for your pharmacy when it is ready. Your other tools work as usual.</Alert>;
+  }
+
+  if (done) {
+    return (
+      <section className="ws-section" aria-labelledby="done-h">
+        <h2 id="done-h">{done.replayed ? 'Already booked' : 'Booked'}</h2>
+        <Alert tone="ok">
+          {done.replayed ? 'This booking was already made. Nothing was booked or charged twice.' : 'The lab test is booked and paid from your wallet.'}
+          {done.ref ? <> Booking reference: <strong>{done.ref}</strong>.</> : null}
+        </Alert>
+        <SummaryList s={done.summary} />
+        {done.paidMinor !== undefined && <p>Paid from your wallet: <strong>{formatRupees(done.paidMinor / 100)}</strong>. Collect this from the patient.</p>}
+        {done.newAccount && <p className="ws-muted">This number was new to Jansetu. An account was made for it; the patient can sign in with this number later.</p>}
+        <div className="ws-actions">
+          <Button onClick={resetAll}>Book another lab test</Button>
+          <Link to="/pharmacy/lab-tests">See booked lab tests</Link>
+        </div>
+      </section>
+    );
+  }
+
+  const frozen = !!review || busy;
+  const addr = (k: keyof typeof EMPTY_ADDRESS, label: string, hint?: string) => (
+    <TextField label={label} autoComplete="off" value={address[k]} error={errors[`address.${k}`]} hint={hint} inputMode={k === 'pincode' ? 'numeric' : undefined}
+      onChange={(e) => setAddress((a) => ({ ...a, [k]: e.target.value }))} />
+  );
+  return (
+    <>
+      {notice && <Alert tone="ok">{notice}</Alert>}
+      <PatientSection step={pt} busy={busy} frozen={patientDone || frozen} locked={frozen} nextLabel="Next: choose the lab" />
+
+      {patientDone && (
+        <section className="ws-section" aria-labelledby="lab-h">
+          <h2 id="lab-h">2. Lab, tests and time</h2>
+          <form className="rx-form" noValidate onSubmit={visitNext}>
+            <fieldset className="ws-frozen" disabled={frozen}>
+              <fieldset className="ws-checks">
+                <legend>Where is the sample taken?</legend>
+                {(['lab', 'home'] as const).map((m) => (
+                  <label key={m} className="ws-check">
+                    <input type="radio" name="visit" checked={mode === m} onChange={() => chooseMode(m)} />
+                    {LAB_VISIT_MODE_LABEL[m]}
+                  </label>
+                ))}
+              </fieldset>
+
+              {labs.isPending ? <Loading label="Finding labs…" />
+                : labs.isError ? <ErrorState message={labRefusal(labs.error).message} onRetry={() => void labs.refetch()} />
+                : labs.data.length === 0 ? <Empty title="No labs found">Try the other kind of visit.</Empty>
+                : (
+                  <ul className="stock-list" aria-label="Labs, nearest first">
+                    {labs.data.map((l) => (
+                      <li key={l.partnerId} className="ws-section">
+                        <div className="stock-head">
+                          <h3>{l.name}</h3>
+                          {l.nearby === 'pincode' ? <Badge tone="ok">Near you</Badge> : l.nearby === 'city' ? <Badge>Same city</Badge> : null}
+                        </div>
+                        <div className="ws-actions">
+                          <span className="ws-muted">{branchesFor(l, mode).map((b) => b.name).join(' · ') || 'No branch for this visit'}</span>
+                          {partnerId === l.partnerId ? <Badge tone="ok">Chosen</Badge>
+                            : <Button variant="secondary" aria-label={`Choose ${l.name}`} onClick={() => chooseLab(l.partnerId)}>Choose</Button>}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              {errors.lab && <span className="j-field__error" role="alert">{errors.lab}</span>}
+
+              {lab && branches.length > 1 && (
+                <fieldset className="ws-checks">
+                  <legend>Branch</legend>
+                  {branches.map((b) => (
+                    <label key={b.branchId} className="ws-check">
+                      <input type="radio" name="branch" checked={branchId === b.branchId} onChange={() => { setBranchId(b.branchId); setSlotId(null); }} />
+                      {b.name}{b.address ? ` (${b.address})` : ''}
+                    </label>
+                  ))}
+                  {errors.branch && <span className="j-field__error" role="alert">{errors.branch}</span>}
+                </fieldset>
+              )}
+              {lab && branches.length === 0 && <Alert tone="warn">This lab has no branch for this kind of visit. Choose another lab or visit.</Alert>}
+
+              {lab && (
+                <fieldset className="ws-checks">
+                  <legend>Tests</legend>
+                  {catalogue.isPending ? <Loading label="Loading tests…" />
+                    : catalogue.isError ? <ErrorState message={labRefusal(catalogue.error).message} onRetry={() => void catalogue.refetch()} />
+                    : items.length === 0 ? <span>No tests for this kind of visit here.</span>
+                    : items.map((i) => (
+                      <label key={i.itemId} className="ws-check">
+                        <input type="checkbox" checked={itemIds.includes(i.itemId)} onChange={() => toggleItem(i.itemId)} />
+                        {i.name}{i.kind === 'package' ? ' (package)' : ''} · {formatRupees(i.priceMinor / 100)}
+                        {i.preparation ? <span className="ws-muted"> · {i.preparation}</span> : null}
+                      </label>
+                    ))}
+                  {errors.items && <span className="j-field__error" role="alert">{errors.items}</span>}
+                </fieldset>
+              )}
+
+              {branch && (
+                <>
+                  <TextField label="From day" type="date" value={date} min={istToday()} hint={`Free times for ${SLOT_DAYS} days from this day.`}
+                    onChange={(e) => { if (e.target.value) { setDate(e.target.value); setSlotId(null); } }} />
+                  <div className="ws-day">
+                    {slots.isPending ? <Loading label="Finding free times…" />
+                      : slots.isError ? <ErrorState message={labRefusal(slots.error).message} onRetry={() => void slots.refetch()} />
+                      : slotDays.length === 0 ? <span>No free times in these days. Choose a later day or another branch.</span>
+                      : <SlotDays days={slotDays} chosen={slotId} onChoose={(s) => setSlotId(s.slotId)} />}
+                  </div>
+                  {errors.slot && <span className="j-field__error" role="alert">{errors.slot}</span>}
+                </>
+              )}
+
+              {mode === 'home' && lab && (
+                <fieldset className="ws-checks">
+                  <legend>Address for the home collection</legend>
+                  {addr('line1', 'House and street')}
+                  {addr('line2', 'Area (optional)')}
+                  <div className="rx-form-row">{addr('city', 'City')}{addr('pincode', 'Pincode')}</div>
+                  <div className="rx-form-row">{addr('state', 'State (optional)')}{addr('landmark', 'Landmark (optional)')}</div>
+                </fieldset>
+              )}
+
+              {lab && (
+                <>
+                  <div className="rx-form-row">
+                    <div className="j-field">
+                      <label htmlFor="lab-lang">Language the patient speaks</label>
+                      <select id="lab-lang" value={language} aria-invalid={errors.language ? true : undefined}
+                        aria-describedby={errors.language ? 'lab-lang-err' : undefined} onChange={(e) => setLanguage(e.target.value)}>
+                        <option value="">Choose…</option>
+                        {PATIENT_LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+                      </select>
+                      {errors.language && <span id="lab-lang-err" className="j-field__error" role="alert">{errors.language}</span>}
+                    </div>
+                    <TextField label="Coupon code (optional)" value={coupon} error={errors.coupon} maxLength={50} hint="Only if the patient has one." onChange={(e) => setCoupon(e.target.value)} />
+                  </div>
+                </>
+              )}
+            </fieldset>
+            {refused && !review && <Alert>{refused.message}</Alert>}
+            {!review && <div><Button type="submit">Next: check the price</Button></div>}
+          </form>
+        </section>
+      )}
+
+      {review && (
+        <ReviewAndPay pharmacyId={pharmacyId} review={review} busy={busy} refused={refused}
+          onPay={() => void pay()} onBack={() => { setReview(null); setRefused(null); }} onNewPrice={payAtNewPrice} />
+      )}
+    </>
+  );
+}
+
+function ReviewAndPay({ pharmacyId, review, busy, refused, onPay, onBack, onNewPrice }: {
+  pharmacyId: string; review: { requestKey: string } & PendingLab; busy: boolean; refused: Refusal | null;
+  onPay: () => void; onBack: () => void; onNewPrice: (priceMinor: number) => void;
+}) {
+  const s = review.summary;
+  return (
+    <section className="ws-section" aria-labelledby="pay-h">
+      <h2 id="pay-h">3. Check and pay</h2>
+      <div className="confirm" role="group" aria-label="Check and pay">
+        <SummaryList s={s} />
+        {s.couponCode && !s.couponChecked && <p className="ws-muted">Price before the coupon; the coupon is checked when you pay.</p>}
+        <WalletPay pharmacyId={pharmacyId} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy}
+          onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
+      </div>
+    </section>
+  );
+}

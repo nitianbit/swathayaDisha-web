@@ -2,11 +2,10 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  ApiError, ASSISTED_GENDERS, ASSISTED_MODE_LABEL, ASSISTED_RELATIONS, assistedRefusal, canonicalPhone, CONSENT_STATEMENT, CONSENT_STATEMENT_LANGUAGE,
-  CONSENT_STATEMENT_VERSION, EMPTY_PATIENT, familyBookedBefore, formatSlotDate, isSwitchedOff, istToday, joinWords, nextFreeSlot, refusedBeforeWriting, supportedModes,
-  MAX_CONCERN, MAX_PERSON_NAME, PATIENT_LANGUAGES, patientBody, patientProblems, pharmacyAssistedApi, SWITCHED_OFF_MESSAGE, walletBalancePaise,
-  walletState, type AssistedCardPayment, type AssistedDoctor, type AssistedGender, type AssistedMode, type AssistedRelation, type AssistedSlot, type BookedConsultation,
-  type ConsultationReceipt, type ConsultationRequest, type JoinOn, type PatientDraft, type PatientLookup, type Refusal,
+  ApiError, ASSISTED_MODE_LABEL, assistedRefusal, canonicalPhone, CONSENT_STATEMENT_LANGUAGE,
+  CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday, joinWords, nextFreeSlot, refusedBeforeWriting, supportedModes,
+  MAX_CONCERN, PATIENT_LANGUAGES, patientBody, pharmacyAssistedApi, SWITCHED_OFF_MESSAGE, type AssistedCardPayment, type AssistedDoctor, type AssistedMode, type AssistedSlot, type BookedConsultation,
+  type ConsultationReceipt, type ConsultationRequest, type JoinOn, type Refusal,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -14,9 +13,11 @@ import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requ
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { CardPaymentPanel, useCardBookings } from './cardBooking.tsx';
-import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
-import { TopUpForm } from './topup.tsx';
-import { useWallet, walletHoldWords } from './WalletScreen.tsx';
+import { PatientSection, usePatientStep } from './patientStep.tsx';
+import { SlotDays } from './slotDays.tsx';
+import { UnconfirmedBooking } from './unconfirmedBooking.tsx';
+import { RefusalAlert, refusalText, WalletPay } from './walletPay.tsx';
+import { useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 
 /**
  * WQ12: a pharmacy books a doctor consultation for a walk-in patient (assisted booking phase 1a, §19.3):
@@ -88,11 +89,6 @@ function nextWords(d: AssistedDoctor, modeFilter: AssistedMode | ''): string {
   return d.nextSlot ? 'Choose to see the free times' : 'No free times soon';
 }
 
-/** Plain refusal words, adjusted when a coupon explains the new price. */
-function refusalText(r: Refusal, coupon?: string): string {
-  if (r.kind === 'price' && coupon && r.priceMinor !== undefined) return `With the coupon ${coupon}, the price is ${formatRupees(r.priceMinor / 100)}. Check it with the patient, then pay.`;
-  return r.message;
-}
 
 function Book({ pharmacyId }: { pharmacyId: string }) {
   const { api } = useSession();
@@ -117,15 +113,10 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   /** 502 RAZORPAY_ORDER_CREATION_FAILED: the booking is held; the same request again gets the payment page. */
   const [orderFailed, setOrderFailed] = useState(false);
 
-  // Step 1: the patient.
-  const [phoneText, setPhoneText] = useState('');
-  const [phoneError, setPhoneError] = useState<string | null>(null);
-  const [lookup, setLookup] = useState<{ phone: string; result: PatientLookup } | null>(null);
-  const [patient, setPatient] = useState<PatientDraft>(EMPTY_PATIENT);
-  const [patientErrors, setPatientErrors] = useState<Partial<Record<keyof PatientDraft, string>>>({});
-  const [agreed, setAgreed] = useState(false);
-  const [agreeError, setAgreeError] = useState<string | null>(null);
-  const [patientDone, setPatientDone] = useState(false);
+  // Step 1: the patient (WQ17: the shared step, `patientStep.tsx`).
+  const pt = usePatientStep({ pharmacyId, perform, onFind: () => setNotice(null), onSwitchedOff: () => setOff(true),
+    onChangePhone: () => { setReview(null); setRefused(null); } });
+  const { lookup, patient, patientDone, patientLabel } = pt;
 
   // Step 2: the doctor and the time.
   const [speciality, setSpeciality] = useState('');
@@ -146,64 +137,11 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   const [refused, setRefused] = useState<Refusal | null>(null);
   const [done, setDone] = useState<Done | null>(null);
 
-  const set = <K extends keyof PatientDraft>(k: K, v: PatientDraft[K]) => setPatient((d) => ({ ...d, [k]: v }));
-
   function resetAll() {
-    setPhoneText(''); setPhoneError(null); setLookup(null); setPatient(EMPTY_PATIENT); setPatientErrors({}); setAgreed(false); setAgreeError(null);
-    setPatientDone(false); setDoctorId(null); setSlotId(null); setMode(''); setJoinOn(''); setJoinPhone(''); setLanguage(''); setConcern('');
+    pt.reset(); setDoctorId(null); setSlotId(null); setMode(''); setJoinOn(''); setJoinPhone(''); setLanguage(''); setConcern('');
     setCoupon(''); setVisitErrors({}); setReview(null); setRefused(null); setDone(null); setNotice(null);
     setCardDue(null); setEnded(null); setMethod('wallet');
   }
-
-  async function find(e: FormEvent) {
-    e.preventDefault();
-    setNotice(null);
-    const phone = canonicalPhone(phoneText);
-    if (!phone) { setPhoneError('Enter a valid 10-digit mobile number.'); return; }
-    setPhoneError(null);
-    try {
-      const result = await perform(() => assisted.lookup(phone));
-      setLookup({ phone, result });
-      setPatient({ ...EMPTY_PATIENT, phone });
-      setPatientErrors({});
-    } catch (err) {
-      if (isSwitchedOff(err)) { setOff(true); return; }
-      setPhoneError(assistedRefusal(err).message);
-    }
-  }
-
-  function changePhone() {
-    setLookup(null); setPatient(EMPTY_PATIENT); setPatientErrors({}); setAgreed(false); setPatientDone(false); setReview(null); setRefused(null);
-  }
-
-  // Family members this pharmacy booked for before on this number (its own list; the lookup never lists the family).
-  const family = useQuery({
-    queryKey: ['pharmacy-bookings', pharmacyId, 'family-source'],
-    queryFn: async () => {
-      const first = await assisted.bookings({ limit: 50 });
-      const second = first.nextCursor ? await assisted.bookings({ limit: 50, cursor: first.nextCursor }) : null;
-      return [...first.items, ...(second?.items ?? [])];
-    },
-    enabled: !!lookup?.result.exists,
-    staleTime: 60_000,
-  });
-  const knownFamily = useMemo(() => (lookup && family.data ? familyBookedBefore(family.data, lookup.phone) : []), [lookup, family.data]);
-
-  function patientNext(e: FormEvent) {
-    e.preventDefault();
-    if (!lookup) return;
-    const problems = patientProblems({ ...patient, phone: lookup.phone }, lookup.result.exists);
-    setPatientErrors(problems);
-    setAgreeError(agreed ? null : 'Ask the patient, then tick this box. Without it you cannot book.');
-    if (Object.keys(problems).length || !agreed) return;
-    setPatientDone(true);
-  }
-
-  const patientLabel = (): string => {
-    if (patient.who === 'known') return knownFamily.find((f) => f.dependentId === patient.dependentId)?.name ?? 'Family member';
-    const name = patient.name.trim().replace(/\s+/g, ' ');
-    return patient.who === 'family' ? `${name} (${patient.relation.toLowerCase()} of the phone’s owner)` : name;
-  };
 
   // The doctor list: nearby first (the pharmacy's pincode, then its city); that day's free times.
   const doctors = useQuery({
@@ -441,40 +379,16 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
 
   // An unconfirmed booking stays on screen while it is resent or given up (its first attempt shows the review busy).
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
-    const restored = !!op.restored || !op.body;
     return (
-      <>
-        {resendError && <Alert>{resendError}</Alert>}
-        <CheckPanel label="Unconfirmed booking"
-          onCheck={async () => {
-            const r = await assisted.byKey(op.requestKey);
-            if (r.state === 'used') return afterUsed(r, op, restored);
-            if (r.state === 'abandoned') {
-              settle(op.requestKey);
-              setReview(null);
-              setNotice('That booking was given up, so nothing was booked or charged with it. You can book again.');
-              return null;
-            }
-            return restored
-              ? 'Not booked so far. It may still be on its way. Give it up to make sure it never is, then book again.'
-              : 'Not booked so far. It may still be on its way. Sending the same request again is safe: it is never booked or charged twice.';
-          }}
-          resend={restored ? undefined : {
-            label: 'Send the same request again', busy: busy && !givingUp,
-            onClick: () => { setResendError(null); void sendBooking(op).catch((err: unknown) => setResendError(assistedRefusal(err).message)); },
-          }}
-          giveUp={{ label: 'Give this up', busy: givingUp, onClick: () => void giveUp(op) }}>
-          {orderFailed && !restored && (
-            <Alert tone="warn">The booking is held, but the card payment could not be started. Send the same request again to get the payment page: it is never booked twice.</Alert>
-          )}
-          <Alert tone="warn">
-            {restored
-              ? 'A booking made earlier on this device (before the page was reloaded, or before you signed out) was not confirmed. Its details are not kept here. Check it, or give it up: then it can never be booked.'
-              : `The outcome of this request is not known yet${op.error ? ` (${op.error})` : ''}. The booking may already be made and paid. Sending the same request again is safe: it is never booked or charged twice. Or give it up: then it can never be booked.`}
-          </Alert>
-          {!restored && op.body && <SummaryList s={op.body.summary} />}
-        </CheckPanel>
-      </>
+      <UnconfirmedBooking op={op} what="booking" busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => assisted.byKey(op.requestKey)}
+        onUsed={(r, restored) => afterUsed(r, op, restored)}
+        onAbandoned={() => { settle(op.requestKey); setReview(null); setNotice('That booking was given up, so nothing was booked or charged with it. You can book again.'); }}
+        onResend={() => { setResendError(null); void sendBooking(op).catch((err: unknown) => setResendError(assistedRefusal(err).message)); }}
+        onGiveUp={() => void giveUp(op)}
+        extra={orderFailed && (
+          <Alert tone="warn">The booking is held, but the card payment could not be started. Send the same request again to get the payment page: it is never booked twice.</Alert>
+        )}
+        summary={op.body && <SummaryList s={op.body.summary} />} />
     );
   }
 
@@ -547,113 +461,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     <>
       {notice && <Alert tone="ok">{notice}</Alert>}
 
-      <section className="ws-section" aria-labelledby="pt-h">
-        <h2 id="pt-h">1. Patient</h2>
-        {!lookup ? (
-          <form className="ws-search" noValidate onSubmit={(e) => void find(e)}>
-            <TextField label="Patient’s mobile number" inputMode="tel" autoComplete="off" value={phoneText} error={phoneError}
-              hint="The number the patient (or their family) uses. A family can share one number." onChange={(e) => setPhoneText(e.target.value)} />
-            <Button type="submit" busy={busy}>Find</Button>
-          </form>
-        ) : (
-          <form className="rx-form" noValidate onSubmit={patientNext}>
-            <div className="ws-actions">
-              <span>Mobile number <strong>{lookup.phone}</strong></span>
-              <Button variant="ghost" disabled={frozenPatient} onClick={changePhone}>Change number</Button>
-            </div>
-            {lookup.result.exists ? (
-              <Alert tone="ok">
-                This number is on Jansetu. Account holder: <strong>{lookup.result.holderNameMasked ?? 'name not given'}</strong>.
-                {' '}Only part of the name is shown, to protect the patient.
-              </Alert>
-            ) : (
-              <Alert tone="warn">This number is new to Jansetu. An account is made for it when you book.</Alert>
-            )}
-            <fieldset className="ws-frozen" disabled={frozenPatient}>
-              {!lookup.result.exists && (
-                <TextField label="Type the number again" inputMode="tel" autoComplete="off" value={patient.phoneAgain} error={patientErrors.phoneAgain}
-                  onChange={(e) => set('phoneAgain', e.target.value)} />
-              )}
-              <fieldset className="ws-checks" aria-describedby={patientErrors.dependentId ? 'who-err' : undefined}>
-                <legend>Who is the patient?</legend>
-                <label className="ws-check">
-                  <input type="radio" name="who" checked={patient.who === 'self'} onChange={() => setPatient((d) => ({ ...d, who: 'self', dependentId: '' }))} />
-                  The phone’s owner{lookup.result.exists && lookup.result.holderNameMasked ? ` (${lookup.result.holderNameMasked})` : ''}
-                </label>
-                {knownFamily.map((f) => (
-                  <label key={f.dependentId} className="ws-check">
-                    <input type="radio" name="who" checked={patient.who === 'known' && patient.dependentId === f.dependentId}
-                      onChange={() => setPatient((d) => ({ ...d, who: 'known', dependentId: f.dependentId }))} />
-                    {f.name} (family member, booked here before)
-                  </label>
-                ))}
-                <label className="ws-check">
-                  <input type="radio" name="who" checked={patient.who === 'family'} onChange={() => setPatient((d) => ({ ...d, who: 'family', dependentId: '' }))} />
-                  {knownFamily.length ? 'Another family member' : 'A family member of the phone’s owner'}
-                </label>
-                {patientErrors.dependentId && <span id="who-err" className="j-field__error" role="alert">{patientErrors.dependentId}</span>}
-              </fieldset>
-              {lookup.result.exists && family.isPending && <span className="ws-muted">Looking for family members you booked for before…</span>}
-
-              {patient.who === 'self' && (
-                <TextField label="Patient’s full name" autoComplete="off" value={patient.name} maxLength={MAX_PERSON_NAME} error={patientErrors.name}
-                  hint="Type the name the patient tells you." onChange={(e) => set('name', e.target.value)} />
-              )}
-              {patient.who === 'family' && (
-                <>
-                  <div className="rx-form-row">
-                    <TextField label="Family member’s full name" autoComplete="off" value={patient.name} maxLength={MAX_PERSON_NAME} error={patientErrors.name}
-                      onChange={(e) => set('name', e.target.value)} />
-                    <div className="j-field">
-                      <label htmlFor="pt-relation">Relation to the phone’s owner</label>
-                      <select id="pt-relation" value={patient.relation} aria-invalid={patientErrors.relation ? true : undefined}
-                        aria-describedby={patientErrors.relation ? 'pt-relation-err' : undefined}
-                        onChange={(e) => set('relation', e.target.value as AssistedRelation | '')}>
-                        <option value="">Choose…</option>
-                        {ASSISTED_RELATIONS.map((r) => <option key={r} value={r}>{r}</option>)}
-                      </select>
-                      {patientErrors.relation && <span id="pt-relation-err" className="j-field__error" role="alert">{patientErrors.relation}</span>}
-                    </div>
-                  </div>
-                  <div className="rx-form-row">
-                    <div className="j-field">
-                      <label htmlFor="pt-gender">Gender (optional)</label>
-                      <select id="pt-gender" value={patient.gender} onChange={(e) => set('gender', e.target.value as AssistedGender | '')}>
-                        <option value="">Not said</option>
-                        {ASSISTED_GENDERS.map((g) => <option key={g} value={g}>{g}</option>)}
-                      </select>
-                    </div>
-                    <TextField label="Date of birth (optional)" type="date" value={patient.dateOfBirth} max={istToday()} error={patientErrors.dateOfBirth}
-                      onChange={(e) => set('dateOfBirth', e.target.value)} />
-                  </div>
-                  <p className="ws-muted">If this family member is already on the account with the same name and relation, they are used; otherwise they are added.</p>
-                </>
-              )}
-              {patient.who !== 'self' && (
-                <TextField label="Phone owner’s name (optional)" autoComplete="off" value={patient.holderName} maxLength={MAX_PERSON_NAME} error={patientErrors.holderName}
-                  hint="Only used the first time your pharmacy books on this number." onChange={(e) => set('holderName', e.target.value)} />
-              )}
-
-              <label className="rx-ack">
-                <input type="checkbox" checked={agreed} aria-describedby={agreeError ? 'agree-err' : 'agree-text'}
-                  onChange={(e) => { setAgreed(e.target.checked); if (e.target.checked) setAgreeError(null); }} />
-                Patient agreed to this booking
-              </label>
-              <span id="agree-text" className="j-field__hint">{CONSENT_STATEMENT}</span>
-              {agreeError && <span id="agree-err" className="j-field__error" role="alert">{agreeError}</span>}
-            </fieldset>
-            {patientDone ? (
-              <div className="ws-actions">
-                <Badge tone="ok">Patient ready</Badge>
-                <Button variant="ghost" disabled={!!review || busy} onClick={() => setPatientDone(false)}>Change patient details</Button>
-              </div>
-            ) : (
-              <div><Button type="submit">Next: choose the doctor</Button></div>
-            )}
-          </form>
-        )}
-      </section>
-
+      <PatientSection step={pt} busy={busy} frozen={frozenPatient} locked={!!review || busy} />
       {patientDone && (
         <section className="ws-section" aria-labelledby="dr-h">
           <h2 id="dr-h">2. Doctor and time</h2>
@@ -706,19 +514,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
                               : slots.isError ? <ErrorState message={assistedRefusal(slots.error).message} onRetry={() => void slots.refetch()} />
                               : slotDays.length === 0 ? (
                                 <span>No free times from {formatSlotDate(slots.data.from)} to {formatSlotDate(slots.data.to)}. Choose a later day or another doctor.</span>
-                              ) : slotDays.map(([day, times]) => (
-                                <fieldset key={day} className="ws-checks">
-                                  <legend>Free times on {formatSlotDate(day)}</legend>
-                                  <div className="ws-actions">
-                                    {times.map((s) => (
-                                      <Button key={s.slotId} variant={slotId === s.slotId ? 'primary' : 'secondary'} aria-pressed={slotId === s.slotId}
-                                        aria-label={`${formatSlotDate(day)} ${s.startTime}${s.endTime ? `–${s.endTime}` : ''}`} onClick={() => chooseSlot(s)}>
-                                        {s.startTime}{s.endTime ? `–${s.endTime}` : ''}
-                                      </Button>
-                                    ))}
-                                  </div>
-                                </fieldset>
-                              ))}
+                              ) : <SlotDays days={slotDays} chosen={slotId} onChoose={chooseSlot} />}
                           </div>
                         )}
                       </li>
@@ -804,13 +600,7 @@ function ReviewAndPay({ pharmacyId, review, busy, refused, method, cardOff, onMe
   onBack: () => void;
   onNewPrice: (priceMinor: number) => void;
 }) {
-  const wallet = useWallet(pharmacyId);
   const s = review.summary;
-  const balance = walletBalancePaise(wallet.data);
-  const hold = walletHoldWords(wallet.data);
-  const short = wallet.data !== undefined && walletState(wallet.data) === 'ok' && balance < s.priceMinor;
-  const [showTopUp, setShowTopUp] = useState(false);
-  const needTopUp = short || refused?.kind === 'topup';
   // WQ16: card or UPI only when there is something to pay; the wallet path below stays as it was.
   const offerCard = s.priceMinor > 0;
   const byCard = offerCard && method === 'razorpay' && !cardOff;
@@ -838,9 +628,7 @@ function ReviewAndPay({ pharmacyId, review, busy, refused, method, cardOff, onMe
         )}
         {byCard ? (
           <>
-            {refused && <Alert>{refusalText(refused, s.couponCode)}{refused.kind === 'price' && refused.priceMinor !== undefined && (
-              <> <Button variant="secondary" onClick={() => onNewPrice(refused.priceMinor!)}>Use the new price ({formatRupees(refused.priceMinor / 100)})</Button></>
-            )}</Alert>}
+            <RefusalAlert refused={refused} couponCode={s.couponCode} onNewPrice={onNewPrice} />
             <span className="ws-muted">
               Collect {formatRupees(s.priceMinor / 100)} from the patient at your counter. You pay it on the Razorpay page next. The time is held for 30
               minutes while you pay. If the booking is cancelled later, the money goes back to the card or UPI, or to your wallet if you choose.
@@ -850,38 +638,10 @@ function ReviewAndPay({ pharmacyId, review, busy, refused, method, cardOff, onMe
               <Button variant="ghost" disabled={busy} onClick={onBack}>Back</Button>
             </div>
           </>
-        ) : (<>
-        {wallet.isPending ? <Loading label="Reading your wallet…" />
-          : wallet.isError ? <ErrorState message={assistedRefusal(wallet.error).message} onRetry={() => void wallet.refetch()} />
-          : (
-            <p>
-              Money in your wallet: <strong>{formatRupees(balance / 100)}</strong>
-              {!hold && !short ? <> · After this booking: {formatRupees((balance - s.priceMinor) / 100)}</> : null}
-            </p>
-          )}
-        {hold && <Alert tone="warn">{hold}</Alert>}
-        {refused && (
-          <Alert>
-            {refusalText(refused, s.couponCode)}
-            {refused.kind === 'price' && refused.priceMinor !== undefined && (
-              <> <Button variant="secondary" onClick={() => onNewPrice(refused.priceMinor!)}>Use the new price ({formatRupees(refused.priceMinor / 100)})</Button></>
-            )}
-          </Alert>
+        ) : (
+          <WalletPay pharmacyId={pharmacyId} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy}
+            onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
         )}
-        {needTopUp && !hold && (
-          <Alert tone="warn">
-            {short ? `Your wallet needs ${formatRupees((s.priceMinor - balance) / 100)} more for this booking.` : 'Your wallet needs more money for this booking.'}
-            {' '}<Button variant="secondary" onClick={() => setShowTopUp(true)}>Top up now</Button>{' '}
-            or open the <Link to="/pharmacy/wallet">Wallet</Link> page (this booking is not kept if you leave).
-          </Alert>
-        )}
-        {showTopUp && <TopUpForm pharmacyId={pharmacyId} suggested={Math.max(1, (s.priceMinor - balance) / 100)} onCredited={() => void wallet.refetch()} />}
-        <span className="ws-muted">Collect {formatRupees(s.priceMinor / 100)} from the patient at your counter. If the booking is cancelled, the money comes back to your wallet.</span>
-        <div className="confirm-actions">
-          <Button busy={busy} disabled={!!hold || short || (refused?.kind === 'price')} onClick={onPay}>Pay {formatRupees(s.priceMinor / 100)} from wallet</Button>
-          <Button variant="ghost" disabled={busy} onClick={onBack}>Back</Button>
-        </div>
-        </>)}
       </div>
     </section>
   );

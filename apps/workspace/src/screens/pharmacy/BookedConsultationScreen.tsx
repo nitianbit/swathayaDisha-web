@@ -1,14 +1,13 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft, FileText } from 'lucide-react';
 import {
-  ApiError, assistedRefusal, cancelWords, canBookerCancel, canBookerReschedule, isAssistedBooking, typedNameTarget, formatSlotDate, joinWords, MAX_BOOKER_CANCEL_REASON, medicineName,
-  bookingPaidBy, bookingPayBy, bookingWasPaid, LATE_PAYMENT_BACK, orderFromBooking, PATIENT_LANGUAGES, payByWords, pharmacyAssistedApi, pharmacyStockApi, requestKeysApi, rxOrderProblems, type BookedConsultation,
+  ApiError, assistedRefusal, cancelWords, canBookerCancel, canBookerReschedule, isAssistedBooking, typedNameTarget, formatSlotDate, joinWords, medicineName,
+  bookingPaidBy, bookingPayBy, bookingWasPaid, LATE_PAYMENT_BACK, orderFromBooking, PATIENT_LANGUAGES, payByWords, pharmacyAssistedApi, pharmacyStockApi, requestKeysApi, rxOrderProblems, type BookedConsultation, type CancelAnswer,
   type Medicine, type RefundTo, type RxMedicine, type RxOrderRequest,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextField } from '@jansetu/ui';
-import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
@@ -16,7 +15,8 @@ import { useOneAtATime } from '../finance/finance.tsx';
 import { BookingBadges, modeWords, statusWords, waitingForCard } from './BookedConsultationsScreen.tsx';
 import { CardPaymentPanel, useCardBookings } from './cardBooking.tsx';
 import { ChangeTime, CorrectName, type BookingGuard } from './BookingChanges.tsx';
-import { sniffDocument } from './documents.ts';
+import { DocumentPreview, useDocumentViewer } from './documentViewer.tsx';
+import { OwnedCancel } from './ownedCancel.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 
 /**
@@ -164,73 +164,23 @@ function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, 
 }) {
   const { api } = useSession();
   const assisted = pharmacyAssistedApi(api);
-  const { op, send, settle } = useOwnedOp<PendingCancel>(`assisted-cancel:${pharmacyId}:${booking._id}`);
-  const { perform, busy } = guard;
-  const [resendError, setResendError] = useState<string | null>(null);
   // WQ16 (r10 C2): a card-paid booking's money goes back to the card by default, or to the wallet on the pharmacy's choice.
   const [refundTo, setRefundTo] = useState<RefundTo>('card');
   const choose = paidBy === 'card' && !waiting && captured;
   const amount = typeof booking.price === 'number' ? formatRupees(booking.price) : 'The amount';
 
-  async function sendCancel(p: PendingOp<PendingCancel>) {
-    const r = await perform(() => send(p, (b) => assisted.cancel(b.bookingId, { ...(b.reason ? { reason: b.reason } : {}),
-      ...(b.expectedUpdatedAt ? { expectedUpdatedAt: b.expectedUpdatedAt } : {}), ...(b.refundTo ? { refundTo: b.refundTo } : {}) })));
-    if (r.kind === 'stale') return;
-    if (r.kind === 'ok') { onDone(cancelWords(r.value)); onChanged(); return; }
-    if (r.kind === 'refused') { onChanged(); throw new Error(assistedRefusal(r.error).message); }
-  }
-
-  if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
-    const restored = !!op.restored || !op.body;
-    return (
-      <section className="ws-section" aria-labelledby="cancel-h">
-        <h2 id="cancel-h">Cancel</h2>
-        {resendError && <Alert>{resendError}</Alert>}
-        <CheckPanel label="Unconfirmed cancellation"
-          onCheck={async () => {
-            const now = await assisted.booking(booking._id);
-            if (now.status === 'cancelled') {
-              settle(op.requestKey);
-              // WQ16c: a restored cancellation's choice is not kept here, so no destination is named.
-              onDone(waiting ? `Cancelled. It was not paid, so nothing is refunded. ${LATE_PAYMENT_BACK}`
-                : restored && paidBy === 'card' ? 'Cancelled. The amount goes back the way chosen.'
-                : op.body?.refundTo === 'wallet' ? 'Cancelled. The amount goes back to your Jansetu wallet. See it under Wallet.'
-                : paidBy === 'card' ? 'Cancelled. The amount goes back to the card or UPI it was paid with.'
-                : paidBy === 'wallet' ? 'Cancelled. The amount is back in your Jansetu wallet.'
-                : 'Cancelled. The amount goes back the way it was paid: to your Jansetu wallet, or to the card or UPI.');
-              onChanged();
-              return null;
-            }
-            return 'Not cancelled so far. It may still be on its way. Sending the same cancellation again is safe: the money is never refunded twice.';
-          }}
-          resend={restored ? undefined : {
-            label: 'Send the same request again', busy,
-            onClick: () => { setResendError(null); void sendCancel(op).catch((err: unknown) => setResendError(err instanceof Error ? err.message : String(err))); },
-          }}
-          forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget: () => settle(op.requestKey),
-            consequence: 'If the earlier cancellation still arrives, the booking is cancelled and the money goes back the way it was paid. You can cancel again from here.' }}>
-          <Alert tone="warn">
-            {restored
-              ? 'A cancellation made earlier on this device was not confirmed. Check whether the booking was cancelled.'
-              : `The outcome of this request is not known yet${op.error ? ` (${op.error})` : ''}. The booking may already be cancelled. Sending the same request again is safe.`}
-          </Alert>
-        </CheckPanel>
-      </section>
-    );
-  }
-
   return (
-    <section className="ws-section" aria-labelledby="cancel-h">
-      <h2 id="cancel-h">Cancel</h2>
-      <p className="ws-muted">
+    <OwnedCancel<PendingCancel, CancelAnswer> slot={`assisted-cancel:${pharmacyId}:${booking._id}`} label="Cancel this consultation"
+      perform={guard.perform} busy={guard.busy} version={booking.updatedAt}
+      intro={<>
         You can cancel any time before the consultation starts.{' '}
         {waiting ? `It is not paid yet, so nothing is refunded; the time is released. ${LATE_PAYMENT_BACK}`
           : choose ? 'The full amount goes back to the card or UPI it was paid with, or to your Jansetu wallet if you choose.'
           : paidBy === 'wallet' ? 'The full amount goes back to your Jansetu wallet.'
           : 'The full amount goes back the way it was paid: to your Jansetu wallet, or to the card or UPI.'}
-      </p>
-      {choose && (
-        <fieldset className="ws-checks" disabled={busy}>
+      </>}
+      extra={choose && (
+        <fieldset className="ws-checks" disabled={guard.busy}>
           <legend>Where does the money go back?</legend>
           <label className="ws-check">
             <input type="radio" name="refund-to" checked={refundTo === 'card'} onChange={() => setRefundTo('card')} />
@@ -242,32 +192,36 @@ function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, 
           </label>
         </fieldset>
       )}
-      <ConfirmAction label="Cancel this consultation" danger confirmLabel="Yes, cancel it" reason="optional" reasonLabel="Why? (optional)"
-        maxReason={MAX_BOOKER_CANCEL_REASON} version={booking.updatedAt}
-        consequence={`The consultation on ${formatSlotDate(booking.bookingDate)} at ${booking.bookingTime} is cancelled. ${
-          waiting ? `It was not paid, so nothing is refunded. The time is released. ${LATE_PAYMENT_BACK}`
-            : choose ? `${amount} goes back to ${refundTo === 'wallet' ? 'your Jansetu wallet' : 'the card or UPI it was paid with'}; give the patient their money back. The patient and the doctor are told.`
-            : paidBy === 'wallet' ? `${amount} goes back to your wallet; give the patient their money back. The patient and the doctor are told.`
-            : `${amount} goes back the way it was paid (your wallet, or the card or UPI); give the patient their money back. The patient and the doctor are told.`}`}
-        onConfirm={async (reason) => {
-          await sendCancel(startOp(newRequestKey(), { bookingId: booking._id, ...(reason.trim() ? { reason: reason.trim() } : {}),
-            ...(booking.updatedAt ? { expectedUpdatedAt: booking.updatedAt } : {}), label: booking.doctorName ?? '', ...(choose ? { refundTo } : {}) }));
-        }} />
-    </section>
+      consequence={`The consultation on ${formatSlotDate(booking.bookingDate)} at ${booking.bookingTime} is cancelled. ${
+        waiting ? `It was not paid, so nothing is refunded. The time is released. ${LATE_PAYMENT_BACK}`
+          : choose ? `${amount} goes back to ${refundTo === 'wallet' ? 'your Jansetu wallet' : 'the card or UPI it was paid with'}; give the patient their money back. The patient and the doctor are told.`
+          : paidBy === 'wallet' ? `${amount} goes back to your wallet; give the patient their money back. The patient and the doctor are told.`
+          : `${amount} goes back the way it was paid (your wallet, or the card or UPI); give the patient their money back. The patient and the doctor are told.`}`}
+      makeBody={(reason) => ({ bookingId: booking._id, ...(reason ? { reason } : {}), ...(booking.updatedAt ? { expectedUpdatedAt: booking.updatedAt } : {}),
+        label: booking.doctorName ?? '', ...(choose ? { refundTo } : {}) })}
+      send={(b) => assisted.cancel(b.bookingId, { ...(b.reason ? { reason: b.reason } : {}), ...(b.expectedUpdatedAt ? { expectedUpdatedAt: b.expectedUpdatedAt } : {}),
+        ...(b.refundTo ? { refundTo: b.refundTo } : {}) })}
+      doneWords={cancelWords}
+      refusalWords={(err) => assistedRefusal(err).message}
+      onChanged={onChanged}
+      isCancelled={async () => (await assisted.booking(booking._id)).status === 'cancelled'}
+      // WQ16c: a restored cancellation's choice is not kept here, so no destination is named.
+      checkedWords={(body, restored) => (waiting ? `Cancelled. It was not paid, so nothing is refunded. ${LATE_PAYMENT_BACK}`
+        : restored && paidBy === 'card' ? 'Cancelled. The amount goes back the way chosen.'
+        : body?.refundTo === 'wallet' ? 'Cancelled. The amount goes back to your Jansetu wallet. See it under Wallet.'
+        : paidBy === 'card' ? 'Cancelled. The amount goes back to the card or UPI it was paid with.'
+        : paidBy === 'wallet' ? 'Cancelled. The amount is back in your Jansetu wallet.'
+        : 'Cancelled. The amount goes back the way it was paid: to your Jansetu wallet, or to the card or UPI.')}
+      forgetConsequence="If the earlier cancellation still arrives, the booking is cancelled and the money goes back the way it was paid. You can cancel again from here."
+      onDone={onDone} />
   );
 }
 
 // ── The dispensing copy ──
 
 function Prescription({ pharmacyId, booking, onRetry }: { pharmacyId: string; booking: BookedConsultation; onRetry: () => void }) {
-  const { api } = useSession();
   const p = booking.prescription;
-  const [preview, setPreview] = useState<{ url: string; kind: 'pdf' | 'image' | 'other' } | null>(null);
-  const [opening, setOpening] = useState(false);
-  const [fileError, setFileError] = useState<string | null>(null);
-  const fetching = useRef<AbortController | null>(null);
-  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
-  useEffect(() => () => fetching.current?.abort(), []);
+  const { open, opening, error: fileError, preview } = useDocumentViewer();
 
   if (!p) {
     return (
@@ -280,24 +234,6 @@ function Prescription({ pharmacyId, booking, onRetry }: { pharmacyId: string; bo
         </p>
       </section>
     );
-  }
-
-  async function open(url: string) {
-    fetching.current?.abort();
-    const ctrl = new AbortController();
-    fetching.current = ctrl;
-    setOpening(true);
-    setFileError(null);
-    try {
-      const blob = await pharmacyAssistedApi(api).file(url, ctrl.signal);
-      const { kind, type } = await sniffDocument(blob);
-      if (ctrl.signal.aborted) return;
-      setPreview({ url: URL.createObjectURL(new Blob([blob], { type })), kind });
-    } catch (err) {
-      if (!ctrl.signal.aborted) setFileError(assistedRefusal(err).message);
-    } finally {
-      if (fetching.current === ctrl) setOpening(false);
-    }
   }
 
   const medicines = p.medicines ?? [];
@@ -325,7 +261,7 @@ function Prescription({ pharmacyId, booking, onRetry }: { pharmacyId: string; bo
       {(p.testsAdvised ?? []).length > 0 && <p><strong>Tests advised:</strong> {(p.testsAdvised ?? []).join(', ')}</p>}
       <div className="ws-actions">
         {p.fileUrls[0] ? (
-          <Button variant="secondary" busy={opening} onClick={() => void open(p.fileUrls[0]!)}><FileText size={16} aria-hidden="true" /> Open the prescription copy</Button>
+          <Button variant="secondary" busy={opening !== null} onClick={() => void open(p.fileUrls[0]!)}><FileText size={16} aria-hidden="true" /> Open the prescription copy</Button>
         ) : p.copyPending ? (
           <>
             <span className="ws-muted">The printable copy is being made. Try again in a minute.</span>
@@ -334,19 +270,7 @@ function Prescription({ pharmacyId, booking, onRetry }: { pharmacyId: string; bo
         ) : null}
       </div>
       {fileError && <Alert>Could not open the copy: {fileError}</Alert>}
-      {preview && (
-        <div className="rx-preview-wrap">
-          <div className="rx-preview">
-            {preview.kind === 'pdf' ? (
-              <div className="rx-pdf">
-                <iframe src={preview.url} title="Prescription copy" />
-                <a href={preview.url} target="_blank" rel="noopener">Open the copy in a new tab (to print)</a>
-              </div>
-            ) : preview.kind === 'image' ? <img src={preview.url} alt="Prescription copy" />
-              : <a href={preview.url} download="prescription-copy">Download the copy</a>}
-          </div>
-        </div>
-      )}
+      <DocumentPreview preview={preview} title="Prescription copy" noun="copy" fileName="prescription-copy" />
       {medicines.length > 0 && <RxOrder pharmacyId={pharmacyId} booking={booking} medicines={medicines} />}
     </section>
   );

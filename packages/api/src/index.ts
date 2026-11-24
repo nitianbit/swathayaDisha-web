@@ -201,3 +201,11 @@ export type {
   ConsultationReceipt, ConsultationRequest, AssistedMode, DispensingCopy, DoctorQuery, DoctorSlots, DoctorSlotsQuery, AssistedSlot, JoinOn, PatientDraft, PatientLookup, PharmacyWallet,
   Refusal, RefusalKind, RxMedicine, RxOrderAnswer, RxOrderItem, RxOrderRequest, TopupCheck, TopupOrder, WalletMovement,
 } from './assisted.ts';
+// WQ17: assisted booking phase 2a, a pharmacy books a lab test for a walk-in patient (wallet-paid).
+export {
+  branchesFor, canCancelLab, LAB_BOOKER_CANCEL_CUTOFF_MS, LAB_SWITCHED_OFF_MESSAGE, labRefusal, labStatusLabel, labTotalMinor, pharmacyLabApi,
+} from './assistedLab.ts';
+export type {
+  AssistedLab, AssistedLabBranch, AssistedLabItem, AssistedLabSlot, LabAddress as AssistedLabAddress, LabBookingListStatus, LabBookingRequest, LabBookingView, LabByKeyAnswer,
+  LabCancelAnswer, LabReceipt,
+} from './assistedLab.ts';

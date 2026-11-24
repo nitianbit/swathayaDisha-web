@@ -1,0 +1,70 @@
+import { useState } from 'react';
+import { Link } from 'react-router';
+import { assistedRefusal, walletBalancePaise, walletState, type Refusal } from '@jansetu/api';
+import { Alert, Button, ErrorState, formatRupees, Loading } from '@jansetu/ui';
+import { TopUpForm } from './topup.tsx';
+import { useWallet, walletHoldWords } from './WalletScreen.tsx';
+
+/**
+ * WQ17: paying an assisted booking from the pharmacy's Jansetu wallet (WQ12, moved here unchanged from Book consultation
+ * so that Book lab test pays the very same way): the balance, a hold, the refusal with "Use the new price", the top-up in
+ * place, and the one primary action.
+ */
+
+/** Plain refusal words, adjusted when a coupon explains the new price. */
+export function refusalText(r: Refusal, coupon?: string): string {
+  if (r.kind === 'price' && coupon && r.priceMinor !== undefined) return `With the coupon ${coupon}, the price is ${formatRupees(r.priceMinor / 100)}. Check it with the patient, then pay.`;
+  return r.message;
+}
+
+/** The refusal of the last attempt, with "Use the new price" when the server named one (a new request). */
+export function RefusalAlert({ refused, couponCode, onNewPrice }: { refused: Refusal | null; couponCode?: string; onNewPrice: (priceMinor: number) => void }) {
+  if (!refused) return null;
+  return (
+    <Alert>
+      {refusalText(refused, couponCode)}
+      {refused.kind === 'price' && refused.priceMinor !== undefined && (
+        <> <Button variant="secondary" onClick={() => onNewPrice(refused.priceMinor!)}>Use the new price ({formatRupees(refused.priceMinor / 100)})</Button></>
+      )}
+    </Alert>
+  );
+}
+
+export function WalletPay({ pharmacyId, priceMinor, couponCode, refused, busy, onPay, onBack, onNewPrice }: {
+  pharmacyId: string; priceMinor: number; couponCode?: string; refused: Refusal | null; busy: boolean;
+  onPay: () => void; onBack: () => void; onNewPrice: (priceMinor: number) => void;
+}) {
+  const wallet = useWallet(pharmacyId);
+  const balance = walletBalancePaise(wallet.data);
+  const hold = walletHoldWords(wallet.data);
+  const short = wallet.data !== undefined && walletState(wallet.data) === 'ok' && balance < priceMinor;
+  const [showTopUp, setShowTopUp] = useState(false);
+  const needTopUp = short || refused?.kind === 'topup';
+  return (
+    <>
+      {wallet.isPending ? <Loading label="Reading your wallet…" />
+        : wallet.isError ? <ErrorState message={assistedRefusal(wallet.error).message} onRetry={() => void wallet.refetch()} />
+        : (
+          <p>
+            Money in your wallet: <strong>{formatRupees(balance / 100)}</strong>
+            {!hold && !short ? <> · After this booking: {formatRupees((balance - priceMinor) / 100)}</> : null}
+          </p>
+        )}
+      {hold && <Alert tone="warn">{hold}</Alert>}
+      <RefusalAlert refused={refused} couponCode={couponCode} onNewPrice={onNewPrice} />
+      {needTopUp && !hold && (
+        <Alert tone="warn">
+          {short ? `Your wallet needs ${formatRupees((priceMinor - balance) / 100)} more for this booking.` : 'Your wallet needs more money for this booking.'}
+          {' '}<Button variant="secondary" onClick={() => setShowTopUp(true)}>Top up now</Button>{' '}
+          or open the <Link to="/pharmacy/wallet">Wallet</Link> page (this booking is not kept if you leave).
+        </Alert>
+      )}
+      {showTopUp && <TopUpForm pharmacyId={pharmacyId} suggested={Math.max(1, (priceMinor - balance) / 100)} onCredited={() => void wallet.refetch()} />}
+      <span className="ws-muted">Collect {formatRupees(priceMinor / 100)} from the patient at your counter. If the booking is cancelled, the money comes back to your wallet.</span>
+      <div className="confirm-actions">
+        <Button busy={busy} disabled={!!hold || short || (refused?.kind === 'price')} onClick={onPay}>Pay {formatRupees(priceMinor / 100)} from wallet</Button>
+        <Button variant="ghost" disabled={busy} onClick={onBack}>Back</Button>
+      </div>
+    </>
+  );
+}

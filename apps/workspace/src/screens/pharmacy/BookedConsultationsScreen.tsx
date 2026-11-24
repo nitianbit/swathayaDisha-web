@@ -5,9 +5,10 @@ import {
   ASSISTED_MODE_LABEL, assistedRefusal, awaitingCardPayment, bookingStatusLabel, isAssistedBooking, formatSlotDate, isSwitchedOff, pharmacyAssistedApi, SWITCHED_OFF_MESSAGE,
   type AssistedBookingStatus, type AssistedMode, type BookedConsultation,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, Loading } from '@jansetu/ui';
+import { Alert, Badge, Empty, ErrorState, Loading } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
+import { CursorPager, StatusFilter, useCursorPages } from './cursorList.tsx';
 import { usePharmacyId } from './ownedOp.tsx';
 
 /** WQ12: consultations this pharmacy booked (`GET /pharmacy-bookings`, newest first, cursor-paged; phase 0 + 1a). */
@@ -51,9 +52,8 @@ export function BookingBadges({ b }: { b: BookedConsultation }) {
 function BookedList({ pharmacyId }: { pharmacyId: string }) {
   const { api } = useSession();
   const [status, setStatus] = useState<AssistedBookingStatus | ''>('');
-  // Cursor paging: the cursors of the pages seen so far ('' = the first page).
-  const [cursors, setCursors] = useState<string[]>(['']);
-  const cursor = cursors[cursors.length - 1]!;
+  const pages = useCursorPages();
+  const { cursor } = pages;
   const q = useQuery({
     queryKey: ['pharmacy-bookings', pharmacyId, 'list', status, cursor],
     queryFn: () => pharmacyAssistedApi(api).bookings({ ...(status ? { status } : {}), ...(cursor ? { cursor } : {}), limit: PAGE_SIZE }),
@@ -62,14 +62,7 @@ function BookedList({ pharmacyId }: { pharmacyId: string }) {
   return (
     <section className="ws-section" aria-labelledby="list-h">
       <h2 id="list-h" className="j-sr-only">Booked consultations</h2>
-      <div className="ws-filter">
-        <div className="j-field">
-          <label htmlFor="bk-status">Status</label>
-          <select id="bk-status" value={status} onChange={(e) => { setStatus(e.target.value as AssistedBookingStatus | ''); setCursors(['']); }}>
-            {STATUS_FILTERS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
-          </select>
-        </div>
-      </div>
+      <StatusFilter id="bk-status" value={status} options={STATUS_FILTERS} onChange={(v) => { setStatus(v); pages.reset(); }} />
       {q.isPending ? <Loading label="Loading booked consultations…" />
         : q.isError ? (isSwitchedOff(q.error) ? <Alert tone="warn">{SWITCHED_OFF_MESSAGE}</Alert>
           : <ErrorState message={assistedRefusal(q.error).message} onRetry={() => void q.refetch()} />)
@@ -103,13 +96,7 @@ function BookedList({ pharmacyId }: { pharmacyId: string }) {
                 </tbody>
               </table>
             </div>
-            {(cursors.length > 1 || q.data.nextCursor) && (
-              <nav className="ws-pager" aria-label="Booked consultation pages">
-                <Button variant="secondary" disabled={cursors.length <= 1} onClick={() => setCursors((c) => c.slice(0, -1))}>Newer</Button>
-                <span>Page {cursors.length}</span>
-                <Button variant="secondary" disabled={!q.data.nextCursor} onClick={() => setCursors((c) => [...c, q.data.nextCursor!])}>Older</Button>
-              </nav>
-            )}
+            <CursorPager pages={pages} nextCursor={q.data.nextCursor} label="Booked consultation pages" />
           </>
         )}
     </section>
