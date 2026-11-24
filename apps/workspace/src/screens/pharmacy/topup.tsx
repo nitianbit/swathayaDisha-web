@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ApiError, assistedRefusal, pharmacyWalletApi, type ApiClient, type Refusal, type TopupCheck, type TopupOrder } from '@jansetu/api';
+import {
+  ApiError, assistedRefusal, LAB_TOPUP_MAX_MINOR, ownerWalletRefusal, pharmacyWalletApi, type ApiClient, type OwnWalletApi, type Refusal, type TopupCheck,
+  type TopupOrder, type WalletOwnerKind,
+} from '@jansetu/api';
 import { Alert, Button, formatDateTime, formatRupees, TextField } from '@jansetu/ui';
 import { newRequestKey, startOp } from '../../requests.ts';
 import { useOwnedOp } from './ownedOp.tsx';
@@ -78,8 +81,9 @@ export type TopupOutcome =
   | { kind: 'unknown'; message: string };
 
 /**
- * WQ20: whose wallet a top-up goes to, and through which routes: the pharmacy's (`/pharmacy-wallet`, no request key) or
- * a lab's (`/partner-workspace/assisted/wallet/topups`, keyed; §24.13). The same form, payment and check serve both.
+ * WQ20: whose wallet a top-up goes to, and through which routes: the pharmacy's (`/pharmacy-wallet`, no request key), a
+ * lab's (`/partner-workspace/assisted/wallet/topups`, keyed; §24.13) or (WQ23) a doctor's (`/specialists/me/assisted/…`,
+ * keyed; §25.12). The same form, payment and check serve all of them.
  */
 export interface TopupSource {
   /** The owner's id, for this device's memory slots. */
@@ -108,6 +112,19 @@ export function pharmacyTopupSource(api: ApiClient, pharmacyId: string): TopupSo
   const w = pharmacyWalletApi(api);
   return { owner: pharmacyId, queryKey: ['pharmacy-wallet', pharmacyId], maxRupees: MAX_TOPUP, start: (rupees) => w.startTopup(rupees),
     verify: (p) => w.verify(p), check: (id) => w.checkTopup(id), refusal: assistedRefusal, rememberOnDevice: true, keyed: false };
+}
+
+/**
+ * A lab's (WQ20) or a doctor's (WQ23) own top-ups: a keyed order in paise, the owner's words. The server lists a lab's
+ * top-ups; a doctor has no such list (r20 E7), so a doctor's unconfirmed ones are kept on this device.
+ */
+export function ownerTopupSource(w: OwnWalletApi, kind: WalletOwnerKind, ownerId: string, queryKey: readonly unknown[]): TopupSource {
+  return {
+    owner: `${kind}-${ownerId}`, queryKey, maxRupees: LAB_TOPUP_MAX_MINOR / 100,
+    start: (rupees, requestKey) => w.startTopup(Math.round(rupees * 100), requestKey),
+    verify: (p) => w.verify(p), check: (id) => w.checkTopup(id), refusal: (err) => ownerWalletRefusal(err, kind),
+    rememberOnDevice: kind === 'doctor', keyed: true,
+  };
 }
 
 /** Asks the server to check one top-up with Razorpay (credited once if it was paid). Never throws. */
@@ -301,6 +318,11 @@ export function useTopupCheck(source: TopupSource, unpaidWords: string, onSettle
   }
   const drop = (id: string) => setNotes((n) => { const { [id]: _gone, ...rest } = n; return rest; });
   return { busy, checking, notes, check, drop };
+}
+
+/** WQ23b: this device's unconfirmed top-ups alone (a doctor whose wallet is closed can still check them, r20 E8). */
+export function DeviceTopups({ source }: { source: TopupSource }) {
+  return <PendingTopups source={source} pending={usePendingTopups(source.owner)} />;
 }
 
 /** Top-ups started on this device and not confirmed yet, each with "Check my top-up". */

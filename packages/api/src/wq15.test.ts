@@ -1,6 +1,6 @@
 import { ApiError, createApiClient } from './client.ts';
 import {
-  adminPharmacyWalletApi, CLOSE_COMPENSATED_EXPLAIN, closeCompensatedFinal, closeCompensatedRefusal, closeReasonProblem, closeRefusedBeforeWriting, uncreditedOf,
+  adminPharmacyWalletApi, closeCompensatedExplain, closeCompensatedFinal, closeCompensatedRefusal, closeReasonProblem, closeRefusedBeforeWriting, uncreditedOf,
 } from './adminPharmacyWallet.ts';
 import { CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, isClinicDoctorNotVerified } from './auth.ts';
 
@@ -43,10 +43,12 @@ describe('close as already paid by hand: refusals in plain words', () => {
   });
 
   it('the reason is required (1–500 after trimming); the owner wording', () => {
-    expect(closeReasonProblem('   ')).toMatch(/^Write why this top-up is closed/);
-    expect(closeReasonProblem('x'.repeat(501))).toBe('Use at most 500 characters.');
-    expect(closeReasonProblem(' paid by UPI ')).toBeUndefined();
-    expect(CLOSE_COMPENSATED_EXPLAIN).toBe('Use this only when Jansetu support already paid this amount to the pharmacy another way. The top-up can then never be credited.');
+    expect(closeReasonProblem('   ', 'pharmacy')).toBe('Write why this top-up is closed, for example who paid the pharmacy and how.');
+    expect(closeReasonProblem('   ', 'doctor')).toBe('Write why this top-up is closed, for example who paid the doctor and how.');
+    expect(closeReasonProblem('x'.repeat(501), 'pharmacy')).toBe('Use at most 500 characters.');
+    expect(closeReasonProblem(' paid by UPI ', 'lab')).toBeUndefined();
+    expect(closeCompensatedExplain('pharmacy')).toBe('Use this only when Jansetu support already paid this amount to the pharmacy another way. The top-up can then never be credited.');
+    expect(closeCompensatedExplain('doctor')).toBe('Use this only when Jansetu support already paid this amount to the doctor another way. The top-up can then never be credited.');
   });
 });
 

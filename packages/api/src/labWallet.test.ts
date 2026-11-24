@@ -1,5 +1,5 @@
 import { ApiError, createApiClient } from './client.ts';
-import { adminLabWalletApi, asMovement, asPharmacyWallet, LAB_WALLET_SWITCHED_OFF_MESSAGE, labTopupCheckable, labWalletApi, labWalletRefusal } from './labWallet.ts';
+import { adminOwnerWalletApi, asMovement, asPharmacyWallet, LAB_WALLET_SWITCHED_OFF_MESSAGE, labTopupCheckable, labWalletApi, ownerWalletRefusal } from './labWallet.ts';
 import { movementLabel, signedPaiseOf, walletBalancePaise, walletState } from './assisted.ts';
 import { adminTopupWarning, ADMIN_TOPUP_WARNING, uncreditedOf } from './adminPharmacyWallet.ts';
 import { ALL_PARTNER_PERMISSIONS, grantablePermissions, permissionsForKind } from './partners.ts';
@@ -70,7 +70,7 @@ describe('WQ20 lab wallet (r13 /partner-workspace/assisted, /admin/labs)', () =>
     const { client, calls } = recorder((url) => (url.includes('/by-key/')
       ? { success: true, data: { state: 'credited', entry: { _id: 'e9', kind: 'credit', amountMinor: 20000, balanceAfterMinor: 20000, referenceType: 'topup', referenceId: KEY, at: '2026-11-25T05:00:00.000Z', notes: 'support' } } }
       : { success: true, data: [], pagination: { nextCursor: null } }));
-    const a = adminLabWalletApi(client);
+    const a = adminOwnerWalletApi(client, 'lab');
     await a.wallet(LAB);
     await a.entries(LAB);
     await a.lots(LAB);
@@ -103,6 +103,7 @@ describe('WQ20 lab wallet (r13 /partner-workspace/assisted, /admin/labs)', () =>
   });
 
   it('the wallet limit in words from its paise details; the switch; other refusals as the shared words', () => {
+    const labWalletRefusal = (err: unknown) => ownerWalletRefusal(err, 'lab');
     const limit = labWalletRefusal(new ApiError(409, 'x', 'WALLET_LIMIT_REACHED', undefined,
       { details: { maxBalanceMinor: 5_000_000, balanceMinor: 4_800_000, pendingMinor: 0, allowedMinor: 200_000 } }));
     expect(limit).toEqual({ kind: 'limit', message: 'The wallet can hold at most ₹50,000.00. You can add up to ₹2,000.00 now.' });

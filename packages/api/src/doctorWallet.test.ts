@@ -1,7 +1,7 @@
 import { ApiError, createApiClient } from './client.ts';
 import {
-  adminDoctorWalletApi, adminLabWalletApi, DOCTOR_WALLET_CLOSED_MESSAGE, DOCTOR_WALLET_SWITCHED_OFF_MESSAGE, doctorWalletApi, doctorWalletRefusal,
-  isDoctorWalletClosed, LAB_WALLET_SWITCHED_OFF_MESSAGE, labWalletRefusal,
+  adminOwnerWalletApi, DOCTOR_WALLET_CLOSED_MESSAGE, DOCTOR_WALLET_SWITCHED_OFF_MESSAGE, doctorWalletApi,
+  isDoctorWalletClosed, LAB_WALLET_SWITCHED_OFF_MESSAGE, ownerWalletRefusal,
 } from './labWallet.ts';
 import { adminTopupWarning, uncreditedOf } from './adminPharmacyWallet.ts';
 
@@ -43,12 +43,12 @@ describe('WQ23 doctor wallet (r20 /specialists/me/assisted, /admin/doctors)', ()
 
   it('the admin tools are the lab routes under /admin/doctors; a non-doctor id is refused before any request', async () => {
     const { client, calls } = recorder();
-    const a = adminDoctorWalletApi(client);
+    const a = adminOwnerWalletApi(client, 'doctor');
     await a.wallet(DOC);
     await a.lots(DOC);
     await a.topup(DOC, { amountMinor: 50000, notes: 'Support credit' }, KEY);
     await a.freeze(DOC, true, 'dispute');
-    await adminLabWalletApi(client).wallet(DOC);
+    await adminOwnerWalletApi(client, 'lab').wallet(DOC);
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       `GET /admin/doctors/${DOC}/wallet`, `GET /admin/doctors/${DOC}/wallet/lots`, `POST /admin/doctors/${DOC}/wallet/topup`, `PUT /admin/doctors/${DOC}/wallet/freeze`,
       `GET /admin/labs/${DOC}/wallet`,
@@ -60,10 +60,10 @@ describe('WQ23 doctor wallet (r20 /specialists/me/assisted, /admin/doctors)', ()
   it('words: an ineligible doctor’s wallet is closed; the switch per owner; a doctor’s uncredited rows by specialistId', () => {
     const closed = new ApiError(403, 'x', 'SPECIALIST_NOT_VERIFIED');
     expect(isDoctorWalletClosed(closed)).toBe(true);
-    expect(doctorWalletRefusal(closed).message).toBe(DOCTOR_WALLET_CLOSED_MESSAGE);
-    expect(doctorWalletRefusal(new ApiError(503, 'x', 'ASSISTED_BOOKING_DISABLED')).message).toBe(DOCTOR_WALLET_SWITCHED_OFF_MESSAGE);
-    expect(labWalletRefusal(new ApiError(503, 'x', 'ASSISTED_BOOKING_DISABLED')).message).toBe(LAB_WALLET_SWITCHED_OFF_MESSAGE);
-    expect(doctorWalletRefusal(new ApiError(404, 'x', 'SPECIALIST_NOT_FOUND')).message).toBe('This doctor was not found.');
+    expect(ownerWalletRefusal(closed, 'doctor').message).toBe(DOCTOR_WALLET_CLOSED_MESSAGE);
+    expect(ownerWalletRefusal(new ApiError(503, 'x', 'ASSISTED_BOOKING_DISABLED'), 'doctor').message).toBe(DOCTOR_WALLET_SWITCHED_OFF_MESSAGE);
+    expect(ownerWalletRefusal(new ApiError(503, 'x', 'ASSISTED_BOOKING_DISABLED'), 'lab').message).toBe(LAB_WALLET_SWITCHED_OFF_MESSAGE);
+    expect(ownerWalletRefusal(new ApiError(404, 'x', 'SPECIALIST_NOT_FOUND'), 'doctor').message).toBe('This doctor was not found.');
     const rows = [{ paymentTransactionId: PAY, walletKind: 'doctor', specialistId: DOC, amountMinor: 700, createdAt: '', state: 'paid_not_credited' },
       { paymentTransactionId: 'b2'.repeat(12), walletKind: 'lab', partnerId: 'a1'.repeat(12), amountMinor: 900, createdAt: '', state: 'paid_not_credited' }];
     expect(uncreditedOf(rows, DOC).map((r) => r.amountMinor)).toEqual([700]);

@@ -3,7 +3,7 @@ import { expect, test, type Page, type Route } from '@playwright/test';
 /**
  * WQ23: the doctor wallet (r20, design §25.12) against a mocked backend: the doctor's top-up by Razorpay, a lost order
  * answer asked again with the same key, an ineligible doctor, the switch, and the admin's credit and hold on the doctor's
- * wallet page. Amounts in paise.
+ * wallet page. Amounts in paise. WQ23b: a failed read keeps the form; a closed wallet still checks this device's top-ups.
  */
 const DOC = 'd1'.repeat(12);
 const ADMIN = 'ad'.repeat(12);
@@ -17,6 +17,9 @@ interface Backend {
   off?: boolean;
   loseStartAfter?: boolean;
   loseAdminAfter?: boolean;
+  /** WQ23b: the wallet read fails (500); the proof's answer is lost. */
+  walletDown?: boolean;
+  loseVerify?: boolean;
   wallet: { balanceMinor: number; withdrawableMinor: number; receivableMinor: number; frozen: boolean; frozenReason: string | null; isActive: boolean };
   entries: Rec[];
   topups: Rec[];
@@ -71,7 +74,7 @@ async function mockBackend(page: Page): Promise<Backend> {
       if ((sub === '/wallet' || sub === '/wallet/entries' || (sub === '/wallet/topups' && method === 'POST')) && !b.eligible) {
         return fail(route, 403, 'SPECIALIST_NOT_VERIFIED', 'Your doctor account must be verified and active before you can do this');
       }
-      if (sub === '/wallet') return ok(route, view());
+      if (sub === '/wallet') return b.walletDown ? fail(route, 500, 'INTERNAL_ERROR', 'Something went wrong') : ok(route, view());
       if (sub === '/wallet/entries') return json(route, 200, { success: true, data: b.entries, pagination: { nextCursor: null } });
       if (sub === '/wallet/topups' && method === 'POST') {
         if (b.off) return fail(route, 503, 'ASSISTED_BOOKING_DISABLED', 'Doctor wallet top-ups are not switched on');
@@ -86,12 +89,15 @@ async function mockBackend(page: Page): Promise<Backend> {
       if (check) {
         const t = b.topups.find((y) => y._id === check[1]);
         if (!t) return fail(route, 404, 'PAYMENT_RECORD_NOT_FOUND', 'Payment record not found');
-        return ok(route, t.status === 'credited' ? { state: 'credited', wallet: view() } : { state: 'unpaid', wallet: view() });
+        if (t.status === 'paid') { t.status = 'credited'; credit(t.amountMinor as number, { referenceType: 'wallet_recharge', referenceId: t._id }); }
+        // E8: an ineligible doctor's check answers the state only.
+        return ok(route, { state: t.status === 'credited' ? 'credited' : 'unpaid', ...(b.eligible ? { wallet: view() } : {}) });
       }
     }
     if (path === '/payments/verify' && method === 'POST' && !admin) {
       const t = b.topups.find((y) => y._id === (body as Rec).paymentTransactionId);
       if (!t) return fail(route, 404, 'PAYMENT_RECORD_NOT_FOUND', 'Payment record not found');
+      if (b.loseVerify) { b.loseVerify = false; return route.abort('failed'); }
       if (t.status !== 'credited') { t.status = 'credited'; b.wallet.withdrawableMinor += t.amountMinor as number; credit(t.amountMinor as number, { referenceType: 'wallet_recharge', referenceId: t._id }); }
       return ok(route, { context: 'wallet_recharge', paymentRecord: { _id: t._id, status: 'paid', credited: true }, entity: view() });
     }
@@ -193,12 +199,51 @@ test('an ineligible doctor sees only that the wallet opens after verification; t
   await expect(page.getByText('Could not start the top-up: Adding money to your wallet is not switched on yet. No money was taken.')).toBeVisible();
 });
 
+test('WQ23b: a failed read after the wallet was shown keeps Add money, its answer and the history', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await page.goto('/#/doctor/wallet');
+  await expect(page.getByRole('region', { name: 'Wallet history' })).toBeVisible();
+  backend.walletDown = true;
+  await page.getByLabel('Amount to add (₹)').fill('300');
+  await page.getByRole('button', { name: 'Top up' }).click();
+  await expect(page.getByText('₹300.00 was added to your wallet.')).toBeVisible();
+  // The wallet read again after the top-up fails (after its retries): the balance says so; nothing else goes away.
+  await expect(page.getByRole('region', { name: 'Balance' }).getByRole('button', { name: 'Try again' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('₹300.00 was added to your wallet.')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Add money' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Wallet history' })).toContainText('Top-up (card / UPI)');
+});
+
+test('WQ23b: a doctor whose wallet is closed can still check a top-up started on this device (r20 E8)', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.loseVerify = true;
+  await signIn(page);
+  await page.goto('/#/doctor/wallet');
+  await page.getByLabel('Amount to add (₹)').fill('250');
+  await page.getByRole('button', { name: 'Top up' }).click();
+  await expect(page.getByText('The payment was not completed, so no money was added.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Top-ups not confirmed yet' })).toBeVisible();
+
+  backend.eligible = false;
+  backend.topups[0]!.status = 'paid';
+  await page.reload();
+  await expect(page.getByText('Your wallet opens once Jansetu has verified your account and it is active.')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Add money' })).toHaveCount(0);
+  const pending = page.getByRole('region', { name: 'Top-ups not confirmed yet' });
+  await pending.getByRole('button', { name: 'Check my top-up' }).click();
+  await expect(pending).toContainText('was added to your wallet.');
+  expect(backend.calls.filter((c) => c.path === `/specialists/me/assisted/wallet/topups/${backend.topups[0]!._id as string}/check`)).toHaveLength(2);
+  expect(orders(backend)).toHaveLength(1);
+});
+
 test('admin: the doctor’s wallet from the doctor page; money added once after a lost answer; the hold and its release', async ({ page }) => {
   const backend = await mockBackend(page);
   await signIn(page, 'Admin');
   await page.goto(`/#/admin/doctors/${DOC}`);
   await page.getByRole('link', { name: 'Wallet', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Wallet: Dr Asha Mehta' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Balance' })).toContainText('Card money (withdrawals coming later)');
   const add = page.getByRole('form', { name: 'Add money to the wallet' });
   await expect(add).toContainText('or the doctor could be paid twice');
   await add.getByLabel('Amount to add (₹)').fill('1000');

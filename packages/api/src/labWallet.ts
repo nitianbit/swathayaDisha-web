@@ -105,41 +105,45 @@ export function labWalletApi(c: ApiClient, scope: PartnerScope) {
 
 /** WQ23: the doctor's own wallet (r20, specialist token; an eligible doctor reads it). */
 export const doctorWalletApi = (c: ApiClient) => ownWalletApi(c, () => '/specialists/me/assisted', () => '/payments/verify');
+/** What a lab's or a doctor's own top-up needs (the shared top-up form). */
+export type OwnWalletApi = ReturnType<typeof ownWalletApi>;
 
 /** The admin's credit: at most ₹2,00,000 at one time (checked by the server too), a note of at most 500 characters. */
 export const LAB_ADMIN_TOPUP_MAX_MINOR = 20_000_000;
 
 /** WQ23: whose wallet an admin works on beside a pharmacy's: a lab's (r13) or a doctor's (r20); the same routes and shapes. */
 export type WalletOwnerKind = 'lab' | 'doctor';
+/** Every wallet owner the admin and the shared words name. */
+export type WalletOwner = 'pharmacy' | WalletOwnerKind;
 const ADMIN_WALLET_BASE: Record<WalletOwnerKind, string> = { lab: '/admin/labs', doctor: '/admin/doctors' };
 
 export function adminOwnerWalletApi(c: ApiClient, kind: WalletOwnerKind) {
-  const base = (partnerId: string) => `${ADMIN_WALLET_BASE[kind]}/${checkId(partnerId, kind).toLowerCase()}/wallet`;
+  const base = (ownerId: string) => `${ADMIN_WALLET_BASE[kind]}/${checkId(ownerId, kind).toLowerCase()}/wallet`;
   return {
-    /** `exists: false` (zeros) while the lab has no wallet yet. */
-    wallet: (partnerId: string) => c.get<LabWalletView>(base(partnerId)),
-    entries: async (partnerId: string, cursor?: string, limit = 20): Promise<Page<WalletMovement>> => {
-      const p = await c.page<LabWalletEntry>(`${base(partnerId)}/entries`, { query: cursorQuery(cursor, limit) });
+    /** `exists: false` (zeros) while the owner has no wallet yet. */
+    wallet: (ownerId: string) => c.get<LabWalletView>(base(ownerId)),
+    entries: async (ownerId: string, cursor?: string, limit = 20): Promise<Page<WalletMovement>> => {
+      const p = await c.page<LabWalletEntry>(`${base(ownerId)}/entries`, { query: cursorQuery(cursor, limit) });
       return { ...p, items: p.items.map(asMovement) };
     },
-    lots: (partnerId: string) => c.get<LabWalletLot[]>(`${base(partnerId)}/lots`),
+    lots: (ownerId: string) => c.get<LabWalletLot[]>(`${base(ownerId)}/lots`),
     /** The exact read of an admin credit by its Idempotency-Key: the entry it made, or none (resend the same body). */
-    topupByKey: async (partnerId: string, key: string): Promise<{ state: 'used'; row: WalletMovement } | { state: 'none' }> => {
+    topupByKey: async (ownerId: string, key: string): Promise<{ state: 'used'; row: WalletMovement } | { state: 'none' }> => {
       if (!ADMIN_TOPUP_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
-      const r = await c.get<{ state?: string; entry?: LabWalletEntry | null } | null>(`${base(partnerId)}/topups/by-key/${key}`);
+      const r = await c.get<{ state?: string; entry?: LabWalletEntry | null } | null>(`${base(ownerId)}/topups/by-key/${key}`);
       if (r?.state === 'credited' && r.entry && typeof r.entry === 'object') return { state: 'used', row: asMovement(r.entry) };
       if (r?.state === 'not_found') return { state: 'none' };
       throw new ApiError(502, 'The answer about this top-up could not be read.');
     },
     /** Once per key (the same body answers the wallet again; another body is 409 IDEMPOTENCY_KEY_REUSED). Non-withdrawable. */
-    topup: (partnerId: string, body: { amountMinor: number; notes: string }, idempotencyKey: string) => {
+    topup: (ownerId: string, body: { amountMinor: number; notes: string }, idempotencyKey: string) => {
       if (!ADMIN_TOPUP_KEY_PATTERN.test(idempotencyKey)) throw new Error('Invalid request key');
       if (!Number.isSafeInteger(body.amountMinor) || body.amountMinor < 1 || body.amountMinor > LAB_ADMIN_TOPUP_MAX_MINOR) throw new Error('Invalid amount');
-      return c.post<LabWalletView>(`${base(partnerId)}/topup`, { body: { amountMinor: body.amountMinor, notes: body.notes.trim().replace(/\s+/g, ' ') }, idempotencyKey });
+      return c.post<LabWalletView>(`${base(ownerId)}/topup`, { body: { amountMinor: body.amountMinor, notes: body.notes.trim().replace(/\s+/g, ' ') }, idempotencyKey });
     },
     /** Hold (no spending) or release; 409 WALLET_RECEIVABLE to release a wallet that owes. */
-    freeze: (partnerId: string, frozen: boolean, reason: string) =>
-      c.put<LabWalletView>(`${base(partnerId)}/freeze`, { body: { frozen, reason: reason.trim() } }),
+    freeze: (ownerId: string, frozen: boolean, reason: string) =>
+      c.put<LabWalletView>(`${base(ownerId)}/freeze`, { body: { frozen, reason: reason.trim() } }),
     /**
      * The existing chargeback of one top-up lot (`POST /admin/wallet-lots/:lotId/chargeback`): a lab's is flag only (D1:
      * the lot is no longer withdrawable, nothing is taken). Repeating it answers the flag again (`replayed`).
@@ -149,11 +153,8 @@ export function adminOwnerWalletApi(c: ApiClient, kind: WalletOwnerKind) {
   };
 }
 
-export const adminLabWalletApi = (c: ApiClient) => adminOwnerWalletApi(c, 'lab');
-export const adminDoctorWalletApi = (c: ApiClient) => adminOwnerWalletApi(c, 'doctor');
-
 /** The ₹50,000 most a lab or doctor wallet holds (`WALLET_LIMIT_REACHED`, paise `details`), in words; else the shared assisted words. */
-export function ownerWalletRefusal(err: unknown, kind: WalletOwnerKind = 'lab'): Refusal {
+export function ownerWalletRefusal(err: unknown, kind: WalletOwnerKind): Refusal {
   if (err instanceof ApiError && err.code === 'WALLET_LIMIT_REACHED') {
     const d = (err.details ?? {}) as { maxBalanceMinor?: number; allowedMinor?: number };
     const rupees = (p: unknown) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(p) / 100);
@@ -171,8 +172,6 @@ export function ownerWalletRefusal(err: unknown, kind: WalletOwnerKind = 'lab'):
   const shared = assistedRefusal(err);
   return shared.kind === 'off' ? { kind: 'off', message: kind === 'doctor' ? DOCTOR_WALLET_SWITCHED_OFF_MESSAGE : LAB_WALLET_SWITCHED_OFF_MESSAGE } : shared;
 }
-export const labWalletRefusal = (err: unknown) => ownerWalletRefusal(err, 'lab');
-export const doctorWalletRefusal = (err: unknown) => ownerWalletRefusal(err, 'doctor');
 export const LAB_WALLET_SWITCHED_OFF_MESSAGE = 'Adding money to the lab wallet is not switched on yet.';
 export const DOCTOR_WALLET_SWITCHED_OFF_MESSAGE = 'Adding money to your wallet is not switched on yet.';
 /** r20: only a verified, active doctor has a wallet to read (403 SPECIALIST_NOT_VERIFIED). */
