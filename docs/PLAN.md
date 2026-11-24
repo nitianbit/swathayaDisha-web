@@ -2068,6 +2068,15 @@ origin/stage f089b46 (WQ17c) merged first, then WQ20b and WQ20c. Behind `ASSISTE
 
 API gaps: none blocking.
 
+### WQ22c review follow-ups (2026-11-25, same branch)
+
+- L1 (money held): activity is sent only while an offer is open; once it ran out ("No doctor accepted"), nothing is sent, so the
+  30-minute inactivity refund starts even with the tab open. "Ask again" opens a new offer, and activity with it.
+- L2: "Cancel and refund" says the amount the server refunded (`refundedMinor` of its answer).
+- L3: a server without the r17 routes (404 with no code) is said as "not switched on yet", never "Route not found".
+- L4: one QUOTE_CHANGED parser (`changedQuote`, used by `instantBookerRefusal`); the assisted refusals share one paise formatter
+  (`rupees` in `assisted.ts`; the desk's copy is gone too).
+
 ## Follow-ups
 
 
@@ -2101,6 +2110,7 @@ API gaps: none blocking.
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ22c review follow-ups (L1–L4 on 7c76251) | typecheck clean; Vitest 440/440 (assistedInstant.test.ts extended: a 404 with no code is "not switched on", a coded 404 keeps its words, an unreadable QUOTE_CHANGED names no price); Playwright consult-now + assisted-booking + lab-desk 74/74 (consult-now +2 = 1 journey x 2: a server without the routes says not switched on; extended: no activity for three minutes after the offer ran out, activity again after asking again (failing before the fix), the refund words name the amount the server refunded) on a temporary config (port 5497, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ22b waiting requests listed (on da0015d) | typecheck clean; Vitest 440/440; Playwright consult-now 16/16 (+2 = 1 journey x 2: after a reload the waiting request is listed, opens the waiting view and is cancelled and refunded there; nothing about the patient kept in the browser; the list is gone after "Start another") on a temporary config (port 5495, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ22 pharmacy Consult now (on 97b2449 + origin/stage f089b46, then WQ20b and WQ20c) | Against r17 02b4a0e0 (§25.12; mocked API). typecheck clean; Vitest 440/440 (+4 in assistedInstant.test.ts: the routes with the phone only in a body and the speciality trimmed, chat and bad ids/keys/versions refused before any request, where a request stands (waiting, offer ran out, accepted, refunded), the changed quote with the payable the server names, no doctor online, the switch, the wallet words); Playwright workspace 940/940 before WQ20c (+14 = 7 journeys x 2: request and accept with activity and the Join call, a changed quote paid again as a new request, no doctor online, cancel and refund on the version shown, ask any available doctor after the offer ran out, a lost answer checked by key, switched off), then lab-wallet + partner-workspace + consult-now 140/140 after merging WQ20c, on a temporary config (port 5492, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ20c the permission editor waits for the partner's kind (on eebb19f) | typecheck clean; Vitest 432/432; Playwright lab-wallet 14/14 (+2 = 1 journey x 2: while the lab cannot be read, Save is off and nothing is listed; once read, the member's wallet access is kept on save; failing before the fix), partner-workspace + clinic-desk 164/164, on a temporary config (port 5494, deleted); release build with VITE_API_SAME_ORIGIN=true. |

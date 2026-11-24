@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
   changedQuote, CONSENT_STATEMENT_LANGUAGE, CONSENT_STATEMENT_VERSION, INSTANT_ACTIVITY_MS, INSTANT_DESK_MODES, INSTANT_MODE_LABEL, INSTANT_POLL_MS,
-  INSTANT_SWITCHED_OFF_MESSAGE, instantBookerRefusal, instantStage, isSwitchedOff, offerCountdown, patientBody, pharmacyAssistedApi, pharmacyInstantApi,
+  INSTANT_SWITCHED_OFF_MESSAGE, instantBookerRefusal, instantStage, offerCountdown, patientBody, pharmacyAssistedApi, pharmacyInstantApi,
   type InstantBookerByKey, type InstantBookerReceipt, type InstantBookerRequest, type InstantDeskMode, type InstantTarget,
 } from '@jansetu/api';
 import { Alert, Badge, Button, ErrorState, formatRupees, Loading } from '@jansetu/ui';
@@ -101,7 +101,9 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
   const doctors = useQuery({
     queryKey: ['assisted-instant', pharmacyId, 'doctors', speciality, mode], queryFn: () => instant.doctors({ speciality, mode }), enabled: patientDone && !off && !!speciality,
   });
-  useEffect(() => { if (isSwitchedOff(specialities.error) || isSwitchedOff(doctors.error)) setOff(true); }, [specialities.error, doctors.error]);
+  // WQ22c L3: also a server without these routes (a 404 with no code) says "not switched on".
+  const offOf = (err: unknown) => !!err && instantBookerRefusal(err).kind === 'off';
+  useEffect(() => { if (offOf(specialities.error) || offOf(doctors.error)) setOff(true); }, [specialities.error, doctors.error]);
   const online = useMemo(() => (specialities.data ?? []).filter((x) => x.onlineNow > 0), [specialities.data]);
 
   function resetAll() {
@@ -286,15 +288,17 @@ function Waiting({ pharmacyId, requestId, onAnother }: { pharmacyId: string; req
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
   const q = useQuery({ queryKey: key, queryFn: () => instant.one(requestId), refetchInterval: (query) => (query.state.data?.status === 'offered' ? INSTANT_POLL_MS : false) });
   const v = q.data;
-  const open = v?.status === 'offered';
-  // Activity while the screen is open and the request waits (best effort: a missed one only brings the refund nearer).
+  // WQ22c L1: activity ONLY while an offer is open (a doctor may still accept). Once the offer ran out nothing is sent, so
+  // the 30-minute inactivity refund starts even with this tab open; "Ask again" opens a new offer (and activity again).
+  const offerOpen = !!v && instantStage(v, now) === 'waiting';
+  // Activity while the screen is open and the offer waits (best effort: a missed one only brings the refund nearer).
   useEffect(() => {
-    if (!open) return;
+    if (!offerOpen) return;
     const tell = () => { void instant.activity(requestId).catch(() => undefined); };
     tell();
     const t = setInterval(tell, INSTANT_ACTIVITY_MS);
     return () => clearInterval(t);
-  }, [open, requestId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [offerOpen, requestId]); // eslint-disable-line react-hooks/exhaustive-deps
   const booking = useQuery({
     queryKey: ['pharmacy-bookings', pharmacyId, 'one', v?.bookingId],
     queryFn: () => pharmacyAssistedApi(api).booking(v!.bookingId!),
@@ -305,11 +309,10 @@ function Waiting({ pharmacyId, requestId, onAnother }: { pharmacyId: string; req
   const settleRead = () => queryClient.invalidateQueries({ queryKey: key });
 
   /** A command on the version shown; a lost answer is settled by reading the request again. */
-  const command = (run: () => Promise<unknown>, done: string) => perform(async () => {
+  const command = <T,>(run: () => Promise<T>, done: (answer: T) => string) => perform(async () => {
     setOutcome(null);
     try {
-      await run();
-      setOutcome({ tone: 'ok', text: done });
+      setOutcome({ tone: 'ok', text: done(await run()) });
     } catch (err) {
       const why = instantBookerRefusal(err);
       setOutcome({ tone: definitelyNotRecorded(err) ? 'error' : 'warn', text: definitelyNotRecorded(err) ? why.message : `Not confirmed: ${why.message} It is shown as it is now.` });
@@ -327,7 +330,9 @@ function Waiting({ pharmacyId, requestId, onAnother }: { pharmacyId: string; req
   const refundStep = (
     <ConfirmAction key="refund" label="Cancel and refund" danger confirmLabel="Yes, cancel and refund" disabled={busy} version={v.statusVersion}
       consequence={`The request is cancelled before any doctor accepts. ${paid} goes back to your wallet; give the patient their money back.`}
-      onConfirm={() => command(() => instant.refund(v._id, v.statusVersion), `Cancelled. ${paid} is back in your wallet; give the patient their money back.`)} />
+      onConfirm={() => command(() => instant.refund(v._id, v.statusVersion),
+        // WQ22c L2: what the server says it refunded.
+        (a) => `Cancelled. ${formatRupees(a.refundedMinor / 100)} is back in your wallet; give the patient their money back.`)} />
   );
   const sameTarget: InstantTarget = v.target.kind === 'specific' && v.target.doctorId ? { kind: 'specific', doctorId: v.target.doctorId } : { kind: 'any' };
   return (
@@ -350,9 +355,9 @@ function Waiting({ pharmacyId, requestId, onAnother }: { pharmacyId: string; req
         <>
           <Alert tone="warn">No doctor accepted this time. Ask again, or cancel and get the money back.</Alert>
           <div className="ws-actions">
-            <Button busy={busy} onClick={() => void command(() => instant.reoffer(v._id, sameTarget, v.statusVersion), 'Asked again. Waiting for a doctor.').catch(() => undefined)}>Ask again</Button>
+            <Button busy={busy} onClick={() => void command(() => instant.reoffer(v._id, sameTarget, v.statusVersion), () => 'Asked again. Waiting for a doctor.').catch(() => undefined)}>Ask again</Button>
             {v.target.kind === 'specific' && (
-              <Button variant="secondary" disabled={busy} onClick={() => void command(() => instant.reoffer(v._id, { kind: 'any' }, v.statusVersion), 'Asked any available doctor. Waiting for a doctor.').catch(() => undefined)}>
+              <Button variant="secondary" disabled={busy} onClick={() => void command(() => instant.reoffer(v._id, { kind: 'any' }, v.statusVersion), () => 'Asked any available doctor. Waiting for a doctor.').catch(() => undefined)}>
                 Ask any available doctor
               </Button>
             )}

@@ -30,10 +30,15 @@ interface Backend {
   loseAfter?: boolean;
   /** The request's offer has already run out when it is first read. */
   expired?: boolean;
+  /** WQ22c: the refund answers this amount (what the server refunded). */
+  refundMinor?: number;
+  /** WQ22c: a server without the r17 routes (404 with no code). */
+  noRoutes?: boolean;
 }
 
-async function mockBackend(page: Page): Promise<Backend> {
-  await page.clock.setFixedTime(NOW);
+async function mockBackend(page: Page, opts: { runningClock?: boolean } = {}): Promise<Backend> {
+  // WQ22c: a running fake clock (moved on with fastForward) where timers matter; else a fixed time.
+  if (opts.runningClock) await page.clock.install({ time: NOW }); else await page.clock.setFixedTime(NOW);
   const b: Backend = { calls: [], live: false, balanceMinor: 200_000, request: null, keys: {} };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const ok = (route: Route, data: unknown, status = 200) => json(route, status, { success: true, data });
@@ -65,6 +70,7 @@ async function mockBackend(page: Page): Promise<Backend> {
         consultationMode: 'video', instantRequestId: REQ, virtualMeeting: { joinUrl: 'https://meet.example.test/abc' }, assisted: { shortRef: 'K7QXM2PA', join: { on: 'partner_device' } } });
     }
     const base = '/pharmacy-assisted/instant';
+    if (b.noRoutes && path.startsWith(base)) return json(route, 404, { success: false, message: 'Route not found' });
     if (path === `${base}/specialities`) {
       if (b.off) return fail(route, 503, 'ASSISTED_BOOKING_DISABLED', 'Consult now is not switched on');
       return ok(route, [{ specialization: 'General Physician', onlineNow: b.nobodyOnline ? 0 : 2 }, { specialization: 'Dermatology', onlineNow: 0 }]);
@@ -107,7 +113,7 @@ async function mockBackend(page: Page): Promise<Backend> {
       if (v !== r.statusVersion) return fail(route, 409, 'INSTANT_REQUEST_CHANGED', 'The request changed');
       if (cmd === '/refund') {
         if (r.status !== 'offered') return fail(route, 409, 'REQUEST_NOT_REFUNDABLE', 'Not refundable');
-        const paid = (r.money as Json).paidMinor as number;
+        const paid = b.refundMinor ?? (r.money as Json).paidMinor as number;
         b.balanceMinor += paid;
         Object.assign(r, { status: 'refunded', statusVersion: (r.statusVersion as number) + 1, money: { ...(r.money as Json), refundedMinor: paid } });
         return ok(route, { refundedMinor: paid, request: r });
@@ -215,27 +221,36 @@ test('cancel and refund before a doctor accepts: on the version shown; the money
   await page.getByRole('button', { name: 'Pay ₹400.00 from wallet and request' }).click();
   await page.getByRole('button', { name: 'Cancel and refund' }).click();
   await expect(page.getByRole('group', { name: 'Cancel and refund' })).toContainText('₹400.00 goes back to your wallet');
+  // WQ22c L2: the words name what the server refunded (here not the whole amount).
+  backend.refundMinor = 39_900;
   await page.getByRole('button', { name: 'Yes, cancel and refund' }).click();
-  await expect(page.getByText('Cancelled. ₹400.00 is back in your wallet; give the patient their money back.')).toBeVisible();
+  await expect(page.getByText('Cancelled. ₹399.00 is back in your wallet; give the patient their money back.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Cancelled and refunded' })).toBeVisible();
   const refund = backend.calls.find((c) => c.path === `/pharmacy-assisted/instant/requests/${REQ}/refund`)!;
   expect(refund.body).toEqual({ expectedStatusVersion: 1 });
   expect((requests(backend)[0]!.body as Json).target).toEqual({ kind: 'specific', doctorId: DOC1 });
-  expect(backend.balanceMinor).toBe(200_000);
+  expect(backend.balanceMinor).toBe(199_900);
 });
 
-test('the offer ran out: ask again (the same doctor, or any available doctor) on the version shown', async ({ page }) => {
-  const backend = await mockBackend(page);
+test('the offer ran out: no activity is sent any more (the money is refunded unless asked again); ask any available doctor on the version shown', async ({ page }) => {
+  const backend = await mockBackend(page, { runningClock: true });
   backend.expired = true;
   await signIn(page);
   await patientAndDoctor(page, /^Dr Asha Mehta/);
   await page.getByRole('button', { name: 'Pay ₹400.00 from wallet and request' }).click();
   await expect(page.getByText('No doctor accepted this time.', { exact: false })).toBeVisible();
+  // WQ22c L1: an open tab no longer keeps the money held once the offer ran out: three minutes pass, no activity is sent.
+  const activity = () => backend.calls.filter((c) => c.path === `/pharmacy-assisted/instant/requests/${REQ}/activity`).length;
+  await page.clock.fastForward('03:00');
+  await expect(page.getByText('No doctor accepted this time.', { exact: false })).toBeVisible();
+  expect(activity()).toBe(0);
   await page.getByRole('button', { name: 'Ask any available doctor' }).click();
   await expect(page.getByText('Asked any available doctor. Waiting for a doctor.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Waiting for a doctor' })).toBeVisible();
   const reoffer = backend.calls.find((c) => c.path === `/pharmacy-assisted/instant/requests/${REQ}/reoffer`)!;
   expect(reoffer.body).toEqual({ target: { kind: 'any' }, expectedStatusVersion: 1 });
+  // A new offer is open: activity again.
+  await expect.poll(activity).toBeGreaterThan(0);
 });
 
 test('a lost answer: the unconfirmed request is checked by its key and then followed', async ({ page }) => {
@@ -264,6 +279,21 @@ test('switched off: said once; nothing is requested', async ({ page }) => {
   await page.getByLabel('Patient agreed to this booking').check();
   await page.getByRole('button', { name: 'Next: choose the doctor' }).click();
   await expect(page.getByText('Consult now for patients is not switched on yet.', { exact: false })).toBeVisible();
+  expect(requests(backend)).toHaveLength(0);
+});
+
+test('WQ22c: a server without Consult now (404 with no code) says it is not switched on, never "Route not found"', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.noRoutes = true;
+  await signIn(page);
+  await page.getByLabel('Patient’s mobile number').fill(PHONE);
+  await page.getByRole('button', { name: 'Find' }).click();
+  await page.getByRole('radio', { name: /^The phone’s owner/ }).check();
+  await page.getByLabel('Patient’s full name').fill('Ravi Kumar');
+  await page.getByLabel('Patient agreed to this booking').check();
+  await page.getByRole('button', { name: 'Next: choose the doctor' }).click();
+  await expect(page.getByText('Consult now for patients is not switched on yet.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Route not found')).toHaveCount(0);
   expect(requests(backend)).toHaveLength(0);
 });
 

@@ -1,6 +1,6 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import {
-  assistedRefusal, idOf, keyOf, MAX_CONCERN, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type JoinOn, type Refusal,
+  assistedRefusal, idOf, keyOf, MAX_CONCERN, rupees, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type JoinOn, type Refusal,
 } from './assisted.ts';
 import { countdown, SPECIALITY_LIMITS, waitingState, type InstantQuote, type InstantSpeciality, type InstantTarget } from './instantConsult.ts';
 
@@ -140,24 +140,7 @@ const INSTANT_WORDS: Readonly<Record<string, Refusal>> = {
   PAYMENT_METHOD_UNAVAILABLE: { kind: 'other', message: 'Consult now can only be paid from the Jansetu wallet.' },
 };
 
-/** One plain sentence for a refusal (the shared assisted words for wallet, patient, coupon, limits; the quote as the server names it). */
-export function instantBookerRefusal(err: unknown): Refusal {
-  if (err instanceof ApiError && err.code === 'QUOTE_CHANGED') {
-    const d = (err.details ?? {}) as { quotedAmountMinor?: unknown; discountMinor?: unknown };
-    const q = Number(d.quotedAmountMinor);
-    const disc = Number(d.discountMinor ?? 0);
-    if (Number.isSafeInteger(q) && q >= 0 && Number.isFinite(disc)) {
-      const pay = Math.max(0, q - Math.max(0, disc));
-      return { kind: 'price', priceMinor: pay, message: `The price has changed. It is now ${rupees(pay)}. Check it with the patient, then pay again.` };
-    }
-    return { kind: 'price', message: 'The price has changed. Choose the doctor again to see the new price.' };
-  }
-  const shared = assistedRefusal(err);
-  if (shared.kind === 'off') return { kind: 'off', message: INSTANT_SWITCHED_OFF_MESSAGE };
-  const known = err instanceof ApiError && err.code ? INSTANT_WORDS[err.code] : undefined;
-  return known ?? shared;
-}
-/** The quote the server named with QUOTE_CHANGED (paise), for the new review. */
+/** QUOTE_CHANGED's `details` (the quote and discount the server names, paise), or null for any other answer: the one parser. */
 export function changedQuote(err: unknown): { quotedAmountMinor: number; discountMinor: number } | null {
   if (!(err instanceof ApiError) || err.code !== 'QUOTE_CHANGED') return null;
   const d = (err.details ?? {}) as { quotedAmountMinor?: unknown; discountMinor?: unknown };
@@ -165,4 +148,19 @@ export function changedQuote(err: unknown): { quotedAmountMinor: number; discoun
   const disc = Number(d.discountMinor ?? 0);
   return Number.isSafeInteger(q) && q >= 0 && Number.isSafeInteger(disc) && disc >= 0 ? { quotedAmountMinor: q, discountMinor: disc } : null;
 }
-const rupees = (paise: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(paise / 100);
+
+/** One plain sentence for a refusal (the shared assisted words for wallet, patient, coupon, limits; the quote as the server names it). */
+export function instantBookerRefusal(err: unknown): Refusal {
+  if (err instanceof ApiError && err.code === 'QUOTE_CHANGED') {
+    const q = changedQuote(err);
+    if (!q) return { kind: 'price', message: 'The price has changed. Choose the doctor again to see the new price.' };
+    const pay = Math.max(0, q.quotedAmountMinor - q.discountMinor);
+    return { kind: 'price', priceMinor: pay, message: `The price has changed. It is now ${rupees(pay)}. Check it with the patient, then pay again.` };
+  }
+  // WQ22c L3: a server without r17 has no such routes (a 404 with no code): said as not switched on, never "Route not found".
+  if (err instanceof ApiError && err.status === 404 && !err.code) return { kind: 'off', message: INSTANT_SWITCHED_OFF_MESSAGE };
+  const shared = assistedRefusal(err);
+  if (shared.kind === 'off') return { kind: 'off', message: INSTANT_SWITCHED_OFF_MESSAGE };
+  const known = err instanceof ApiError && err.code ? INSTANT_WORDS[err.code] : undefined;
+  return known ?? shared;
+}
