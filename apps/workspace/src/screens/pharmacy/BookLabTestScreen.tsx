@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  addressErrors, branchesFor, CONSENT_STATEMENT_LANGUAGE, CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday,
-  LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, labRefusal, labTotalMinor, PATIENT_LANGUAGES, patientBody, pharmacyLabApi, type AssistedLabSlot, type LabAddress, type LabBookingRequest, type LabBookingView, type LabByKeyAnswer, type LabReceipt, type Refusal,
+  addressErrors, cardBookingState, orderFromBooking, branchesFor, CONSENT_STATEMENT_LANGUAGE, CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday,
+  LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, labRefusal, labTotalMinor, PATIENT_LANGUAGES, patientBody, pharmacyLabApi, type AssistedLabSlot, type LabAddress, type LabBookingRequest, type LabBookingView, type LabByKeyAnswer, type LabReceipt, type AssistedCardPayment, type AssistedPaymentMethod, type OpenCardOrder, type Refusal,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -15,7 +15,8 @@ import { useAssistedCreate } from './assistedCreate.ts';
 import { SlotDays } from './slotDays.tsx';
 import { UnconfirmedBooking } from './unconfirmedBooking.tsx';
 import { PatientSection, usePatientStep } from './patientStep.tsx';
-import { WalletPay } from './walletPay.tsx';
+import { PayChoice } from './walletPay.tsx';
+import { CardDueSection, CardPaymentPanel, isOrderFailed, labCardSource, NOT_PAYABLE_WORDS, NotBooked, ORDER_FAILED_WORDS, useCardChoice } from './cardBooking.tsx';
 
 /**
  * WQ17: a pharmacy books a lab test for a walk-in patient (assisted booking phase 2a, backend r11, design §24.11): the same
@@ -42,7 +43,9 @@ interface Summary { patient: string; lab: string; branch: string; mode: Mode; da
 interface PendingLab { request: LabBookingRequest; summary: Summary }
 /** WQ17b M1: a booking found by its key after a reload: its price is not in the booker view, so none is shown. */
 type ShownSummary = Omit<Summary, 'priceMinor'> & { priceMinor?: number };
-interface Done { summary: ShownSummary; ref?: string; paidMinor?: number; replayed: boolean; newAccount?: boolean }
+interface Done { summary: ShownSummary; ref?: string; paidMinor?: number; replayed: boolean; newAccount?: boolean; paidBy?: 'wallet' | 'card'; note?: string }
+/** WQ17c: a card lab booking held until it is paid (or its time is released). */
+interface CardDue { bookingId: string; requestKey: string; order: OpenCardOrder | null; summary: ShownSummary; ref?: string; newAccount?: boolean; autoOpen: boolean }
 
 const SLOT_DAYS = 7;
 const EMPTY_ADDRESS = { line1: '', line2: '', city: '', state: '', pincode: '', landmark: '' };
@@ -60,12 +63,14 @@ function SummaryList({ s }: { s: ShownSummary }) {
   );
 }
 
-function doneFromView(b: LabBookingView, summary: Summary | undefined): Done {
-  const s: ShownSummary = summary ?? {
+function summaryOf(b: LabBookingView, summary: Summary | undefined): ShownSummary {
+  return summary ?? {
     patient: b.patientName ?? 'The patient', lab: b.lab?.name ?? 'The lab', branch: b.branch?.name ?? '', mode: (b.visitMode as Mode) ?? 'lab',
     date: b.slot?.date?.replace(/-/g, '') ?? '', time: b.slot?.startTime ?? '', tests: (b.items ?? []).map((i) => i.name),
   };
-  return { summary: s, ref: b.assisted?.shortRef, replayed: true };
+}
+function doneFromView(b: LabBookingView, summary: Summary | undefined): Done {
+  return { summary: summaryOf(b, summary), ref: b.assisted?.shortRef, replayed: true, paidBy: b.payment?.method === 'razorpay' ? 'card' : 'wallet' };
 }
 
 function Book({ pharmacyId }: { pharmacyId: string }) {
@@ -75,22 +80,62 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   const [off, setOff] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [done, setDone] = useState<Done | null>(null);
+  // WQ17c (r14 phase 2b): card or UPI, the consultation's way (`cardBooking.tsx`).
+  const choice = useCardChoice();
+  const [cardDue, setCardDue] = useState<CardDue | null>(null);
+  const [cardHeld, setCardHeld] = useState(false);
+  const [ended, setEnded] = useState<string | null>(null);
+  const [orderFailed, setOrderFailed] = useState(false);
 
   // WQ17b: the keyed create, shared with Book consultation (`assistedCreate.ts`).
   const create = useAssistedCreate<PendingLab, LabReceipt, LabByKeyAnswer>({
     slot: `assisted-lab-book:${pharmacyId}`, perform, book: (request) => labsApi.book(request), abandon: (key) => labsApi.abandon(key), refusal: labRefusal,
     walletKey: ['pharmacy-wallet', pharmacyId], refreshKeys: [['pharmacy-lab-bookings', pharmacyId], ['assisted-labs', pharmacyId]],
-    onReceipt: (v, p) => setDone({ summary: p.body.summary, ref: v.booking.assisted?.shortRef, paidMinor: v.funding?.amountMinor, replayed: v.replayed, newAccount: v.newAccount }),
-    onUsed: (r, p) => { settle(p.requestKey); setReview(null); setDone(doneFromView(r.booking, p.body?.summary)); create.refresh(); return null; },
+    onReceipt: (v, p) => afterReceipt(v, p.requestKey, p.body.summary),
+    onUsed: (r, p, restored) => afterUsed(r, p.requestKey, restored ? undefined : p.body?.summary, restored),
     onOff: () => setOff(true),
     onNotice: setNotice,
-    onRefused: (why) => {
+    onResult: (r) => setOrderFailed(r.kind === 'unknown' && isOrderFailed(r.error)),
+    onRefusedBeforeWriting: (why, err) => { if (why.kind === 'card') choice.refused(err); },
+    onRefused: (why, err) => {
+      if (why.kind === 'card') { choice.refused(err); create.rotateKey(); return; }
       if (why.kind === 'slot') { setReview(null); setSlotId(null); void slots.refetch(); }
       else if (why.kind === 'doctor') { setReview(null); setPartnerId(null); setBranchId(null); setSlotId(null); void labs.refetch(); }
       else if (why.kind === 'patient' || why.kind === 'coupon' || why.kind === 'other' || why.kind === 'limit') void catalogue.refetch();
     },
   });
   const { op, settle, review, setReview, refused, setRefused, resendError, setResendError, givingUp } = create;
+
+  /** A create (or its replay) answered: a wallet booking is done; a card booking waits for its payment (`cardBookingState`). */
+  function afterReceipt(v: LabReceipt, requestKey: string, summary: Summary) {
+    const base: Done = { summary, ref: v.booking.assisted?.shortRef, paidMinor: v.funding?.amountMinor, replayed: v.replayed, newAccount: v.newAccount };
+    if (v.funding?.method !== 'razorpay') { setDone({ ...base, paidBy: 'wallet' }); return; }
+    const state = cardBookingState('lab', v.booking);
+    if (state === 'paid') { setDone({ ...base, paidBy: 'card' }); return; }
+    if (state === 'waiting') {
+      setCardDue({ bookingId: v.booking._id, requestKey, order: v.payment ?? null, summary, ref: v.booking.assisted?.shortRef, newAccount: v.newAccount, autoOpen: !!v.payment });
+      return;
+    }
+    setEnded(NOT_PAYABLE_WORDS);
+  }
+
+  /** A by-key answer `used` (check or give-up): as the consultation's (`payment` present = a card booking). */
+  function afterUsed(r: { booking: LabBookingView; payment?: AssistedCardPayment | null }, requestKey: string, summary: Summary | undefined, restored: boolean): string | null {
+    const b = r.booking;
+    const card = 'payment' in r || b.payment?.method === 'razorpay';
+    const state = card ? cardBookingState('lab', b) : 'paid';
+    if (card && state === 'waiting' && !r.payment && !restored) return 'The booking is held, but its card payment could not be started. Send the same request again to get the payment page.';
+    settle(requestKey);
+    setReview(null);
+    create.refresh();
+    if (state === 'paid') { setDone(doneFromView(b, summary)); return null; }
+    if (state === 'waiting') {
+      setCardDue({ bookingId: b._id, requestKey, order: r.payment ?? orderFromBooking(b), summary: summaryOf(b, summary), ref: b.assisted?.shortRef, autoOpen: false });
+      return null;
+    }
+    setEnded(NOT_PAYABLE_WORDS);
+    return null;
+  }
 
   // Step 1: the patient (shared with Book consultation).
   const pt = usePatientStep({ pharmacyId, perform, onFind: () => setNotice(null), onSwitchedOff: () => setOff(true),
@@ -148,6 +193,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   function resetAll() {
     pt.reset(); setMode('lab'); setPartnerId(null); setBranchId(null); setItemIds([]); setSlotId(null); setAddress(EMPTY_ADDRESS); setLanguage('');
     setCoupon(''); setErrors({}); setReview(null); setRefused(null); setDone(null); setNotice(null);
+    setCardDue(null); setEnded(null); choice.setMethod('wallet');
   }
 
   function visitNext(e: FormEvent) {
@@ -191,7 +237,8 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
     return (
       <UnconfirmedBooking op={op} what="lab booking" busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => labsApi.byKey(op.requestKey)}
-        onUsed={(r) => { settle(op.requestKey); setReview(null); setDone(doneFromView(r.booking, op.body?.summary)); create.refresh(); return null; }}
+        onUsed={(r, restored) => afterUsed(r, op.requestKey, restored ? undefined : op.body?.summary, restored)}
+        extra={orderFailed && <Alert tone="warn">{ORDER_FAILED_WORDS}</Alert>}
         onAbandoned={() => create.abandonedByCheck(op.requestKey)}
         onResend={() => { setResendError(null); void create.send(op).catch((err: unknown) => setResendError(labRefusal(err).message)); }}
         onGiveUp={() => void create.giveUp(op)}
@@ -203,16 +250,36 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     return <Alert tone="warn">{LAB_SWITCHED_OFF_MESSAGE} Jansetu turns it on for your pharmacy when it is ready. Your other tools work as usual.</Alert>;
   }
 
+  if (ended) {
+    return <NotBooked words={ended} againLabel="Book another lab test" onAgain={resetAll} listPath="/pharmacy/lab-tests" listLabel="See booked lab tests" />;
+  }
+
+  if (cardDue) {
+    const due = cardDue;
+    return (
+      <CardDueSection bookingRef={due.ref} summary={<SummaryList s={due.summary} />} newAccount={due.newAccount} listPath="/pharmacy/lab-tests"
+        listLabel="See booked lab tests" held={cardHeld}>
+        <CardPaymentPanel key={due.bookingId} source={labCardSource(api, due.bookingId, due.requestKey)} order={due.order} amountMinor={due.summary.priceMinor}
+          perform={perform} busy={busy} autoOpen={due.autoOpen} onHeld={setCardHeld}
+          onPaid={(_b, note) => { setCardDue(null); setDone({ summary: due.summary, ref: due.ref, paidMinor: due.order?.amountMinor ?? due.summary.priceMinor, replayed: false, newAccount: due.newAccount, paidBy: 'card', ...(note ? { note } : {}) }); create.refresh(); }}
+          onEnded={(words) => { setCardDue(null); setEnded(words); create.refresh(); }} />
+      </CardDueSection>
+    );
+  }
+
   if (done) {
+    const byCard = done.paidBy === 'card';
     return (
       <section className="ws-section" aria-labelledby="done-h">
         <h2 id="done-h">{done.replayed ? 'Already booked' : 'Booked'}</h2>
         <Alert tone="ok">
-          {done.replayed ? 'This booking was already made. Nothing was booked or charged twice.' : 'The lab test is booked and paid from your wallet.'}
+          {done.replayed ? 'This booking was already made. Nothing was booked or charged twice.'
+            : byCard ? 'The lab test is booked and paid by card or UPI.' : 'The lab test is booked and paid from your wallet.'}
           {done.ref ? <> Booking reference: <strong>{done.ref}</strong>.</> : null}
         </Alert>
+        {done.note && <Alert tone="warn">{done.note}</Alert>}
         <SummaryList s={done.summary} />
-        {done.paidMinor !== undefined && <p>Paid from your wallet: <strong>{formatRupees(done.paidMinor / 100)}</strong>. Collect this from the patient.</p>}
+        {done.paidMinor !== undefined && <p>{byCard ? 'Paid by card or UPI' : 'Paid from your wallet'}: <strong>{formatRupees(done.paidMinor / 100)}</strong>. Collect this from the patient.</p>}
         {done.newAccount && <p className="ws-muted">This number was new to Jansetu. An account was made for it; the patient can sign in with this number later.</p>}
         <div className="ws-actions">
           <Button onClick={resetAll}>Book another lab test</Button>
@@ -349,14 +416,17 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
 
       {review && (
         <ReviewAndPay pharmacyId={pharmacyId} review={review} busy={busy} refused={refused}
-          onPay={() => void create.pay()} onBack={() => { setReview(null); setRefused(null); }} onNewPrice={create.payAtNewPrice} />
+          method={choice.method} cardOff={choice.cardOff} onMethod={(m) => { choice.setMethod(m); if (refused?.kind === 'card') setRefused(null); }}
+          onPay={() => void create.pay((p) => ({ ...p, request: { ...p.request, paymentMethod: choice.methodFor(p.summary.priceMinor) } }))}
+          onBack={() => { setReview(null); setRefused(null); }} onNewPrice={create.payAtNewPrice} />
       )}
     </>
   );
 }
 
-function ReviewAndPay({ pharmacyId, review, busy, refused, onPay, onBack, onNewPrice }: {
+function ReviewAndPay({ pharmacyId, review, busy, refused, method, cardOff, onMethod, onPay, onBack, onNewPrice }: {
   pharmacyId: string; review: { requestKey: string } & PendingLab; busy: boolean; refused: Refusal | null;
+  method: AssistedPaymentMethod; cardOff: string | null; onMethod: (m: AssistedPaymentMethod) => void;
   onPay: () => void; onBack: () => void; onNewPrice: (priceMinor: number) => void;
 }) {
   const s = review.summary;
@@ -366,8 +436,8 @@ function ReviewAndPay({ pharmacyId, review, busy, refused, onPay, onBack, onNewP
       <div className="confirm" role="group" aria-label="Check and pay">
         <SummaryList s={s} />
         {s.couponCode && !s.couponChecked && <p className="ws-muted">Price before the coupon; the coupon is checked when you pay.</p>}
-        <WalletPay pharmacyId={pharmacyId} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy}
-          onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
+        <PayChoice pharmacyId={pharmacyId} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy} method={method} cardOff={cardOff}
+          onMethod={onMethod} onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
       </div>
     </section>
   );

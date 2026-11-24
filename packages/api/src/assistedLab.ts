@@ -1,6 +1,7 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import {
-  assistedRefusal, idOf, keyOf, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type BookingPayment, type Refusal,
+  assistedRefusal, idOf, keyOf, SLOW_WRITE_TIMEOUT_MS, type AssistedCardPayment, type AssistedPatient, type AssistedPaymentMethod, type BookingPayment,
+  type CardRefund, type Refusal, type RefundTo,
 } from './assisted.ts';
 import { LAB_BOOKING_STATUS_LABEL, type LabBookingStatus } from './partnerLabs.ts';
 import type { VisitMode } from './partnerInvoices.ts';
@@ -37,7 +38,8 @@ export interface LabBookingRequest {
   acceptedPriceMinor: number;
   /** Not sent: r11 validates `notes` but never stores or shows it (API gap), so the screen offers no note. */
   notes?: string;
-  paymentMethod: 'wallet';
+  /** WQ17c (r14 phase 2b, §24.14): `razorpay` = paid by card or UPI on one Razorpay order. */
+  paymentMethod: AssistedPaymentMethod;
 }
 
 /** The booker lab view (`assisted/labBookings.ts` `bookerLabViews`): an allowlist; never prices, keys or funding internals. */
@@ -71,14 +73,18 @@ export interface LabBookingView {
 }
 export interface LabReceipt {
   booking: LabBookingView;
-  funding: { method: string; amountMinor: number; state: string; walletEntryId: string | null };
+  funding: { method: string; amountMinor: number; state: string; walletEntryId: string | null; paymentTransactionId?: string | null };
   split: { listMinor: number; discountMinor: number; couponCode: string | null };
+  /** WQ17c: card bookings only: the open order while it waits for payment, else null. */
+  payment?: AssistedCardPayment | null;
   newAccount: boolean;
   replayed: boolean;
 }
-export type LabByKeyAnswer = { state: 'used'; booking: LabBookingView } | { state: 'abandoned' } | { state: 'unknown' };
-export interface LabCancelAnswer { booking: LabBookingView; refundedMinor: number; alreadyCancelled: boolean }
-export type LabBookingListStatus = Exclude<LabBookingStatus, 'pending_payment'>;
+/** WQ17c: `payment` only for a card booking: its open order (read only), null when none is open. */
+export type LabByKeyAnswer = { state: 'used'; booking: LabBookingView; payment?: AssistedCardPayment | null } | { state: 'abandoned' } | { state: 'unknown' };
+/** `refund` for card bookings only (null: cancelled before it was paid). */
+export interface LabCancelAnswer { booking: LabBookingView; refundedMinor: number; alreadyCancelled: boolean; refund?: CardRefund | null }
+export type LabBookingListStatus = LabBookingStatus;
 
 
 export function pharmacyLabApi(c: ApiClient) {
@@ -98,7 +104,7 @@ export function pharmacyLabApi(c: ApiClient) {
     byKey: (key: string) => c.get<LabByKeyAnswer>(`/pharmacy-assisted/lab-bookings/by-key/${keyOf(key)}`),
     abandon: (key: string) => c.post<LabByKeyAnswer>(`/pharmacy-assisted/lab-bookings/by-key/${keyOf(key)}/abandon`),
     /** Before 1 hour to the slot, or any time while a new time from the lab is unanswered; the refund goes to the wallet. */
-    cancel: (id: string, body: { reason?: string; expectedVersion?: number }) =>
+    cancel: (id: string, body: { reason?: string; expectedVersion?: number; refundTo?: RefundTo }) =>
       c.post<LabCancelAnswer>(`/pharmacy-assisted/lab-bookings/${idOf(id, 'booking')}/cancel`, { body }),
     /** `version`: the `reschedule.version` shown. */
     acceptReschedule: (id: string, version: number) =>
@@ -112,6 +118,8 @@ export const labStatusLabel = (s: string | undefined) => (s ? (LAB_BOOKING_STATU
 /** The booker may cancel up to 1 hour before the slot (`BOOKER_CANCEL_CUTOFF_MS`), or any time while a new time is unanswered. */
 export const LAB_BOOKER_CANCEL_CUTOFF_MS = 60 * 60_000;
 export function canCancelLab(b: Pick<LabBookingView, 'status' | 'slot' | 'reschedule'>, now = new Date()): boolean {
+  // WQ17c (r14 E3): a card booking still waiting for its payment may be cancelled at any time (nothing was paid).
+  if (b.status === 'pending_payment') return true;
   if (b.status !== 'confirmed') return false;
   if (b.reschedule?.pending) return true;
   const at = b.slot?.startsAt ? Date.parse(b.slot.startsAt) : NaN;
@@ -133,7 +141,6 @@ const LAB_WORDS: Readonly<Record<string, Refusal>> = {
   SLOT_UNAVAILABLE: { kind: 'slot', message: 'This time was just taken. Choose another time.' },
   CATALOGUE_ITEM_NOT_AVAILABLE: { kind: 'other', message: 'One of the chosen tests is no longer offered here. Choose the tests again.' },
   ADDRESS_REQUIRED: { kind: 'patient', message: 'Enter the address for the home collection.' },
-  PAYMENT_METHOD_UNAVAILABLE: { kind: 'other', message: 'Lab tests can only be paid from the Jansetu wallet for now.' },
   LAB_BOOKING_NOT_FOUND: { kind: 'other', message: 'This lab booking was not found.' },
   LAB_BOOKING_CHANGED: { kind: 'other', message: 'This booking changed since you opened it. Look at it again, then try again.' },
   LAB_BOOKING_NOT_CANCELLABLE: { kind: 'other', message: 'This lab booking can no longer be cancelled (the sample is taken or the test is done).' },

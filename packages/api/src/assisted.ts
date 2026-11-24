@@ -123,6 +123,11 @@ export interface AssistedCardPayment {
   paymentRequired: true; paymentTransactionId: string; razorpayOrderId: string; razorpayKeyId: string;
   amount: number; amountMinor: number; currency: string; payBy: string;
 }
+/**
+ * WQ17c: an open order as a screen may know it: the create's (with its amount), or the booker view's `payment` (r10d/r14:
+ * the order without an amount when the view carries no price, as a lab booking's: Checkout then takes the order's own).
+ */
+export type OpenCardOrder = Omit<AssistedCardPayment, 'amount' | 'amountMinor'> & { amount?: number; amountMinor?: number };
 
 export interface ConsultationReceipt {
   booking: {

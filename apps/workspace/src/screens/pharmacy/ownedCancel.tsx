@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { MAX_BOOKER_CANCEL_REASON } from '@jansetu/api';
+import { cancelWords, LATE_PAYMENT_BACK, MAX_BOOKER_CANCEL_REASON, type CancelAnswer, type RefundTo } from '@jansetu/api';
 import { Alert } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
@@ -85,5 +85,83 @@ export function OwnedCancel<B, R, V = unknown>({ slot, label, intro, extra, cons
         maxReason={MAX_BOOKER_CANCEL_REASON} version={version} consequence={consequence}
         onConfirm={async (reason) => { await sendCancel(startOp(newRequestKey(), makeBody(reason.trim()))); }} />
     </section>
+  );
+}
+
+/**
+ * WQ17c: the cancel of a booking that may have been paid by card (WQ16, moved here from Booked consultations so that a lab
+ * test cancels the very same way): the words follow how it was paid; a card-paid one chooses "Refund to card (default)" or
+ * "Refund to wallet" (`refundTo`); one still waiting for its payment refunds nothing. The answer's `refund` is said.
+ */
+export function CardAwareCancel<B, V>({ slot, label, what, when, introLead, amount, told, paidBy, waiting, captured, version, perform, busy, makeBody, send,
+  refusalWords, isCancelled, checkedWords, onChanged, onDone }: {
+  slot: string;
+  label: string;
+  /** "consultation", "lab test". */
+  what: string;
+  /** "24 Nov 2026 at 10:30". */
+  when: string;
+  /** "You can cancel any time before the consultation starts." */
+  introLead: string;
+  /** "₹500.00", or "The amount" when the view has no price. */
+  amount: string;
+  /** "The patient and the doctor are told." */
+  told: string;
+  /** From the booker view's `payment` (`unknown` only on an older server for a consultation not made on this device). */
+  paidBy: 'card' | 'wallet' | 'unknown';
+  /** A card booking not paid yet: nothing is refunded. */
+  waiting: boolean;
+  /** The server says the money was taken (`payment.state: 'captured'`; assumed on an older server). */
+  captured: boolean;
+  version?: string | number;
+  perform: Perform;
+  busy: boolean;
+  makeBody: (reason: string, refundTo: RefundTo | undefined) => B;
+  send: (body: B) => Promise<Pick<CancelAnswer, 'refundedMinor' | 'alreadyCancelled' | 'refund'>>;
+  refusalWords: (err: unknown) => string;
+  isCancelled: () => Promise<V | null>;
+  checkedWords: (body: B | undefined, restored: boolean, found: V) => string;
+  onChanged?: () => void;
+  onDone: (words: string) => void;
+}) {
+  // WQ16 (r10 C2): a card-paid booking's money goes back to the card by default, or to the wallet on the pharmacy's choice.
+  const [refundTo, setRefundTo] = useState<RefundTo>('card');
+  const choose = paidBy === 'card' && !waiting && captured;
+  return (
+    <OwnedCancel<B, Pick<CancelAnswer, 'refundedMinor' | 'alreadyCancelled' | 'refund'>, V> slot={slot} label={label} perform={perform} busy={busy} version={version}
+      intro={<>
+        {introLead}{' '}
+        {waiting ? `It is not paid yet, so nothing is refunded; the time is released. ${LATE_PAYMENT_BACK}`
+          : choose ? 'The full amount goes back to the card or UPI it was paid with, or to your Jansetu wallet if you choose.'
+          : paidBy === 'wallet' ? 'The full amount goes back to your Jansetu wallet.'
+          : 'The full amount goes back the way it was paid: to your Jansetu wallet, or to the card or UPI.'}
+      </>}
+      extra={choose && (
+        <fieldset className="ws-checks" disabled={busy}>
+          <legend>Where does the money go back?</legend>
+          <label className="ws-check">
+            <input type="radio" name="refund-to" checked={refundTo === 'card'} onChange={() => setRefundTo('card')} />
+            Refund to card (default): to the card or UPI it was paid with, usually in 5 to 7 working days
+          </label>
+          <label className="ws-check">
+            <input type="radio" name="refund-to" checked={refundTo === 'wallet'} onChange={() => setRefundTo('wallet')} />
+            Refund to wallet: at once, to your Jansetu wallet (it pays for bookings; it cannot be withdrawn)
+          </label>
+        </fieldset>
+      )}
+      consequence={`The ${what} on ${when} is cancelled. ${
+        waiting ? `It was not paid, so nothing is refunded. The time is released. ${LATE_PAYMENT_BACK}`
+          : choose ? `${amount} goes back to ${refundTo === 'wallet' ? 'your Jansetu wallet' : 'the card or UPI it was paid with'}; give the patient their money back. ${told}`
+          : paidBy === 'wallet' ? `${amount} goes back to your wallet; give the patient their money back. ${told}`
+          : `${amount} goes back the way it was paid (your wallet, or the card or UPI); give the patient their money back. ${told}`}`}
+      makeBody={(reason) => makeBody(reason, choose ? refundTo : undefined)}
+      send={send}
+      doneWords={(a) => cancelWords(a, told)}
+      refusalWords={refusalWords}
+      onChanged={onChanged}
+      isCancelled={isCancelled}
+      checkedWords={checkedWords}
+      forgetConsequence="If the earlier cancellation still arrives, the booking is cancelled and the money goes back the way it was paid. You can cancel again from here."
+      onDone={onDone} />
   );
 }

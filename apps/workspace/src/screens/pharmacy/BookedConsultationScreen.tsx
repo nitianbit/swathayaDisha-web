@@ -3,8 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft, FileText } from 'lucide-react';
 import {
-  ApiError, assistedRefusal, cancelWords, canBookerCancel, canBookerReschedule, isAssistedBooking, typedNameTarget, formatSlotDate, joinWords, medicineName,
-  bookingPaidBy, bookingPayBy, bookingWasPaid, LATE_PAYMENT_BACK, orderFromBooking, PATIENT_LANGUAGES, payByWords, pharmacyAssistedApi, pharmacyStockApi, requestKeysApi, rxOrderProblems, type BookedConsultation, type CancelAnswer,
+  ApiError, assistedRefusal, canBookerCancel, canBookerReschedule, isAssistedBooking, typedNameTarget, formatSlotDate, joinWords, medicineName,
+  bookingPaidBy, bookingPayBy, bookingWasPaid, LATE_PAYMENT_BACK, orderFromBooking, PATIENT_LANGUAGES, payByWords, pharmacyAssistedApi, pharmacyStockApi, requestKeysApi, rxOrderProblems, type BookedConsultation,
   type Medicine, type RefundTo, type RxMedicine, type RxOrderRequest,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextField } from '@jansetu/ui';
@@ -13,10 +13,10 @@ import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requ
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { BookingBadges, modeWords, statusWords, waitingForCard } from './BookedConsultationsScreen.tsx';
-import { CardPaymentPanel, useCardBookings } from './cardBooking.tsx';
+import { CardPaymentPanel, consultationCardSource, useCardBookings } from './cardBooking.tsx';
 import { ChangeTime, CorrectName, type BookingGuard } from './BookingChanges.tsx';
 import { DocumentPreview, useDocumentViewer } from './documentViewer.tsx';
-import { OwnedCancel } from './ownedCancel.tsx';
+import { CardAwareCancel } from './ownedCancel.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 
 /**
@@ -117,7 +117,7 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
         <section className="ws-section" aria-labelledby="pay-h">
           <h2 id="pay-h">Payment</h2>
           {cardKey || recordId ? (
-            <CardPaymentPanel bookingId={b._id} requestKey={cardKey} paymentTransactionId={recordId} order={orderFromBooking(b)} payBy={payBy} amountMinor={typeof b.price === 'number' ? Math.round(b.price * 100) : undefined}
+            <CardPaymentPanel source={consultationCardSource(api, b._id, cardKey)} paymentTransactionId={recordId} order={orderFromBooking(b)} payBy={payBy} amountMinor={typeof b.price === 'number' ? Math.round(b.price * 100) : undefined}
               perform={guard.perform} busy={guard.busy}
               onPaid={(_b, note) => { setPayNote({ tone: 'ok', text: `Paid. The consultation is booked. The patient and the doctor are told.${note ? ` ${note}` : ''}` }); changed(); void q.refetch(); }}
               onEnded={(words) => { cards.forget(b._id); setPayNote({ tone: 'error', text: words }); changed(); void q.refetch(); }} />
@@ -164,44 +164,15 @@ function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, 
 }) {
   const { api } = useSession();
   const assisted = pharmacyAssistedApi(api);
-  // WQ16 (r10 C2): a card-paid booking's money goes back to the card by default, or to the wallet on the pharmacy's choice.
-  const [refundTo, setRefundTo] = useState<RefundTo>('card');
-  const choose = paidBy === 'card' && !waiting && captured;
-  const amount = typeof booking.price === 'number' ? formatRupees(booking.price) : 'The amount';
-
   return (
-    <OwnedCancel<PendingCancel, CancelAnswer> slot={`assisted-cancel:${pharmacyId}:${booking._id}`} label="Cancel this consultation"
-      perform={guard.perform} busy={guard.busy} version={booking.updatedAt}
-      intro={<>
-        You can cancel any time before the consultation starts.{' '}
-        {waiting ? `It is not paid yet, so nothing is refunded; the time is released. ${LATE_PAYMENT_BACK}`
-          : choose ? 'The full amount goes back to the card or UPI it was paid with, or to your Jansetu wallet if you choose.'
-          : paidBy === 'wallet' ? 'The full amount goes back to your Jansetu wallet.'
-          : 'The full amount goes back the way it was paid: to your Jansetu wallet, or to the card or UPI.'}
-      </>}
-      extra={choose && (
-        <fieldset className="ws-checks" disabled={guard.busy}>
-          <legend>Where does the money go back?</legend>
-          <label className="ws-check">
-            <input type="radio" name="refund-to" checked={refundTo === 'card'} onChange={() => setRefundTo('card')} />
-            Refund to card (default): to the card or UPI it was paid with, usually in 5 to 7 working days
-          </label>
-          <label className="ws-check">
-            <input type="radio" name="refund-to" checked={refundTo === 'wallet'} onChange={() => setRefundTo('wallet')} />
-            Refund to wallet: at once, to your Jansetu wallet (it pays for bookings; it cannot be withdrawn)
-          </label>
-        </fieldset>
-      )}
-      consequence={`The consultation on ${formatSlotDate(booking.bookingDate)} at ${booking.bookingTime} is cancelled. ${
-        waiting ? `It was not paid, so nothing is refunded. The time is released. ${LATE_PAYMENT_BACK}`
-          : choose ? `${amount} goes back to ${refundTo === 'wallet' ? 'your Jansetu wallet' : 'the card or UPI it was paid with'}; give the patient their money back. The patient and the doctor are told.`
-          : paidBy === 'wallet' ? `${amount} goes back to your wallet; give the patient their money back. The patient and the doctor are told.`
-          : `${amount} goes back the way it was paid (your wallet, or the card or UPI); give the patient their money back. The patient and the doctor are told.`}`}
-      makeBody={(reason) => ({ bookingId: booking._id, ...(reason ? { reason } : {}), ...(booking.updatedAt ? { expectedUpdatedAt: booking.updatedAt } : {}),
-        label: booking.doctorName ?? '', ...(choose ? { refundTo } : {}) })}
+    <CardAwareCancel<PendingCancel, BookedConsultation> slot={`assisted-cancel:${pharmacyId}:${booking._id}`} label="Cancel this consultation"
+      what="consultation" when={`${formatSlotDate(booking.bookingDate)} at ${booking.bookingTime}`} introLead="You can cancel any time before the consultation starts."
+      amount={typeof booking.price === 'number' ? formatRupees(booking.price) : 'The amount'} told="The patient and the doctor are told."
+      paidBy={paidBy} waiting={waiting} captured={captured} version={booking.updatedAt} perform={guard.perform} busy={guard.busy}
+      makeBody={(reason, refundTo) => ({ bookingId: booking._id, ...(reason ? { reason } : {}), ...(booking.updatedAt ? { expectedUpdatedAt: booking.updatedAt } : {}),
+        label: booking.doctorName ?? '', ...(refundTo ? { refundTo } : {}) })}
       send={(b) => assisted.cancel(b.bookingId, { ...(b.reason ? { reason: b.reason } : {}), ...(b.expectedUpdatedAt ? { expectedUpdatedAt: b.expectedUpdatedAt } : {}),
         ...(b.refundTo ? { refundTo: b.refundTo } : {}) })}
-      doneWords={cancelWords}
       refusalWords={(err) => assistedRefusal(err).message}
       onChanged={onChanged}
       isCancelled={async () => { const now = await assisted.booking(booking._id); return now.status === 'cancelled' ? now : null; }}
@@ -212,7 +183,6 @@ function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, 
         : paidBy === 'card' ? 'Cancelled. The amount goes back to the card or UPI it was paid with.'
         : paidBy === 'wallet' ? 'Cancelled. The amount is back in your Jansetu wallet.'
         : 'Cancelled. The amount goes back the way it was paid: to your Jansetu wallet, or to the card or UPI.')}
-      forgetConsequence="If the earlier cancellation still arrives, the booking is cancelled and the money goes back the way it was paid. You can cancel again from here."
       onDone={onDone} />
   );
 }

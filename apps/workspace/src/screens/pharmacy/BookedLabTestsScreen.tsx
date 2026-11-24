@@ -3,16 +3,18 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft, FileText } from 'lucide-react';
 import {
-  ApiError, canCancelLab, formatSlotDate, isSwitchedOff, LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, labRefusal, labStatusLabel, pharmacyLabApi, type LabBookingListStatus, type LabBookingView, type LabCancelAnswer,
+  ApiError, bookingPaidBy, canCancelLab, formatSlotDate, isSwitchedOff, LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, LATE_PAYMENT_BACK, labRefusal, labStatusLabel,
+  orderFromBooking, pharmacyLabApi, type LabBookingListStatus, type LabBookingView, type RefundTo,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime, type Perform } from '../finance/finance.tsx';
 import { DocumentPreview, useDocumentViewer } from './documentViewer.tsx';
 import { CursorPager, StatusFilter, useCursorPages } from './cursorList.tsx';
-import { OwnedCancel } from './ownedCancel.tsx';
+import { CardAwareCancel } from './ownedCancel.tsx';
+import { CardPaymentPanel, labCardSource } from './cardBooking.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 
 /**
@@ -35,7 +37,7 @@ export function BookedLabTestsScreen() {
 }
 
 const STATUS_FILTERS: { value: LabBookingListStatus | ''; label: string }[] = [
-  { value: '', label: 'All' }, { value: 'confirmed', label: 'Confirmed' }, { value: 'sample_collected', label: 'Sample collected' },
+  { value: '', label: 'All' }, { value: 'pending_payment', label: 'Waiting for payment' }, { value: 'confirmed', label: 'Confirmed' }, { value: 'sample_collected', label: 'Sample collected' },
   { value: 'visited', label: 'Visited' }, { value: 'processing', label: 'Processing' }, { value: 'report_ready', label: 'Report released' }, { value: 'completed', label: 'Completed' },
   { value: 'cancelled', label: 'Cancelled' }, { value: 'no_show', label: 'No-show' },
 ];
@@ -169,6 +171,16 @@ function LabDetail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: s
 
       {note && <Alert tone="ok">{note}</Alert>}
       {acceptError && !note && <Alert>{acceptError}</Alert>}
+      {/* WQ17c: a card booking waiting for its payment: the consultation's panel, on the lab's reads (any device, r14). */}
+      {b.status === 'pending_payment' && !note && (
+        <section className="ws-section" aria-labelledby="lab-pay-h">
+          <h2 id="lab-pay-h">Payment</h2>
+          <CardPaymentPanel source={labCardSource(api, b._id, null)} order={orderFromBooking(b)} payBy={b.payment?.payBy ?? undefined}
+            paymentTransactionId={b.payment?.paymentTransactionId ?? null} perform={guard.perform} busy={guard.busy}
+            onPaid={(_b, n) => { setNote(`Paid. The lab test is booked. The patient is told.${n ? ` ${n}` : ''}`); changed(); void q.refetch(); }}
+            onEnded={(w) => { setNote(w); changed(); void q.refetch(); }} />
+        </section>
+      )}
       {r && b.status === 'confirmed' && !note && (
         <AcceptNewTime pharmacyId={pharmacyId} booking={b} version={r.version} perform={guard.perform} busy={guard.busy}
           onDone={(w) => { setAcceptError(null); setNote(w); changed(); void q.refetch(); }}
@@ -253,29 +265,42 @@ function AcceptNewTime({ pharmacyId, booking, version, perform, busy, onDone, on
 
 // ── Cancel ──
 
-interface PendingCancel { bookingId: string; reason?: string; expectedVersion?: number }
+interface PendingCancel { bookingId: string; reason?: string; expectedVersion?: number; refundTo?: RefundTo }
 
-/** `POST …/cancel {reason?, expectedVersion}`: the refund goes to the wallet once (the shared cancel, `ownedCancel.tsx`). */
+/**
+ * `POST …/cancel {reason?, expectedVersion, refundTo?}` (the shared cancel, `ownedCancel.tsx`): a wallet booking's money goes
+ * back to the wallet; a card-paid one's to the card or the wallet (r14); one still waiting for payment refunds nothing.
+ */
 function CancelLab({ pharmacyId, booking, perform, busy, onDone }: {
   pharmacyId: string; booking: LabBookingView; perform: Perform; busy: boolean; onDone: (words: string) => void;
 }) {
   const { api } = useSession();
   const labs = pharmacyLabApi(api);
+  const waiting = booking.status === 'pending_payment';
+  const paidBy = bookingPaidBy(booking);
   return (
-    <OwnedCancel<PendingCancel, LabCancelAnswer, LabBookingView> slot={`assisted-lab-cancel:${pharmacyId}:${booking._id}`} label="Cancel this lab test"
-      perform={perform} busy={busy} version={booking.statusVersion}
-      intro={`${booking.reschedule?.pending ? 'While the new time is not answered you can cancel at any time.' : 'You can cancel up to 1 hour before the time.'} The full amount goes back to your Jansetu wallet.`}
-      consequence={`The lab test on ${formatSlotDate(ymd8(booking.slot?.date))} at ${booking.slot?.startTime ?? '—'} is cancelled. The amount goes back to your wallet; give the patient their money back. The patient is told.`}
-      makeBody={(reason) => ({ bookingId: booking._id, ...(reason ? { reason } : {}), ...(typeof booking.statusVersion === 'number' ? { expectedVersion: booking.statusVersion } : {}) })}
-      send={(b) => labs.cancel(b.bookingId, { ...(b.reason ? { reason: b.reason } : {}), ...(b.expectedVersion !== undefined ? { expectedVersion: b.expectedVersion } : {}) })}
-      doneWords={(a) => (a.alreadyCancelled ? 'It was already cancelled. Nothing was refunded twice.'
-        : `Cancelled. ${formatRupees(a.refundedMinor / 100)} is back in your Jansetu wallet. The patient is told.`)}
+    <CardAwareCancel<PendingCancel, LabBookingView> slot={`assisted-lab-cancel:${pharmacyId}:${booking._id}`} label="Cancel this lab test"
+      what="lab test" when={`${formatSlotDate(ymd8(booking.slot?.date))} at ${booking.slot?.startTime ?? '—'}`}
+      introLead={waiting ? 'You can cancel it at any time.' : booking.reschedule?.pending ? 'While the new time is not answered you can cancel at any time.' : 'You can cancel up to 1 hour before the time.'}
+      amount="The amount" told="The patient is told." paidBy={paidBy} waiting={waiting} captured={!booking.payment || booking.payment.state === 'captured'}
+      version={booking.statusVersion} perform={perform} busy={busy}
+      makeBody={(reason, refundTo) => ({ bookingId: booking._id, ...(reason ? { reason } : {}), ...(typeof booking.statusVersion === 'number' ? { expectedVersion: booking.statusVersion } : {}),
+        ...(refundTo ? { refundTo } : {}) })}
+      send={(b) => labs.cancel(b.bookingId, { ...(b.reason ? { reason: b.reason } : {}), ...(b.expectedVersion !== undefined ? { expectedVersion: b.expectedVersion } : {}),
+        ...(b.refundTo ? { refundTo: b.refundTo } : {}) })}
       refusalWords={(err) => labRefusal(err).message}
       isCancelled={async () => { const now = await labs.booking(booking._id); return now.status === 'cancelled' ? now : null; }}
-      // WQ17b L3: the money words follow the server's `payment.state`.
-      checkedWords={(_b, _r, now) => (now.payment?.state === 'refunded' ? 'Cancelled. The amount is back in your Jansetu wallet.'
-        : now.payment?.state === 'forfeited' ? 'Cancelled. Nothing was refunded.' : 'Cancelled.')}
-      forgetConsequence="If the earlier cancellation still arrives, the booking is cancelled and the money comes back to your wallet."
+      // WQ17b L3: the money words follow the server's `payment.state` (WQ17c: and how it was paid).
+      checkedWords={(body, restored, now) => {
+        const state = now.payment?.state;
+        if (state === 'not_paid') return `Cancelled. It was not paid, so nothing is refunded. ${LATE_PAYMENT_BACK}`;
+        if (state === 'forfeited') return 'Cancelled. Nothing was refunded.';
+        if (state !== 'refunded') return 'Cancelled.';
+        if (now.payment?.method !== 'razorpay') return 'Cancelled. The amount is back in your Jansetu wallet.';
+        return restored ? 'Cancelled. The amount goes back the way chosen.'
+          : body?.refundTo === 'wallet' ? 'Cancelled. The amount goes back to your Jansetu wallet. See it under Wallet.'
+          : 'Cancelled. The amount goes back to the card or UPI it was paid with.';
+      }}
       onDone={onDone} />
   );
 }

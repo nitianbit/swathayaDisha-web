@@ -1924,6 +1924,30 @@ API gaps (no route; nothing invented):
 - L2: a fence mismatch settles the verify on any attempt (re-read, shown). L3: no Verify without a name (no false "outcome
   unknown"). L4: a card-paid assisted booking's close says the refund "is being refunded" to the card.
 
+### WQ17c pharmacy pays a lab test by card or UPI (phase 2b) (2026-11-25, branch `wq17/pharmacy-lab-booking`)
+
+Backend r14 (`m0/r14-phase2b` 77594d72, design §24.14; local). On stage 24019c4 (WQ17, WQ17b, WQ18).
+
+- **One card machinery, by booking kind** (owner: no duplicated code). The consultation card code is generalised, not copied:
+  `assistedCard.ts` `cardBookingState(kind, booking)` (consultation `pending`/`pending` → `confirmed`/`paid`; lab `pending_payment`
+  → any later status), `orderFromBooking` for any view (the amount only when the view has a price: a lab view has none, so
+  Checkout takes the order's own), `cancelWords(answer, told)`; `cardBooking.tsx` `CardPaymentPanel` takes a
+  `CardBookingSource` (`consultationCardSource`, `labCardSource`: the reads, Checkout's description and who is told),
+  `useCardChoice` (the way to pay, the card refusals), `CardDueSection`, `NotBooked`, `ORDER_FAILED_WORDS`; `walletPay.tsx`
+  `PayChoice` ("How do you pay?"); `ownedCancel.tsx` `CardAwareCancel` (the money words, "Refund to card (default)" / "Refund to
+  wallet", `refundTo`). Book consultation, its booked detail and their specs are unchanged. `assistedCard.ts` now reuses `hex`
+  and `idOf` from `assisted.ts`.
+- **Book lab test**: "How do you pay?" next to the wallet pay; card creates with `paymentMethod: 'razorpay'` (same body, key and
+  owned request); Checkout at once on the create's order; verify, then reconcile; the held page with "Pay now" (asks the server
+  first: an authorized payment means no second Checkout) and "Check payment"; a late or duplicate payment as for consultations;
+  502 order failure, switch off, nothing to pay, no gateway keys as for consultations.
+- **Booked lab tests**: "Waiting for payment" in the list and its filter (`status=pending_payment`); on the booking, the
+  consultation's payment panel on the lab's own reads (the open order from the booker view's `payment`, any device; "Pay now"
+  shows no amount, the view has no price); cancel: a waiting card booking at any time (nothing refunded), a card-paid one up
+  to 1 hour before with the refund to the card (default) or the wallet (`refundTo`), the answer's `refund` in words.
+- The lab switch-off words for the card (`PAYMENT_METHOD_UNAVAILABLE`) are now the consultation's ("Card payment is not
+  switched on yet. Pay from your Jansetu wallet."): lab tests can be paid by card from r14.
+
 ## Follow-ups
 
 
@@ -1957,6 +1981,7 @@ API gaps (no route; nothing invented):
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ17c lab tests by card or UPI (phase 2b) on 24019c4 | Against r14 77594d72 (§24.14; mocked API). typecheck clean; Vitest 422/422 (+4 in wq17c.test.ts: card state by kind, the lab view's order without an amount, cancel words by who is told and the waiting lab cancel, `refundTo` and `status=pending_payment`; the lab card switch-off words now the consultation's); Playwright workspace 895 passed of 896 (+10 = 5 journeys x 2: lab card pay, Checkout closed then Pay now after asking the server, another device with an authorized payment gets no second Checkout, cancel to the card, cancel to the wallet; the consultation card and wallet specs pass unchanged on the shared pieces). The one failure is the known load-timing check in stock-supply.spec.ts:1277 (as in WQ18b): 6/6 on its own afterwards. Temporary config on port 5472, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ17b review fixes (M1, D1, D2, L1–L4 on 3c1960e) | Against r11 f5f171c9 (mocked API). typecheck clean; Vitest 406/406 (no change: D1/D2 are moves covered by the journeys); Playwright workspace 868/868 (+6 = 3 journeys x 2: L1 a lost accept not claimed after a cancel, L2 a refused accept said and read again, L3 a found cancel says what was done with the money; the reload journey now checks no price is shown (M1) and the list journey the Visited filter (L4); all five failed on 3c1960e; the consultation specs pass unchanged on the shared create hook). Temporary config on port 5471, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ17 pharmacy lab-test booking (phase 2a) on 0aca6c3 | Against r11 f5f171c9 (§24.11; mocked API). typecheck clean; Vitest 406/406 (+5 in assistedLab.test.ts: lab, catalogue and slot paths and queries, ids and keys checked before sending, the cursor list, by-key, abandon, cancel with `expectedVersion`, accept with the proposal version, the 1-hour cancel rule, the tests' total, branches by visit, status and refusal words); Playwright workspace 862/862 (+16 = 8 journeys x 2: book with the shared patient step and pay from the wallet (no note offered), home collection with its address, a lost answer and a reload then Check by key, price changed then not enough money, list and cancel with the version, accept a new time, open a released report and no cancel within the hour, another pharmacy's booking not found and the switch off); the consultation specs pass unchanged on the shared components. A first full run had 6 timeouts in doctor-tools and admin-pharmacies (load); both specs then passed 88/88 and a second full run passed 862/862. Temporary config on port 5403, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ18b no duplicated code and review follow-ups (O1–O3, L2–L4 on 62e94b3) | Mocked API as WQ18. typecheck clean; Vitest 413/413 (wq18.test.ts updated: no open-consultations read, the close reason checked with the admin-cancel rule, refund targets incl. the card being refunded); Playwright workspace 864 run (+4 = 2 journeys x 2: a resend refused for a fence mismatch is settled and shown, no Verify without a name; a card-paid pharmacy booking's close says the refund is on its way to the card; the close journeys moved to ConfirmAction and the doctor page's links to Consultations): 863 passed, 1 timing failure in the untouched pharmacy stock-import spec (stock-supply.spec.ts:1277, tablet, under a 14-minute loaded run), passing 6/6 on its own; temporary config on port 5462, deleted; release build with VITE_API_SAME_ORIGIN=true. |
