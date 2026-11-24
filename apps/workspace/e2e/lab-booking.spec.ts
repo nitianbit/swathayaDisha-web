@@ -33,6 +33,10 @@ interface Backend {
   t1Minor: number;
   loseNextCreateAnswer: boolean;
   labsOff: boolean;
+  /** WQ17b: the next accept / cancel never reaches the server; the next accept is refused. */
+  dropNextAccept: boolean;
+  refuseNextAccept: boolean;
+  dropNextCancel: boolean;
 }
 
 const labView = (o: Json = {}): Json => ({
@@ -46,7 +50,8 @@ const labView = (o: Json = {}): Json => ({
 
 async function mockBackend(page: Page, init: { bookings?: Json[]; walletPaise?: number } = {}): Promise<Backend> {
   const b: Backend = { calls: [], creates: [], cancels: [], accepts: [], keys: {}, bookings: init.bookings ?? [], walletPaise: init.walletPaise ?? 200_000,
-    t1Minor: 30_000, loseNextCreateAnswer: false, labsOff: false };
+    t1Minor: 30_000, loseNextCreateAnswer: false, labsOff: false,
+    dropNextAccept: false, refuseNextAccept: false, dropNextCancel: false };
   let live = false;
   await page.route('**/api/v1/**', async (route) => {
     const req = route.request();
@@ -113,6 +118,7 @@ async function mockBackend(page: Page, init: { bookings?: Json[]; walletPaise?: 
     const cancel = /^\/pharmacy-assisted\/lab-bookings\/(\w{24})\/cancel$/.exec(path);
     if (cancel) {
       b.cancels.push(body!);
+      if (b.dropNextCancel) { b.dropNextCancel = false; return route.abort('connectionreset'); }
       const x = b.bookings.find((y) => y._id === cancel[1])!;
       Object.assign(x, { status: 'cancelled', statusVersion: 4, cancellation: { reason: 'partner', byKind: 'booker', at: '2026-11-23T06:00:00.000Z' } });
       b.walletPaise += 30_000;
@@ -121,6 +127,8 @@ async function mockBackend(page: Page, init: { bookings?: Json[]; walletPaise?: 
     const accept = /^\/pharmacy-assisted\/lab-bookings\/(\w{24})\/accept-reschedule$/.exec(path);
     if (accept) {
       b.accepts.push(body!);
+      if (b.dropNextAccept) { b.dropNextAccept = false; return route.abort('connectionreset'); }
+      if (b.refuseNextAccept) { b.refuseNextAccept = false; return refuse(route, 409, 'RESCHEDULE_CHANGED', 'The lab changed the time again'); }
       const x = b.bookings.find((y) => y._id === accept[1])!;
       Object.assign(x, { reschedule: { ...(x.reschedule as Json), pending: false }, statusVersion: 5 });
       return json(route, 200, { success: true, data: x });
@@ -223,6 +231,9 @@ test('a lost answer and a reload: only the key is kept; Check finds the booking,
   await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
   await expect(page.getByRole('heading', { name: 'Already booked' })).toBeVisible();
   await expect(page.getByText('L7QXM2PA')).toBeVisible();
+  // WQ17b M1: the booker view carries no price, so none is shown (never "₹0.00").
+  await expect(page.getByText(/^Price:/)).toHaveCount(0);
+  await expect(page.getByText('₹0.00')).toHaveCount(0);
   expect(b.creates).toHaveLength(1);
   await nothingStored(page, b, PHONE, 'Rina Kumari');
 });
@@ -250,6 +261,7 @@ test('booked lab tests: list, open, cancel up to 1 hour before (refund to the wa
   await signIn(page, 'Booked lab tests');
   const table = page.getByRole('table', { name: 'Booked lab tests, newest first' });
   await expect(table.getByRole('cell', { name: 'Complete blood count' })).toBeVisible();
+  await expect(page.getByLabel('Status').locator('option', { hasText: 'Visited' })).toHaveCount(1); // WQ17b L4
   await table.getByRole('link', { name: /Open the lab test of Rina Kumari/ }).click();
   await expect(page.getByText('L7QXM2PA')).toBeVisible();
   await page.getByRole('button', { name: 'Cancel this lab test' }).click();
@@ -294,4 +306,47 @@ test('another pharmacy’s booking (or none) is "not found"; the switch off hide
   await page.getByRole('link', { name: 'Book lab test', exact: true }).first().click();
   await patientReady(page);
   await expect(page.getByText(/Booking lab tests for patients is not switched on yet\./)).toBeVisible();
+});
+
+// ── WQ17b ──
+
+const proposal = { reschedule: { pending: true, version: 2, previousSlot: { date: TOMORROW, startTime: '08:00' }, reason: 'Collector unwell', at: '2026-11-23T06:00:00.000Z' } };
+
+test('WQ17b L1: a lost accept is not claimed when the booking was cancelled meanwhile', async ({ page }) => {
+  const b = await mockBackend(page, { bookings: [labView(proposal)] });
+  await signIn(page, 'Booked lab tests');
+  await page.getByRole('link', { name: /Open the lab test of Rina Kumari/ }).click();
+  b.dropNextAccept = true;
+  await page.getByRole('button', { name: 'Accept new time' }).click();
+  await expect(page.getByText(/The outcome of accepting the new time is not known yet/)).toBeVisible();
+  Object.assign(b.bookings[0]!, { status: 'cancelled', reschedule: { ...proposal.reschedule, pending: false } });
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Not accepted so far. It may still be on its way. Sending it again is safe.')).toBeVisible();
+  await expect(page.getByText('The new time is accepted.')).toHaveCount(0);
+});
+
+test('WQ17b L2: a refused accept is said and the booking is read again', async ({ page }) => {
+  const b = await mockBackend(page, { bookings: [labView(proposal)] });
+  await signIn(page, 'Booked lab tests');
+  await page.getByRole('link', { name: /Open the lab test of Rina Kumari/ }).click();
+  const reads = () => b.calls.filter((c) => c.method === 'GET' && c.path === `/pharmacy-assisted/lab-bookings/${BK}`).length;
+  await expect(page.getByRole('button', { name: 'Accept new time' })).toBeVisible();
+  const before = reads();
+  b.refuseNextAccept = true;
+  await page.getByRole('button', { name: 'Accept new time' }).click();
+  await expect(page.getByText('The lab changed the time again. Look at the new time, then accept it or cancel.')).toBeVisible();
+  await expect.poll(reads).toBeGreaterThan(before);
+});
+
+test('WQ17b L3: a lost cancel, when found, says what the server did with the money', async ({ page }) => {
+  const b = await mockBackend(page, { bookings: [labView()] });
+  await signIn(page, 'Booked lab tests');
+  await page.getByRole('link', { name: /Open the lab test of Rina Kumari/ }).click();
+  b.dropNextCancel = true;
+  await page.getByRole('button', { name: 'Cancel this lab test' }).click();
+  await page.getByRole('button', { name: 'Yes, cancel it' }).click();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  Object.assign(b.bookings[0]!, { status: 'cancelled', payment: { method: 'wallet', state: 'forfeited', payBy: null } });
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Cancelled. Nothing was refunded.')).toBeVisible();
 });

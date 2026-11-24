@@ -269,9 +269,10 @@ export interface WalletMovement {
 export interface TopupOrder { paymentRequired: boolean; paymentTransactionId: string; razorpayOrderId: string; razorpayKeyId: string; amount: number; currency: string }
 export interface TopupCheck { state: 'credited' | 'unpaid'; wallet: PharmacyWallet | null }
 
-const hex = /^[0-9a-fA-F]{24}$/;
-const idOf = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; };
-const keyOf = (v: string) => { if (!ASSISTED_KEY_PATTERN.test(v)) throw new Error('Invalid request key'); return v; };
+/** Record ids and request keys checked before any request (shared by the assisted modules). */
+export const hex = /^[0-9a-fA-F]{24}$/;
+export const idOf = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; };
+export const keyOf = (v: string) => { if (!ASSISTED_KEY_PATTERN.test(v)) throw new Error('Invalid request key'); return v; };
 
 /** `/pharmacy-assisted/*` (phase 1a) and `/pharmacy-bookings` (phase 0): pharmacy token, operational pharmacies only. */
 export function pharmacyAssistedApi(c: ApiClient) {

@@ -1,6 +1,6 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import {
-  ASSISTED_KEY_PATTERN, assistedRefusal, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type BookingPayment, type Refusal,
+  assistedRefusal, idOf, keyOf, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type BookingPayment, type Refusal,
 } from './assisted.ts';
 import { LAB_BOOKING_STATUS_LABEL, type LabBookingStatus } from './partnerLabs.ts';
 import type { VisitMode } from './partnerInvoices.ts';
@@ -80,9 +80,6 @@ export type LabByKeyAnswer = { state: 'used'; booking: LabBookingView } | { stat
 export interface LabCancelAnswer { booking: LabBookingView; refundedMinor: number; alreadyCancelled: boolean }
 export type LabBookingListStatus = Exclude<LabBookingStatus, 'pending_payment'>;
 
-const hex = /^[0-9a-fA-F]{24}$/;
-const idOf = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; };
-const keyOf = (v: string) => { if (!ASSISTED_KEY_PATTERN.test(v)) throw new Error('Invalid request key'); return v; };
 
 export function pharmacyLabApi(c: ApiClient) {
   return {

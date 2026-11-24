@@ -1853,6 +1853,19 @@ Backend r11 (`m0/r11-phase2a` f5f171c9, design ASSISTED_BOOKING_DESIGN.md §24.1
 - API gap (r11 f5f171c9, now on stage): `notes` on the create is validated and part of the request hash but never stored or
   shown to the lab, so the screen offers no note and sends none. For the backend: store it and show it to the lab, or drop it.
 
+### WQ17b review fixes (review of 3c1960e, 2026-11-25; same branch)
+
+- M1 (money wording): a lab booking found by its key after a reload shows no price (the booker view has none); it never says
+  "Price: ₹0.00". The price line shows only when the price is known.
+- D1 (no duplication): the keyed create (send, refusals, re-price, rotate the key, give up, refresh) is one hook,
+  `assistedCreate.ts` (`useAssistedCreate`), used by Book consultation and Book lab test; the consultation's card branches plug
+  into its answers (`onReceipt`, `onUsed`, `onResult`, `onRefused`). The consultation behaviour and specs are unchanged.
+- D2: `hex`, `idOf` and `keyOf` are exported once from `assisted.ts` and imported by `assistedLab.ts`.
+- L1: a lost accept is checked as accepted only while the booking is still confirmed and the same proposal (`reschedule.version`)
+  is no longer waiting. L2: a refused accept is said by the page, which reads the booking again. L3: a lost cancel, when found,
+  says what the server did with the money (`payment.state`: refunded → back in the wallet; forfeited → nothing refunded).
+  L4: "Visited" in the status filter.
+
 ## Follow-ups
 
 
@@ -1886,6 +1899,7 @@ Backend r11 (`m0/r11-phase2a` f5f171c9, design ASSISTED_BOOKING_DESIGN.md §24.1
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ17b review fixes (M1, D1, D2, L1–L4 on 3c1960e) | Against r11 f5f171c9 (mocked API). typecheck clean; Vitest 406/406 (no change: D1/D2 are moves covered by the journeys); Playwright workspace 868/868 (+6 = 3 journeys x 2: L1 a lost accept not claimed after a cancel, L2 a refused accept said and read again, L3 a found cancel says what was done with the money; the reload journey now checks no price is shown (M1) and the list journey the Visited filter (L4); all five failed on 3c1960e; the consultation specs pass unchanged on the shared create hook). Temporary config on port 5471, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ17 pharmacy lab-test booking (phase 2a) on 0aca6c3 | Against r11 f5f171c9 (§24.11; mocked API). typecheck clean; Vitest 406/406 (+5 in assistedLab.test.ts: lab, catalogue and slot paths and queries, ids and keys checked before sending, the cursor list, by-key, abandon, cancel with `expectedVersion`, accept with the proposal version, the 1-hour cancel rule, the tests' total, branches by visit, status and refusal words); Playwright workspace 862/862 (+16 = 8 journeys x 2: book with the shared patient step and pay from the wallet (no note offered), home collection with its address, a lost answer and a reload then Check by key, price changed then not enough money, list and cancel with the version, accept a new time, open a released report and no cancel within the hour, another pharmacy's booking not found and the switch off); the consultation specs pass unchanged on the shared components. A first full run had 6 timeouts in doctor-tools and admin-pharmacies (load); both specs then passed 88/88 and a second full run passed 862/862. Temporary config on port 5403, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-23 | WQ16d card-last (items 1–7 on 244bbf7) | Against r10e d1ed6d24 (mocked API). typecheck clean; Vitest 401/401 (+3 in wq16dLast.test.ts, all failing before: the server asked before Checkout (authorized not opened, created opened), the 60-second minimum, marked-failed in any state; the wq16c timeout case moved to 60); Playwright workspace 846/846 (+10 = 5 journeys x 2: authorized never opens Checkout, created opens it (a guard, passed before), the "pay it from there" line hidden while confirming, the duplicate sentence kept when its re-read fails, a restored cancellation says "goes back the way chosen"; the four others failed before; temporary config on port 5401, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-23 | WQ16d alignment with r10e d1ed6d24 (refund read by id, DUPLICATE_PAYMENT_REFUNDED, extra_capture) | typecheck clean; Vitest 398/398 (+3 in wq16d.test.ts, all failing before; 4 older assertions moved to the r10e envelope and the no-recheck rule); Playwright affected specs (card-booking, assisted-booking, pharmacy-extras) 162/162 (+4 = 2 journeys x 2, both failing before: a duplicate payment refunded and the booking shown paid after a re-read; the extra-capture label and the not-available check without recheck); temporary config on port 5399, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |

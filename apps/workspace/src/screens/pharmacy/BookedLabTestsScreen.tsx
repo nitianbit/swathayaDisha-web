@@ -36,7 +36,7 @@ export function BookedLabTestsScreen() {
 
 const STATUS_FILTERS: { value: LabBookingListStatus | ''; label: string }[] = [
   { value: '', label: 'All' }, { value: 'confirmed', label: 'Confirmed' }, { value: 'sample_collected', label: 'Sample collected' },
-  { value: 'processing', label: 'Processing' }, { value: 'report_ready', label: 'Report released' }, { value: 'completed', label: 'Completed' },
+  { value: 'visited', label: 'Visited' }, { value: 'processing', label: 'Processing' }, { value: 'report_ready', label: 'Report released' }, { value: 'completed', label: 'Completed' },
   { value: 'cancelled', label: 'Cancelled' }, { value: 'no_show', label: 'No-show' },
 ];
 const PAGE_SIZE = 20;
@@ -132,6 +132,7 @@ function LabDetail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: s
     retry: (n, err) => !(err instanceof ApiError && err.status >= 400 && err.status < 500) && n < 2,
   });
   const [note, setNote] = useState<string | null>(null);
+  const [acceptError, setAcceptError] = useState<string | null>(null);
   const guard = useOneAtATime('lab booking');
   const changed = () => {
     void queryClient.invalidateQueries({ queryKey: listKey(pharmacyId) });
@@ -167,9 +168,11 @@ function LabDetail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: s
       </section>
 
       {note && <Alert tone="ok">{note}</Alert>}
+      {acceptError && !note && <Alert>{acceptError}</Alert>}
       {r && b.status === 'confirmed' && !note && (
         <AcceptNewTime pharmacyId={pharmacyId} booking={b} version={r.version} perform={guard.perform} busy={guard.busy}
-          onDone={(w) => { setNote(w); changed(); void q.refetch(); }} />
+          onDone={(w) => { setAcceptError(null); setNote(w); changed(); void q.refetch(); }}
+          onRefused={(w) => { setAcceptError(w); void q.refetch(); }} />
       )}
       {!note && (canCancelLab(b) ? (
         <CancelLab pharmacyId={pharmacyId} booking={b} perform={guard.perform} busy={guard.busy} onDone={(w) => { setNote(w); changed(); void q.refetch(); }} />
@@ -190,8 +193,10 @@ function LabDetail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: s
 interface PendingAccept { bookingId: string; version: number }
 
 /** `POST …/accept-reschedule {version}`: the new time the lab proposed; or cancel it (below) with the refund to the wallet. */
-function AcceptNewTime({ pharmacyId, booking, version, perform, busy, onDone }: {
+function AcceptNewTime({ pharmacyId, booking, version, perform, busy, onDone, onRefused }: {
   pharmacyId: string; booking: LabBookingView; version: number; perform: Perform; busy: boolean; onDone: (words: string) => void;
+  /** WQ17b L2: a refusal is said by the page, which reads the booking again (the proposal may have changed). */
+  onRefused: (words: string) => void;
 }) {
   const { api } = useSession();
   const { op, send, settle } = useOwnedOp<PendingAccept>(`assisted-lab-accept:${pharmacyId}:${booking._id}`);
@@ -205,7 +210,7 @@ function AcceptNewTime({ pharmacyId, booking, version, perform, busy, onDone }: 
     const res = await perform(() => send(p, (b) => pharmacyLabApi(api).acceptReschedule(b.bookingId, b.version)));
     if (res.kind === 'stale') return;
     if (res.kind === 'ok') { onDone(`New time accepted: ${newTime}. The patient is told.`); return; }
-    if (res.kind === 'refused') setError(labRefusal(res.error).message);
+    if (res.kind === 'refused') onRefused(labRefusal(res.error).message);
   }
 
   if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
@@ -215,8 +220,12 @@ function AcceptNewTime({ pharmacyId, booking, version, perform, busy, onDone }: 
         <CheckPanel label="Unconfirmed acceptance"
           onCheck={async () => {
             const now = await pharmacyLabApi(api).booking(booking._id);
-            if (!now.reschedule?.pending) { settle(op.requestKey); onDone('The new time is accepted.'); return null; }
-            return 'Not accepted so far. It may still be on its way. Sending it again is safe.';
+            // WQ17b L1: accepted only when the booking is still confirmed and the very proposal sent is no longer waiting.
+            if (op.body && now.status === 'confirmed' && now.reschedule && !now.reschedule.pending && now.reschedule.version === op.body.version) {
+              settle(op.requestKey); onDone('The new time is accepted.'); return null;
+            }
+            return op.body ? 'Not accepted so far. It may still be on its way. Sending it again is safe.'
+              : 'Its details are not kept on this device after a reload. Look at the booking: if no new time is waiting, it was answered.';
           }}
           resend={op.restored || !op.body ? undefined : { label: 'Send the same request again', busy, onClick: () => void accept(op).catch((e: unknown) => setError(labRefusal(e).message)) }}
           forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget: () => settle(op.requestKey), consequence: 'If the earlier acceptance still arrives, the new time is accepted.' }}>
@@ -253,7 +262,7 @@ function CancelLab({ pharmacyId, booking, perform, busy, onDone }: {
   const { api } = useSession();
   const labs = pharmacyLabApi(api);
   return (
-    <OwnedCancel<PendingCancel, LabCancelAnswer> slot={`assisted-lab-cancel:${pharmacyId}:${booking._id}`} label="Cancel this lab test"
+    <OwnedCancel<PendingCancel, LabCancelAnswer, LabBookingView> slot={`assisted-lab-cancel:${pharmacyId}:${booking._id}`} label="Cancel this lab test"
       perform={perform} busy={busy} version={booking.statusVersion}
       intro={`${booking.reschedule?.pending ? 'While the new time is not answered you can cancel at any time.' : 'You can cancel up to 1 hour before the time.'} The full amount goes back to your Jansetu wallet.`}
       consequence={`The lab test on ${formatSlotDate(ymd8(booking.slot?.date))} at ${booking.slot?.startTime ?? '—'} is cancelled. The amount goes back to your wallet; give the patient their money back. The patient is told.`}
@@ -262,8 +271,10 @@ function CancelLab({ pharmacyId, booking, perform, busy, onDone }: {
       doneWords={(a) => (a.alreadyCancelled ? 'It was already cancelled. Nothing was refunded twice.'
         : `Cancelled. ${formatRupees(a.refundedMinor / 100)} is back in your Jansetu wallet. The patient is told.`)}
       refusalWords={(err) => labRefusal(err).message}
-      isCancelled={async () => (await labs.booking(booking._id)).status === 'cancelled'}
-      checkedWords={() => 'Cancelled. The amount is back in your Jansetu wallet.'}
+      isCancelled={async () => { const now = await labs.booking(booking._id); return now.status === 'cancelled' ? now : null; }}
+      // WQ17b L3: the money words follow the server's `payment.state`.
+      checkedWords={(_b, _r, now) => (now.payment?.state === 'refunded' ? 'Cancelled. The amount is back in your Jansetu wallet.'
+        : now.payment?.state === 'forfeited' ? 'Cancelled. Nothing was refunded.' : 'Cancelled.')}
       forgetConsequence="If the earlier cancellation still arrives, the booking is cancelled and the money comes back to your wallet."
       onDone={onDone} />
   );

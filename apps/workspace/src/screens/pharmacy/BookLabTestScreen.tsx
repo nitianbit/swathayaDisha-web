@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
   addressErrors, branchesFor, CONSENT_STATEMENT_LANGUAGE, CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday,
-  LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, labRefusal, labTotalMinor, PATIENT_LANGUAGES, patientBody, pharmacyLabApi, refusedBeforeWriting,
-  type AssistedLabSlot, type LabAddress, type LabBookingRequest, type LabBookingView, type LabReceipt, type Refusal,
+  LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, labRefusal, labTotalMinor, PATIENT_LANGUAGES, patientBody, pharmacyLabApi, type AssistedLabSlot, type LabAddress, type LabBookingRequest, type LabBookingView, type LabByKeyAnswer, type LabReceipt, type Refusal,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
-import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
+import { newRequestKey } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
-import { useOwnedOp, usePharmacyId } from './ownedOp.tsx';
+import { usePharmacyId } from './ownedOp.tsx';
+import { useAssistedCreate } from './assistedCreate.ts';
 import { SlotDays } from './slotDays.tsx';
 import { UnconfirmedBooking } from './unconfirmedBooking.tsx';
 import { PatientSection, usePatientStep } from './patientStep.tsx';
@@ -40,12 +40,14 @@ type Mode = 'lab' | 'home';
 interface Summary { patient: string; lab: string; branch: string; mode: Mode; date: string; time: string; tests: string[]; address?: string; priceMinor: number; couponCode?: string;
   couponChecked?: boolean }
 interface PendingLab { request: LabBookingRequest; summary: Summary }
-interface Done { summary: Summary; ref?: string; paidMinor?: number; replayed: boolean; newAccount?: boolean }
+/** WQ17b M1: a booking found by its key after a reload: its price is not in the booker view, so none is shown. */
+type ShownSummary = Omit<Summary, 'priceMinor'> & { priceMinor?: number };
+interface Done { summary: ShownSummary; ref?: string; paidMinor?: number; replayed: boolean; newAccount?: boolean }
 
 const SLOT_DAYS = 7;
 const EMPTY_ADDRESS = { line1: '', line2: '', city: '', state: '', pincode: '', landmark: '' };
 
-function SummaryList({ s }: { s: Summary }) {
+function SummaryList({ s }: { s: ShownSummary }) {
   return (
     <ul className="ws-list">
       <li>Patient: <strong>{s.patient}</strong></li>
@@ -53,33 +55,42 @@ function SummaryList({ s }: { s: Summary }) {
       <li>Visit: <strong>{LAB_VISIT_MODE_LABEL[s.mode]}</strong>{s.address ? ` at ${s.address}` : ''}</li>
       <li>When: <strong>{formatSlotDate(s.date)} at {s.time}</strong></li>
       <li>Tests: <strong>{s.tests.join(', ')}</strong></li>
-      <li>Price: <strong>{formatRupees(s.priceMinor / 100)}</strong>{s.couponCode ? ` (coupon ${s.couponCode})` : ''}</li>
+      {s.priceMinor !== undefined && <li>Price: <strong>{formatRupees(s.priceMinor / 100)}</strong>{s.couponCode ? ` (coupon ${s.couponCode})` : ''}</li>}
     </ul>
   );
 }
 
 function doneFromView(b: LabBookingView, summary: Summary | undefined): Done {
-  const s: Summary = summary ?? {
+  const s: ShownSummary = summary ?? {
     patient: b.patientName ?? 'The patient', lab: b.lab?.name ?? 'The lab', branch: b.branch?.name ?? '', mode: (b.visitMode as Mode) ?? 'lab',
-    date: b.slot?.date?.replace(/-/g, '') ?? '', time: b.slot?.startTime ?? '', tests: (b.items ?? []).map((i) => i.name), priceMinor: 0,
+    date: b.slot?.date?.replace(/-/g, '') ?? '', time: b.slot?.startTime ?? '', tests: (b.items ?? []).map((i) => i.name),
   };
   return { summary: s, ref: b.assisted?.shortRef, replayed: true };
 }
 
 function Book({ pharmacyId }: { pharmacyId: string }) {
   const { api } = useSession();
-  const queryClient = useQueryClient();
   const labsApi = pharmacyLabApi(api);
-  const { op, send, settle } = useOwnedOp<PendingLab>(`assisted-lab-book:${pharmacyId}`);
   const { perform, busy } = useOneAtATime('booking');
   const [off, setOff] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [resendError, setResendError] = useState<string | null>(null);
-  const [givingUp, setGivingUp] = useState(false);
-
-  const [review, setReview] = useState<({ requestKey: string } & PendingLab) | null>(null);
-  const [refused, setRefused] = useState<Refusal | null>(null);
   const [done, setDone] = useState<Done | null>(null);
+
+  // WQ17b: the keyed create, shared with Book consultation (`assistedCreate.ts`).
+  const create = useAssistedCreate<PendingLab, LabReceipt, LabByKeyAnswer>({
+    slot: `assisted-lab-book:${pharmacyId}`, perform, book: (request) => labsApi.book(request), abandon: (key) => labsApi.abandon(key), refusal: labRefusal,
+    walletKey: ['pharmacy-wallet', pharmacyId], refreshKeys: [['pharmacy-lab-bookings', pharmacyId], ['assisted-labs', pharmacyId]],
+    onReceipt: (v, p) => setDone({ summary: p.body.summary, ref: v.booking.assisted?.shortRef, paidMinor: v.funding?.amountMinor, replayed: v.replayed, newAccount: v.newAccount }),
+    onUsed: (r, p) => { settle(p.requestKey); setReview(null); setDone(doneFromView(r.booking, p.body?.summary)); create.refresh(); return null; },
+    onOff: () => setOff(true),
+    onNotice: setNotice,
+    onRefused: (why) => {
+      if (why.kind === 'slot') { setReview(null); setSlotId(null); void slots.refetch(); }
+      else if (why.kind === 'doctor') { setReview(null); setPartnerId(null); setBranchId(null); setSlotId(null); void labs.refetch(); }
+      else if (why.kind === 'patient' || why.kind === 'coupon' || why.kind === 'other' || why.kind === 'limit') void catalogue.refetch();
+    },
+  });
+  const { op, settle, review, setReview, refused, setRefused, resendError, setResendError, givingUp } = create;
 
   // Step 1: the patient (shared with Book consultation).
   const pt = usePatientStep({ pharmacyId, perform, onFind: () => setNotice(null), onSwitchedOff: () => setOff(true),
@@ -176,102 +187,14 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     });
   }
 
-  const refreshAfterBooking = () => {
-    void queryClient.invalidateQueries({ queryKey: ['pharmacy-wallet', pharmacyId] });
-    void queryClient.invalidateQueries({ queryKey: ['pharmacy-lab-bookings', pharmacyId] });
-    void queryClient.invalidateQueries({ queryKey: ['assisted-labs', pharmacyId] });
-  };
-  const rotateKey = () => {
-    const requestKey = newRequestKey();
-    setReview((v) => (v ? { ...v, requestKey, request: { ...v.request, requestKey } } : v));
-  };
-
-  /** Sends `p` (its key, its request) under the one-at-a-time guard; an unknown outcome stays stored for the panel. */
-  async function sendBooking(p: PendingOp<PendingLab>) {
-    const sole = p.attempts === 0 && !p.uncertain;
-    const r = await perform(() => send(p, (b) => labsApi.book(b.request)));
-    if (r.kind === 'stale') return;
-    if (r.kind === 'ok') {
-      setReview(null);
-      const v: LabReceipt = r.value;
-      setDone({ summary: p.body.summary, ref: v.booking.assisted?.shortRef, paidMinor: v.funding?.amountMinor, replayed: v.replayed, newAccount: v.newAccount });
-      refreshAfterBooking();
-      return;
-    }
-    if (r.kind === 'unknown' && wasAbandoned(r.error)) {
-      settle(p.requestKey);
-      setReview(null);
-      setNotice('This booking was given up earlier, so nothing was booked or charged with it. Book again if the patient still wants it.');
-      return;
-    }
-    // The switch, the indexes, customer linking or the lookup limit refused the only attempt before any write: not booked.
-    if (r.kind === 'unknown' && sole && refusedBeforeWriting(r.error)) {
-      settle(p.requestKey);
-      const why = labRefusal(r.error);
-      if (why.kind === 'off') { setOff(true); setReview(null); return; }
-      setRefused(why);
-      rotateKey();
-      return;
-    }
-    if (r.kind === 'refused') {
-      const why = labRefusal(r.error);
-      if (why.kind === 'off') { setOff(true); setReview(null); return; }
-      setRefused(why);
-      if (why.kind === 'slot') { setReview(null); setSlotId(null); void slots.refetch(); }
-      else if (why.kind === 'doctor') { setReview(null); setPartnerId(null); setBranchId(null); setSlotId(null); void labs.refetch(); }
-      else if (why.kind === 'patient' || why.kind === 'coupon' || why.kind === 'other' || why.kind === 'limit') { setReview(null); void catalogue.refetch(); }
-      // 'price', 'topup', 'wallet': the review stays, with what to do next; paying again is a new request (a new key).
-      if (why.kind === 'topup' || why.kind === 'wallet') { void queryClient.invalidateQueries({ queryKey: ['pharmacy-wallet', pharmacyId] }); rotateKey(); }
-    }
-  }
-
-  async function pay() {
-    if (!review) return;
-    const { requestKey, ...pending } = review;
-    setRefused(null);
-    try {
-      await sendBooking(startOp(requestKey, pending));
-    } catch (err) {
-      setRefused(labRefusal(err)); // the one-at-a-time guard refused: nothing was sent
-    }
-  }
-
-  /** A new review at the price the server named (a coupon or a changed price): a new request with a new key. */
-  function payAtNewPrice(newPrice: number) {
-    if (!review) return;
-    const requestKey = newRequestKey();
-    setRefused(null);
-    setReview({ requestKey, request: { ...review.request, requestKey, acceptedPriceMinor: newPrice }, summary: { ...review.summary, priceMinor: newPrice, couponChecked: true } });
-  }
-
-  async function giveUp(p: PendingOp<PendingLab>) {
-    setResendError(null);
-    setGivingUp(true);
-    try {
-      const r = await perform(() => labsApi.abandon(p.requestKey));
-      if (r.state === 'used') {
-        settle(p.requestKey); setReview(null); setDone(doneFromView(r.booking, p.body?.summary)); refreshAfterBooking();
-        return;
-      }
-      if (r.state !== 'abandoned') { setResendError('It could not be given up yet. Check whether it was recorded, then try again.'); return; }
-      settle(p.requestKey);
-      setReview(null);
-      setNotice('Given up: nothing was booked or charged with that request, and it can never be booked now. You can book again.');
-    } catch (err) {
-      setResendError(labRefusal(err).message);
-    } finally {
-      setGivingUp(false);
-    }
-  }
-
   // An unconfirmed booking stays on screen while it is resent or given up (its first attempt shows the review busy).
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
     return (
       <UnconfirmedBooking op={op} what="lab booking" busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => labsApi.byKey(op.requestKey)}
-        onUsed={(r) => { settle(op.requestKey); setReview(null); setDone(doneFromView(r.booking, op.body?.summary)); refreshAfterBooking(); return null; }}
-        onAbandoned={() => { settle(op.requestKey); setReview(null); setNotice('That booking was given up, so nothing was booked or charged with it. You can book again.'); }}
-        onResend={() => { setResendError(null); void sendBooking(op).catch((err: unknown) => setResendError(labRefusal(err).message)); }}
-        onGiveUp={() => void giveUp(op)}
+        onUsed={(r) => { settle(op.requestKey); setReview(null); setDone(doneFromView(r.booking, op.body?.summary)); create.refresh(); return null; }}
+        onAbandoned={() => create.abandonedByCheck(op.requestKey)}
+        onResend={() => { setResendError(null); void create.send(op).catch((err: unknown) => setResendError(labRefusal(err).message)); }}
+        onGiveUp={() => void create.giveUp(op)}
         summary={op.body && <SummaryList s={op.body.summary} />} />
     );
   }
@@ -426,7 +349,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
 
       {review && (
         <ReviewAndPay pharmacyId={pharmacyId} review={review} busy={busy} refused={refused}
-          onPay={() => void pay()} onBack={() => { setReview(null); setRefused(null); }} onNewPrice={payAtNewPrice} />
+          onPay={() => void create.pay()} onBack={() => { setReview(null); setRefused(null); }} onNewPrice={create.payAtNewPrice} />
       )}
     </>
   );
