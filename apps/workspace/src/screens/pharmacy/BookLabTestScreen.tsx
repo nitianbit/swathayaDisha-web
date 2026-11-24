@@ -1,15 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  addressErrors, isCardAnswer, routeCardAnswer, cleanRecommendationCode, matchRecommended, pharmacyRecommendationsApi, recommendationRefusal, recommendationsOff, orderFromBooking, branchesFor, CONSENT_STATEMENT_LANGUAGE, CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday,
-  LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, labRefusal, labTotalMinor, patientBody, pharmacyLabApi, type AssistedLabSlot, type LabAddress, type LabBookingRequest, type LabBookingView, type LabByKeyAnswer, type LabReceipt, type TestRecommendation, type AssistedCardPayment, type AssistedPaymentMethod, type OpenCardOrder, type Refusal,
+  addressErrors, isCardAnswer, routeCardAnswer, pharmacyRecommendationsApi, orderFromBooking, branchesFor, CONSENT_STATEMENT_LANGUAGE, CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday,
+  LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, labRefusal, labTotalMinor, patientBody, pharmacyLabApi, type AssistedLabSlot, type LabAddress, type LabBookingRequest, type LabBookingView, type LabByKeyAnswer, type LabReceipt, type AssistedCardPayment, type AssistedPaymentMethod, type OpenCardOrder, type Refusal,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
-import { useOneAtATime, type Perform } from '../finance/finance.tsx';
+import { useOneAtATime } from '../finance/finance.tsx';
 import { usePharmacyId } from './ownedOp.tsx';
 import { useAssistedCreate } from './assistedCreate.ts';
 import { SlotDays } from './slotDays.tsx';
@@ -17,6 +17,7 @@ import { UnconfirmedBooking } from './unconfirmedBooking.tsx';
 import { AddressFields, EMPTY_ADDRESS, labAddressLine, labAddressOf, LanguageSelect } from './bookingFields.tsx';
 import { PatientSection, usePatientStep } from './patientStep.tsx';
 import { PayChoice } from './walletPay.tsx';
+import { RecommendedTests, useRecommendedTicks } from './recommendedTests.tsx';
 import { CardDueSection, CardPaymentPanel, isOrderFailed, labCardSource, NOT_PAYABLE_WORDS, NotBooked, ORDER_FAILED_WORDS, useCardChoice } from './cardBooking.tsx';
 
 /**
@@ -174,19 +175,8 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     return [...days];
   }, [slots.data]);
   const items = catalogue.data ?? [];
-  // WQ21 (r16 phase 3d): tests recommended by the doctor, loaded by the code on the prescription and the patient's number.
-  const [rec, setRec] = useState<TestRecommendation | null>(null);
-  const [recOff, setRecOff] = useState(false);
-  const recApplied = useRef('');
-  // The recommended tests this lab lists are ticked once per lab and code; the pharmacist can change the ticks.
-  useEffect(() => {
-    if (!rec || !catalogue.data || !partnerId) return;
-    const key = `${partnerId}:${mode}:${rec.code}`;
-    if (recApplied.current === key) return;
-    recApplied.current = key;
-    setItemIds(matchRecommended(catalogue.data, rec.items.map((i) => i.name)).itemIds);
-  }, [rec, catalogue.data, partnerId, mode]);
-  const recUnmatched = rec && catalogue.data && partnerId ? matchRecommended(catalogue.data, rec.items.map((i) => i.name)).unmatched : null;
+  // WQ21: tests recommended by the doctor (the shared step, `recommendedTests.tsx`); ticked once per lab, visit and code.
+  const recTicks = useRecommendedTicks(catalogue.data ?? null, partnerId ? `${partnerId}:${mode}` : null, setItemIds);
   const priceMinor = labTotalMinor(items, itemIds);
 
   function chooseMode(m: Mode) { setMode(m); setPartnerId(null); setBranchId(null); setItemIds([]); setSlotId(null); setErrors({}); setRefused(null); }
@@ -196,7 +186,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   function resetAll() {
     pt.reset(); setMode('lab'); setPartnerId(null); setBranchId(null); setItemIds([]); setSlotId(null); setAddress(EMPTY_ADDRESS); setLanguage('');
     setCoupon(''); setErrors({}); setReview(null); setRefused(null); setDone(null); setNotice(null);
-    setCardDue(null); setEnded(null); choice.setMethod('wallet'); setRec(null); recApplied.current = '';
+    setCardDue(null); setEnded(null); choice.setMethod('wallet'); recTicks.reset();
   }
 
   function visitNext(e: FormEvent) {
@@ -297,10 +287,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
       {patientDone && (
         <section className="ws-section" aria-labelledby="lab-h">
           <h2 id="lab-h">2. Lab, tests and time</h2>
-          {!recOff && lookup && (
-            <RecommendedTests phone={lookup.phone} perform={perform} disabled={frozen} rec={rec} unmatched={recUnmatched}
-              onLoaded={(r) => { recApplied.current = ''; setRec(r); }} onOff={() => { setRecOff(true); setRec(null); }} />
-          )}
+          {lookup && <RecommendedTests load={pharmacyRecommendationsApi(api).load} phone={lookup.phone} perform={perform} disabled={frozen} ticks={recTicks} />}
           <form className="rx-form" noValidate onSubmit={visitNext}>
             <fieldset className="ws-frozen" disabled={frozen}>
               <fieldset className="ws-checks">
@@ -404,45 +391,6 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
           onBack={() => { setReview(null); setRefused(null); }} onNewPrice={create.payAtNewPrice} />
       )}
     </>
-  );
-}
-
-/**
- * WQ21 (r16 phase 3d, §25.12.4): "Have a test code from the doctor?": loads the recommended test names by the code and the
- * patient's number (`GET /pharmacy-assisted/recommendations/:code?phone=`). The code and the number stay in this page's
- * state. The booking is not linked to the recommendation yet (the backend's next round): nothing new is sent on create.
- */
-function RecommendedTests({ phone, perform, disabled, rec, unmatched, onLoaded, onOff }: {
-  phone: string; perform: Perform; disabled: boolean; rec: TestRecommendation | null; unmatched: string[] | null;
-  onLoaded: (r: TestRecommendation) => void; onOff: () => void;
-}) {
-  const { api } = useSession();
-  const [text, setText] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  async function load(e: FormEvent) {
-    e.preventDefault();
-    const code = cleanRecommendationCode(text);
-    if (!code) { setError('This code is not valid. Check it on the prescription.'); return; }
-    setError(null);
-    setLoading(true);
-    try {
-      onLoaded(await perform(() => pharmacyRecommendationsApi(api).load(code, phone)));
-    } catch (err) {
-      if (recommendationsOff(err)) { onOff(); return; }
-      setError(recommendationRefusal(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-  return (
-    <form className="ws-search" noValidate onSubmit={(e) => void load(e)} aria-label="Recommended tests">
-      <TextField label="Have a test code from the doctor? (optional)" autoComplete="off" value={text} error={error} disabled={disabled} maxLength={20}
-        hint={rec ? `Recommended tests: ${rec.items.map((i) => i.name).join(', ')}.` : 'It is on the prescription, for example ABCD-EFGH.'}
-        onChange={(e) => setText(e.target.value)} />
-      <Button type="submit" variant="secondary" busy={loading} disabled={disabled}>Load tests</Button>
-      {unmatched && unmatched.length > 0 && <span className="ws-muted">{unmatched.map((n) => `${n}: not in this lab's list`).join('. ')}.</span>}
-    </form>
   );
 }
 

@@ -43,3 +43,23 @@ describe('the recommended-tests code', () => {
     expect(recommendationsOff(e(404, 'RECOMMENDATION_NOT_FOUND'))).toBe(false);
   });
 });
+
+describe('WQ21b: the lab desk lookup', () => {
+  it('posts the code and the number to the desk route (and its admin mirror); 403 from a non-lab hides the field', async () => {
+    const { labDeskApi } = await import('./labDesk.ts');
+    const calls: { url: string; body: unknown }[] = [];
+    const c = createApiClient({ baseUrl: '', getToken: () => 'tok', timeoutMs: 100, fetchImpl: async (u, init) => {
+      calls.push({ url: String(u), body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      return new Response(JSON.stringify({ success: true, data: { code: 'ABCDEFGH', status: 'open', items: [] } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    } });
+    await labDeskApi(c, { kind: 'member' }).recommendation('abcd-efgh', '9876543210');
+    await labDeskApi(c, { kind: 'admin', partnerId: 'a1'.repeat(12) }).recommendation('ABCDEFGH', '9876543210');
+    expect(calls).toEqual([
+      { url: '/api/v1/partner-workspace/lab-desk/recommendations/lookup', body: { code: 'ABCDEFGH', phone: '9876543210' } },
+      { url: `/api/v1/partner-workspace/admin/${'a1'.repeat(12)}/workspace/lab-desk/recommendations/lookup`, body: { code: 'ABCDEFGH', phone: '9876543210' } },
+    ]);
+    expect(recommendationsOff(new ApiError(403, 'x', 'LAB_PARTNER_REQUIRED'))).toBe(true);
+    expect(recommendationsOff(new ApiError(403, 'x', 'PARTNER_NOT_VERIFIED'))).toBe(true);
+    expect(recommendationsOff(new ApiError(403, 'x', 'INSUFFICIENT_PERMISSIONS'))).toBe(false);
+  });
+});

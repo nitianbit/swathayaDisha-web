@@ -2013,6 +2013,19 @@ API gaps:
 - L1: the bill form's mobile stays read-only for every clinic appointment bill, as before; only a lab booking's may be typed.
 - L2: `labDesk.ts` uses `keyOf` from `assisted.ts` (no local copy).
 
+### WQ21b the recommended-tests code at the lab front desk (2026-11-25, same branch, on the WQ19 merge)
+
+- `wq19/lab-desk` (12f0321, WQ19 + WQ19b) merged in first (the shared WQ17 pieces: WQ17c's card pieces and WQ19's
+  `bookingFields.tsx` both kept).
+- **Lab › Front desk**: the same "Have a test code from the doctor?" step, now one shared component and hook
+  (`pharmacy/recommendedTests.tsx`: `RecommendedTests`, `useRecommendedTicks`) used by Book lab test and the desk, each with its
+  own `load`: the desk route `POST /partner-workspace/lab-desk/recommendations/lookup {code, phone}` (admins: the same under
+  `/admin/:partnerId/workspace`; `labDeskApi(...).recommendation`, on the shared `recommendationLookup`). The desk's own
+  catalogue is ticked by exact name once per visit and code. 403 `LAB_PARTNER_REQUIRED` / `PARTNER_NOT_VERIFIED` hide the field,
+  as the switch off does; the other refusals are the pharmacy's words. Nothing new is sent on create.
+- The stale `GET …/:code?phone=` comment is gone with the move; the shared component says POST `/lookup` with the code and the
+  number in the body.
+
 ## Follow-ups
 
 
@@ -2046,6 +2059,7 @@ API gaps:
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ21b recommended-tests code at the lab front desk (after merging wq19/lab-desk 12f0321) | Mocked API (r16b desk route). typecheck clean; Vitest 437/437 (+1 in wq21.test.ts: the desk and admin-mirror POST paths with the code and number in the body, the 403 codes hiding the field); Playwright lab-desk, lab-booking and clinic-desk 110/110 (+4 = 2 journeys x 2: the desk loads a code and ticks its own tests, says the unmatched name, sends nothing new and stores nothing; an unknown code said plainly). Temporary config on port 5474, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ21 recommended-tests code (phase 3d web) + L1/L2 on f089b46 | Against r16 8e5337f4 with the r16b POST lookup (mocked; §25.12.4). typecheck clean; Vitest 429/429 (+7: wq21.test.ts 4 (cleaning and printing the code, the POST body with no code or number in the URL and no malformed code sent, exact-name ticks, refusal words and the switch-off rule), wq21b.test.ts 3 (`routeCardAnswer` for both kinds, the held-without-order case, `isCardAnswer`)); Playwright workspace 902/902 (+6 = 3 journeys x 2: load and pre-tick with the unmatched name said and nothing new on create and nothing stored or in a URL; typo, not found and switch off; the booked consultation's code; the lab card journey now opens from the list's Pay now link (L2)). Temporary config on port 5473, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ17c lab tests by card or UPI (phase 2b) on 24019c4 | Against r14 77594d72 (§24.14; mocked API). typecheck clean; Vitest 422/422 (+4 in wq17c.test.ts: card state by kind, the lab view's order without an amount, cancel words by who is told and the waiting lab cancel, `refundTo` and `status=pending_payment`; the lab card switch-off words now the consultation's); Playwright workspace 895 passed of 896 (+10 = 5 journeys x 2: lab card pay, Checkout closed then Pay now after asking the server, another device with an authorized payment gets no second Checkout, cancel to the card, cancel to the wallet; the consultation card and wallet specs pass unchanged on the shared pieces). The one failure is the known load-timing check in stock-supply.spec.ts:1277 (as in WQ18b): 6/6 on its own afterwards. Temporary config on port 5472, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ19b review fix (M1, L1, L2 on e981104) | typecheck clean (a true/false `isCancelled` no longer compiles); Vitest 425/425; Playwright lab-desk 18/18 (+2 = 1 journey x 2: a desk cancel lost before the server, checked while the booking is still confirmed, says "Not cancelled so far" and is then resent once; failing before the fix), clinic-desk + partner-invoices + lab-booking + assisted-booking + card-booking 242/242 on a temporary config (port 5481, deleted); release build with VITE_API_SAME_ORIGIN=true. |

@@ -116,6 +116,12 @@ async function mockBackend(page: Page, me: Me = owner): Promise<Backend> {
       return ok(route, slots.filter((s) => s.branchId === q.get('branchId') && s.visitMode === q.get('visitMode') && String(s.date) >= q.get('from')! && String(s.date) <= q.get('to')!));
     }
 
+    // ── WQ21b: r16b recommended tests at the desk (code and number in the body) ──
+    if (sub === '/lab-desk/recommendations/lookup' && method === 'POST') {
+      if (body?.code !== 'ABCDEFGH' || body?.phone !== PHONE) return fail(route, 404, 'RECOMMENDATION_NOT_FOUND', 'Not found');
+      return ok(route, { code: 'ABCDEFGH', status: 'open', items: [{ index: 0, name: 'cbc' }, { index: 1, name: 'Lipid  Profile' }, { index: 2, name: 'Vitamin D' }] });
+    }
+
     // ── r12 lab desk ──
     if (sub === '/lab-desk/patients/lookup' && method === 'POST') {
       if (b.off) return fail(route, 503, 'ASSISTED_BOOKING_DISABLED', 'Booking for patients is not switched on');
@@ -481,4 +487,42 @@ test('branch scope: staff see only their branches; another branch’s booking is
   await expect(nav(page).getByRole('link', { name: 'Front desk' })).toHaveCount(0);
   await page.goto('/#/partner/lab-desk');
   await expect(page.getByText('Page not found')).toBeVisible();
+});
+
+// ── WQ21b: the recommended-tests code at the front desk (the pharmacy's step, r16b route) ──
+
+test('WQ21b: a code from the doctor ticks this lab’s matching tests; the rest are said; nothing new is sent or stored', async ({ page }) => {
+  const backend = await mockBackend(page);
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Front desk' }).click();
+  await patient(page);
+  await page.getByLabel('Have a test code from the doctor? (optional)').fill('abcd efgh');
+  await page.getByRole('button', { name: 'Load tests' }).click();
+  await expect(page.getByText('Recommended tests: cbc, Lipid  Profile, Vitamin D.')).toBeVisible();
+  const form = page.getByRole('form', { name: 'Tests and time' });
+  await expect(form.getByLabel(/^CBC/)).toBeChecked();
+  await expect(form.getByLabel(/^Lipid profile/)).toBeChecked();
+  await expect(page.getByText("Vitamin D: not in this lab's list.")).toBeVisible();
+  await form.getByLabel('Branch').selectOption({ label: 'Indiranagar' });
+  await expect(form.getByText('Total: ₹750.00, paid at the lab')).toBeVisible();
+  await form.getByLabel('Language the patient speaks').selectOption('hi');
+  await form.getByRole('button', { name: 'Book' }).click();
+  await page.getByRole('button', { name: 'Yes, book for ₹750.00' }).click();
+  await expect(page.getByRole('heading', { name: 'Booked' })).toBeVisible();
+  const loads = backend.calls.filter((c) => c.path.includes('/recommendations'));
+  expect(loads).toEqual([{ method: 'POST', path: '/partner-workspace/lab-desk/recommendations/lookup', body: { code: 'ABCDEFGH', phone: PHONE } }]);
+  expect(Object.keys(creates(backend)[0]!.body as Rec).filter((k) => /recommend/i.test(k))).toEqual([]);
+  const all = await stored(page) + backend.calls.map((c) => c.path).join(' ');
+  for (const w of ['ABCDEFGH', PHONE]) expect(all).not.toContain(w);
+});
+
+test('WQ21b: an unknown code (or another number) is said plainly at the desk', async ({ page }) => {
+  await mockBackend(page);
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Front desk' }).click();
+  await patient(page);
+  await page.getByLabel('Have a test code from the doctor? (optional)').fill('WXYZ-2345');
+  await page.getByRole('button', { name: 'Load tests' }).click();
+  await expect(page.getByText('No recommended tests were found for this code and this mobile number. Check both with the patient.')).toBeVisible();
+  await expect(page.getByRole('form', { name: 'Tests and time' }).getByLabel(/^CBC/)).not.toBeChecked();
 });

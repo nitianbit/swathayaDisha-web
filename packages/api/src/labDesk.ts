@@ -1,4 +1,5 @@
 import { ApiError, type ApiClient } from './client.ts';
+import { recommendationLookup } from './assistedLab.ts';
 import { keyOf, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type PatientLookup, type Refusal } from './assisted.ts';
 import { labRefusal, labTotalMinor, type LabAddress } from './assistedLab.ts';
 import type { LabBooking } from './partnerLabs.ts';
@@ -49,6 +50,8 @@ export function labDeskApi(c: ApiClient, scope: PartnerScope) {
   return {
     /** The masked account holder of a number (counted against the hourly lookup limit). */
     lookup: (phone: string) => c.post<PatientLookup>(`${base()}/patients/lookup`, { body: { phone } }),
+    /** WQ21b (r16b): the recommended tests by the code and the patient's number, in the body (the admin mirror too). */
+    recommendation: (code: string, phone: string) => recommendationLookup(c, `${base()}/recommendations/lookup`)(code, phone),
     /** Exactly once per (lab, member, request key); the same key and content answer the booking again (`replayed`). */
     book: (body: DeskBookingRequest) => {
       keyOf(body.requestKey);

@@ -13,6 +13,7 @@ import { useOneAtATime } from '../finance/finance.tsx';
 import { AddressFields, EMPTY_ADDRESS, labAddressLine, labAddressOf, LanguageSelect } from '../pharmacy/bookingFields.tsx';
 import { useAssistedCreate } from '../pharmacy/assistedCreate.ts';
 import { PatientSection, usePatientStep } from '../pharmacy/patientStep.tsx';
+import { RecommendedTests, useRecommendedTicks } from '../pharmacy/recommendedTests.tsx';
 import { SlotDays } from '../pharmacy/slotDays.tsx';
 import { UnconfirmedBooking } from '../pharmacy/unconfirmedBooking.tsx';
 import { BillLink, money, useCatalogue } from './billing.tsx';
@@ -110,6 +111,9 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
   const items = useMemo(() => deskItems(catalogue.data ?? [], visit), [catalogue.data, visit]);
   const [itemIds, setItemIds] = useState<string[]>([]);
   const chosen = itemIds.filter((id) => items.some((i) => i._id === id));
+  // WQ21b: tests recommended by the doctor (the pharmacy's step, `recommendedTests.tsx`), ticked once per visit and code.
+  const recItems = useMemo(() => (catalogue.data ? items.map((i) => ({ itemId: i._id, name: i.name })) : null), [catalogue.data, items]);
+  const recTicks = useRecommendedTicks(recItems, recItems ? visit : null, setItemIds);
   const totalMinor = deskTotalMinor(items, chosen);
   const now = new Date();
   const [date, setDate] = useState(() => istDateOf(new Date()));
@@ -139,7 +143,7 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
   function toggleItem(id: string) { setItemIds((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id])); setRefused(null); }
   function resetAll() {
     pt.reset(); setMode('walkin'); setBranchId(null); setItemIds([]); setSlotId(null); setAddress(EMPTY_ADDRESS); setCollectorName(''); setCollectorPhone('');
-    setLanguage(''); setErrors({}); setReview(null); setRefused(null); setDone(null); setNotice(null);
+    setLanguage(''); setErrors({}); setReview(null); setRefused(null); setDone(null); setNotice(null); recTicks.reset();
   }
 
   function book(e: FormEvent) {
@@ -230,6 +234,7 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
       {patientDone && (
         <section className="ws-section" aria-labelledby="desk-h">
           <h2 id="desk-h">2. Tests and time</h2>
+          {lookup && <RecommendedTests load={desk.recommendation} phone={lookup.phone} perform={perform} disabled={frozen} ticks={recTicks} />}
           <form className="rx-form" noValidate onSubmit={book} aria-label="Tests and time">
             <fieldset className="ws-frozen" disabled={frozen}>
               <fieldset className="ws-checks">
