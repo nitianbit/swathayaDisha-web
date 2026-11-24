@@ -5,5 +5,8 @@
   "exports": {
     ".": "./src/index.tsx",
     "./tokens.css": "./src/tokens.css"
+  },
+  "dependencies": {
+    "@jansetu/i18n": "*"
   }
 }

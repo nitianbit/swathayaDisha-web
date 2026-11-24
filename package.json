@@ -7,7 +7,7 @@
     "apps/*"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit -p packages/api && tsc --noEmit -p packages/ui && tsc --noEmit -p apps/workspace && tsc --noEmit -p apps/customer",
+    "typecheck": "tsc --noEmit -p packages/i18n && tsc --noEmit -p packages/api && tsc --noEmit -p packages/ui && tsc --noEmit -p apps/workspace && tsc --noEmit -p apps/customer",
     "test": "vitest run",
     "build": "npm run typecheck && npm run build --workspace apps/workspace",
     "dev:workspace": "npm run dev --workspace apps/workspace",

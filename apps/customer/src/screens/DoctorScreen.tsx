@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
   COUPON_PATTERN, customerApi, type ConsultationMode, type CouponCheck, type NewConsultation, type Slot, type Specialist, requestKeysApi } from '@jansetu/api';
+import { formatDateWith, INDIA_TIME } from '@jansetu/i18n';
 import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
 import { Confirm, messageOf, PageHeading } from '../common.tsx';
 import { useAlive } from '../onceOnly.tsx';
@@ -19,7 +20,7 @@ export function nextDays(n: number, now = new Date()): { date: string; label: st
     const ist = new Date(d.getTime() + 5.5 * 3_600_000);
     const date = ist.toISOString().slice(0, 10).replace(/-/g, '');
     const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow'
-      : new Intl.DateTimeFormat('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' }).format(d);
+      : formatDateWith(d, { weekday: 'short', day: 'numeric', month: 'short', timeZone: INDIA_TIME });
     out.push({ date, label });
   }
   return out;

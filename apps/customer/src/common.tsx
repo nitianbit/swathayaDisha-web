@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ApiError, appointmentInstant } from '@jansetu/api';
+import { formatDateWith, INDIA_TIME } from '@jansetu/i18n';
 import { Alert, Button, TextArea } from '@jansetu/ui';
 
 export function PageHeading({ title, children }: { title: string; children?: ReactNode }) {
@@ -21,8 +22,8 @@ export function messageOf(err: unknown): string {
 export function formatAppointment(bookingDate: string, bookingTime: string): string {
   const a = appointmentInstant(bookingDate, bookingTime);
   if (!a) return [bookingDate, bookingTime].filter(Boolean).join(' ');
-  const d = new Intl.DateTimeFormat('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(a.at);
-  const t = new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' }).format(a.at);
+  const d = formatDateWith(a.at, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: INDIA_TIME });
+  const t = formatDateWith(a.at, { hour: 'numeric', minute: '2-digit', timeZone: INDIA_TIME });
   return `${d} · ${t}`;
 }
 

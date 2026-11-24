@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ApiError } from '@jansetu/api';
+import { startLanguage } from '@jansetu/i18n';
 import '@jansetu/ui/tokens.css';
 import './styles.css';
 import { App } from './App.tsx';
@@ -22,8 +23,9 @@ const queryClient = new QueryClient({
 const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ?? '';
 
 // N2: in the phone app the app starts only once the secure store is ready (a retry screen otherwise).
+// Phase 6: the language (and its words) before the first render; English unless this app offers another.
 const root = createRoot(document.getElementById('root')!);
-void startApp(
+void startLanguage('customer').then(() => startApp(
   () => root.render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
@@ -39,4 +41,4 @@ void startApp(
       <button type="button" onClick={retry}>Try again</button>
     </main>,
   ),
-);
+));

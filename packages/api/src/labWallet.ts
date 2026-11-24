@@ -1,3 +1,4 @@
+import { formatPaise } from '@jansetu/i18n';
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import { assistedRefusal, type PharmacyWallet, type Refusal, type TopupCheck, type TopupOrder, type WalletMovement } from './assisted.ts';
 import { ADMIN_TOPUP_KEY_PATTERN } from './adminPharmacyWallet.ts';
@@ -157,11 +158,10 @@ export function adminOwnerWalletApi(c: ApiClient, kind: WalletOwnerKind) {
 export function ownerWalletRefusal(err: unknown, kind: WalletOwnerKind): Refusal {
   if (err instanceof ApiError && err.code === 'WALLET_LIMIT_REACHED') {
     const d = (err.details ?? {}) as { maxBalanceMinor?: number; allowedMinor?: number };
-    const rupees = (p: unknown) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(p) / 100);
-    const max = Number.isFinite(Number(d.maxBalanceMinor)) ? rupees(d.maxBalanceMinor) : '₹50,000';
+    const max = Number.isFinite(Number(d.maxBalanceMinor)) ? formatPaise(Number(d.maxBalanceMinor)) : '₹50,000';
     const allowed = Number(d.allowedMinor);
     return { kind: 'limit', message: Number.isFinite(allowed) && allowed > 0
-      ? `The wallet can hold at most ${max}. You can add up to ${rupees(allowed)} now.`
+      ? `The wallet can hold at most ${max}. You can add up to ${formatPaise(allowed)} now.`
       : `The wallet can hold at most ${max}, so no more money can be added now.` };
   }
   if (err instanceof ApiError && err.code === 'WALLET_NOT_FOUND') return { kind: 'other', message: 'The wallet is for labs only.' };

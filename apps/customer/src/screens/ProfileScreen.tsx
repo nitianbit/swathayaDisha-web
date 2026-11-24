@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import {
   ApiError, customerApi, maskTarget, MAX_EMAIL, normalizeEmail, OTP_PATTERN, targetKey, type CustomerProfile, type Gender, type ProfileUpdate,
 } from '@jansetu/api';
-import { Alert, Button, ErrorState, Loading, TextField, useCooldowns } from '@jansetu/ui';
+import { Alert, Button, ErrorState, LanguageSwitcher, Loading, TextField, useCooldowns } from '@jansetu/ui';
 import { Confirm, messageOf, PageHeading } from '../common.tsx';
 import { useCustomer, useSession } from '../session.tsx';
 import { missingProfileFields } from './HomeScreen.tsx';
@@ -22,6 +22,7 @@ export function ProfileScreen() {
   return (
     <>
       <PageHeading title="Profile" />
+      <LanguageSwitcher className="card" />
       {q.isPending ? <Loading /> : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : <>
           <ProfileForm key={q.data._id} profile={q.data} />

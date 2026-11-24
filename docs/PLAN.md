@@ -2148,6 +2148,42 @@ device is not listed (the server's sweep credits it).
   owner page; `adminLabWalletApi`, `adminDoctorWalletApi`, `labWalletRefusal` and `doctorWalletRefusal` removed (tests use
   `adminOwnerWalletApi(c, kind)` and `ownerWalletRefusal(err, kind)`); the admin routes take `ownerId`.
 
+## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
+
+Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
+Nothing visible changes: English stays byte-identical and no language list shows until a second language is released.
+
+- **`@jansetu/i18n`** (new workspace package, no dependency, no React): `catalogue(name, en, import.meta.glob(...))` returns a
+  typed `t(key, params)`: keys and `{placeholders}` typed from the English source (`en.ts`, `as const`), `{ one, other }`
+  plurals through `Intl.PluralRules`, English per word when a translation is missing (noted once in development, by key
+  only), `t.rich` for elements inside words, `t.has` for keys made from server codes. Other languages are JSON chunks
+  loaded when chosen; a language that cannot load changes nothing; the last switch wins.
+- **Start-up** (`startLanguage(app)` before the first render): the code kept on this device if the app offers it, else the
+  first offered browser language, else English. Offered = `RELEASED` in `languages.ts` (English only for both apps). A
+  choice (`chooseLanguage`) keeps only the code in `localStorage['jansetu.lang']`. The pseudo-language (`pseudo`:
+  bracketed, accented, 35% longer) can be kept only in development and tests.
+- **React side** (`@jansetu/ui`): `useLanguage`, `LanguageScope` (the page content mounts again on a switch; the session,
+  the query cache and a doctor's presence stay), `LanguageSwitcher` (renders nothing while one language is offered;
+  placed on both sign-in screens, the customer Profile and the workspace side bar), `Parts`.
+- **Formats** (`format.ts`): the 15 `Intl` call sites and the duplicated helpers now go through `formatRupees`,
+  `formatPaise`, `formatDateTime`, `formatYmd`, `formatClock` and `formatDateWith(at, options)`. Money is `en-IN` in every
+  language; dates use `<lang>-IN-u-nu-latn`; English is `en-IN` exactly as before (`assistedCard`'s `en-GB` clock gives
+  the same text). `formatRupees` and `formatDateTime` are still exported by `@jansetu/ui`.
+- **Checks in `npx vitest run`:** `catalogues.test.ts` (extra keys, shapes, plural forms, empty, placeholders, stale against
+  `<lang>.source.json`, released languages at 95% per app); `literals.test.ts` (no English written into code: JSX text,
+  word attributes, sentences, templates; `// i18n-ignore` for non-UI strings) with `packages/i18n/literals-allowlist.txt`
+  listing the 159 files not extracted yet (6,228 findings), which fails when a listed file is clean so the list only
+  shrinks.
+- **Tests:** both Playwright configs pin `locale: 'en-IN'`; `tests/setup.ts` puts each test back in English; `e2e/i18n.spec.ts`
+  in each app (English by default, no language list, nothing stored; a kept language not offered is ignored).
+- Left for 6a2 (I18N_PLAN.md §4): the translator script, fonts and Indic CSS, typed Indian-script digits, saving the choice
+  to the account (needs 6a-backend).
+- **Merged with `wq/stage-next` bd0df6c** (push 1: lab desk, lab wallet, WQ21b; branch `wq31/i18n-merged`): the lab desk and
+  lab wallet money words use `formatPaise` (English unchanged); `assisted.ts` exports `rupees` (= `formatPaise`) for WQ22c's
+  desk; the scan no longer counts route attributes (`back="/admin/partners"`); the 7 new files with English are allowlisted
+  (166). For the integrator: merging WQ22 adds its new files with English (`assistedInstant.ts`, and its `ConsultNowScreen.tsx`
+  unless it is the doctor's, already listed) to the allowlist, and any `Intl` money call it adds goes to `formatPaise`.
+
 ## Follow-ups
 
 
@@ -2282,3 +2318,5 @@ device is not listed (the server's sweep credits it).
 | 2026-11-15 | WC1 (customer: partner labs, bills, Consult now) | typecheck clean; Vitest 82/82 (+ lab/bill/instant api modules, cancel rule, timeline, GST split, waiting rules, file sniffing); Playwright customer 176/176 (new: partner-labs 20, instant-consult 16, bills 6; desktop + Pixel 7, mocked API); release build with VITE_API_BASE_URL=https://api.example.test. The existing "inside 24 hours" test now accepts the Monday 48-hour rule (it failed when 5 hours ahead fell on a Monday). Not yet run against a real backend; not Codex-reviewed. |
 | 2026-11-15 | WC1 review round 1 + Q9 | Codex WC1: 5 MEDIUM (quote not bound to funding; stale lab coupon; unowned create/pay completions; no refresh after acceptance; file state across bill versions). Fixed with backend Q9 (78b9efe). typecheck clean; Vitest 89/89 (+ price agreement, paging, single lab, payable mirrors, versioned PDF, recorded refunds); Playwright customer 194/194 (new: coupon re-checked on test change, price refused then accepted (labs and Consult now), late create and pay answers after leaving open nothing, reload lookup used / unknown → confirmed give-up, Meet link after acceptance + doctor cancellation, bill PDF follows the version, report signers by file); release build with VITE_API_BASE_URL=https://api.example.test. |
 | 2026-11-16 | WC1 review round 2 | Codex WC1 re-review: 2 MEDIUM (older/left-page create success consumed a newer attempt's request; a coupon dropped by an automatic re-check auto-accepted the higher price). Fixed. typecheck clean; Vitest 89/89; Playwright customer 200/200 (new: out-of-order answers across remounts keep the newer attempt and complete it once; coupon dropped by re-check requires accepting the higher price, labs and Consult now); release build with VITE_API_BASE_URL=https://api.example.test. |
+| 2026-11-25 | WQ31 UI translation round 6a (foundation) | typecheck clean (now with `packages/i18n`); Vitest 449/449 (+27: placeholders, plurals, per-word English fallback, loading and the last switch winning, pseudo, start-up and choice storage, formats byte-identical to the old helpers in English with Latin digits elsewhere, the catalogue check, the literal scan, switcher/scope/parts); Playwright workspace 900/900 and customer 270/270 (+4 each: English by default with no language list and nothing stored; a kept language not offered is ignored), all on temporary ports 5476/5477 with `reuseExistingServer: false`, configs deleted; both builds with `VITE_API_SAME_ORIGIN=true` (no pseudo-language in either bundle). |
+| 2026-11-25 | WQ31 6a merged with `wq/stage-next` bd0df6c (branch `wq31/i18n-merged`) | typecheck clean; Vitest 471/471; Playwright workspace 942/942 on temporary port 5486 (`reuseExistingServer: false`, config deleted); both builds with `VITE_API_SAME_ORIGIN=true` (no pseudo-language in either bundle). Lab desk and lab wallet money through `formatPaise` (English unchanged); 7 new files allowlisted (166). |

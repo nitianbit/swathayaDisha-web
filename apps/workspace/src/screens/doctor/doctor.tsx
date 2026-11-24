@@ -3,6 +3,7 @@ import { useQueries, useQuery } from '@tanstack/react-query';
 import {
   addDays, appointmentStart, CONSULT_MODE_LABEL, doctorToolsApi, fromYmd, istDateOf, meetingLinkState, type ConsultMode, type DoctorAppointment, type DoctorToolsApi,
 } from '@jansetu/api';
+import { formatClock } from '@jansetu/i18n';
 import { Button, Empty, formatRupees } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { useSession, useStaff, type StaffUser } from '../../session.tsx';
@@ -140,7 +141,7 @@ export function useUpcomingAppointments(d: DoctorContext, days: number, refetchI
 }
 
 /** HH:MM, India time. */
-const clock = (at: number) => new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Kolkata' }).format(new Date(at));
+const clock = formatClock;
 
 /**
  * WQ11c: a list read again in the background failed, but an earlier read is on screen: the list stays, with this quiet

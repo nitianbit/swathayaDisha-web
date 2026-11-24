@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { NavLink } from 'react-router';
 import { LogOut } from 'lucide-react';
-import { Button } from '@jansetu/ui';
+import { Button, LanguageScope, LanguageSwitcher, useLanguage } from '@jansetu/ui';
 import { pagesFor } from './modules.tsx';
 import { useSession, useStaff } from './session.tsx';
 import { DoctorPresenceProvider } from './screens/doctor/presence.tsx';
@@ -9,6 +9,7 @@ import { DoctorPresenceProvider } from './screens/doctor/presence.tsx';
 export function Shell({ children }: { children: ReactNode }) {
   const user = useStaff();
   const { signOut } = useSession();
+  useLanguage(); // the navigation follows a language change; the page itself is mounted again (LanguageScope)
   const nav = pagesFor(user).filter((p) => p.nav);
   const sections = [...new Set(nav.map((p) => p.nav!.section))];
 
@@ -41,6 +42,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 : user.doctor?.specialization ? `${user.roleLabel} · ${user.doctor.specialization}` : user.roleLabel}
             </div>
           </div>
+          <LanguageSwitcher />
           {/* A deliberate sign-out starts the next person at Home; an expired session keeps its page to resume. */}
           <Button variant="ghost" onClick={() => { window.history.replaceState(null, '', '#/'); signOut(); }}>
             <LogOut size={18} aria-hidden="true" /> Sign out
@@ -48,7 +50,9 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       </aside>
       {/* WQ4: a doctor's "available now" (and its heartbeat) lives as long as the signed-in shell, across pages. */}
-      <main id="main" className="ws-main">{user.role === 'specialist' ? <DoctorPresenceProvider key={user.id}>{children}</DoctorPresenceProvider> : children}</main>
+      <main id="main" className="ws-main">{user.role === 'specialist'
+        ? <DoctorPresenceProvider key={user.id}><LanguageScope>{children}</LanguageScope></DoctorPresenceProvider>
+        : <LanguageScope>{children}</LanguageScope>}</main>
     </div>
   );
 }

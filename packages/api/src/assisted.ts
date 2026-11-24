@@ -1,3 +1,4 @@
+import { formatPaise, formatYmd } from '@jansetu/i18n';
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import { appointmentInstant } from './cancellationWindow.ts';
 import { fetchableFileUrl } from './pharmacyOrders.ts';
@@ -360,8 +361,7 @@ export const bookingStatusLabel = (s: string | undefined) => (s ? BOOKING_STATUS
 /** YYYYMMDD → "22 Nov 2026" (the slot's own India date). */
 export function formatSlotDate(yyyymmdd: string | undefined): string {
   if (!yyyymmdd || !/^\d{8}$/.test(yyyymmdd)) return yyyymmdd ?? '—';
-  const d = new Date(Date.UTC(Number(yyyymmdd.slice(0, 4)), Number(yyyymmdd.slice(4, 6)) - 1, Number(yyyymmdd.slice(6, 8))));
-  return new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(d);
+  return formatYmd(yyyymmdd);
 }
 
 
@@ -506,8 +506,8 @@ export function joinWords(mode: string | undefined, on: JoinOn | undefined): str
 export type RefusalKind = 'off' | 'topup' | 'wallet' | 'price' | 'slot' | 'doctor' | 'limit' | 'patient' | 'coupon' | 'card' | 'other';
 export interface Refusal { kind: RefusalKind; message: string; priceMinor?: number }
 
-/** Integer paise in rupee words ("₹1,234.50"): the one formatter the assisted refusals share. */
-export const rupees = (paise: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(paise / 100);
+/** Paise as money ("₹1,234.50"); kept as `rupees` for the screens that import it by that name. */
+export const rupees = formatPaise;
 const waitWords = (seconds: number | undefined) =>
   !seconds ? 'later' : seconds < 90 ? 'in a minute' : seconds < 3600 ? `in about ${Math.ceil(seconds / 60)} minutes` : `in about ${Math.ceil(seconds / 3600)} hours`;
 

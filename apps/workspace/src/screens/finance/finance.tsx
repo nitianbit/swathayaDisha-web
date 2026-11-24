@@ -8,6 +8,7 @@ import {
   type FinanceEvent, type FinanceSummary, type Page, type PayoutDetailsInput, type PayoutDetailsState, type PayoutDetailsView, type PeriodQuery,
   type SettlementAccount, type SettlementPayout, type StatementLine, type StatementPage, type StatementQuery,
 } from '@jansetu/api';
+import { CALENDAR_DATE, formatDateWith } from '@jansetu/i18n';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
 import { dirtyKeys, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
@@ -27,7 +28,7 @@ export function Signed({ minor }: { minor: number }) {
 /** An India calendar date (YYYY-MM-DD) as people read it. */
 export function formatDate(date: string | undefined): string {
   if (!date || !isRealDate(date)) return date ?? '—';
-  return new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(Date.parse(`${date}T00:00:00Z`));
+  return formatDateWith(Date.parse(`${date}T00:00:00Z`), CALENDAR_DATE);
 }
 
 export const detailsTone = (s: PayoutDetailsState) => (s === 'verified' ? 'ok' : s === 'unverified' ? 'warn' : undefined);

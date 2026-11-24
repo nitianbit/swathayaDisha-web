@@ -1,7 +1,7 @@
+import { formatPaise } from '@jansetu/i18n';
 import { ApiError, type ApiClient } from './client.ts';
-import { recommendationLookup } from './assistedLab.ts';
-import { keyOf, rupees, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type PatientLookup, type Refusal } from './assisted.ts';
-import { labRefusal, labTotalMinor, type LabAddress } from './assistedLab.ts';
+import { keyOf, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type PatientLookup, type Refusal } from './assisted.ts';
+import { labRefusal, labTotalMinor, recommendationLookup, type LabAddress } from './assistedLab.ts';
 import type { LabBooking } from './partnerLabs.ts';
 import { checkId, partnerWorkspaceBase, type PartnerScope } from './partners.ts';
 import type { CatalogueItem, VisitMode } from './partnerInvoices.ts';
@@ -100,7 +100,7 @@ export function deskRefusal(err: unknown): Refusal {
     const p = shared.priceMinor;
     return p === undefined
       ? { kind: 'price', message: 'The lab’s prices changed. Choose the tests again to see the new total.' }
-      : { kind: 'price', priceMinor: p, message: `The lab’s prices changed: the total is now ${rupees(p)}. Tell the patient, then book at the new total.` };
+      : { kind: 'price', priceMinor: p, message: `The lab’s prices changed: the total is now ${formatPaise(p)}. Tell the patient, then book at the new total.` };
   }
   const known = err instanceof ApiError && err.code ? DESK_WORDS[err.code] : undefined;
   return known ?? shared;
