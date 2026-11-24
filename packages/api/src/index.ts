@@ -209,3 +209,10 @@ export type {
   AssistedLab, AssistedLabBranch, AssistedLabItem, AssistedLabSlot, LabAddress as AssistedLabAddress, LabBookingListStatus, LabBookingRequest, LabBookingView, LabByKeyAnswer,
   LabCancelAnswer, LabReceipt,
 } from './assistedLab.ts';
+// WQ18: admin doctors (verify with the S5 fence, unverify) and the S5c admin close and refund of a consultation.
+export {
+  BOOKING_CLOSE_REFUSAL, bookingCloseApi, bookingCloseFinal, bookingCloseRefusal, bookingCloseRefusedBeforeWriting,
+  canCloseAndRefund, closeByKey, closeRefundTarget, closeRefundWords, doctorAdminListApi, doctorEligibility, doctorStateRefusal, doctorStateRefusedBeforeWriting, DOCTORS_PAGE_SIZE,
+  fenceHolds, isAlreadyCancelled, isFenceMismatch, MAX_DOCTOR_NAME_SEARCH, verifyFenceOf,
+} from './adminDoctors.ts';
+export type { AdminDoctor, AdminDoctorQuery, BookingClose, CloseRefundTarget, BookingCloseAnswer, BookingCloseBody, DoctorStateBody, VerifyFence } from './adminDoctors.ts';

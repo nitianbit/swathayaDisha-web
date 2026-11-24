@@ -237,7 +237,8 @@ const fence = (v: Version) => (v ? { expectedUpdatedAt: v } : {});
 /** Whose workspace: the signed-in member's own partner, or (admins) any partner by id. */
 export type PartnerScope = { kind: 'member' } | { kind: 'admin'; partnerId: string };
 
-function checkId(id: string, what: string): string {
+/** An id the backend can take (24 hex), checked before any request. */
+export function checkId(id: string, what: string): string {
   if (!OBJECT_ID_PATTERN.test(id)) throw new Error(`Invalid ${what} id`);
   return id;
 }

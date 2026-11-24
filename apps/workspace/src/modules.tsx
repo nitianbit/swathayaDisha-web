@@ -13,6 +13,8 @@ import type { StaffRole, StaffUser } from './session.tsx';
 import { AdminLabBookingsScreen } from './screens/admin/AdminLabBookingsScreen.tsx';
 import { ConsultationScreen } from './screens/admin/ConsultationScreen.tsx';
 import { ConsultationsScreen } from './screens/admin/ConsultationsScreen.tsx';
+import { DoctorScreen } from './screens/admin/DoctorScreen.tsx';
+import { DoctorsScreen } from './screens/admin/DoctorsScreen.tsx';
 import { NewPharmacyScreen } from './screens/admin/NewPharmacyScreen.tsx';
 import { PharmaciesScreen } from './screens/admin/PharmaciesScreen.tsx';
 import { PharmacyScreen } from './screens/admin/PharmacyScreen.tsx';
@@ -259,6 +261,12 @@ export const PAGES: readonly WorkspacePage[] = [
     nav: { label: 'Pharmacy wallets', icon: Wallet, section: 'Admin' },
   },
   { path: '/admin/pharmacy-wallets/:pharmacyId', roles: ['admin'], element: <PharmacyWalletScreen /> },
+  // WQ18: doctor accounts and their verification (S5 fence: `expectedName`, `expectedRegistrationNumber`).
+  {
+    path: '/admin/doctors', roles: ['admin'], element: <DoctorsScreen />,
+    nav: { label: 'Doctors', icon: Stethoscope, section: 'Admin' },
+  },
+  { path: '/admin/doctors/:doctorId', roles: ['admin'], element: <DoctorScreen /> },
   {
     path: '/admin/consultations', roles: ['admin'], element: <ConsultationsScreen />,
     nav: { label: 'Consultations', icon: CalendarSearch, section: 'Admin' },

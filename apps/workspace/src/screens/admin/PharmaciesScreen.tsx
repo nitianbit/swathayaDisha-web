@@ -1,38 +1,17 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { PHARMACY_PHONE_PATTERN, pharmacyAdminApi, pharmacyState, type PharmacyAccount, type PharmacyQuery } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
+import { NameSearch, Pager, StateBadges, StateFilterSelects, stateFiltersOf, useNameSearch } from './accountList.tsx';
 import { useAdminScope, useListParams } from './adminScope.ts';
-
-/**
- * Filters from the URL, kept only when they are values `pharmacyQuerySchema` accepts. Typed text (a name searched, a
- * mobile number) is never put in the address or the history: it is kept in the page's memory.
- */
-function queryOf(params: URLSearchParams, name: string): PharmacyQuery {
-  const verified = params.get('isVerified');
-  const active = params.get('isActive');
-  const page = Number.parseInt(params.get('page') ?? '1', 10);
-  return {
-    ...(name ? { name } : {}),
-    ...(Number.isInteger(page) && page > 1 ? { page } : {}),
-    ...(verified === 'true' || verified === 'false' ? { isVerified: verified } : {}),
-    ...(active === 'true' || active === 'false' ? { isActive: active } : {}),
-  };
-}
 
 /** Verification and active state as badges. */
 export function PharmacyBadges({ p }: { p: Pick<PharmacyAccount, 'isVerified' | 'isActive'> }) {
-  const s = pharmacyState(p);
-  return (
-    <>
-      <Badge tone={s.verified ? 'ok' : 'warn'}>{s.verified ? 'Verified' : 'Not verified'}</Badge>
-      {!s.active && <> <Badge tone="danger">Inactive</Badge></>}
-    </>
-  );
+  return <StateBadges {...pharmacyState(p)} />;
 }
 
 /** Admin: pharmacy accounts, newest first, searchable by name and filtered by status (WQ10b). */
@@ -44,54 +23,20 @@ export function PharmaciesScreen() {
 function Pharmacies({ scopeKey }: { scopeKey: readonly string[] }) {
   const { api } = useSession();
   const { params, setFilter } = useListParams();
-  /** The name searched (page memory only). */
-  const [name, setName] = useState('');
-  /** A new name was searched on a later page: nothing is read until the address is back on page 1. */
-  const [resetting, setResetting] = useState(false);
-  const urlPage = params.get('page');
-  useEffect(() => { if (!urlPage) setResetting(false); }, [urlPage]);
-  const q = queryOf(params, name);
+  // Typed text (a name searched, a mobile number) is never put in the address or the history: it is kept in the page's memory.
+  const search = useNameSearch(params, setFilter);
+  const q: PharmacyQuery = { ...stateFiltersOf(params), ...(search.name ? { name: search.name } : {}) };
   const page = q.page ?? 1;
-  const list = useQuery({ queryKey: [...scopeKey, 'list', q], queryFn: () => pharmacyAdminApi(api).list(q), enabled: !resetting });
-  const [search, setSearch] = useState('');
-  /** A filter or search change starts again at page 1. */
-  const lastPage = Math.max(1, list.data?.totalPages ?? 1);
-  const submitSearch = (e: FormEvent) => {
-    e.preventDefault();
-    const next = search.trim().slice(0, 100);
-    if (next === name) return;
-    if (urlPage) { setResetting(true); setFilter('page', ''); }
-    setName(next);
-  };
+  const list = useQuery({ queryKey: [...scopeKey, 'list', q], queryFn: () => pharmacyAdminApi(api).list(q), enabled: !search.resetting });
   const filtered = !!(q.name || q.isVerified || q.isActive);
 
   return (
     <>
       <PageHeading title="Pharmacies">Pharmacy accounts: add a pharmacy, verify it, and change its details or how it signs in.</PageHeading>
       <div><Link className="j-btn j-btn--primary" to="/admin/pharmacies/new">Add a pharmacy</Link></div>
-      <form className="ws-search" role="search" onSubmit={submitSearch}>
-        <TextField label="Search by name" value={search} maxLength={100} onChange={(e) => setSearch(e.target.value)} />
-        <Button type="submit" variant="secondary">Search</Button>
-      </form>
+      <NameSearch s={search} />
       <PhoneLookup scopeKey={scopeKey} />
-      <div className="ws-search" role="group" aria-label="Filters">
-        <div className="j-field ws-filter">
-          <label htmlFor="ph-verified">Verification</label>
-          <select id="ph-verified" value={q.isVerified ?? ''} onChange={(e) => setFilter('isVerified', e.target.value)}>
-            <option value="">Verified or not</option>
-            <option value="true">Verified</option>
-            <option value="false">Not verified</option>
-          </select>
-        </div>
-        <div className="j-field ws-filter">
-          <label htmlFor="ph-active">Active</label>
-          <select id="ph-active" value={q.isActive ?? ''} onChange={(e) => setFilter('isActive', e.target.value)}>
-            <option value="">Active or not</option>
-            <option value="true">Active</option>
-            <option value="false">Inactive</option>
-          </select>
-        </div>
-      </div>
+      <StateFilterSelects idPrefix="ph" q={q} setFilter={setFilter} />
       {list.isPending ? <Loading label="Loading pharmacies…" />
         : list.isError ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
         : list.data.items.length === 0 && page === 1 ? (
@@ -119,13 +64,7 @@ function Pharmacies({ scopeKey }: { scopeKey: readonly string[] }) {
                 </tbody>
               </table>
             </div>
-            {(lastPage > 1 || page > 1) && (
-              <nav className="ws-pager" aria-label="Pages">
-                <Button variant="secondary" disabled={page <= 1} onClick={() => setFilter('page', page - 1 > 1 ? String(page - 1) : '')}>Previous</Button>
-                <span>Page {page} of {lastPage}</span>
-                <Button variant="secondary" disabled={page >= lastPage} onClick={() => setFilter('page', String(page + 1))}>Next</Button>
-              </nav>
-            )}
+            <Pager page={page} lastPage={Math.max(1, list.data.totalPages)} setFilter={setFilter} />
           </>
         )}
     </>
