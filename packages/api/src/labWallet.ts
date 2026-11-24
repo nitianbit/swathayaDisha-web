@@ -61,8 +61,11 @@ const cursorQuery = (cursor?: string, limit?: number) => {
   return { cursor, limit };
 };
 
-export function labWalletApi(c: ApiClient, scope: PartnerScope) {
-  const base = () => `${partnerWorkspaceBase(scope)}/assisted`;
+/**
+ * WQ23: an owner's own wallet routes (r13 labs at `/partner-workspace/assisted`, r20 doctors at `/specialists/me/assisted`):
+ * the same shapes; the proof of payment goes to `verifyPath` (a lab's own, a doctor's the existing `/payments/verify`).
+ */
+function ownWalletApi(c: ApiClient, base: () => string, verifyPath: () => string) {
   return {
     wallet: async () => asPharmacyWallet(await c.get<LabWalletView>(`${base()}/wallet`))!,
     /** Newest first, 1–50 a page, the next page by `nextCursor`. */
@@ -70,8 +73,7 @@ export function labWalletApi(c: ApiClient, scope: PartnerScope) {
       const p = await c.page<LabWalletEntry>(`${base()}/wallet/entries`, { query: cursorQuery(cursor, limit) });
       return { ...p, items: p.items.map(asMovement) };
     },
-    topups: (cursor?: string, limit = 20) => c.page<LabTopupRow>(`${base()}/wallet/topups`, { query: cursorQuery(cursor, limit) }),
-    /** One Razorpay order per (lab, member, key): the same key and amount answer the same order (`replayed`). */
+    /** One Razorpay order per (owner, key): the same key and amount answer the same order (`replayed`). */
     startTopup: async (amountMinor: number, requestKey: string): Promise<TopupOrder & { replayed: boolean }> => {
       if (!Number.isSafeInteger(amountMinor) || amountMinor < LAB_TOPUP_MIN_MINOR || amountMinor > LAB_TOPUP_MAX_MINOR) throw new Error('Invalid amount');
       if (!REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
@@ -79,24 +81,40 @@ export function labWalletApi(c: ApiClient, scope: PartnerScope) {
       return { paymentRequired: true, paymentTransactionId: o.paymentTransactionId, razorpayOrderId: o.razorpayOrderId, razorpayKeyId: o.razorpayKeyId,
         amount: o.amountMinor / 100, currency: o.currency, replayed: o.replayed };
     },
+    /** `wallet` is absent for an ineligible doctor (r20 E8). */
     checkTopup: async (paymentTransactionId: string): Promise<TopupCheck> => {
-      const r = await c.post<{ state: 'credited' | 'unpaid'; wallet: LabWalletView | null }>(`${base()}/wallet/topups/${checkId(paymentTransactionId, 'payment')}/check`);
-      return { state: r.state, wallet: asPharmacyWallet(r.wallet) };
+      const r = await c.post<{ state: 'credited' | 'unpaid'; wallet?: LabWalletView | null }>(`${base()}/wallet/topups/${checkId(paymentTransactionId, 'payment')}/check`);
+      return { state: r.state, wallet: asPharmacyWallet(r.wallet ?? null) };
     },
     verify: (p: { paymentTransactionId: string; razorpayOrderId: string; razorpayPaymentId: string; razorpaySignature: string }) =>
-      c.post<{ context: string; paymentRecord: { status: string; credited?: boolean } }>(`${base()}/payments/verify`, {
+      c.post<{ context: string; paymentRecord: { status: string; credited?: boolean } }>(verifyPath(), {
         body: { paymentTransactionId: checkId(p.paymentTransactionId, 'payment'), razorpayOrderId: p.razorpayOrderId,
           razorpayPaymentId: p.razorpayPaymentId, razorpaySignature: p.razorpaySignature },
       }),
   };
 }
 
-const partnerIdOf = (v: string) => checkId(v, 'lab').toLowerCase();
+export function labWalletApi(c: ApiClient, scope: PartnerScope) {
+  const base = () => `${partnerWorkspaceBase(scope)}/assisted`;
+  return {
+    ...ownWalletApi(c, base, () => `${base()}/payments/verify`),
+    /** The lab's card top-ups with their state (a lost answer is found here; a doctor has no such list, r20 E7). */
+    topups: (cursor?: string, limit = 20) => c.page<LabTopupRow>(`${base()}/wallet/topups`, { query: cursorQuery(cursor, limit) }),
+  };
+}
+
+/** WQ23: the doctor's own wallet (r20, specialist token; an eligible doctor reads it). */
+export const doctorWalletApi = (c: ApiClient) => ownWalletApi(c, () => '/specialists/me/assisted', () => '/payments/verify');
+
 /** The admin's credit: at most ₹2,00,000 at one time (checked by the server too), a note of at most 500 characters. */
 export const LAB_ADMIN_TOPUP_MAX_MINOR = 20_000_000;
 
-export function adminLabWalletApi(c: ApiClient) {
-  const base = (partnerId: string) => `/admin/labs/${partnerIdOf(partnerId)}/wallet`;
+/** WQ23: whose wallet an admin works on beside a pharmacy's: a lab's (r13) or a doctor's (r20); the same routes and shapes. */
+export type WalletOwnerKind = 'lab' | 'doctor';
+const ADMIN_WALLET_BASE: Record<WalletOwnerKind, string> = { lab: '/admin/labs', doctor: '/admin/doctors' };
+
+export function adminOwnerWalletApi(c: ApiClient, kind: WalletOwnerKind) {
+  const base = (partnerId: string) => `${ADMIN_WALLET_BASE[kind]}/${checkId(partnerId, kind).toLowerCase()}/wallet`;
   return {
     /** `exists: false` (zeros) while the lab has no wallet yet. */
     wallet: (partnerId: string) => c.get<LabWalletView>(base(partnerId)),
@@ -131,8 +149,11 @@ export function adminLabWalletApi(c: ApiClient) {
   };
 }
 
-/** The ₹50,000 most a lab wallet holds (`WALLET_LIMIT_REACHED`, paise `details`), in words; else the shared assisted words. */
-export function labWalletRefusal(err: unknown): Refusal {
+export const adminLabWalletApi = (c: ApiClient) => adminOwnerWalletApi(c, 'lab');
+export const adminDoctorWalletApi = (c: ApiClient) => adminOwnerWalletApi(c, 'doctor');
+
+/** The ₹50,000 most a lab or doctor wallet holds (`WALLET_LIMIT_REACHED`, paise `details`), in words; else the shared assisted words. */
+export function ownerWalletRefusal(err: unknown, kind: WalletOwnerKind = 'lab'): Refusal {
   if (err instanceof ApiError && err.code === 'WALLET_LIMIT_REACHED') {
     const d = (err.details ?? {}) as { maxBalanceMinor?: number; allowedMinor?: number };
     const rupees = (p: unknown) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(p) / 100);
@@ -144,8 +165,16 @@ export function labWalletRefusal(err: unknown): Refusal {
   }
   if (err instanceof ApiError && err.code === 'WALLET_NOT_FOUND') return { kind: 'other', message: 'The wallet is for labs only.' };
   if (err instanceof ApiError && err.code === 'LAB_NOT_FOUND') return { kind: 'other', message: 'This lab was not found.' };
+  if (err instanceof ApiError && err.code === 'SPECIALIST_NOT_FOUND') return { kind: 'other', message: 'This doctor was not found.' };
+  if (err instanceof ApiError && err.code === 'SPECIALIST_NOT_VERIFIED') return { kind: 'other', message: DOCTOR_WALLET_CLOSED_MESSAGE };
   if (err instanceof ApiError && err.code === 'WALLET_RECEIVABLE') return { kind: 'other', message: 'The wallet owes Jansetu money, so its hold cannot be released yet.' };
   const shared = assistedRefusal(err);
-  return shared.kind === 'off' ? { kind: 'off', message: LAB_WALLET_SWITCHED_OFF_MESSAGE } : shared;
+  return shared.kind === 'off' ? { kind: 'off', message: kind === 'doctor' ? DOCTOR_WALLET_SWITCHED_OFF_MESSAGE : LAB_WALLET_SWITCHED_OFF_MESSAGE } : shared;
 }
+export const labWalletRefusal = (err: unknown) => ownerWalletRefusal(err, 'lab');
+export const doctorWalletRefusal = (err: unknown) => ownerWalletRefusal(err, 'doctor');
 export const LAB_WALLET_SWITCHED_OFF_MESSAGE = 'Adding money to the lab wallet is not switched on yet.';
+export const DOCTOR_WALLET_SWITCHED_OFF_MESSAGE = 'Adding money to your wallet is not switched on yet.';
+/** r20: only a verified, active doctor has a wallet to read (403 SPECIALIST_NOT_VERIFIED). */
+export const DOCTOR_WALLET_CLOSED_MESSAGE = 'Your wallet opens once Jansetu has verified your account and it is active.';
+export const isDoctorWalletClosed = (err: unknown) => err instanceof ApiError && err.code === 'SPECIALIST_NOT_VERIFIED';

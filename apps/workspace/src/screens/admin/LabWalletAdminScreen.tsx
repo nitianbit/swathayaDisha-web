@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  adminLabWalletApi, asPharmacyWallet, labWalletRefusal, OBJECT_ID_PATTERN, partnerAdminApi, type ApiClient, type LabWalletLot,
+  adminOwnerWalletApi, asPharmacyWallet, doctorAdminListApi, OBJECT_ID_PATTERN, ownerWalletRefusal, partnerAdminApi, type ApiClient, type LabWalletLot,
+  type WalletOwnerKind,
 } from '@jansetu/api';
 import { Alert, Badge, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
@@ -18,67 +19,84 @@ import { useAdminScope } from './adminScope.ts';
 import { AddMoney, Balance, UncreditedTopups, type AdminTopupTarget } from './PharmacyWalletsScreen.tsx';
 
 /**
- * WQ20 admin: one lab's Jansetu wallet (r13, `/admin/labs/:partnerId/wallet*`), on the admin pharmacy wallet's own pieces:
- * the balance, its hold (`PUT …/freeze`), money added by an admin (`POST …/topup`, Idempotency-Key, at most ₹2,00,000,
- * exact by-key read), the history, the card top-ups (lots) with the existing chargeback (a lab's is flag only), and the
- * card top-ups not credited with the existing "already paid by hand" close.
+ * WQ20 admin: one lab's Jansetu wallet (r13, `/admin/labs/:partnerId/wallet*`); WQ23: one doctor's the same way (r20,
+ * `/admin/doctors/:specialistId/wallet*`). On the admin pharmacy wallet's own pieces: the balance, its hold (`PUT …/freeze`),
+ * money added by an admin (`POST …/topup`, Idempotency-Key, at most ₹2,00,000, exact by-key read), the history, the card
+ * top-ups (lots) with the existing chargeback (flag only for both), and the card top-ups not credited with the existing
+ * "already paid by hand" close.
  */
 export function LabWalletAdminScreen() {
   const { partnerId = '' } = useParams();
   const scope = useAdminScope('lab-wallets');
   if (!OBJECT_ID_PATTERN.test(partnerId)) return <NoSuchRecord back="/admin/partners" backLabel="Back to labs and clinics" title="Lab">Open it from the list of labs and clinics.</NoSuchRecord>;
-  return <LabWallet key={`${scope.identity}:${partnerId}`} scopeKey={scope.key} partnerId={partnerId.toLowerCase()} />;
+  return <OwnerWallet key={`${scope.identity}:${partnerId}`} kind="lab" scopeKey={scope.key} ownerId={partnerId.toLowerCase()} />;
 }
 
-/** A lab's wallet as the admin credit's target (the shared Add money form). */
-function labTarget(api: ApiClient, scopeKey: readonly string[], partnerId: string, name: string): AdminTopupTarget {
-  const w = adminLabWalletApi(api);
+/** WQ23: `/admin/doctors/:doctorId/wallet`, linked from the doctor's admin page (WQ18). */
+export function DoctorWalletAdminScreen() {
+  const { doctorId = '' } = useParams();
+  const scope = useAdminScope('doctor-wallets');
+  if (!OBJECT_ID_PATTERN.test(doctorId)) return <NoSuchRecord back="/admin/doctors" backLabel="Back to doctors" title="Doctor">Open it from the doctor list.</NoSuchRecord>;
+  return <OwnerWallet key={`${scope.identity}:${doctorId}`} kind="doctor" scopeKey={scope.key} ownerId={doctorId.toLowerCase()} />;
+}
+
+const OWNER_WORD: Record<WalletOwnerKind, string> = { lab: 'lab', doctor: 'doctor' };
+
+/** An owner's wallet as the admin credit's target (the shared Add money form). */
+function ownerTarget(api: ApiClient, kind: WalletOwnerKind, scopeKey: readonly string[], ownerId: string, name: string): AdminTopupTarget {
+  const w = adminOwnerWalletApi(api, kind);
   return {
-    ownerKey: `lab-${partnerId}`, ownerName: name, owner: 'lab', queryKey: [...scopeKey, partnerId], recentKey: [...scopeKey, partnerId, 'entries', 'recent'],
-    recent: () => w.entries(partnerId),
-    topup: async (body, key) => asPharmacyWallet(await w.topup(partnerId, { amountMinor: body.amount * 100, notes: body.notes }, key)),
+    ownerKey: `${kind}-${ownerId}`, ownerName: name, owner: kind, queryKey: [...scopeKey, ownerId], recentKey: [...scopeKey, ownerId, 'entries', 'recent'],
+    recent: () => w.entries(ownerId),
+    topup: async (body, key) => asPharmacyWallet(await w.topup(ownerId, { amountMinor: body.amount * 100, notes: body.notes }, key)),
     findCredit: async (key) => {
-      const exact = await w.topupByKey(partnerId, key);
+      const exact = await w.topupByKey(ownerId, key);
       return exact.state === 'used' ? { row: exact.row } : { row: null, complete: true, searched: 0, exact: true };
     },
   };
 }
 
-function LabWallet({ scopeKey, partnerId }: { scopeKey: readonly string[]; partnerId: string }) {
+function OwnerWallet({ kind, scopeKey, ownerId }: { kind: WalletOwnerKind; scopeKey: readonly string[]; ownerId: string }) {
   const { api } = useSession();
-  const w = adminLabWalletApi(api);
-  const lab = useQuery({ queryKey: [...scopeKey, partnerId, 'lab'], queryFn: () => partnerAdminApi(api).get(partnerId) });
-  const wallet = useQuery({ queryKey: [...scopeKey, partnerId, 'wallet'], queryFn: () => w.wallet(partnerId) });
+  const w = adminOwnerWalletApi(api, kind);
+  const refusal = (err: unknown) => ownerWalletRefusal(err, kind);
+  const owner = useQuery({
+    queryKey: [...scopeKey, ownerId, kind],
+    queryFn: async () => (kind === 'lab' ? partnerAdminApi(api).get(ownerId) : doctorAdminListApi(api).get(ownerId)),
+  });
+  const wallet = useQuery({ queryKey: [...scopeKey, ownerId, 'wallet'], queryFn: () => w.wallet(ownerId) });
   const history = useCursorPages();
-  const entries = useQuery({ queryKey: [...scopeKey, partnerId, 'entries', history.cursor], queryFn: () => w.entries(partnerId, history.cursor || undefined) });
-  const name = lab.data?.name ?? 'this lab';
+  const entries = useQuery({ queryKey: [...scopeKey, ownerId, 'entries', history.cursor], queryFn: () => w.entries(ownerId, history.cursor || undefined) });
+  const word = OWNER_WORD[kind];
+  const name = owner.data?.name ?? `this ${word}`;
   const view = wallet.data ? asPharmacyWallet(wallet.data) : null;
+  const back = kind === 'lab' ? `/admin/partners/${ownerId}` : `/admin/doctors/${ownerId}`;
   return (
     <>
-      <Link className="ws-back" to={`/admin/partners/${partnerId}`}><ArrowLeft size={16} aria-hidden="true" /> Back to {lab.data?.name ?? 'the lab'}</Link>
-      <PageHeading title={lab.data ? `Wallet: ${lab.data.name}` : 'Lab wallet'} />
+      <Link className="ws-back" to={back}><ArrowLeft size={16} aria-hidden="true" /> Back to {owner.data?.name ?? `the ${word}`}</Link>
+      <PageHeading title={owner.data ? `Wallet: ${owner.data.name}` : `${word === 'lab' ? 'Lab' : 'Doctor'} wallet`} />
       <section className="ws-section" aria-labelledby="bal-h">
         <h2 id="bal-h">Balance</h2>
         {wallet.isPending ? <Loading label="Loading the wallet…" />
-          : wallet.isError ? <ErrorState message={labWalletRefusal(wallet.error).message} onRetry={() => void wallet.refetch()} />
+          : wallet.isError ? <ErrorState message={refusal(wallet.error).message} onRetry={() => void wallet.refetch()} />
           : (
             <>
-              <Balance w={wallet.data.exists === false ? null : view} owner="lab" />
-              <Hold scopeKey={scopeKey} partnerId={partnerId} name={name} frozen={wallet.data.frozen} />
+              <Balance w={wallet.data.exists === false ? null : view} owner={kind} />
+              <Hold kind={kind} scopeKey={scopeKey} ownerId={ownerId} name={name} frozen={wallet.data.frozen} />
             </>
           )}
       </section>
       <section className="ws-section" aria-labelledby="add-h">
         <h2 id="add-h">Add money</h2>
-        {lab.data && wallet.isSuccess ? <AddMoney target={labTarget(api, scopeKey, partnerId, lab.data.name)} wallet={view} />
-          : lab.isPending || wallet.isPending ? <Loading label="Loading…" /> : <p className="ws-muted">The lab and its wallet must load first.</p>}
+        {owner.data && wallet.isSuccess ? <AddMoney target={ownerTarget(api, kind, scopeKey, ownerId, owner.data.name)} wallet={view} />
+          : owner.isPending || wallet.isPending ? <Loading label="Loading…" /> : <p className="ws-muted">The {word} and its wallet must load first.</p>}
       </section>
       <WalletHistory q={entries} notes empty={`Top-ups, admin credits and bookings of ${name} are listed here.`} first={history.page === 1}
         pager={<CursorPager pages={history} nextCursor={entries.data?.nextCursor} label="Wallet history pages" />} />
-      <Lots scopeKey={scopeKey} partnerId={partnerId} />
+      <Lots kind={kind} scopeKey={scopeKey} ownerId={ownerId} />
       <section className="ws-section" aria-labelledby="uncredited-h">
         <h2 id="uncredited-h">Card top-ups not credited</h2>
-        <UncreditedTopups scopeKey={scopeKey} ownerId={partnerId} ownerName={name} owner="lab" />
+        <UncreditedTopups scopeKey={scopeKey} ownerId={ownerId} ownerName={name} owner={kind} />
       </section>
     </>
   );
@@ -88,7 +106,8 @@ function LabWallet({ scopeKey, partnerId }: { scopeKey: readonly string[]; partn
  * Put the wallet on hold (it cannot pay; money can still be added) or release it, with a reason. Setting a state twice
  * changes nothing more, so a lost answer is settled by reading the wallet again.
  */
-function Hold({ scopeKey, partnerId, name, frozen }: { scopeKey: readonly string[]; partnerId: string; name: string; frozen: boolean }) {
+function Hold({ kind, scopeKey, ownerId: partnerId, name, frozen }: { kind: WalletOwnerKind; scopeKey: readonly string[]; ownerId: string; name: string; frozen: boolean }) {
+  const refusal = (err: unknown) => ownerWalletRefusal(err, kind);
   const { api } = useSession();
   const queryClient = useQueryClient();
   const { perform, busy } = useOneAtATime('wallet');
@@ -100,14 +119,14 @@ function Hold({ scopeKey, partnerId, name, frozen }: { scopeKey: readonly string
     setOutcome(null);
     const done = to ? `The wallet of ${name} is on hold: it cannot pay for bookings; money can still be added.` : `The wallet of ${name} is released.`;
     try {
-      await adminLabWalletApi(api).freeze(partnerId, to, reason);
+      await adminOwnerWalletApi(api, kind).freeze(partnerId, to, reason);
       say('ok', done);
     } catch (err) {
-      if (definitelyNotRecorded(err)) say('error', `Not changed: ${labWalletRefusal(err).message}`);
+      if (definitelyNotRecorded(err)) say('error', `Not changed: ${refusal(err).message}`);
       else {
-        const now = await adminLabWalletApi(api).wallet(partnerId).catch(() => null);
+        const now = await adminOwnerWalletApi(api, kind).wallet(partnerId).catch(() => null);
         if (now && now.frozen === to) say('ok', done);
-        else say('warn', `Not confirmed: ${labWalletRefusal(err).message} The hold shown is what is saved now; try again if it is still needed.`);
+        else say('warn', `Not confirmed: ${refusal(err).message} The hold shown is what is saved now; try again if it is still needed.`);
       }
     } finally {
       await queryClient.invalidateQueries({ queryKey: [...scopeKey, partnerId] });
@@ -132,14 +151,15 @@ function Hold({ scopeKey, partnerId, name, frozen }: { scopeKey: readonly string
 const DISPUTE_LABEL: Readonly<Record<string, string>> = { lost: 'Card dispute recorded' };
 
 /**
- * The lab's card top-ups as lots (newest first, at most 200). The existing chargeback of a lot
- * (`POST /admin/wallet-lots/:lotId/chargeback`): for a lab it only flags the top-up (no money is taken; the lot stops being
+ * The card top-ups as lots (newest first, at most 200). The existing chargeback of a lot
+ * (`POST /admin/wallet-lots/:lotId/chargeback`): for a lab or a doctor it only flags the top-up (no money is taken; the lot stops being
  * withdrawable; recovering the money is an admin decision). Repeating it answers the flag again.
  */
-function Lots({ scopeKey, partnerId }: { scopeKey: readonly string[]; partnerId: string }) {
+function Lots({ kind, scopeKey, ownerId: partnerId }: { kind: WalletOwnerKind; scopeKey: readonly string[]; ownerId: string }) {
+  const refusal = (err: unknown) => ownerWalletRefusal(err, kind);
   const { api } = useSession();
   const queryClient = useQueryClient();
-  const w = adminLabWalletApi(api);
+  const w = adminOwnerWalletApi(api, kind);
   const lots = useQuery({ queryKey: [...scopeKey, partnerId, 'lots'], queryFn: () => w.lots(partnerId) });
   const { perform, busy } = useOneAtATime('lot');
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'error'; text: string } | null>(null);
@@ -150,8 +170,8 @@ function Lots({ scopeKey, partnerId }: { scopeKey: readonly string[]; partnerId:
       setNotice({ tone: 'ok', text: r.replayed ? 'This card dispute was already recorded. Nothing more was changed.'
         : `Card dispute recorded on the ${formatRupees(lot.amountMinor / 100)} top-up. No money was taken from the wallet; that money is no longer withdrawable.` });
     } catch (err) {
-      if (definitelyNotRecorded(err)) setNotice({ tone: 'error', text: `Not recorded: ${labWalletRefusal(err).message}` });
-      else setNotice({ tone: 'warn', text: `Not confirmed: ${labWalletRefusal(err).message} The list shows what is saved now; recording it again is safe.` });
+      if (definitelyNotRecorded(err)) setNotice({ tone: 'error', text: `Not recorded: ${refusal(err).message}` });
+      else setNotice({ tone: 'warn', text: `Not confirmed: ${refusal(err).message} The list shows what is saved now; recording it again is safe.` });
     } finally {
       await queryClient.invalidateQueries({ queryKey: [...scopeKey, partnerId] });
     }
@@ -161,7 +181,7 @@ function Lots({ scopeKey, partnerId }: { scopeKey: readonly string[]; partnerId:
       <h2 id="lots-h">Card top-ups</h2>
       {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
       {lots.isPending ? <Loading label="Loading card top-ups…" />
-        : lots.isError ? <ErrorState message={labWalletRefusal(lots.error).message} onRetry={() => void lots.refetch()} />
+        : lots.isError ? <ErrorState message={refusal(lots.error).message} onRetry={() => void lots.refetch()} />
         : lots.data.length === 0 ? <p className="ws-muted">No card top-ups yet.</p>
         : (
           <div className="ws-table-wrap">

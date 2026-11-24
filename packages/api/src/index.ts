@@ -226,8 +226,11 @@ export type { DeskBookingRequest, DeskByKey, DeskCancelAnswer, DeskCollector, De
 export {
   adminLabWalletApi, asMovement, asPharmacyWallet, LAB_ADMIN_TOPUP_MAX_MINOR, LAB_TOPUP_MAX_MINOR, LAB_TOPUP_MIN_MINOR, LAB_TOPUP_STATE_LABEL,
   LAB_WALLET_SWITCHED_OFF_MESSAGE, labTopupCheckable, labWalletApi, labWalletRefusal,
+  // WQ23: the doctor's wallet (r20) on the same routes and shapes.
+  adminDoctorWalletApi, adminOwnerWalletApi, DOCTOR_WALLET_CLOSED_MESSAGE, DOCTOR_WALLET_SWITCHED_OFF_MESSAGE, doctorWalletApi, doctorWalletRefusal,
+  isDoctorWalletClosed, ownerWalletRefusal,
 } from './labWallet.ts';
-export type { LabTopupOrder, LabTopupRow, LabTopupState, LabWalletEntry, LabWalletLot, LabWalletView } from './labWallet.ts';
+export type { LabTopupOrder, LabTopupRow, LabTopupState, LabWalletEntry, LabWalletLot, LabWalletView, WalletOwnerKind } from './labWallet.ts';
 // WQ22: the pharmacy's "Consult now" (r17): an instant consultation for a walk-in, paid from the wallet.
 export {
   bookerInstantBody, changedQuote, INSTANT_ACTIVITY_MS, INSTANT_DESK_MODES, INSTANT_POLL_MS, INSTANT_SWITCHED_OFF_MESSAGE, instantBookerRefusal, instantStage,

@@ -183,7 +183,7 @@ export function adminTopupRefusal(err: unknown): string {
 
 /** S6: the warning shown on the form and its review (owner wording). */
 /** WQ20: the same words for a lab's wallet. */
-export const adminTopupWarning = (owner: 'pharmacy' | 'lab') =>
+export const adminTopupWarning = (owner: 'pharmacy' | 'lab' | 'doctor') =>
   `Do not use this to make up for a card top-up that never arrived. Ask the tech team to run the top-up check instead, or the ${owner} could be paid twice.`;
 export const ADMIN_TOPUP_WARNING = adminTopupWarning('pharmacy');
 
@@ -193,9 +193,10 @@ export const ADMIN_TOPUP_WARNING = adminTopupWarning('pharmacy');
 export interface UncreditedTopup {
   paymentTransactionId: string;
   pharmacyId: string;
-  /** r13: a lab's top-up names `walletKind: 'lab'` and its `partnerId` (no `pharmacyId`). */
-  walletKind?: 'pharmacy' | 'lab' | string;
+  /** r13: a lab's top-up names `walletKind: 'lab'` and its `partnerId`; r20: a doctor's `walletKind: 'doctor'` and `specialistId`. */
+  walletKind?: 'pharmacy' | 'lab' | 'doctor' | string;
   partnerId?: string;
+  specialistId?: string;
   amountMinor: number;
   createdAt: string;
   /** `paid_not_credited`: the card payment was taken; `not_checked_with_gateway`: an attempt nobody checked with Razorpay. */
@@ -208,7 +209,7 @@ export interface UncreditedTopup {
 export function uncreditedOf(data: unknown, ownerId: string): UncreditedTopup[] {
   if (!Array.isArray(data)) return [];
   const id = ownerId.toLowerCase();
-  const ownerOf = (r: UncreditedTopup) => (r.walletKind === 'lab' ? r.partnerId : r.pharmacyId);
+  const ownerOf = (r: UncreditedTopup) => (r.walletKind === 'lab' ? r.partnerId : r.walletKind === 'doctor' ? r.specialistId : r.pharmacyId);
   return data.filter((r): r is UncreditedTopup => !!r && typeof r === 'object'
     && hex.test(String((r as UncreditedTopup).paymentTransactionId)) && String(ownerOf(r as UncreditedTopup) ?? '').toLowerCase() === id
     && Number.isSafeInteger((r as UncreditedTopup).amountMinor));

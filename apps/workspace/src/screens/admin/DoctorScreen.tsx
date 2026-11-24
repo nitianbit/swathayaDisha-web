@@ -59,6 +59,7 @@ function DoctorDetail({ doctorId, scopeKey }: { doctorId: string; scopeKey: read
           <>
             <VerificationSection d={q.data} doctorId={doctorId} perform={guard.perform} busy={guard.busy || q.isFetching} reread={reread} readNow={readNow} />
             {/* The doctor's open consultations are the Consultations list filtered by doctor and status (closed there, S5c). */}
+            <p><Link to={`/admin/doctors/${doctorId}/wallet`}>Wallet</Link></p>
             <p>
               Consultations with this doctor:{' '}
               <Link to={`/admin/consultations?doctor=${doctorId}&status=pending`}>Waiting</Link>{' · '}

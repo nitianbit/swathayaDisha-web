@@ -162,7 +162,7 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
 }
 
 /** WQ20: a pharmacy's or a lab's wallet as an admin sees it (`owner` names it). */
-export function Balance({ w, owner }: { w: PharmacyWallet | null; owner: 'pharmacy' | 'lab' }) {
+export function Balance({ w, owner }: { w: PharmacyWallet | null; owner: 'pharmacy' | 'lab' | 'doctor' }) {
   if (!w) return <p>This {owner} has no wallet yet. It is made when the {owner} opens its wallet, or when money is added here.</p>;
   const state = walletState(w);
   const owed = Number(w.receivableMinor ?? 0);
@@ -192,7 +192,7 @@ export interface AdminTopupTarget {
   /** The memory slots' owner part (a pharmacy's id as before; a lab's `lab-<id>`). */
   ownerKey: string;
   ownerName: string;
-  owner: 'pharmacy' | 'lab';
+  owner: 'pharmacy' | 'lab' | 'doctor';
   /** Read again after every answer. */
   queryKey: readonly unknown[];
   /** The newest history page (for the last admin credit on the review). */
@@ -390,7 +390,7 @@ const topupWords = (r: UncreditedTopup) => `${formatRupees(r.amountMinor / 100)}
  * Closing is once per top-up whatever the key, so forgetting an unconfirmed close is safe: closing again is replayed.
  */
 export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pharmacyName, owner }: {
-  scopeKey: readonly string[]; ownerId: string; ownerName: string; owner: 'pharmacy' | 'lab';
+  scopeKey: readonly string[]; ownerId: string; ownerName: string; owner: 'pharmacy' | 'lab' | 'doctor';
 }) {
   const { api } = useSession();
   const admin = useStaff();

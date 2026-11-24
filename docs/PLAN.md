@@ -2068,6 +2068,29 @@ origin/stage f089b46 (WQ17c) merged first, then WQ20b and WQ20c. Behind `ASSISTE
 
 API gaps: none blocking.
 
+## WQ23 doctor wallet: the doctor's own wallet and the admin's doctor wallet tools (2026-11-25, branch `wq23/doctor-wallet`)
+
+Backend: r20 (`m0/r20-phase3a` d3f89855, design ASSISTED_BOOKING_DESIGN.md §25.12; local, under review). Web base: WQ22b 7c76251.
+Behind `ASSISTED_BOOKING_ENABLED_DOCTOR` (off: a new top-up answers 503, said as "Adding money to your wallet is not switched on
+yet."; reads, the check and verify keep working). Pharmacy and lab screens unchanged.
+
+- **Doctor › Wallet** (`/doctor/wallet`): the shared balance (with the card money), **Add money** by Razorpay on a keyed order
+  (`POST /specialists/me/assisted/wallet/topups`; after a lost answer "Top up" asks again with the same key and amount, WQ20b),
+  the proof to the existing `/payments/verify`, else the server's check; no top-up list for doctors (r20 E7), so an unconfirmed
+  top-up is kept on this device by its record id only, with "Check my top-up" (as the pharmacy's); the history in cursor pages.
+  A doctor who is not verified and active (403 `SPECIALIST_NOT_VERIFIED`) sees only "Your wallet opens once Jansetu has verified
+  your account and it is active."
+- **Admin › Doctors › a doctor › Wallet** (`/admin/doctors/:id/wallet`, linked from WQ18's doctor page): the admin lab wallet page,
+  generalised to its owner (`kind: 'lab' | 'doctor'`, `/admin/labs|doctors/:id/wallet*`): balance, hold and release, Add money
+  (Idempotency-Key, exact by-key read), history with notes, card top-ups with the dispute flag, card top-ups not credited with
+  the existing close (the uncredited list's doctor rows by `specialistId`).
+- **Shared, not copied**: the wallet API builds the lab's and the doctor's own routes from one function (`ownWalletApi`) and the
+  admin routes from one (`adminOwnerWalletApi`); one refusal mapper per owner (`ownerWalletRefusal`); the owner unions of the
+  admin pieces and the top-up warning take `'doctor'`.
+
+API gaps: none blocking. Doctors have no top-up list (by design, E7): a top-up whose answer was lost after a reload or on another
+device is not listed (the server's sweep credits it).
+
 ## Follow-ups
 
 
