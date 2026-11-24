@@ -1924,6 +1924,30 @@ API gaps (no route; nothing invented):
 - L2: a fence mismatch settles the verify on any attempt (re-read, shown). L3: no Verify without a name (no false "outcome
   unknown"). L4: a card-paid assisted booking's close says the refund "is being refunded" to the card.
 
+### WQ17c pharmacy pays a lab test by card or UPI (phase 2b) (2026-11-25, branch `wq17/pharmacy-lab-booking`)
+
+Backend r14 (`m0/r14-phase2b` 77594d72, design §24.14; local). On stage 24019c4 (WQ17, WQ17b, WQ18).
+
+- **One card machinery, by booking kind** (owner: no duplicated code). The consultation card code is generalised, not copied:
+  `assistedCard.ts` `cardBookingState(kind, booking)` (consultation `pending`/`pending` → `confirmed`/`paid`; lab `pending_payment`
+  → any later status), `orderFromBooking` for any view (the amount only when the view has a price: a lab view has none, so
+  Checkout takes the order's own), `cancelWords(answer, told)`; `cardBooking.tsx` `CardPaymentPanel` takes a
+  `CardBookingSource` (`consultationCardSource`, `labCardSource`: the reads, Checkout's description and who is told),
+  `useCardChoice` (the way to pay, the card refusals), `CardDueSection`, `NotBooked`, `ORDER_FAILED_WORDS`; `walletPay.tsx`
+  `PayChoice` ("How do you pay?"); `ownedCancel.tsx` `CardAwareCancel` (the money words, "Refund to card (default)" / "Refund to
+  wallet", `refundTo`). Book consultation, its booked detail and their specs are unchanged. `assistedCard.ts` now reuses `hex`
+  and `idOf` from `assisted.ts`.
+- **Book lab test**: "How do you pay?" next to the wallet pay; card creates with `paymentMethod: 'razorpay'` (same body, key and
+  owned request); Checkout at once on the create's order; verify, then reconcile; the held page with "Pay now" (asks the server
+  first: an authorized payment means no second Checkout) and "Check payment"; a late or duplicate payment as for consultations;
+  502 order failure, switch off, nothing to pay, no gateway keys as for consultations.
+- **Booked lab tests**: "Waiting for payment" in the list and its filter (`status=pending_payment`); on the booking, the
+  consultation's payment panel on the lab's own reads (the open order from the booker view's `payment`, any device; "Pay now"
+  shows no amount, the view has no price); cancel: a waiting card booking at any time (nothing refunded), a card-paid one up
+  to 1 hour before with the refund to the card (default) or the wallet (`refundTo`), the answer's `refund` in words.
+- The lab switch-off words for the card (`PAYMENT_METHOD_UNAVAILABLE`) are now the consultation's ("Card payment is not
+  switched on yet. Pay from your Jansetu wallet."): lab tests can be paid by card from r14.
+
 ## WQ19 lab front desk: book a walk-in, a lab visit or a home collection, paid at the lab (2026-11-25, branch `wq19/lab-desk`)
 
 Backend: r12 (`m0/r12-phase2c` e304dabe, design ASSISTED_BOOKING_DESIGN.md §24.12; local). Web base: stage 0aca6c3 + WQ17
@@ -2035,6 +2059,7 @@ API gaps:
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ17c lab tests by card or UPI (phase 2b) on 24019c4 | Against r14 77594d72 (§24.14; mocked API). typecheck clean; Vitest 422/422 (+4 in wq17c.test.ts: card state by kind, the lab view's order without an amount, cancel words by who is told and the waiting lab cancel, `refundTo` and `status=pending_payment`; the lab card switch-off words now the consultation's); Playwright workspace 895 passed of 896 (+10 = 5 journeys x 2: lab card pay, Checkout closed then Pay now after asking the server, another device with an authorized payment gets no second Checkout, cancel to the card, cancel to the wallet; the consultation card and wallet specs pass unchanged on the shared pieces). The one failure is the known load-timing check in stock-supply.spec.ts:1277 (as in WQ18b): 6/6 on its own afterwards. Temporary config on port 5472, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ20 lab wallet (on WQ19b 12f0321) | Against r13 215556e2 (§24.13; mocked API). typecheck clean; Vitest 432/432 (+7: labWallet.test.ts 6 (member and admin paths, the keyed order read into the pharmacy shape, refusals before any request, the Idempotency-Key and the exact by-key read, freeze and lot chargeback bodies, paise into balance/hold/owing and signed history rows, the wallet limit from its details, the switch, checkable states, a lab's uncredited rows, the wallet permissions, the owner in the warning) and topup.test.ts +1 (the ₹50,000 lab cap)); Playwright workspace 914/914 (+10 = 5 journeys x 2: top-up by Razorpay, a lost answer found under Top-ups and checked once, the wallet limit and the switch, wallet.view without Add money and a clinic with no wallet page, the admin credit resent after a lost answer with the same key and added once plus the hold and its release) on a temporary config (port 5491, no server reuse, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ19b review fix (M1, L1, L2 on e981104) | typecheck clean (a true/false `isCancelled` no longer compiles); Vitest 425/425; Playwright lab-desk 18/18 (+2 = 1 journey x 2: a desk cancel lost before the server, checked while the booking is still confirmed, says "Not cancelled so far" and is then resent once; failing before the fix), clinic-desk + partner-invoices + lab-booking + assisted-booking + card-booking 242/242 on a temporary config (port 5481, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ19 after merging WQ17b + WQ18 (24019c4): the desk on `useAssistedCreate` | typecheck clean; Vitest 425/425; Playwright workspace 902 run (temporary config, port 5481): 901 passed, 1 failed = pharmacy-extras.spec.ts:952 (tablet), whose check that storage holds no "250" matched the stored timestamp 1795552507312 (unrelated; 6/6 alone); lab-desk + lab-booking 38/38; release build with VITE_API_SAME_ORIGIN=true. |

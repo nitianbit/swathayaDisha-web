@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { assistedRefusal, walletBalancePaise, walletState, type Refusal } from '@jansetu/api';
+import { assistedRefusal, walletBalancePaise, walletState, type AssistedPaymentMethod, type Refusal } from '@jansetu/api';
 import { Alert, Button, ErrorState, formatRupees, Loading } from '@jansetu/ui';
 import { TopUpForm } from './topup.tsx';
 import { useWallet, walletHoldWords } from './WalletScreen.tsx';
@@ -65,6 +65,54 @@ export function WalletPay({ pharmacyId, priceMinor, couponCode, refused, busy, o
         <Button busy={busy} disabled={!!hold || short || (refused?.kind === 'price')} onClick={onPay}>Pay {formatRupees(priceMinor / 100)} from wallet</Button>
         <Button variant="ghost" disabled={busy} onClick={onBack}>Back</Button>
       </div>
+    </>
+  );
+}
+
+/**
+ * WQ17c: "How do you pay?" (WQ16, moved here from Book consultation so that Book lab test offers card or UPI the very same
+ * way): the wallet (the default) or card or UPI, only when there is something to pay; a switched-off card is said next to it.
+ */
+export function PayChoice({ pharmacyId, priceMinor, couponCode, refused, busy, method, cardOff, onMethod, onPay, onBack, onNewPrice }: {
+  pharmacyId: string; priceMinor: number; couponCode?: string; refused: Refusal | null; busy: boolean;
+  method: AssistedPaymentMethod; cardOff: string | null; onMethod: (m: AssistedPaymentMethod) => void;
+  onPay: () => void; onBack: () => void; onNewPrice: (priceMinor: number) => void;
+}) {
+  // WQ16: card or UPI only when there is something to pay; the wallet path below stays as it was.
+  const offerCard = priceMinor > 0;
+  const byCard = offerCard && method === 'razorpay' && !cardOff;
+  return (
+    <>
+      {offerCard && (
+        <fieldset className="ws-checks" disabled={busy}>
+          <legend>How do you pay?</legend>
+          <label className="ws-check">
+            <input type="radio" name="pay-method" checked={!byCard} onChange={() => onMethod('wallet')} />
+            Pay from wallet
+          </label>
+          <label className="ws-check">
+            <input type="radio" name="pay-method" checked={byCard} disabled={!!cardOff} aria-describedby={cardOff ? 'card-off' : undefined} onChange={() => onMethod('razorpay')} />
+            Pay by card or UPI
+          </label>
+          {cardOff && <span id="card-off" className="j-field__hint">{cardOff}</span>}
+        </fieldset>
+      )}
+      {byCard ? (
+        <>
+          <RefusalAlert refused={refused} couponCode={couponCode} onNewPrice={onNewPrice} />
+          <span className="ws-muted">
+            Collect {formatRupees(priceMinor / 100)} from the patient at your counter. You pay it on the Razorpay page next. The time is held for 30
+            minutes while you pay. If the booking is cancelled later, the money goes back to the card or UPI, or to your wallet if you choose.
+          </span>
+          <div className="confirm-actions">
+            <Button busy={busy} disabled={refused?.kind === 'price'} onClick={onPay}>Pay {formatRupees(priceMinor / 100)} by card or UPI</Button>
+            <Button variant="ghost" disabled={busy} onClick={onBack}>Back</Button>
+          </div>
+        </>
+      ) : (
+        <WalletPay pharmacyId={pharmacyId} priceMinor={priceMinor} couponCode={couponCode} refused={refused} busy={busy}
+          onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
+      )}
     </>
   );
 }

@@ -1,5 +1,5 @@
 import { ApiError, type ApiClient } from './client.ts';
-import { assistedRefusal, type AssistedCardPayment, type BookedConsultation, type CancelAnswer, type CardRefund } from './assisted.ts';
+import { assistedRefusal, hex, idOf as checkedId, type BookedConsultation, type BookingPayment, type CancelAnswer, type CardRefund, type OpenCardOrder } from './assisted.ts';
 
 /**
  * WQ16: assisted booking phase 1b, a pharmacy pays a walk-in consultation by card or UPI (backend r10
@@ -9,8 +9,7 @@ import { assistedRefusal, type AssistedCardPayment, type BookedConsultation, typ
  * fallback. Only the server's `paymentRecord.status` says paid or refunded; nothing here claims either on its own.
  */
 
-const hex = /^[0-9a-fA-F]{24}$/;
-const idOf = (v: string) => { if (!hex.test(v)) throw new Error('Invalid payment id'); return v; };
+const idOf = (v: string) => checkedId(v, 'payment');
 
 /** The booker view of the booking inside a verify or reconcile answer (`forRequester`). */
 export interface CardPaymentAnswer {
@@ -166,12 +165,26 @@ export function bookingWasPaid(b: Pick<BookedConsultation, 'status' | 'paymentSt
   if (!b.payment) return !(b.status === 'pending' && b.paymentStatus === 'pending');
   return ['captured', 'refunded', 'forfeited'].includes(b.payment.state);
 }
-/** WQ16c (r10d): the open order of a waiting card booking from its booker view, for Checkout on any device; null when none. */
-export function orderFromBooking(b: Pick<BookedConsultation, 'payment' | 'price'>): AssistedCardPayment | null {
+/**
+ * WQ16c (r10d): the open order of a waiting card booking from its booker view, for Checkout on any device; null when none.
+ * WQ17c: any booking kind; the amount only when the view carries the price (a lab view does not).
+ */
+export function orderFromBooking(b: { payment?: BookingPayment; price?: number }): OpenCardOrder | null {
   const p = b.payment;
-  if (!p || p.method !== 'razorpay' || p.state !== 'pending' || !p.razorpayOrderId || !p.razorpayKeyId || !p.paymentTransactionId || typeof b.price !== 'number') return null;
+  if (!p || p.method !== 'razorpay' || p.state !== 'pending' || !p.razorpayOrderId || !p.razorpayKeyId || !p.paymentTransactionId) return null;
   return { paymentRequired: true, paymentTransactionId: p.paymentTransactionId, razorpayOrderId: p.razorpayOrderId, razorpayKeyId: p.razorpayKeyId,
-    amount: b.price, amountMinor: Math.round(b.price * 100), currency: 'INR', payBy: p.payBy ?? '' };
+    ...(typeof b.price === 'number' ? { amount: b.price, amountMinor: Math.round(b.price * 100) } : {}), currency: 'INR', payBy: p.payBy ?? '' };
+}
+
+/**
+ * WQ17c: where a card booking stands, by kind: a consultation waits as `pending`/`pending` and is paid once `confirmed`/`paid`;
+ * a lab booking waits as `pending_payment` and is paid once it moved on (any status but `pending_payment` and `cancelled`).
+ */
+export type CardBookingKind = 'consultation' | 'lab';
+export function cardBookingState(kind: CardBookingKind, b: { status?: string; paymentStatus?: string }): 'waiting' | 'paid' | 'ended' {
+  if (kind === 'lab') return b.status === 'pending_payment' ? 'waiting' : b.status && b.status !== 'cancelled' ? 'paid' : 'ended';
+  if (b.status === 'pending' && b.paymentStatus === 'pending') return 'waiting';
+  return b.status === 'confirmed' && b.paymentStatus === 'paid' ? 'paid' : 'ended';
 }
 /** WQ16c: "Pay now" stops 2 minutes before the pay-by time (the page could not finish in time); only "Check payment" then. */
 export const PAY_NOW_MARGIN_MS = 2 * 60_000;
@@ -227,12 +240,13 @@ export function cardRefundWords(r: CardRefund): string {
 }
 
 /** What a cancellation did with the money (WQ12 words for a wallet booking; the `refund` for a card booking). */
-export function cancelWords(a: CancelAnswer): string {
+/** `told`: who hears of it (WQ17c: a lab test tells the patient only). */
+export function cancelWords(a: Pick<CancelAnswer, 'refundedMinor' | 'alreadyCancelled' | 'refund'> & { booking?: unknown }, told = 'The patient and the doctor are told.'): string {
   if (a.alreadyCancelled) return 'It was already cancelled. Nothing was refunded twice.';
   // r10: `refund` is present only for a card booking (null: cancelled before it was paid).
-  if (!('refund' in a)) return `Cancelled. ${rupees(a.refundedMinor)} is back in your Jansetu wallet. The patient and the doctor are told.`;
+  if (!('refund' in a)) return `Cancelled. ${rupees(a.refundedMinor)} is back in your Jansetu wallet. ${told}`;
   if (!a.refund) return `Cancelled. It was not paid, so nothing is refunded. ${LATE_PAYMENT_BACK}`;
-  return `Cancelled. ${cardRefundWords(a.refund)} The patient and the doctor are told.`;
+  return `Cancelled. ${cardRefundWords(a.refund)} ${told}`;
 }
 
 // ── Admin: card refunds of assisted bookings that need a person (r10 `cardRefunds.ts`, §23.3 "Admin") ──

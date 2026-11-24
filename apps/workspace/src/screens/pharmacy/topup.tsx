@@ -39,7 +39,8 @@ function loadCheckout(): Promise<RazorpayCtor> {
 export type CheckoutResult = { kind: 'paid'; razorpayPaymentId: string; razorpayOrderId: string; razorpaySignature: string } | { kind: 'closed' };
 /** What Checkout needs: the server's order (WQ16: also a card booking's, with `amountMinor` from its answer). */
 export interface CheckoutOrder {
-  razorpayKeyId: string; razorpayOrderId: string; amountMinor: number; currency: string; description: string;
+  /** WQ17c: absent when only the order is known (Checkout then takes the order's own amount). */
+  razorpayKeyId: string; razorpayOrderId: string; amountMinor?: number; currency: string; description: string;
   /** WQ16c: Razorpay's `timeout` (seconds): the page closes itself (as if dismissed) before the booking's cut-off. */
   timeoutSeconds?: number;
 }
@@ -51,7 +52,7 @@ export async function openCheckout(order: CheckoutOrder): Promise<CheckoutResult
     const rz = new Razorpay({
       key: order.razorpayKeyId,
       order_id: order.razorpayOrderId,
-      amount: order.amountMinor,
+      ...(order.amountMinor !== undefined ? { amount: order.amountMinor } : {}),
       currency: order.currency,
       name: 'Jansetu',
       description: order.description,

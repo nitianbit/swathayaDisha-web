@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link } from 'react-router';
 import {
-  assistedRefusal, beforeCheckout, checkCardPayment, checkoutSeconds, LATE_CAPTURE_WORDS, orderFromBooking, PAY_NOW_MARGIN_MS, payByWords, payNowOpen, pharmacyAssistedApi,
-  settleCardPayment, type ApiClient, type AssistedCardPayment, type BookedConsultation, type CardOutcome, type PendingMarker,
+  ApiError, assistedRefusal, beforeCheckout, cardBookingState, checkCardPayment, checkoutSeconds, LATE_CAPTURE_WORDS, orderFromBooking, PAY_NOW_MARGIN_MS, payByWords, payNowOpen,
+  pharmacyAssistedApi, pharmacyLabApi, settleCardPayment, type ApiClient, type AssistedPaymentMethod, type CardBookingKind, type CardOutcome, type OpenCardOrder, type PendingMarker,
 } from '@jansetu/api';
 import { Alert, Button, formatRupees } from '@jansetu/ui';
 import { useSession } from '../../session.tsx';
@@ -36,19 +37,92 @@ export function useCardBookings(pharmacyId: string) {
   };
 }
 
+/**
+ * WQ17c: the way to pay chosen on "Check and pay" (WQ16, moved here from Book consultation): the wallet by default; card or
+ * UPI unless the server said it cannot (switch off, no gateway keys); a free booking always uses the wallet method.
+ */
+export function useCardChoice() {
+  const [method, setMethod] = useState<AssistedPaymentMethod>('wallet');
+  /** Why card or UPI cannot pay (the switch is off, no gateway keys): the card option is then disabled. */
+  const [cardOff, setCardOff] = useState<string | null>(null);
+  /** The switch is off, or there are no gateway keys: the card option is disabled. "Nothing to pay": wallet only. */
+  function refused(err: unknown) {
+    setMethod('wallet');
+    const code = err instanceof ApiError ? err.code : undefined;
+    if (code === 'PAYMENT_METHOD_UNAVAILABLE') setCardOff('Card payment is not switched on yet.');
+    else if (code === 'RAZORPAY_NOT_CONFIGURED') setCardOff('Card and UPI payments are not set up on this server yet.');
+  }
+  /** The method sent for a price (the chosen way, unless it cannot pay this booking). */
+  const methodFor = (priceMinor: number): AssistedPaymentMethod => (method === 'razorpay' && !cardOff && priceMinor > 0 ? 'razorpay' : 'wallet');
+  return { method, setMethod, cardOff, refused, methodFor };
+}
+
 export type CardStep = CardOutcome | { kind: 'not_opened' };
+
+/**
+ * WQ17c: where a card booking is read again, by kind (`assistedCard.ts` `cardBookingState`): a consultation (WQ16) or a lab
+ * test (r14 phase 2b). One panel, one flow; only the reads and a few words differ.
+ */
+export interface CardBookingSource {
+  kind: CardBookingKind;
+  /** The booking now and its open order (by the create's key when known, else by id); null when the key is not known. */
+  read: () => Promise<{ booking: { status?: string; paymentStatus?: string }; order: OpenCardOrder | null } | null>;
+  /** Whether `read` can give the order back for "Pay now". */
+  canReopen: boolean;
+  /** Checkout's description. */
+  description: string;
+  /** "The patient and the doctor are told once it is paid." */
+  toldOnPaid: string;
+  /** The list where it can be cancelled. */
+  listName: string;
+}
+
+/** A consultation (WQ16): the order by the create's key; without it only "Check payment". */
+export function consultationCardSource(api: ApiClient, bookingId: string, requestKey: string | null): CardBookingSource {
+  const assisted = pharmacyAssistedApi(api);
+  return {
+    kind: 'consultation', canReopen: !!requestKey, description: 'Doctor consultation for a patient',
+    toldOnPaid: 'The patient and the doctor are told once it is paid.', listName: 'Booked consultations',
+    read: async () => {
+      if (requestKey) {
+        const r = await assisted.byKey(requestKey);
+        return r.state === 'used' ? { booking: r.booking, order: r.payment ?? null } : null;
+      }
+      const b = await assisted.booking(bookingId);
+      return { booking: b, order: orderFromBooking(b) };
+    },
+  };
+}
+
+/** A lab test (r14): the order by the create's key, else from the booker view (any device). */
+export function labCardSource(api: ApiClient, bookingId: string, requestKey: string | null): CardBookingSource {
+  const labs = pharmacyLabApi(api);
+  return {
+    kind: 'lab', canReopen: true, description: 'Lab test for a patient',
+    toldOnPaid: 'The patient is told once it is paid.', listName: 'Booked lab tests',
+    read: async () => {
+      if (requestKey) {
+        const r = await labs.byKey(requestKey);
+        return r.state === 'used' ? { booking: r.booking, order: r.payment ?? orderFromBooking(r.booking) } : null;
+      }
+      const b = await labs.booking(bookingId);
+      return { booking: b, order: orderFromBooking(b) };
+    },
+  };
+}
 
 /**
  * Opens Checkout on the booking's order (closing itself before the cut-off), then settles the attempt with the server.
  * Never throws. `reported`: Checkout said the payment went through.
  */
-export async function payCardOrder(api: ApiClient, order: AssistedCardPayment): Promise<{ step: CardStep; reported: boolean }> {
+export async function payCardOrder(api: ApiClient, order: OpenCardOrder, description = 'Doctor consultation for a patient'): Promise<{ step: CardStep; reported: boolean }> {
   const timeoutSeconds = checkoutSeconds(order.payBy);
   if (timeoutSeconds === 0) return { step: { kind: 'unpaid' }, reported: false };
   let result;
   try {
-    result = await openCheckout({ razorpayKeyId: order.razorpayKeyId, razorpayOrderId: order.razorpayOrderId, amountMinor: order.amountMinor,
-      currency: order.currency, description: 'Doctor consultation for a patient', ...(timeoutSeconds !== undefined ? { timeoutSeconds } : {}) });
+    result = await openCheckout({ razorpayKeyId: order.razorpayKeyId, razorpayOrderId: order.razorpayOrderId,
+      ...(order.amountMinor !== undefined ? { amountMinor: order.amountMinor } : {}),
+      currency: order.currency, description, ...(timeoutSeconds !== undefined ? { timeoutSeconds } : {}) });
   } catch {
     return { step: { kind: 'not_opened' }, reported: false };
   }
@@ -60,21 +134,21 @@ export async function payCardOrder(api: ApiClient, order: AssistedCardPayment): 
 
 type Note = { tone: 'ok' | 'warn' | 'error'; text: string };
 export const DO_NOT_PAY_AGAIN = 'Razorpay reported the payment; it is being confirmed. Do not pay again. Tap “Check payment” in a minute.';
-export const NO_ORDER_WORDS = 'The card payment for this booking could not be started. Tap “Check payment”, or cancel this booking under Booked consultations and book again.';
+const noOrderWords = (listName: string) =>
+  `The card payment for this booking could not be started. Tap “Check payment”, or cancel this booking under ${listName} and book again.`;
 
 /**
  * A card booking waiting for its payment: "Pay before HH:MM or the time is released", "Pay now" (the same order) and
  * "Check payment". `onPaid` runs once the server says paid; `onEnded` once it says the payment can never pay this booking
  * (a late capture refunded to the card, a failed payment, the booking no longer payable).
  */
-export function CardPaymentPanel({ bookingId, requestKey, order: initial, amountMinor, payBy, paymentTransactionId, perform, busy, autoOpen, onHeld, onPaid, onEnded }: {
-  bookingId: string;
-  /** The create's key (this device): it gives the open order back for "Pay now" on any server. */
-  requestKey: string | null;
+export function CardPaymentPanel({ source, order: initial, amountMinor, payBy, paymentTransactionId, perform, busy, autoOpen, onHeld, onPaid, onEnded }: {
+  /** WQ17c: the booking kind's reads and words. */
+  source: CardBookingSource;
   /** WQ16b (r10c booker view `payment`): the record to check from any device. */
   paymentTransactionId?: string | null;
-  /** The open order known now (the create's answer, or r10d's booker view); re-read before Checkout is reopened. */
-  order: AssistedCardPayment | null;
+  /** The open order known now (the create's answer, or the booker view's); re-read before Checkout is reopened. */
+  order: OpenCardOrder | null;
   amountMinor?: number;
   /** Until the order is read: the booking's pay-by time (the server's, else its creation + 30 minutes). */
   payBy?: string;
@@ -85,11 +159,11 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
   /** card-last: told whenever the payment is (or stops being) held for confirmation. */
   onHeld?: (held: boolean) => void;
   /** `note`: WQ16d, said with it (another payment of this booking is being refunded). */
-  onPaid: (booking: Partial<BookedConsultation> | null, note?: string) => void;
+  onPaid: (booking: unknown, note?: string) => void;
   onEnded: (words: string) => void;
 }) {
   const { api } = useSession();
-  const [order, setOrder] = useState<AssistedCardPayment | null>(initial);
+  const [order, setOrder] = useState<OpenCardOrder | null>(initial);
   const [note, setNote] = useState<Note | null>(null);
   /** Razorpay reported a payment, or the outcome is unknown: "Pay now" is not offered again (only "Check payment"). */
   const [held, setHeld] = useState(false);
@@ -108,10 +182,10 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
     return () => clearTimeout(timer);
   }, [due]);
   const late = !payNowOpen(due, now);
-  const canPay = !!order || !!requestKey;
+  const canPay = !!order || source.canReopen;
   const payOffered = canPay && !late && !held;
 
-  async function apply(step: CardStep, o: AssistedCardPayment | null, didReport = false) {
+  async function apply(step: CardStep, o: OpenCardOrder | null, didReport = false) {
     if (!live.current) return;
     // WQ16d (r10e): this payment was a second one on a booking already paid; it goes back to the card. Never "paid" by
     // itself: the booking is read again, and shown paid only if the server says so.
@@ -119,9 +193,8 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
       setHeld(true);
       setNote({ tone: 'warn', text: step.message });
       // card-last: a failed re-read leaves the duplicate sentence on screen.
-      const b = await (requestKey ? pharmacyAssistedApi(api).byKey(requestKey).then((r) => (r.state === 'used' ? r.booking : null))
-        : pharmacyAssistedApi(api).booking(bookingId)).catch(() => null);
-      if (live.current && b?.status === 'confirmed' && b.paymentStatus === 'paid') onPaid(b, step.message);
+      const b = await source.read().then((r) => r?.booking ?? null).catch(() => null);
+      if (live.current && b && cardBookingState(source.kind, b) === 'paid') onPaid(b, step.message);
       return;
     }
     if (didReport) reported.current = true;
@@ -147,26 +220,17 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
   }
 
   /**
-   * The open order as the server has it now: by the create's key (any server), else from the booking (r10d). Settles the
-   * panel when the booking is paid or no longer payable; null when there is no order to open.
+   * The open order as the server has it now (`source.read`). Settles the panel when the booking is paid or no longer
+   * payable; null when there is no order to open.
    */
-  async function freshOrder(): Promise<AssistedCardPayment | null> {
-    const assisted = pharmacyAssistedApi(api);
-    let b: BookedConsultation;
-    let o: AssistedCardPayment | null;
-    if (requestKey) {
-      const r = await assisted.byKey(requestKey);
-      if (r.state !== 'used') { setNote({ tone: 'error', text: 'This booking was not found on this device. Look for it under Booked consultations.' }); return null; }
-      b = r.booking;
-      o = r.payment ?? null;
-    } else {
-      b = await assisted.booking(bookingId);
-      o = orderFromBooking(b);
-    }
-    if (o) { if (live.current) setOrder(o); return o; }
-    if (b.status === 'confirmed' && b.paymentStatus === 'paid') { onPaid(b); return null; }
-    if (b.status !== 'pending') { onEnded(`This booking can no longer be paid: it was cancelled, or its time was released because it was not paid in time. If money was taken, it goes back to the card or UPI.`); return null; }
-    if (live.current) { setOrder(null); setNote({ tone: 'warn', text: NO_ORDER_WORDS }); }
+  async function freshOrder(): Promise<OpenCardOrder | null> {
+    const r = await source.read();
+    if (!r) { setNote({ tone: 'error', text: `This booking was not found on this device. Look for it under ${source.listName}.` }); return null; }
+    const state = cardBookingState(source.kind, r.booking);
+    if (state === 'waiting' && r.order) { if (live.current) setOrder(r.order); return r.order; }
+    if (state === 'paid') { onPaid(r.booking); return null; }
+    if (state === 'ended') { onEnded(`This booking can no longer be paid: it was cancelled, or its time was released because it was not paid in time. If money was taken, it goes back to the card or UPI.`); return null; }
+    if (live.current) { setOrder(null); setNote({ tone: 'warn', text: noOrderWords(source.listName) }); }
     return null;
   }
 
@@ -184,7 +248,7 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
           if (pre.kind === 'settled') { await apply(pre.outcome, o); return; }
           if (!pre.created) setNote(null);
         } else setNote(null);
-        const r = await payCardOrder(api, o);
+        const r = await payCardOrder(api, o, source.description);
         await apply(r.step, o, r.reported);
       });
     } catch (err) {
@@ -196,8 +260,8 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
     setNote(null);
     try {
       await perform(async () => {
-        const id = order?.paymentTransactionId ?? paymentTransactionId ?? (requestKey ? (await freshOrder())?.paymentTransactionId : undefined);
-        if (!id) { if (live.current && !requestKey) setNote({ tone: 'warn', text: NO_ORDER_WORDS }); return; }
+        const id = order?.paymentTransactionId ?? paymentTransactionId ?? (source.canReopen ? (await freshOrder())?.paymentTransactionId : undefined);
+        if (!id) { if (live.current && !source.canReopen) setNote({ tone: 'warn', text: noOrderWords(source.listName) }); return; }
         await apply(await checkCardPayment(api, id), order);
       });
     } catch (err) {
@@ -215,7 +279,7 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
   return (
     <div className="confirm" role="group" aria-label="Waiting for payment">
       <Alert tone="warn">
-        <strong>Waiting for payment.</strong> {payByWords(due)} The time is held for the patient until then. The patient and the doctor are told once it is paid.
+        <strong>Waiting for payment.</strong> {payByWords(due)} The time is held for the patient until then. {source.toldOnPaid}
       </Alert>
       {note && <Alert tone={note.tone}>{note.text}</Alert>}
       {!canPay && !held && (
@@ -229,5 +293,44 @@ export function CardPaymentPanel({ bookingId, requestKey, order: initial, amount
         <Button variant={payOffered ? 'secondary' : 'primary'} disabled={busy} onClick={() => void check()}>Check payment</Button>
       </div>
     </div>
+  );
+}
+
+/** WQ17c: the 502 at create (the booking is held, its order not made yet): the same request again makes it. */
+export const ORDER_FAILED_WORDS = 'The booking is held, but the card payment could not be started. Send the same request again to get the payment page: it is never booked twice.';
+export const isOrderFailed = (err: unknown) => err instanceof ApiError && err.code === 'RAZORPAY_ORDER_CREATION_FAILED';
+/** A card booking that can no longer be paid (cancelled, or its time released unpaid). */
+export const NOT_PAYABLE_WORDS = 'This booking was not paid in time (or was cancelled), so its time was released and nothing is booked. Book again if the patient still wants it.';
+
+/** WQ17c: a card booking held for its payment, after the create (WQ16, moved here from Book consultation). */
+export function CardDueSection({ bookingRef, summary, newAccount, listPath, listLabel, held, children }: {
+  bookingRef?: string; summary: ReactNode; newAccount?: boolean; listPath: string; listLabel: string; held: boolean; children: ReactNode;
+}) {
+  return (
+    <section className="ws-section" aria-labelledby="card-h">
+      <h2 id="card-h">Booking held: waiting for payment</h2>
+      <p>Pay by card or UPI on the Razorpay page.{bookingRef ? <> Booking reference: <strong>{bookingRef}</strong>.</> : null}</p>
+      {summary}
+      {children}
+      {newAccount && <p className="ws-muted">This number was new to Jansetu. An account was made for it; the patient can sign in with this number later.</p>}
+      <div className="ws-actions">
+        <Link to={listPath}>{listLabel}</Link>
+        {!held && <span className="ws-muted">You can also pay it from there, on this device.</span>}
+      </div>
+    </section>
+  );
+}
+
+/** WQ17c: the booking could not be made or paid after all (WQ16, moved here from Book consultation). */
+export function NotBooked({ words, againLabel, onAgain, listPath, listLabel }: { words: string; againLabel: string; onAgain: () => void; listPath: string; listLabel: string }) {
+  return (
+    <section className="ws-section" aria-labelledby="ended-h">
+      <h2 id="ended-h">Not booked</h2>
+      <Alert>{words}</Alert>
+      <div className="ws-actions">
+        <Button onClick={onAgain}>{againLabel}</Button>
+        <Link to={listPath}>{listLabel}</Link>
+      </div>
+    </section>
   );
 }

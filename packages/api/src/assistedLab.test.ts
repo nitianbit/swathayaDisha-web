@@ -87,6 +87,7 @@ describe('lab booking rules and words', () => {
     expect(labRefusal(e(409, 'SLOT_UNAVAILABLE'))).toEqual({ kind: 'slot', message: 'This time was just taken. Choose another time.' });
     expect(labRefusal(e(409, 'CANCELLATION_WINDOW_CLOSED')).message).toBe('Too late to cancel: lab bookings can be cancelled up to 1 hour before the time.');
     expect(labRefusal(e(409, 'RESCHEDULE_CHANGED')).message).toBe('The lab changed the time again. Look at the new time, then accept it or cancel.');
-    expect(labRefusal(e(400, 'PAYMENT_METHOD_UNAVAILABLE')).message).toBe('Lab tests can only be paid from the Jansetu wallet for now.');
+    // WQ17c (r14 phase 2b): card or UPI exists for lab tests too: the card switch off reads as for consultations.
+    expect(labRefusal(e(400, 'PAYMENT_METHOD_UNAVAILABLE'))).toEqual({ kind: 'card', message: 'Card payment is not switched on yet. Pay from your Jansetu wallet.' });
   });
 });
