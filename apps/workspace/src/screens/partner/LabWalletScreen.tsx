@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { holdsAny, LAB_TOPUP_MAX_MINOR, LAB_TOPUP_STATE_LABEL, labTopupCheckable, labWalletApi, labWalletRefusal, type LabTopupRow } from '@jansetu/api';
+import { holdsAny, LAB_TOPUP_MAX_MINOR, LAB_TOPUP_STATE_LABEL, labTopupCheckable, labWalletApi, labWalletRefusal } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { useSession } from '../../session.tsx';
 import { CHECK_LABEL, TopUpForm, UNPAID_CHECK_AGAIN, useTopupCheck, type TopupSource } from '../pharmacy/topup.tsx';
