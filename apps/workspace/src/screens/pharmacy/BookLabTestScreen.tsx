@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
   addressErrors, branchesFor, CONSENT_STATEMENT_LANGUAGE, CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday,
-  LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, labRefusal, labTotalMinor, PATIENT_LANGUAGES, patientBody, pharmacyLabApi, refusedBeforeWriting,
+  LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, labRefusal, labTotalMinor, patientBody, pharmacyLabApi, refusedBeforeWriting,
   type AssistedLabSlot, type LabAddress, type LabBookingRequest, type LabBookingView, type LabReceipt, type Refusal,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
@@ -14,6 +14,7 @@ import { useOneAtATime } from '../finance/finance.tsx';
 import { useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 import { SlotDays } from './slotDays.tsx';
 import { UnconfirmedBooking } from './unconfirmedBooking.tsx';
+import { AddressFields, EMPTY_ADDRESS, labAddressLine, labAddressOf, LanguageSelect } from './bookingFields.tsx';
 import { PatientSection, usePatientStep } from './patientStep.tsx';
 import { WalletPay } from './walletPay.tsx';
 
@@ -43,7 +44,6 @@ interface PendingLab { request: LabBookingRequest; summary: Summary }
 interface Done { summary: Summary; ref?: string; paidMinor?: number; replayed: boolean; newAccount?: boolean }
 
 const SLOT_DAYS = 7;
-const EMPTY_ADDRESS = { line1: '', line2: '', city: '', state: '', pincode: '', landmark: '' };
 
 function SummaryList({ s }: { s: Summary }) {
   return (
@@ -154,11 +154,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     if (code && !/^[A-Z0-9_-]{2,50}$/.test(code)) errs.coupon = 'Check the coupon code (letters and numbers only).';
     setErrors(errs);
     if (Object.keys(errs).length || !lab || !branch || !slot || !lookup) return;
-    const home: LabAddress | undefined = mode === 'home' ? {
-      line1: address.line1.trim(), city: address.city.trim(), pincode: address.pincode.trim(),
-      ...(address.line2.trim() ? { line2: address.line2.trim() } : {}), ...(address.state.trim() ? { state: address.state.trim() } : {}),
-      ...(address.landmark.trim() ? { landmark: address.landmark.trim() } : {}),
-    } : undefined;
+    const home: LabAddress | undefined = mode === 'home' ? labAddressOf(address) : undefined;
     const requestKey = newRequestKey();
     const request: LabBookingRequest = {
       requestKey, phone: lookup.phone, ...patientBody({ ...patient, phone: lookup.phone }),
@@ -172,7 +168,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
       requestKey, request,
       summary: { patient: patientLabel(), lab: lab.name, branch: branch.name, mode, date: slot.date.replace(/-/g, ''), time: slot.startTime,
         tests: items.filter((i) => itemIds.includes(i.itemId)).map((i) => i.name), priceMinor,
-        ...(home ? { address: [home.line1, home.city, home.pincode].join(', ') } : {}), ...(code ? { couponCode: code } : {}) },
+        ...(home ? { address: labAddressLine(home) } : {}), ...(code ? { couponCode: code } : {}) },
     });
   }
 
@@ -300,10 +296,6 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   }
 
   const frozen = !!review || busy;
-  const addr = (k: keyof typeof EMPTY_ADDRESS, label: string, hint?: string) => (
-    <TextField label={label} autoComplete="off" value={address[k]} error={errors[`address.${k}`]} hint={hint} inputMode={k === 'pincode' ? 'numeric' : undefined}
-      onChange={(e) => setAddress((a) => ({ ...a, [k]: e.target.value }))} />
-  );
   return (
     <>
       {notice && <Alert tone="ok">{notice}</Alert>}
@@ -391,28 +383,12 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
                 </>
               )}
 
-              {mode === 'home' && lab && (
-                <fieldset className="ws-checks">
-                  <legend>Address for the home collection</legend>
-                  {addr('line1', 'House and street')}
-                  {addr('line2', 'Area (optional)')}
-                  <div className="rx-form-row">{addr('city', 'City')}{addr('pincode', 'Pincode')}</div>
-                  <div className="rx-form-row">{addr('state', 'State (optional)')}{addr('landmark', 'Landmark (optional)')}</div>
-                </fieldset>
-              )}
+              {mode === 'home' && lab && <AddressFields value={address} errors={errors} onChange={setAddress} />}
 
               {lab && (
                 <>
                   <div className="rx-form-row">
-                    <div className="j-field">
-                      <label htmlFor="lab-lang">Language the patient speaks</label>
-                      <select id="lab-lang" value={language} aria-invalid={errors.language ? true : undefined}
-                        aria-describedby={errors.language ? 'lab-lang-err' : undefined} onChange={(e) => setLanguage(e.target.value)}>
-                        <option value="">Choose…</option>
-                        {PATIENT_LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
-                      </select>
-                      {errors.language && <span id="lab-lang-err" className="j-field__error" role="alert">{errors.language}</span>}
-                    </div>
+                    <LanguageSelect id="lab-lang" value={language} error={errors.language} onChange={setLanguage} />
                     <TextField label="Coupon code (optional)" value={coupon} error={errors.coupon} maxLength={50} hint="Only if the patient has one." onChange={(e) => setCoupon(e.target.value)} />
                   </div>
                 </>

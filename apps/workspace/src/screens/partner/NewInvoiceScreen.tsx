@@ -14,7 +14,7 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { afterFailure, beginAttempt, newRequestKey, ownsKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
-import { APPOINTMENT_BILL_REFUSAL, billPrefillSlot, money, takeHandover, useCatalogue, useClinicDoctors, type BillHandover, type BillPrefill } from './billing.tsx';
+import { BILL_LINK_REFUSAL, billPrefillSlot, money, takeHandover, useCatalogue, useClinicDoctors, type BillHandover, type BillPrefill } from './billing.tsx';
 import { Totals } from './InvoiceScreen.tsx';
 import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
@@ -30,10 +30,10 @@ export interface InvoiceDraft {
   branchId: string; name: string; phone: string; age: string; gender: '' | InvoiceGender; gstin: string; placeOfSupply: string;
   doctorId: string; lines: LineDraft[];
   /**
-   * Q14: the clinic appointment this bill is for. While it is linked, its branch, doctor and customer (the account holder:
-   * mobile, and the name when one was given) are fixed as booked.
+   * Q14 / r12: the clinic appointment or lab front-desk booking this bill is for. While it is linked, its branch, doctor
+   * and customer (the account holder: mobile, and the name when one was given) are fixed as booked.
    */
-  appointment?: { id: string; label: string; nameFixed: boolean };
+  link?: { kind: 'appointment' | 'lab_booking'; id: string; label: string; nameFixed: boolean; phoneFixed: boolean };
 }
 
 /** The bill type in a sentence. */
@@ -122,7 +122,7 @@ export function buildInvoice(d: InvoiceDraft, partner: Pick<Partner, 'taxRegime'
         ...(d.gender ? { gender: d.gender } : {}), ...(pos ? { placeOfSupply: pos } : {}),
       },
       ...(d.doctorId ? { doctorId: d.doctorId } : {}),
-      ...(d.appointment ? { appointmentId: d.appointment.id } : {}),
+      ...(d.link ? (d.link.kind === 'appointment' ? { appointmentId: d.link.id } : { labBookingId: d.link.id }) : {}),
       items,
     },
     errors,
@@ -200,6 +200,8 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
   const issued = (inv: Invoice, op: Pending, earlier = false) => {
     void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'invoices'] });
     void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'clinic-appointments'] });
+    void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'lab-bookings'] });
+    void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'lab-booking'] });
     if (earlier ? !ownsTheKey(op) : !owns(op)) return;
     resolveStored(memory, slot, op.requestKey);
     const requestKey = op.requestKey;
@@ -239,7 +241,7 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
       const next = linkingOff ? null : afterFailure(attempt, err, messageOf(err));
       if (mounted.current) {
         setPending(next ?? undefined);
-        if (!next) setRefused((err instanceof ApiError && err.code && APPOINTMENT_BILL_REFUSAL[err.code]) || messageOf(err));
+        if (!next) setRefused((err instanceof ApiError && err.code && BILL_LINK_REFUSAL[err.code]) || messageOf(err));
       } else if (next) memory.set(slot, next); else memory.delete(slot);
     } finally {
       if (mounted.current) setBusy(false);
@@ -308,9 +310,9 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
 }) {
   const [d, setD] = useState<InvoiceDraft>(() => (prefill
     ? { ...EMPTY, branchId: prefill.branchId, doctorId: prefill.doctorId, name: prefill.name, phone: prefill.phone,
-      appointment: { id: prefill.appointmentId, label: prefill.label, nameFixed: !!prefill.name.trim() } }
+      link: { ...prefill.link, label: prefill.label, nameFixed: !!prefill.name.trim(), phoneFixed: !!prefill.phone.trim() } }
     : { ...EMPTY, branchId: branches.length === 1 ? branches[0]!._id : '' }));
-  const linked = !!d.appointment;
+  const linked = !!d.link;
   // Field errors appear once the person has asked to review the bill, then follow every change.
   const [tried, setTried] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
@@ -381,12 +383,20 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
     <form className="rx-form" noValidate onSubmit={review}>
       <section className="ws-section" aria-labelledby="nb-who-h">
         <h2 id="nb-who-h">Branch and customer</h2>
-        {d.appointment && (
+        {d.link && (d.link.kind === 'appointment' ? (
           <div className="ws-actions" role="group" aria-label="Appointment">
-            <span>For the clinic appointment with {d.appointment.label}. Its branch, doctor and customer (the account holder) stay as booked.</span>
-            <Button variant="ghost" onClick={() => set({ appointment: undefined })}>Not for this appointment</Button>
+            <span>For the clinic appointment with {d.link.label}. Its branch, doctor and customer (the account holder) stay as booked.</span>
+            <Button variant="ghost" onClick={() => set({ link: undefined })}>Not for this appointment</Button>
           </div>
-        )}
+        ) : (
+          <div className="ws-actions" role="group" aria-label="Lab booking">
+            <span>
+              For the lab booking of {d.link.label}. Its branch stays as booked; the customer is its account holder
+              {d.link.phoneFixed ? '.' : ': enter the mobile number it was booked with.'}
+            </span>
+            <Button variant="ghost" onClick={() => set({ link: undefined })}>Not for this booking</Button>
+          </div>
+        ))}
         <div className="rx-form-row">
           <div className="j-field">
             <label htmlFor="nb-branch">Branch</label>
@@ -411,9 +421,9 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
           )}
         </div>
         <div className="rx-form-row">
-          <TextField label="Customer name" value={d.name} maxLength={MAX_NAME} error={errors.name} readOnly={!!d.appointment?.nameFixed}
+          <TextField label="Customer name" value={d.name} maxLength={MAX_NAME} error={errors.name} readOnly={!!d.link?.nameFixed}
             onChange={(e) => set({ name: e.target.value })} />
-          <TextField label="Mobile number (optional)" inputMode="tel" value={d.phone} error={errors.phone} readOnly={linked}
+          <TextField label={d.link?.kind === 'lab_booking' ? 'Mobile number' : 'Mobile number (optional)'} inputMode="tel" value={d.phone} error={errors.phone} readOnly={!!d.link?.phoneFixed}
             onChange={(e) => set({ phone: e.target.value })} />
           <TextField label="Age (optional)" inputMode="numeric" value={d.age} error={errors.age} onChange={(e) => set({ age: e.target.value.replace(/\D/g, '') })} />
           <div className="j-field">
@@ -506,7 +516,7 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
       ) : (
         <div className="confirm" role="group" aria-label="Issue the bill">
           <div className="confirm-text">
-            Issue {KIND_TEXT[pv.documentKind]} for {money(pv.totals.totalMinor)} to {built.body.customer.name} from {branch?.name}{d.appointment ? `, for the appointment with ${d.appointment.label}` : ''}?
+            Issue {KIND_TEXT[pv.documentKind]} for {money(pv.totals.totalMinor)} to {built.body.customer.name} from {branch?.name}{d.link ? (d.link.kind === 'appointment' ? `, for the appointment with ${d.link.label}` : `, for the lab booking of ${d.link.label}`) : ''}?
             It gets the next number in the series and cannot be changed afterwards; it can only be cancelled.
             {built.body.customer.phone ? ' It will be added to the Jansetu account of the mobile number given.' : ''}
           </div>

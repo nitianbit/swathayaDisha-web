@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
-import { ArrowLeft, Building2, CalendarCheck, CalendarClock, ClipboardList, FlaskConical, History, MapPin, Receipt, Stethoscope, Users, Wallet } from 'lucide-react';
+import { ArrowLeft, Building2, CalendarCheck, CalendarClock, ClipboardList, FlaskConical, History, MapPin, Receipt, Stethoscope, Users, Wallet, CalendarPlus } from 'lucide-react';
 import {
   GSTIN_PATTERN, INVOICE_PREFIX_PATTERN, OBJECT_ID_PATTERN, PAN_PATTERN, PARTNER_KIND_LABEL, partnerAdminApi, TAX_REGIME_LABEL,
   VERIFICATION_LABEL, type Partner, type PartnerUpdate, type TaxRegime,
@@ -63,6 +63,7 @@ function PartnerDetail({ partnerId }: { partnerId: string }) {
                 <li><Link className="home-link" to={`${root}/invoices`}><Receipt size={22} aria-hidden="true" /><span>Bills</span></Link></li>
                 {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/lab-bookings`}><FlaskConical size={22} aria-hidden="true" /><span>Lab bookings</span></Link></li>}
                 {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/slots`}><CalendarClock size={22} aria-hidden="true" /><span>Slots</span></Link></li>}
+                {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/lab-desk`}><CalendarPlus size={22} aria-hidden="true" /><span>Front desk</span></Link></li>}
                 <li><Link className="home-link" to={`${root}/finance`}><Wallet size={22} aria-hidden="true" /><span>Finance</span></Link></li>
                 {p!.kind === 'clinic' && <li><Link className="home-link" to={`${root}/desk`}><CalendarCheck size={22} aria-hidden="true" /><span>Front desk</span></Link></li>}
                 {p!.kind === 'clinic' && <li><Link className="home-link" to={`${root}/clinic-doctors`}><Stethoscope size={22} aria-hidden="true" /><span>Doctors</span></Link></li>}

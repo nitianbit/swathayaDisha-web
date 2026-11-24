@@ -9,7 +9,7 @@ import { Empty } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 
-export type PartnerSection = 'profile' | 'staff' | 'branches' | 'audit' | 'catalogue' | 'invoices' | 'slots' | 'lab-bookings';
+export type PartnerSection = 'profile' | 'staff' | 'branches' | 'audit' | 'catalogue' | 'invoices' | 'slots' | 'lab-bookings' | 'lab-desk';
 
 export interface ScopeContext {
   scope: PartnerScope;

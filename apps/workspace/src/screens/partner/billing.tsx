@@ -1,9 +1,12 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { Link, useNavigate } from 'react-router';
 import {
   holdsAny, paiseToRupees, type CatalogueItemKind, type PartnerKind, type VisitMode,
 } from '@jansetu/api';
 import { formatRupees } from '@jansetu/ui';
-import type { ScopeContext } from './scope.tsx';
+import { newRequestKey } from '../../requests.ts';
+import type { SessionMemory } from '../../session.tsx';
+import { scopeIdentity, type ScopeContext } from './scope.tsx';
 
 /** Backend amounts are integer paise; this is the only way the workspace shows them. */
 export const money = (minor: number | undefined | null) =>
@@ -16,8 +19,8 @@ export const ITEM_KIND_LABEL: Record<CatalogueItemKind, string> = {
 /** Labs only (clinic items have no visit modes). */
 export const VISIT_MODE_LABEL: Record<VisitMode, string> = { home: 'Home collection', lab: 'At the lab' };
 
-/** Catalogue readers (`GET /catalogue`): `catalogue.manage` or `invoices.create`. */
-export const canReadCatalogue = (ctx: ScopeContext) => holdsAny(ctx.actor, ['catalogue.manage', 'invoices.create']);
+/** Catalogue readers (`GET /catalogue`): `catalogue.manage` or `invoices.create`; r12: also `bookings.manage` (the lab desk). */
+export const canReadCatalogue = (ctx: ScopeContext) => holdsAny(ctx.actor, ['catalogue.manage', 'invoices.create', 'bookings.manage']);
 
 /**
  * Active catalogue items (admin-disabled ones included); `includeInactive` adds deactivated ones (catalogue managers).
@@ -46,16 +49,19 @@ export function useClinicDoctors(ctx: ScopeContext, kind: PartnerKind | undefine
 }
 
 /**
- * Q14: "Create bill" from a clinic appointment hands the new-bill form the patient, doctor, branch and appointment. Kept
- * in session memory only (never a URL or browser storage), read once by the form.
+ * Q14: "Create bill" from a clinic appointment hands the new-bill form the patient, doctor, branch and appointment; r12:
+ * "Make bill" from a lab front-desk booking does the same with the booking. Kept in session memory only (never a URL or
+ * browser storage), read once by the form.
  */
 export interface BillPrefill {
-  appointmentId: string;
+  /** What the bill is for: a clinic appointment (`appointmentId`) or a lab front-desk booking (`labBookingId`). */
+  link: { kind: 'appointment' | 'lab_booking'; id: string };
   branchId: string;
   doctorId: string;
   name: string;
+  /** The account holder's mobile (the bill's customer); empty when not known here (the form then asks for it). */
   phone: string;
-  /** "Dr Mehta, Tue, 17 Nov 2026, 09:30" — what the form shows about the appointment. */
+  /** "Dr Mehta, Tue, 17 Nov 2026, 09:30" / "Asha, Wed, 25 Nov 2026, 10:00" — what the form shows about the record. */
   label: string;
 }
 export const billPrefillSlot = (identity: string) => `invoice-prefill:${identity}`;
@@ -68,8 +74,13 @@ export function takeHandover(stored: BillHandover | undefined, routeState: unkno
   return stored && typeof token === 'string' && stored.token === token ? stored.prefill : undefined;
 }
 
-/** Q14 refusals of a bill for an appointment (`admitAppointment`), in words staff can act on. */
-export const APPOINTMENT_BILL_REFUSAL: Record<string, string> = {
+/** Q14 / r12 refusals of a bill for an appointment or a lab booking (`BILL_LINKS`), in words staff can act on. */
+export const BILL_LINK_REFUSAL: Record<string, string> = {
+  LAB_BOOKING_ALREADY_BILLED: 'This lab booking already has a bill. Open it from the booking; cancel it first to issue a new one.',
+  LAB_BOOKING_BRANCH_MISMATCH: 'A bill for a lab booking is issued by the branch where the booking is.',
+  LAB_BOOKING_CANCELLED: 'This lab booking was cancelled, so it cannot be billed.',
+  LAB_BOOKING_NOT_FOUND: 'This lab booking was not found (or is not at one of your branches, or was not booked at the front desk).',
+  LAB_BOOKING_CUSTOMER_MISMATCH: 'A bill for a lab booking is made out to its account holder: enter the mobile number it was booked with.',
   APPOINTMENT_ALREADY_BILLED: 'This appointment already has a bill. Open it from the front desk; cancel it first to issue a new one.',
   APPOINTMENT_BRANCH_MISMATCH: 'A bill for an appointment is issued by the branch where the appointment takes place.',
   APPOINTMENT_DOCTOR_MISMATCH: 'The bill names a different doctor than the appointment.',
@@ -77,3 +88,30 @@ export const APPOINTMENT_BILL_REFUSAL: Record<string, string> = {
   APPOINTMENT_NOT_FOUND: 'This appointment was not found at this clinic (or not at one of your branches).',
   APPOINTMENT_CUSTOMER_MISMATCH: 'A bill for an appointment is made out to the appointment’s account holder (the mobile it was booked with).',
 };
+
+/** Who may open bills (the bills list): any of these permissions. */
+export const BILL_READERS = ['invoices.create', 'invoices.cancel', 'payments.record', 'finance.view'] as const;
+
+/**
+ * Q14 / r12: the new-bill form for this record, prefilled with its patient, branch (and doctor) and the record (handed over
+ * in session memory only, never in the URL), or the bills list for other bill readers.
+ */
+export function BillLink({ ctx, memory, prefill, label = 'Make a bill for this visit' }: { ctx: ScopeContext; memory: SessionMemory; prefill: BillPrefill; label?: string }) {
+  const navigate = useNavigate();
+  if (holdsAny(ctx.actor, ['invoices.create'])) {
+    const to = `${ctx.link('invoices')}/new`;
+    return (
+      <Link to={to} onClick={(e) => {
+        // A modified click opens another tab (its own session memory): nothing is handed over, the form starts empty.
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        e.preventDefault();
+        // Bound to this navigation: the form takes it only when the route state names this token, once.
+        const token = newRequestKey();
+        memory.set(billPrefillSlot(scopeIdentity(ctx)), { token, prefill } satisfies BillHandover);
+        navigate(to, { state: { prefillToken: token } });
+      }}>{label}</Link>
+    );
+  }
+  if (holdsAny(ctx.actor, BILL_READERS)) return <Link to={ctx.link('invoices')}>Bills</Link>;
+  return null;
+}

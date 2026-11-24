@@ -2,12 +2,12 @@ import { useMemo, useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  addDays, isRealDate, istDateOf, LAB_BOOKING_STATUS_LABEL, LAB_BOOKING_STATUSES, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL,
+  addDays, isRealDate, istDateOf, LAB_BOOKING_STATUS_LABEL, LAB_BOOKING_STATUSES, LAB_VISIT_MODE_LABEL,
   type LabBooking, type LabBookingQuery, type LabBookingStatus,
 } from '@jansetu/api';
 import { Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
-import { LabOnly, labStatusTone, slotLabel, useScopedBranches } from './labs.tsx';
+import { LabOnly, LabPayment, labStatusTone, slotLabel, useScopedBranches } from './labs.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
 /** Online bookings at this lab's branches (`bookings.view`, `bookings.manage`, `reports.upload` or `reports.release`). */
@@ -23,7 +23,7 @@ function LabBookings({ ctx }: { ctx: ScopeContext }) {
   return (
     <>
       <PartnerPageHeading ctx={ctx} title="Lab bookings" partnerName={partner.data?.name}>
-        Tests customers booked and paid for in the Jansetu app, by slot time: upcoming ones first. Times are India time.
+        Tests booked in the Jansetu app or at your front desk (pay at lab), by slot time: upcoming ones first. Times are India time.
       </PartnerPageHeading>
       {ctx.adminHome && <div><Link to={ctx.link('slots')}>Slots of this lab</Link></div>}
       <LabOnly ctx={ctx}><BookingList ctx={ctx} /></LabOnly>
@@ -148,7 +148,7 @@ function BookingList({ ctx }: { ctx: ScopeContext }) {
                         <Badge tone={labStatusTone(b.status)}>{LAB_BOOKING_STATUS_LABEL[b.status] ?? b.status}</Badge>
                         {b.reschedule?.pending && <> <Badge tone="warn">New time proposed</Badge></>}
                       </td>
-                      <td>{LAB_PAYMENT_STATUS_LABEL[b.paymentStatus] ?? b.paymentStatus}</td>
+                      <td><LabPayment b={b} /></td>
                     </tr>
                   ))}
                 </tbody>

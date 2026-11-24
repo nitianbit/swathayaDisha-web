@@ -209,3 +209,9 @@ export type {
   AssistedLab, AssistedLabBranch, AssistedLabItem, AssistedLabSlot, LabAddress as AssistedLabAddress, LabBookingListStatus, LabBookingRequest, LabBookingView, LabByKeyAnswer,
   LabCancelAnswer, LabReceipt,
 } from './assistedLab.ts';
+// WQ19: the lab front desk (r12): walk-in, lab visit and home collection booked by the lab, paid at the lab.
+export {
+  canBillDesk, canDeskCancel, deskItems, deskRefusal, deskTotalMinor, isDeskBooking, LAB_DESK_CONSENT_STATEMENT, LAB_DESK_CONSENT_VERSION,
+  LAB_DESK_SWITCHED_OFF_MESSAGE, labDeskApi,
+} from './labDesk.ts';
+export type { DeskBookingRequest, DeskByKey, DeskCancelAnswer, DeskCollector, DeskReceipt } from './labDesk.ts';

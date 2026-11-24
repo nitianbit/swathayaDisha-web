@@ -1105,7 +1105,8 @@ test('permissions: view-only desk staff, a biller sees doctors only, a lab has n
   await expect.poll(() => backend.live).toBe(false);
   const before = backend.calls.length;
   await signInPartner(page);
-  await expect(nav(page).getByRole('link', { name: 'Front desk' })).toHaveCount(0);
+  // WQ19: a lab's "Front desk" is its own lab desk, never the clinic desk.
+  await expect(nav(page).getByRole('link', { name: 'Front desk' })).toHaveAttribute('href', '#/partner/lab-desk');
   await expect(nav(page).getByRole('link', { name: 'Doctors' })).toHaveCount(0);
   await page.goto('/#/partner/clinic-doctors');
   await expect(page.getByText('This page does not exist or is not available to your account.')).toBeVisible();
@@ -1147,7 +1148,8 @@ test('admin as owner: clinic pages under the partner, switching partners discard
   await expect(page.getByText('Only for clinics')).toBeVisible();
   await expect(page.getByText('City Lab is a lab.', { exact: false })).toBeVisible();
   await page.goto(`/#/admin/partners/${LAB}`);
-  await expect(page.getByRole('link', { name: 'Front desk' })).toHaveCount(0);
+  // WQ19: a lab's page links its own lab desk, never the clinic desk.
+  await expect(page.getByRole('link', { name: 'Front desk' })).toHaveAttribute('href', `#/admin/partners/${LAB}/lab-desk`);
   expect(backend.calls.some((c) => c.path.includes(`/admin/${LAB}/workspace/clinic`))).toBe(false);
 });
 

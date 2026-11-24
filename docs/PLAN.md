@@ -1853,6 +1853,42 @@ Backend r11 (`m0/r11-phase2a` f5f171c9, design ASSISTED_BOOKING_DESIGN.md §24.1
 - API gap (r11 f5f171c9, now on stage): `notes` on the create is validated and part of the request hash but never stored or
   shown to the lab, so the screen offers no note and sends none. For the backend: store it and show it to the lab, or drop it.
 
+## WQ19 lab front desk: book a walk-in, a lab visit or a home collection, paid at the lab (2026-11-25, branch `wq19/lab-desk`)
+
+Backend: r12 (`m0/r12-phase2c` e304dabe, design ASSISTED_BOOKING_DESIGN.md §24.12; local). Web base: stage 0aca6c3 + WQ17
+(`wq17/pharmacy-lab-booking`, merged first). Behind the backend's `LAB_DESK_ENABLED` (off: lookup and create answer 503
+`ASSISTED_BOOKING_DISABLED`, shown as "The lab front desk is not switched on yet.").
+
+- **Lab › Front desk** (`/partner/lab-desk`; labs, `bookings.manage`; admins at `/admin/partners/:id/lab-desk`, linked from the
+  partner page). The shared patient step (WQ12/WQ17) with the desk's lookup (`POST /lab-desk/patients/lookup`: masked holder
+  only; no "booked before" family list, a family member is typed) and the desk's consent sentence (`web-lab-desk-v1`); then one
+  form: Walk-in now / Lab visit at a time / Home collection, the branch (the member's branches offering the visit; chosen at once
+  when one), the tests (`GET /catalogue`: active tests and packages offered for the visit, with the total), a time (`GET /slots`,
+  open seats after now, the shared day picker; none for a walk-in), the address and an optional collector (name, mobile) for a
+  home collection, the language. One primary action, **Book**, then "Check the total" → `POST /lab-desk/bookings` (no `notes`;
+  `acceptedTotalMinor` = Σ catalogue prices). Owned PendingOp; a lost answer uses the shared unconfirmed panel (check by key,
+  same request again, give up; after a reload only the key). `PRICE_CHANGED`: the tests are read again and the new total said;
+  booking again is a new key. A sole first attempt refused before writing (switch, indexes, linking, lookup limit) is settled.
+- **After booking**: "Open the booking" (the existing lab booking page) and **Make bill**: the existing new-bill form with the
+  lab booking prefilled (session memory handover, as the clinic's Create bill): branch fixed, the account holder's mobile fixed
+  (only known right after booking; from the booking page later the member types it: the lab view carries no phone), body
+  `labBookingId`.
+- **Lab bookings**: desk rows show **Pay at lab** and the bill's number when linked (list and page). The page's steps run for desk
+  rows (`payAtLab`, never `paid`): a walk-in offers only Mark visited (no no-show, no new time); a desk row is never rejected
+  for a refund; Complete says nothing is recorded through Jansetu. A Bill section (number, or Make bill) and the desk's
+  **Cancel this booking** (the shared owned cancel; `POST /lab-desk/bookings/:id/cancel {reason?, expectedVersion}`; no money).
+- **Shared, not copied**: `usePatientStep`/`PatientSection` take a lookup and the booker's words; `UnconfirmedBooking` takes
+  `charged`; the language select and the home address moved to `pharmacy/bookingFields.tsx` (Book consultation and Book lab
+  test use them); the bill handover is generic (`BillPrefill.link` = appointment or lab booking; `BillLink` and `BILL_READERS`
+  moved from the clinic desk to `partner/billing.tsx`); `LabPayment` badge in `partner/labs.tsx`; `checkId` exported from
+  `partners.ts` (as WQ18b).
+
+API gaps:
+- The lab booking view carries no phone, so Make bill from the booking page (not right after booking) asks for the account
+  holder's mobile (409 `LAB_BOOKING_CUSTOMER_MISMATCH` if it is another number).
+- No desk list of family members booked before (the lab never sees the account's family); family members are typed.
+- The bill page does not show its `labBookingId` (Q14 shows an appointment); left as it is.
+
 ## Follow-ups
 
 
@@ -1886,6 +1922,7 @@ Backend r11 (`m0/r11-phase2a` f5f171c9, design ASSISTED_BOOKING_DESIGN.md §24.1
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ19 lab front desk (on 0aca6c3 + WQ17 3c1960e) | Against r12 e304dabe (§24.12; mocked API). typecheck clean; Vitest 413/413 (+7 in labDesk.test.ts: member and admin paths with the phone only in bodies, refusals before any request, desk tests and total, switch/price/slot words, desk cancel and bill rules, steps on desk rows and walk-ins, the list `source` and the bill `labBookingId`); Playwright workspace 878 run on a temporary config (port 5481, no server reuse): 874 passed, 4 failed = 2 clinic-desk journeys x 2 that asserted a lab has no "Front desk" link (labs now have their own); updated to check that the link is the lab desk, then those and lab-desk.spec.ts 18/18 (+16 = 8 journeys x 2: walk-in, lab visit with a changed price, home collection with a collector, by-key after a reload, Make bill, desk cancel, switched off, branch scope); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ17 pharmacy lab-test booking (phase 2a) on 0aca6c3 | Against r11 f5f171c9 (§24.11; mocked API). typecheck clean; Vitest 406/406 (+5 in assistedLab.test.ts: lab, catalogue and slot paths and queries, ids and keys checked before sending, the cursor list, by-key, abandon, cancel with `expectedVersion`, accept with the proposal version, the 1-hour cancel rule, the tests' total, branches by visit, status and refusal words); Playwright workspace 862/862 (+16 = 8 journeys x 2: book with the shared patient step and pay from the wallet (no note offered), home collection with its address, a lost answer and a reload then Check by key, price changed then not enough money, list and cancel with the version, accept a new time, open a released report and no cancel within the hour, another pharmacy's booking not found and the switch off); the consultation specs pass unchanged on the shared components. A first full run had 6 timeouts in doctor-tools and admin-pharmacies (load); both specs then passed 88/88 and a second full run passed 862/862. Temporary config on port 5403, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-23 | WQ16d card-last (items 1–7 on 244bbf7) | Against r10e d1ed6d24 (mocked API). typecheck clean; Vitest 401/401 (+3 in wq16dLast.test.ts, all failing before: the server asked before Checkout (authorized not opened, created opened), the 60-second minimum, marked-failed in any state; the wq16c timeout case moved to 60); Playwright workspace 846/846 (+10 = 5 journeys x 2: authorized never opens Checkout, created opens it (a guard, passed before), the "pay it from there" line hidden while confirming, the duplicate sentence kept when its re-read fails, a restored cancellation says "goes back the way chosen"; the four others failed before; temporary config on port 5401, `reuseExistingServer: false`, deleted); `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-23 | WQ16d alignment with r10e d1ed6d24 (refund read by id, DUPLICATE_PAYMENT_REFUNDED, extra_capture) | typecheck clean; Vitest 398/398 (+3 in wq16d.test.ts, all failing before; 4 older assertions moved to the r10e envelope and the no-recheck rule); Playwright affected specs (card-booking, assisted-booking, pharmacy-extras) 162/162 (+4 = 2 journeys x 2, both failing before: a duplicate payment refunded and the booking shown paid after a re-read; the extra-capture label and the not-available check without recheck); temporary config on port 5399, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
