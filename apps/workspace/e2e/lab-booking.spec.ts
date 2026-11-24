@@ -43,6 +43,8 @@ interface Backend {
   gatewayStatuses: string[];
   verifies: Json[];
   reconciles: Json[];
+  /** WQ21: the recommendations switch is off. */
+  recOff: boolean;
 }
 
 const labView = (o: Json = {}): Json => ({
@@ -57,7 +59,7 @@ const labView = (o: Json = {}): Json => ({
 async function mockBackend(page: Page, init: { bookings?: Json[]; walletPaise?: number } = {}): Promise<Backend> {
   const b: Backend = { calls: [], creates: [], cancels: [], accepts: [], keys: {}, bookings: init.bookings ?? [], walletPaise: init.walletPaise ?? 200_000,
     t1Minor: 30_000, loseNextCreateAnswer: false, labsOff: false,
-    dropNextAccept: false, refuseNextAccept: false, dropNextCancel: false, record: { status: 'none', captured: false }, gatewayStatuses: [], verifies: [], reconciles: [] };
+    dropNextAccept: false, refuseNextAccept: false, dropNextCancel: false, record: { status: 'none', captured: false }, gatewayStatuses: [], verifies: [], reconciles: [], recOff: false };
   const PAY_BY = new Date(Date.now() + 25 * 60_000).toISOString();
   const cardPayment = (): Json => ({ method: 'razorpay', state: 'pending', payBy: PAY_BY, paymentTransactionId: CARD_REC, razorpayOrderId: 'order_L1', razorpayKeyId: 'rzp_test' });
   const openOrder = (): Json | null => (b.record.status === 'created' && b.bookings.find((x) => x._id === BK)?.status === 'pending_payment'
@@ -101,6 +103,14 @@ async function mockBackend(page: Page, init: { bookings?: Json[]; walletPaise?: 
 
     if (path === '/pharmacy-assisted/patients/lookup') return json(route, 200, { success: true, data: { exists: true, holderNameMasked: 'Rina K.' } });
     if (path === '/pharmacy-bookings') return json(route, 200, { success: true, data: [], pagination: { total: 0, nextCursor: null } });
+    if (path === '/pharmacy-assisted/recommendations/lookup' && method === 'POST') {
+      if (b.recOff) return refuse(route, 503, 'RECOMMENDATIONS_DISABLED', 'Test recommendations are not switched on yet');
+      if (body!.code === 'BADC0DE1') return refuse(route, 400, 'INVALID_CODE', 'This code is not valid; check it on the prescription');
+      // One answer for an unknown code and for a known code with another number.
+      if (body!.code !== 'ABCDEFGH' || body!.phone !== PHONE) return refuse(route, 404, 'RECOMMENDATION_NOT_FOUND', 'Not found');
+      return json(route, 200, { success: true, data: { code: 'ABCDEFGH', status: 'open',
+        items: [{ index: 0, name: 'Complete blood count' }, { index: 1, name: '  thyroid   PROFILE ' }, { index: 2, name: 'Vitamin D' }] } });
+    }
     if (path === '/pharmacy-assisted/labs') {
       if (b.labsOff) return refuse(route, 503, 'ASSISTED_BOOKING_DISABLED', 'Booking lab tests is not switched on yet');
       return json(route, 200, { success: true, data: [
@@ -462,7 +472,7 @@ test('WQ17c card, another device: an authorized payment at Razorpay means no sec
   await signIn(page, 'Booked lab tests');
   const table = page.getByRole('table', { name: 'Booked lab tests, newest first' });
   await expect(table.getByText('Waiting for payment')).toBeVisible();
-  await table.getByRole('link', { name: /Open the lab test of Rina Kumari/ }).click();
+  await table.getByRole('link', { name: /Pay now for the lab test of Rina Kumari/ }).click(); // WQ21 L2
   await page.getByRole('button', { name: 'Pay now' }).click();
   await expect(page.getByText('Razorpay reported the payment; it is being confirmed. Do not pay again. Tap “Check payment” in a minute.')).toBeVisible();
   await expect(page.getByRole('button', { name: /^Pay now/ })).toHaveCount(0);
@@ -491,4 +501,50 @@ test('WQ17c card: cancel a card-paid lab test with the refund to the wallet', as
   await page.getByRole('button', { name: 'Yes, cancel it' }).click();
   await expect(page.getByText('Cancelled. ₹300.00 is back in your Jansetu wallet. This money pays for bookings; it cannot be withdrawn. The patient is told.')).toBeVisible();
   expect(b.cancels).toEqual([{ expectedVersion: 3, refundTo: 'wallet' }]);
+});
+
+// ── WQ21: the recommended-tests code (r16 phase 3d, §25.12.4) ──
+
+const codeField = (page: Page) => page.getByLabel('Have a test code from the doctor? (optional)');
+
+test('WQ21: a code loads the recommended tests; the lab’s matching tests are ticked, the others said; nothing new is sent', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page, 'Book lab test');
+  await patientReady(page);
+  await codeField(page).fill('abcd-efgh');
+  await page.getByRole('button', { name: 'Load tests' }).click();
+  await expect(page.getByText('Recommended tests: Complete blood count,   thyroid   PROFILE , Vitamin D.')).toBeVisible();
+  await page.getByRole('button', { name: 'Choose Sun Diagnostics' }).click();
+  await page.getByLabel(/^Kothrud/).check();
+  await expect(page.getByLabel(/^Complete blood count/)).toBeChecked();
+  await expect(page.getByLabel(/^Thyroid profile/)).toBeChecked();
+  await expect(page.getByText("Vitamin D: not in this lab's list.")).toBeVisible();
+  await page.getByLabel(/^Thyroid profile/).uncheck(); // the pharmacist decides
+  await page.getByRole('button', { name: /09:00–09:30$/ }).click();
+  await page.getByLabel('Language the patient speaks').selectOption('hi');
+  await page.getByRole('button', { name: 'Next: check the price' }).click();
+  await page.getByRole('button', { name: 'Pay ₹300.00 from wallet' }).click();
+  await expect(page.getByRole('heading', { name: 'Booked' })).toBeVisible();
+  const loads = b.calls.filter((c) => c.path.startsWith('/pharmacy-assisted/recommendations'));
+  // r16b: the code and the number travel in the POST body only.
+  expect(loads).toEqual([{ method: 'POST', path: '/pharmacy-assisted/recommendations/lookup', body: { code: 'ABCDEFGH', phone: PHONE } }]);
+  expect(b.creates[0]!.itemIds).toEqual([T1]);
+  expect(Object.keys(b.creates[0]!).filter((k) => /recommend/i.test(k))).toEqual([]);
+  await nothingStored(page, b, 'ABCDEFGH', 'ABCD-EFGH', PHONE); // storage, the address and every request URL
+});
+
+test('WQ21: a typo and an unknown code are said plainly; with the switch off the field is not shown', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page, 'Book lab test');
+  await patientReady(page);
+  await codeField(page).fill('BADC-0DE1');
+  await page.getByRole('button', { name: 'Load tests' }).click();
+  await expect(page.getByText('This code is not valid. Check it on the prescription.')).toBeVisible();
+  await codeField(page).fill('WXYZ-2345');
+  await page.getByRole('button', { name: 'Load tests' }).click();
+  await expect(page.getByText('No recommended tests were found for this code and this mobile number. Check both with the patient.')).toBeVisible();
+  b.recOff = true;
+  await page.getByRole('button', { name: 'Load tests' }).click();
+  await expect(codeField(page)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Choose Sun Diagnostics' })).toBeVisible();
 });

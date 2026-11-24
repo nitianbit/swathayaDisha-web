@@ -1948,6 +1948,25 @@ Backend r14 (`m0/r14-phase2b` 77594d72, design §24.14; local). On stage 24019c4
 - The lab switch-off words for the card (`PAYMENT_METHOD_UNAVAILABLE`) are now the consultation's ("Card payment is not
   switched on yet. Pay from your Jansetu wallet."): lab tests can be paid by card from r14.
 
+## WQ21 pharmacy: the recommended-tests code (phase 3d web) (2026-11-25, branch `wq21/recommendation-code`)
+
+Backend r16 (`m0/r16-phase3d` 8e5337f4, design §25.12.4; local). On WQ17c f089b46.
+
+- **Booked consultation**: the prescription shows "Recommended tests code: ABCD-EFGH" when the booker view carries
+  `prescription.recommendationCode`.
+- **Book lab test**: after the patient step, "Have a test code from the doctor? (optional)" with "Load tests":
+  `POST /pharmacy-assisted/recommendations/lookup {code, phone}` (r16b: both in the body, never in a URL; the code with spaces
+  and hyphens dropped; the number is the patient's from step 1). The recommended names are listed; once a lab is chosen its tests named exactly so (case and spaces aside) are ticked,
+  once per lab and code, and the pharmacist can change the ticks; names the lab does not list read "…: not in this lab's list".
+  400 `INVALID_CODE` / `VALIDATION_ERROR`: "This code is not valid. Check it on the prescription."; 404 `RECOMMENDATION_NOT_FOUND`
+  (the server's one answer for an unknown code and a wrong number): "No recommended tests were found for this code and this
+  mobile number. Check both with the patient."; 503 `RECOMMENDATIONS_DISABLED` (or a server without the route) hides the field.
+  The code and the number stay in the page's state. Nothing new is sent on create (linking is the backend's next round).
+- **WQ21 L1**: `routeCardAnswer` (next to `cardBookingState` in `assistedCard.ts`) is the one router for a create's answer
+  and a by-key `used` answer, used by Book consultation and Book lab test (consultation behaviour unchanged). **L2**: a "Pay now"
+  link on the waiting rows of Booked lab tests, as in Booked consultations.
+- Built against the r16b shape (the 3d review moved the load from `GET …/:code?phone=` to a POST body); mocked until r16b lands.
+
 ## Follow-ups
 
 
@@ -1981,6 +2000,7 @@ Backend r14 (`m0/r14-phase2b` 77594d72, design §24.14; local). On stage 24019c4
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ21 recommended-tests code (phase 3d web) + L1/L2 on f089b46 | Against r16 8e5337f4 with the r16b POST lookup (mocked; §25.12.4). typecheck clean; Vitest 429/429 (+7: wq21.test.ts 4 (cleaning and printing the code, the POST body with no code or number in the URL and no malformed code sent, exact-name ticks, refusal words and the switch-off rule), wq21b.test.ts 3 (`routeCardAnswer` for both kinds, the held-without-order case, `isCardAnswer`)); Playwright workspace 902/902 (+6 = 3 journeys x 2: load and pre-tick with the unmatched name said and nothing new on create and nothing stored or in a URL; typo, not found and switch off; the booked consultation's code; the lab card journey now opens from the list's Pay now link (L2)). Temporary config on port 5473, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ17c lab tests by card or UPI (phase 2b) on 24019c4 | Against r14 77594d72 (§24.14; mocked API). typecheck clean; Vitest 422/422 (+4 in wq17c.test.ts: card state by kind, the lab view's order without an amount, cancel words by who is told and the waiting lab cancel, `refundTo` and `status=pending_payment`; the lab card switch-off words now the consultation's); Playwright workspace 895 passed of 896 (+10 = 5 journeys x 2: lab card pay, Checkout closed then Pay now after asking the server, another device with an authorized payment gets no second Checkout, cancel to the card, cancel to the wallet; the consultation card and wallet specs pass unchanged on the shared pieces). The one failure is the known load-timing check in stock-supply.spec.ts:1277 (as in WQ18b): 6/6 on its own afterwards. Temporary config on port 5472, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ17b review fixes (M1, D1, D2, L1–L4 on 3c1960e) | Against r11 f5f171c9 (mocked API). typecheck clean; Vitest 406/406 (no change: D1/D2 are moves covered by the journeys); Playwright workspace 868/868 (+6 = 3 journeys x 2: L1 a lost accept not claimed after a cancel, L2 a refused accept said and read again, L3 a found cancel says what was done with the money; the reload journey now checks no price is shown (M1) and the list journey the Visited filter (L4); all five failed on 3c1960e; the consultation specs pass unchanged on the shared create hook). Temporary config on port 5471, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ17 pharmacy lab-test booking (phase 2a) on 0aca6c3 | Against r11 f5f171c9 (§24.11; mocked API). typecheck clean; Vitest 406/406 (+5 in assistedLab.test.ts: lab, catalogue and slot paths and queries, ids and keys checked before sending, the cursor list, by-key, abandon, cancel with `expectedVersion`, accept with the proposal version, the 1-hour cancel rule, the tests' total, branches by visit, status and refusal words); Playwright workspace 862/862 (+16 = 8 journeys x 2: book with the shared patient step and pay from the wallet (no note offered), home collection with its address, a lost answer and a reload then Check by key, price changed then not enough money, list and cancel with the version, accept a new time, open a released report and no cancel within the hour, another pharmacy's booking not found and the switch off); the consultation specs pass unchanged on the shared components. A first full run had 6 timeouts in doctor-tools and admin-pharmacies (load); both specs then passed 88/88 and a second full run passed 862/862. Temporary config on port 5403, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |

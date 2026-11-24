@@ -151,6 +151,8 @@ export interface DispensingCopy {
   testsAdvised?: string[];
   prescribedAt?: string;
   prescribedBySpecialistName?: string;
+  /** WQ21 (r16 phase 3d, §25.12): the recommended-tests code on the prescription (stored without the hyphen), when made. */
+  recommendationCode?: string;
   fileUrls: string[];
   /** The PDF is still being made: read again shortly. */
   copyPending?: boolean;

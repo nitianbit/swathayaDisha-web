@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router';
 import { ArrowLeft, FileText } from 'lucide-react';
 import {
   ApiError, assistedRefusal, canBookerCancel, canBookerReschedule, isAssistedBooking, typedNameTarget, formatSlotDate, joinWords, medicineName,
-  bookingPaidBy, bookingPayBy, bookingWasPaid, LATE_PAYMENT_BACK, orderFromBooking, PATIENT_LANGUAGES, payByWords, pharmacyAssistedApi, pharmacyStockApi, requestKeysApi, rxOrderProblems, type BookedConsultation,
+  bookingPaidBy, bookingPayBy, formatRecommendationCode, bookingWasPaid, LATE_PAYMENT_BACK, orderFromBooking, PATIENT_LANGUAGES, payByWords, pharmacyAssistedApi, pharmacyStockApi, requestKeysApi, rxOrderProblems, type BookedConsultation,
   type Medicine, type RefundTo, type RxMedicine, type RxOrderRequest,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextField } from '@jansetu/ui';
@@ -229,6 +229,8 @@ function Prescription({ pharmacyId, booking, onRetry }: { pharmacyId: string; bo
       ) : <p>No medicines prescribed.</p>}
       {p.advice && <p><strong>Advice:</strong> {p.advice}</p>}
       {(p.testsAdvised ?? []).length > 0 && <p><strong>Tests advised:</strong> {(p.testsAdvised ?? []).join(', ')}</p>}
+      {/* WQ21 (r16): the code the patient shows to book these tests (here, at Book lab test). */}
+      {p.recommendationCode && <p><strong>Recommended tests code:</strong> {formatRecommendationCode(p.recommendationCode)}</p>}
       <div className="ws-actions">
         {p.fileUrls[0] ? (
           <Button variant="secondary" busy={opening !== null} onClick={() => void open(p.fileUrls[0]!)}><FileText size={16} aria-hidden="true" /> Open the prescription copy</Button>

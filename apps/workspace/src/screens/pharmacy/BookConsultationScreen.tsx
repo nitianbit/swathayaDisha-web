@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  ASSISTED_MODE_LABEL, assistedRefusal, canonicalPhone, CONSENT_STATEMENT_LANGUAGE,
+  ASSISTED_MODE_LABEL, assistedRefusal, isCardAnswer, routeCardAnswer, canonicalPhone, CONSENT_STATEMENT_LANGUAGE,
   CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday, joinWords, nextFreeSlot, supportedModes,
   MAX_CONCERN, PATIENT_LANGUAGES, patientBody, pharmacyAssistedApi, SWITCHED_OFF_MESSAGE, type AssistedCardPayment, type AssistedDoctor, type AssistedMode, type AssistedSlot, type BookedConsultation,
   type ByKeyAnswer, type ConsultationReceipt, type ConsultationRequest, type JoinOn, type Refusal,
@@ -243,45 +243,32 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
 
   /** WQ16: what a create (or its replay) answered: a wallet booking is done; a card booking waits for its payment. */
   function afterReceipt(r: ConsultationReceipt, requestKey: string, summary: Summary) {
-    if (r.funding?.method !== 'razorpay') { setDone(doneFromReceipt(r, summary)); return; }
-    cards.remember(r.booking._id, requestKey);
-    const b = r.booking;
-    if (b.status === 'confirmed' && b.paymentStatus === 'paid') { setDone(doneFromReceipt(r, summary)); return; }
-    if (b.status === 'pending') {
-      setCardDue({ bookingId: b._id, requestKey, order: r.payment ?? null, summary, ref: b.assisted?.shortRef, newAccount: r.newAccount, autoOpen: !!r.payment });
-      return;
-    }
-    cards.forget(b._id);
-    setEnded(NOT_PAYABLE_WORDS);
+    const card = r.funding?.method === 'razorpay';
+    if (card) cards.remember(r.booking._id, requestKey);
+    routeCardAnswer('consultation', { card, booking: r.booking, order: r.payment ?? null }, null, {
+      done: () => setDone(doneFromReceipt(r, summary)),
+      due: (order) => setCardDue({ bookingId: r.booking._id, requestKey, order, summary, ref: r.booking.assisted?.shortRef, newAccount: r.newAccount, autoOpen: !!order }),
+      ended: () => { cards.forget(r.booking._id); setEnded(NOT_PAYABLE_WORDS); },
+    });
   }
 
   /**
    * A by-key answer `used` (the check, or a give-up that found it). A card booking (`payment` present) waits for its
    * payment; one still without its order (502 at create) needs the same request again, so the request stays stored.
-   * Answers null once settled, or what is still to do.
+   * Answers null once settled, or what is still to do (WQ21 L1: `routeCardAnswer`, shared with Book lab test).
    */
   function afterUsed(r: { booking: BookedConsultation; payment?: AssistedCardPayment | null }, p: PendingOp<PendingBooking>, restored: boolean): string | null {
     const summary = restored ? undefined : p.body?.summary;
-    if (!('payment' in r)) {
-      settle(p.requestKey);
-      setReview(null);
-      setDone(doneFromView(r.booking, summary));
-      refreshAfterBooking();
-      return null;
-    }
     const b = r.booking;
-    if (b.status === 'pending' && !r.payment && !restored) return 'The booking is held, but its card payment could not be started. Send the same request again to get the payment page.';
-    settle(p.requestKey);
-    setReview(null);
-    refreshAfterBooking();
-    if (b.status === 'confirmed' && b.paymentStatus === 'paid') { cards.remember(b._id, p.requestKey); setDone(doneFromView(b, summary, 'card')); return null; }
-    if (b.status === 'pending') {
-      cards.remember(b._id, p.requestKey);
-      setCardDue({ bookingId: b._id, requestKey: p.requestKey, order: r.payment ?? null, summary: summaryOf(b, summary), ref: b.assisted?.shortRef, autoOpen: false });
-      return null;
-    }
-    setEnded(NOT_PAYABLE_WORDS);
-    return null;
+    return routeCardAnswer('consultation', { card: isCardAnswer(r), booking: b, order: r.payment ?? null }, { restored }, {
+      settle: () => { settle(p.requestKey); setReview(null); refreshAfterBooking(); },
+      done: (card) => { if (card) cards.remember(b._id, p.requestKey); setDone(doneFromView(b, summary, card ? 'card' : 'wallet')); },
+      due: (order) => {
+        cards.remember(b._id, p.requestKey);
+        setCardDue({ bookingId: b._id, requestKey: p.requestKey, order, summary: summaryOf(b, summary), ref: b.assisted?.shortRef, autoOpen: false });
+      },
+      ended: () => setEnded(NOT_PAYABLE_WORDS),
+    });
   }
 
   /** WQ16: the chosen way to pay goes in the same body (a free consultation is always booked with the wallet method). */

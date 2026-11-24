@@ -93,7 +93,12 @@ function LabList({ pharmacyId }: { pharmacyId: string }) {
                       <td>{b.lab?.name ?? '—'}</td>
                       <td>{(b.items ?? []).map((i) => i.name).join(', ') || '—'}</td>
                       <td>{labStatusLabel(b.status)}<LabBadges b={b} /></td>
-                      <td><Link to={`/pharmacy/lab-tests/${b._id}`} aria-label={`Open the lab test of ${b.patientName ?? 'the patient'} at ${b.lab?.name ?? 'the lab'}`}>Open</Link></td>
+                      <td>
+                        {/* WQ21 L2: a card booking waiting for its payment, as in Booked consultations. */}
+                        {b.status === 'pending_payment'
+                          ? <Link to={`/pharmacy/lab-tests/${b._id}`} aria-label={`Pay now for the lab test of ${b.patientName ?? 'the patient'} at ${b.lab?.name ?? 'the lab'}`}>Pay now</Link>
+                          : <Link to={`/pharmacy/lab-tests/${b._id}`} aria-label={`Open the lab test of ${b.patientName ?? 'the patient'} at ${b.lab?.name ?? 'the lab'}`}>Open</Link>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

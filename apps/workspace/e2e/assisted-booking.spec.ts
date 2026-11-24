@@ -689,3 +689,12 @@ test('WQ12 fixes: Checkout that does not load says no money was taken; an unpaid
   await expect(page.getByRole('heading', { name: 'Top-ups not confirmed yet' })).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => Object.keys(sessionStorage).some((k) => k.includes('wallet-topups:')))).toBe(false);
 });
+
+test('WQ21: a prescription with a recommended-tests code shows it as printed', async ({ page }) => {
+  await mockBackend(page, { bookings: [bookedRow({ status: 'completed', prescription: {
+    medicines: [], testsAdvised: ['CBC'], recommendationCode: 'ABCDEFGH', prescribedAt: '2026-11-22T06:00:00.000Z', fileUrls: [] } })] });
+  await signIn(page, 'Booked consultations');
+  await page.getByRole('link', { name: /Open the consultation of Rina Kumari/ }).click();
+  await expect(page.getByText('Recommended tests code:')).toBeVisible();
+  await expect(page.getByText('ABCD-EFGH')).toBeVisible();
+});
