@@ -10,7 +10,8 @@ import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
-import { useCursorPages, WalletHistory } from '../pharmacy/WalletScreen.tsx';
+import { CursorPager, useCursorPages } from '../pharmacy/cursorList.tsx';
+import { WalletHistory } from '../pharmacy/WalletScreen.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { NoSuchRecord } from './accountList.tsx';
 import { useAdminScope } from './adminScope.ts';
@@ -49,7 +50,7 @@ function LabWallet({ scopeKey, partnerId }: { scopeKey: readonly string[]; partn
   const lab = useQuery({ queryKey: [...scopeKey, partnerId, 'lab'], queryFn: () => partnerAdminApi(api).get(partnerId) });
   const wallet = useQuery({ queryKey: [...scopeKey, partnerId, 'wallet'], queryFn: () => w.wallet(partnerId) });
   const history = useCursorPages();
-  const entries = useQuery({ queryKey: [...scopeKey, partnerId, 'entries', history.cursor ?? 'first'], queryFn: () => w.entries(partnerId, history.cursor) });
+  const entries = useQuery({ queryKey: [...scopeKey, partnerId, 'entries', history.cursor], queryFn: () => w.entries(partnerId, history.cursor || undefined) });
   const name = lab.data?.name ?? 'this lab';
   const view = wallet.data ? asPharmacyWallet(wallet.data) : null;
   return (
@@ -72,7 +73,8 @@ function LabWallet({ scopeKey, partnerId }: { scopeKey: readonly string[]; partn
         {lab.data && wallet.isSuccess ? <AddMoney target={labTarget(api, scopeKey, partnerId, lab.data.name)} wallet={view} />
           : lab.isPending || wallet.isPending ? <Loading label="Loading…" /> : <p className="ws-muted">The lab and its wallet must load first.</p>}
       </section>
-      <WalletHistory q={entries} notes empty={`Top-ups, admin credits and bookings of ${name} are listed here.`} pager={history.pager(entries.data?.nextCursor)} />
+      <WalletHistory q={entries} notes empty={`Top-ups, admin credits and bookings of ${name} are listed here.`} first={history.page === 1}
+        pager={<CursorPager pages={history} nextCursor={entries.data?.nextCursor} label="Wallet history pages" />} />
       <Lots scopeKey={scopeKey} partnerId={partnerId} />
       <section className="ws-section" aria-labelledby="uncredited-h">
         <h2 id="uncredited-h">Card top-ups not credited</h2>
