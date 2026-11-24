@@ -7,6 +7,7 @@ import {
   importTemplateCsv, importUploadRefusal, isSupplierRefusal, pharmacyStockApi, SUPPLIER_REFUSAL, type ApiError, type ImportMode, type ImportStatus,
   type InventoryImport,
 } from '@jansetu/api';
+import { formatClock } from '@jansetu/i18n';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -259,7 +260,7 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
 
 /** HH:MM in India time (24-hour). */
 const formatTime = (value: string | undefined) =>
-  (value ? new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Kolkata' }).format(new Date(value)) : '—');
+  (value ? formatClock(new Date(value)) : '—');
 
 const PAGE_SIZE = 20;
 

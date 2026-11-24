@@ -3,6 +3,7 @@ import { FileText } from 'lucide-react';
 import {
   hasGlobalScope, LAB_VISIT_MODES, reportFileName, type Branch, type LabBookingStatus, type VisitMode,
 } from '@jansetu/api';
+import { CALENDAR_DAY, formatDateWith } from '@jansetu/i18n';
 import { Alert, Button, Empty, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { sniffDocument } from '../pharmacy/documents.ts';
@@ -12,7 +13,7 @@ import { useBranches, useWorkspacePartner, type ScopeContext } from './scope.tsx
 export function formatDay(date: string): string {
   const t = Date.parse(`${date}T00:00:00Z`);
   if (Number.isNaN(t)) return date;
-  return new Intl.DateTimeFormat('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(t);
+  return formatDateWith(t, CALENDAR_DAY);
 }
 
 /** A slot as staff read it: its India-time day and times. */

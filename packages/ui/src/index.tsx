@@ -106,18 +106,9 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
   );
 }
 
-/** Money is held in rupees on these records; show it in Indian grouping. */
-export function formatRupees(value: number | undefined | null): string {
-  if (value === undefined || value === null || !Number.isFinite(value)) return '—';
-  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(value);
-}
-
-export function formatDateTime(value: string | undefined | null): string {
-  if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '—';
-  return new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }).format(d);
-}
+/** Money in Indian grouping and India date-times, in the current language (docs/I18N_PLAN.md §3.5). */
+export { formatDateTime, formatRupees } from '@jansetu/i18n';
+export { LanguageScope, LanguageSwitcher, Parts, useLanguage } from './language.tsx';
 
 /** Whole seconds left until `until` (epoch ms) at `now`; 0 when none or passed. */
 export const cooldownLeft = (until: number | undefined, now: number) => (until && until > now ? Math.ceil((until - now) / 1000) : 0);

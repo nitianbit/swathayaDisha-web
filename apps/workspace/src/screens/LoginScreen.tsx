@@ -3,7 +3,7 @@ import {
   ApiError, CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, EMAIL_NOT_REGISTERED_MESSAGE, EMAIL_NOT_REGISTERED_STAFF_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, PARTNER_KIND_LABEL, parseLoginIdentifier,
   targetKey, targetKind, type OtpTarget, type PartnerSelection,
 } from '@jansetu/api';
-import { Alert, Button, TextField, useCooldowns } from '@jansetu/ui';
+import { Alert, Button, LanguageSwitcher, TextField, useCooldowns } from '@jansetu/ui';
 import { messageOf } from '../errors.ts';
 import { useSession, type StaffRole } from '../session.tsx';
 
@@ -141,6 +141,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
     <main className="login">
       <div className="login-card">
         <div className="ws-brand login-brand">Jansetu <span>Workspace</span></div>
+        <LanguageSwitcher />
         <h1 id="page-title" tabIndex={-1}>Sign in</h1>
         {notice && <Alert tone="warn">{notice}</Alert>}
         {/* WQ15: a refusal that also ended the session is said once (as the notice). */}

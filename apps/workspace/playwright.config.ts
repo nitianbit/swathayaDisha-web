@@ -5,7 +5,8 @@ export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
   reporter: 'list',
-  use: { baseURL: 'http://127.0.0.1:5174', trace: 'retain-on-failure' },
+  // English on any machine (docs/I18N_PLAN.md §4.2): the app's first guess reads the browser language.
+  use: { baseURL: 'http://127.0.0.1:5174', trace: 'retain-on-failure', locale: 'en-IN' },
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'] } },
     { name: 'tablet', use: { ...devices['Galaxy Tab S4'] } },

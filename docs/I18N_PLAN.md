@@ -110,7 +110,8 @@ t.has(`errors.${code}`);                                          // for codes f
 - **Keys** are typed from `en.ts`; placeholders are typed from the `{name}` parts of the English text.
 - **Plurals:** an entry `{ one, other }` with `count`. A later language with more forms adds them in its JSON; the check
   accepts exactly the forms `Intl.PluralRules` names for it.
-- **Placeholders:** numbers are formatted for the language; ids, phone numbers and codes are passed as strings.
+- **Placeholders:** values are inserted as written (a number is not regrouped), so English stays exactly as the old
+  `${n}` wrote it; pass formatted text (`formatRupees`, a date) where the format matters.
 - **Fallback:** checked translation, else English. A key never shows. In development, a missing translation is noted
   once in the console by **key only** (params may hold a patient's name: never printed).
 - **Loading:** English is bundled. Other languages load on choice (`import.meta.glob`: one hashed chunk per catalogue and
@@ -219,7 +220,8 @@ Each round is one build and one independent review (Opus xhigh). Commits stay lo
 
 | Round | Content | Strings |
 |---|---|---|
-| **6a** | `packages/i18n` (core, format, digits, pseudo, checks, scripts); fonts and CSS; `LanguageSwitcher`, `LanguageScope` and the language rules of §3.7 on both sign-in screens, the Profile and the side bar; Playwright `locale`; the pseudo smoke spec. Moves the 15 `Intl` call sites to `format` | ~20 |
+| **6a** (built, WQ31) | `packages/i18n` (core, format, pseudo, catalogue check, literal scan with its starting allowlist); `LanguageSwitcher` (shows nothing until a second language is released), `LanguageScope` and the start-up rules of §3.7 in both apps; Playwright `locale`; a start-up smoke spec per app. Moves the 15 `Intl` call sites to `format` | 2 |
+| **6a2** | Before the first hand-off (after 6c): the translator script (CSV export, import, prune, accept); before the first release: fonts and the Indic CSS (§3.8), typed Indian-script digits (§3.5), and the switcher's save to the account once 6a-backend exists | ~2 |
 | **6a-backend** | `uiLanguage` and `PUT /auth/profile/ui-language` (§3.7), with an integration test | — |
 | **6b** | Shared words: `packages/ui`, then every word in `packages/api` (labels, refusals, word helpers, plurals). One `messageOf` in `@jansetu/api` (§6) | ~620 |
 | **6c** | Customer app: all screens, `TABS`, `BOOKING_STATUS`, `common.tsx`, `labels.ts`, session notices as codes | ~530 |
@@ -420,7 +422,8 @@ Build days are for one builder; each round then gets one independent review (abo
 
 | Round | Build | Notes |
 |---|---|---|
-| 6a | 4 days | Core, format, fonts, switcher, checks, scripts, pseudo spec |
+| 6a | 3 days | Core, format, switcher, checks, start-up spec (built) |
+| 6a2 | 1.5 days | Translator script, fonts and CSS, typed digits, save to the account |
 | 6a-backend | 1 day | Model field, route, integration test |
 | 6b | 3 days | api words are many short maps; plurals; one `messageOf` |
 | 6c | 3 days | Customer app; session notices |

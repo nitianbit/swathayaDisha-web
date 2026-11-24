@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { createHashRouter, NavLink, Outlet, RouterProvider, useLocation } from 'react-router';
 import { CalendarDays, House, Pill, UserRound, Wallet } from 'lucide-react';
-import { Empty, Loading } from '@jansetu/ui';
+import { Empty, LanguageScope, Loading, useLanguage } from '@jansetu/ui';
 import { useSession, type Customer } from './session.tsx';
 import { LoginScreen } from './screens/LoginScreen.tsx';
 import { HomeScreen } from './screens/HomeScreen.tsx';
@@ -46,10 +46,11 @@ function FocusOnNavigate() {
 }
 
 function Layout() {
+  useLanguage(); // the tab names follow a language change; the page itself is mounted again (LanguageScope)
   return (
     <div className="app">
       <a className="app-skip" href="#main">Skip to content</a>
-      <main id="main" className="app-main"><FocusOnNavigate /><Outlet /></main>
+      <main id="main" className="app-main"><FocusOnNavigate /><LanguageScope><Outlet /></LanguageScope></main>
       <nav className="app-tabs" aria-label="Main">
         {TABS.map(({ to, label, icon: Icon }) => (
           <NavLink key={to} to={to} end={to === '/'} className="app-tab">
@@ -101,6 +102,6 @@ export function App() {
   const { state } = useSession();
   // D4: a reload resumes the cookie session before deciding to show the sign-in screen.
   if (state.status === 'restoring') return <main className="login"><Loading label="Signing you in…" /></main>;
-  if (state.status !== 'signed_in') return <LoginScreen notice={state.notice} />;
+  if (state.status !== 'signed_in') return <LanguageScope><LoginScreen notice={state.notice} /></LanguageScope>;
   return <SignedIn customer={state.customer} />;
 }

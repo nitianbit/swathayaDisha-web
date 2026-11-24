@@ -1,3 +1,4 @@
+import { formatYmd } from '@jansetu/i18n';
 import type { ApiClient, Page } from './client.ts';
 import type { OrderStatus } from './pharmacyOrders.ts';
 
@@ -135,6 +136,5 @@ export const medicineName = (m: InventoryItem['medicineId']) =>
 /** YYYYMMDD → "30 Jun 2027". */
 export function formatExpiry(yyyymmdd: string | undefined): string {
   if (!yyyymmdd || !/^\d{8}$/.test(yyyymmdd)) return yyyymmdd || '—';
-  const d = new Date(Date.UTC(+yyyymmdd.slice(0, 4), +yyyymmdd.slice(4, 6) - 1, +yyyymmdd.slice(6, 8)));
-  return new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(d);
+  return formatYmd(yyyymmdd);
 }

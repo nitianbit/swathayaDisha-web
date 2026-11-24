@@ -11,6 +11,7 @@ Read before changing:
 ```
 packages/api        typed client; one module per backend area (auth.ts, pharmacyOrders.ts, ...)
 packages/ui         tokens.css + small components (Button, TextField, Alert, Loading, Empty, ErrorState, ...)
+packages/i18n       UI words: typed catalogues, the language start-up and every money/date format (docs/I18N_PLAN.md)
 apps/workspace      staff web app: src/modules.tsx declares every page and its roles; screens/<area>/*Screen.tsx
 apps/customer       (W3) customer app, browser + Capacitor
 ```
@@ -25,6 +26,8 @@ apps/customer       (W3) customer app, browser + Capacitor
 - Tokens: memory only on the web; secure storage only on native. Never write a token, OTP or patient data to
   `localStorage`, `sessionStorage`, logs or URLs.
 - No mock data in shipped code. Browser tests mock `/api/**` inside the test.
+- Words a person reads come from a catalogue (`t`, docs/I18N_PLAN.md §3.4); money and dates from `@jansetu/i18n` formats.
+  Files still holding English are listed in `packages/i18n/literals-allowlist.txt`; that list only shrinks.
 - Keep secrets, `.env` files, patient records and uploaded documents out of Git.
 
 ## Checks (report web and native/device checks separately)

@@ -1,3 +1,4 @@
+import { formatClock, formatPaise } from '@jansetu/i18n';
 import { ApiError, type ApiClient } from './client.ts';
 import { assistedRefusal, hex, idOf as checkedId, type BookedConsultation, type BookingPayment, type CancelAnswer, type CardRefund, type OpenCardOrder } from './assisted.ts';
 
@@ -154,7 +155,7 @@ export function payByWords(payBy: string | undefined | null): string {
 export function payByClock(payBy: string | undefined | null): string | null {
   const d = payBy ? new Date(payBy) : null;
   if (!d || Number.isNaN(d.getTime())) return null;
-  return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Kolkata' }).format(d);
+  return formatClock(d);
 }
 
 /**
@@ -220,7 +221,7 @@ export const LATE_PAYMENT_BACK = 'If a payment arrives later, it goes back to th
 export const LATE_CAPTURE_WORDS =
   'The payment came after the booking could no longer take it (the time was released, it was cancelled, or the doctor is not available). The amount is being refunded to the card or UPI it was paid with. Nothing is booked: book again if the patient still wants it.';
 
-const rupees = (paise: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(paise / 100);
+const rupees = formatPaise;
 
 /** The refund of a card-paid booking in plain words, from the server's state only (only `processed` is done). */
 export function cardRefundWords(r: CardRefund): string {

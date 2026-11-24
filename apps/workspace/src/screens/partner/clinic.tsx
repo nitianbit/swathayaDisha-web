@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { appointmentAt, appointmentDay, partnerClinicApi, type ClinicAppointmentStatus, type DeskAppointment } from '@jansetu/api';
+import { formatClock } from '@jansetu/i18n';
 import { Empty, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { useSession } from '../../session.tsx';
@@ -39,11 +40,10 @@ export function ClinicOnly({ ctx, children }: { ctx: ScopeContext; children: Rea
   return <>{children}</>;
 }
 
-const TIME = new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Kolkata' });
 /** An instant as India time "HH:MM". */
 export const istTime = (iso: string | Date) => {
   const t = typeof iso === 'string' ? Date.parse(iso) : iso.getTime();
-  return Number.isNaN(t) ? '—' : TIME.format(t);
+  return Number.isNaN(t) ? '—' : formatClock(t);
 };
 
 /** An appointment's India-time day and time as staff read them ("Tue, 17 Nov 2026, 10:30"). */

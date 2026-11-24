@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import {
   ApiError, EMAIL_NOT_REGISTERED_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, parseLoginIdentifier, targetKey, targetKind, type OtpTarget,
 } from '@jansetu/api';
-import { Alert, Button, TextField, useCooldowns } from '@jansetu/ui';
+import { Alert, Button, LanguageSwitcher, TextField, useCooldowns } from '@jansetu/ui';
 import { messageOf } from '../common.tsx';
 import { useSession } from '../session.tsx';
 
@@ -82,6 +82,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
     <main className="login">
       <div className="login-card">
         <div className="brand">Jansetu</div>
+        <LanguageSwitcher />
         <h1 id="page-title" tabIndex={-1}>Sign in</h1>
         <p className="page-sub">Book doctors and lab tests for you and your family.</p>
         {notice && <Alert tone="warn">{notice}</Alert>}
