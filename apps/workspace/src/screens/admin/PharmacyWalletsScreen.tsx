@@ -3,8 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  ADMIN_TOPUP_PAGE_SIZE, ADMIN_TOPUP_WARNING, adminPharmacyWalletApi, ApiError, adminTopupForm, adminTopupRefusal, adminWalletReadError, findAdminTopup,
-  latestAdminCredit, MAX_ADMIN_TOPUP_NOTE, movementLabel, topupNotFoundWords, type PendingMarker, type WalletMovement, OBJECT_ID_PATTERN, pharmacyAdminApi, signedPaiseOf, walletBalancePaise, walletState, type AdminTopupBody, type PharmacyWallet,
+  ADMIN_TOPUP_PAGE_SIZE, adminTopupWarning, adminPharmacyWalletApi, ApiError, adminTopupForm, adminTopupRefusal, adminWalletReadError, findAdminTopup,
+  latestAdminCredit, MAX_ADMIN_TOPUP_NOTE, movementLabel, topupNotFoundWords, type PendingMarker, type WalletMovement, OBJECT_ID_PATTERN, pharmacyAdminApi, signedPaiseOf, walletBalancePaise, walletState, type ApiClient, type Page, type PharmacyWallet,
   CLOSE_COMPENSATED_EXPLAIN, closeCompensatedFinal, closeCompensatedRefusal, closeReasonProblem, closeRefusedBeforeWriting, MAX_CLOSE_REASON, type CompensatedClose, type UncreditedTopup,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
@@ -13,6 +13,7 @@ import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { CheckPanel, useOwnedOp } from '../pharmacy/ownedOp.tsx';
+import { MovementsTable } from '../pharmacy/WalletScreen.tsx';
 import { useAdminScope } from './adminScope.ts';
 import { CardRefundsQueue } from './CardRefunds.tsx';
 import { PharmacyBadges } from './PharmaciesScreen.tsx';
@@ -123,13 +124,13 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
         <h2 id="bal-h">Balance</h2>
         {wallet.isPending ? <Loading label="Loading the wallet…" />
           : wallet.isError ? <ErrorState message={adminWalletReadError(wallet.error)} onRetry={() => void wallet.refetch()} />
-          : <Balance w={wallet.data} />}
+          : <Balance w={wallet.data} owner="pharmacy" />}
       </section>
 
       <section className="ws-section" aria-labelledby="add-h">
         <h2 id="add-h">Add money</h2>
         {pharmacy.data && wallet.isSuccess
-          ? <AddMoney scopeKey={scopeKey} pharmacyId={pharmacyId} pharmacyName={pharmacy.data.name} wallet={wallet.data} />
+          ? <AddMoney target={pharmacyTarget(api, scopeKey, pharmacyId, pharmacy.data.name)} wallet={wallet.data} />
           : pharmacy.isPending || wallet.isPending ? <Loading label="Loading…" /> : <p className="ws-muted">The pharmacy and its wallet must load first.</p>}
       </section>
 
@@ -140,30 +141,7 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
           : movements.data.items.length === 0 ? <Empty title="No money in or out yet">Top-ups, booking payments, refunds and admin credits of {name} are listed here.</Empty>
           : (
             <>
-              <div className="ws-table-wrap">
-                <table className="j-table">
-                  <caption className="j-sr-only">Wallet history, newest first</caption>
-                  <thead><tr><th scope="col">When</th><th scope="col">What</th><th scope="col">Note</th><th scope="col">In / out</th><th scope="col">Balance after</th></tr></thead>
-                  <tbody>
-                    {movements.data.items.map((m) => {
-                      const signed = signedPaiseOf(m);
-                      const after = typeof m.balanceAfterPaise === 'number' ? m.balanceAfterPaise / 100 : m.balanceAfter;
-                      return (
-                        <tr key={m._id}>
-                          <td>{formatDateTime(m.createdAt)}</td>
-                          <td>
-                            {movementLabel(m)}
-                            {m.status && m.status !== 'completed' && <> <Badge tone="warn">{m.status === 'pending' ? 'Pending' : 'Failed'}</Badge></>}
-                          </td>
-                          <td>{m.notes || '—'}</td>
-                          <td>{signed >= 0 ? <span>+{formatRupees(signed / 100)}</span> : <span className="ws-warn-text">−{formatRupees(-signed / 100)}</span>}</td>
-                          <td>{formatRupees(after)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <MovementsTable rows={movements.data.items} notes />
               {movements.data.totalPages > 1 && (
                 <nav className="ws-pager" aria-label="Wallet history pages">
                   <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Newer</Button>
@@ -177,14 +155,15 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
 
       <section className="ws-section" aria-labelledby="uncredited-h">
         <h2 id="uncredited-h">Card top-ups not credited</h2>
-        <UncreditedTopups scopeKey={scopeKey} pharmacyId={pharmacyId} pharmacyName={name} />
+        <UncreditedTopups scopeKey={scopeKey} ownerId={pharmacyId} ownerName={name} owner="pharmacy" />
       </section>
     </>
   );
 }
 
-function Balance({ w }: { w: PharmacyWallet | null }) {
-  if (!w) return <p>This pharmacy has no wallet yet. It is made when the pharmacy opens its wallet, or when money is added here.</p>;
+/** WQ20: a pharmacy's or a lab's wallet as an admin sees it (`owner` names it). */
+export function Balance({ w, owner }: { w: PharmacyWallet | null; owner: 'pharmacy' | 'lab' }) {
+  if (!w) return <p>This {owner} has no wallet yet. It is made when the {owner} opens its wallet, or when money is added here.</p>;
   const state = walletState(w);
   const owed = Number(w.receivableMinor ?? 0);
   return (
@@ -192,6 +171,7 @@ function Balance({ w }: { w: PharmacyWallet | null }) {
       <dl className="fin-cards" aria-label="Wallet">
         <div className="fin-card fin-card--main"><dt>Money in the wallet</dt><dd>{formatRupees(walletBalancePaise(w) / 100)}</dd></div>
         {owed > 0 && <div className="fin-card"><dt>Owed to Jansetu</dt><dd>{formatRupees(owed / 100)}</dd></div>}
+        {owner === 'lab' && <div className="fin-card"><dt>Card money (withdrawals coming later)</dt><dd>{formatRupees(Number(w.withdrawableMinor ?? 0) / 100)}</dd></div>}
       </dl>
       {state === 'owing' && <Alert tone="warn">The wallet owes {formatRupees(owed / 100)} to Jansetu after a disputed card payment. It cannot pay for bookings. Money added clears this first.</Alert>}
       {state !== 'owing' && w.frozen === true && <Alert tone="warn">The wallet is on hold{w.frozenReason ? ` (${w.frozenReason})` : ''}, so it cannot pay for bookings. Money can still be added.</Alert>}
@@ -201,27 +181,63 @@ function Balance({ w }: { w: PharmacyWallet | null }) {
   );
 }
 
-interface PendingTopup { body: AdminTopupBody; pharmacyName: string }
+/** What an admin credit sends, and to whom (the name shown). */
+interface PendingTopup { body: { amount: number; notes: string }; pharmacyName: string }
+
+/**
+ * WQ20: the wallet an admin adds money to: a pharmacy's (`/pharmacy-wallet/topup`) or a lab's (`/admin/labs/:id/wallet/topup`).
+ * Both are once per Idempotency-Key with an exact by-key read; the same form, review, resend and check serve both.
+ */
+export interface AdminTopupTarget {
+  /** The memory slots' owner part (a pharmacy's id as before; a lab's `lab-<id>`). */
+  ownerKey: string;
+  ownerName: string;
+  owner: 'pharmacy' | 'lab';
+  /** Read again after every answer. */
+  queryKey: readonly unknown[];
+  /** The newest history page (for the last admin credit on the review). */
+  recentKey: readonly unknown[];
+  recent: () => Promise<Page<WalletMovement>>;
+  topup: (body: { amount: number; notes: string }, key: string) => Promise<PharmacyWallet | null>;
+  findCredit: (key: string) => Promise<{ row: WalletMovement } | { row: null; complete: boolean; searched: number; exact?: boolean }>;
+}
+
+/** WQ13/WQ14: a pharmacy's wallet as the credit's target (unchanged routes, slots and fallback search). */
+function pharmacyTarget(api: ApiClient, scopeKey: readonly string[], pharmacyId: string, pharmacyName: string): AdminTopupTarget {
+  const wallets = adminPharmacyWalletApi(api);
+  return {
+    ownerKey: pharmacyId, ownerName: pharmacyName, owner: 'pharmacy', queryKey: [...scopeKey, pharmacyId], recentKey: movementsKey(scopeKey, pharmacyId, 1),
+    recent: () => wallets.movements(pharmacyId, 1),
+    topup: (body, key) => wallets.topup({ pharmacyId, ...body }, key),
+    // Review M1: the exact by-key read first (backend r7); on an older server, the history, newest first, up to 20 pages.
+    findCredit: async (key) => {
+      const exact = await wallets.topupByKey(pharmacyId, key);
+      if (exact.state === 'used') return { row: exact.row };
+      if (exact.state === 'none') return { row: null, complete: true, searched: 0, exact: true };
+      return findAdminTopup((page) => wallets.movements(pharmacyId, page, ADMIN_TOPUP_PAGE_SIZE), key);
+    },
+  };
+}
 
 /**
  * The admin credit: amount and note, a review, then one send with an owned PendingOp (its key is the Idempotency-Key).
- * A lost answer stays on screen: send the same request again (same key, same body: never added twice), or find it in
- * the history by its key.
+ * A lost answer stays on screen: send the same request again (same key, same body: never added twice), or find it by its
+ * key.
  */
-function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: readonly string[]; pharmacyId: string; pharmacyName: string; wallet: PharmacyWallet | null }) {
-  const { api, memory } = useSession();
+export function AddMoney({ target, wallet }: { target: AdminTopupTarget; wallet: PharmacyWallet | null }) {
+  const { memory } = useSession();
   const admin = useStaff();
   const queryClient = useQueryClient();
-  const wallets = adminPharmacyWalletApi(api);
-  const { op, send, settle } = useOwnedOp<PendingTopup>(`admin-wallet-topup:${admin.id}:${pharmacyId}`);
+  const { ownerKey, ownerName: pharmacyName } = target;
+  const { op, send, settle } = useOwnedOp<PendingTopup>(`admin-wallet-topup:${admin.id}:${ownerKey}`);
   /**
    * WQ14 W1: the key of an unconfirmed credit, checked (not found so far) and then forgotten (WQ14b M2: any such credit,
-   * not only one restored after a reload). It may still be finishing on the server, so the next credit to this pharmacy
+   * not only one restored after a reload). It may still be finishing on the server, so the next credit to this wallet
    * reuses it: the same body is replayed, another body is 409 IDEMPOTENCY_KEY_REUSED (so it was added), and if it never
    * landed it is added once. WQ14b M1: kept in the pending-marker shape, so it survives a reload or signing in again
    * as an opaque key only (never a body); it has its own slot, so it is never shown as an unconfirmed credit.
    */
-  const carrySlot = `admin-wallet-topup-carry:${admin.id}:${pharmacyId}`;
+  const carrySlot = `admin-wallet-topup-carry:${admin.id}:${ownerKey}`;
   const carriedKey = () => memory.get<PendingMarker>(carrySlot)?.requestKey;
   const carry = (requestKey: string) => { const now = Date.now(); memory.set<PendingMarker>(carrySlot, { requestKey, attempts: 0, firstAttemptAt: now, lastAttemptAt: now }); };
   const { perform, busy } = useOneAtATime('wallet');
@@ -233,11 +249,11 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
   const [done, setDone] = useState<string | null>(null);
   const [resendError, setResendError] = useState<string | null>(null);
 
-  const reread = () => queryClient.invalidateQueries({ queryKey: [...scopeKey, pharmacyId] });
+  const reread = () => queryClient.invalidateQueries({ queryKey: target.queryKey });
   // Review L6: the newest page of the history, read again when the review opens, for the last admin credit.
-  const recent = useQuery({ queryKey: movementsKey(scopeKey, pharmacyId, 1), queryFn: () => wallets.movements(pharmacyId, 1) });
+  const recent = useQuery({ queryKey: target.recentKey, queryFn: target.recent });
   const lastCredit = latestAdminCredit(recent.data?.items ?? []);
-  const added = (body: AdminTopupBody, w: PharmacyWallet | null, again: boolean) => {
+  const added = (body: PendingTopup['body'], w: PharmacyWallet | null, again: boolean) => {
     setReview(null);
     setAmount('');
     setNote('');
@@ -253,7 +269,7 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
     setErrors({ amount: f.amount, notes: f.notes });
     if (!f.value) return;
     // The key is made now, with the reviewed body; confirming sends exactly this.
-    setReview({ requestKey: carriedKey() ?? newRequestKey(), body: { pharmacyId, ...f.value }, pharmacyName });
+    setReview({ requestKey: carriedKey() ?? newRequestKey(), body: { ...f.value }, pharmacyName });
     void recent.refetch();
   }
 
@@ -261,7 +277,7 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
     // WQ14 W1: once sent, the stored request owns a carried key; only a refusal that does not prove the earlier credit
     // (anything but 409 IDEMPOTENCY_KEY_REUSED) gives it back to the next credit.
     const carried = carriedKey() === p.requestKey;
-    const r = await perform(() => { if (carried) memory.delete(carrySlot); return send(p, (b) => wallets.topup(b.body, p.requestKey)); });
+    const r = await perform(() => { if (carried) memory.delete(carrySlot); return send(p, (b) => target.topup(b.body, p.requestKey)); });
     if (r.kind === 'stale') return;
     if (r.kind === 'ok') { added(p.body.body, r.value, p.attempts > 0); return; }
     if (r.kind === 'refused') {
@@ -272,17 +288,6 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
     if (r.kind === 'unknown') void reread();
   }
 
-  /**
-   * Review M1: the exact by-key read first (backend r7); on an older server, the history, newest first, up to 20 pages and
-   * with no time cut-off. Answers the row it made, or what was searched.
-   */
-  async function findCredit(key: string): Promise<{ row: WalletMovement } | { row: null; complete: boolean; searched: number; exact?: boolean }> {
-    const exact = await wallets.topupByKey(pharmacyId, key);
-    if (exact.state === 'used') return { row: exact.row };
-    if (exact.state === 'none') return { row: null, complete: true, searched: 0, exact: true };
-    return findAdminTopup((page) => wallets.movements(pharmacyId, page, ADMIN_TOPUP_PAGE_SIZE), key);
-  }
-
   if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
     const restored = !!op.restored || !op.body;
     return (
@@ -290,7 +295,7 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
         {resendError && <Alert>{resendError}</Alert>}
         <CheckPanel label="Unconfirmed money added"
           onCheck={async () => {
-            const found = await findCredit(op.requestKey);
+            const found = await target.findCredit(op.requestKey);
             void reread();
             if (found.row) {
               // WQ14b L1: a key kept for the next credit is dropped once its credit is found.
@@ -309,7 +314,7 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
           forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it',
             onForget: () => { carry(op.requestKey); settle(op.requestKey); },
             acknowledge: 'I understand the money may already have been added to this wallet.',
-            consequence: 'The money may already have been added, or may still arrive. Forgetting it does not undo it. Check the wallet history, or ask the tech team, before adding money again: otherwise the pharmacy could be paid twice.' }}>
+            consequence: `The money may already have been added, or may still arrive. Forgetting it does not undo it. Check the wallet history, or ask the tech team, before adding money again: otherwise the ${target.owner} could be paid twice.` }}>
           <Alert tone="warn">
             {restored
               ? 'Money added earlier on this device (before the page was reloaded) was not confirmed. Its details are not kept here. Check the wallet history for it.'
@@ -324,7 +329,7 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
   const owed = Number(wallet?.receivableMinor ?? 0);
   return (
     <form className="rx-form" noValidate onSubmit={check} aria-label="Add money to the wallet">
-      <Alert tone="warn">{ADMIN_TOPUP_WARNING}</Alert>
+      <Alert tone="warn">{adminTopupWarning(target.owner)}</Alert>
       {done && <Alert tone="ok">{done}</Alert>}
       <fieldset className="ws-frozen" disabled={!!review || busy}>
         <div className="rx-form-row">
@@ -352,10 +357,10 @@ function AddMoney({ scopeKey, pharmacyId, pharmacyName, wallet }: { scopeKey: re
                   : `No money added by an admin in the latest ${ADMIN_TOPUP_PAGE_SIZE} movements.`}
             </li>
             {owed > 0
-              ? <li>{formatRupees(Math.min(owed, review.body.amount * 100) / 100)} of it first clears what the pharmacy owes Jansetu.</li>
+              ? <li>{formatRupees(Math.min(owed, review.body.amount * 100) / 100)} of it first clears what the {target.owner} owes Jansetu.</li>
               : <li>Balance after: {formatRupees((balance + review.body.amount * 100) / 100)}</li>}
           </ul>
-          <span className="ws-muted">{ADMIN_TOPUP_WARNING}</span>
+          <span className="ws-muted">{adminTopupWarning(target.owner)}</span>
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => {
               const { requestKey, ...pending } = review;
@@ -384,7 +389,9 @@ const topupWords = (r: UncreditedTopup) => `${formatRupees(r.amountMinor / 100)}
  * same key and body (the server answers the closure again), or checked by key (`.../close-compensated/by-key/:key`).
  * Closing is once per top-up whatever the key, so forgetting an unconfirmed close is safe: closing again is replayed.
  */
-function UncreditedTopups({ scopeKey, pharmacyId, pharmacyName }: { scopeKey: readonly string[]; pharmacyId: string; pharmacyName: string }) {
+export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pharmacyName, owner }: {
+  scopeKey: readonly string[]; ownerId: string; ownerName: string; owner: 'pharmacy' | 'lab';
+}) {
   const { api } = useSession();
   const admin = useStaff();
   const queryClient = useQueryClient();
@@ -521,7 +528,7 @@ function UncreditedTopups({ scopeKey, pharmacyId, pharmacyName }: { scopeKey: re
           <p>The <strong>{topupWords(chosen)}</strong>{chosen.razorpayOrderId ? ` (Razorpay order ${chosen.razorpayOrderId})` : ''}.</p>
           <fieldset className="ws-frozen" disabled={!!review || busy}>
             <TextArea label="Why is it closed?" value={reason} maxLength={MAX_CLOSE_REASON} error={reasonError}
-              hint="Required. For example who at Jansetu support paid the pharmacy, how and when." onChange={(e) => setReason(e.target.value)} />
+              hint={`Required. For example who at Jansetu support paid the ${owner}, how and when.`} onChange={(e) => setReason(e.target.value)} />
           </fieldset>
           {!review ? (
             <div className="confirm-actions">
@@ -551,3 +558,4 @@ function UncreditedTopups({ scopeKey, pharmacyId, pharmacyName }: { scopeKey: re
     </>
   );
 }
+

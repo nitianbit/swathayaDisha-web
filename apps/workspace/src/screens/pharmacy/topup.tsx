@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ApiError, assistedRefusal, pharmacyWalletApi, type ApiClient, type TopupOrder } from '@jansetu/api';
+import { ApiError, assistedRefusal, pharmacyWalletApi, type ApiClient, type Refusal, type TopupCheck, type TopupOrder } from '@jansetu/api';
 import { Alert, Button, formatDateTime, formatRupees, TextField } from '@jansetu/ui';
+import { newRequestKey, startOp } from '../../requests.ts';
+import { useOwnedOp } from './ownedOp.tsx';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 
@@ -75,21 +77,54 @@ export type TopupOutcome =
   /** No answer from the server: keep it and check again later. */
   | { kind: 'unknown'; message: string };
 
+/**
+ * WQ20: whose wallet a top-up goes to, and through which routes: the pharmacy's (`/pharmacy-wallet`, no request key) or
+ * a lab's (`/partner-workspace/assisted/wallet/topups`, keyed; §24.13). The same form, payment and check serve both.
+ */
+export interface TopupSource {
+  /** The owner's id, for this device's memory slots. */
+  owner: string;
+  /** The wallet's query key (read again after every answer). */
+  queryKey: readonly unknown[];
+  /** The largest top-up at one time (rupees). */
+  maxRupees: number;
+  /** Opens the Razorpay order; `requestKey` is new for each top-up (a keyed create answers a resend with the same order). */
+  start: (rupees: number, requestKey: string) => Promise<TopupOrder>;
+  verify: (p: { paymentTransactionId: string; razorpayOrderId: string; razorpayPaymentId: string; razorpaySignature: string }) =>
+    Promise<{ paymentRecord: { status: string; credited?: boolean } }>;
+  check: (paymentTransactionId: string) => Promise<TopupCheck>;
+  refusal: (err: unknown) => Refusal;
+  /** Remember unfinished top-ups on this device (the lab's own top-ups are listed by the server instead). */
+  rememberOnDevice: boolean;
+  /**
+   * WQ20b: the order is keyed (the lab's): an order whose answer was lost is asked for again with the SAME key and amount
+   * (an owned request), so a repeated "Top up" never makes a second unpaid order (which would count towards the limit).
+   */
+  keyed: boolean;
+}
+
+/** The pharmacy's own top-ups (WQ12). */
+export function pharmacyTopupSource(api: ApiClient, pharmacyId: string): TopupSource {
+  const w = pharmacyWalletApi(api);
+  return { owner: pharmacyId, queryKey: ['pharmacy-wallet', pharmacyId], maxRupees: MAX_TOPUP, start: (rupees) => w.startTopup(rupees),
+    verify: (p) => w.verify(p), check: (id) => w.checkTopup(id), refusal: assistedRefusal, rememberOnDevice: true, keyed: false };
+}
+
 /** Asks the server to check one top-up with Razorpay (credited once if it was paid). Never throws. */
-export async function checkTopup(api: ApiClient, paymentTransactionId: string): Promise<TopupOutcome> {
+export async function checkTopup(source: TopupSource, paymentTransactionId: string): Promise<TopupOutcome> {
   try {
-    const r = await pharmacyWalletApi(api).checkTopup(paymentTransactionId);
+    const r = await source.check(paymentTransactionId);
     return r.state === 'credited' ? { kind: 'credited' } : { kind: 'unpaid' };
   } catch (err) {
     if (err instanceof ApiError && ['PAYMENT_FAILED', 'PAYMENT_REFUNDED', 'PAYMENT_RECORD_NOT_FOUND', 'TOPUP_BLOCKED'].includes(err.code ?? '')) {
-      return { kind: 'closed', message: assistedRefusal(err).message };
+      return { kind: 'closed', message: source.refusal(err).message };
     }
-    return { kind: 'unknown', message: assistedRefusal(err).message };
+    return { kind: 'unknown', message: source.refusal(err).message };
   }
 }
 
 /** Pays one opened top-up and settles it with the server: verify first, then the server-side check. Never throws. */
-async function payTopup(api: ApiClient, order: TopupOrder): Promise<TopupOutcome> {
+async function payTopup(source: TopupSource, order: TopupOrder): Promise<TopupOutcome> {
   let result: CheckoutResult;
   try {
     result = await openCheckout({ razorpayKeyId: order.razorpayKeyId, razorpayOrderId: order.razorpayOrderId, amountMinor: Math.round(order.amount * 100),
@@ -100,16 +135,19 @@ async function payTopup(api: ApiClient, order: TopupOrder): Promise<TopupOutcome
   }
   if (result.kind === 'paid') {
     try {
-      const v = await pharmacyWalletApi(api).verify({ paymentTransactionId: order.paymentTransactionId, razorpayOrderId: result.razorpayOrderId,
+      const v = await source.verify({ paymentTransactionId: order.paymentTransactionId, razorpayOrderId: result.razorpayOrderId,
         razorpayPaymentId: result.razorpayPaymentId, razorpaySignature: result.razorpaySignature });
-      if (v.paymentRecord?.status === 'paid') return { kind: 'credited' };
+      // WQ20b: paid AND credited (a lab's answer says `credited`; the pharmacy's has no such field): else the server's check.
+      if (v.paymentRecord?.status === 'paid' && v.paymentRecord.credited !== false) return { kind: 'credited' };
     } catch { /* fall through to the server-side check */ }
   }
-  return checkTopup(api, order.paymentTransactionId);
+  return checkTopup(source, order.paymentTransactionId);
 }
 
 export const NOT_OPENED = 'The payment page didn’t open. No money was taken.';
-const UNPAID_WORDS = 'Not paid yet. If you paid, wait a minute and check again. If you did not pay, you can remove it from this list.';
+export const UNPAID_CHECK_AGAIN = 'Not paid yet. If you paid, wait a minute and check again.';
+export const UNPAID_WORDS = `${UNPAID_CHECK_AGAIN} If you did not pay, you can remove it from this list.`;
+export const CHECK_LABEL = 'Check my top-up';
 const pendingSlot = (pharmacyId: string) => `wallet-topups:${pharmacyId}`;
 const infoSlot = (pharmacyId: string) => `wallet-topup-info:${pharmacyId}`;
 type TopupInfo = Record<string, { amount: number; at: number }>;
@@ -133,11 +171,11 @@ export function usePendingTopups(pharmacyId: string) {
 
 export const MIN_TOPUP = 1;
 export const MAX_TOPUP = 200_000;
-export function topupProblem(text: string): string | null {
+export function topupProblem(text: string, max = MAX_TOPUP): string | null {
   if (!/^\d{1,6}(\.\d{1,2})?$/.test(text.trim())) return 'Enter the amount in rupees, for example 500.';
   const n = Number(text.trim());
   if (n < MIN_TOPUP) return `The smallest top-up is ${formatRupees(MIN_TOPUP)}.`;
-  if (n > MAX_TOPUP) return `The largest top-up at one time is ${formatRupees(MAX_TOPUP)}.`;
+  if (n > max) return `The largest top-up at one time is ${formatRupees(max)}.`;
   return null;
 }
 
@@ -145,11 +183,17 @@ export function topupProblem(text: string): string | null {
  * Add money to the wallet by card or UPI. Opening an order moves no money (an unpaid Razorpay order is never charged),
  * so a failed start is simply tried again; the payment itself is settled once on the server (verify, else check).
  */
-export function TopUpForm({ pharmacyId, suggested, onCredited }: { pharmacyId: string; suggested?: number; onCredited?: () => void }) {
+export function TopUpForm({ pharmacyId, source: given, suggested, onCredited }: {
+  pharmacyId: string; source?: TopupSource; suggested?: number; onCredited?: () => void;
+}) {
   const { api } = useSession();
+  const source = given ?? pharmacyTopupSource(api, pharmacyId);
   const queryClient = useQueryClient();
-  const pending = usePendingTopups(pharmacyId);
+  const pending = usePendingTopups(source.owner);
   const { perform, busy } = useOneAtATime('wallet');
+  // WQ20b: a keyed order whose answer was lost (the amount, and its key as the stored request's).
+  const started = useOwnedOp<{ rupees: number }>(`topup-start:${source.owner}`);
+  const unconfirmed = source.keyed && started.op?.body && !started.op.restored ? started.op : undefined;
   const [amount, setAmount] = useState(suggested ? String(Math.ceil(suggested)) : '');
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<{ tone: 'ok' | 'warn' | 'error'; text: string } | null>(null);
@@ -159,23 +203,39 @@ export function TopUpForm({ pharmacyId, suggested, onCredited }: { pharmacyId: s
   async function start(e: FormEvent) {
     e.preventDefault();
     setNote(null);
-    const problem = topupProblem(amount);
+    const problem = unconfirmed ? null : topupProblem(amount, source.maxRupees);
     setError(problem);
     if (problem) return;
-    const rupees = Number(amount.trim());
+    const rupees = unconfirmed ? unconfirmed.body.rupees : Number(amount.trim());
     try {
       await perform(async () => {
         let order: TopupOrder;
-        try {
-          order = await pharmacyWalletApi(api).startTopup(rupees);
-        } catch (err) {
-          if (live.current) setNote({ tone: 'error', text: `Could not start the top-up: ${assistedRefusal(err).message} No money was taken.` });
-          return;
+        if (source.keyed) {
+          // The same request (key and amount) when the last one's answer was lost; else a new one, stored before it is sent.
+          const p = unconfirmed ?? startOp(newRequestKey(), { rupees });
+          const r = await started.send(p, (b) => source.start(b.rupees, p.requestKey));
+          if (r.kind === 'stale') return;
+          if (r.kind !== 'ok') {
+            if (live.current) {
+              setNote({ tone: 'error', text: r.kind === 'refused'
+                ? `Could not start the top-up: ${source.refusal(r.error).message} No money was taken.`
+                : `Could not start the top-up: ${source.refusal(r.error).message} No money was taken. “Top up” asks for the same ${formatRupees(rupees)} again (never a second order).` });
+            }
+            return;
+          }
+          order = r.value;
+        } else {
+          try {
+            order = await source.start(rupees, newRequestKey());
+          } catch (err) {
+            if (live.current) setNote({ tone: 'error', text: `Could not start the top-up: ${source.refusal(err).message} No money was taken.` });
+            return;
+          }
         }
         // Remembered BEFORE the payment page opens, so a closed tab or lost answer can still be checked.
-        pending.add(order.paymentTransactionId, rupees);
-        const outcome = await payTopup(api, order);
-        void queryClient.invalidateQueries({ queryKey: ['pharmacy-wallet', pharmacyId] });
+        if (source.rememberOnDevice) pending.add(order.paymentTransactionId, rupees);
+        const outcome = await payTopup(source, order);
+        void queryClient.invalidateQueries({ queryKey: source.queryKey });
         if (outcome.kind === 'credited' || outcome.kind === 'closed') pending.remove(order.paymentTransactionId);
         if (!live.current) return;
         if (outcome.kind === 'credited') {
@@ -184,57 +244,69 @@ export function TopUpForm({ pharmacyId, suggested, onCredited }: { pharmacyId: s
           onCredited?.();
         } else if (outcome.kind === 'closed') setNote({ tone: outcome.message === NOT_OPENED ? 'warn' : 'error', text: outcome.message });
         else if (outcome.kind === 'unpaid') {
-          setNote({ tone: 'warn', text: 'The payment was not completed, so no money was added. If you did pay, tap “Check my top-up” below in a minute.' });
+          setNote({ tone: 'warn', text: `The payment was not completed, so no money was added. If you did pay, tap “${CHECK_LABEL}” ${source.rememberOnDevice ? 'below' : 'next to it under Top-ups'} in a minute.` });
         } else {
-          setNote({ tone: 'warn', text: `We could not confirm the top-up yet (${outcome.message}) If you paid, your money is safe: tap “Check my top-up” below in a minute.` });
+          setNote({ tone: 'warn', text: `We could not confirm the top-up yet (${outcome.message}) If you paid, your money is safe: tap “${CHECK_LABEL}” ${source.rememberOnDevice ? 'below' : 'next to it under Top-ups'} in a minute.` });
         }
       });
     } catch (err) {
-      if (live.current) setNote({ tone: 'error', text: assistedRefusal(err).message });
+      if (live.current) setNote({ tone: 'error', text: source.refusal(err).message });
     }
   }
 
   return (
     <form className="rx-form" noValidate onSubmit={(e) => void start(e)} aria-label="Top up the wallet">
       <div className="ws-search">
-        <TextField label="Amount to add (₹)" inputMode="decimal" value={amount} error={error} disabled={busy}
+        <TextField label="Amount to add (₹)" inputMode="decimal" value={unconfirmed ? String(unconfirmed.body.rupees) : amount} error={error} disabled={busy || !!unconfirmed}
           hint="Paid by card or UPI on the Razorpay page." onChange={(e) => setAmount(e.target.value)} />
         <Button type="submit" busy={busy}>Top up</Button>
+        {unconfirmed && !busy && (
+          <Button variant="ghost" onClick={() => started.settle(unconfirmed.requestKey)}>Use another amount</Button>
+        )}
       </div>
       {note && <Alert tone={note.tone}>{note.text}</Alert>}
-      <PendingTopups pharmacyId={pharmacyId} pending={pending} />
+      {source.rememberOnDevice && <PendingTopups source={source} pending={pending} />}
     </form>
   );
 }
 
-/** Top-ups started on this device and not confirmed yet, each with "Check my top-up". */
-function PendingTopups({ pharmacyId, pending }: { pharmacyId: string; pending: ReturnType<typeof usePendingTopups> }) {
-  const { api } = useSession();
+type CheckNote = { tone: 'ok' | 'warn' | 'error'; text: string };
+
+/**
+ * WQ20b: "Check my top-up" on one top-up (the device's own list, and the lab's Top-ups): the server asks Razorpay, adds it
+ * once if paid, and the answer is said next to it. `onSettled`: added, or over without money (failed, refunded, blocked).
+ */
+export function useTopupCheck(source: TopupSource, unpaidWords: string, onSettled?: (id: string) => void) {
   const queryClient = useQueryClient();
   const { perform, busy } = useOneAtATime('top-up check');
   const [checking, setChecking] = useState<string | null>(null);
-  const [notes, setNotes] = useState<Record<string, { tone: 'ok' | 'warn' | 'error'; text: string }>>({});
-  if (pending.ids.length === 0 && Object.keys(notes).length === 0) return null;
-
-  async function check(id: string) {
+  const [notes, setNotes] = useState<Record<string, CheckNote>>({});
+  async function check(id: string, amountRupees: number | undefined) {
     setChecking(id);
     try {
       await perform(async () => {
-        const outcome = await checkTopup(api, id);
-        void queryClient.invalidateQueries({ queryKey: ['pharmacy-wallet', pharmacyId] });
-        const amount = pending.info(id)?.amount;
-        if (outcome.kind === 'credited' || outcome.kind === 'closed') pending.remove(id);
-        setNotes((n) => ({ ...n, [id]: outcome.kind === 'credited' ? { tone: 'ok', text: `${amount ? formatRupees(amount) : 'The top-up'} was added to your wallet.` }
+        const outcome = await checkTopup(source, id);
+        void queryClient.invalidateQueries({ queryKey: source.queryKey });
+        if (outcome.kind === 'credited' || outcome.kind === 'closed') onSettled?.(id);
+        setNotes((n) => ({ ...n, [id]: outcome.kind === 'credited' ? { tone: 'ok', text: `${amountRupees ? formatRupees(amountRupees) : 'The top-up'} was added to your wallet.` }
           : outcome.kind === 'closed' ? { tone: 'error', text: outcome.message }
-          : outcome.kind === 'unpaid' ? { tone: 'warn', text: UNPAID_WORDS }
+          : outcome.kind === 'unpaid' ? { tone: 'warn', text: unpaidWords }
           : { tone: 'warn', text: `Could not check just now: ${outcome.message}` } }));
       });
     } catch (err) {
-      setNotes((n) => ({ ...n, [id]: { tone: 'error', text: assistedRefusal(err).message } }));
+      setNotes((n) => ({ ...n, [id]: { tone: 'error', text: source.refusal(err).message } }));
     } finally {
       setChecking(null);
     }
   }
+  const drop = (id: string) => setNotes((n) => { const { [id]: _gone, ...rest } = n; return rest; });
+  return { busy, checking, notes, check, drop };
+}
+
+/** Top-ups started on this device and not confirmed yet, each with "Check my top-up". */
+function PendingTopups({ source, pending }: { source: TopupSource; pending: ReturnType<typeof usePendingTopups> }) {
+  const { busy, checking, notes, check, drop } = useTopupCheck(source, UNPAID_WORDS, (id) => pending.remove(id));
+  if (pending.ids.length === 0 && Object.keys(notes).length === 0) return null;
 
   const done = Object.keys(notes).filter((id) => !pending.ids.includes(id));
   return (
@@ -246,12 +318,12 @@ function PendingTopups({ pharmacyId, pending }: { pharmacyId: string; pending: R
           return (
             <li key={id} className="ws-actions">
               <span>{info ? `${formatRupees(info.amount)}, started ${formatDateTime(new Date(info.at).toISOString())}` : 'A top-up started earlier on this device'}</span>
-              <Button variant="secondary" busy={checking === id} disabled={busy && checking !== id} onClick={() => void check(id)}>Check my top-up</Button>
+              <Button variant="secondary" busy={checking === id} disabled={busy && checking !== id} onClick={() => void check(id, info?.amount)}>{CHECK_LABEL}</Button>
               {notes[id] && <Alert tone={notes[id].tone}>{notes[id].text}</Alert>}
               {notes[id]?.text === UNPAID_WORDS && (
                 // Not paid when checked: it may be dropped from this device. A payment captured later is still found and
                 // credited by Jansetu's own payment check (the recovery sweep), so nothing is lost by removing it here.
-                <Button variant="ghost" disabled={busy} onClick={() => { pending.remove(id); setNotes((n) => { const { [id]: _gone, ...rest } = n; return rest; }); }}>
+                <Button variant="ghost" disabled={busy} onClick={() => { pending.remove(id); drop(id); }}>
                   Remove from this list
                 </Button>
               )}

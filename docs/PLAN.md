@@ -2026,6 +2026,48 @@ API gaps:
 - The stale `GET …/:code?phone=` comment is gone with the move; the shared component says POST `/lookup` with the code and the
   number in the body.
 
+## WQ20 lab wallet: the lab's own wallet and the admin's lab wallet tools (2026-11-25, branch `wq20/lab-wallet`)
+
+Backend: r13 (`m0/r13-phase2d` 215556e2, design ASSISTED_BOOKING_DESIGN.md §24.13; local). Web base: WQ19 e981104 + WQ19b
+12f0321. Behind `ASSISTED_BOOKING_ENABLED_LAB` (off: a new top-up answers 503, said as "Adding money to the lab wallet is not
+switched on yet."; reads, checks and verify keep working). Kept minimal; the pharmacy wallet's own pieces show both wallets.
+
+- **Lab › Wallet** (`/partner/wallet`; labs, `wallet.view` or `wallet.manage`): the balance (with "Card money (withdrawals coming
+  later)" = `withdrawableMinor`, and the hold/owing words), **Add money** (`wallet.manage` only) by Razorpay: `POST
+  /partner-workspace/assisted/wallet/topups {amountMinor, requestKey}` (₹1–₹50,000), Checkout, `…/payments/verify`, else the
+  server's `…/wallet/topups/:id/check`; **Top-ups** as the server lists them (`GET …/wallet/topups`, state words; **Check my
+  top-up** on one not paid or not added yet: a lost answer is found here, nothing is kept on the device), and the history
+  (`GET …/wallet/entries`, cursor pages). `WALLET_LIMIT_REACHED` names the most and what can still be added (paise `details`).
+- **Admin › Labs and clinics › a lab › Wallet** (`/admin/partners/:id/wallet`): the balance, **Put on hold / Release the hold**
+  (`PUT /admin/labs/:id/wallet/freeze {frozen, reason}`, confirmed with a reason; a lost answer is settled by reading the
+  wallet), **Add money** (the admin pharmacy credit form: Idempotency-Key from an owned PendingOp, review with the last admin
+  credit, resend the same request, exact by-key read `GET …/topups/by-key/:key`; at most ₹2,00,000), the history with notes,
+  **Card top-ups** (lots) with **Record a card dispute** (`POST /admin/wallet-lots/:lotId/chargeback`; a lab's is flag only:
+  nothing is taken, the money stops being withdrawable), and **Card top-ups not credited** with the existing "Mark as already
+  paid by hand" (the uncredited list's lab rows, `walletKind: 'lab'`, by `partnerId`).
+- **Shared, not copied**: the top-up form takes a `TopupSource` (the pharmacy's routes by default; the lab's keyed order); the
+  balance, history table, pager and cursor pages are shared (`pharmacy/WalletScreen.tsx`; the admin pharmacy wallet uses the
+  same table); the admin credit form, balance and uncredited close take their owner (`AdminTopupTarget`, `owner: 'pharmacy' |
+  'lab'`; the pharmacy's slots, routes and fallback search are unchanged); the lab's paise answers are read into the
+  pharmacy's shapes (`asPharmacyWallet`, `asMovement`). The partner permissions gain `wallet.view` and `wallet.manage`.
+
+API gaps:
+- No admin mirror of the lab's own wallet routes (`/partner-workspace/admin/:id/workspace/assisted/*`); admins use
+  `/admin/labs/:id/wallet*` (no Razorpay top-up for an admin, as for pharmacies).
+- The lots read has no top-up record id link to the Top-ups list (a dispute is recorded per lot; `POST /admin/wallet-payments/:id/chargeback`
+  is not offered separately: the lot's names the same top-up).
+- Withdrawals are off (O2): the withdrawable amount is shown only.
+
+### WQ20b review follow-ups (2026-11-25, same branch)
+
+- L1: "View the wallet" / "Add money to the wallet" are offered in the staff editor for labs only (`permissionsForKind`; a kind not
+  read yet offers neither); the Wallet menu item was already for labs only.
+- L2: a verify answer says "added" only when `paid` and `credited !== false`; otherwise the server's check settles it.
+- L3: the lab's order is an owned request: after a lost answer "Top up" asks again with the same key and amount (the field is
+  held; "Use another amount" lets it go), so no second unpaid order counts towards the ₹50,000.
+- L4: the lab and admin histories and the lab's Top-ups use WQ17's `useCursorPages` / `CursorPager`; the pharmacy keeps its page
+  numbers; "Check my top-up" is one hook (`useTopupCheck`) for the device list and the lab's Top-ups.
+
 ## Follow-ups
 
 
@@ -2062,6 +2104,8 @@ API gaps:
 | 2026-11-25 | WQ21b recommended-tests code at the lab front desk (after merging wq19/lab-desk 12f0321) | Mocked API (r16b desk route). typecheck clean; Vitest 437/437 (+1 in wq21.test.ts: the desk and admin-mirror POST paths with the code and number in the body, the 403 codes hiding the field); Playwright lab-desk, lab-booking and clinic-desk 110/110 (+4 = 2 journeys x 2: the desk loads a code and ticks its own tests, says the unmatched name, sends nothing new and stores nothing; an unknown code said plainly). Temporary config on port 5474, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ21 recommended-tests code (phase 3d web) + L1/L2 on f089b46 | Against r16 8e5337f4 with the r16b POST lookup (mocked; §25.12.4). typecheck clean; Vitest 429/429 (+7: wq21.test.ts 4 (cleaning and printing the code, the POST body with no code or number in the URL and no malformed code sent, exact-name ticks, refusal words and the switch-off rule), wq21b.test.ts 3 (`routeCardAnswer` for both kinds, the held-without-order case, `isCardAnswer`)); Playwright workspace 902/902 (+6 = 3 journeys x 2: load and pre-tick with the unmatched name said and nothing new on create and nothing stored or in a URL; typo, not found and switch off; the booked consultation's code; the lab card journey now opens from the list's Pay now link (L2)). Temporary config on port 5473, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
 | 2026-11-25 | WQ17c lab tests by card or UPI (phase 2b) on 24019c4 | Against r14 77594d72 (§24.14; mocked API). typecheck clean; Vitest 422/422 (+4 in wq17c.test.ts: card state by kind, the lab view's order without an amount, cancel words by who is told and the waiting lab cancel, `refundTo` and `status=pending_payment`; the lab card switch-off words now the consultation's); Playwright workspace 895 passed of 896 (+10 = 5 journeys x 2: lab card pay, Checkout closed then Pay now after asking the server, another device with an authorized payment gets no second Checkout, cancel to the card, cancel to the wallet; the consultation card and wallet specs pass unchanged on the shared pieces). The one failure is the known load-timing check in stock-supply.spec.ts:1277 (as in WQ18b): 6/6 on its own afterwards. Temporary config on port 5472, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |
+| 2026-11-25 | WQ20b review follow-ups (L1–L4 on 97b2449) | typecheck clean; Vitest 432/432 (labWallet.test.ts extended: wallet permissions for labs only, a clinic owner never offered them; partners.test.ts: a lab owner grants everything); Playwright lab-wallet + pharmacy-extras + admin + partner-workspace + assisted-booking + card-booking 306/306 (+2 = 1 journey x 2: a lost order answer, then "Top up" asks again with the same key and amount (one order), and a verify that says paid but not credited is settled by the server's check) on a temporary config (port 5493, deleted); release build with VITE_API_SAME_ORIGIN=true. |
+| 2026-11-25 | WQ20 lab wallet (on WQ19b 12f0321) | Against r13 215556e2 (§24.13; mocked API). typecheck clean; Vitest 432/432 (+7: labWallet.test.ts 6 (member and admin paths, the keyed order read into the pharmacy shape, refusals before any request, the Idempotency-Key and the exact by-key read, freeze and lot chargeback bodies, paise into balance/hold/owing and signed history rows, the wallet limit from its details, the switch, checkable states, a lab's uncredited rows, the wallet permissions, the owner in the warning) and topup.test.ts +1 (the ₹50,000 lab cap)); Playwright workspace 914/914 (+10 = 5 journeys x 2: top-up by Razorpay, a lost answer found under Top-ups and checked once, the wallet limit and the switch, wallet.view without Add money and a clinic with no wallet page, the admin credit resent after a lost answer with the same key and added once plus the hold and its release) on a temporary config (port 5491, no server reuse, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ19b review fix (M1, L1, L2 on e981104) | typecheck clean (a true/false `isCancelled` no longer compiles); Vitest 425/425; Playwright lab-desk 18/18 (+2 = 1 journey x 2: a desk cancel lost before the server, checked while the booking is still confirmed, says "Not cancelled so far" and is then resent once; failing before the fix), clinic-desk + partner-invoices + lab-booking + assisted-booking + card-booking 242/242 on a temporary config (port 5481, deleted); release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ19 after merging WQ17b + WQ18 (24019c4): the desk on `useAssistedCreate` | typecheck clean; Vitest 425/425; Playwright workspace 902 run (temporary config, port 5481): 901 passed, 1 failed = pharmacy-extras.spec.ts:952 (tablet), whose check that storage holds no "250" matched the stored timestamp 1795552507312 (unrelated; 6/6 alone); lab-desk + lab-booking 38/38; release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ17b review fixes (M1, D1, D2, L1–L4 on 3c1960e) | Against r11 f5f171c9 (mocked API). typecheck clean; Vitest 406/406 (no change: D1/D2 are moves covered by the journeys); Playwright workspace 868/868 (+6 = 3 journeys x 2: L1 a lost accept not claimed after a cancel, L2 a refused accept said and read again, L3 a found cancel says what was done with the money; the reload journey now checks no price is shown (M1) and the list journey the Visited filter (L4); all five failed on 3c1960e; the consultation specs pass unchanged on the shared create hook). Temporary config on port 5471, `reuseExistingServer: false`, deleted; `VITE_API_SAME_ORIGIN=true` workspace build OK. |

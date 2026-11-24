@@ -230,7 +230,7 @@ function AddMember({ ctx, branches, branchesError, admin, onCancel, onAdded }: {
   onCancel: () => void; onAdded: (m: PartnerMember) => Promise<void>;
 }) {
   const wide = hasGlobalScope(ctx.actor);
-  const grantable = grantablePermissions(ctx.actor);
+  const grantable = grantablePermissions(ctx.actor, useWorkspacePartner(ctx).data?.kind);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -450,7 +450,7 @@ function EditPermissions({ ctx, member, onClose, onSaved }:
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const grantable = grantablePermissions(ctx.actor);
+  const grantable = grantablePermissions(ctx.actor, useWorkspacePartner(ctx).data?.kind);
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
 
