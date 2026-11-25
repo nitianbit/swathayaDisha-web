@@ -2434,6 +2434,21 @@ lab's or doctor's own account" sentence, `recoveredAt` is not read yet. Review i
 Waiting for r35b: the admin wallet read's `referral` block (replaces the switch probe), `requestedByMe`, `recoveredAt`,
 `home` on the account read and the owner view's `receivableDeltaMinor` (the e2e mocks follow the shapes sent so far).
 
+### WQ48b part 2: built to r35b (backend stage 43f46f57; same branch, from c6a373a)
+
+- **Set-off from referral earnings** reads the admin wallet read's `referral: { dueMinor, payoutsEnabled }` (the pharmacy's
+  `GET /pharmacy-wallet?pharmacyId=`, a lab's or doctor's admin wallet): the switch probe is gone. Paused: "Paused until tax
+  advice"; on with nothing due (or no line, an older server): not shown; else at most the smaller of what is owed and what
+  is due ("Up to ₹x"), checked before asking; the intro names both.
+- **Older card top-ups** read `recoveredAt`: a recovered one stays listed, marked "Recovered", with no button.
+- **Cancel** follows `requestedByMe` (a branch-limited lab manager is offered only its own; the refusal's words stay).
+- **Set-off rows**: a lab's or doctor's entry takes its amount from `receivableDeltaMinor` (the owner's entries carry it
+  now); only `referenceType: 'referral_setoff'` rows are shown as paid from referral earnings.
+- **Referral accounts**: `account.home` from `GET /settlements/accounts/:id`; `null` (no home account yet) says so, absent
+  (an older server) says payouts go to the lab's or doctor's own account. The e2e mocks answer r35b's shapes (and r35's
+  for the degradation journey).
+- Typed only (no screen needs them): `requestedBy` on the admin's withdrawals.
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -2764,6 +2779,7 @@ sign-in and a reload the page showed "Signing you in…" or the sign-in screen. 
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ48b part 2 (r35b 43f46f57 shapes, on c6a373a) | typecheck clean; Vitest 526/526; Playwright finance-4f + withdrawals 60/60 (+1 journey x 2: nothing due, no set-off offered; at most the smaller of owed and due; the older top-up marked recovered; a lab set-off entry's amount from its change of what is owed; no switch probe), finance + referral-cuts + lab-wallet + doctor-wallet + pharmacy-extras 156/156 on a temporary config (port 5563); the full suite via pw-slot.sh runs on this commit (result in the report). |
 | 2026-11-25 | WQ48b part 1 (on stage 984cc7f) and the full suite on WQ48 4ee5c9b | WQ48 4ee5c9b: full workspace suite 1120/1120 via pw-slot.sh (22.3 min, port 5562, temporary config deleted). WQ48b: typecheck clean; Vitest 526/526 (walletFinance.test.ts: a cleared owed amount is a debit, a lab set-off entry's amount from its receivable change or none); Playwright finance-4f + withdrawals 58/58 (+4 journeys x 2: against r35 nothing missing or NaN and no details form on a referral account; payouts on, the referral payout check names the home details; an unknown quote reason and a lab not verified; a resend refused for a changed fee, then checked by key and given up), and finance + referral-cuts + lab-wallet + doctor-wallet + pharmacy-extras + assisted-booking 196/196 on a temporary config (port 5563, deleted). |
 | 2026-11-25 | WQ48 the 4f finance screens (on 5ade2d5 + origin/stage 53e523e) | Against r35 bbd6a64b (§26.10, §26.18.3) and the r35b shapes (mocked API). typecheck clean; Vitest 525/525 (+5 in walletFinance.test.ts: the pharmacy finance and statement routes with cursor and period, `expectedTransferMinor` and the changed quote read from the refusal, `disputeAcknowledged` only when asked, the disputes, top-ups without a lot and set-off routes with their checks, the referral owner kinds and the set-off row's words); Playwright finance-4f (new) + withdrawals + referral-cuts + finance + lab-wallet + doctor-wallet + pharmacy-extras 206/206 on desktop and tablet (finance-4f 18 = 9 journeys x 2; withdrawals 32 (+6: the dispute acknowledged after the refusal, never offered without it, the quote reason, payout details refused while a withdrawal waits; the fee-changed and payout-details journeys rewritten for r35 and the Finance page); referral-cuts' two pharmacy journeys moved to Finance) on a temporary config (port 5561, deleted). The full workspace suite via pw-slot.sh is still to run. |
 | 2026-11-25 | WQ45 rounds 6e, 6f, 6i (pharmacy and doctor screens) on wq45a 3233a59 + the WQ24b re-check fixes | typecheck clean; Vitest 506/507 (the literal scan and the catalogue check pass with the 49 files off the allowlist; the one failure, `components/NoShowMove.test.tsx` WQ11b, is a 5 s timeout under load that fails the same way on origin/stage and passed in the wq45a run); Playwright workspace on a temporary config, port 5566 (5556 was held by another agent; `reuseExistingServer: false`, deleted): 1011/1052 with the machine at load 64, then the 41 failures (all 30 s timeouts: page.reload, "Signing you in…") 41/41 with `--last-failed --workers=2`; no assertion changed; `VITE_API_SAME_ORIGIN=true npm run build --workspace apps/workspace` built. |

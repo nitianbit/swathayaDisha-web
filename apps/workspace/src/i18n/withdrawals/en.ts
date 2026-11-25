@@ -264,11 +264,12 @@ export default {
   /** WQ48 (r35): an admin wallet that owes Jansetu money, paid from the owner's referral earnings. */
   'setoff.title': 'Pay what is owed from referral earnings',
   /** {owed}: what the wallet owes Jansetu. */
-  'setoff.intro': 'The wallet owes {owed}. Pay it from the owner’s referral earnings: what is owed and the referral earnings due both go down by the same amount.',
+  'setoff.intro': 'The wallet owes {owed}; the owner’s referral earnings due are {due}. Pay what is owed from them: both go down by the same amount.',
   'setoff.paused': 'Paused until tax advice: referral earnings cannot pay what is owed yet.',
   'setoff.amount': 'Amount (₹)',
-  'setoff.amountHint': 'Up to {owed}, and no more than the referral earnings due.',
-  'setoff.invalid': 'Enter an amount in rupees above zero, up to {owed}.',
+  /** {max}: the smaller of what is owed and the referral earnings due. */
+  'setoff.amountHint': 'Up to {max}.',
+  'setoff.invalid': 'Enter an amount in rupees above zero, up to {max}.',
   'setoff.next': 'Next: check',
   'setoff.consequence': 'Pay {amount} of the {owed} the wallet owes from the owner’s referral earnings? This cannot be undone here. The wallet stays on hold until you release it.',
   'setoff.confirm': 'Yes, pay it',

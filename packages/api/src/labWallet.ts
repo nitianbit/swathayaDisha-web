@@ -2,6 +2,7 @@ import { formatPaise } from '@jansetu/i18n';
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import { assistedRefusal, type PharmacyWallet, type Refusal, type TopupCheck, type TopupOrder, type WalletMovement } from './assisted.ts';
 import { ADMIN_TOPUP_KEY_PATTERN } from './adminPharmacyWallet.ts';
+import type { ReferralDue } from './finance.ts';
 import { t } from './i18n/lab/index.ts';
 import { onLanguage, wordMap } from './i18n/words.ts';
 import { checkId, partnerWorkspaceBase, REQUEST_KEY_PATTERN, type PartnerScope } from './partners.ts';
@@ -18,6 +19,8 @@ import { checkId, partnerWorkspaceBase, REQUEST_KEY_PATTERN, type PartnerScope }
 export interface LabWalletView {
   balanceMinor: number; withdrawableMinor: number; receivableMinor: number; frozen: boolean; isActive: boolean; updatedAt: string | null;
   exists?: boolean; frozenReason?: string | null; frozenAt?: string | null; version?: number; createdAt?: string | null;
+  /** r35b, the admin's read only: the owner's referral earnings due and the payout switch (for the set-off). */
+  referral?: ReferralDue | null;
 }
 /** `entryView` / `adminEntryView`: `amountMinor` signed. */
 export interface LabWalletEntry {

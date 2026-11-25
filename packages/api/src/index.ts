@@ -118,7 +118,7 @@ export {
 export type {
   AccountRow, AccountsPage, AccountsQuery, AdjustmentInput, AdjustmentKeyAbandon, FinanceEvent, FinanceSummary, FinanceTotals, HistoryRef, LedgerEntry, LedgerKind,
   PageQuery, PayoutDetailsInput, PayoutDetailsState, PayoutDetailsView, PayoutKeyAbandon, PayoutMethod, PayoutsQuery, PayoutState, PeriodQuery, QueuePayout, RecordPayoutInput,
-  SettlementAccount, SettlementOwnerKind, SettlementPayout, StatementLine, StatementPage, StatementQuery, ReferralBlock, ReferralOwnerKind, WithdrawalsBlock,
+  SettlementAccount, SettlementOwnerKind, SettlementPayout, StatementLine, StatementPage, StatementQuery, ReferralBlock, ReferralDue, ReferralOwnerKind, WithdrawalsBlock,
 } from './finance.ts';
 export {
   appointmentAt, appointmentDay, appointmentRangeProblem, canonicalMobile, CLINIC_APPOINTMENT_STATUS_LABEL, CLINIC_APPOINTMENT_STATUSES, clinicBranchesFor,

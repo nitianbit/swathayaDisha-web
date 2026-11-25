@@ -141,7 +141,7 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
       </section>
 
       {/* WQ48 (r35 §26.9): what the wallet owes, paid from the pharmacy's referral earnings (while the server allows it). */}
-      <SetOffFromReferral kind={PHARMACY} ownerId={pharmacyId} owedMinor={Number(wallet.data?.receivableMinor ?? 0)} scopeKey={scopeKey}
+      <SetOffFromReferral kind={PHARMACY} ownerId={pharmacyId} owedMinor={Number(wallet.data?.receivableMinor ?? 0)} referral={wallet.data?.referral}
         changed={[...scopeKey, pharmacyId]} />
 
       <section className="ws-section" aria-labelledby="add-h">

@@ -161,7 +161,12 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
       if (as) {
         const sub = as[1] ?? '';
         if (sub === '') return ok(route, { balanceMinor: 300_000, withdrawableMinor: 300_000, receivableMinor: 0, frozen: false, isActive: true, updatedAt: NOW.toISOString() });
-        if (sub === '/entries' || sub === '/topups') return empty(route);
+        // r35b: the owner's rows carry `receivableDeltaMinor` (a referral set-off moves only what is owed).
+        if (sub === '/entries') {
+          return ok(route, [{ _id: 'e7'.padStart(24, '0'), kind: 'receivable_setoff', amountMinor: 0, receivableDeltaMinor: -5_000, balanceAfterMinor: 300_000,
+            description: 'Owed amount paid from your referral earnings', referenceType: 'referral_setoff', at: '2026-11-24T06:00:00.000Z' }], 200, { pagination: { nextCursor: null } });
+        }
+        if (sub === '/topups') return empty(route);
         if (sub === '/withdrawable') {
           return ok(route, { enabled: true, minimumMinor: 50_000, withdrawableNowMinor: 300_000, availableLater: [], nextAllowedAt: null,
             destination: { state: 'verified', masked: 'HDFC0001234 XXXX4321', detailsVersion: 1, details: null } });
@@ -196,15 +201,22 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
         if (rec[1] === 'wallet-payments' && nl && !nl.chargebackAt) return refuse(route, 409, 'DISPUTE_NOT_RECORDED');
         const replayed = b.recovered.includes(rec[2]!);
         b.recovered.push(rec[2]!);
+        if (nl) nl.recoveredAt = NOW.toISOString();
         if (d) Object.assign(d, { state: 'recovered', recoveredAt: NOW.toISOString() });
         return ok(route, { recovered: true, replayed, lotId: rec[1] === 'wallet-lots' ? rec[2] : null, paymentRecordId: rec[2], walletKind: 'pharmacy', withoutLot: rec[1] === 'wallet-payments' });
       }
       if (path === `/pharmacies/${PH}`) return ok(route, { _id: PH, name: 'Asha Medicals', city: 'Pune', phone: '9000000001' });
-      if (path === '/pharmacy-wallet') return ok(route, { _id: 'w1', pharmacyId: PH, balance: 0, balancePaise: 0, isActive: true, frozen: b.receivableMinor > 0, receivableMinor: b.receivableMinor });
+      // r35b: the admin's read adds the pharmacy's referral line (what is due, the switch).
+      if (path === '/pharmacy-wallet') {
+        return ok(route, { _id: 'w1', pharmacyId: PH, balance: 0, balancePaise: 0, isActive: true, frozen: b.receivableMinor > 0, receivableMinor: b.receivableMinor,
+          ...(b.r35 ? {} : { referral: { dueMinor: b.referralDueMinor, payoutsEnabled: b.payoutsOn } }) });
+      }
       if (path === '/pharmacy-wallet/transactions') return ok(route, [], 200, { pagination: { page: 1, limit: 20, total: 0, totalPages: 1 } });
       if (path === `/admin/pharmacies/${PH}/wallet/lots`) return ok(route, []);
       if (path === '/admin/wallet-recharges/uncredited') return ok(route, []);
-      if (path === `/admin/wallets/pharmacy/${PH}/topups-without-lot`) return ok(route, b.noLot);
+      if (path === `/admin/wallets/pharmacy/${PH}/topups-without-lot`) {
+        return ok(route, b.noLot.map((r) => (b.r35 ? Object.fromEntries(Object.entries(r).filter(([k]) => k !== 'recoveredAt')) : { recoveredAt: null, ...r })));
+      }
       const so = /^\/admin\/wallets\/pharmacy\/(\w{24})\/receivable\/setoff-from-referral(?:\/by-key\/(\w+)(\/abandon)?)?$/.exec(path);
       if (so) {
         if (so[2]) {
@@ -380,6 +392,8 @@ test('a branch-limited lab manager cannot ask for a withdrawal (it covers the wh
   const section = page.getByRole('region', { name: 'Withdraw to bank' });
   await expect(section).toContainText('Withdrawals cover the whole lab, so only members who can see every branch can ask for one.');
   await expect(section.getByLabel('Amount to withdraw (₹)')).toHaveCount(0);
+  // r35b: a set-off in the history: what it cleared, without a sign (from the entry's change of what is owed).
+  await expect(page.getByRole('region', { name: 'Wallet history' })).toContainText('Paid from referral earnings₹50.00');
   const rows = page.getByRole('table', { name: 'Withdrawals, newest first' }).getByRole('row');
   await expect(rows.nth(2).getByRole('button', { name: 'Cancel' })).toHaveCount(0);
   await rows.nth(3).getByRole('button', { name: 'Cancel' }).click();
@@ -438,8 +452,12 @@ test('admin pharmacy wallet: older card top-ups recovered by payment id; paying 
   await rows.nth(1).getByLabel('Why? (kept with the record)').fill('Old chargeback');
   await rows.nth(1).getByRole('button', { name: 'Yes, recover it' }).click();
   await expect(older.getByText('Recovered: the ₹800.00 top-up was taken back from the wallet.')).toBeVisible();
+  // r35b: it stays listed, marked recovered, with nothing more to do.
+  await expect(rows.nth(1)).toContainText('Recovered');
+  await expect(rows.nth(1).getByRole('button', { name: 'Recover the money' })).toHaveCount(0);
   expect(writes(b)).toEqual([`/admin/wallet-payments/${PAY2}/recover`]);
-  expect(b.calls.some((c) => c.path === '/settlements/accounts?ownerKind=referral&limit=1')).toBe(true);
+  // r35b: the switch and what is due come with the wallet read; no other read is made for them.
+  expect(b.calls.some((c) => c.path.startsWith('/settlements/accounts'))).toBe(false);
 });
 
 test('admin pays what a wallet owes from referral earnings: one owned request; a lost answer is found by its key; never twice', async ({ page }) => {
@@ -447,7 +465,7 @@ test('admin pays what a wallet owes from referral earnings: one owned request; a
   await signIn(page, 'Admin');
   await page.goto(`/#/admin/pharmacy-wallets/${PH}`);
   const setoff = page.getByRole('region', { name: 'Pay what is owed from referral earnings' });
-  await expect(setoff).toContainText('The wallet owes ₹200.00.');
+  await expect(setoff).toContainText('The wallet owes ₹200.00; the owner’s referral earnings due are ₹1,555.00.');
   await setoff.getByLabel('Amount (₹)').fill('300');
   await setoff.getByRole('button', { name: 'Next: check' }).click();
   await expect(setoff.getByText('Enter an amount in rupees above zero, up to ₹200.00.')).toBeVisible();
@@ -458,7 +476,7 @@ test('admin pays what a wallet owes from referral earnings: one owned request; a
   await expect(setoff.getByText(/The outcome is not known yet/)).toBeVisible();
   await setoff.getByRole('button', { name: 'Check whether it was recorded' }).click();
   await expect(setoff.getByText('It was recorded: ₹150.00 paid from referral earnings.')).toBeVisible();
-  await expect(setoff).toContainText('The wallet owes ₹50.00.');
+  await expect(setoff).toContainText('The wallet owes ₹50.00; the owner’s referral earnings due are ₹1,405.00.');
   const sent = b.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/setoff-from-referral'));
   expect(sent).toHaveLength(1);
   expect(sent[0]!.body).toMatchObject({ amountMinor: 15_000 });
@@ -521,4 +539,20 @@ test('WQ48b: referral payouts on: the referral account’s payout form is offere
   await pay.getByRole('button', { name: 'Review the payout' }).click();
   await expect(pay).toContainText('at HDFC0001234 XXXX4321 (details version 3)');
   expect(b.calls.some((c) => c.path === '/settlements/accounts?ownerKind=referral&limit=1')).toBe(true);
+});
+
+test('WQ48b: paying what is owed waits for referral earnings: nothing due, nothing offered; at most the smaller of owed and due', async ({ page }) => {
+  const b = await mockBackend(page, { payoutsOn: true, referralDueMinor: 0 });
+  await signIn(page, 'Admin');
+  await page.goto(`/#/admin/pharmacy-wallets/${PH}`);
+  await expect(page.getByRole('region', { name: 'Older card top-ups' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Pay what is owed from referral earnings' })).toHaveCount(0);
+  b.referralDueMinor = 12_000;
+  await page.reload();
+  const setoff = page.getByRole('region', { name: 'Pay what is owed from referral earnings' });
+  await expect(setoff).toContainText('Up to ₹120.00.');
+  await setoff.getByLabel('Amount (₹)').fill('150');
+  await setoff.getByRole('button', { name: 'Next: check' }).click();
+  await expect(setoff.getByText('Enter an amount in rupees above zero, up to ₹120.00.')).toBeVisible();
+  expect(writes(b)).toEqual([]);
 });

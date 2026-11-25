@@ -2,7 +2,7 @@ import { formatPaise, formatYmd } from '@jansetu/i18n';
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import { appointmentInstant } from './cancellationWindow.ts';
 import { fetchableFileUrl } from './pharmacyOrders.ts';
-import { istToday } from './finance.ts';
+import { istToday, type ReferralDue } from './finance.ts';
 import { t as core } from './i18n/index.ts';
 import { t, type AssistedKey } from './i18n/assisted/index.ts';
 import { labelledList, onLanguage, wordMap } from './i18n/words.ts';
@@ -265,6 +265,8 @@ export interface PharmacyWallet {
   receivableMinor?: number;
   frozen?: boolean;
   frozenReason?: string;
+  /** r35b, an admin's read only: the pharmacy's referral earnings due and the payout switch (for the set-off). */
+  referral?: ReferralDue | null;
 }
 export interface WalletMovement {
   _id: string;

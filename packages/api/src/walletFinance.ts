@@ -82,6 +82,8 @@ export interface WalletDispute {
 export interface TopupWithoutLot {
   paymentRecordId: string; walletKind: WalletKind; ownerId: string; razorpayPaymentId: string | null; amountMinor: number;
   paidAt: string | null; creditedAt: string | null; chargebackAt: string | null;
+  /** r35b: when it was recovered (it then stays listed); null until then, absent from r35. */
+  recoveredAt?: string | null;
 }
 export interface SetOff { amountMinor: number; referralAccountId: string; ledgerEntryId: string; walletEntryId: string | null; at: string }
 export interface SetOffAnswer { setoff: SetOff; wallet: { receivableMinor: number; frozen: boolean } | null; replayed: boolean }

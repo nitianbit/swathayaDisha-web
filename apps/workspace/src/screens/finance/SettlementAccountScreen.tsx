@@ -106,7 +106,7 @@ function AccountPage({ accountId }: { accountId: string }) {
                   {home.masked ? t('account.home', { destination: home.masked, state: DETAILS_STATE_LABEL[home.state] ?? home.state }) : t('account.homeNone')}
                   {' '}<Link to={`/admin/settlements/${home.accountId}`}>{t('account.homeLink')}</Link>
                 </p>
-              ) : usesHome(a) ? <p>{t('account.homeUnknown')}</p>
+              ) : usesHome(a) ? <p>{a.home === null ? t('account.homeNone') : t('account.homeUnknown')}</p>
                 : a.payoutDetails ? <PayoutDetailsList account={a} /> : <p className="ws-muted">{t('details.noneYet')}</p>}
               {usesHome(a) ? null : editing ? (
                 // i18n-ignore: `audience` is a code (who edits), not words

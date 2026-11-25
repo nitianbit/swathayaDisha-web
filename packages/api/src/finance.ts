@@ -127,6 +127,8 @@ export interface ReferralBlock {
   /** r35b: what paid an owed wallet amount (earned − paid − set off = due); absent from r35. */
   setOffMinor?: number;
 }
+/** r35b: an admin wallet read's referral line: what the owner's referral earnings can pay now, and the switch. */
+export type ReferralDue = Pick<ReferralBlock, 'dueMinor' | 'payoutsEnabled'>;
 /** r35 (§26.10) `withdrawalsSummary`: requested withdrawals waiting for Jansetu, the last paid one, the switch. */
 export interface WithdrawalsBlock { openCount: number; lastPaidAt: string | null; enabled: boolean }
 

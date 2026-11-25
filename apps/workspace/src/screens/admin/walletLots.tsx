@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  adminWalletFinanceApi, chargebackLot, chargebackTook, rupeesToPaise, walletRecoverApi, type LabWalletLot, type Refusal, type WalletKind,
+  adminWalletFinanceApi, chargebackLot, chargebackTook, rupeesToPaise, walletRecoverApi, type LabWalletLot, type ReferralDue, type Refusal, type WalletKind,
 } from '@jansetu/api';
 import { formatPaise } from '@jansetu/i18n';
 import { Alert, Badge, Button, ErrorState, formatDateTime, formatRupees, Loading, TextField } from '@jansetu/ui';
@@ -10,7 +10,7 @@ import { messageOf } from '../../errors.ts';
 import { t } from '../../i18n/withdrawals/index.ts';
 import { definitelyNotRecorded, newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
-import { useOneAtATime, useReferralPayoutsPaused } from '../finance/finance.tsx';
+import { useOneAtATime } from '../finance/finance.tsx';
 import { CheckPanel, useKeyedCheck, useOwnedOp } from '../pharmacy/ownedOp.tsx';
 import { withdrawalWords, wordedError } from '../pharmacy/withdrawals.tsx';
 
@@ -156,7 +156,8 @@ export function TopupsWithoutLot({ kind, ownerId, queryKey, changed }: { kind: W
                     <td>{formatPaise(r.amountMinor)}</td>
                     <td>{r.chargebackAt ? t('noLot.disputed', { date: formatDateTime(r.chargebackAt) }) : t('noLot.noDispute')}</td>
                     <td>
-                      {r.chargebackAt && (
+                      {/* r35b: a recovered top-up stays listed, marked, with nothing more to do. */}
+                      {r.recoveredAt ? <Badge tone="ok">{t('disputes.state.recovered')}</Badge> : r.chargebackAt && (
                         <ConfirmAction label={t('recover.button')} danger reason reasonLabel={t('recover.reason')} confirmLabel={t('recover.confirm')} disabled={busy}
                           consequence={t('recover.consequence', { amount: formatPaise(r.amountMinor), date: r.paidAt ? formatDateTime(r.paidAt) : '—' })}
                           onConfirm={(reason) => perform(() => recoverBy({ paymentRecordId: r.paymentRecordId }, formatPaise(r.amountMinor), reason))} />
@@ -177,16 +178,16 @@ interface PendingSetOff { amountMinor: number }
 /**
  * WQ48 (r35 round 4e, §26.9): what a wallet owes Jansetu, paid from the owner's referral earnings: one owned request with
  * its key (a lost answer is checked by the key, sent again unchanged, or given up on the server). Shown only while the
- * wallet owes something (or a request is unconfirmed) and the server allows it: referral payouts on; paused, it says so.
+ * wallet owes something and the owner has referral earnings due (or a request is unconfirmed), from the admin wallet
+ * read's `referral` line (r35b): paused while referral payouts are off; at most the smaller of what is owed and what is due.
  */
-export function SetOffFromReferral({ kind, ownerId, owedMinor, scopeKey, changed }: {
-  kind: WalletKind; ownerId: string; owedMinor: number; scopeKey: readonly unknown[]; changed: readonly unknown[];
+export function SetOffFromReferral({ kind, ownerId, owedMinor, referral, changed }: {
+  kind: WalletKind; ownerId: string; owedMinor: number; referral: ReferralDue | null | undefined; changed: readonly unknown[];
 }) {
   const { api } = useSession();
   const admin = useStaff();
   const queryClient = useQueryClient();
   const { op, send, settle } = useOwnedOp<PendingSetOff>(`wallet-setoff:${admin.id}:${kind}:${ownerId}`);
-  const paused = useReferralPayoutsPaused(scopeKey, owedMinor > 0 || !!op);
   const { perform, busy } = useOneAtATime('wallet');
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -195,6 +196,9 @@ export function SetOffFromReferral({ kind, ownerId, owedMinor, scopeKey, changed
   const w = adminWalletFinanceApi(api);
   const reread = () => queryClient.invalidateQueries({ queryKey: changed });
   const owed = formatPaise(owedMinor);
+  const dueMinor = Math.max(0, referral?.dueMinor ?? 0);
+  const maxMinor = Math.min(owedMinor, dueMinor);
+  const max = formatPaise(maxMinor);
   const keyed = useKeyedCheck(settle, { byKey: (k) => w.setOffByKey(kind, ownerId, k), abandon: (k) => w.abandonSetOff(kind, ownerId, k) }, {
     found: async (r) => { setReview(null); setText(''); setNote({ tone: 'ok', text: t('setoff.found', { amount: formatPaise(r.setoff.amountMinor) }) }); await reread(); },
     givenUp: () => { setReview(null); setNote({ tone: 'ok', text: t('setoff.givenUp') }); },
@@ -208,7 +212,7 @@ export function SetOffFromReferral({ kind, ownerId, owedMinor, scopeKey, changed
     e.preventDefault();
     setNote(null);
     const amount = rupeesToPaise(text);
-    if (amount === null || amount < 1 || amount > owedMinor) { setError(t('setoff.invalid', { owed })); return; }
+    if (amount === null || amount < 1 || amount > maxMinor) { setError(t('setoff.invalid', { max })); return; }
     setError(null);
     setReview({ amountMinor: amount, requestKey: newRequestKey() });
   }
@@ -226,13 +230,13 @@ export function SetOffFromReferral({ kind, ownerId, owedMinor, scopeKey, changed
     if (r.kind === 'refused') {
       setReview(null);
       setNote({ tone: 'error', text: withdrawalWords(r.error) });
-      // REFERRAL_PAYOUTS_DISABLED: the switch went off meanwhile; read it again (the form then says it is paused).
-      await queryClient.invalidateQueries({ queryKey: [...scopeKey, 'referral-payouts-paused'] });
+      // E.g. REFERRAL_PAYOUTS_DISABLED or SETOFF_ABOVE_AVAILABLE: the wallet (and its referral line) is read again.
       await reread();
     }
   }
 
-  if (!op && (owedMinor <= 0 || paused.data === null)) return note ? <Alert tone={note.tone}>{note.text}</Alert> : null;
+  // Nothing owed, no referral line (an older server) or nothing due: nothing to pay from (unless a request is unconfirmed).
+  if (!op && (owedMinor <= 0 || !referral || (referral.payoutsEnabled && dueMinor <= 0))) return note ? <Alert tone={note.tone}>{note.text}</Alert> : null;
   const said = note && <Alert tone={note.tone}>{note.text}</Alert>;
   let body;
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
@@ -245,9 +249,7 @@ export function SetOffFromReferral({ kind, ownerId, owedMinor, scopeKey, changed
         <Alert tone="warn">{restored ? t('setoff.restored') : t('setoff.unconfirmed', { error: op.error ?? '' })}</Alert>
       </CheckPanel>
     );
-  } else if (paused.data === undefined) {
-    body = paused.isError ? <ErrorState message={messageOf(paused.error)} onRetry={() => void paused.refetch()} /> : <Loading />;
-  } else if (paused.data) {
+  } else if (!referral?.payoutsEnabled) {
     body = <p>{t('setoff.paused')}</p>;
   } else if (review) {
     body = (
@@ -263,7 +265,7 @@ export function SetOffFromReferral({ kind, ownerId, owedMinor, scopeKey, changed
     body = (
       <form className="ws-search" noValidate onSubmit={check}>
         <TextField label={t('setoff.amount')} inputMode="decimal" autoComplete="off" value={text} error={error}
-          hint={t('setoff.amountHint', { owed })} onChange={(e) => setText(e.target.value)} />
+          hint={t('setoff.amountHint', { max })} onChange={(e) => setText(e.target.value)} />
         <Button type="submit" variant="secondary">{t('setoff.next')}</Button>
       </form>
     );
@@ -271,7 +273,7 @@ export function SetOffFromReferral({ kind, ownerId, owedMinor, scopeKey, changed
   return (
     <section className="ws-section" aria-labelledby="setoff-h">
       <h2 id="setoff-h">{t('setoff.title')}</h2>
-      {owedMinor > 0 && <p className="ws-muted">{t('setoff.intro', { owed })}</p>}
+      {owedMinor > 0 && <p className="ws-muted">{t('setoff.intro', { owed, due: formatPaise(dueMinor) })}</p>}
       {said}
       {body}
     </section>

@@ -98,7 +98,7 @@ function OwnerWallet({ kind, scopeKey, ownerId }: { kind: WalletOwnerKind; scope
           )}
       </section>
       {/* WQ48 (r35 §26.9): what the wallet owes, paid from the owner's referral earnings (while the server allows it). */}
-      <SetOffFromReferral kind={kind} ownerId={ownerId} owedMinor={Number(view?.receivableMinor ?? 0)} scopeKey={scopeKey} changed={[...scopeKey, ownerId]} />
+      <SetOffFromReferral kind={kind} ownerId={ownerId} owedMinor={Number(view?.receivableMinor ?? 0)} referral={wallet.data?.referral} changed={[...scopeKey, ownerId]} />
       <section className="ws-section" aria-labelledby="add-h">
         <h2 id="add-h">{t('adminWallet.addMoney')}</h2>
         {owner.data && wallet.isSuccess ? <AddMoney target={ownerTarget(tools, kind, scopeKey, ownerId, owner.data.name)} wallet={view} />

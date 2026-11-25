@@ -56,7 +56,11 @@ export interface Withdrawal {
   updatedAt: string;
 }
 /** The admin's row: whose wallet it is too. */
-export interface AdminWithdrawal extends Withdrawal { walletRef: { kind: string; id: string } }
+export interface AdminWithdrawal extends Withdrawal {
+  walletRef: { kind: string; id: string };
+  /** r35b: who asked for it (the owners' answers carry `requestedByMe` instead). */
+  requestedBy?: { kind: string; id: string };
+}
 export interface WalletAfter { balanceMinor: number; withdrawableMinor: number; receivableMinor: number; frozen: boolean }
 export type WithdrawalByKey = { state: 'used'; withdrawal: Withdrawal } | { state: 'abandoned' } | { state: 'unknown' };
 export interface WithdrawalAnswer { withdrawal: Withdrawal; wallet: WalletAfter; replayed: boolean }
