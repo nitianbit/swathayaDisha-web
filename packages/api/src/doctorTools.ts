@@ -3,6 +3,7 @@ import { appointmentInstant } from './cancellationWindow.ts';
 import type { BookingNoShowMove } from './clinic.ts';
 import { noShowMovedOnce } from './noShows.ts';
 import { isRealDate } from './partnerLabs.ts';
+import type { ReferralBlock, WithdrawalsBlock } from './finance.ts';
 import { t } from './i18n/doctor/index.ts';
 import { wordMap } from './i18n/words.ts';
 import {
@@ -629,6 +630,9 @@ export interface FinanceSummary {
   balanceMinor: number;
   totals: { earnedMinor: number; reversedMinor: number; paidOutMinor: number; adjustedMinor: number };
   lastPayout: Payout | null;
+  /** r35 (§26.10): the doctor's referral earnings and wallet withdrawals (absent from an older server). */
+  referral?: ReferralBlock | null;
+  withdrawals?: WithdrawalsBlock | null;
 }
 export type LedgerKind = 'earning' | 'reversal' | 'payout' | 'adjustment';
 export const LEDGER_KIND_LABEL: Record<LedgerKind, string> = wordMap(t, {

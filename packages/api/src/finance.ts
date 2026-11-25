@@ -24,13 +24,20 @@ import { tooLongWords } from './messages.ts';
  * page by an exact `<ms>_<id>` cursor (`pagination {total, nextCursor}`, 400 INVALID_CURSOR).
  */
 
-export type SettlementOwnerKind = 'partner' | 'doctor';
+/** r35 (§26.9): a referral account (a booker's cuts) is a settlement account too. */
+export type ReferralOwnerKind = 'pharmacy_referral' | 'lab_referral' | 'doctor_referral';
+export const REFERRAL_OWNER_KINDS: readonly ReferralOwnerKind[] = ['pharmacy_referral', 'lab_referral', 'doctor_referral'];
+export const isReferralOwnerKind = (k: string): k is ReferralOwnerKind => (REFERRAL_OWNER_KINDS as readonly string[]).includes(k);
+export type SettlementOwnerKind = 'partner' | 'doctor' | ReferralOwnerKind;
 export type PayoutDetailsState = 'none' | 'unverified' | 'verified';
 export type LedgerKind = 'earning' | 'reversal' | 'payout' | 'adjustment';
 export type PayoutMethod = 'bank_transfer' | 'upi' | 'other';
 export type PayoutState = 'recorded' | 'voided';
 
-export const OWNER_KIND_LABEL: Record<SettlementOwnerKind, string> = wordMap(t, { partner: 'owner.partner', doctor: 'owner.doctor' });
+export const OWNER_KIND_LABEL: Record<SettlementOwnerKind, string> = wordMap(t, {
+  partner: 'owner.partner', doctor: 'owner.doctor', pharmacy_referral: 'owner.pharmacy_referral', lab_referral: 'owner.lab_referral',
+  doctor_referral: 'owner.doctor_referral',
+});
 export const DETAILS_STATE_LABEL: Record<PayoutDetailsState, string> = wordMap(t, {
   none: 'details.none', unverified: 'details.unverified', verified: 'details.verified',
 });
@@ -72,6 +79,11 @@ export interface SettlementAccount {
    * adjustment names the version it was decided on (`expectedFinanceVersion`; 409 FINANCE_CHANGED otherwise).
    */
   financeVersion: number;
+  /**
+   * r35b: a lab's or a doctor's referral account pays to its HOME account (the lab's or the doctor's own): that account's
+   * destination, version and state. Its own details cannot be changed (409 REFERRAL_ACCOUNT_USES_HOME).
+   */
+  home?: { accountId: string; masked: string | null; detailsVersion: number; state: PayoutDetailsState } | null;
 }
 
 export interface FinanceTotals { earnedMinor: number; reversedMinor: number; paidOutMinor: number; adjustedMinor: number }
@@ -103,7 +115,20 @@ export interface FinanceSummary {
   balanceMinor: number;
   totals: FinanceTotals;
   lastPayout: SettlementPayout | null;
+  /** r35 (§26.10): a lab's referral earnings (null for a partner that is not a lab; absent from an older server). */
+  referral?: ReferralBlock | null;
+  /** r35 (§26.10): a lab's wallet withdrawals (null for a partner that is not a lab). */
+  withdrawals?: WithdrawalsBlock | null;
 }
+
+/** r35 (§26.10) `referralSummary`: what the booker's referral cuts earned, were paid and are due, and the switches. */
+export interface ReferralBlock {
+  earnedMinor: number; paidMinor: number; dueMinor: number; cutsEnabled: boolean; payoutsEnabled: boolean;
+  /** r35b: what paid an owed wallet amount (earned − paid − set off = due); absent from r35. */
+  setOffMinor?: number;
+}
+/** r35 (§26.10) `withdrawalsSummary`: requested withdrawals waiting for Jansetu, the last paid one, the switch. */
+export interface WithdrawalsBlock { openCount: number; lastPaidAt: string | null; enabled: boolean }
 
 export interface StatementLine {
   _id: string;
@@ -146,13 +171,18 @@ export interface HistoryRef {
   periodLabel?: string; amountMinor: number; at: string;
 }
 
-export interface AccountRow extends SettlementAccount { balanceMinor: number }
+export interface AccountRow extends SettlementAccount {
+  balanceMinor: number;
+  /** r35 (§26.9): on a referral account, true while referral payouts are switched off (until tax advice, O1). */
+  payoutsPaused?: boolean;
+}
 /** `adminListAccounts`: `total` matching accounts, `totalDueMinor` = Σ positive balances over ALL of them (not just the page). */
 export interface AccountsPage { total: number; totalDueMinor: number; rows: AccountRow[] }
 
 /** `accountsQuerySchema`. Sorted by balance (largest first), then name. */
 export interface AccountsQuery {
-  ownerKind?: SettlementOwnerKind; due?: boolean; search?: string; detailsState?: PayoutDetailsState; limit?: number; skip?: number;
+  /** r35: a referral kind too, or `referral` for all three. */
+  ownerKind?: SettlementOwnerKind | 'referral'; due?: boolean; search?: string; detailsState?: PayoutDetailsState; limit?: number; skip?: number;
 }
 /** Q13 `pageQuerySchema`: the `<ms>_<id>` cursor from the previous page's `pagination.nextCursor`, and 1–500 rows. */
 export interface PageQuery { cursor?: string; limit?: number }

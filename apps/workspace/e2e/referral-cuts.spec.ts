@@ -210,6 +210,26 @@ async function mockBackend(page: Page): Promise<Backend> {
         return ok(route, { earnedMinor: earned, paidMinor: 0, dueMinor: earned, ...switches() });
       }
       if (path === '/pharmacy-assisted/referral/statement') return statementOf(route, url, b.statement);
+      // WQ48 (r35 §26.10): the pharmacy's Finance page: its blocks, one statement for the wallet or the referral account.
+      if (path === '/pharmacy-assisted/finance') {
+        const earned = b.statement.reduce((a, l) => a + Number(l.amountMinor), 0);
+        return ok(route, { wallet: { balanceMinor: 0, withdrawableNowMinor: 0, availableLater: [], receivableMinor: 0, frozen: false },
+          referral: { earnedMinor: earned, paidMinor: 0, setOffMinor: 0, dueMinor: earned, ...switches() }, withdrawals: { openCount: 0, lastPaidAt: null, enabled: false },
+          payoutDetails: { state: 'none', masked: null, detailsVersion: 0, details: null } });
+      }
+      if (path === '/pharmacy-assisted/finance/statement') {
+        return url.searchParams.get('kind') === 'referral' ? statementOf(route, url, b.statement) : ok(route, [], { pagination: { nextCursor: null } });
+      }
+      if (path === '/pharmacy-assisted/finance/statement.csv') {
+        if (b.csvTooLarge && !url.searchParams.get('from') && !url.searchParams.get('to')) {
+          return fail(route, 400, 'EXPORT_TOO_LARGE', 'More than 5000 entries in this period; export a shorter period');
+        }
+        return csvAnswer(route, 'x.csv', b.statement);
+      }
+      if (path === '/pharmacy-assisted/wallet/withdrawable') {
+        return ok(route, { enabled: false, minimumMinor: 50000, withdrawableNowMinor: 0, availableLater: [], nextAllowedAt: null,
+          destination: { state: 'none', masked: null, detailsVersion: 0, details: null } });
+      }
       if (path === '/pharmacy-assisted/referral/statement.csv') {
         if (b.csvTooLarge && !url.searchParams.get('from') && !url.searchParams.get('to')) {
           return fail(route, 400, 'EXPORT_TOO_LARGE', 'More than 5000 entries in this period; export a shorter period');
@@ -397,25 +417,28 @@ test('switch-off note: from the server’s switches (even with no rule set); tur
   ]);
 });
 
-test('pharmacy: referral earnings (earned, paid, due), its rates and the statement by short ref with a lab booking’s lines, and its CSV; read only', async ({ page }) => {
+test('pharmacy: referral earnings on Finance (earned, paid, due), its rates and the statement by short ref with a lab booking’s lines, and its CSV; read only', async ({ page }) => {
   const backend = await mockBackend(page);
   backend.rules.push(rule({}), rule({ category: 'lab_test', basis: 'fixed', percentBasisPoints: undefined, fixedMinor: 4000, isActive: false }));
   await signIn(page, 'Pharmacy');
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Referral earnings' }).click();
-  await expect(page.getByRole('heading', { name: 'Referral earnings', level: 1 })).toBeVisible();
-  const cards = page.getByLabel('Referral earnings', { exact: true });
+  // WQ48: the Referral earnings page is part of Finance (one nav item).
+  await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Referral earnings' })).toHaveCount(0);
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Finance', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Finance', level: 1 })).toBeVisible();
+  const tiles = page.getByLabel('Money at a glance');
   // ₹50 + ₹55 + 50 × ₹30 = ₹1,605.00 earned, nothing paid (payouts paused), all of it due.
-  await expect(cards).toContainText('Due to you₹1,605.00');
-  await expect(cards).toContainText('Earned₹1,605.00');
-  await expect(cards).toContainText('Paid to you₹0.00');
-  await expect(page.getByText('Payouts start once Jansetu switches them on.')).toBeVisible();
-  const rates = page.getByRole('region', { name: 'Your rates' });
+  await expect(tiles).toContainText('Referral earned₹1,605.00');
+  await expect(tiles).toContainText('Due to you: ₹1,605.00');
+  await expect(tiles).toContainText('Paid out: ₹0.00');
+  await expect(tiles).toContainText('Payouts are paused for now.');
+  const rates = page.getByRole('region', { name: 'Referral earnings' });
   await expect(rates).toContainText('Consultation10% of each line');
   await expect(rates).toContainText('Lab testOff');
   await expect(rates).toContainText('Lab packageOff');
   await expect(rates).not.toContainText('Jansetu has not switched referral cuts on yet');
 
   const statement = page.getByRole('region', { name: 'Statement' });
+  await statement.getByLabel('Show').selectOption({ label: 'Referral earnings' });
   const rows = statement.getByRole('row');
   await expect(rows).toHaveCount(51);
   await expect(rows.nth(1)).toContainText('ABCD2345');
@@ -434,13 +457,14 @@ test('pharmacy: referral earnings (earned, paid, due), its rates and the stateme
   const text = await readFile((await file.path())!, 'utf8');
   expect(text.split('\n')[0]).toBe(CSV_HEADER);
   expect(text).toContain('Ref ABCD2345');
-  expect(backend.calls.filter((c) => c.path.startsWith('/pharmacy-assisted/referral/statement.csv')).map((c) => c.path)).toEqual(['/pharmacy-assisted/referral/statement.csv']);
+  expect(backend.calls.filter((c) => c.path.startsWith('/pharmacy-assisted/finance/statement.csv')).map((c) => c.path)).toEqual(['/pharmacy-assisted/finance/statement.csv?kind=referral']);
   await statement.getByRole('button', { name: 'Older' }).click();
   await expect(rows).toHaveCount(3);
   await expect(rows.nth(2)).toContainText('CONS0051');
   await expect(statement.getByRole('button', { name: 'Older' })).toBeDisabled();
-  const reads = backend.calls.filter((c) => c.path.startsWith('/pharmacy-assisted/referral/statement?')).map((c) => c.path);
-  expect(reads).toEqual(['/pharmacy-assisted/referral/statement?limit=50', `/pharmacy-assisted/referral/statement?before=${Date.parse(String(backend.statement[49]!.at))}_${backend.statement[49]!._id}&limit=50`]);
+  const reads = backend.calls.filter((c) => c.path.startsWith('/pharmacy-assisted/finance/statement?kind=referral')).map((c) => c.path);
+  expect(reads).toEqual(['/pharmacy-assisted/finance/statement?kind=referral&limit=50',
+    `/pharmacy-assisted/finance/statement?kind=referral&before=${Date.parse(String(backend.statement[49]!.at))}_${backend.statement[49]!._id}&limit=50`]);
   // Read only: nothing to change here, and nothing about the bookings is kept on this device or in the address.
   await expect(page.getByRole('button', { name: /Edit/ })).toHaveCount(0);
   expect(backend.calls.some((c) => c.method !== 'GET' && c.path.includes('referral'))).toBe(false);
@@ -451,8 +475,9 @@ test('pharmacy statement: a lone cut line that is not the whole booking is liste
   const backend = await mockBackend(page);
   backend.csvTooLarge = true;
   await signIn(page, 'Pharmacy');
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Referral earnings' }).click();
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Finance', exact: true }).click();
   const statement = page.getByRole('region', { name: 'Statement' });
+  await statement.getByLabel('Show').selectOption({ label: 'Referral earnings' });
   const rows = statement.getByRole('row');
   await expect(rows.nth(3)).toContainText('LABT0002Lab test');
   await expect(rows.nth(3).getByRole('listitem')).toHaveText(['Lab test ₹300.00: cut ₹30.00']);
@@ -467,12 +492,12 @@ test('pharmacy statement: a lone cut line that is not the whole booking is liste
   expect((await download).suggestedFilename()).toBe('pharmacy-referral-statement-2026-11-01-to-2026-11-30.csv');
   await expect(statement.getByText('Could not download the statement', { exact: false })).toHaveCount(0);
   // The list follows the same period.
-  await expect.poll(() => backend.calls.filter((c) => c.path.startsWith('/pharmacy-assisted/referral/statement')).map((c) => c.path)).toEqual([
-    '/pharmacy-assisted/referral/statement?limit=50',
-    '/pharmacy-assisted/referral/statement.csv',
-    '/pharmacy-assisted/referral/statement?from=2026-11-01&limit=50',
-    '/pharmacy-assisted/referral/statement?from=2026-11-01&to=2026-11-30&limit=50',
-    '/pharmacy-assisted/referral/statement.csv?from=2026-11-01&to=2026-11-30',
+  await expect.poll(() => backend.calls.filter((c) => c.path.startsWith('/pharmacy-assisted/finance/statement') && !c.path.includes('kind=wallet')).map((c) => c.path)).toEqual([
+    '/pharmacy-assisted/finance/statement?kind=referral&limit=50',
+    '/pharmacy-assisted/finance/statement.csv?kind=referral',
+    '/pharmacy-assisted/finance/statement?kind=referral&from=2026-11-01&limit=50',
+    '/pharmacy-assisted/finance/statement?kind=referral&from=2026-11-01&to=2026-11-30&limit=50',
+    '/pharmacy-assisted/finance/statement.csv?kind=referral&from=2026-11-01&to=2026-11-30',
   ]);
 });
 

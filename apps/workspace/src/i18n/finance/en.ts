@@ -324,4 +324,54 @@ export default {
   'adjust.forGood': 'An adjustment is recorded for good; a mistake is corrected with another adjustment.',
   'adjust.post': 'Post adjustment',
   'adjust.backToForm': 'Back to the adjustment',
+
+  /** WQ48 (r35 §26.10): the pharmacy's Finance page. */
+  'pharmacy.title': 'Finance',
+  'pharmacy.intro': 'Your wallet, its card money and your referral earnings in one place. Withdraw card money to your bank here.',
+  'pharmacy.loading': 'Loading your finance…',
+  'pharmacy.detailsIntro': 'Where withdrawals are sent. Any change, even to the same details, is checked by Jansetu again before the next withdrawal.',
+  /** The full account number is never shown; the form asks for it again. */
+  'pharmacy.detailsSaved': 'Saved. Jansetu checks these details before your next withdrawal.',
+  'pharmacy.referralTitle': 'Referral earnings',
+  'pharmacy.referralHint': 'Choose “Referral earnings” in the statement below to see each cut.',
+
+  /** WQ48: the money tiles (pharmacy, lab and doctor Finance). Screen-reader name of the tiles. */
+  'tiles.label': 'Money at a glance',
+  'tiles.wallet': 'Wallet balance',
+  'tiles.now': 'Withdrawable now: {amount}',
+  'tiles.later': 'Withdrawable later: {amount}',
+  'tiles.owed': 'Owed to Jansetu: {amount}',
+  'tiles.onHold': 'The wallet is on hold.',
+  /** Card top-ups not spent yet: the only wallet money that can be withdrawn. */
+  'tiles.card': 'Card money',
+  'tiles.cardText': 'Card top-ups not spent yet. Only this can be withdrawn.',
+  'tiles.referral': 'Referral earned',
+  'tiles.referralPaid': 'Paid out: {amount}',
+  /** r35b: referral earnings that paid what the wallet owed Jansetu. */
+  'tiles.referralSetOff': 'Paid what the wallet owed: {amount}',
+  'tiles.referralDue': 'Due to you: {amount}',
+  'tiles.referralPaused': 'Payouts are paused for now.',
+  'tiles.referralLink': 'See referral earnings',
+  'tiles.withdrawals': 'Withdrawals to the bank',
+  'tiles.withdrawalsOff': 'Not open yet',
+  /** How many withdrawals are waiting for Jansetu to pay them. */
+  'tiles.waiting': 'Waiting: {count}',
+  'tiles.lastPaid': 'Last paid: {date}',
+  'tiles.nonePaid': 'None paid yet',
+
+  /** WQ48: which statement the pharmacy reads. */
+  'statement.show': 'Show',
+  'statement.kind.wallet': 'Wallet',
+  'statement.kind.referral': 'Referral earnings',
+  'statement.walletEmpty': 'Top-ups, booking payments, refunds and withdrawals appear here.',
+  'statement.pages': 'Statement pages',
+
+  /** WQ48 (r35 §26.9): referral accounts in the admin's settlement list. */
+  'settlements.referralAll': 'Referral (all)',
+  'settlements.paused': 'Paused until tax advice',
+  'payout.blocked.paused': 'Paused until tax advice: referral earnings cannot be paid out yet.',
+  /** r35b: a lab's or doctor's referral account is paid to its own account's details. {destination}: masked; {state}: verified or not. */
+  'account.home': 'Payouts go to the payout details of the lab’s or doctor’s own account: {destination} ({state}).',
+  'account.homeNone': 'Payouts go to the payout details of the lab’s or doctor’s own account, which has none yet.',
+  'account.homeLink': 'Open that account',
 } as const;

@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { adminWithdrawalsApi, isPaidReference, istToday, type AdminWithdrawal, type PaidBody, type PaidMethod, type WithdrawalState } from '@jansetu/api';
+import { adminWithdrawalsApi, isPaidReference, istToday, withdrawalErrorCode, type AdminWithdrawal, type PaidBody, type PaidMethod, type WithdrawalState } from '@jansetu/api';
 import { formatPaise } from '@jansetu/i18n';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
@@ -130,6 +130,7 @@ function Row({ adminId, w, queueKey, onDone }: { adminId: string; w: AdminWithdr
       <td>
         <Badge tone={WITHDRAWAL_STATE_TONE[w.state]}>{withdrawalStateWords(w.state)}</Badge>
         {w.paid && <div className="ws-muted">{t('list.paid', { date: w.paid.paidOn, reference: w.paid.reference })}</div>}
+        {w.paid?.disputeAcknowledged && <div className="ws-muted">{t('paid.disputeNote', { amount: formatPaise(w.paid.disputedMinor ?? 0) })}</div>}
         {w.reason && <div className="ws-muted">{t('list.reason', { reason: w.reason })}</div>}
       </td>
       <td>
@@ -172,6 +173,8 @@ function MarkPaid({ w, owned, queueKey, onPaid }: {
   const [errors, setErrors] = useState<{ reference?: string; paidOn?: string }>({});
   const [review, setReview] = useState<PendingPaid | null>(null);
   const [outcome, setOutcome] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  /** WQ48 (r35): refused because a card dispute was recorded since: what was reviewed, to mark paid anyway if the transfer went out. */
+  const [disputed, setDisputed] = useState<PendingPaid | null>(null);
   const reread = () => queryClient.invalidateQueries({ queryKey: queueKey });
 
   function check(e: FormEvent) {
@@ -186,8 +189,13 @@ function MarkPaid({ w, owned, queueKey, onPaid }: {
     setOutcome(null);
     const r = await perform(() => send(p, (b) => adminWithdrawalsApi(api).paid(w._id, { ...b, requestKey: p.requestKey })));
     if (r.kind === 'stale') return;
-    if (r.kind === 'ok') { setOutcome({ tone: 'ok', text: t('paid.done', { reference: p.body.reference }) }); onPaid(); setReview(null); setOpen(false); await reread(); return; }
-    if (r.kind === 'refused') { setReview(null); setOutcome({ tone: 'error', text: withdrawalWords(r.error) }); await reread(); }
+    if (r.kind === 'ok') { setOutcome({ tone: 'ok', text: t('paid.done', { reference: p.body.reference }) }); onPaid(); setReview(null); setDisputed(null); setOpen(false); await reread(); return; }
+    // WQ48 (r35): a card dispute was recorded on the money it holds: reject it, or, only if the bank transfer already went
+    // out, mark it paid acknowledging the dispute (a new request: this one recorded nothing).
+    if (r.kind === 'refused' && withdrawalErrorCode(r.error) === 'WITHDRAWAL_LOT_DISPUTED' && !p.body.disputeAcknowledged) {
+      setReview(null); setDisputed(p.body); await reread(); return;
+    }
+    if (r.kind === 'refused') { setReview(null); setDisputed(null); setOutcome({ tone: 'error', text: withdrawalWords(r.error) }); await reread(); }
   }
 
   if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
@@ -218,7 +226,17 @@ function MarkPaid({ w, owned, queueKey, onPaid }: {
   return (
     <div className="confirm" role="group" aria-label={t('paid.form')}>
       {outcome && <Alert tone={outcome.tone}>{outcome.text}</Alert>}
-      {review ? (
+      {disputed ? (
+        <>
+          <Alert tone="warn">{t('paid.disputed')}</Alert>
+          <div className="confirm-actions">
+            <ConfirmAction label={t('paid.wentOut')} danger confirmLabel={t('paid.wentOutConfirm')} disabled={busy}
+              consequence={t('paid.wentOutConsequence', { transfer: formatPaise(w.transferMinor), masked: w.destination.masked ?? '—' })}
+              onConfirm={() => sendPaid(startOp(newRequestKey(), { ...disputed, disputeAcknowledged: true }))} />
+            <Button variant="ghost" disabled={busy} onClick={() => { setDisputed(null); setOpen(false); }}>{t('paid.close')}</Button>
+          </div>
+        </>
+      ) : review ? (
         <>
           <p>{t('paid.consequence', { transfer: formatPaise(w.transferMinor), masked: w.destination.masked ?? '—', date: review.paidOn, reference: review.reference })}</p>
           <div className="confirm-actions">

@@ -43,6 +43,8 @@ export default {
   'movement.refund_credit': 'Refund of a cancelled booking',
   'movement.chargeback': 'Taken back after a card dispute',
   'movement.receivable_setoff': 'Used to clear money owed to Jansetu',
+  /** r35b: money the wallet owed Jansetu, paid from the owner's referral earnings (the wallet balance does not change). */
+  'movement.referralSetoff': 'Paid from referral earnings',
   'movement.opening_balance': 'Opening balance',
   'movement.adjustment': 'Correction by Jansetu',
   'movement.withdrawal_hold': 'Withdrawal requested',

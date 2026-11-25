@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  istToday, MAX_FINANCE_MINOR, MAX_FINANCE_REASON, MAX_PAYOUT_NOTE, MAX_PAYOUT_REFERENCE,
+  DETAILS_STATE_LABEL, isReferralOwnerKind, istToday, MAX_FINANCE_MINOR, MAX_FINANCE_REASON, MAX_PAYOUT_NOTE, MAX_PAYOUT_REFERENCE,
   OBJECT_ID_PATTERN, OWNER_KIND_LABEL, PAYOUT_METHOD_LABEL, PAYOUT_METHODS, payoutProblems, reasonProblem, rupeesToPaise, settlementsApi,
   type AdjustmentInput, type FinanceSummary, type PayoutMethod, type RecordPayoutInput, type SettlementAccount, type SettlementPayout,
 } from '@jansetu/api';
@@ -21,7 +21,7 @@ import { NoSuchPartner } from '../partner/scope.tsx';
 import { money } from '../partner/billing.tsx';
 import {
   detailsLabel, EventsList, formatDate, ListSection, PagedSection, PayoutDetailsForm, PayoutDetailsList, PayoutsTable, Signed, StatementSection,
-  SummaryCards, useOneAtATime, type Perform,
+  SummaryCards, useOneAtATime, useReferralPayoutsPaused, type Perform,
 } from './finance.tsx';
 
 /** Q13 cursor pages of the account's payouts and events. */
@@ -29,6 +29,15 @@ const PAGE = 50;
 
 type Api = ReturnType<typeof settlementsApi>;
 type Funded = FinanceSummary & { account: SettlementAccount };
+
+/** r35b: a lab's or a doctor's referral account pays to its HOME account (that account's details, version and state). */
+const homeOf = (a: SettlementAccount) => (a.home && a.home.accountId !== a._id ? a.home : null);
+/** Where a payout recorded on this account goes: its own details, or its home account's. */
+function payoutTarget(a: SettlementAccount) {
+  const home = homeOf(a);
+  return home ? { state: home.state, version: home.detailsVersion, label: home.masked ?? '—', method: undefined, has: !!home.masked }
+    : { state: a.payoutDetailsState, version: a.payoutDetailsVersion, label: detailsLabel(a.payoutDetails), method: a.payoutDetails?.method, has: !!a.payoutDetails };
+}
 
 /** Admin: one settlement account (`/admin/settlements/:accountId`). */
 export function SettlementAccountScreen() {
@@ -57,6 +66,9 @@ function AccountPage({ accountId }: { accountId: string }) {
 
   const data = summary.data;
   const a = data?.account;
+  const home = a ? homeOf(a) : null;
+  // WQ48 (r35 §26.9): a referral account's payouts are paused while the server's switch is off ("until tax advice").
+  const paused = useReferralPayoutsPaused(['settlements'], !!a && isReferralOwnerKind(a.ownerKind));
   return (
     <>
       <Link className="ws-back" to="/admin/settlements"><ArrowLeft size={16} aria-hidden="true" /> {t('account.back')}</Link>
@@ -77,8 +89,14 @@ function AccountPage({ accountId }: { accountId: string }) {
 
             <section className="ws-section" aria-labelledby="sa-dest-h">
               <h2 id="sa-dest-h">{t('details.title')}</h2>
-              {a.payoutDetails ? <PayoutDetailsList account={a} /> : <p className="ws-muted">{t('details.noneYet')}</p>}
-              {editing ? (
+              {home ? (
+                // r35b: a lab's or doctor's referral account is paid to its own account's details (changed there only).
+                <p>
+                  {home.masked ? t('account.home', { destination: home.masked, state: DETAILS_STATE_LABEL[home.state] ?? home.state }) : t('account.homeNone')}
+                  {' '}<Link to={`/admin/settlements/${home.accountId}`}>{t('account.homeLink')}</Link>
+                </p>
+              ) : a.payoutDetails ? <PayoutDetailsList account={a} /> : <p className="ws-muted">{t('details.noneYet')}</p>}
+              {home ? null : editing ? (
                 // i18n-ignore: `audience` is a code (who edits), not words
                 <PayoutDetailsForm account={a} audience="admin" perform={perform}
                   reread={async () => (await s.account(accountId)).account}
@@ -108,7 +126,7 @@ function AccountPage({ accountId }: { accountId: string }) {
               )}
             </section>
 
-            <RecordPayout api={s} accountId={accountId} summary={{ ...data, account: a }} perform={perform} onChanged={reload} />
+            <RecordPayout api={s} accountId={accountId} summary={{ ...data, account: a }} perform={perform} onChanged={reload} paused={paused.data === true} />
             <PostAdjustment api={s} accountId={accountId} summary={{ ...data, account: a }} perform={perform} onChanged={reload} />
 
             <StatementSection queryKey={key} load={(q) => s.statement(accountId, q)} csv={(q, signal) => s.statementCsv(accountId, q, signal)}
@@ -186,7 +204,9 @@ type PendingPayout = PendingOp<RecordPayoutInput>;
  * resend it unchanged, look it up by its key (Q13 `GET .../payouts/by-key/:key`), or give it up on the server (`abandon`:
  * then it can never be recorded). The same works after a reload, from the body-less marker's key.
  */
-function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api: Api; accountId: string; summary: Funded; perform: Perform; onChanged: () => void }) {
+function RecordPayout({ api: s, accountId, summary, perform, onChanged, paused }: {
+  api: Api; accountId: string; summary: Funded; perform: Perform; onChanged: () => void; paused: boolean;
+}) {
   const { memory } = useSession();
   const slot = `settlement-payout:${accountId}`;
   const [pending, setPendingState] = useState<PendingPayout | undefined>(() => memory.get<PendingPayout>(slot));
@@ -263,9 +283,11 @@ function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api:
   }
 
   const a = summary.account;
-  const blocked = !a.isActive ? t('payout.blocked.inactive')
-    : a.payoutDetailsState === 'none' || !a.payoutDetails ? t('payout.blocked.noDetails')
-    : a.payoutDetailsState !== 'verified' ? t('payout.blocked.unverified')
+  const to = payoutTarget(a);
+  const blocked = paused ? t('payout.blocked.paused')
+    : !a.isActive ? t('payout.blocked.inactive')
+    : to.state === 'none' || !to.has ? t('payout.blocked.noDetails')
+    : to.state !== 'verified' ? t('payout.blocked.unverified')
     : summary.balanceMinor <= 0 ? t('payout.blocked.nothingDue')
     : null;
   const showPanel = pending && !(busy && pending.attempts === 1 && !pending.uncertain);
@@ -314,8 +336,9 @@ function PayoutForm({ summary, busy, refused, onRecord }: {
   summary: Funded; busy: boolean; refused: string | null; onRecord: (body: Omit<RecordPayoutInput, 'requestKey'>) => void;
 }) {
   const a = summary.account;
+  const to = payoutTarget(a);
   const [amount, setAmount] = useState('');
-  const [method, setMethod] = useState<PayoutMethod>(a.payoutDetails?.method === 'upi' ? 'upi' : 'bank_transfer');
+  const [method, setMethod] = useState<PayoutMethod>(to.method === 'upi' ? 'upi' : 'bank_transfer');
   const [reference, setReference] = useState('');
   const [paidOn, setPaidOn] = useState(() => istToday());
   const [note, setNote] = useState('');
@@ -331,21 +354,21 @@ function PayoutForm({ summary, busy, refused, onRecord }: {
   // review made before it.
   useEffect(() => { if (refused) setReview(null); }, [refused]);
   useEffect(() => {
-    if (review && (review.detailsVersion !== a.payoutDetailsVersion || review.amountMinor > summary.balanceMinor)) {
+    if (review && (review.detailsVersion !== to.version || review.amountMinor > summary.balanceMinor)) {
       setReview(null);
       setChanged(t('payout.changed'));
     } else if (review && review.expectedFinanceVersion !== a.financeVersion) {
       setReview(null);
       setChanged(moved());
     }
-  }, [review, a.payoutDetailsVersion, a.financeVersion, summary.balanceMinor]);
+  }, [review, to.version, a.financeVersion, summary.balanceMinor]);
 
   function submit(e: FormEvent) {
     e.preventDefault();
     setTried(true);
     setChanged(null);
     if (Object.keys(all).length || amountMinor === null) return;
-    setReview({ amountMinor, method, reference: reference.trim(), paidOn, ...(note.trim() ? { note: note.trim() } : {}), detailsVersion: a.payoutDetailsVersion,
+    setReview({ amountMinor, method, reference: reference.trim(), paidOn, ...(note.trim() ? { note: note.trim() } : {}), detailsVersion: to.version,
       expectedFinanceVersion: a.financeVersion });
   }
 
@@ -372,7 +395,7 @@ function PayoutForm({ summary, busy, refused, onRecord }: {
         <div className="confirm" role="group" aria-label={t('payout.confirmLabel')}>
           <div className="confirm-text">
             {t('payout.confirm', {
-              amount: money(review.amountMinor), name: a.beneficiaryName, destination: detailsLabel(a.payoutDetails), version: review.detailsVersion,
+              amount: money(review.amountMinor), name: a.beneficiaryName, destination: to.label, version: review.detailsVersion,
               method: PAYOUT_METHOD_LABEL[review.method], date: formatDate(review.paidOn), reference: review.reference,
               from: money(summary.balanceMinor), to: money(summary.balanceMinor - review.amountMinor),
             })}

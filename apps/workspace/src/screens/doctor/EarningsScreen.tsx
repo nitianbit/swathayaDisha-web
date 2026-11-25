@@ -10,8 +10,10 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded } from '../../requests.ts';
 import { formatDay } from '../partner/labs.tsx';
+import { OwnerFinanceTiles } from '../finance/financeTiles.tsx';
 import { NotADoctor, rupeesOf, useDoctor, type DoctorContext } from './doctor.tsx';
 import { t } from '../../i18n/doctor/index.ts';
+import { t as wt } from '../../i18n/withdrawals/index.ts';
 
 const STATEMENT_PAGE = 50;
 const PAYOUT_METHOD_LABEL = () => ({ bank_transfer: t('earnings.bankTransfer'), upi: 'UPI', other: 'Other' } as const);
@@ -44,6 +46,8 @@ function Earnings({ d }: { d: DoctorContext }) {
         : (
           <>
             <Summary f={finance.data} />
+            {/* WQ48 (r35 §26.10): referral earnings and withdrawals to the bank, when the server sends them. */}
+            <OwnerFinanceTiles referral={finance.data.referral} withdrawals={finance.data.withdrawals} />
             <PayoutDestination d={d} account={finance.data.account} />
           </>
         )}
@@ -150,6 +154,8 @@ function PayoutForm({ d, version, onClose, onSaved }: {
         setFailure({ tone: 'warn', text: t('earnings.yourPayoutDetailsWereChanged', { value: fresh?.account?.payoutDetails ? ` (now: ${detailsText(fresh.account.payoutDetails)})` : '' }) });
         return;
       }
+      // WQ48 (r35): refused while a withdrawal to these details waits.
+      if (err instanceof ApiError && err.code === 'WITHDRAWAL_OPEN') { setFailure({ tone: 'error', text: wt('error.WITHDRAWAL_OPEN') }); return; }
       setFailure({ tone: 'error', text: definitelyNotRecorded(err) ? t('common.notSaved', { value: messageOf(err) })
         : t('earnings.theyMayHaveBeenSaved', { value: messageOf(err) }) });
     } finally {

@@ -9,6 +9,7 @@ import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useW
 import {
   EventsList, PagedSection, PayoutDetailsForm, PayoutDetailsList, PayoutsTable, StatementSection, SummaryCards,
 } from './finance.tsx';
+import { OwnerFinanceTiles } from './financeTiles.tsx';
 
 /** Q13 cursor pages of payouts and finance events. */
 const PAGE = 50;
@@ -57,6 +58,8 @@ function PartnerFinance({ ctx }: { ctx: ScopeContext }) {
               {!s.account ? (
                 <Empty title={t('partner.nothingEarned')}>{t('partner.nothingEarnedText')}</Empty>
               ) : <SummaryCards summary={s} />}
+              {/* WQ48 (r35 §26.10): a lab's referral earnings (its own page stays, linked for members) and withdrawals. */}
+              <OwnerFinanceTiles referral={s.referral} withdrawals={s.withdrawals} referralLink={admin ? undefined : '/partner/referral'} />
             </section>
 
             <section className="ws-section" aria-labelledby="fin-dest-h">

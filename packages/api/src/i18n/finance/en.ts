@@ -7,6 +7,10 @@ export default {
   /** Who a settlement account belongs to. */
   'owner.partner': 'Lab or clinic',
   'owner.doctor': 'Doctor',
+  /** r35: the account of a pharmacy's, a lab's or a doctor's referral earnings. */
+  'owner.pharmacy_referral': 'Pharmacy referral',
+  'owner.lab_referral': 'Lab referral',
+  'owner.doctor_referral': 'Doctor referral',
   /** Where the payout bank account or UPI ID stands. */
   'details.none': 'Not given',
   'details.unverified': 'Waiting for verification',

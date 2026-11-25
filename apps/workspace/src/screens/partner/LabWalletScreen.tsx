@@ -10,6 +10,7 @@ import { WithdrawSection } from '../pharmacy/withdrawals.tsx';
 import { LabOnly } from './labs.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 import { t } from '../../i18n/partner/index.ts';
+import { t as wt } from '../../i18n/withdrawals/index.ts';
 
 /**
  * WQ20: the lab's Jansetu wallet (assisted booking round 2d, backend r13, design §24.13), shown with the pharmacy wallet's
@@ -62,7 +63,11 @@ function Wallet({ ctx }: { ctx: ScopeContext }) {
       )}
       <Topups ctx={ctx} source={source} />
       {/* WQ29 (r32): withdrawals to the bank (switched off on the server until allowed); `wallet.manage` asks and cancels. */}
-      <WithdrawSection source={{ owner: `lab:${scopeIdentity(ctx)}`, walletKey: key, api: labWithdrawalsApi(api, ctx.scope), canAct: holdsAny(ctx.actor, ['wallet.manage']),
+      {/* WQ48 (r35): asking for a withdrawal needs `wallet.manage` AND partner-wide scope (403 FINANCE_SCOPE_REQUIRED); r35b: a
+          branch-limited manager may still cancel the one it asked for (the server decides whose it is). */}
+      <WithdrawSection source={{ owner: `lab:${scopeIdentity(ctx)}`, walletKey: key, api: labWithdrawalsApi(api, ctx.scope),
+        canAct: holdsAny(ctx.actor, ['wallet.manage']) && hasGlobalScope(ctx.actor), canCancel: holdsAny(ctx.actor, ['wallet.manage']),
+        actNote: holdsAny(ctx.actor, ['wallet.manage']) && !hasGlobalScope(ctx.actor) ? wt('error.FINANCE_SCOPE_REQUIRED') : undefined,
         // WQ29b: the Finance page needs `finance.view` and partner-wide scope (as its page declaration); else ask an owner.
         destination: holdsAny(ctx.actor, ['finance.view']) && hasGlobalScope(ctx.actor) ? { link: '/partner/finance', page: 'finance' } : { askOwner: true } }} />
       <WalletHistory q={entries} empty={t('labWallet.historyEmpty')} first={history.page === 1}
