@@ -2381,6 +2381,32 @@ On WQ24 33439af. Against r21 (§24.17.3 "Admin": card refund rows add `payerKind
 - Seen, not changed: "Open the booking" in the queue links every row to the admin consultation page, also a lab-test booking's
   (`bookingKind`).
 
+## WQ40 UI translation engine: i18next + react-i18next (2026-11-25, branch `wq40/react-i18next`)
+
+Owner decisions of 2026-11-25, recorded in [I18N_PLAN.md](I18N_PLAN.md) §1 items 7–9 and §3.1: use the open-source
+`i18next` + `react-i18next` instead of WQ31's in-house engine; translations are machine-made only (IndicTrans2), static
+JSON files, no human checker; a language is released once 95% of its app's words are **present** (was "checked").
+Nothing visible changes: English is byte-identical and the language list stays hidden (English only in `RELEASED`).
+
+- **Engine** (`packages/i18n/src/store.ts`, `index.ts`): one i18next instance; each catalogue is a namespace of flat keys
+  (`keySeparator`/`nsSeparator` off); `{name}` placeholders inserted as written (no escaping, nesting or second pass);
+  plurals stored as `key_one`/`key_other`; English fallback per word; only words shaped like their English entry are
+  loaded. i18next fetches nothing: `catalogue()` adds English, `setLanguage()` loads each catalogue's `<lang>.json` chunk
+  (as before) and then switches. The pseudo-language is an i18next language generated from English in development only
+  (not in either release bundle). The missing-word note (development, key only) reads i18next's `usedLng`.
+- **Same API for every builder:** `catalogue(name, en, import.meta.glob(...))` → typed `t(key, params)`, `t.rich`, `t.has`;
+  `setLanguage`, `chooseLanguage`, `startLanguage`, `getLanguage`, `subscribeLanguage`, the format module, `jansetu.lang`,
+  `RELEASED`, `LanguageScope`, `LanguageSwitcher`, `Parts` are unchanged in shape. Code written against 6a needs no change.
+- **React** (`packages/ui/src/language.tsx`): the instance is registered with react-i18next (`setI18n`, no provider needed)
+  and `useLanguage()` is `useTranslation()` (no Suspense; it also renders again when words are added, so a catalogue
+  loaded late shows its words).
+- **Dependencies (owner-approved):** `i18next` 27.2.7 in `@jansetu/i18n` (still React-free, so `@jansetu/api` can use it)
+  and `react-i18next` 18.0.3 in `@jansetu/ui`, pinned. No other package.
+- **Gate:** `catalogues.test.ts` still fails on extra, misshapen, empty, misplaced or stale words; a released language needs
+  95% present (machine translations count). `packages/i18n/README.md` tells builders how to extract a string.
+- Seen, not changed: customer `e2e/native-session.spec.ts:178` and `e2e/pharmacy.spec.ts:370` fail on unchanged stage
+  bac568e too (after a sign-in and a reload the app shows the sign-in screen or stays on "Signing you in…").
+
 ## Follow-ups
 
 
@@ -2522,3 +2548,4 @@ On WQ24 33439af. Against r21 (§24.17.3 "Admin": card refund rows add `payerKind
 | 2026-11-25 | WQ31 UI translation round 6a (foundation) | typecheck clean (now with `packages/i18n`); Vitest 449/449 (+27: placeholders, plurals, per-word English fallback, loading and the last switch winning, pseudo, start-up and choice storage, formats byte-identical to the old helpers in English with Latin digits elsewhere, the catalogue check, the literal scan, switcher/scope/parts); Playwright workspace 900/900 and customer 270/270 (+4 each: English by default with no language list and nothing stored; a kept language not offered is ignored), all on temporary ports 5476/5477 with `reuseExistingServer: false`, configs deleted; both builds with `VITE_API_SAME_ORIGIN=true` (no pseudo-language in either bundle). |
 | 2026-11-25 | WQ31 6a merged with `wq/stage-next` bd0df6c (branch `wq31/i18n-merged`) | typecheck clean; Vitest 471/471; Playwright workspace 942/942 on temporary port 5486 (`reuseExistingServer: false`, config deleted); both builds with `VITE_API_SAME_ORIGIN=true` (no pseudo-language in either bundle). Lab desk and lab wallet money through `formatPaise` (English unchanged); 7 new files allowlisted (166). |
 | 2026-11-25 | WQ26 referral cuts, phase 4a/4b web (on `wq/stage-next-2` 13333e9) | Against r24 on stage 6a8574e9 (§26.5, §26.6, §26.15; mocked API). typecheck clean; Vitest 488/488 (+10 in referralCuts.test.ts: percent typed → basis points 1–5000 without floating point, fixed ≥ ₹0.01 with no upper limit and no cap, the optional cap, Off keeps the saved terms inactive, the PUT body checked again, the words, the switch read from `effective`, refusals and the before-writing 503s, the statement row's short ref and category, the routes with ids, kinds and cursors checked first); Playwright workspace 984/984 on temporary port 5513 (`reuseExistingServer: false`, config deleted; +12 = 6 journeys x 2 devices in referral-cuts.spec.ts: a % rule set and confirmed with a reason, sent as a create and shown with its history; a fixed rule for a lab, then a lost answer checked by reading the rules; a version conflict (409 RECORD_CHANGED) read again and sent on the new version; the switch-off note and turning a cut off; the pharmacy's earnings, rates and statement pages with nothing kept on the device; a pharmacy cannot reach the admin page); release build with `VITE_API_SAME_ORIGIN=true`. |
+| 2026-11-25 | WQ40 i18next + react-i18next engine (branch `wq40/react-i18next` on stage bac568e) | typecheck clean; Vitest 495/495 (+2: values inserted as written with no escaping, nesting or second pass; only words shaped like their English are used; the 6a i18n, switcher and scope tests pass unchanged on the new engine); Playwright on temporary ports 5541/5542 (`reuseExistingServer: false`, configs deleted): workspace 1004/1004 (932 in the full run, which shared the machine with the customer suite; the 72 that timed out, nearly all right after a `page.reload()`, all passed when run again alone) and customer 266/270: the 4 failures are `native-session.spec.ts:178` and `pharmacy.spec.ts:370` on both devices, which fail the same way on unchanged stage bac568e (pre-existing, not WQ40); both builds with `VITE_API_SAME_ORIGIN=true` (no pseudo-language in either bundle; main chunk +56 kB, +18 kB gzip, for i18next and react-i18next). |

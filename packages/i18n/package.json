@@ -4,5 +4,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "i18next": "27.2.7"
   }
 }

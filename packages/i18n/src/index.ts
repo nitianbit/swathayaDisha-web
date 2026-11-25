@@ -1,15 +1,16 @@
 /**
  * Jansetu UI words (docs/I18N_PLAN.md §3). Framework-free, so `@jansetu/api` can word its refusals; `@jansetu/ui` adds
- * the React side. English is the source and is bundled; another language is a JSON chunk per catalogue, loaded when
- * chosen. A word missing in a language shows in English. No dependency: plurals and formats come from `Intl`.
+ * the React side (react-i18next). English is the source and is bundled; another language is a JSON chunk per
+ * catalogue, loaded when chosen. A word missing in a language shows in English. The engine is i18next (owner decision
+ * 2026-11-25); screens only ever see the typed `t(key, params)` below, so the engine stays an internal detail.
  */
 import { isLang, RELEASED, type AppName, type Lang } from './languages.ts';
 import { pseudo } from './pseudo.ts';
-import { applyLanguage, getLanguage, notifyLanguage, type UiLang } from './store.ts';
+import { applyLanguage, getLanguage, i18n, type UiLang } from './store.ts';
 
 export * from './format.ts';
 export * from './languages.ts';
-export { getLanguage, subscribeLanguage, type UiLang } from './store.ts';
+export { getLanguage, i18n, subscribeLanguage, type UiLang } from './store.ts';
 
 /** A plural: Intl.PluralRules picks the form from `count` (every first-wave language has just these two). */
 export interface PluralEntry { readonly one: string; readonly other: string }
@@ -26,7 +27,7 @@ export type ParamsOf<E, V = Value> = E extends PluralEntry
   : { [K in NamesOf<E>]: V };
 type Args<E> = E extends PluralEntry ? [params: ParamsOf<E>] : [NamesOf<E>] extends [never] ? [] : [params: ParamsOf<E>];
 
-/** A checked translation as stored in `<lang>.json`: a string, or the plural forms of that language. */
+/** A translation as stored in `<lang>.json`: a string, or the plural forms of that language. */
 export type Translation = Readonly<Record<string, string | Readonly<Partial<Record<Intl.LDMLPluralRule, string>>>>>;
 type Loader = () => Promise<unknown>;
 
@@ -34,7 +35,8 @@ interface Catalogue {
   name: string;
   en: Messages;
   loaders: ReadonlyMap<string, Loader>;
-  loaded: Map<string, Translation>;
+  /** Languages whose words are in i18next (or that have none to load). */
+  loaded: Set<string>;
 }
 
 const catalogues = new Map<string, Catalogue>();
@@ -44,14 +46,23 @@ let offered: readonly Lang[] = ['en'];
 let generation = 0;
 
 const translated = (lang: UiLang): lang is Exclude<Lang, 'en'> => lang !== 'en' && lang !== 'pseudo';
-const pluralRules = new Map<string, Intl.PluralRules>();
-function pluralForm(lang: string, count: number): Intl.LDMLPluralRule {
-  let rules = pluralRules.get(lang);
-  if (!rules) {
-    rules = new Intl.PluralRules(lang);
-    pluralRules.set(lang, rules);
+
+/**
+ * A catalogue's words as i18next holds them: flat keys, a plural as `key_<form>`. Only words shaped like their English
+ * entry are kept (a string for a string, plural forms for a plural); anything else shows in English.
+ */
+function resources(en: Messages, words: Readonly<Record<string, unknown>>, map: (text: string) => string = (x) => x) {
+  const out: Record<string, string> = {};
+  for (const [key, english] of Object.entries(en)) {
+    if (!Object.hasOwn(words, key)) continue;
+    const own = words[key];
+    if (typeof english === 'string') {
+      if (typeof own === 'string') out[key] = map(own);
+    } else if (own && typeof own === 'object' && !Array.isArray(own)) {
+      for (const [form, text] of Object.entries(own)) if (typeof text === 'string') out[`${key}_${form}`] = map(text);
+    }
   }
-  return rules.select(count);
+  return out;
 }
 
 const warned = new Set<string>();
@@ -62,25 +73,24 @@ function noteMissing(catalogue: string, lang: string, key: string) {
   console.warn(`[i18n] ${lang}: ${catalogue}:${key} is not translated yet; English is shown.`);
 }
 
-function textOf(c: Catalogue, key: string, count: number): string {
+type Lookup = (key: string, options: Readonly<Record<string, unknown>>) => { res: string; usedLng: string };
+
+/** The words for `key` in the current language, else English; filled from `params` unless `raw`. */
+function lookup(c: Catalogue, key: string, params: Readonly<Record<string, unknown>> | undefined, raw: boolean): string {
   const en = c.en[key];
   if (en === undefined) return key; // typed keys make this unreachable; `has` guards keys made from server codes
+  const { res, usedLng } = (i18n.t as unknown as Lookup)(key, {
+    ns: c.name,
+    replace: params ?? {},
+    // Only a plural picks a form; `{count}` in a plain text is just a placeholder.
+    ...(typeof en === 'string' ? {} : { count: Number(params?.count ?? 0) }),
+    skipInterpolation: raw,
+    nest: false,
+    returnDetails: true,
+  });
   const lang = getLanguage();
-  if (translated(lang)) {
-    const own = c.loaded.get(lang)?.[key];
-    const text = typeof en === 'string' ? (typeof own === 'string' ? own : undefined)
-      : own && typeof own === 'object' ? own[pluralForm(lang, count)] : undefined;
-    if (text) return text;
-    noteMissing(c.name, lang, key);
-  }
-  const english = typeof en === 'string' ? en : pluralForm('en', count) === 'one' ? en.one : en.other;
-  // `import.meta.env.DEV` first: a release build drops the pseudo-language entirely.
-  return import.meta.env.DEV && lang === 'pseudo' ? pseudo(english) : english;
-}
-
-function fill(text: string, params: Readonly<Record<string, unknown>> | undefined): string {
-  if (!params) return text;
-  return text.replace(PLACEHOLDER, (all, name: string) => (Object.hasOwn(params, name) ? String(params[name]) : all));
+  if (translated(lang) && usedLng !== lang) noteMissing(c.name, lang, key);
+  return res;
 }
 
 function parts<V>(text: string, params: Readonly<Record<string, unknown>>): (string | V)[] {
@@ -97,16 +107,24 @@ function parts<V>(text: string, params: Readonly<Record<string, unknown>>): (str
   return out;
 }
 
-async function load(c: Catalogue, lang: string): Promise<boolean> {
+async function load(c: Catalogue, lang: UiLang): Promise<boolean> {
   if (c.loaded.has(lang)) return true;
+  // `import.meta.env.DEV` first: a release build drops the pseudo-language entirely.
+  if (import.meta.env.DEV && lang === 'pseudo') {
+    i18n.addResourceBundle(lang, c.name, resources(c.en, c.en, pseudo), false, true);
+    c.loaded.add(lang);
+    return true;
+  }
   const loader = c.loaders.get(lang);
   if (!loader) {
-    c.loaded.set(lang, {});
+    c.loaded.add(lang);
     return true;
   }
   try {
     const words = ((await loader()) as { default?: unknown } | null)?.default;
-    c.loaded.set(lang, words && typeof words === 'object' && !Array.isArray(words) ? words as Translation : {});
+    const own = words && typeof words === 'object' && !Array.isArray(words) ? words as Readonly<Record<string, unknown>> : {};
+    i18n.addResourceBundle(lang, c.name, resources(c.en, own), false, true);
+    c.loaded.add(lang);
     return true;
   } catch {
     return false;
@@ -115,7 +133,8 @@ async function load(c: Catalogue, lang: string): Promise<boolean> {
 
 /**
  * One catalogue: its English words (`en.ts`, `as const`) and its translations (`import.meta.glob` of its JSON files,
- * `<lang>.source.json` excluded). Returns its `t`: typed keys, and typed `{placeholders}` from the English text.
+ * `<lang>.source.json` excluded). Returns its `t`: typed keys, and typed `{placeholders}` from the English text. The
+ * catalogue is one i18next namespace, named `name`.
  */
 export function catalogue<const C extends Messages>(name: string, en: C, files: Readonly<Record<string, Loader>> = {}) {
   const loaders = new Map<string, Loader>();
@@ -123,20 +142,21 @@ export function catalogue<const C extends Messages>(name: string, en: C, files: 
     const lang = /\/([a-z]{2,3})\.json$/.exec(path)?.[1];
     if (lang) loaders.set(lang, loader);
   }
-  // Replaced by name: a module run again (hot reload) does not add a second copy.
-  const c: Catalogue = { name, en, loaders, loaded: new Map() };
+  // Replaced by name: a module run again (hot reload) does not keep old words.
+  if (catalogues.has(name)) for (const lng of Object.keys(i18n.store.data)) i18n.removeResourceBundle(lng, name);
+  const c: Catalogue = { name, en, loaders, loaded: new Set(['en']) };
   catalogues.set(name, c);
+  i18n.addResourceBundle('en', name, resources(en, en), false, true);
   const lang = getLanguage();
-  if (translated(lang)) void load(c, lang).then((ok) => { if (ok && getLanguage() === lang) notifyLanguage(); });
+  if (lang !== 'en') void load(c, lang);
 
   function t<K extends keyof C & string>(key: K, ...args: Args<C[K]>): string {
-    const params = args[0] as Readonly<Record<string, unknown>> | undefined;
-    return fill(textOf(c, key, Number(params?.count ?? 0)), params);
+    return lookup(c, key, args[0] as Readonly<Record<string, unknown>> | undefined, false);
   }
   /** The words with some placeholders as elements (React nodes): text and elements in order. */
   t.rich = <K extends keyof C & string, V>(key: K, params: ParamsOf<C[K], Value | V>): (string | V)[] => {
     const p = params as Readonly<Record<string, unknown>>;
-    return parts<V>(textOf(c, key, Number(p.count ?? 0)), p);
+    return parts<V>(lookup(c, key, p, true), p);
   };
   /** For keys made from server codes (`errors.${code}`). */
   t.has = (key: string): key is keyof C & string => Object.hasOwn(en, key);
@@ -155,12 +175,9 @@ const pseudoAllowed = () => import.meta.env.DEV;
 export async function setLanguage(lang: UiLang): Promise<boolean> {
   const mine = ++generation;
   if (lang === 'pseudo' && !pseudoAllowed()) return false;
-  if (translated(lang)) {
-    const loaded = await Promise.all([...catalogues.values()].map((c) => load(c, lang)));
-    if (!loaded.every(Boolean)) return false;
-  }
-  if (mine !== generation) return false;
-  if (lang !== getLanguage()) applyLanguage(lang);
+  const loaded = await Promise.all([...catalogues.values()].map((c) => load(c, lang)));
+  if (!loaded.every(Boolean) || mine !== generation) return false;
+  if (lang !== getLanguage()) await applyLanguage(lang);
   return true;
 }
 
