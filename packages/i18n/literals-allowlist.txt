@@ -1,5 +1,5 @@
 # Files that still hold English written into the code (docs/I18N_PLAN.md §4.1). Each extraction round removes
-# its files once their words come from a catalogue; the list is empty after round 6j. Started in 6a: 159 files; 166 with the stage-next (push 1) files; 169 with push 2 (Consult now, doctor wallet).
+# its files once their words come from a catalogue; the list is empty after round 6j. Started in 6a: 159 files; 166 with the stage-next (push 1) files; 169 with push 2 (Consult now, doctor wallet); 172 with WQ26 (referral cuts).
 apps/customer/src/App.tsx
 apps/customer/src/common.tsx
 apps/customer/src/files.tsx
@@ -63,6 +63,7 @@ apps/workspace/src/screens/admin/PartnersScreen.tsx
 apps/workspace/src/screens/admin/PharmaciesScreen.tsx
 apps/workspace/src/screens/admin/PharmacyScreen.tsx
 apps/workspace/src/screens/admin/PharmacyWalletsScreen.tsx
+apps/workspace/src/screens/admin/ReferralCutsScreen.tsx
 apps/workspace/src/screens/admin/RefundsScreen.tsx
 apps/workspace/src/screens/admin/accountList.tsx
 apps/workspace/src/screens/admin/pharmacyFields.tsx
@@ -115,6 +116,7 @@ apps/workspace/src/screens/pharmacy/LowStockScreen.tsx
 apps/workspace/src/screens/pharmacy/OrderScreen.tsx
 apps/workspace/src/screens/pharmacy/OrdersScreen.tsx
 apps/workspace/src/screens/pharmacy/QualityScreen.tsx
+apps/workspace/src/screens/pharmacy/ReferralEarningsScreen.tsx
 apps/workspace/src/screens/pharmacy/RxQueueScreen.tsx
 apps/workspace/src/screens/pharmacy/RxReviewScreen.tsx
 apps/workspace/src/screens/pharmacy/SettingsScreen.tsx
@@ -167,5 +169,6 @@ packages/api/src/partners.ts
 packages/api/src/pharmacyOrders.ts
 packages/api/src/pharmacyStock.ts
 packages/api/src/pharmacySuppliers.ts
+packages/api/src/referralCuts.ts
 packages/api/src/webSession.ts
 packages/ui/src/index.tsx
