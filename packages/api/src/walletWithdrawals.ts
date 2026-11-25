@@ -52,15 +52,15 @@ export interface WithdrawalAnswer { withdrawal: Withdrawal; wallet: WalletAfter;
 
 const CURSOR = /^\d{1,15}_[0-9a-fA-F]{24}$/;
 const cursorOf = (cursor?: string) => {
-  if (cursor !== undefined && cursor !== '' && !CURSOR.test(cursor)) throw new Error('Invalid cursor'); // i18n-ignore
+  if (cursor !== undefined && cursor !== '' && !CURSOR.test(cursor)) throw new Error('Invalid cursor'); // i18n-ignore: a programming error, not shown
   return cursor || undefined;
 };
 const paise = (v: number) => {
-  if (!Number.isSafeInteger(v) || v < 1) throw new Error('Invalid amount'); // i18n-ignore
+  if (!Number.isSafeInteger(v) || v < 1) throw new Error('Invalid amount'); // i18n-ignore: a programming error, not shown
   return v;
 };
 const versionOf = (v: number) => {
-  if (!Number.isSafeInteger(v) || v < 0) throw new Error('Invalid version'); // i18n-ignore
+  if (!Number.isSafeInteger(v) || v < 0) throw new Error('Invalid version'); // i18n-ignore: a programming error, not shown
   return v;
 };
 

@@ -42,8 +42,10 @@ export function AddStockScreen() {
   );
 }
 
-const describe = (e: StockEntry, name: string, supplier?: string) =>
-  `${e.quantity} units of ${name}, batch ${e.batchNumber.toUpperCase()} (expires ${formatExpiry(e.expiryDate)})${supplier ? ` from ${supplier}` : ''}`;
+const describe = (e: StockEntry, name: string, supplier?: string) => {
+  const p = { quantity: e.quantity, name, batch: e.batchNumber.toUpperCase(), expires: formatExpiry(e.expiryDate) };
+  return supplier ? t('addStock.entryFrom', { ...p, supplier }) : t('addStock.entry', p);
+};
 const describeOp = (b: PendingEntry) => describe(b.entry, b.medicineName, b.supplierName);
 
 /** The adjustment's medicine id (populated or not). */
@@ -66,11 +68,11 @@ async function savedWords(read: () => Promise<StockAdjustment[]>, p: PendingOp<P
       && a.adjustmentType === 'add' && (!a.createdAt || Date.parse(a.createdAt) >= since));
     const recorded = hit?.supplier?.supplierId ?? hit?.supplierId;
     if (hit && recorded && String(recorded).toLowerCase() === b.entry.supplierId.toLowerCase()) {
-      return `${base} from ${hit.supplier?.displayName ?? b.supplierName ?? 'the supplier'}`;
+      return describe(b.entry, b.medicineName, hit.supplier?.displayName ?? b.supplierName ?? t('addStock.theSupplier'));
     }
-    return `${base} (supplier not recorded)`;
+    return t('addStock.supplierNotRecorded', { entry: base });
   } catch {
-    return `${base} (supplier not confirmed: see the stock history)`;
+    return t('addStock.supplierNotConfirmed', { entry: base });
   }
 }
 
@@ -88,7 +90,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
   const stock = pharmacyStockApi(api);
   const [params, setParams] = useSearchParams();
   const { op, send, settle } = useOwnedOp<PendingEntry>(`stock-add:${pharmacyId}`);
-  const { perform, busy } = useOneAtATime('stock entry');
+  const { perform, busy } = useOneAtATime('stockEntry');
   const [resendError, setResendError] = useState<string | null>(null);
   const [givingUp, setGivingUp] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -142,7 +144,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
     const b = p.body;
     const base = b ? describe(b.entry, b.medicineName) : 'the units';
     const checking = !!b?.entry.supplierId;
-    setDone({ text: words(checking ? `${base} (checking the supplier…)` : base), search });
+    setDone({ text: words(checking ? t('addStock.checkingSupplier', { entry: base }) : base), search });
     if (checking) {
       void savedWords(readAdjustments, p).then((what) => {
         if (shown.current === mine) setDone((d) => (d ? { ...d, text: words(what) } : d));
@@ -340,7 +342,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
             {review.entry.purchasePrice !== undefined && <li>{t('addStock.purchasePriceFull', { amount: formatRupees(review.entry.purchasePrice) })}</li>}
             {review.entry.rackLocation && <li>{t('addStock.rackFull', { rackLocation: review.entry.rackLocation })}</li>}
             {review.entry.reorderThreshold !== undefined && <li>{t('addStock.reorderAtFull', { reorderThreshold: review.entry.reorderThreshold })}</li>}
-            <li>{t('addStock.supplierFull', { supplierName: review.supplierName ?? 'not said' })}</li>
+            <li>{t('addStock.supplierFull', { supplierName: review.supplierName ?? t('addStock.supplierNotSaid') })}</li>
             <li>{ADD_STOCK_REASONS.find((r) => r.value === review.entry.reason)?.label}</li>
           </ul>
           <span className="ws-muted">{t('addStock.theUnitsAreOnSale')}</span>
@@ -389,7 +391,7 @@ function StockHistory({ pharmacyId, suppliers }: { pharmacyId: string; suppliers
                     <tr key={a._id}>
                       <td>{formatDateTime(a.createdAt)}</td>
                       <td>{medicineName(a.medicineId as InventoryItem['medicineId'])}</td>
-                      <td>{a.adjustmentType === 'remove' ? `−${a.quantity}` : a.adjustmentType === 'add' ? `+${a.quantity}` : `set ${a.quantity}`}</td>
+                      <td>{a.adjustmentType === 'remove' ? `−${a.quantity}` : a.adjustmentType === 'add' ? `+${a.quantity}` : t('addStock.setTo', { quantity: a.quantity })}</td>
                       <td>{a.batchNumber ? `${a.batchNumber}${a.expiryDate ? ` · ${formatExpiry(a.expiryDate)}` : ''}` : '—'}</td>
                       <td>{supplierOf(a)}</td>
                       <td>{a.sourceType ? SOURCE_LABEL()[a.sourceType] ?? a.sourceType : '—'}{a.notes ? <div className="ws-muted">{a.notes}</div> : null}</td>

@@ -155,7 +155,7 @@ export function MovementsTable({ rows, notes = false }: { rows: readonly WalletM
                 <td>{formatDateTime(m.createdAt)}</td>
                 <td>
                   {movementLabel(m)}
-                  {m.status && m.status !== 'completed' && <> <Badge tone="warn">{m.status === 'pending' ? 'Pending' : 'Failed'}</Badge></>}
+                  {m.status && m.status !== 'completed' && <> <Badge tone="warn">{m.status === 'pending' ? t('wallet.status.pending') : t('wallet.status.failed')}</Badge></>}
                 </td>
                 {notes && <td>{m.notes || '—'}</td>}
                 <td>{signed >= 0 ? <span>+{formatRupees(signed / 100)}</span> : <span className="ws-warn-text">−{formatRupees(-signed / 100)}</span>}</td>

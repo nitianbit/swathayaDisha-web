@@ -4,13 +4,14 @@ import { t } from '../../i18n/pharmacy/index.ts';
 // The status words live in @jansetu/api so every screen (orders, prescription review, quality) uses the same ones.
 export { ORDER_STATUS_LABEL, PAYMENT_STATUS_LABEL } from '@jansetu/api';
 
-export const REFUND_STATUS_LABEL: Record<PrescriptionRefundStatus, string> = {
+/** Words read at render (a language switch shows the new words). */
+export const REFUND_STATUS_LABEL = (): Record<PrescriptionRefundStatus, string> => ({
   wallet_pending: t('orderLabels.waitingToCreditTheWallet'),
   wallet_credited: t('orderLabels.creditedToTheCustomerS'),
   source_processing: t('orderLabels.beingRefundedToTheOriginal'),
   source_refunded: t('orderLabels.refundedToTheOriginalPayment'),
   manual_review: t('orderLabels.needsManualReviewByFinance'),
-};
+});
 
 export const DELIVERY_EXCEPTION_LABEL = (): Record<DeliveryExceptionType, string> => ({
   delivery_failed: t('orderLabels.deliveryFailed'),

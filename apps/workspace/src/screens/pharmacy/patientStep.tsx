@@ -111,7 +111,7 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
   const patientLabel = (): string => {
     if (patient.who === 'known') return knownFamily.find((f) => f.dependentId === patient.dependentId)?.name ?? t('patientStep.familyMember');
     const name = patient.name.trim().replace(/\s+/g, ' ');
-    return patient.who === 'family' ? `${name} (${patient.relation.toLowerCase()} of the phone’s owner)` : name;
+    return patient.who === 'family' ? t('patientStep.familyOfOwner', { name, relation: patient.relation.toLowerCase() }) : name;
   };
 
   return {
@@ -150,7 +150,7 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = t('comm
             <Button variant="ghost" disabled={frozenPatient} onClick={changePhone}>{t('patientStep.changeNumber')}</Button>
           </div>
           {lookup.result.exists ? (
-            <Alert tone="ok"><Parts of={t.rich('patientStep.thisNumberIsOnJansetuFull', { holderNameMasked: <strong>{lookup.result.holderNameMasked ?? 'name not given'}</strong> })} /></Alert>
+            <Alert tone="ok"><Parts of={t.rich('patientStep.thisNumberIsOnJansetuFull', { holderNameMasked: <strong>{lookup.result.holderNameMasked ?? t('patientStep.nameNotGiven')}</strong> })} /></Alert>
           ) : (
             <Alert tone="warn">{t('patientStep.thisNumberIsNewTo')}</Alert>
           )}
@@ -296,7 +296,7 @@ export function ConsultationPatientSection({ step, frozen, locked, consent, walk
         : missing ? <Alert>{t('patientStep.thisConsultationWasNotFound')}</Alert>
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : (
-          <p><Parts of={t.rich('patientStep.fromYourConsultationOnFull', { strong: <strong>{formatSlotDate(b?.bookingDate)}, {b?.bookingTime}</strong>, value: b?.consultationMode ? ` (${CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode})` : '', value2: b?.family ? ', for a family member' : '' })} /></p>
+          <p><Parts of={t.rich(b?.family ? 'patientStep.fromConsultationFamily' : 'patientStep.fromConsultation', { when: <strong>{formatSlotDate(b?.bookingDate)}, {b?.bookingTime}</strong>, mode: b?.consultationMode ? ` (${CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode})` : '' })} /></p>
         )}
       <p className="ws-muted"><Link to={walkInPath}>{t('patientStep.bookForAPatientBy')}</Link></p>
       {!missing && (

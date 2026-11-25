@@ -99,8 +99,8 @@ export function LabList({ booker }: { booker: LabBooker }) {
                       <td>
                         {/* WQ21 L2: a card booking waiting for its payment, as in Booked consultations. */}
                         {b.status === 'pending_payment'
-                          ? <Link to={`${booker.paths.list}/${b._id}`} aria-label={t('bookedLabTests.payNowForTheLab', { value: b.patientName ?? 'the patient', value2: b.lab?.name ?? 'the lab' })}>{t('common.payNow')}</Link>
-                          : <Link to={`${booker.paths.list}/${b._id}`} aria-label={t('bookedLabTests.openTheLabTestOf', { value: b.patientName ?? 'the patient', value2: b.lab?.name ?? 'the lab' })}>{t('common.open')}</Link>}
+                          ? <Link to={`${booker.paths.list}/${b._id}`} aria-label={t('bookedLabTests.payNowForTheLab', { patient: b.patientName ?? t('common.patientFallback'), lab: b.lab?.name ?? t('common.labFallback') })}>{t('common.payNow')}</Link>
+                          : <Link to={`${booker.paths.list}/${b._id}`} aria-label={t('bookedLabTests.openTheLabTestOf', { patient: b.patientName ?? t('common.patientFallback'), lab: b.lab?.name ?? t('common.labFallback') })}>{t('common.open')}</Link>}
                       </td>
                     </tr>
                   ))}
@@ -145,7 +145,7 @@ export function LabDetail({ booker, bookingId }: { booker: LabBooker; bookingId:
   });
   const [note, setNote] = useState<string | null>(null);
   const [acceptError, setAcceptError] = useState<string | null>(null);
-  const guard = useOneAtATime('lab booking');
+  const guard = useOneAtATime('labBooking');
   const changed = () => {
     void queryClient.invalidateQueries({ queryKey: booker.listKey });
     void queryClient.invalidateQueries({ queryKey: booker.walletKey });
@@ -259,7 +259,7 @@ function AcceptNewTime({ booker, booking, version, perform, busy, onDone, onRefu
   return (
     <section className="ws-section" aria-labelledby="lab-new-h">
       <h2 id="lab-new-h">{t('bookedLabTests.newTimeFromTheLab')}</h2>
-      <Alert tone="warn"><Parts of={t.rich('bookedLabTests.theLabProposedANewFull', { newTime: <strong>{newTime}</strong>, value: oldTime ? ` (it was ${oldTime})` : '', reason: r.reason ? ` ${t('bookedLabTests.reason', { reason: r.reason })}` : '' })} /></Alert>
+      <Alert tone="warn"><Parts of={t.rich(oldTime ? 'bookedLabTests.proposedNewTimeWas' : 'bookedLabTests.theLabProposedANewFull', { newTime: <strong>{newTime}</strong>, oldTime: oldTime ?? '', reason: r.reason ? ` ${t('bookedLabTests.reason', { reason: r.reason })}` : '' })} /></Alert>
       {error && <Alert>{error}</Alert>}
       <div className="ws-actions">
         <Button busy={busy} onClick={() => void accept(startOp(newRequestKey(), { bookingId: booking._id, version })).catch((e: unknown) => setError(booker.refusal(e).message))}>{t('bookedLabTests.acceptNewTime')}</Button>
@@ -324,7 +324,7 @@ function Reports({ booking }: { booking: LabBookingView }) {
         <ul className="ws-list">
           {releases.map((r, i) => (
             <li key={`${r.file}:${i}`} className="ws-actions">
-              <span>{t('bookedLabTests.releasedFull', { time: r.releasedAt ? formatDateTime(r.releasedAt) : '', value: r.signer?.name ? `, signed by ${r.signer.name}` : '' })}</span>
+              <span>{r.signer?.name ? t('bookedLabTests.releasedSigned', { time: r.releasedAt ? formatDateTime(r.releasedAt) : '', signer: r.signer.name }) : t('bookedLabTests.releasedFull', { time: r.releasedAt ? formatDateTime(r.releasedAt) : '' })}</span>
               <Button variant="secondary" busy={opening === r.file} onClick={() => void open(r.file)}>
                 <FileText size={16} aria-hidden="true" />{' '}{t('bookedLabTests.openTheReportFull', { value: releases.length > 1 ? ` ${i + 1}` : '' })}
               </Button>

@@ -54,7 +54,7 @@ export function RefundsScreen() {
                     <tr key={r._id}>
                       <td>{r.orderNumber ?? r._id.slice(-8)}</td>
                       <td>{refund.cause ? refundCause(refund.cause) : '—'}</td>
-                      <td><Badge tone={refund.status === 'manual_review' ? 'danger' : 'warn'}>{REFUND_STATUS_LABEL[refund.status] ?? refund.status}</Badge></td>
+                      <td><Badge tone={refund.status === 'manual_review' ? 'danger' : 'warn'}>{REFUND_STATUS_LABEL()[refund.status] ?? refund.status}</Badge></td>
                       <td>{formatRupees(refund.walletAmount)}</td>
                       <td>{refund.lastError ? refundProblem(refund.lastError) : '—'}</td>
                       <td>{formatDateTime(refund.updatedAt ?? r.updatedAt)}</td>

@@ -163,9 +163,9 @@ async function payTopup(source: TopupSource, order: TopupOrder): Promise<TopupOu
 }
 
 export const NOT_OPENED = () => (t('topup.thePaymentPageDidnT'));
-export const UNPAID_CHECK_AGAIN = t('topup.notPaidYetIfYou');
-export const UNPAID_WORDS = () => (t('topup.ifYouDidNotPay', { UNPAID_CHECK_AGAIN }));
-export const CHECK_LABEL = t('topup.checkMyTopUp');
+export const UNPAID_CHECK_AGAIN = () => t('topup.notPaidYetIfYou');
+export const UNPAID_WORDS = () => (t('topup.ifYouDidNotPay', { UNPAID_CHECK_AGAIN: UNPAID_CHECK_AGAIN() }));
+export const CHECK_LABEL = () => t('topup.checkMyTopUp');
 const pendingSlot = (pharmacyId: string) => `wallet-topups:${pharmacyId}`;
 const infoSlot = (pharmacyId: string) => `wallet-topup-info:${pharmacyId}`;
 type TopupInfo = Record<string, { amount: number; at: number }>;
@@ -262,9 +262,9 @@ export function TopUpForm({ pharmacyId, source: given, suggested, onCredited }: 
           onCredited?.();
         } else if (outcome.kind === 'closed') setNote({ tone: outcome.message === NOT_OPENED() ? 'warn' : 'error', text: outcome.message });
         else if (outcome.kind === 'unpaid') {
-          setNote({ tone: 'warn', text: t('topup.thePaymentWasNotCompleted', { CHECK_LABEL, value: source.rememberOnDevice ? 'below' : 'next to it under Top-ups' }) });
+          setNote({ tone: 'warn', text: t(source.rememberOnDevice ? 'topup.notCompletedCheckBelow' : 'topup.notCompletedCheckUnderTopups', { CHECK_LABEL: CHECK_LABEL() }) });
         } else {
-          setNote({ tone: 'warn', text: t('topup.weCouldNotConfirmThe', { message: outcome.message, CHECK_LABEL, value: source.rememberOnDevice ? 'below' : 'next to it under Top-ups' }) });
+          setNote({ tone: 'warn', text: t(source.rememberOnDevice ? 'topup.notConfirmedCheckBelow' : 'topup.notConfirmedCheckUnderTopups', { message: outcome.message, CHECK_LABEL: CHECK_LABEL() }) });
         }
       });
     } catch (err) {
@@ -296,7 +296,7 @@ type CheckNote = { tone: 'ok' | 'warn' | 'error'; text: string };
  */
 export function useTopupCheck(source: TopupSource, unpaidWords: string, onSettled?: (id: string) => void) {
   const queryClient = useQueryClient();
-  const { perform, busy } = useOneAtATime('top-up check');
+  const { perform, busy } = useOneAtATime('topupCheck');
   const [checking, setChecking] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, CheckNote>>({});
   async function check(id: string, amountRupees: number | undefined) {
@@ -340,8 +340,8 @@ function PendingTopups({ source, pending }: { source: TopupSource; pending: Retu
           const info = pending.info(id);
           return (
             <li key={id} className="ws-actions">
-              <span>{info ? `${formatRupees(info.amount)}, started ${formatDateTime(new Date(info.at).toISOString())}` : t('topup.aTopUpStartedEarlier')}</span>
-              <Button variant="secondary" busy={checking === id} disabled={busy && checking !== id} onClick={() => void check(id, info?.amount)}>{CHECK_LABEL}</Button>
+              <span>{info ? t('topup.startedAt', { amount: formatRupees(info.amount), when: formatDateTime(new Date(info.at).toISOString()) }) : t('topup.aTopUpStartedEarlier')}</span>
+              <Button variant="secondary" busy={checking === id} disabled={busy && checking !== id} onClick={() => void check(id, info?.amount)}>{CHECK_LABEL()}</Button>
               {notes[id] && <Alert tone={notes[id].tone}>{notes[id].text}</Alert>}
               {notes[id]?.text === UNPAID_WORDS() && (
                 // Not paid when checked: it may be dropped from this device. A payment captured later is still found and

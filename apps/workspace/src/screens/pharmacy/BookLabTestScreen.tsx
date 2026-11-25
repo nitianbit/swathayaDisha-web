@@ -245,7 +245,7 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
   // An unconfirmed booking stays on screen while it is resent or given up (its first attempt shows the review busy).
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
     return (
-      <UnconfirmedBooking op={op} what={t('bookLabTest.labBooking')} busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => labsApi.byKey(op.requestKey)}
+      <UnconfirmedBooking op={op} kind="labBooking" busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => labsApi.byKey(op.requestKey)}
         onUsed={(r, restored) => afterUsed(r, op.requestKey, restored ? undefined : op.body?.summary, restored)}
         extra={orderFailed && <Alert tone="warn">{ORDER_FAILED_WORDS()}</Alert>}
         onAbandoned={() => create.abandonedByCheck(op.requestKey)}
@@ -256,7 +256,7 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
   }
 
   if (off) {
-    return <Alert tone="warn">{t('bookLabTest.jansetuTurnsItOnFull', { LAB_SWITCHED_OFF_MESSAGE, offFor: booker.words.offFor })}</Alert>;
+    return <Alert tone="warn">{t(`bookLabTest.turnsItOn.${booker.kind}`, { LAB_SWITCHED_OFF_MESSAGE })}</Alert>;
   }
 
   if (ended) {
@@ -280,7 +280,7 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
     const byCard = done.paidBy === 'card';
     return (
       <section className="ws-section" aria-labelledby="done-h">
-        <h2 id="done-h">{done.replayed ? t('common.alreadyBooked') : 'Booked'}</h2>
+        <h2 id="done-h">{done.replayed ? t('common.alreadyBooked') : t('common.booked')}</h2>
         <Alert tone="ok">
           {done.replayed ? t('common.thisBookingWasAlreadyMade')
             : byCard ? t('bookLabTest.theLabTestIsBooked') : t('bookLabTest.theLabTestIsBooked2')}
@@ -368,7 +368,7 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
                     : items.map((i) => (
                       <label key={i.itemId} className="ws-check">
                         <input type="checkbox" checked={itemIds.includes(i.itemId)} onChange={() => toggleItem(i.itemId)} />
-                        {i.name}{i.kind === 'package' ? ' (package)' : ''} · {formatRupees(i.priceMinor / 100)}
+                        {i.name}{i.kind === 'package' ? ` ${t('bookLabTest.packageTag')}` : ''} · {formatRupees(i.priceMinor / 100)}
                         {i.preparation ? <span className="ws-muted"> · {i.preparation}</span> : null}
                       </label>
                     ))}

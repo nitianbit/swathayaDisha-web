@@ -56,7 +56,7 @@ function Suppliers({ pharmacyId }: { pharmacyId: string }) {
   const [resendError, setResendError] = useState<string | null>(null);
   const [givingUp, setGivingUp] = useState(false);
   const { op, send, settle } = useOwnedOp<SupplierChange>(`supplier-change:${pharmacyId}`);
-  const { perform, busy } = useOneAtATime('supplier list');
+  const { perform, busy } = useOneAtATime('supplierList');
   const q = useQuery({
     queryKey: ['pharmacy-suppliers', pharmacyId, 'list', state, page],
     queryFn: () => suppliers.list({ state, page, limit: SUPPLIERS_PAGE_MAX }),
@@ -159,7 +159,7 @@ function Suppliers({ pharmacyId }: { pharmacyId: string }) {
           giveUp={!op.body || op.body.kind === 'create' ? { label: t('common.giveThisUp'), busy: givingUp, onClick: () => void giveUp(op) } : undefined}
           forget={op.body && op.body.kind !== 'create' ? {
             label: t('common.forgetIt'), confirmLabel: t('common.forgetIt'),
-            consequence: t('suppliers.ifTheEarlierStillArrives', { value: op.body.kind === 'archive' ? 'archive' : 'change', name: op.body.name }),
+            consequence: t(op.body.kind === 'archive' ? 'suppliers.ifTheEarlierArchiveArrives' : 'suppliers.ifTheEarlierChangeArrives', { name: op.body.name }),
             onForget: () => { settle(op.requestKey); setResendError(null); },
           } : undefined}>
           <Alert tone="warn">
@@ -291,7 +291,7 @@ function SupplierForm({ base: opened, busy, locked, onCancel, onSave, reread }: 
         setDraft((d) => ({ ...d, ...Object.fromEntries(theirs.filter((f) => !both.includes(f)).map((f) => [f, saved[f]])) }));
         setBase(fresh);
         setStale(both.length
-          ? t('suppliers.someoneChangedThisSupplierMeanwhile', { value: both.map((f) => `${SUPPLIER_FIELD_LABEL[f]}: now “${saved[f]}”`).join('; ') })
+          ? t('suppliers.someoneChangedThisSupplierMeanwhile', { value: both.map((f) => t('suppliers.fieldNow', { field: SUPPLIER_FIELD_LABEL[f], value: saved[f] })).join('; ') })
           : t('suppliers.someoneChangedThisSupplierMeanwhile2'));
         return;
       }

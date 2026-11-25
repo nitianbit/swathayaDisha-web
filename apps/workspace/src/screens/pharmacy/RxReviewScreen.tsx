@@ -99,7 +99,7 @@ function ReviewOutcome({ order }: { order: PharmacyOrder }) {
         <dl className="ws-dl">
           <dt>{t('common.pharmacist')}</dt><dd>{r.pharmacistName} ({r.pharmacistRegistrationNumber})</dd>
           <dt>{t('common.when')}</dt><dd>{formatDateTime(r.reviewedAt)}</dd>
-          <dt>{t('rxReview.documentsReviewed')}</dt><dd>{r.reviewedDocumentCount}{r.prescriptionAttached === false ? ' (no prescription attached)' : ''}</dd>
+          <dt>{t('rxReview.documentsReviewed')}</dt><dd>{r.reviewedDocumentCount}{r.prescriptionAttached === false ? ` ${t('rxReview.noPrescriptionAttached')}` : ''}</dd>
           {r.reason && (<><dt>{t('common.reason')}</dt><dd>{r.reason}</dd></>)}
         </dl>
       )}

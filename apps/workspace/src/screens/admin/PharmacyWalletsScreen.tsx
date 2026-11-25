@@ -429,7 +429,7 @@ export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pha
   const wallets = adminPharmacyWalletApi(api);
   const list = useQuery({ queryKey: [...scopeKey, pharmacyId, 'uncredited'], queryFn: () => wallets.uncredited(pharmacyId) });
   const { op, send, settle } = useOwnedOp<PendingClose>(`admin-wallet-close:${admin.id}:${pharmacyId}`);
-  const { perform, busy } = useOneAtATime('top-up');
+  const { perform, busy } = useOneAtATime('topup');
   const [chosen, setChosen] = useState<UncreditedTopup | null>(null);
   const [reason, setReason] = useState('');
   const [reasonError, setReasonError] = useState<string | undefined>();

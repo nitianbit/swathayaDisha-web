@@ -91,8 +91,8 @@ export function BookedConsultationsList({ booker }: { booker: ConsultBooker }) {
                       <td>{statusWords(b)}<BookingBadges b={b} /></td>
                       <td>
                         {waitingForCard(b)
-                          ? <Link to={`${list}/${b._id}`} aria-label={t('bookedConsultations.payNowForTheConsultation', { value: b.patientName ?? 'the patient', value2: b.doctorName ?? 'the doctor' })}>{t('common.payNow')}</Link>
-                          : <Link to={`${list}/${b._id}`} aria-label={t('bookedConsultations.openTheConsultationOfWith', { value: b.patientName ?? 'the patient', value2: b.doctorName ?? 'the doctor' })}>{t('common.open')}</Link>}
+                          ? <Link to={`${list}/${b._id}`} aria-label={t('bookedConsultations.payNowForTheConsultation', { patient: b.patientName ?? t('common.patientFallback'), doctor: b.doctorName ?? t('common.doctorFallback') })}>{t('common.payNow')}</Link>
+                          : <Link to={`${list}/${b._id}`} aria-label={t('bookedConsultations.openTheConsultationOfWith', { patient: b.patientName ?? t('common.patientFallback'), doctor: b.doctorName ?? t('common.doctorFallback') })}>{t('common.open')}</Link>}
                       </td>
                     </tr>
                   ))}

@@ -487,7 +487,7 @@ export function canBookerReschedule(b: BookedConsultation, now = new Date()): bo
 
 /** The rule the reschedule enforces, in plain words (shown next to "Change time"), with `{mode}` left in. */
 export let RESCHEDULE_RULE = '';
-onLanguage(() => { RESCHEDULE_RULE = t('reschedule.rule', { mode: '{mode}' }); });
+onLanguage(() => { RESCHEDULE_RULE = t('reschedule.rule', { mode: '{mode}' }); }); // i18n-ignore: the {mode} placeholder is kept for the caller to fill
 export const rescheduleRuleText = (mode: string | undefined) =>
   t('reschedule.rule', { mode: t(mode === 'in-person' ? 'reschedule.mode.in-person' : mode === 'call' ? 'reschedule.mode.call' : 'reschedule.mode.video') });
 

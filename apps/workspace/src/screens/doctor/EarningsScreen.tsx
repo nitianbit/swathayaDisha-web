@@ -159,7 +159,8 @@ function PayoutForm({ d, version, onClose, onSaved }: {
     }
   }
 
-  const masked = f.method === 'bank' ? `account ending ${(f.accountNumber ?? '').replace(/\s+/g, '').slice(-4)}, IFSC ${(f.ifsc ?? '').trim().toUpperCase()}` : `UPI ${(f.upiId ?? '').trim().toLowerCase()}`;
+  const masked = f.method === 'bank' ? t('earnings.maskedBank', { last4: (f.accountNumber ?? '').replace(/\s+/g, '').slice(-4), ifsc: (f.ifsc ?? '').trim().toUpperCase() })
+    : t('earnings.maskedUpi', { upi: (f.upiId ?? '').trim().toLowerCase() });
   return (
     <form className="rx-form" noValidate onSubmit={review} aria-label={t('earnings.payoutDetails')}>
       <fieldset className="ws-checks">
@@ -247,7 +248,7 @@ function Statement({ d }: { d: DoctorContext }) {
                     <tr key={l._id}>
                       <td>{formatDateTime(l.at)}</td>
                       <td>{LEDGER_KIND_LABEL[l.kind] ?? l.kind}</td>
-                      <td>{l.description}{l.reference ? ` · ref ${l.reference}` : ''}{l.note ? <div className="ws-muted">{l.note}</div> : null}</td>
+                      <td>{l.description}{l.reference ? ` · ${t('earnings.ref', { reference: l.reference })}` : ''}{l.note ? <div className="ws-muted">{l.note}</div> : null}</td>
                       <td>{rupeesOf(l.amountMinor)}</td>
                       <td>{rupeesOf(l.balanceAfterMinor)}</td>
                     </tr>
@@ -296,7 +297,7 @@ function CsvDownload({ d, from, to }: { d: DoctorContext; from?: string; to?: st
 
   return (
     <div className="ws-action">
-      <Button variant="secondary" busy={busy} onClick={() => void download()}>{t('earnings.downloadCsv')}{from || to ? ` (${from ? formatDay(from) : 'start'} to ${to ? formatDay(to) : 'today'})` : ' (everything)'}
+      <Button variant="secondary" busy={busy} onClick={() => void download()}>{from || to ? t('earnings.downloadCsvRange', { from: from ? formatDay(from) : t('earnings.rangeStart'), to: to ? formatDay(to) : t('earnings.rangeToday') }) : t('earnings.downloadCsvAll')}
       </Button>
       {error && <Alert>{t('earnings.couldNotDownloadTheStatementFull', { error })}</Alert>}
     </div>
@@ -379,7 +380,7 @@ function History({ d }: { d: DoctorContext }) {
                   <tr key={h._id}>
                     <td>{formatDateTime(h.at)}</td>
                     <td>{h.periodLabel ?? '—'}</td>
-                    <td>{h.legacyKind === 'disbursal' ? t('earnings.paidOut') : 'Billed'}</td>
+                    <td>{h.legacyKind === 'disbursal' ? t('earnings.paidOut') : t('earnings.billed')}</td>
                     <td>{rupeesOf(h.amountMinor)}</td>
                   </tr>
                 ))}

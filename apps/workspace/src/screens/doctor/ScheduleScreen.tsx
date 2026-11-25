@@ -15,7 +15,8 @@ import { formatDay } from '../partner/labs.tsx';
 import { NotADoctor, useClinics, useDoctor, type DoctorContext } from './doctor.tsx';
 import { t } from '../../i18n/doctor/index.ts';
 
-const DAY_LABEL = Object.fromEntries(WEEKDAYS.map((d) => [d.value, d.label])) as Record<Weekday, string>;
+/** A weekday in words, read at render (the list's labels follow the language). */
+const dayLabel = (d: Weekday) => WEEKDAYS.find((x) => x.value === d)?.label ?? d;
 const expansionText = (x: ScheduleExpansion) =>
   t('schedule.nextDaysSlotsAddedChanged', { DOCTOR_ROLLING_DAYS, inserted: x.inserted, updated: x.updated, closed: x.closed, reopened: x.reopened });
 
@@ -65,9 +66,9 @@ function placeName(w: Pick<ScheduleWindow, 'branchId'>, clinics: MyClinics): str
   if (!w.branchId) return '';
   for (const c of clinics.clinics) {
     const b = c.branches.find((x) => x.branchId === w.branchId);
-    if (b) return ` at ${c.name ?? 'a clinic'} · ${b.name}`;
+    if (b) return ` ${t('schedule.atClinicBranch', { clinic: c.name ?? t('schedule.aClinic'), branch: b.name })}`;
   }
-  return ' at a clinic branch you no longer consult at';
+  return ` ${t('schedule.atFormerBranch')}`;
 }
 
 function WeekSummary({ schedule, clinics }: { schedule: DoctorSchedule | null; clinics: MyClinics }) {
@@ -76,14 +77,14 @@ function WeekSummary({ schedule, clinics }: { schedule: DoctorSchedule | null; c
   }
   return (
     <>
-      <p className="ws-muted">{schedule.slotMinutes}{t('schedule.minuteSlots')}{schedule.isActive === false ? ' · the template is switched off' : ''}.</p>
+      <p className="ws-muted">{t(schedule.isActive === false ? 'schedule.minuteSlotsOff' : 'schedule.minuteSlotsFull', { minutes: schedule.slotMinutes })}</p>
       <ul className="ws-list" aria-label={t('schedule.weeklyHours')}>
         {SCHEDULE_WEEKDAYS.map((day) => {
           const windows = schedule.days[day] ?? [];
           return (
             <li key={day}>
-              <strong>{DAY_LABEL[day]}:</strong>{' '}
-              {windows.length === 0 ? 'off' : windows.map((w) => `${w.start}–${w.end} (${w.modes.map((m) => CONSULT_MODE_LABEL[m] ?? m).join(', ')}${placeName(w, clinics)})`).join('; ')}
+              <strong>{dayLabel(day)}:</strong>{' '}
+              {windows.length === 0 ? t('schedule.dayOff') : windows.map((w) => `${w.start}–${w.end} (${w.modes.map((m) => CONSULT_MODE_LABEL[m] ?? m).join(', ')}${placeName(w, clinics)})`).join('; ')}
             </li>
           );
         })}
@@ -95,10 +96,8 @@ function WeekSummary({ schedule, clinics }: { schedule: DoctorSchedule | null; c
 // ── Weekly template editor ──
 
 type TemplateDraft = { slotMinutes: string } & Record<Weekday, ScheduleWindow[]>;
-const DRAFT_LABEL: Record<keyof TemplateDraft, string> = {
-  slotMinutes: 'slot length',
-  ...Object.fromEntries(SCHEDULE_WEEKDAYS.map((d) => [d, `${DAY_LABEL[d]} hours`])) as Record<Weekday, string>,
-};
+/** A part of the weekly hours in words (named when it changed meanwhile). */
+const draftLabel = (k: keyof TemplateDraft) => (k === 'slotMinutes' ? t('schedule.field.slotLength') : t('schedule.field.dayHours', { day: dayLabel(k) }));
 const cleanWindow = (w: ScheduleWindow): ScheduleWindow => ({ start: w.start, end: w.end, modes: [...w.modes], ...(w.branchId ? { branchId: w.branchId } : {}) });
 const toDraft = (schedule: DoctorSchedule | null): TemplateDraft => ({
   slotMinutes: String(schedule?.slotMinutes ?? 30),
@@ -128,7 +127,7 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
   const serverValue = JSON.stringify(toDraft(saved));
   useEffect(() => {
     const c = rebaseTo(JSON.parse(serverValue) as TemplateDraft);
-    if (c.length) { setStale(staleMessage(c.map((k) => DRAFT_LABEL[k]))); setConfirming(false); }
+    if (c.length) { setStale(staleMessage(c.map((k) => draftLabel(k)))); setConfirming(false); }
   }, [serverValue, rebaseTo]);
 
   const tpl = draft.draft;
@@ -154,7 +153,7 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
       // Read again right before replacing it: a change saved elsewhere since this form opened is shown, not overwritten.
       const fresh = await queryClient.fetchQuery({ queryKey: scheduleKey(d), queryFn: () => d.api.schedule(), staleTime: 0 });
       const conflicts = rebaseTo(toDraft(fresh));
-      if (conflicts.length) { setStale(staleMessage(conflicts.map((k) => DRAFT_LABEL[k]))); setConfirming(false); return; }
+      if (conflicts.length) { setStale(staleMessage(conflicts.map((k) => draftLabel(k)))); setConfirming(false); return; }
       if (!check()) { setConfirming(false); return; }
       // Q13: the write names the version it is based on; a change landing after this read is refused (409 SCHEDULE_CHANGED).
       const r = await d.api.saveSchedule(fromDraft(draft.current().draft), fresh ? fresh.updatedAt ?? null : null);
@@ -186,7 +185,7 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
         <p className="ws-muted">{t('schedule.youDoNotConsultAt')}</p>
       )}
       {unverified.length > 0 && (
-        <p className="ws-muted">{t('schedule.notOfferedUntilJansetuVerifiesFull', { value: unverified.length === 1 ? 'it' : 'them', unverified: unverified.map((c) => c.name ?? 'a clinic').join(', ') })}</p>
+        <p className="ws-muted">{t('schedule.notOfferedUntilVerified', { count: unverified.length, unverified: unverified.map((c) => c.name ?? t('schedule.aClinic')).join(', ') })}</p>
       )}
       <div className="rx-form-row">
         <TextField label={t('schedule.slotLengthMinutes')} inputMode="numeric" value={tpl.slotMinutes} error={errors.slotMinutes} disabled={confirming}
@@ -196,15 +195,15 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
         const count = scheduleSlotCount(body, day);
         return (
           <fieldset key={day} className="ws-line" aria-describedby={errors[day] ? `sch-${day}-err` : undefined}>
-            <legend>{DAY_LABEL[day]}: {tpl[day].length === 0 ? 'off' : `${count} ${count === 1 ? 'slot' : 'slots'}`}</legend>
+            <legend>{dayLabel(day)}: {tpl[day].length === 0 ? t('schedule.dayOff') : t('schedule.slotCount', { count })}</legend>
             {tpl[day].map((w, i) => {
-              const name = `${DAY_LABEL[day]} window ${i + 1}`;
+              const name = t('schedule.windowName', { day: dayLabel(day), n: i + 1 });
               const known = !w.branchId || places.some((p) => p.branchId === w.branchId);
               return (
                 <div key={i} className="doc-window">
                   <div className="ws-window">
-                    <TextField label={`${name} from`} type="time" value={w.start} disabled={confirming} onChange={(e) => edit(day, i, (x) => ({ ...x, start: e.target.value }))} />
-                    <TextField label={`${name} to`} type="time" value={w.end} disabled={confirming} onChange={(e) => edit(day, i, (x) => ({ ...x, end: e.target.value }))} />
+                    <TextField label={t('schedule.windowFrom', { name })} type="time" value={w.start} disabled={confirming} onChange={(e) => edit(day, i, (x) => ({ ...x, start: e.target.value }))} />
+                    <TextField label={t('schedule.windowTo', { name })} type="time" value={w.end} disabled={confirming} onChange={(e) => edit(day, i, (x) => ({ ...x, end: e.target.value }))} />
                     <Button variant="ghost" disabled={confirming} aria-label={t('schedule.remove', { name })}
                       onClick={() => draft.update((x) => ({ ...x, [day]: x[day].filter((_, j) => j !== i) }))}>{shared('action.remove')}</Button>
                   </div>
@@ -232,7 +231,7 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
             })}
             {errors[day] && <span id={`sch-${day}-err`} className="j-field__error">{errors[day]}</span>}
             <div>
-              <Button variant="secondary" disabled={confirming || tpl[day].length >= SCHEDULE_WINDOWS_MAX} aria-label={t('schedule.addAWindowOn', { value: DAY_LABEL[day] })}
+              <Button variant="secondary" disabled={confirming || tpl[day].length >= SCHEDULE_WINDOWS_MAX} aria-label={t('schedule.addAWindowOn', { value: dayLabel(day) })}
                 onClick={() => draft.update((x) => ({ ...x, [day]: [...x[day], { start: '', end: '', modes: ['video'] }] }))}>{t('schedule.addAWindow')}</Button>
             </div>
           </fieldset>
@@ -249,7 +248,7 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
         <div className="confirm" role="group" aria-label={t('schedule.saveTheWeeklyHours')}>
           <div className="confirm-text">{t('schedule.replaceYourWeeklyHoursFull', { slotMinutes: body.slotMinutes })}<ul className="ws-list">
               {SCHEDULE_WEEKDAYS.map((day) => (
-                <li key={day}>{DAY_LABEL[day]}: {tpl[day].length === 0 ? 'off'
+                <li key={day}>{dayLabel(day)}: {tpl[day].length === 0 ? t('schedule.dayOff')
                   : tpl[day].map((w) => `${w.start}–${w.end} (${w.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')}${placeName(w, clinics)})`).join('; ')}</li>
               ))}
             </ul>{t('schedule.overTheNextFull', { DOCTOR_ROLLING_DAYS })}</div>
@@ -302,7 +301,7 @@ function LeaveDays({ d, schedule }: { d: DoctorContext; schedule: DoctorSchedule
       const r = await d.api.addLeave(day);
       setReviewing(null);
       setDate('');
-      done(t('schedule.isALeaveDayOpen', { when: formatDay(day), closed: r.expansion.closed, value: r.expansion.closed === 1 ? 'slot' : 'slots' }), r.template);
+      done(t('schedule.leaveDayClosed', { when: formatDay(day), count: r.expansion.closed }), r.template);
     } catch (err) {
       // Marking the same day again changes nothing on the server, so trying again is safe.
       setFailure(definitelyNotRecorded(err) ? messageOf(err) : t('schedule.itMayHaveBeenRecorded', { value: messageOf(err) }));
@@ -328,7 +327,7 @@ function LeaveDays({ d, schedule }: { d: DoctorContext; schedule: DoctorSchedule
                   setNotice(null);
                   try {
                     const r = await d.api.removeLeave(day);
-                    done(t('schedule.leaveOnRemovedReopened', { when: formatDay(day), reopened: r.expansion.reopened, value: r.expansion.reopened === 1 ? 'slot' : 'slots' }), r.template);
+                    done(t('schedule.leaveRemovedReopened', { when: formatDay(day), count: r.expansion.reopened }), r.template);
                   } finally {
                     void queryClient.invalidateQueries({ queryKey: scheduleKey(d) });
                   }
@@ -337,7 +336,7 @@ function LeaveDays({ d, schedule }: { d: DoctorContext; schedule: DoctorSchedule
           ))}
         </ul>
       )}
-      {past > 0 && <p className="ws-muted">{t('schedule.earlierLeaveFull', { past, value: past === 1 ? 'day' : 'days' })}</p>}
+      {past > 0 && <p className="ws-muted">{t('schedule.earlierLeaveNotShown', { count: past })}</p>}
       {reviewing ? (
         <div className="confirm" role="group" aria-label={t('schedule.addALeaveDay')}>
           <div className="confirm-text">{t('schedule.takeLeaveOnFull', { date: formatDay(reviewing) })}</div>

@@ -95,7 +95,7 @@ function AppointmentTable({ d, items, empty, meet, refresh, readAt, reading }: {
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   // Q14: one no-show move at a time on this page (the central guard).
-  const guard = useOneAtATime('appointment list');
+  const guard = useOneAtATime('appointmentList');
   const changed = (message: string) => { setFailure(null); setNotice(message); void queryClient.invalidateQueries({ queryKey: appointmentsKey(d) }); };
   const move: MoveProps = {
     readAt, reading, busy: guard.busy, now, perform: guard.perform,
@@ -177,7 +177,7 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
   return (
     <tr>
       <td>{label}</td>
-      <td>{b.bookingKind === 'instant' ? 'Instant' : clinic ? t('appointments.atAClinic') : 'Booked'}{b.dependentId ? ' · family member' : ''}</td>
+      <td>{b.bookingKind === 'instant' ? t('appointments.kind.instant') : clinic ? t('appointments.atAClinic') : t('appointments.kind.booked')}{b.dependentId ? ` · ${t('appointments.familyMember')}` : ''}</td>
       <td>
         {b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode : '—'}
         {link && <div>{link}</div>}
@@ -185,10 +185,12 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
       <td>{b.primaryConcern || '—'}</td>
       <td>
         <Badge tone={statusTone(b.status)}>{APPOINTMENT_STATUS_LABEL[b.status] ?? b.status}</Badge>{b.cancellationReason ? <div className="ws-muted">{b.cancellationReason}</div> : null}
-        {movedFrom && <div className="ws-muted">{t('appointments.movedAfterANoShow')}{movedFrom.fromDate ? ` (missed ${formatYmd(movedFrom.fromDate)}${movedFrom.fromTime ? `, ${movedFrom.fromTime}` : ''})` : ''}{t('appointments.aSecondNoShowIs')}</div>}
+        {movedFrom && <div className="ws-muted">{movedFrom.fromDate
+          ? t('appointments.movedAfterANoShowMissed', { missed: `${formatYmd(movedFrom.fromDate)}${movedFrom.fromTime ? `, ${movedFrom.fromTime}` : ''}` })
+          : t('appointments.movedAfterANoShowFull')}</div>}
       </td>
       <td>
-        {b.paymentStatus === 'paid' ? t('appointments.paid', { value: typeof b.price === 'number' ? ` · ${formatRupees(b.price)}` : '' }) : b.paymentStatus === 'refunded' ? 'Refunded' : b.settlementSystem === 'clinic' ? t('appointments.atTheClinic') : t('appointments.notPaid')}
+        {b.paymentStatus === 'paid' ? (typeof b.price === 'number' ? t('appointments.paidAmount', { amount: formatRupees(b.price) }) : t('appointments.paid')) : b.paymentStatus === 'refunded' ? t('appointments.refunded') : b.settlementSystem === 'clinic' ? t('appointments.atTheClinic') : t('appointments.notPaid')}
         {b.status === 'no_show' && <div className="ws-muted">{t('appointments.noEarningYouArePaid')}</div>}
       </td>
       <td>
@@ -222,7 +224,7 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
             {actions.includes('cancel') && (
               <ConfirmAction label={t('common.cancel')} confirmLabel={t('appointments.cancel2', { label })} danger reason reasonLabel={t('appointments.reasonThePatientSeesIt')}
                 consequence={<>{t('appointments.cancelTheAppointmentOnFull', { label, thePatientGetsTheirFull: b.paymentStatus === 'paid' ? `${t('appointments.thePatientGetsTheirFull')} ` : '' })}</>}
-                onConfirm={(reason) => run('cancelled', t('appointments.isCancelled', { label, value: b.paymentStatus === 'paid' ? ' and the patient refunded in full' : '' }), reason)} />
+                onConfirm={(reason) => run('cancelled', b.paymentStatus === 'paid' ? t('appointments.isCancelledRefunded', { label }) : t('appointments.isCancelled', { label }), reason)} />
             )}
           </div>
         )}
@@ -262,9 +264,11 @@ function DoctorSlotPicker({ d, b, now, onChoose }: { d: DoctorContext; b: Doctor
   const choices = (slots.data ?? []).filter((s) => movableSlot(s, now) && noShowSlotFits(s, b));
   const where = (s: DoctorSlot) => placeOf(s, inPerson, branches);
   const mode = b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode : null;
+  const placeWords = inPerson ? (b.clinicVisit?.branchId ? branches.get(String(b.clinicVisit.branchId).toLowerCase()) ?? t('appointments.place.sameClinic')
+    : t('appointments.place.ownPlace')) : t('appointments.place.online');
   return (
     <>
-      <p className="ws-muted">{t('appointments.timesFull', { value: mode ? `for ${mode.toLowerCase()} consultations ` : '', get: inPerson ? (b.clinicVisit?.branchId ? branches.get(String(b.clinicVisit.branchId).toLowerCase()) ?? 'the same clinic' : 'your own place') : 'no clinic (online)' })}</p>
+      <p className="ws-muted">{mode ? t('appointments.timesFor', { mode: mode.toLowerCase(), place: placeWords }) : t('appointments.times', { place: placeWords })}</p>
       <TextField label={t('appointments.newDay')} type="date" value={day} min={istDateOf(now)} error={ok ? undefined : t('appointments.enterARealDate')}
         onChange={(e) => { setDay(e.target.value); setSlotId(''); onChoose(null); }} />
       {!ok ? null

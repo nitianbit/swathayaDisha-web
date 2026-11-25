@@ -55,7 +55,7 @@ function DoctorList({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
   const rows = doctors.data ?? [];
   // Q14 `unlinkDoctor`: the owner (admins act as owner); one change on this list at a time.
   const canRemove = ctx.actor.role === 'owner';
-  const { perform } = useOneAtATime('doctor list');
+  const { perform } = useOneAtATime('doctorList');
   const [notice, setNotice] = useState<string | null>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);

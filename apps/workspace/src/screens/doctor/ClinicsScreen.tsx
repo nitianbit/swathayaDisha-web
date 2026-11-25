@@ -61,7 +61,7 @@ function ClinicLists({ d, data }: { d: DoctorContext; data: MyClinics }) {
               return (
                 <li key={i.inviteId} className="doc-offer" aria-label={t('clinics.invitationFrom', { name })}>
                   <div className="stock-head"><strong>{name}</strong><Badge tone="warn">{t('clinics.noLongerValid')}</Badge></div>
-                  <span>{t('clinics.branchesFull', { branchesText: i.branches.length ? branchesText(i.branches) : 'all its in-clinic branches', value: i.createdAt ? ` · invited ${formatDateTime(i.createdAt)}` : '' })}</span>
+                  <span>{t('clinics.branchesFull', { branchesText: i.branches.length ? branchesText(i.branches) : t('clinics.allInClinicBranches') })}{i.createdAt ? ` · ${t('clinics.invitedOn', { date: formatDateTime(i.createdAt) })}` : ''}</span>
                   <span className="ws-muted">{t('clinics.toConsultAtFull', { name })}</span>
                   <div className="ws-actions">
                     <ConfirmAction label={t('clinics.dismiss')} confirmLabel={t('clinics.dismissTheInvitationFrom', { name })}
@@ -86,7 +86,7 @@ function ClinicLists({ d, data }: { d: DoctorContext; data: MyClinics }) {
                     <strong>{name}</strong>
                     {c.solo && <Badge>{t('clinics.yourPractice')}</Badge>}
                     {c.verified ? <Badge tone="ok">{t('common.verified')}</Badge> : <Badge tone="warn">{t('common.waitingForVerification')}</Badge>}
-                    <Badge>{c.role === 'owner' ? 'Owner' : 'Doctor'}</Badge>
+                    <Badge>{c.role === 'owner' ? t('clinics.role.owner') : t('clinics.role.doctor')}</Badge>
                   </div>
                   <span>{t('clinics.branchesFull2', { branchesText: branchesText(c.branches) })}</span>
                   {!c.verified && <span className="ws-muted">{t('clinics.patientsCannotBookYouHere')}</span>}

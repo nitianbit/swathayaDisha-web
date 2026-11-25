@@ -147,9 +147,8 @@ export function CardAwareCancel<B, V extends object>({ slot, label, what, when, 
         </fieldset>
       )}
       consequence={t('ownedCancel.theOnIsCancelled', { what, when, value: waiting ? t('ownedCancel.itWasNotPaidSo', { LATE_PAYMENT_BACK })
-          : choose ? `${amount} goes back to ${refundTo === 'wallet' ? 'your Jansetu wallet' : 'the card or UPI it was paid with'}; give the patient their money back. ${told}`
-          : paidBy === 'wallet' ? `${amount} goes back to your wallet; give the patient their money back. ${told}`
-          : `${amount} goes back the way it was paid (your wallet, or the card or UPI); give the patient their money back. ${told}` })}
+          : `${t(choose ? (refundTo === 'wallet' ? 'ownedCancel.backToJansetuWallet' : 'ownedCancel.backToCard')
+            : paidBy === 'wallet' ? 'ownedCancel.backToWallet' : 'ownedCancel.backTheWayPaid', { amount })} ${told}` })}
       makeBody={(reason) => makeBody(reason, choose ? refundTo : undefined)}
       send={send}
       doneWords={(a) => cancelWords(a, told)}

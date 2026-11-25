@@ -55,7 +55,7 @@ export function BatchActions({ itemId, batch, onChanged }: { itemId: string; bat
       {panel === 'supplier' && (
         <SupplierReturnForm itemId={itemId} batch={batch} onCancel={() => setPanel(null)}
           onDone={async (r) => {
-            setNotice(t('batchActions.unitsOfBatchReturned', { value: r.duplicate ? t('batchActions.alreadyRecorded') : 'Recorded', quantity: r.quantity, batchNumber: r.batchNumber, value2: r.reason.replace(/_/g, ' ') }));
+            setNotice(t('batchActions.unitsOfBatchReturned', { value: r.duplicate ? t('batchActions.alreadyRecorded') : t('batchActions.recorded'), quantity: r.quantity, batchNumber: r.batchNumber, value2: r.reason.replace(/_/g, ' ') }));
             await done();
           }} />
       )}

@@ -46,7 +46,12 @@ export function detailsLabel(d: PayoutDetailsView | null | undefined): string {
  * One money action on an account at a time (record payout, adjustment, verify, edit details, void), enforced in one
  * place: confirmations that were already open are refused while another action runs (WQ3 `perform`).
  */
-export function useOneAtATime(what = t('busy.what.account')) {
+/** What a page does one at a time, named in "Another action on this … is still running" (a code: worded at render). */
+export type BusyKind = 'account' | 'payoutList' | 'booking' | 'stockEntry' | 'supplierList' | 'stockFile' | 'request' | 'wallet' | 'topupCheck'
+  | 'import' | 'order' | 'withdrawal' | 'referralCut' | 'pharmacy' | 'lot' | 'consultation' | 'labBooking' | 'doctor' | 'appointmentList'
+  | 'records' | 'topup' | 'refund' | 'doctorList';
+export function useOneAtATime(kind: BusyKind = 'account') {
+  const what = t(`busy.what.${kind}`);
   const inFlight = useRef(false);
   const [busy, setBusy] = useState(false);
   const perform = useCallback(async <T,>(run: () => Promise<T>): Promise<T> => {

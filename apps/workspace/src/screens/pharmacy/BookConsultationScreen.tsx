@@ -296,7 +296,7 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
   // An unconfirmed booking stays on screen while it is resent or given up (its first attempt shows the review busy).
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
     return (
-      <UnconfirmedBooking op={op} what={t('bookConsultation.booking')} busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => assisted.byKey(op.requestKey)}
+      <UnconfirmedBooking op={op} kind="booking" busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => assisted.byKey(op.requestKey)}
         onUsed={(r, restored) => afterUsed(r, op, restored)}
         onAbandoned={() => create.abandonedByCheck(op.requestKey)}
         onResend={() => { setResendError(null); void create.send(op).catch((err: unknown) => setResendError(booker.refusal(err).message)); }}
@@ -330,7 +330,7 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
     const byCard = done.paidBy === 'card';
     return (
       <section className="ws-section" aria-labelledby="done-h">
-        <h2 id="done-h">{done.replayed ? t('common.alreadyBooked') : 'Booked'}</h2>
+        <h2 id="done-h">{done.replayed ? t('common.alreadyBooked') : t('common.booked')}</h2>
         <Alert tone="ok">
           {done.replayed ? t('common.thisBookingWasAlreadyMade')
             : byCard ? t('bookConsultation.theConsultationIsBookedAnd') : t('bookConsultation.theConsultationIsBookedAnd2')}
@@ -415,10 +415,10 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
                           <h3>{d.name}</h3>
                           {d.specialization && <span>{d.specialization}</span>}
                           {d.nearby === 'pincode' ? <Badge tone="ok">{t('common.nearYou')}</Badge> : d.nearby === 'city' ? <Badge>{t('common.sameCity')}</Badge> : null}
-                          <strong>{d.feeMinor === 0 ? 'Free' : formatRupees(d.feeMinor / 100)}</strong>
+                          <strong>{d.feeMinor === 0 ? t('bookConsultation.free') : formatRupees(d.feeMinor / 100)}</strong>
                         </div>
                         <div className="ws-muted">
-                          {[d.experienceYears ? `${d.experienceYears} years` : null, d.languages.length ? t('bookConsultation.speaks', { value: d.languages.join(', ') }) : null, d.city]
+                          {[d.experienceYears ? t('bookConsultation.years', { years: d.experienceYears }) : null, d.languages.length ? t('bookConsultation.speaks', { value: d.languages.join(', ') }) : null, d.city]
                             .filter(Boolean).join(' · ')}
                         </div>
                         <div className="ws-actions">

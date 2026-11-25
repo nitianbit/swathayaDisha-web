@@ -75,7 +75,7 @@ function StockItem({ item, onChanged }: { item: InventoryItem; onChanged: () => 
     <li className="ws-section stock-item">
       <div className="stock-head">
         <h2>{name}</h2>
-        <span>{t('stock.sellableFull', { sellable, reservedQty: item.reservedQty, value: item.rackLocation ? ` · rack ${item.rackLocation}` : '' })}</span>
+        <span>{item.rackLocation ? t('stock.sellableRack', { sellable, reservedQty: item.reservedQty, rack: item.rackLocation }) : t('stock.sellableFull', { sellable, reservedQty: item.reservedQty })}</span>
         {low && <Badge tone="warn">{t('stock.lowReorderAtFull', { reorderThreshold: item.reorderThreshold })}</Badge>}
         {typeof item.medicineId === 'object' && /^[0-9a-fA-F]{24}$/.test(item.medicineId._id) && (
           <Link to={`/pharmacy/stock/add?medicine=${item.medicineId._id}`} aria-label={t('stock.addABatchOf', { name })}>{t('stock.addABatch')}</Link>

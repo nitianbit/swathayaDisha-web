@@ -10,11 +10,11 @@ type Used = { state: 'used' };
  * test handles it the very same way): check it by its key, send the same request again (never booked or charged twice),
  * or give it up on the server (then it can never be booked). After a reload only the key is kept: check or give up.
  */
-export function UnconfirmedBooking<B, A extends { state: string }>({ op, what, busy, givingUp, resendError, byKey, onUsed, onAbandoned, onResend, onGiveUp,
+export function UnconfirmedBooking<B, A extends { state: string }>({ op, kind, busy, givingUp, resendError, byKey, onUsed, onAbandoned, onResend, onGiveUp,
   extra, summary, charged = true }: {
   op: PendingOp<B>;
-  /** "booking", "lab booking". */
-  what: string;
+  /** What was asked for: a booking, a lab booking or a Consult now request (whole sentences for each). */
+  kind: 'booking' | 'labBooking' | 'request';
   busy: boolean;
   givingUp: boolean;
   resendError: string | null;
@@ -34,7 +34,7 @@ export function UnconfirmedBooking<B, A extends { state: string }>({ op, what, b
   return (
     <>
       {resendError && <Alert>{resendError}</Alert>}
-      <CheckPanel label={t('unconfirmedBooking.unconfirmed', { what })}
+      <CheckPanel label={t(`unconfirmedBooking.unconfirmed.${kind}`)}
         onCheck={async () => {
           const r = await byKey();
           if (r.state === 'used') return onUsed(r as A & Used, restored);
@@ -48,8 +48,8 @@ export function UnconfirmedBooking<B, A extends { state: string }>({ op, what, b
         {!restored && extra}
         <Alert tone="warn">
           {restored
-            ? t('unconfirmedBooking.aMadeEarlierOnThis', { what })
-            : t('unconfirmedBooking.theOutcomeOfThisRequest', { value: op.error ? ` (${op.error})` : '', value2: charged ? ' and paid' : '', twice })}
+            ? t(`unconfirmedBooking.madeEarlier.${kind}`)
+            : t(charged ? 'unconfirmedBooking.outcomeUnknownPaid' : 'unconfirmedBooking.outcomeUnknown', { error: op.error ? ` (${op.error})` : '', twice })}
         </Alert>
         {!restored && summary}
       </CheckPanel>

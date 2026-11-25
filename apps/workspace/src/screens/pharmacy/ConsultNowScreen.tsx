@@ -158,7 +158,7 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
 
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
     return (
-      <UnconfirmedBooking op={op} what={t('consultNow.request')} busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => instant.byKey(op.requestKey)}
+      <UnconfirmedBooking op={op} kind="request" busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => instant.byKey(op.requestKey)}
         onUsed={(r) => { settle(op.requestKey); setReview(null); setActive(r.request._id); create.refresh(); return null; }}
         onAbandoned={() => create.abandonedByCheck(op.requestKey)}
         onResend={() => { setResendError(null); void create.send(op).catch((err: unknown) => setResendError(instantBookerRefusal(err).message)); }}
@@ -262,7 +262,7 @@ function OpenRequests({ pharmacyId, onOpen }: { pharmacyId: string; onOpen: (id:
         {list.data.items.map((r) => (
           <li key={r._id} className="ws-actions">
             <span>{r.patientName ?? t('consultNow.aPatient')} · {r.specialization} · {INSTANT_MODE_LABEL[r.mode] ?? r.mode}{r.money ? ` · ${formatRupees(r.money.paidMinor / 100)}` : ''}</span>
-            <Button variant="secondary" aria-label={t('consultNow.openTheRequestFor', { value: r.patientName ?? 'the patient' })} onClick={() => onOpen(r._id)}>{t('common.open')}</Button>
+            <Button variant="secondary" aria-label={t('consultNow.openTheRequestFor', { patient: r.patientName ?? t('common.patientFallback') })} onClick={() => onOpen(r._id)}>{t('common.open')}</Button>
           </li>
         ))}
       </ul>
@@ -344,7 +344,9 @@ function Waiting({ pharmacyId, requestId, onAnother }: { pharmacyId: string; req
       </ul>
       {stage === 'waiting' && (
         <>
-          <p><Parts of={t.rich('consultNow.offeredToFull', { offeredCount: v.offeredCount ?? 'the', value: v.offeredCount === 1 ? 'doctor' : 'doctors', offerCountdown: <strong>{offerCountdown(v.offerExpiresAt ?? undefined, now)}</strong> })} /></p>
+          <p><Parts of={v.offeredCount == null
+            ? t.rich('consultNow.offeredToAll', { offerCountdown: <strong>{offerCountdown(v.offerExpiresAt ?? undefined, now)}</strong> })
+            : t.rich('consultNow.offeredTo', { count: v.offeredCount, offerCountdown: <strong>{offerCountdown(v.offerExpiresAt ?? undefined, now)}</strong> })} /></p>
           <p className="ws-muted">{t('consultNow.keepThisScreenOpenThe')}</p>
           <div className="ws-actions">{refundStep}</div>
         </>

@@ -136,7 +136,7 @@ function OrderView({ order }: { order: PharmacyOrder }) {
             })}
             {canMarkPaid && (
               <ConfirmAction label={t('order.recordPayment')} confirmLabel={t('order.yesPaymentReceived')}
-                consequence={t('order.recordThatWasReceived', { amount: formatRupees(order.grandTotal), value: order.paymentMode === 'cash_on_delivery' ? 'on delivery' : 'at the counter' })}
+                consequence={t(order.paymentMode === 'cash_on_delivery' ? 'order.receivedOnDelivery' : 'order.receivedAtCounter', { amount: formatRupees(order.grandTotal) })}
                 reason={'optional'} reasonLabel={t('common.note')}
                 onConfirm={(note) => act(() => orders.markPaid(order._id, note ? { notes: note } : {}))} />
             )}
@@ -208,7 +208,7 @@ function RefundPanel({ order, seller, onRetry }: { order: PharmacyOrder; seller:
   return (
     <section className="ws-section" aria-labelledby="refund-h">
       <h2 id="refund-h">{t('order.refund')}</h2>
-      <Alert tone={tone}>{REFUND_STATUS_LABEL[r.status] ?? r.status}</Alert>
+      <Alert tone={tone}>{REFUND_STATUS_LABEL()[r.status] ?? r.status}</Alert>
       <dl className="ws-dl">
         <dt>{t('order.amount')}</dt><dd>{formatRupees(r.walletAmount)}</dd>
         {r.walletCreditedAt && <><dt>{t('order.credited')}</dt><dd>{formatDateTime(r.walletCreditedAt)}</dd></>}

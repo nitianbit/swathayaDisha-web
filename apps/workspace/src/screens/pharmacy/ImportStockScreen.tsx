@@ -128,7 +128,7 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
   const queryClient = useQueryClient();
   const stock = pharmacyStockApi(api);
   const { op, send, settle } = useOwnedOp<PendingCheck>(`stock-import-check:${pharmacyId}`);
-  const { perform, busy } = useOneAtATime('stock file');
+  const { perform, busy } = useOneAtATime('stockFile');
   const [mode, setMode] = useState<ImportMode>('upsert');
   const [supplierId, setSupplierId] = useState('');
   const [supplierError, setSupplierError] = useState<string | null>(null);

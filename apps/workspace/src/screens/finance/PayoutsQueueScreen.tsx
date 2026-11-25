@@ -50,7 +50,7 @@ export function PayoutsQueueScreen() {
     return out;
   }, [list.data]);
   const total = list.data?.pages.at(-1)?.total ?? rows.length;
-  const { perform, busy } = useOneAtATime(t('busy.what.payoutList'));
+  const { perform, busy } = useOneAtATime('payoutList');
   const [notice, setNotice] = useState<string | null>(null);
 
   async function voidIt(p: QueuePayout, reason: string) {

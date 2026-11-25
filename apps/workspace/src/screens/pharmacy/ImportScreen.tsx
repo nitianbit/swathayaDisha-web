@@ -123,7 +123,7 @@ function ImportView({ pharmacyId, record, reread }: {
   };
   const outcome = (r: InventoryImport) => {
     const skipped = (r.previewRows ?? []).filter((x) => x.status === 'skipped').length;
-    const skip = skipped > 0 ? ` ${t('import.skippedByTheRowsYou', { skipped, value: skipped === 1 ? 'row was' : 'rows were' })}` : '';
+    const skip = skipped > 0 ? ` ${t('import.skipped', { count: skipped })}` : '';
     return r.status === 'committed' ? t('import.doneRowsWereAddedTo', { value: r.committedRows ?? 0, skip })
       : r.status === 'partially_committed' ? t('import.partlyDoneRowsWereAdded', { value: r.committedRows ?? 0, value2: r.failedRows ?? 0, skip })
       : r.status === 'failed' ? t('import.noRowWasAddedSee')
@@ -183,8 +183,9 @@ function ImportView({ pharmacyId, record, reread }: {
   }
 
   const mode = IMPORT_MODES.find((m) => m.value === record.importMode);
-  const rowsWord = (n: number) => `${n} ${n === 1 ? 'row' : 'rows'}`;
-  const named = (list: readonly ImportRow[]) => list.slice(0, 5).map((r) => `row ${r.rowIndex} (${r.medicineName || 'no name'})`).join(', ') + (list.length > 5 ? ` and ${list.length - 5} more` : '');
+  const rowsWord = (n: number) => t('import.rows', { count: n });
+  const named = (list: readonly ImportRow[]) => list.slice(0, 5).map((r) => t('import.namedRow', { row: r.rowIndex, name: r.medicineName || t('import.noName') })).join(', ')
+    + (list.length > 5 ? ` ${t('import.andMore', { count: list.length - 5 })}` : '');
   return (
     <>
       <PageHeading title={t('import.importOf', { fileName: record.fileName })}><Parts of={t.rich('import.uploadedFull', { time: formatDateTime(record.createdAt), discardedOnThisDevice: <Badge tone={importTone(record.status)}>{isDiscarded ? t('common.discardedOnThisDevice') : IMPORT_STATUS_LABEL[record.status] ?? record.status}</Badge> })} />
@@ -205,7 +206,7 @@ function ImportView({ pharmacyId, record, reread }: {
           <Alert tone="warn">{t('import.youChoseFull', { supplierAsked: arrival.supplierAsked })}</Alert>
         )}
         {monthFirst.length > 0 && (
-          <Alert tone="warn">{t('import.thisFileWritesDatesMonthFull', { value: monthFirst.length === 1 ? '1 row was' : `${monthFirst.length} rows were`, IMPORT_DATE_FORMAT })}</Alert>
+          <Alert tone="warn">{t('import.monthFirst', { count: monthFirst.length, IMPORT_DATE_FORMAT })}</Alert>
         )}
         {problemRows > 0 && <ProblemFile importId={record._id} fileName={record.fileName} />}
       </section>
@@ -247,19 +248,21 @@ function ImportView({ pharmacyId, record, reread }: {
               {plan.examples.length > 0 ? (
                 <Alert>{t('import.rowFull', { examples: plan.examples.map((r) => r.rowIndex).join(', '), TEMPLATE_EXAMPLE_MARK })}</Alert>
               ) : importCommittable(record) && plan.rows > 0 ? (
-                <ConfirmAction label={t('import.addReadyToStock', { validRows: record.validRows, value: record.validRows === 1 ? 'row' : 'rows' })} confirmLabel={t('import.yesAddThem')}
+                <ConfirmAction label={t('import.addReadyRows', { count: record.validRows })} confirmLabel={t('import.yesAddThem')}
                   consequence={<>
                     {record.importMode === 'create_only' && plan.mayBeSkipped > 0
-                      ? t('import.upToUnitsAreAdded', { value: rowsWord(plan.rows), units: plan.units, mayBeSkipped: plan.mayBeSkipped })
-                      : t('import.unitsAdded', { value: rowsWord(plan.rows), units: plan.units, value2: plan.rows === 1 ? 'is' : 'are', value3: record.importMode === 'update_only' ? ' if the medicine is in your stock (others are skipped)' : '' })}
-                    {plan.skippedNew > 0 && ` ${t('import.forMedicinesNotInYour', { value: rowsWord(plan.skippedNew), value2: plan.skippedNew === 1 ? 'is' : 'are' })}`}
-                    {plan.newMedicines > 0 && ` ${plan.newMedicines} ${plan.newMedicines === 1 ? 'medicine is' : 'medicines are'} not in the medicine list yet and will be added to it`}
+                      ? t('import.upToUnitsAreAdded', { rows: rowsWord(plan.rows), units: plan.units, mayBeSkipped: plan.mayBeSkipped })
+                      : t(record.importMode === 'update_only' ? 'import.unitsAddedIfInStock' : 'import.unitsAdded', { count: plan.rows, rows: rowsWord(plan.rows), units: plan.units })}
+                    {plan.skippedNew > 0 && ` ${t('import.skippedNotInStock', { count: plan.skippedNew, rows: rowsWord(plan.skippedNew) })}`}
+                    {plan.newMedicines > 0 && ` ${t('import.newMedicines', { count: plan.newMedicines })}`}
                     {plan.newMedicines > 0 && (plan.newNeedingPrescription > 0 ? ` ${t('import.needingAPrescription', { newNeedingPrescription: plan.newNeedingPrescription })}` : ` ${t('import.noneNeedingAPrescription')}`)}
-                    {plan.unpriced.length > 0 && ` ${t('import.withoutASellingPriceNot', { value: rowsWord(plan.unpriced.length), value2: plan.unpriced.length === 1 ? 'leaves its medicine' : 'leave their medicines', value3: named(plan.unpriced) })}`}
+                    {plan.unpriced.length > 0 && ` ${t('import.unpriced', { count: plan.unpriced.length, rows: rowsWord(plan.unpriced.length), named: named(plan.unpriced) })}`}
                     {plan.priceChanges.length > 0
-                      ? ` ${t('import.pricesChangeInBlankPrice', { value: rowsWord(plan.priceChanges.length), value2: named(plan.priceChanges), value3: plan.zeroPrices.length > 0 ? `, ${rowsWord(plan.zeroPrices.length)} to ₹0` : '' })}`
+                      ? ` ${(plan.zeroPrices.length > 0
+                        ? t('import.pricesChangeZero', { rows: rowsWord(plan.priceChanges.length), named: named(plan.priceChanges), zeroRows: rowsWord(plan.zeroPrices.length) })
+                        : t('import.pricesChange', { rows: rowsWord(plan.priceChanges.length), named: named(plan.priceChanges) }))}`
                       : ` ${t('import.noPriceChangesEveryPrice')}`}
-                    {' '}{t('import.stockWithASellingPrice')}{record.errorRows > 0 && ` ${t('import.leftOutFixThemAnd', { errorRows: record.errorRows, value: record.errorRows === 1 ? 'row with a problem is' : 'rows with problems are' })}`}
+                    {' '}{t('import.stockWithASellingPrice')}{record.errorRows > 0 && ` ${t('import.leftOut', { count: record.errorRows })}`}
                     {' '}{t('import.theWorkspaceCannotUndoThis')}</>}
                   onConfirm={() => run(startOp(record._id, { kind: 'commit', importId: record._id }))} />
               ) : importCommittable(record) ? <Alert tone="warn">{t('import.everyReadyRowIsFor')}</Alert>

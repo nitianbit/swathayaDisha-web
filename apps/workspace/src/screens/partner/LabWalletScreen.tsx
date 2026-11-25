@@ -79,7 +79,7 @@ function Topups({ ctx, source }: { ctx: ScopeContext; source: TopupSource }) {
   const { api } = useSession();
   const pages = useCursorPages();
   const list = useQuery({ queryKey: [...source.queryKey, 'topups', pages.cursor], queryFn: () => labWalletApi(api, ctx.scope).topups(pages.cursor || undefined) });
-  const { busy, checking, notes, check } = useTopupCheck(source, UNPAID_CHECK_AGAIN);
+  const { busy, checking, notes, check } = useTopupCheck(source, UNPAID_CHECK_AGAIN());
   return (
     <section className="ws-section" aria-labelledby="topups-h">
       <h2 id="topups-h">{t('labWallet.topups')}</h2>
@@ -101,7 +101,7 @@ function Topups({ ctx, source }: { ctx: ScopeContext; source: TopupSource }) {
                       <td>
                         {labTopupCheckable(r.state) && (
                           <Button variant="secondary" busy={checking === r.paymentTransactionId} disabled={busy && checking !== r.paymentTransactionId}
-                            aria-label={t('labWallet.checkLabel', { check: CHECK_LABEL, amount: formatPaise(r.amountMinor), date: formatDateTime(r.createdAt) })} onClick={() => void check(r.paymentTransactionId, r.amountMinor / 100)}>{CHECK_LABEL}</Button>
+                            aria-label={t('labWallet.checkLabel', { check: CHECK_LABEL(), amount: formatPaise(r.amountMinor), date: formatDateTime(r.createdAt) })} onClick={() => void check(r.paymentTransactionId, r.amountMinor / 100)}>{CHECK_LABEL()}</Button>
                         )}
                         {notes[r.paymentTransactionId] && <Alert tone={notes[r.paymentTransactionId]!.tone}>{notes[r.paymentTransactionId]!.text}</Alert>}
                       </td>

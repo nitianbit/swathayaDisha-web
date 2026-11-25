@@ -8,7 +8,8 @@ import ts from 'typescript';
 /**
  * No English written into the code (docs/I18N_PLAN.md §4.1): visible words come from a catalogue. Files not extracted
  * yet are listed in `literals-allowlist.txt`; each round removes its files, and the list is empty after round 6j. A
- * string that is not UI text (a programming error, a log line) is marked `// i18n-ignore` on its line or the line before.
+ * string that is not UI text (a programming error, a log line) is marked `// i18n-ignore: <reason>` on its line or the line
+ * before; a marker without a reason covers nothing.
  */
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const SOURCES = ['packages/ui/src', 'packages/api/src', 'apps/customer/src', 'apps/workspace/src'];
@@ -21,6 +22,8 @@ const TECHNICAL = new Set([
   'enterKeyHint', 'spellCheck', 'capture', 'download', 'src', 'mode', 'kind', 'size', 'step', 'min', 'max', 'slot', 'scope',
   'aria-describedby', 'aria-labelledby', 'aria-controls', 'aria-live', 'aria-current', 'aria-haspopup', 'aria-expanded',
   'aria-invalid', 'aria-busy', 'aria-hidden', 'aria-pressed', 'aria-checked', 'aria-modal', 'aria-atomic', 'aria-relevant',
+  // Component props that take a code: a status or state to show, an id prefix, a role, whether a reason is asked.
+  'status', 'state', 'idPrefix', 'viewer', 'audience', 'reason',
 ]);
 
 /** Object properties that hold words even when they are one word (`{ label: 'Home' }`). */
@@ -33,6 +36,44 @@ const looksLikeWords = (text: string) => {
 };
 
 interface Hit { line: number; text: string }
+
+/** A catalogue's word function: `t`, `shared`, `tc`, `recordsT` …, or its `.rich`. */
+const isWordCall = (n: ts.Node): n is ts.CallExpression => {
+  if (!ts.isCallExpression(n)) return false;
+  const c = ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'rich' ? n.expression.expression : n.expression;
+  return ts.isIdentifier(c) && /^(t|shared|t[A-Z]\w*|\w+T)$/.test(c.text);
+};
+/** A code a word is given (`ABC_DEF`, `abc_def`, `abc-def`), not words. */
+const looksLikeCode = (s: string) => /^[A-Z0-9_]+$/.test(s) || /^[a-z0-9]+([_-][a-z0-9]+)+$/.test(s);
+
+/**
+ * A string with letters that reaches the screen as it is: a JSX child (`{'off'}`), a branch of a choice inside one
+ * (`{n === 1 ? 'slot' : 'slots'}`, `{x || 'none'}`), a word attribute's value (`aria-label={a ? 'Open' : 'Close'}`), or
+ * a value given to a catalogue word (`t('k', { where: 'below' })`).
+ */
+function shownAsIs(node: ts.StringLiteral | ts.NoSubstitutionTemplateLiteral, sf: ts.SourceFile): boolean {
+  if (!/[A-Za-z]{2,}/.test(node.text) || looksLikeCode(node.text)) return false;
+  let child: ts.Node = node;
+  let p = node.parent;
+  const logical = (b: ts.BinaryExpression) => [ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken]
+    .includes(b.operatorToken.kind) && b.right === child;
+  while (p && ((ts.isConditionalExpression(p) && p.condition !== child) || ts.isParenthesizedExpression(p) || (ts.isBinaryExpression(p) && logical(p)))) {
+    child = p;
+    p = p.parent;
+  }
+  if (ts.isJsxExpression(p)) {
+    if (ts.isJsxAttribute(p.parent)) {
+      const name = p.parent.name.getText(sf);
+      return !TECHNICAL.has(name) && !name.startsWith('data-');
+    }
+    return true;
+  }
+  if (ts.isPropertyAssignment(p) && p.initializer === child && ts.isObjectLiteralExpression(p.parent)) {
+    const call = p.parent.parent;
+    return isWordCall(call) && call.arguments[1] === p.parent;
+  }
+  return false;
+}
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -51,7 +92,12 @@ function literalsOf(file: string, text: string): Hit[] {
   const lines = text.split('\n');
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const hits: Hit[] = [];
-  const ignored = (line: number) => /i18n-ignore/.test(lines[line] ?? '') || /i18n-ignore/.test(lines[line - 1] ?? '');
+  // `// i18n-ignore: <reason>` (or `{/* i18n-ignore: <reason> */}` in JSX) covers its own line when it trails code, or the
+  // next line when it stands alone. A marker without a reason covers nothing.
+  const marker = /(\/\/|\/\*) i18n-ignore: \S.{2,}/;
+  const commentOnly = (l: string) => /^\s*(\/\/|\{?\/\*)/.test(l);
+  const ignored = (line: number) => (marker.test(lines[line] ?? '') && !commentOnly(lines[line] ?? ''))
+    || (marker.test(lines[line - 1] ?? '') && commentOnly(lines[line - 1] ?? ''));
   const add = (node: ts.Node, words: string) => {
     const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line;
     if (!ignored(line)) hits.push({ line: line + 1, text: words.trim().slice(0, 60) });
@@ -78,7 +124,7 @@ function literalsOf(file: string, text: string): Hit[] {
       const isKey = (ts.isPropertyAssignment(parent) || ts.isPropertySignature(parent)) && parent.name === node;
       const wordsProperty = ts.isPropertyAssignment(parent) && parent.initializer === node && TEXT_PROPERTIES.has(parent.name.getText(sf))
         && /[A-Za-z]{2,}/.test(node.text);
-      if (!isKey && !ts.isElementAccessExpression(parent) && (wordsProperty || looksLikeWords(node.text))) add(node, node.text);
+      if (!isKey && !ts.isElementAccessExpression(parent) && (wordsProperty || looksLikeWords(node.text) || shownAsIs(node, sf))) add(node, node.text);
       return;
     }
     if (ts.isTemplateExpression(node)) {
@@ -115,6 +161,16 @@ describe('no English written into the code', { timeout: 60_000 }, () => {
     expect(count("const a = 'Wallet'; const b = 'SLOT_NOT_AVAILABLE'; const c = 'j-btn j-btn--primary'; const d = '/api/v1';")).toBe(0);
     expect(count("import x from 'Some module path';\ntype T = 'Not a word.';\nconsole.warn('Logged, not shown.');")).toBe(0);
     expect(count("// i18n-ignore: a programming error\nthrow new Error('Invalid API path.');")).toBe(0);
+    // A marker needs a reason, and covers only the next line (or its own, after code).
+    expect(count("// i18n-ignore\nthrow new Error('Invalid API path.');")).toBe(1);
+    expect(count("// i18n-ignore: a programming error\nconst a = 1;\nthrow new Error('Invalid API path.');")).toBe(1);
+    expect(count("throw new Error('Invalid API path.'); // i18n-ignore: a programming error")).toBe(0);
+    // Words shown as they are: a JSX child, a branch of a choice inside one, a word attribute, a value given to a word.
+    expect(count("const a = <p>{n === 1 ? 'slot' : 'slots'}</p>;")).toBe(2);
+    expect(count("const a = <p>{name || 'nobody'}</p>;")).toBe(1);
+    expect(count("const a = <Button aria-label={open ? 'Close it' : 'Open'} />;")).toBe(2);
+    expect(count("const a = t('k', { where: 'below' });")).toBe(1);
+    expect(count("const a = <div className={open ? 'is-open' : 'shut'} />; const b = t('k', { code: 'SLOT_FULL' });")).toBe(0);
   });
 
   it('every file outside the allowlist has no English written into it', () => {

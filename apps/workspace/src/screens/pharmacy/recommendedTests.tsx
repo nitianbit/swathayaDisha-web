@@ -63,7 +63,7 @@ export function RecommendedTests({ load, phone, perform, disabled, ticks, label 
         hint={rec ? t('recommendedTests.recommendedTests2', { value: rec.items.map((i) => i.name).join(', ') }) : t('recommendedTests.itIsOnThePrescription')}
         onChange={(e) => setText(e.target.value)} />
       <Button type="submit" variant="secondary" busy={loading} disabled={disabled}>{t('recommendedTests.loadTests')}</Button>
-      {unmatched && unmatched.length > 0 && <span className="ws-muted">{unmatched.map((n) => `${n}: not in this lab's list`).join('. ')}.</span>}
+      {unmatched && unmatched.length > 0 && <span className="ws-muted">{unmatched.map((n) => t('recommendedTests.notInList', { name: n })).join(' ')}</span>}
     </form>
   );
 }

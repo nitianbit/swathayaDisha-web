@@ -60,7 +60,7 @@ function HeldOrder({ order, onChanged }: { order: ImpactedOrder; onChanged: () =
         <Badge>{ORDER_STATUS_LABEL[order.status] ?? order.status}</Badge>
       </div>
       <div className="ws-muted">
-        {order.heldUnits.map((u) => `${u.medicineName ?? u.medicineId} × ${u.quantity} from batch ${u.batchNumber}`).join('; ')}
+        {order.heldUnits.map((u) => t('quality.heldUnits', { name: u.medicineName ?? u.medicineId, quantity: u.quantity, batch: u.batchNumber })).join('; ')}
       </div>
       <div className="ws-actions">
         {swappable ? (

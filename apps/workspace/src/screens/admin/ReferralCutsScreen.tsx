@@ -107,7 +107,7 @@ function Rules({ kind, bookerId, name, pageKey }: { kind: ReferralBookerKind; bo
   const rulesApi = referralRulesAdminApi(api);
   const rulesKey = [...pageKey, 'rules'];
   const rules = useQuery({ queryKey: rulesKey, queryFn: () => rulesApi.list(kind, bookerId) });
-  const guard = useOneAtATime('referral cut');
+  const guard = useOneAtATime('referralCut');
   const { op, send, settle } = useOwnedOp<RuleChange>(`admin-referral-rule:${admin.id}:${kind}:${bookerId}`);
   const [editing, setEditing] = useState<{ category: ReferralCategory; base: ReferralRule | null } | null>(null);
   const [outcome, setOutcome] = useState<{ tone: 'ok' | 'warn' | 'error'; text: string } | null>(null);

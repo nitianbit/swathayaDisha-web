@@ -41,7 +41,7 @@ function Status({ d }: { d: DoctorContext }) {
           {' '}<Link to="/doctor/consult-now">{t('common.consultNow')}</Link>
         </dd>
         <dt>{t('doctorHome.offersWaiting')}</dt>
-        <dd>{offers.isPending ? '…' : offers.isError ? messageOf(offers.error) : offers.data.length === 0 ? 'None' : <Link to="/doctor/consult-now">{t('doctorHome.openFull', { length: offers.data.length, value: offers.data.length === 1 ? 'offer' : 'offers' })}</Link>}</dd>
+        <dd>{offers.isPending ? '…' : offers.isError ? messageOf(offers.error) : offers.data.length === 0 ? t('doctorHome.none') : <Link to="/doctor/consult-now">{t('doctorHome.openOffers', { count: offers.data.length })}</Link>}</dd>
       </dl>
       <h3>{t('doctorHome.nextAppointments')}</h3>
       {next.refreshError && <RefreshFailed error={next.refreshError} readAt={next.readAt} onRetry={next.refetch} />}
@@ -51,7 +51,7 @@ function Status({ d }: { d: DoctorContext }) {
         : (
           <ul className="ws-list" aria-label={t('doctorHome.nextAppointments')}>
             {coming.map((b) => (
-              <li key={b._id}>{appointmentLabel(b)} · {b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode] : 'Consultation'}{b.bookingKind === 'instant' ? ' (instant)' : ''}{b.status === 'pending' ? ' · waiting' : ''}</li>
+              <li key={b._id}>{appointmentLabel(b)} · {b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode] : t('doctorHome.consultation')}{b.bookingKind === 'instant' ? ` ${t('doctorHome.instantTag')}` : ''}{b.status === 'pending' ? ` · ${t('doctorHome.waiting')}` : ''}</li>
             ))}
           </ul>
         )}

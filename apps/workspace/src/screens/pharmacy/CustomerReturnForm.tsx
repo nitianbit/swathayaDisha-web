@@ -145,7 +145,7 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
           }}
           summary={pending.restored ? null : <>
             <ReturnLines lines={pending.body.lines.map((l) => ({ ...l, ...nameOf(l.medicineId, l.batchId) }))} />
-            <div>{t('customerReturnForm.refundFull', { reason: pending.body.reason, amount: pending.body.refundAmount != null ? formatRupees(pending.body.refundAmount) : 'none' })}</div>
+            <div>{t('customerReturnForm.refundFull', { reason: pending.body.reason, amount: pending.body.refundAmount != null ? formatRupees(pending.body.refundAmount) : t('customerReturnForm.refundNone') })}</div>
           </>} />
       ) : receipt ? (
         <div className="confirm" role="group" aria-label={t('customerReturnForm.recordedReturn')}>

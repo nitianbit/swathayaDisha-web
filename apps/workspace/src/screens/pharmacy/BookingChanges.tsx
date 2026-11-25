@@ -146,7 +146,7 @@ export function ChangeTime({ booker, booking, guard, onChanged, onDone }: {
       ) : (
         <form className="rx-form" noValidate onSubmit={pick} aria-label={t('bookingChanges.chooseTheNewTime')}>
           <fieldset className="ws-frozen" disabled={!!review || busy}>
-            <TextField label={t('common.fromDay')} type="date" value={from} min={istToday()} hint={t('bookingChanges.freeTimesOfForDays', { value: booking.doctorName ?? 'this doctor', SLOT_DAYS })}
+            <TextField label={t('common.fromDay')} type="date" value={from} min={istToday()} hint={t('bookingChanges.freeTimesOfForDays', { doctor: booking.doctorName ?? t('common.thisDoctor'), SLOT_DAYS })}
               onChange={(e) => { if (e.target.value) { setFrom(e.target.value); setChosen(null); } }} />
             <div className="ws-day">
               {slots.isPending ? <Loading label={t('common.findingFreeTimes')} />
