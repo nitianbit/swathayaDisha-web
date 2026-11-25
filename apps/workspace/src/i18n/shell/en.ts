@@ -45,6 +45,8 @@ export default {
   'nav.stock': 'Stock',
   'nav.suppliers': 'Suppliers',
   'nav.wallet': 'Wallet',
+  /** Admin: wallet withdrawals to the bank waiting for a person. */
+  'nav.withdrawals': 'Withdrawals',
   /** Headings above groups of menu entries. */
   'nav.section.admin': 'Admin',
   'nav.section.billing': 'Billing',

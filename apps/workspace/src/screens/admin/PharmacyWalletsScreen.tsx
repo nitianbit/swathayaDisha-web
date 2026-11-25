@@ -18,6 +18,7 @@ import { MovementsTable } from '../pharmacy/WalletScreen.tsx';
 import { useAdminScope } from './adminScope.ts';
 import { CardRefundsQueue, notKnownYet } from './CardRefunds.tsx';
 import { PharmacyBadges } from './PharmaciesScreen.tsx';
+import { Lots } from './walletLots.tsx';
 
 /**
  * WQ13 admin: pharmacy wallets. Pick a pharmacy (the admin pharmacy list, `GET /pharmacies?name=`), read its wallet and
@@ -164,6 +165,10 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
             </>
           )}
       </section>
+
+      {/* WQ29 (r32): the pharmacy's card top-ups with the dispute and Recover; WQ29b (r32b): its dispute takes the money at once. */}
+      <Lots load={() => wallets.lots(pharmacyId)} refusal={(err) => ({ kind: 'other', message: adminWalletReadError(err) })}
+        queryKey={[...scopeKey, pharmacyId, 'lots']} changed={[...scopeKey, pharmacyId]} takesNow />
 
       <section className="ws-section" aria-labelledby="uncredited-h">
         <h2 id="uncredited-h">{t('adminWallet.uncredited')}</h2>

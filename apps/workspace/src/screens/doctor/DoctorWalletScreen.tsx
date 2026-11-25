@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { DOCTOR_WALLET_CLOSED_MESSAGE, doctorWalletApi, isDoctorWalletClosed } from '@jansetu/api';
+import { DOCTOR_WALLET_CLOSED_MESSAGE, doctorWalletApi, doctorWithdrawalsApi, isDoctorWalletClosed } from '@jansetu/api';
 import { Alert } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
@@ -7,6 +7,7 @@ import { CursorPager, useCursorPages } from '../pharmacy/cursorList.tsx';
 import { DeviceTopups, ownerTopupSource, TopUpForm } from '../pharmacy/topup.tsx';
 import { usePayerWallet, WalletBalance, WalletHistory } from '../pharmacy/WalletScreen.tsx';
 import { t } from '../../i18n/doctor/index.ts';
+import { WithdrawSection } from '../pharmacy/withdrawals.tsx';
 
 /**
  * WQ23: the doctor's own Jansetu wallet (assisted booking round 3a, backend r20, design §25.12), on the very pieces the
@@ -46,6 +47,9 @@ function Wallet({ doctorId }: { doctorId: string }) {
             <h2 id="top-h">{t('doctorWallet.addMoney')}</h2>
             <TopUpForm pharmacyId={source.owner} source={source} />
           </section>
+          {/* WQ29 (r32): withdrawals to the bank (switched off on the server until allowed). */}
+          <WithdrawSection source={{ owner: `doctor:${doctorId}`, walletKey: key, api: doctorWithdrawalsApi(api), canAct: true,
+            destination: { link: '/doctor/earnings', page: 'earnings' } }} />
           <WalletHistory q={entries} empty={t('doctorWallet.topUpsAndBookingsPaid')} first={history.page === 1}
             pager={<CursorPager pages={history} nextCursor={entries.data?.nextCursor} label={t('doctorWallet.walletHistoryPages')} />} />
         </>

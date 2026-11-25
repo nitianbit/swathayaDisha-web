@@ -784,28 +784,6 @@ export default {
   'labWallet.hold.putConfirm': 'Yes, put it on hold',
   'labWallet.hold.putWhy': 'Why is the wallet put on hold?',
   'labWallet.hold.putConsequence': 'The wallet of {name} cannot pay for bookings until the hold is released. Money can still be added.',
-  'labWallet.dispute.lost': 'Card dispute recorded',
-  'labWallet.lots.replayed': 'This card dispute was already recorded. Nothing more was changed.',
-  'labWallet.lots.recorded': 'Card dispute recorded on the {amount} top-up. No money was taken from the wallet; that money is no longer withdrawable.',
-  /** {message}: why the server refused. */
-  'labWallet.lots.notRecorded': 'Not recorded: {message}',
-  /** {message}: the error seen; a sentence follows it. */
-  'labWallet.lots.notConfirmed': 'Not confirmed: {message} The list shows what is saved now; recording it again is safe.',
-  'labWallet.lots.title': 'Card top-ups',
-  'labWallet.lots.empty': 'No card top-ups yet.',
-  'labWallet.lots.caption': 'Card top-ups, newest first',
-  /** Table column: when the card top-up was paid. */
-  'labWallet.lots.col.paid': 'Paid',
-  /** Table column: how much of the top-up is still in the wallet. */
-  'labWallet.lots.col.left': 'Left',
-  /** Hidden column heading of the "Record a card dispute" buttons. */
-  'labWallet.lots.col.dispute': 'Dispute',
-  /** A card top-up whose money is all spent. */
-  'labWallet.lots.usedUp': 'Used up',
-  'labWallet.lots.record': 'Record a card dispute',
-  'labWallet.lots.recordWhy': 'What did the bank say?',
-  'labWallet.lots.recordConfirm': 'Yes, record it',
-  'labWallet.lots.recordConsequence': 'Record that the {amount} card top-up of {date} was disputed and lost? Nothing is taken from the wallet; the money stops being withdrawable. This cannot be undone here.',
 
   // Card refunds of bookings that need a person (on the pharmacy wallets page). WQ24b: a booking is paid by a pharmacy, a
   // lab or a doctor: {payer} is that word (“pharmacy”, “lab” or “doctor”), {name} the payer’s name.

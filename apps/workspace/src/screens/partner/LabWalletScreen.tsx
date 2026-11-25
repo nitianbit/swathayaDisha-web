@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { holdsAny, LAB_TOPUP_STATE_LABEL, labTopupCheckable, labWalletApi, type ApiClient } from '@jansetu/api';
+import { hasGlobalScope, holdsAny, LAB_TOPUP_STATE_LABEL, labTopupCheckable, labWalletApi, labWithdrawalsApi, type ApiClient } from '@jansetu/api';
 import { formatPaise } from '@jansetu/i18n';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
 import { useSession } from '../../session.tsx';
 import { CHECK_LABEL, ownerTopupSource, TopUpForm, UNPAID_CHECK_AGAIN, useTopupCheck, type TopupSource } from '../pharmacy/topup.tsx';
 import { CursorPager, useCursorPages } from '../pharmacy/cursorList.tsx';
 import { WalletBalance, WalletHistory } from '../pharmacy/WalletScreen.tsx';
+import { WithdrawSection } from '../pharmacy/withdrawals.tsx';
 import { LabOnly } from './labs.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 import { t } from '../../i18n/partner/index.ts';
@@ -60,6 +61,10 @@ function Wallet({ ctx }: { ctx: ScopeContext }) {
         </section>
       )}
       <Topups ctx={ctx} source={source} />
+      {/* WQ29 (r32): withdrawals to the bank (switched off on the server until allowed); `wallet.manage` asks and cancels. */}
+      <WithdrawSection source={{ owner: `lab:${scopeIdentity(ctx)}`, walletKey: key, api: labWithdrawalsApi(api, ctx.scope), canAct: holdsAny(ctx.actor, ['wallet.manage']),
+        // WQ29b: the Finance page needs `finance.view` and partner-wide scope (as its page declaration); else ask an owner.
+        destination: holdsAny(ctx.actor, ['finance.view']) && hasGlobalScope(ctx.actor) ? { link: '/partner/finance', page: 'finance' } : { askOwner: true } }} />
       <WalletHistory q={entries} empty={t('labWallet.historyEmpty')} first={history.page === 1}
         pager={<CursorPager pages={history} nextCursor={entries.data?.nextCursor} label={t('labWallet.historyPages')} />} />
     </>

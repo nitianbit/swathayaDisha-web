@@ -35,6 +35,8 @@ export interface LabTopupOrder {
 export interface LabWalletLot {
   _id: string; paymentRecordId: string; amountMinor: number; gatewayFeeMinor?: number; feeState?: string; disputeState?: string; closed?: boolean;
   remainingMinor: number; withdrawableAfter?: string | null; createdAt: string;
+  /** WQ29 (r32): when the admin's Recover took the money back. */
+  chargedBackAt?: string | null;
 }
 
 /** The lab wallet in the shape the wallet screens show. */
@@ -121,6 +123,18 @@ export type WalletOwnerKind = 'lab' | 'doctor';
 export type WalletOwner = 'pharmacy' | WalletOwnerKind;
 const ADMIN_WALLET_BASE: Record<WalletOwnerKind, string> = { lab: '/admin/labs', doctor: '/admin/doctors' };
 
+/**
+ * The admin's record of a lost card dispute on one top-up lot (`POST /admin/wallet-lots/:lotId/chargeback`). A lab's or a
+ * doctor's is flagged only (the money stops being withdrawable; Recover takes it back, WQ29). r32b (§26.17.7): a pharmacy's is
+ * TAKEN at once while `WALLET_CHARGEBACK_FLAG_ONLY` is off (the default): the answer then has the debit `entry` (the balance
+ * taken, the rest owed, the wallet on hold); with the switch on it is flagged as the others.
+ */
+export const chargebackLot = (c: ApiClient, lotId: string, reason: string) =>
+  c.post<{ flagged?: boolean; replayed?: boolean; message?: string; entry?: unknown; wallet?: unknown }>(`/admin/wallet-lots/${checkId(lotId, 'lot')}/chargeback`,
+    { body: { reason: reason.trim() } });
+/** r32b: the chargeback took the money back (a pharmacy's with the flag-only switch off), rather than only flagging it. */
+export const chargebackTook = (r: { flagged?: boolean; entry?: unknown }) => !!r.entry && r.flagged !== true;
+
 export function adminOwnerWalletApi(c: ApiClient, kind: WalletOwnerKind) {
   const base = (ownerId: string) => `${ADMIN_WALLET_BASE[kind]}/${checkId(ownerId, kind).toLowerCase()}/wallet`;
   return {
@@ -148,12 +162,6 @@ export function adminOwnerWalletApi(c: ApiClient, kind: WalletOwnerKind) {
     /** Hold (no spending) or release; 409 WALLET_RECEIVABLE to release a wallet that owes. */
     freeze: (ownerId: string, frozen: boolean, reason: string) =>
       c.put<LabWalletView>(`${base(ownerId)}/freeze`, { body: { frozen, reason: reason.trim() } }),
-    /**
-     * The existing chargeback of one top-up lot (`POST /admin/wallet-lots/:lotId/chargeback`): a lab's is flag only (D1:
-     * the lot is no longer withdrawable, nothing is taken). Repeating it answers the flag again (`replayed`).
-     */
-    chargebackLot: (lotId: string, reason: string) =>
-      c.post<{ flagged?: boolean; replayed?: boolean; message?: string }>(`/admin/wallet-lots/${checkId(lotId, 'lot')}/chargeback`, { body: { reason: reason.trim() } }),
   };
 }
 

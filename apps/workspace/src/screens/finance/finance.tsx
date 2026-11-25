@@ -450,7 +450,7 @@ interface DetailsDraft { method: 'bank' | 'upi'; accountName: string; accountNum
 const BLANK: DetailsDraft = { method: 'bank', accountName: '', accountNumber: '', confirmNumber: '', ifsc: '', bankName: '', upiId: '' };
 
 /** The form's starting point: the saved destination (the account number only where the server shows it in full: admins). */
-export function draftOfDetails(a: SettlementAccount | null): DetailsDraft {
+export function draftOfDetails(a: Pick<SettlementAccount, 'payoutDetails'> | null): DetailsDraft {
   const d = a?.payoutDetails;
   if (d?.method === 'upi') return { ...BLANK, method: 'upi', accountName: d.accountName ?? '', upiId: d.upiId };
   if (d?.method === 'bank') {
@@ -469,7 +469,8 @@ export function draftOfDetails(a: SettlementAccount | null): DetailsDraft {
 export function PayoutDetailsForm({ account, audience, reread, save, perform, onSaved, onLost, onStale, onCancel }: {
   account: SettlementAccount | null;
   audience: 'owner' | 'admin';
-  reread: () => Promise<SettlementAccount | null>;
+  /** WQ29: only the destination and its version are read (a pharmacy's comes from its withdrawable answer). */
+  reread: () => Promise<Pick<SettlementAccount, 'payoutDetails' | 'payoutDetailsVersion'> | null>;
   /** Sends the destination with the version it was reviewed on (`expectedDetailsVersion`). */
   save: (body: PayoutDetailsInput, expectedDetailsVersion: number) => Promise<SettlementAccount>;
   perform?: Perform;
