@@ -2458,6 +2458,25 @@ Left (for the next rounds):
   consent statements) are WQ42's.
 - No translations (the IndicTrans2 pipeline) and no pseudo walk yet (§4.1 item 4).
 
+## WQ46 customer sign-in then reload: two Playwright journeys over their time (2026-11-25, branch `wq46/signin-reload`)
+
+`native-session.spec.ts:178` and `pharmacy.spec.ts:370` failed in full customer runs (desktop and phone): after a
+sign-in and a reload the page showed "Signing you in…" or the sign-in screen. **Not an app bug; no app change.**
+
+- **Every failure was the 30 s test timeout**, hit during a full page load near the end of the journey. These two are the
+  longest journeys in the suite: five and seven full page loads. Against the Vite dev server each load fetches every
+  module again: about 3 s with the machine quiet, 4–7 s under load. The app's own steps were instant: the session call
+  went out within milliseconds of the page loading, every answer was handled, and every check passed.
+- **Pass rate on unchanged stage 25a860c** (load average 45–55 from other agents): 8/8 at 1 worker (13.7–19.3 s each);
+  4/12 at 5 workers, the suite's default (all 8 failures "Test timeout of 30000ms exceeded"). With a 90 s budget, 4/4
+  passed at 33–37 s. Against the production build (`vite preview`), all 4 passed in 8–12 s with the default 30 s.
+- **No commit introduced it.** The journey took 18–30 s alone at a313850 (22 Nov), 0aca6c3 and 25a860c alike; it was
+  always close to 30 s and fails when the machine is busy (WQ41's run passed both).
+- **What a patient sees:** nothing wrong. The release build is one bundle, and the restore after a reload (refresh, then
+  the home page, or the sign-in screen for a memory-only web session) completes as soon as the server answers.
+- **Fix (tests only, checks unchanged):** both journeys get `test.setTimeout(90_000)`, as the same files already do for
+  their other long journeys (45 s and 60 s).
+
 ## Follow-ups
 
 
@@ -2602,3 +2621,4 @@ Left (for the next rounds):
 | 2026-11-25 | WQ26 referral cuts, phase 4a/4b web (on `wq/stage-next-2` 13333e9) | Against r24 on stage 6a8574e9 (§26.5, §26.6, §26.15; mocked API). typecheck clean; Vitest 488/488 (+10 in referralCuts.test.ts: percent typed → basis points 1–5000 without floating point, fixed ≥ ₹0.01 with no upper limit and no cap, the optional cap, Off keeps the saved terms inactive, the PUT body checked again, the words, the switch read from `effective`, refusals and the before-writing 503s, the statement row's short ref and category, the routes with ids, kinds and cursors checked first); Playwright workspace 984/984 on temporary port 5513 (`reuseExistingServer: false`, config deleted; +12 = 6 journeys x 2 devices in referral-cuts.spec.ts: a % rule set and confirmed with a reason, sent as a create and shown with its history; a fixed rule for a lab, then a lost answer checked by reading the rules; a version conflict (409 RECORD_CHANGED) read again and sent on the new version; the switch-off note and turning a cut off; the pharmacy's earnings, rates and statement pages with nothing kept on the device; a pharmacy cannot reach the admin page); release build with `VITE_API_SAME_ORIGIN=true`. |
 | 2026-11-25 | WQ40 i18next + react-i18next engine (branch `wq40/react-i18next` on stage bac568e) | typecheck clean; Vitest 495/495 (+2: values inserted as written with no escaping, nesting or second pass; only words shaped like their English are used; the 6a i18n, switcher and scope tests pass unchanged on the new engine); Playwright on temporary ports 5541/5542 (`reuseExistingServer: false`, configs deleted): workspace 1004/1004 (932 in the full run, which shared the machine with the customer suite; the 72 that timed out, nearly all right after a `page.reload()`, all passed when run again alone) and customer 266/270: the 4 failures are `native-session.spec.ts:178` and `pharmacy.spec.ts:370` on both devices, which fail the same way on unchanged stage bac568e (pre-existing, not WQ40); both builds with `VITE_API_SAME_ORIGIN=true` (no pseudo-language in either bundle; main chunk +56 kB, +18 kB gzip, for i18next and react-i18next). |
 | 2026-11-25 | WQ26b referral follow-ups on r33 (on stage 25a860c) | Against r33 335e36c2 (§26.16; mocked API). typecheck clean; Vitest 493/493 (referralCuts.test.ts on r33's shapes: `switches` beside the lists, rows from `shortRef` / `category` / `lines`, the pharmacy and lab bases incl. admin scope and the CSV period); Playwright workspace 1024/1024 on temporary port 5563 through `pw-slot.sh` with 2 workers (`reuseExistingServer: false`, config deleted; referral-cuts.spec.ts now 8 journeys x 2 devices: the switch note from `switches` with no rule set and after the switch changes, a lab booking's lines in the statement, the CSV download, a lab finance member's earnings page and CSV, a branch-limited lab member refused); release build with `VITE_API_SAME_ORIGIN=true`. |
+| 2026-11-25 | WQ46 customer sign-in then reload (branch `wq46/signin-reload` on stage 25a860c) | Tests only, no app change. typecheck clean; Vitest 494/494; Playwright customer 270/270 on temporary port 5561 through `pw-slot.sh` (`reuseExistingServer: false`, config deleted). The two journeys on unchanged stage: 8/8 at 1 worker, 4/12 at 5 workers (all 8 failures the 30 s timeout), 4/4 with 90 s, 4/4 in 8–12 s against the release build. |

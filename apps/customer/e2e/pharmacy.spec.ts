@@ -368,6 +368,9 @@ test('delivery with cash on delivery; an unpaid order is cancelled at once', asy
 });
 
 test('a paid order waits for the pharmacy to confirm cancelling; a wallet refund can be moved to the card', async ({ page }) => {
+  // WQ46: seven full page loads; against the dev server each fetches every module again (3-7 s on a busy machine),
+  // which overran the default 30 s while every check passed. Time only: the checks are unchanged.
+  test.setTimeout(90_000);
   const b = await mockBackend(page);
   await signIn(page);
   await fillCart(page);
