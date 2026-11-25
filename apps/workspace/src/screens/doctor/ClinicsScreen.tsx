@@ -145,7 +145,8 @@ function PracticeView({ practice, phone }: { practice: SoloPractice; phone?: str
         <dt>{t('common.verification')}</dt><dd><Badge tone={state === 'verified' ? 'ok' : 'warn'}>{VERIFICATION_LABEL[state] ?? state}</Badge></dd>
         <dt>{t('clinics.branch')}</dt><dd>{practice.branches.map((b) => `${b.name}${b.address?.city ? `, ${b.address.city}` : ''}`).join('; ') || '—'}</dd>
       </dl>
-      {state !== 'verified' && <Alert tone="warn">{t('clinics.jansetuHasNotVerifiedYour')}</Alert>}
+      {state === 'suspended' ? <Alert tone="warn">{t('clinics.suspended')}</Alert>
+        : state !== 'verified' && <Alert tone="warn">{t('clinics.jansetuHasNotVerifiedYour')}</Alert>}
       <p>{t('clinics.andChooseFull', { value: phone ? ` ${phone}` : '', name: practice.partner.name })}</p>
     </>
   );

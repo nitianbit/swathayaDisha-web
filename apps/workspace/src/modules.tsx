@@ -136,7 +136,8 @@ export const PAGES: readonly WorkspacePage[] = [
   {
     path: '/doctor/clinics', roles: ['specialist'], element: <ClinicsScreen />,
     nav: { labelKey: 'nav.clinics', icon: Hospital, sectionKey: 'nav.section.doctor' },
-  },  // WQ51: the doctor's own clinic's bills and price list, from the doctor menu (they open its partner workspace).
+  },
+  // WQ51: the doctor's own clinic's bills and price list, from the doctor menu (they open its partner workspace).
   {
     path: '/doctor/bills', roles: ['specialist'], element: <DoctorBillsScreen />,
     nav: { labelKey: 'nav.bills', icon: Receipt, sectionKey: 'nav.section.doctor' },
@@ -145,7 +146,6 @@ export const PAGES: readonly WorkspacePage[] = [
     path: '/doctor/services', roles: ['specialist'], element: <DoctorPricesScreen />,
     nav: { labelKey: 'nav.servicesAndPrices', icon: ClipboardList, sectionKey: 'nav.section.doctor' },
   },
-
   {
     path: '/doctor/earnings', roles: ['specialist'], element: <EarningsScreen />,
     nav: { labelKey: 'nav.earnings', icon: Wallet, sectionKey: 'nav.section.doctor' },
@@ -404,13 +404,13 @@ export const PAGES: readonly WorkspacePage[] = [
   },
 ];
 
-/** The pages this person may open: by role, and for partners by the member's permissions, partner kind and scope. */
 /** A page's menu words for this user (a partner page may be named after the partner's kind). */
 export const navLabelKey = (p: WorkspacePage, user: Pick<StaffUser, 'partner'>): NavKey => {
   const kind = user.partner?.partner.kind;
   return (kind && p.nav?.labelKeyByKind?.[kind]) || p.nav!.labelKey;
 };
 
+/** The pages this person may open: by role, and for partners by the member's permissions, partner kind and scope. */
 export function pagesFor(user: Pick<StaffUser, 'role' | 'partner'>): WorkspacePage[] {
   return PAGES.filter((p) => {
     if (!p.roles.includes(user.role)) return false;

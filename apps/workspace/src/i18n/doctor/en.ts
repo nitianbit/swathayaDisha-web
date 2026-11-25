@@ -127,6 +127,8 @@ export default {
   'clinics.onlyActiveVerifiedDoctorsCan': 'Only active, verified doctors can create a clinic. Once Jansetu has verified your doctor account, you can create it here.',
   'clinics.name': 'Name',
   'clinics.branch': 'Branch',
+  /** A suspended clinic (the doctor's own), on Doctor › Clinics, Bills and Services and prices. */
+  'clinics.suspended': 'Jansetu has suspended your clinic. Please contact Jansetu support.',
   'clinics.jansetuHasNotVerifiedYour': 'Jansetu has not verified your clinic yet. Until then, in-person hours there cannot be added or booked.',
   'clinics.yourClinicSWorkspaceBills': 'Your clinic’s workspace (bills, front desk, staff): sign out, then sign in as “Lab or clinic staff” with your mobile number',
   'clinics.andChooseFull': 'Your clinic’s workspace (bills, front desk, staff): sign out, then sign in as “Lab or clinic staff” with your mobile number{value} and choose {name}.',

@@ -2822,6 +2822,17 @@ has 11 items (+ Bills, Services and prices) and 3 new journeys (no clinic, unver
   0202, 2026) reads the statement once, on every statement (finance, pharmacy finance and referral, doctor earnings). The
   date error also waits for the pause.
 
+### WQ51b review fixes (2026-11-26, branch `wq51b/doctor-bills-fixes` on stage 06c2080)
+
+- **Lands on the right page**: "Sign out and open my clinic's workspace" sets the address first (as Shell's sign-out does),
+  so the clinic staff sign-in opens `#/partner/invoices` from Bills and `#/partner/catalogue` from Services and prices.
+- **Home tiles** use `navLabelKey` like the menu (a clinic's tile says "Services and prices").
+- **A doctor not verified and active** (`doctorStanding` of the profile) gets `CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE` and no
+  button (the server closes the clinic workspace for them).
+- **A suspended clinic** is said as such (`clinics.suspended`, one key on Bills, Services and prices and Clinics); "not
+  verified yet" only while it is pending.
+- `modules.tsx`: `pagesFor`'s comment is above `pagesFor` again; the WQ51 comment on its own line; a stray blank line gone.
+
 ## WQ53 user guides refreshed (2026-11-26, branch `wq53/guides` on stage 06c2080)
 
 One short "where is what" guide per sign-in in `docs/guides`: pharmacy, lab (owner and staff), clinic (owner and staff,
@@ -2835,8 +2846,7 @@ admin guide lists them all. Labels from the catalogues; example names from the b
   on the HTML and `soffice --headless --convert-to pdf` on the .docx.
 - Written as WQ51b and WQ50b will make it: Doctor › Bills lands on the clinic's Bills after the clinic sign-in; the New
   sale bill is described generally.
-- Found: a clinic's Home tile still says "Tests and packages" (`HomeScreen.tsx` does not use `navLabelKey`); the side
-  menu says "Services and prices". Not fixed here (docs only).
+- The clinic Home tile wording mismatch found here is fixed by WQ51b.
 
 ## Follow-ups
 
@@ -2995,3 +3005,4 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 | 2026-11-25 | WQ26c referral review fixes (on 5475091) | typecheck clean; Vitest 506/506 (the referral statement with a period); Playwright `referral-cuts.spec.ts` + `finance.spec.ts` 54/54 through `pw-slot.sh` with 2 workers on temporary port 5563 (config deleted; +4 = 2 journeys x 2 devices: a lone cut line that is not the whole booking is listed, the whole-statement CSV refused with the server's words and a period exported with the list following it; a lab member without `finance.view` gets no page and reads nothing). |
 | 2026-11-26 | WQ52 statement date fields (on stage 06daf52) | typecheck clean; Vitest 526/526 (the stricter literal scan included); Playwright `finance.spec.ts`, `finance-4f.spec.ts`, `referral-cuts.spec.ts` and `doctor-tools.spec.ts` 132/132 through `pw-slot.sh` with 2 workers on temporary port 5563 (config deleted; the doctor's statement on the shared period fields and CSV; a year typed 0002 → 0020 → 0202 → 2026 read once). |
 | 2026-11-26 | WQ51 Doctor › Bills / Services and prices, "Price list" renamed (branch `wq51/doctor-bills-names`, merged with stage ebcbfd7) | Option (b). typecheck clean; Vitest 526/526 (literal scan and catalogue checks pass); Playwright workspace 1136/1136 on temporary port 5571 through `pw-slot.sh` with 2 workers (`reuseExistingServer: false`, config deleted; +6 = 3 journeys x 2 devices in `doctor-tools.spec.ts`: no clinic, unverified clinic, verified clinic with the sign-out switch and nothing in the URL or storage). |
+| 2026-11-26 | WQ51b doctor Bills review fixes (on stage 06c2080) | typecheck clean; Vitest 529/529; Playwright `doctor-tools.spec.ts` + `partner-invoices.spec.ts` 140/140 through `pw-slot.sh` with 2 workers on temporary port 5563 (config deleted; +8 = 4 journeys x 2 devices: Bills and Services and prices each sign out and, after a clinic staff sign-in with no address typed, open `#/partner/invoices` / `#/partner/catalogue`; a doctor not verified gets the closed-workspace words and no button, a suspended clinic its own words on Bills and Clinics; a clinic's Home tile has the menu's words — this one fails without the fix). |
