@@ -8,6 +8,7 @@ import { Alert, Button, ErrorState, LanguageSwitcher, Loading, TextField, useCoo
 import { Confirm, messageOf, PageHeading } from '../common.tsx';
 import { useCustomer, useSession } from '../session.tsx';
 import { missingProfileFields } from './HomeScreen.tsx';
+import { RecordsLink } from './records/RecordsScreen.tsx';
 
 const GENDERS: Gender[] = ['Female', 'Male', 'Other'];
 
@@ -31,6 +32,8 @@ export function ProfileScreen() {
       <section className="card stack" aria-labelledby="fam-h">
         <h2 id="fam-h">Family</h2>
         <Link to="/profile/family">Family members you book for</Link>
+        {/* WQ28: requests to see records, and who can see them. */}
+        <RecordsLink />
       </section>
       <section className="card stack" aria-labelledby="acct-h">
         <h2 id="acct-h">Account</h2>

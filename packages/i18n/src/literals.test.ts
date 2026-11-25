@@ -18,7 +18,7 @@ const ALLOWLIST = join(ROOT, 'packages/i18n/literals-allowlist.txt');
 const TECHNICAL = new Set([
   'className', 'id', 'key', 'type', 'href', 'to', 'variant', 'tone', 'inputMode', 'autoComplete', 'autoCapitalize', 'name',
   'role', 'htmlFor', 'accept', 'pattern', 'rel', 'target', 'method', 'lang', 'dir', 'value', 'defaultValue', 'form',
-  'enterKeyHint', 'spellCheck', 'capture', 'download', 'src', 'mode', 'kind', 'size', 'step', 'min', 'max', 'slot',
+  'enterKeyHint', 'spellCheck', 'capture', 'download', 'src', 'mode', 'kind', 'size', 'step', 'min', 'max', 'slot', 'scope',
   'aria-describedby', 'aria-labelledby', 'aria-controls', 'aria-live', 'aria-current', 'aria-haspopup', 'aria-expanded',
   'aria-invalid', 'aria-busy', 'aria-hidden', 'aria-pressed', 'aria-checked', 'aria-modal', 'aria-atomic', 'aria-relevant',
 ]);

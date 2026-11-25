@@ -5,6 +5,7 @@ import { customerApi } from '@jansetu/api';
 import { Alert, formatRupees, Loading } from '@jansetu/ui';
 import { PageHeading } from '../common.tsx';
 import { useCustomer, useSession } from '../session.tsx';
+import { RecordsRequestsCard } from './records/RecordsScreen.tsx';
 
 /** What a complete profile needs before booking for someone (the older app asked for the same). */
 export const missingProfileFields = (p: { name?: string; email?: string; gender?: string; dateOfBirth?: string }) =>
@@ -29,6 +30,8 @@ export function HomeScreen() {
           Complete your profile so we can book for you. <Link to="/profile">Complete profile</Link>
         </Alert>
       )}
+      {/* WQ28: a doctor asks to see past records: Allow or Deny here. */}
+      <RecordsRequestsCard />
       <ul className="tiles">
         <li><Link to="/consult" className="tile"><Video aria-hidden="true" /><span>Consult now</span></Link></li>
         <li><Link to="/doctors" className="tile"><Stethoscope aria-hidden="true" /><span>Book a doctor</span></Link></li>

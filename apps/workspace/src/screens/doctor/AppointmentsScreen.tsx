@@ -11,6 +11,7 @@ import { NoShowMove, noShowMoveSlot, type NoShowTarget } from '../../components/
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { messageOf } from '../../errors.ts';
+import { t as recordsT } from '../../i18n/records/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { formatDay } from '../partner/labs.tsx';
 import {
@@ -169,7 +170,8 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
     }
   };
   const clinic = !!(b.clinicVisit || b.clinicDesk);
-  // WQ25: a lab test for the patient of this consultation (the server checks its treating window).
+  // WQ25: a lab test for the patient of this consultation (the server checks its treating window); WQ28: the same window
+  // opens the patient's records.
   const labLink = labBookableFrom(b, move.now);
   return (
     <tr>
@@ -224,7 +226,10 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
           </div>
         )}
         {labLink && (
-          <div><Link to={`/doctor/lab-book/from/${b._id}`} aria-label={`Book lab test for this patient (${label})`}>Book lab test for this patient</Link></div>
+          <>
+            <div><Link to={`/doctor/lab-book/from/${b._id}`} aria-label={`Book lab test for this patient (${label})`}>Book lab test for this patient</Link></div>
+            <div><Link to={`/doctor/appointments/${b._id}/records`} aria-label={recordsT('link.recordsFor', { when: label })}>{recordsT('link.records')}</Link></div>
+          </>
         )}
       </td>
     </tr>
