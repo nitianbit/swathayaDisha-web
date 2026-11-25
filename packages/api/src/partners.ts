@@ -1,5 +1,7 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import { normalizeEmail } from './auth.ts';
+import { t } from './i18n/partner/index.ts';
+import { onLanguage, valueList, wordMap } from './i18n/words.ts';
 
 /**
  * Q1 partner workspace (labs and clinics): the partner account, its members (staff) and branches, and the activity
@@ -31,28 +33,46 @@ export type PartnerPermission =
   | 'wallet.manage';
 
 /** Backend `ALL_PERMISSIONS`, in its order, with the words shown to people. */
-export const PARTNER_PERMISSIONS: readonly { value: PartnerPermission; label: string }[] = [
-  { value: 'staff.manage', label: 'Manage staff' },
-  { value: 'branches.manage', label: 'Manage branches' },
-  { value: 'catalogue.manage', label: 'Manage tests and services' },
-  { value: 'slots.manage', label: 'Manage slots' },
-  { value: 'bookings.view', label: 'View bookings' },
-  { value: 'bookings.manage', label: 'Manage bookings' },
-  { value: 'reports.upload', label: 'Upload reports' },
-  { value: 'reports.release', label: 'Release reports' },
-  { value: 'invoices.create', label: 'Create invoices' },
-  { value: 'invoices.cancel', label: 'Cancel invoices' },
-  { value: 'payments.record', label: 'Record payments' },
-  { value: 'finance.view', label: 'View finance' },
-  { value: 'wallet.view', label: 'View the wallet' },
-  { value: 'wallet.manage', label: 'Add money to the wallet' },
-];
+export const PARTNER_PERMISSIONS: readonly { value: PartnerPermission; label: string }[] = valueList(t, [
+  ['staff.manage', 'permission.staff.manage'],
+  ['branches.manage', 'permission.branches.manage'],
+  ['catalogue.manage', 'permission.catalogue.manage'],
+  ['slots.manage', 'permission.slots.manage'],
+  ['bookings.view', 'permission.bookings.view'],
+  ['bookings.manage', 'permission.bookings.manage'],
+  ['reports.upload', 'permission.reports.upload'],
+  ['reports.release', 'permission.reports.release'],
+  ['invoices.create', 'permission.invoices.create'],
+  ['invoices.cancel', 'permission.invoices.cancel'],
+  ['payments.record', 'permission.payments.record'],
+  ['finance.view', 'permission.finance.view'],
+  ['wallet.view', 'permission.wallet.view'],
+  ['wallet.manage', 'permission.wallet.manage'],
+]);
 export const ALL_PARTNER_PERMISSIONS: readonly PartnerPermission[] = PARTNER_PERMISSIONS.map((p) => p.value);
-export const PERMISSION_LABEL: Record<PartnerPermission, string> =
-  Object.fromEntries(PARTNER_PERMISSIONS.map((p) => [p.value, p.label])) as Record<PartnerPermission, string>;
-export const PARTNER_KIND_LABEL: Record<PartnerKind, string> = { lab: 'Lab', clinic: 'Clinic' };
-export const VERIFICATION_LABEL: Record<VerificationState, string> = { pending: 'Waiting for verification', verified: 'Verified', suspended: 'Suspended' };
-export const TAX_REGIME_LABEL: Record<TaxRegime, string> = { regular: 'GST regular', composition: 'GST composition', unregistered: 'Not GST-registered' };
+export const PERMISSION_LABEL: Record<PartnerPermission, string> = wordMap(t, {
+  'staff.manage': 'permission.staff.manage',
+  'branches.manage': 'permission.branches.manage',
+  'catalogue.manage': 'permission.catalogue.manage',
+  'slots.manage': 'permission.slots.manage',
+  'bookings.view': 'permission.bookings.view',
+  'bookings.manage': 'permission.bookings.manage',
+  'reports.upload': 'permission.reports.upload',
+  'reports.release': 'permission.reports.release',
+  'invoices.create': 'permission.invoices.create',
+  'invoices.cancel': 'permission.invoices.cancel',
+  'payments.record': 'permission.payments.record',
+  'finance.view': 'permission.finance.view',
+  'wallet.view': 'permission.wallet.view',
+  'wallet.manage': 'permission.wallet.manage',
+});
+export const PARTNER_KIND_LABEL: Record<PartnerKind, string> = wordMap(t, { lab: 'kind.lab', clinic: 'kind.clinic' });
+export const VERIFICATION_LABEL: Record<VerificationState, string> = wordMap(t, {
+  pending: 'verification.pending', verified: 'verification.verified', suspended: 'verification.suspended',
+});
+export const TAX_REGIME_LABEL: Record<TaxRegime, string> = wordMap(t, {
+  regular: 'taxRegime.regular', composition: 'taxRegime.composition', unregistered: 'taxRegime.unregistered',
+});
 
 /** Backend validation patterns (`partners/validation/index.ts`). */
 export const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
@@ -124,13 +144,14 @@ export interface PartnerMember {
  */
 export type ProfessionalKind = 'pathologist' | 'pharmacist' | 'doctor';
 export interface MemberProfessional { kind: ProfessionalKind; registrationNumber: string }
-export const PROFESSIONAL_KINDS: readonly { value: ProfessionalKind; label: string }[] = [
-  { value: 'pathologist', label: 'Pathologist' },
-  { value: 'doctor', label: 'Doctor' },
-  { value: 'pharmacist', label: 'Pharmacist' },
-];
-export const PROFESSIONAL_KIND_LABEL: Record<ProfessionalKind, string> =
-  Object.fromEntries(PROFESSIONAL_KINDS.map((k) => [k.value, k.label])) as Record<ProfessionalKind, string>;
+export const PROFESSIONAL_KINDS: readonly { value: ProfessionalKind; label: string }[] = valueList(t, [
+  ['pathologist', 'professional.pathologist'],
+  ['doctor', 'professional.doctor'],
+  ['pharmacist', 'professional.pharmacist'],
+]);
+export const PROFESSIONAL_KIND_LABEL: Record<ProfessionalKind, string> = wordMap(t, {
+  pathologist: 'professional.pathologist', doctor: 'professional.doctor', pharmacist: 'professional.pharmacist',
+});
 /** `memberProfessionalSchema.registrationNumber`: trimmed, 3 to 60 characters. */
 export const MIN_REGISTRATION = 3;
 export const MAX_REGISTRATION = 60;
@@ -139,17 +160,16 @@ export const MAX_REGISTRATION = 60;
 export function professionalInput(kind: string, registrationNumber: string): { value: MemberProfessional } | { problem: { kind?: string; registrationNumber?: string } } {
   const problem: { kind?: string; registrationNumber?: string } = {};
   const reg = registrationNumber.trim();
-  if (!PROFESSIONAL_KINDS.some((k) => k.value === kind)) problem.kind = 'Choose what they are registered as.';
-  if (reg.length < MIN_REGISTRATION || reg.length > MAX_REGISTRATION) problem.registrationNumber = `Enter the registration number (${MIN_REGISTRATION} to ${MAX_REGISTRATION} characters).`;
+  if (!PROFESSIONAL_KINDS.some((k) => k.value === kind)) problem.kind = t('professional.problem.kind');
+  if (reg.length < MIN_REGISTRATION || reg.length > MAX_REGISTRATION) problem.registrationNumber = t('professional.problem.registration', { min: MIN_REGISTRATION, max: MAX_REGISTRATION });
   return Object.keys(problem).length ? { problem } : { value: { kind: kind as ProfessionalKind, registrationNumber: reg } };
 }
 
 export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
-export const WEEKDAYS: readonly { value: Weekday; label: string }[] = [
-  { value: 'mon', label: 'Monday' }, { value: 'tue', label: 'Tuesday' }, { value: 'wed', label: 'Wednesday' },
-  { value: 'thu', label: 'Thursday' }, { value: 'fri', label: 'Friday' }, { value: 'sat', label: 'Saturday' },
-  { value: 'sun', label: 'Sunday' },
-];
+export const WEEKDAYS: readonly { value: Weekday; label: string }[] = valueList(t, [
+  ['mon', 'weekday.mon'], ['tue', 'weekday.tue'], ['wed', 'weekday.wed'], ['thu', 'weekday.thu'], ['fri', 'weekday.fri'],
+  ['sat', 'weekday.sat'], ['sun', 'weekday.sun'],
+]);
 export type WeeklyHours = Partial<Record<Weekday, { open: string; close: string }>>;
 export interface BranchServices { homeCollection: boolean; inLab: boolean; inClinic: boolean }
 export interface BranchAddress { line1: string; line2?: string; city: string; state: string; stateCode: string; pincode: string }
@@ -244,6 +264,7 @@ export type PartnerScope = { kind: 'member' } | { kind: 'admin'; partnerId: stri
 
 /** An id the backend can take (24 hex), checked before any request. */
 export function checkId(id: string, what: string): string {
+  // i18n-ignore: a programming error, not shown
   if (!OBJECT_ID_PATTERN.test(id)) throw new Error(`Invalid ${what} id`);
   return id;
 }
@@ -293,7 +314,7 @@ export function partnerWorkspaceApi(c: ApiClient, scope: PartnerScope) {
      * REQUEST_KEY_REUSED (Q16b df87d96 `createBranch`).
      */
     createBranch: (body: BranchInput, requestKey?: string) => {
-      if (requestKey !== undefined && !REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
+      if (requestKey !== undefined && !REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
       return c.post<Branch>(`${base()}/branches`, { body: { ...body, ...(requestKey ? { requestKey } : {}) } });
     },
     updateBranch: (id: string, body: Partial<BranchInput>, version?: Version) =>
@@ -317,7 +338,7 @@ export function partnerAdminApi(c: ApiClient) {
      * content under the key is refused (409 REQUEST_KEY_REUSED).
      */
     create: (body: NewPartner, requestKey: string) => {
-      if (!REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
+      if (!REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
       return c.post<{ partner: Partner; owner: PartnerMember }>('/partner-workspace/admin', { body: { requestKey, ...body } });
     },
     get: (id: string) => c.get<Partner>(one(id)),
@@ -327,7 +348,7 @@ export function partnerAdminApi(c: ApiClient) {
      * nothing on its own (the request may still arrive): only `abandonCreate` settles that.
      */
     createdByKey: async (key: string): Promise<{ partner: Partner; owner: PartnerMember } | null> => {
-      if (!REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
+      if (!REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
       try {
         return await c.get<{ partner: Partner; owner: PartnerMember }>(`/partner-workspace/admin/by-key/${key}`);
       } catch (err) {
@@ -337,7 +358,7 @@ export function partnerAdminApi(c: ApiClient) {
     },
     /** Q10: 'abandoned' = this key can never create a partner; 'used' = it did (here it is). */
     abandonCreate: (key: string) => {
-      if (!REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
+      if (!REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
       return c.post<{ state: 'abandoned' | 'used'; partner?: Partner }>(`/partner-workspace/admin/by-key/${key}/abandon`, { body: {} });
     },
     /** pending → verified only (409 VERIFICATION_STATE_CONFLICT otherwise). */
@@ -414,16 +435,16 @@ export const canGiveEmail = (a: Pick<PartnerActorView, 'role'>, role: MemberRole
   a.role === 'owner' && (role !== 'owner' || admin);
 /** Q16b: 403 `OWNER_EMAIL_ADMIN_ONLY`: an owner's sign-in email is set or changed by the Jansetu team only. */
 export const isOwnerEmailAdminOnly = (err: unknown) => err instanceof ApiError && err.status === 403 && err.code === 'OWNER_EMAIL_ADMIN_ONLY';
-export const OWNER_EMAIL_ADMIN_ONLY_MESSAGE = 'An owner’s sign-in email is set or changed by the Jansetu team only. Ask Jansetu support.';
+export let OWNER_EMAIL_ADMIN_ONLY_MESSAGE = '';
 /** Q16b: 409 `USE_DOCTOR_UNLINK`: the member is a doctor of the clinic, removed on the Doctors page (owner or admin). */
 export const isUseDoctorUnlink = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'USE_DOCTOR_UNLINK';
 /** WQ11b: 400 `INVALID_BRANCH_IDS` (`validateBranchIds`): a chosen branch is closed or not this partner's. */
 export const isInvalidBranchIds = (err: unknown) => err instanceof ApiError && err.status === 400 && err.code === 'INVALID_BRANCH_IDS';
-export const INVALID_BRANCH_IDS_MESSAGE = 'One of the chosen branches is closed or no longer exists, so nothing was saved. Untick it and save again.';
+export let INVALID_BRANCH_IDS_MESSAGE = '';
 export const isOwnerRequired = (err: unknown) => err instanceof ApiError && err.status === 403 && err.code === 'OWNER_REQUIRED';
 /** WQ9: 409 `EMAIL_IN_USE`: another active member of this partner already signs in with this email. */
 export const isEmailInUse = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'EMAIL_IN_USE';
-export const EMAIL_IN_USE_MESSAGE = 'Another member of this workspace already signs in with this email. Use a different email.';
+export let EMAIL_IN_USE_MESSAGE = '';
 /** WQ9: an optional email as sent (`normalizeEmail`: trimmed, lower-cased, ASCII domain); '' when left empty; null when invalid. */
 export function memberEmail(raw: string): string | null {
   return raw.trim() ? normalizeEmail(raw) : '';
@@ -432,15 +453,22 @@ export const canEditPermissions = (a: Pick<PartnerActorView, 'role'>, target: Pi
   a.role === 'owner' && target.role === 'staff' && target.isActive !== false;
 
 /** Shown instead of "Remove" on a clinic doctor's membership (Q16b `removeMember`: 409 USE_DOCTOR_UNLINK). */
-export const DOCTOR_MEMBER_REMOVAL = 'A doctor of this clinic: removed on the Doctors page (owner only).';
+export let DOCTOR_MEMBER_REMOVAL = '';
+// The message constants above, read again in the current language (screens import them as strings).
+onLanguage(() => {
+  OWNER_EMAIL_ADMIN_ONLY_MESSAGE = t('member.ownerEmailAdminOnly');
+  INVALID_BRANCH_IDS_MESSAGE = t('member.invalidBranchIds');
+  EMAIL_IN_USE_MESSAGE = t('member.emailInUse');
+  DOCTOR_MEMBER_REMOVAL = t('member.removal.doctor');
+});
 
 /** Why a member cannot be removed by this actor, or null (the server still decides; `removeMember`). */
 export function removalBlock(a: PartnerActorView, target: Pick<PartnerMember, '_id' | 'role'> & Partial<Pick<PartnerMember, 'doctorId'>>, activeOwnerCount: number | undefined): string | null {
-  if (a.memberId && a.memberId === target._id) return 'You cannot remove yourself.';
+  if (a.memberId && a.memberId === target._id) return t('member.removal.self');
   // Q16b: a clinic doctor's membership ends only by removing the doctor from the clinic (owner or admin), never as staff.
   if (target.doctorId) return DOCTOR_MEMBER_REMOVAL;
-  if (target.role === 'owner' && a.role !== 'owner') return 'Only an owner can remove an owner.';
-  if (target.role === 'owner' && activeOwnerCount !== undefined && activeOwnerCount <= 1) return 'The last owner cannot be removed.';
+  if (target.role === 'owner' && a.role !== 'owner') return t('member.removal.ownerOnly');
+  if (target.role === 'owner' && activeOwnerCount !== undefined && activeOwnerCount <= 1) return t('member.removal.lastOwner');
   return null;
 }
 
@@ -450,9 +478,9 @@ export function removalBlock(a: PartnerActorView, target: Pick<PartnerMember, '_
  */
 export function scopeProblem(a: Pick<PartnerActorView, 'role' | 'branchIds'>, target: readonly string[], closed: ReadonlySet<string> = new Set()): string | null {
   // WQ11b: `validateBranchIds` takes active branches only (400 INVALID_BRANCH_IDS), whoever gives the access.
-  if (target.some((b) => closed.has(b))) return 'A closed branch cannot be given. Untick the branches marked “(closed)”.';
+  if (target.some((b) => closed.has(b))) return t('scope.closedBranch');
   if (hasGlobalScope(a)) return null;
-  if (target.length === 0) return 'Choose at least one of your branches.';
-  if (target.some((b) => !a.branchIds.includes(b))) return 'You can only give access to your own branches.';
+  if (target.length === 0) return t('scope.chooseOwn');
+  if (target.some((b) => !a.branchIds.includes(b))) return t('scope.ownOnly');
   return null;
 }

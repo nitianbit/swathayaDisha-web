@@ -7,10 +7,11 @@ import {
   OBJECT_ID_PATTERN, OWNER_KIND_LABEL, PAYOUT_METHOD_LABEL, PAYOUT_METHODS, payoutProblems, reasonProblem, rupeesToPaise, settlementsApi,
   type AdjustmentInput, type FinanceSummary, type PayoutMethod, type RecordPayoutInput, type SettlementAccount, type SettlementPayout,
 } from '@jansetu/api';
-import { Alert, Button, ErrorState, formatDateTime, Loading, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Button, ErrorState, formatDateTime, Loading, Parts, shared, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/finance/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import {
   afterFailure, beginAttempt, keyedLookup, newRequestKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp,
@@ -44,7 +45,7 @@ function AccountPage({ accountId }: { accountId: string }) {
   const key = ['settlements', 'account', accountId];
   const summary = useQuery({ queryKey: [...key, 'summary'], queryFn: () => s.account(accountId) });
   const history = useQuery({ queryKey: [...key, 'history'], queryFn: () => s.history(accountId) });
-  const { perform, busy } = useOneAtATime('account');
+  const { perform, busy } = useOneAtATime();
   const [editing, setEditing] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
   /** Everything about this account is read again (after every action, whatever its outcome). */
@@ -58,52 +59,50 @@ function AccountPage({ accountId }: { accountId: string }) {
   const a = data?.account;
   return (
     <>
-      <Link className="ws-back" to="/admin/settlements"><ArrowLeft size={16} aria-hidden="true" /> Back to settlements</Link>
-      <PageHeading title={a?.beneficiaryName ?? 'Settlement account'}>
-        {a ? <>{OWNER_KIND_LABEL[a.ownerKind] ?? a.ownerKind}{a.isActive ? '' : ' · inactive'}{a.ownerKind === 'partner' && (
-          <> · <Link to={`/admin/partners/${a.ownerId}`}>Partner page</Link> · <Link to={`/admin/partners/${a.ownerId}/finance`}>Its finance as owner</Link></>
+      <Link className="ws-back" to="/admin/settlements"><ArrowLeft size={16} aria-hidden="true" /> {t('account.back')}</Link>
+      <PageHeading title={a?.beneficiaryName ?? t('account.title')}>
+        {a ? <>{OWNER_KIND_LABEL[a.ownerKind] ?? a.ownerKind}{a.isActive ? '' : ` · ${t('account.inactive')}`}{a.ownerKind === 'partner' && (
+          <> · <Link to={`/admin/partners/${a.ownerId}`}>{t('account.partnerPage')}</Link> · <Link to={`/admin/partners/${a.ownerId}/finance`}>{t('account.asOwner')}</Link></>
         )}</> : null}
       </PageHeading>
       {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
-      {summary.isPending ? <Loading label="Loading the account…" />
+      {summary.isPending ? <Loading label={t('account.loading')} />
         : summary.isError || !data || !a ? <ErrorState message={messageOf(summary.error)} onRetry={() => void summary.refetch()} />
         : (
           <>
             <section className="ws-section" aria-labelledby="sa-bal-h">
-              <h2 id="sa-bal-h">Balance</h2>
+              <h2 id="sa-bal-h">{t('balance.title')}</h2>
               <SummaryCards summary={data} />
             </section>
 
             <section className="ws-section" aria-labelledby="sa-dest-h">
-              <h2 id="sa-dest-h">Payout details</h2>
-              {a.payoutDetails ? <PayoutDetailsList account={a} /> : <p className="ws-muted">No payout details yet.</p>}
+              <h2 id="sa-dest-h">{t('details.title')}</h2>
+              {a.payoutDetails ? <PayoutDetailsList account={a} /> : <p className="ws-muted">{t('details.noneYet')}</p>}
               {editing ? (
+                // i18n-ignore: `audience` is a code (who edits), not words
                 <PayoutDetailsForm account={a} audience="admin" perform={perform}
                   reread={async () => (await s.account(accountId)).account}
                   save={(body, version) => s.setPayoutDetails(accountId, body, version)}
-                  onSaved={(x) => { setEditing(false); setNotice({ tone: 'ok', text: `Payout details saved as version ${x.payoutDetailsVersion}. Verify them before recording a payout.` }); reload(); }}
+                  onSaved={(x) => { setEditing(false); setNotice({ tone: 'ok', text: t('account.saved', { version: x.payoutDetailsVersion }) }); reload(); }}
                   onLost={(text) => { setEditing(false); setNotice({ tone: 'warn', text }); reload(); }}
                   onStale={reload}
                   onCancel={() => setEditing(false)} />
               ) : (
                 <div className="ws-actions">
                   {a.payoutDetailsState === 'unverified' && a.payoutDetails && (
-                    <ConfirmAction label="Mark as verified" confirmLabel="Yes, these details are verified" disabled={busy}
-                      consequence={<>
-                        Confirm that you checked these exact details (version {a.payoutDetailsVersion}: {detailsLabel(a.payoutDetails)}) outside Jansetu,
-                        by a penny drop or the account holder’s documents. Payouts can then be recorded to them.
-                      </>}
+                    <ConfirmAction label={t('account.verify')} confirmLabel={t('account.verifyConfirm')} disabled={busy}
+                      consequence={t('account.verifyConsequence', { version: a.payoutDetailsVersion, destination: detailsLabel(a.payoutDetails) })}
                       onConfirm={() => perform(async () => {
                         try {
                           await s.verifyPayoutDetails(accountId, a.payoutDetailsVersion);
-                          setNotice({ tone: 'ok', text: `Payout details version ${a.payoutDetailsVersion} verified.` });
+                          setNotice({ tone: 'ok', text: t('account.verified', { version: a.payoutDetailsVersion }) });
                         } finally {
                           reload();
                         }
                       })} />
                   )}
                   <Button variant="secondary" disabled={busy} onClick={() => { setNotice(null); setEditing(true); }}>
-                    {a.payoutDetails ? 'Change payout details' : 'Add payout details'}
+                    {a.payoutDetails ? t('details.change') : t('details.add')}
                   </Button>
                 </div>
               )}
@@ -113,30 +112,38 @@ function AccountPage({ accountId }: { accountId: string }) {
             <PostAdjustment api={s} accountId={accountId} summary={{ ...data, account: a }} perform={perform} onChanged={reload} />
 
             <StatementSection queryKey={key} load={(q) => s.statement(accountId, q)} csv={(q, signal) => s.statementCsv(accountId, q, signal)}
-              csvPrefix={`account-${accountId}`} emptyText="Earnings, payouts and adjustments appear here." />
+              csvPrefix={`account-${accountId}`} />
           </>
         )}
-      <PagedSection id="sa-po-h" title="Payouts" queryKey={[...key, 'payouts']} load={(cursor) => s.payouts(accountId, { cursor, limit: PAGE })}
-        empty="Payouts recorded for this account appear here." more="Show older payouts">
+      <PagedSection id="sa-po-h" title={t('payouts.title')} loading={t('payouts.loading')} emptyTitle={t('payouts.empty')}
+        queryKey={[...key, 'payouts']} load={(cursor) => s.payouts(accountId, { cursor, limit: PAGE })}
+        empty={t('payouts.emptyText.account')} more={t('payouts.older')}>
         {(rows) => (
           <>
-            <PayoutsTable payouts={rows} caption="Payouts of this account, newest first" />
-            <p className="ws-muted">A payout recorded by mistake is voided from <Link to={`/admin/payouts?account=${accountId}`}>Payouts</Link>.</p>
+            <PayoutsTable payouts={rows} caption={t('payouts.caption.account')} />
+            <p className="ws-muted">
+              <Parts of={t.rich('account.voidFrom', { link: <Link to={`/admin/payouts?account=${accountId}`}>{t('payouts.title')}</Link> })} />
+            </p>
           </>
         )}
       </PagedSection>
-      <ListSection id="sa-hist-h" title="Earlier history" q={history} empty="No history from before the ledger.">
+      <ListSection id="sa-hist-h" title={t('history.title')} loading={t('history.loading')} emptyTitle={t('history.empty')} q={history} empty={t('history.emptyText')}>
         {(rows) => (
           <>
-            <p className="ws-muted">Imported from the earlier payout system for reference only: not part of the balance and never payable.</p>
+            <p className="ws-muted">{t('history.intro')}</p>
             <div className="ws-table-wrap">
               <table className="j-table">
-                <caption className="j-sr-only">Earlier history</caption>
-                <thead><tr><th scope="col">Date</th><th scope="col">Kind</th><th scope="col">Period</th><th scope="col" className="fin-amount">Amount</th></tr></thead>
+                <caption className="j-sr-only">{t('history.title')}</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">{shared('field.date')}</th><th scope="col">{t('history.column.kind')}</th><th scope="col">{t('history.column.period')}</th>
+                    <th scope="col" className="fin-amount">{shared('field.amount')}</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {rows.map((h) => (
                     <tr key={h._id}>
-                      <td>{formatDateTime(h.at)}</td><td>{h.legacyKind === 'disbursal' ? 'Paid out' : 'Billed'}</td><td>{h.periodLabel ?? '—'}</td>
+                      <td>{formatDateTime(h.at)}</td><td>{h.legacyKind === 'disbursal' ? t('history.kind.paidOut') : t('history.kind.billed')}</td><td>{h.periodLabel ?? '—'}</td>
                       <td className="fin-amount">{money(h.amountMinor)}</td>
                     </tr>
                   ))}
@@ -146,8 +153,9 @@ function AccountPage({ accountId }: { accountId: string }) {
           </>
         )}
       </ListSection>
-      <PagedSection id="sa-ev-h" title="Finance events" queryKey={[...key, 'events']} load={(cursor) => s.events(accountId, { cursor, limit: PAGE })}
-        empty="Changes to payout details, payouts and adjustments appear here." more="Show older events">
+      <PagedSection id="sa-ev-h" title={t('events.title')} loading={t('events.loading')} emptyTitle={t('events.empty')}
+        queryKey={[...key, 'events']} load={(cursor) => s.events(accountId, { cursor, limit: PAGE })}
+        empty={t('events.emptyText')} more={t('events.older')}>
         {(rows) => <EventsList events={rows} />}
       </PagedSection>
     </>
@@ -158,7 +166,7 @@ function AccountPage({ accountId }: { accountId: string }) {
  * The finance version a review was made on closes the review when the account moves (another payout, adjustment, void,
  * destination change or verification): the admin then looks at the account as it is now before deciding again.
  */
-const MOVED = 'The account changed while you were reviewing (a payout, adjustment or change of payout details). Check it and review again.';
+const moved = () => t('account.moved');
 
 /** Whether the component is still on the page (a late answer then only updates session memory). */
 function useMounted() {
@@ -206,9 +214,8 @@ function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api:
     resolveStored(memory, slot, op.requestKey);
     const requestKey = op.requestKey;
     setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
-    setDone(earlier
-      ? `This payout had already been recorded: ${money(p.amountMinor)}, reference ${p.reference}, paid on ${formatDate(p.paidOn)}. Nothing was recorded twice.`
-      : `Payout of ${money(p.amountMinor)} recorded (reference ${p.reference}, paid on ${formatDate(p.paidOn)}).`);
+    const words = { amount: money(p.amountMinor), reference: p.reference, date: formatDate(p.paidOn) };
+    setDone(earlier ? t('payout.doneEarlier', words) : t('payout.done', words));
     setFormKey((k) => k + 1);
   };
 
@@ -238,7 +245,7 @@ function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api:
           onChanged();
           if (!owns(attempt)) return;
           if (wasAbandoned(err)) {
-            givenUp(attempt, 'This payout was given up earlier, so it was not recorded and never will be. Record it again if the transfer was made.');
+            givenUp(attempt, t('payout.abandoned'));
             return;
           }
           const next = afterFailure(attempt, err, messageOf(err));
@@ -256,23 +263,20 @@ function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api:
   }
 
   const a = summary.account;
-  const blocked = !a.isActive ? 'This settlement account is inactive: no payout can be recorded.'
-    : a.payoutDetailsState === 'none' || !a.payoutDetails ? 'There are no payout details to pay to yet.'
-    : a.payoutDetailsState !== 'verified' ? 'The payout details have changed and are not verified: verify them before recording a payout.'
-    : summary.balanceMinor <= 0 ? 'Nothing is due on this account.'
+  const blocked = !a.isActive ? t('payout.blocked.inactive')
+    : a.payoutDetailsState === 'none' || !a.payoutDetails ? t('payout.blocked.noDetails')
+    : a.payoutDetailsState !== 'verified' ? t('payout.blocked.unverified')
+    : summary.balanceMinor <= 0 ? t('payout.blocked.nothingDue')
     : null;
   const showPanel = pending && !(busy && pending.attempts === 1 && !pending.uncertain);
   return (
     <section className="ws-section" aria-labelledby="sa-pay-h">
-      <h2 id="sa-pay-h">Record a payout</h2>
-      <p className="ws-muted">
-        For a transfer you have already made outside Jansetu to the verified details. It lowers the balance and cannot be
-        deleted; a mistake is corrected by voiding it.
-      </p>
+      <h2 id="sa-pay-h">{t('payout.title')}</h2>
+      <p className="ws-muted">{t('payout.intro')}</p>
       {done && <Alert tone="ok">{done}</Alert>}
-      {refused && <Alert>Not recorded: {refused}</Alert>}
+      {refused && <Alert>{t('payout.notRecorded', { error: refused })}</Alert>}
       {showPanel ? (
-        <PendingOpPanel key={pending.attempts} label="Unconfirmed payout" op={pending} busy={busy} onResend={() => void send(pending)}
+        <PendingOpPanel key={pending.attempts} label={t('payout.unconfirmed')} op={pending} busy={busy} onResend={() => void send(pending)}
           fetchPage={keyedLookup(pending.requestKey, () => s.payoutByKey(accountId, pending.requestKey), ['PAYOUT_NOT_FOUND'])}
           onFound={(p) => recorded(p, pending, true)}
           // Q13: decided by the server: `abandoned` = this payout can never be recorded; `used` = here it is.
@@ -280,8 +284,8 @@ function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api:
             const r = await s.abandonPayoutKey(accountId, pending.requestKey);
             return { state: r.state, record: r.payout ? { ...r.payout, requestKey: pending.requestKey } : undefined };
           }}
-          abandonWhenNotFound abandonLabel="Give up this payout"
-          onDiscard={() => givenUp(pending, 'The unconfirmed payout was given up: it can never be recorded. Record the transfer again if it was made.')}
+          abandonWhenNotFound abandonLabel={t('payout.giveUp')}
+          onDiscard={() => givenUp(pending, t('payout.discarded'))}
           summary={pending.restored ? null : <PayoutSummary body={pending.body} />} />
       ) : blocked ? <p className="ws-muted">{blocked}</p>
         : (
@@ -298,7 +302,10 @@ function RecordPayout({ api: s, accountId, summary, perform, onChanged }: { api:
 function PayoutSummary({ body }: { body: RecordPayoutInput }) {
   return (
     <div>
-      Payout of {money(body.amountMinor)} by {PAYOUT_METHOD_LABEL[body.method]}, reference {body.reference}, paid on {formatDate(body.paidOn)} (details version {body.detailsVersion}).
+      {t('payout.summary', {
+        amount: money(body.amountMinor), method: PAYOUT_METHOD_LABEL[body.method], reference: body.reference, date: formatDate(body.paidOn),
+        version: body.detailsVersion,
+      })}
     </div>
   );
 }
@@ -326,10 +333,10 @@ function PayoutForm({ summary, busy, refused, onRecord }: {
   useEffect(() => {
     if (review && (review.detailsVersion !== a.payoutDetailsVersion || review.amountMinor > summary.balanceMinor)) {
       setReview(null);
-      setChanged('The payout details or the balance changed while you were reviewing. Check them and review again.');
+      setChanged(t('payout.changed'));
     } else if (review && review.expectedFinanceVersion !== a.financeVersion) {
       setReview(null);
-      setChanged(MOVED);
+      setChanged(moved());
     }
   }, [review, a.payoutDetailsVersion, a.financeVersion, summary.balanceMinor]);
 
@@ -343,34 +350,36 @@ function PayoutForm({ summary, busy, refused, onRecord }: {
   }
 
   return (
-    <form className="rx-form" noValidate onSubmit={submit} aria-label="Record a payout">
+    <form className="rx-form" noValidate onSubmit={submit} aria-label={t('payout.title')}>
       <div className="rx-form-row">
-        <TextField label="Amount paid (₹)" inputMode="decimal" value={amount} error={errors.amount}
-          hint={`At most the balance, ${money(summary.balanceMinor)}.`} onChange={(e) => edit(() => setAmount(e.target.value))} />
+        <TextField label={t('payout.amount')} inputMode="decimal" value={amount} error={errors.amount}
+          hint={t('payout.amountHint', { amount: money(summary.balanceMinor) })} onChange={(e) => edit(() => setAmount(e.target.value))} />
         <div className="j-field">
-          <label htmlFor="sa-method">Paid by</label>
+          <label htmlFor="sa-method">{t('payout.method')}</label>
           <select id="sa-method" value={method} onChange={(e) => edit(() => setMethod(e.target.value as PayoutMethod))}>
             {PAYOUT_METHODS.map((m) => <option key={m} value={m}>{PAYOUT_METHOD_LABEL[m]}</option>)}
           </select>
         </div>
-        <TextField label="Bank reference (UTR)" value={reference} maxLength={MAX_PAYOUT_REFERENCE} error={errors.reference}
+        <TextField label={t('payout.reference')} value={reference} maxLength={MAX_PAYOUT_REFERENCE} error={errors.reference}
           onChange={(e) => edit(() => setReference(e.target.value))} />
-        <TextField label="Paid on (India date)" type="date" value={paidOn} max={istToday()} error={errors.paidOn} onChange={(e) => edit(() => setPaidOn(e.target.value))} />
+        <TextField label={t('payout.paidOn')} type="date" value={paidOn} max={istToday()} error={errors.paidOn} onChange={(e) => edit(() => setPaidOn(e.target.value))} />
       </div>
-      <TextArea label="Note (optional)" value={note} maxLength={MAX_PAYOUT_NOTE} error={errors.note} onChange={(e) => edit(() => setNote(e.target.value))} />
+      <TextArea label={t('payout.note')} value={note} maxLength={MAX_PAYOUT_NOTE} error={errors.note} onChange={(e) => edit(() => setNote(e.target.value))} />
       {changed && <Alert tone="warn">{changed}</Alert>}
       {!review ? (
-        <div className="rx-actions"><Button type="submit">Review the payout</Button></div>
+        <div className="rx-actions"><Button type="submit">{t('payout.review')}</Button></div>
       ) : (
-        <div className="confirm" role="group" aria-label="Record the payout">
+        <div className="confirm" role="group" aria-label={t('payout.confirmLabel')}>
           <div className="confirm-text">
-            Record {money(review.amountMinor)} paid to {a.beneficiaryName} at {detailsLabel(a.payoutDetails)} (details version {review.detailsVersion})
-            by {PAYOUT_METHOD_LABEL[review.method]} on {formatDate(review.paidOn)}, reference {review.reference}? The balance goes
-            from {money(summary.balanceMinor)} to {money(summary.balanceMinor - review.amountMinor)}. A recorded payout cannot be deleted; a mistake is corrected by voiding it.
+            {t('payout.confirm', {
+              amount: money(review.amountMinor), name: a.beneficiaryName, destination: detailsLabel(a.payoutDetails), version: review.detailsVersion,
+              method: PAYOUT_METHOD_LABEL[review.method], date: formatDate(review.paidOn), reference: review.reference,
+              from: money(summary.balanceMinor), to: money(summary.balanceMinor - review.amountMinor),
+            })}
           </div>
           <div className="confirm-actions">
-            <Button busy={busy} onClick={() => onRecord(review)}>Record payout</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>Back to the payout</Button>
+            <Button busy={busy} onClick={() => onRecord(review)}>{t('payout.record')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('payout.backToForm')}</Button>
           </div>
         </div>
       )}
@@ -410,8 +419,9 @@ function PostAdjustment({ api: s, accountId, summary, perform, onChanged }: { ap
     resolveStored(memory, slot, op.requestKey);
     const requestKey = op.requestKey;
     setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
-    const what = amountMinor < 0 ? `${money(-amountMinor)} taken from the balance` : `${money(amountMinor)} added to the balance`;
-    setDone(earlier ? `This adjustment had already been posted (${what}). Nothing was posted twice.` : `Adjustment posted: ${what}.`);
+    const taken = amountMinor < 0;
+    const amount = money(Math.abs(amountMinor));
+    setDone(earlier ? t(taken ? 'adjust.doneEarlierTaken' : 'adjust.doneEarlierAdded', { amount }) : t(taken ? 'adjust.doneTaken' : 'adjust.doneAdded', { amount }));
     setFormKey((k) => k + 1);
   };
 
@@ -439,7 +449,7 @@ function PostAdjustment({ api: s, accountId, summary, perform, onChanged }: { ap
           onChanged();
           if (!owns(attempt)) return;
           if (wasAbandoned(err)) {
-            givenUp(attempt, 'This adjustment was given up earlier, so it was not posted and never will be. Post it again if it is still needed.');
+            givenUp(attempt, t('adjust.abandoned'));
             return;
           }
           const next = afterFailure(attempt, err, messageOf(err));
@@ -458,24 +468,26 @@ function PostAdjustment({ api: s, accountId, summary, perform, onChanged }: { ap
   const showPanel = pending && !(busy && pending.attempts === 1 && !pending.uncertain);
   return (
     <section className="ws-section" aria-labelledby="sa-adj-h">
-      <h2 id="sa-adj-h">Post an adjustment</h2>
-      <p className="ws-muted">A correction with a reason: add to the balance, or take from it (a recovery; the balance may go below zero).</p>
+      <h2 id="sa-adj-h">{t('adjust.title')}</h2>
+      <p className="ws-muted">{t('adjust.intro')}</p>
       {done && <Alert tone="ok">{done}</Alert>}
-      {refused && <Alert>Not posted: {refused}</Alert>}
+      {refused && <Alert>{t('adjust.notPosted', { error: refused })}</Alert>}
       {showPanel ? (
-        <PendingOpPanel key={pending.attempts} label="Unconfirmed adjustment" op={pending} busy={busy} onResend={() => void send(pending)}
+        <PendingOpPanel key={pending.attempts} label={t('adjust.unconfirmed')} op={pending} busy={busy} onResend={() => void send(pending)}
           fetchPage={keyedLookup(pending.requestKey, () => s.adjustmentByKey(accountId, pending.requestKey), ['ADJUSTMENT_NOT_FOUND'])}
           onFound={(l) => posted(l.amountMinor, pending, true)}
           abandon={async () => {
             const r = await s.abandonAdjustmentKey(accountId, pending.requestKey);
             return { state: r.state, record: r.entry ? { ...r.entry, requestKey: pending.requestKey } : undefined };
           }}
-          abandonWhenNotFound abandonLabel="Give up this adjustment"
-          onDiscard={() => givenUp(pending, 'The unconfirmed adjustment was given up: it can never be posted. Post it again if it is still needed.')}
+          abandonWhenNotFound abandonLabel={t('adjust.giveUp')}
+          onDiscard={() => givenUp(pending, t('adjust.discarded'))}
           summary={pending.restored ? null : (
-            <div>{pending.body.amountMinor < 0 ? `Take ${money(-pending.body.amountMinor)} from` : `Add ${money(pending.body.amountMinor)} to`} the balance: “{pending.body.reason}”.</div>
+            <div>
+              {t(pending.body.amountMinor < 0 ? 'adjust.summaryTake' : 'adjust.summaryAdd', { amount: money(Math.abs(pending.body.amountMinor)), reason: pending.body.reason })}
+            </div>
           )} />
-      ) : !a.isActive ? <p className="ws-muted">This settlement account is inactive.</p>
+      ) : !a.isActive ? <p className="ws-muted">{t('adjust.inactive')}</p>
         : (
           <AdjustmentForm key={formKey} summary={summary} busy={busy} refused={refused}
             onPost={(body) => {
@@ -497,14 +509,14 @@ function AdjustmentForm({ summary, busy, refused, onPost }: {
   const [review, setReview] = useState<Omit<AdjustmentInput, 'requestKey'> | null>(null);
   const [changed, setChanged] = useState<string | null>(null);
   const paise = rupeesToPaise(amount);
-  const amountError = paise === null ? 'Enter rupees, like 500 or 500.50.' : paise < 1 ? 'Enter an amount above zero.' : paise > MAX_FINANCE_MINOR ? 'This is above the largest adjustment the server accepts.' : null;
+  const amountError = paise === null ? t('adjust.amountFormat') : paise < 1 ? t('adjust.amountZero') : paise > MAX_FINANCE_MINOR ? t('adjust.amountMax') : null;
   const reasonError = reasonProblem(reason);
   const edit = (fn: () => void) => { fn(); setReview(null); setChanged(null); };
   useEffect(() => { if (refused) setReview(null); }, [refused]);
   // Q13: the review names the finance version it was made on; any move of the account closes it.
   const financeVersion = summary.account.financeVersion;
   useEffect(() => {
-    if (review && review.expectedFinanceVersion !== financeVersion) { setReview(null); setChanged(MOVED); }
+    if (review && review.expectedFinanceVersion !== financeVersion) { setReview(null); setChanged(moved()); }
   }, [review, financeVersion]);
 
   function submit(e: FormEvent) {
@@ -517,30 +529,32 @@ function AdjustmentForm({ summary, busy, refused, onPost }: {
 
   const after = review ? summary.balanceMinor + review.amountMinor : 0;
   return (
-    <form className="rx-form" noValidate onSubmit={submit} aria-label="Post an adjustment">
+    <form className="rx-form" noValidate onSubmit={submit} aria-label={t('adjust.title')}>
       <fieldset className="fin-radio">
-        <legend>Direction</legend>
-        <label><input type="radio" name="sa-dir" checked={direction === 'credit'} onChange={() => edit(() => setDirection('credit'))} /> Add to the balance</label>
-        <label><input type="radio" name="sa-dir" checked={direction === 'debit'} onChange={() => edit(() => setDirection('debit'))} /> Take from the balance (recovery)</label>
+        <legend>{t('adjust.direction')}</legend>
+        <label><input type="radio" name="sa-dir" checked={direction === 'credit'} onChange={() => edit(() => setDirection('credit'))} /> {t('adjust.add')}</label>
+        <label><input type="radio" name="sa-dir" checked={direction === 'debit'} onChange={() => edit(() => setDirection('debit'))} /> {t('adjust.take')}</label>
       </fieldset>
       <div className="rx-form-row">
-        <TextField label="Adjustment amount (₹)" inputMode="decimal" value={amount} error={tried ? amountError : null} onChange={(e) => edit(() => setAmount(e.target.value))} />
+        <TextField label={t('adjust.amount')} inputMode="decimal" value={amount} error={tried ? amountError : null} onChange={(e) => edit(() => setAmount(e.target.value))} />
       </div>
-      <TextArea label="Reason (kept with the entry)" value={reason} maxLength={MAX_FINANCE_REASON} error={tried ? reasonError : null} onChange={(e) => edit(() => setReason(e.target.value))} />
+      <TextArea label={t('adjust.reason')} value={reason} maxLength={MAX_FINANCE_REASON} error={tried ? reasonError : null} onChange={(e) => edit(() => setReason(e.target.value))} />
       {changed && <Alert tone="warn">{changed}</Alert>}
       {!review ? (
-        <div className="rx-actions"><Button type="submit">Review the adjustment</Button></div>
+        <div className="rx-actions"><Button type="submit">{t('adjust.review')}</Button></div>
       ) : (
-        <div className="confirm" role="group" aria-label="Post the adjustment">
+        <div className="confirm" role="group" aria-label={t('adjust.confirmLabel')}>
           <div className="confirm-text">
-            {review.amountMinor < 0 ? `Take ${money(-review.amountMinor)} from` : `Add ${money(review.amountMinor)} to`} the balance of {summary.account.beneficiaryName}?
-            It goes from {money(summary.balanceMinor)} to <Signed minor={after} />. Reason: “{review.reason}”.
-            {after < 0 ? ` The balance will be below zero: ${summary.account.beneficiaryName} then owes ${money(-after)} back.` : ''}
-            {' '}An adjustment is recorded for good; a mistake is corrected with another adjustment.
+            <Parts of={t.rich(review.amountMinor < 0 ? 'adjust.confirmTake' : 'adjust.confirmAdd', {
+              amount: money(Math.abs(review.amountMinor)), name: summary.account.beneficiaryName, from: money(summary.balanceMinor),
+              to: <Signed minor={after} />, reason: review.reason,
+            })} />
+            {after < 0 ? ` ${t('adjust.belowZero', { name: summary.account.beneficiaryName, amount: money(-after) })}` : ''}
+            {' '}{t('adjust.forGood')}
           </div>
           <div className="confirm-actions">
-            <Button busy={busy} onClick={() => onPost(review)}>Post adjustment</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>Back to the adjustment</Button>
+            <Button busy={busy} onClick={() => onPost(review)}>{t('adjust.post')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('adjust.backToForm')}</Button>
           </div>
         </div>
       )}

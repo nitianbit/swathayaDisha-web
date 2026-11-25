@@ -3,6 +3,7 @@ import { createHashRouter, Outlet, RouterProvider, useLocation } from 'react-rou
 import { Empty, LanguageScope, Loading } from '@jansetu/ui';
 import { Shell } from './Shell.tsx';
 import { pagesFor } from './modules.tsx';
+import { t } from './i18n/shell/index.ts';
 import { useSession } from './session.tsx';
 import { LoginScreen } from './screens/LoginScreen.tsx';
 import type { StaffUser } from './session.tsx';
@@ -23,7 +24,7 @@ function routerFor(user: StaffUser) {
     element: <Shell><FocusOnNavigate /><Outlet /></Shell>,
     children: [
       ...pagesFor(user).map((p) => ({ path: p.path, element: p.element })),
-      { path: '*', element: <Empty title="Page not found">This page does not exist or is not available to your account.</Empty> },
+      { path: '*', element: <Empty title={t('app.notFound.title')}>{t('app.notFound.body')}</Empty> },
     ],
   }]);
 }
@@ -37,7 +38,7 @@ function SignedIn({ user }: { user: StaffUser }) {
 export function App() {
   const { state } = useSession();
   // D4: a reload resumes the cookie session before deciding to show the sign-in screen.
-  if (state.status === 'restoring') return <main className="login"><Loading label="Signing you in…" /></main>;
+  if (state.status === 'restoring') return <main className="login"><Loading label={t('app.signingIn')} /></main>;
   if (state.status !== 'signed_in') return <LanguageScope><LoginScreen notice={state.notice} /></LanguageScope>;
   return <SignedIn user={state.user} />;
 }

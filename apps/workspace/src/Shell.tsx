@@ -3,31 +3,35 @@ import { NavLink } from 'react-router';
 import { LogOut } from 'lucide-react';
 import { Button, LanguageScope, LanguageSwitcher, useLanguage } from '@jansetu/ui';
 import { pagesFor } from './modules.tsx';
+import { t } from './i18n/shell/index.ts';
 import { useSession, useStaff } from './session.tsx';
 import { DoctorPresenceProvider } from './screens/doctor/presence.tsx';
+
+/** The brand stays in Latin letters in every language (docs/I18N_PLAN.md §5.2). */
+export const BRAND = 'Jansetu';
 
 export function Shell({ children }: { children: ReactNode }) {
   const user = useStaff();
   const { signOut } = useSession();
   useLanguage(); // the navigation follows a language change; the page itself is mounted again (LanguageScope)
   const nav = pagesFor(user).filter((p) => p.nav);
-  const sections = [...new Set(nav.map((p) => p.nav!.section))];
+  const sections = [...new Set(nav.map((p) => p.nav!.sectionKey))];
 
   return (
     <div className="ws">
-      <a className="ws-skip" href="#main">Skip to content</a>
+      <a className="ws-skip" href="#main">{t('shell.skip')}</a>
       <aside className="ws-side">
-        <div className="ws-brand">Jansetu <span>Workspace</span></div>
-        <nav aria-label="Main">
+        <div className="ws-brand">{BRAND} <span>{t('shell.workspace')}</span></div>
+        <nav aria-label={t('shell.nav')}>
           {sections.map((section) => (
             <div key={section || 'top'} className="ws-nav-group">
-              {section && <div className="ws-nav-section">{section}</div>}
-              {nav.filter((p) => p.nav!.section === section).map((p) => {
+              {section && <div className="ws-nav-section">{t(section)}</div>}
+              {nav.filter((p) => p.nav!.sectionKey === section).map((p) => {
                 const Icon = p.nav!.icon;
                 return (
                   <NavLink key={p.path} to={p.path} end={p.path === '/'} className="ws-nav-link">
                     <Icon size={18} aria-hidden="true" />
-                    {p.nav!.label}
+                    {t(p.nav!.labelKey)}
                   </NavLink>
                 );
               })}
@@ -45,7 +49,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <LanguageSwitcher />
           {/* A deliberate sign-out starts the next person at Home; an expired session keeps its page to resume. */}
           <Button variant="ghost" onClick={() => { window.history.replaceState(null, '', '#/'); signOut(); }}>
-            <LogOut size={18} aria-hidden="true" /> Sign out
+            <LogOut size={18} aria-hidden="true" /> {t('shell.signOut')}
           </Button>
         </div>
       </aside>

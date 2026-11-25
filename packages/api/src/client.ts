@@ -5,6 +5,7 @@
  *
  * Backend response shapes (src1): success `{ success, message?, data, pagination? }`, failure `{ error, message, code }`.
  */
+import { t } from './i18n/index.ts';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -107,7 +108,7 @@ export function createApiClient(options: ApiClientOptions) {
 
   function url(path: string, query?: Record<string, QueryValue>): string {
     if (!SAFE_PATH.test(path) || path.includes('//') || path.split('/').includes('..')) {
-      throw new Error(`Invalid API path: ${path}`);
+      throw new Error(`Invalid API path: ${path}`); // i18n-ignore: a programming error, not shown
     }
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query ?? {})) {
@@ -123,7 +124,7 @@ export function createApiClient(options: ApiClientOptions) {
     const target = url(path, o.query); // before the try: a bad path is a programming error, not a network one
     const headers: Record<string, string> = { Accept: 'application/json' };
     const token = o.token ?? (o.auth === false ? null : options.getToken());
-    if (token) headers.Authorization = `Bearer ${token}`;
+    if (token) headers.Authorization = `Bearer ${token}`; // i18n-ignore: a header, not words
     if (o.body !== undefined && !o.form) headers['Content-Type'] = 'application/json';
     if (o.idempotencyKey) headers['Idempotency-Key'] = o.idempotencyKey;
     if (o.session) headers['X-Jansetu-Session'] = '1';
@@ -139,8 +140,8 @@ export function createApiClient(options: ApiClientOptions) {
     const translate = (err: unknown) => {
       if (err instanceof ApiError) return err;
       if (o.signal?.aborted || sessionSignal?.aborted) return err;
-      if (timeout.signal.aborted) return new ApiError(0, 'The server took too long to respond. Please try again.', 'TIMEOUT');
-      return new ApiError(0, 'Could not reach the server. Check your connection and try again.', 'NETWORK');
+      if (timeout.signal.aborted) return new ApiError(0, t('errors.TIMEOUT'), 'TIMEOUT');
+      return new ApiError(0, t('errors.NETWORK'), 'NETWORK');
     };
 
     try {
@@ -161,7 +162,7 @@ export function createApiClient(options: ApiClientOptions) {
       }
       if (!res.ok) {
         // A late answer for a session that has already ended is not news about the current one.
-        if (sessionSignal?.aborted) throw new DOMException('The session ended', 'AbortError');
+        if (sessionSignal?.aborted) throw new DOMException('The session ended', 'AbortError'); // i18n-ignore: an abort, never shown
         if (res.status === 401 && token && options.renew && !renewed && !o.noRenew) {
           const next = await options.renew(token);
           if (next && next !== token) return request(method, path, o, read, true);
@@ -169,7 +170,7 @@ export function createApiClient(options: ApiClientOptions) {
         if (res.status === 401 && token) options.onUnauthorized?.(token);
         const text = await res.text().catch((err: unknown) => { throw translate(err); });
         const body = parseJson(text) as { message?: unknown; code?: unknown; retryAfter?: unknown; limit?: unknown; details?: unknown } | null;
-        const message = typeof body?.message === 'string' && body.message ? body.message : `Request failed (${res.status})`;
+        const message = typeof body?.message === 'string' && body.message ? body.message : t('errors.requestFailed', { status: res.status });
         // A cross-origin build cannot read Retry-After (not CORS-exposed): the JSON body carries the same wait.
         const header = Number(res.headers.get('retry-after'));
         const fromBody = typeof body?.retryAfter === 'number' ? body.retryAfter : NaN;

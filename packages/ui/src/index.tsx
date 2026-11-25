@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useId, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
+import { t } from './i18n/index.ts';
+
+/** The shared UI words (`packages/ui/src/i18n/en.ts` lists them): Back, Cancel, Try again, Loading… */
+export { t as shared } from './i18n/index.ts';
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
 
@@ -65,7 +69,7 @@ export function Badge({ tone, children }: { tone?: 'warn' | 'danger' | 'ok'; chi
  * and nothing else changes; it goes away once the renewal succeeds.
  */
 export function Reconnecting() {
-  return <div className="j-reconnecting" role="status" aria-live="polite">Reconnecting…</div>;
+  return <div className="j-reconnecting" role="status" aria-live="polite">{t('state.reconnecting')}</div>;
 }
 
 /**
@@ -76,16 +80,16 @@ export function ReconnectingStart({ onSignIn }: { onSignIn: () => void }) {
   return (
     <main className="login">
       <div className="j-state">
-        <span role="status" aria-live="polite">Reconnecting… We could not reach the server to resume your sign-in. We keep trying.</span>
-        <Button variant="secondary" onClick={onSignIn}>Sign in again</Button>
+        <span role="status" aria-live="polite">{t('state.reconnectingStart')}</span>
+        <Button variant="secondary" onClick={onSignIn}>{t('action.signInAgain')}</Button>
       </div>
     </main>
   );
 }
 
 /** Every data screen shows one of these while it has no content to show. */
-export function Loading({ label = 'Loading…' }: { label?: string }) {
-  return <div className="j-state" role="status" aria-live="polite">{label}</div>;
+export function Loading({ label }: { label?: string }) {
+  return <div className="j-state" role="status" aria-live="polite">{label ?? t('state.loading')}</div>;
 }
 
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
@@ -101,7 +105,7 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
   return (
     <div className="j-state" role="alert">
       <span>{message}</span>
-      {onRetry && <Button variant="secondary" onClick={onRetry}>Try again</Button>}
+      {onRetry && <Button variant="secondary" onClick={onRetry}>{t('action.tryAgain')}</Button>}
     </div>
   );
 }

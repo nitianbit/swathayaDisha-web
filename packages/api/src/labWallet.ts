@@ -2,6 +2,8 @@ import { formatPaise } from '@jansetu/i18n';
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import { assistedRefusal, type PharmacyWallet, type Refusal, type TopupCheck, type TopupOrder, type WalletMovement } from './assisted.ts';
 import { ADMIN_TOPUP_KEY_PATTERN } from './adminPharmacyWallet.ts';
+import { t } from './i18n/lab/index.ts';
+import { onLanguage, wordMap } from './i18n/words.ts';
 import { checkId, partnerWorkspaceBase, REQUEST_KEY_PATTERN, type PartnerScope } from './partners.ts';
 
 /**
@@ -50,15 +52,16 @@ export const asMovement = (e: LabWalletEntry): WalletMovement => ({
 /** The lab's own Razorpay top-ups: ₹1 to ₹50,000 (the most a lab wallet holds, O2), whole paise. */
 export const LAB_TOPUP_MIN_MINOR = 100;
 export const LAB_TOPUP_MAX_MINOR = 5_000_000;
-export const LAB_TOPUP_STATE_LABEL: Readonly<Record<string, string>> = {
-  awaiting_payment: 'Not paid yet', credited: 'Added', paid_not_credited: 'Paid, not added yet', blocked: 'Blocked after a dispute',
-  closed_compensated: 'Paid by hand', failed: 'Failed', refunded: 'Refunded',
-};
+export const LAB_TOPUP_STATE_LABEL: Readonly<Record<string, string>> = wordMap(t, {
+  awaiting_payment: 'wallet.topup.awaiting_payment', credited: 'wallet.topup.credited', paid_not_credited: 'wallet.topup.paid_not_credited',
+  blocked: 'wallet.topup.blocked', closed_compensated: 'wallet.topup.closed_compensated', failed: 'wallet.topup.failed',
+  refunded: 'wallet.topup.refunded',
+});
 /** A top-up "Check" can still settle: not paid yet, or paid and not added yet. */
 export const labTopupCheckable = (state: string) => state === 'awaiting_payment' || state === 'paid_not_credited';
 
 const cursorQuery = (cursor?: string, limit?: number) => {
-  if (cursor !== undefined && !/^\d{1,15}_[0-9a-fA-F]{24}$/.test(cursor)) throw new Error('Invalid cursor');
+  if (cursor !== undefined && !/^\d{1,15}_[0-9a-fA-F]{24}$/.test(cursor)) throw new Error('Invalid cursor'); // i18n-ignore: a programming error, not shown
   return { cursor, limit };
 };
 
@@ -76,8 +79,8 @@ function ownWalletApi(c: ApiClient, base: () => string, verifyPath: () => string
     },
     /** One Razorpay order per (owner, key): the same key and amount answer the same order (`replayed`). */
     startTopup: async (amountMinor: number, requestKey: string): Promise<TopupOrder & { replayed: boolean }> => {
-      if (!Number.isSafeInteger(amountMinor) || amountMinor < LAB_TOPUP_MIN_MINOR || amountMinor > LAB_TOPUP_MAX_MINOR) throw new Error('Invalid amount');
-      if (!REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
+      if (!Number.isSafeInteger(amountMinor) || amountMinor < LAB_TOPUP_MIN_MINOR || amountMinor > LAB_TOPUP_MAX_MINOR) throw new Error('Invalid amount'); // i18n-ignore: a programming error, not shown
+      if (!REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
       const o = await c.post<LabTopupOrder>(`${base()}/wallet/topups`, { body: { amountMinor, requestKey } });
       return { paymentRequired: true, paymentTransactionId: o.paymentTransactionId, razorpayOrderId: o.razorpayOrderId, razorpayKeyId: o.razorpayKeyId,
         amount: o.amountMinor / 100, currency: o.currency, replayed: o.replayed };
@@ -130,16 +133,16 @@ export function adminOwnerWalletApi(c: ApiClient, kind: WalletOwnerKind) {
     lots: (ownerId: string) => c.get<LabWalletLot[]>(`${base(ownerId)}/lots`),
     /** The exact read of an admin credit by its Idempotency-Key: the entry it made, or none (resend the same body). */
     topupByKey: async (ownerId: string, key: string): Promise<{ state: 'used'; row: WalletMovement } | { state: 'none' }> => {
-      if (!ADMIN_TOPUP_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
+      if (!ADMIN_TOPUP_KEY_PATTERN.test(key)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
       const r = await c.get<{ state?: string; entry?: LabWalletEntry | null } | null>(`${base(ownerId)}/topups/by-key/${key}`);
       if (r?.state === 'credited' && r.entry && typeof r.entry === 'object') return { state: 'used', row: asMovement(r.entry) };
       if (r?.state === 'not_found') return { state: 'none' };
-      throw new ApiError(502, 'The answer about this top-up could not be read.');
+      throw new ApiError(502, t('wallet.topup.unreadable'));
     },
     /** Once per key (the same body answers the wallet again; another body is 409 IDEMPOTENCY_KEY_REUSED). Non-withdrawable. */
     topup: (ownerId: string, body: { amountMinor: number; notes: string }, idempotencyKey: string) => {
-      if (!ADMIN_TOPUP_KEY_PATTERN.test(idempotencyKey)) throw new Error('Invalid request key');
-      if (!Number.isSafeInteger(body.amountMinor) || body.amountMinor < 1 || body.amountMinor > LAB_ADMIN_TOPUP_MAX_MINOR) throw new Error('Invalid amount');
+      if (!ADMIN_TOPUP_KEY_PATTERN.test(idempotencyKey)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
+      if (!Number.isSafeInteger(body.amountMinor) || body.amountMinor < 1 || body.amountMinor > LAB_ADMIN_TOPUP_MAX_MINOR) throw new Error('Invalid amount'); // i18n-ignore: a programming error, not shown
       return c.post<LabWalletView>(`${base(ownerId)}/topup`, { body: { amountMinor: body.amountMinor, notes: body.notes.trim().replace(/\s+/g, ' ') }, idempotencyKey });
     },
     /** Hold (no spending) or release; 409 WALLET_RECEIVABLE to release a wallet that owes. */
@@ -161,19 +164,25 @@ export function ownerWalletRefusal(err: unknown, kind: WalletOwnerKind): Refusal
     const max = Number.isFinite(Number(d.maxBalanceMinor)) ? formatPaise(Number(d.maxBalanceMinor)) : '₹50,000';
     const allowed = Number(d.allowedMinor);
     return { kind: 'limit', message: Number.isFinite(allowed) && allowed > 0
-      ? `The wallet can hold at most ${max}. You can add up to ${formatPaise(allowed)} now.`
-      : `The wallet can hold at most ${max}, so no more money can be added now.` };
+      ? t('wallet.limit.upTo', { max, allowed: formatPaise(allowed) })
+      : t('wallet.limit.full', { max }) };
   }
-  if (err instanceof ApiError && err.code === 'WALLET_NOT_FOUND') return { kind: 'other', message: 'The wallet is for labs only.' };
-  if (err instanceof ApiError && err.code === 'LAB_NOT_FOUND') return { kind: 'other', message: 'This lab was not found.' };
-  if (err instanceof ApiError && err.code === 'SPECIALIST_NOT_FOUND') return { kind: 'other', message: 'This doctor was not found.' };
+  if (err instanceof ApiError && err.code === 'WALLET_NOT_FOUND') return { kind: 'other', message: t('wallet.labsOnly') };
+  if (err instanceof ApiError && err.code === 'LAB_NOT_FOUND') return { kind: 'other', message: t('wallet.labNotFound') };
+  if (err instanceof ApiError && err.code === 'SPECIALIST_NOT_FOUND') return { kind: 'other', message: t('wallet.doctorNotFound') };
   if (err instanceof ApiError && err.code === 'SPECIALIST_NOT_VERIFIED') return { kind: 'other', message: DOCTOR_WALLET_CLOSED_MESSAGE };
-  if (err instanceof ApiError && err.code === 'WALLET_RECEIVABLE') return { kind: 'other', message: 'The wallet owes Jansetu money, so its hold cannot be released yet.' };
+  if (err instanceof ApiError && err.code === 'WALLET_RECEIVABLE') return { kind: 'other', message: t('wallet.receivable') };
   const shared = assistedRefusal(err);
   return shared.kind === 'off' ? { kind: 'off', message: kind === 'doctor' ? DOCTOR_WALLET_SWITCHED_OFF_MESSAGE : LAB_WALLET_SWITCHED_OFF_MESSAGE } : shared;
 }
-export const LAB_WALLET_SWITCHED_OFF_MESSAGE = 'Adding money to the lab wallet is not switched on yet.';
-export const DOCTOR_WALLET_SWITCHED_OFF_MESSAGE = 'Adding money to your wallet is not switched on yet.';
+export let LAB_WALLET_SWITCHED_OFF_MESSAGE = '';
+export let DOCTOR_WALLET_SWITCHED_OFF_MESSAGE = '';
 /** r20: only a verified, active doctor has a wallet to read (403 SPECIALIST_NOT_VERIFIED). */
-export const DOCTOR_WALLET_CLOSED_MESSAGE = 'Your wallet opens once Jansetu has verified your account and it is active.';
+export let DOCTOR_WALLET_CLOSED_MESSAGE = '';
+// The message constants above, read again in the current language (screens import them as strings).
+onLanguage(() => {
+  LAB_WALLET_SWITCHED_OFF_MESSAGE = t('wallet.lab.switchedOff');
+  DOCTOR_WALLET_SWITCHED_OFF_MESSAGE = t('wallet.doctor.switchedOff');
+  DOCTOR_WALLET_CLOSED_MESSAGE = t('wallet.doctor.closed');
+});
 export const isDoctorWalletClosed = (err: unknown) => err instanceof ApiError && err.code === 'SPECIALIST_NOT_VERIFIED';

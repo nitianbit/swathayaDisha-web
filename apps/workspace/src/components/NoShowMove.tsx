@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ApiError, isNoShowMoveUsed, isSlotRefusal, NO_SHOW_MOVE_REFUSAL } from '@jansetu/api';
-import { Alert, Button } from '@jansetu/ui';
+import { Alert, Button, Parts, shared } from '@jansetu/ui';
 import { ConfirmAction } from './ConfirmAction.tsx';
 import { messageOf } from '../errors.ts';
+import { t } from '../i18n/components/index.ts';
 import { afterFailure, beginAttempt, definitelyNotRecorded, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../requests.ts';
 import { useSession } from '../session.tsx';
 import { FOCUS_HOST_STYLE, usePanelFocus } from './focus.ts';
@@ -106,8 +107,8 @@ export function NoShowMove<R extends { replayed?: boolean }>({
     if (status === 'no_show' && state !== 'used') return; // not decided yet: it may still be on its way
     if (!owns(op)) return;
     end(op);
-    if (status !== 'no_show') onNotice(`${who}’s no-show has been moved to a new time (it can be moved only once). Nothing more to do.`);
-    else onFailure('This booking was already moved once after a no-show. A second no-show is final, so it cannot be moved again.');
+    if (status !== 'no_show') onNotice(t('noShow.movedLater', { who }));
+    else onFailure(t('noShow.alreadyMoved'));
   }, [op, fresh, status, state, sending]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Sends exactly `p` (same key, same time). Only success, or a definite refusal of its first attempt, ends it. */
@@ -121,9 +122,7 @@ export function NoShowMove<R extends { replayed?: boolean }>({
       if (!owns(attempt)) return;
       end(attempt);
       onMoved?.(r);
-      onNotice(r.replayed
-        ? `${who}’s no-show had already been moved to ${attempt.body!.label}: nothing was moved twice.`
-        : `${who}’s no-show is moved to ${attempt.body!.label}. It is booked again at the same price.`);
+      onNotice(t(r.replayed ? 'noShow.replayed' : 'noShow.moved', { who, time: attempt.body!.label }));
     } catch (err) {
       reread();
       if (!owns(attempt)) return;
@@ -133,7 +132,7 @@ export function NoShowMove<R extends { replayed?: boolean }>({
       const next: NoShowMoveOp | null = failed && { ...failed, refused: definitelyNotRecorded(err) };
       if (live.current) store(next ?? undefined); else if (next) memory.set(slot, next); else memory.delete(slot);
       if (!next) {
-        onFailure(`Not moved: ${noShowRefusal(err)}`);
+        onFailure(t('noShow.notMoved', { reason: noShowRefusal(err) }));
         if (isSlotRefusal(err)) { onSlotRefused?.(); setChosen(null); setConfirming(false); setOpen(true); }
       }
     } finally {
@@ -152,18 +151,19 @@ export function NoShowMove<R extends { replayed?: boolean }>({
   function body() {
   if (op && phase === 'unconfirmed') {
     return (
-      <div className="confirm" role="group" aria-label="Unconfirmed no-show move">
+      <div className="confirm" role="group" aria-label={t('noShow.unconfirmed.label')}>
         <Alert tone="warn">
-          {op.restored
-            ? `A move of ${who}’s no-show was sent from this device before the page was reloaded, and its answer never arrived. Its details are not kept here. Check the booking: once it is no longer a no-show, the move happened.`
-            : `${sending ? 'Sending… ' : ''}The move of ${who}’s no-show to ${op.body!.label} has not been confirmed${op.error ? ` (${op.error})` : ''}. Sending the same move again is safe: a booking is moved only once.`}
+          {op.restored ? t('noShow.restored', { who })
+            : `${sending ? `${t('pending.sending')} ` : ''}${op.error
+              ? t('noShow.unconfirmedWithError', { who, time: op.body!.label, error: op.error })
+              : t('noShow.unconfirmed', { who, time: op.body!.label })}`}
         </Alert>
         <div className="confirm-actions">
-          {!op.restored && <Button busy={sending} onClick={() => void go(op)}>Send the same move again</Button>}
-          <Button variant="secondary" disabled={sending || reading} onClick={reread}>Check the booking</Button>
+          {!op.restored && <Button busy={sending} onClick={() => void go(op)}>{t('noShow.resend')}</Button>}
+          <Button variant="secondary" disabled={sending || reading} onClick={reread}>{t('noShow.check')}</Button>
           {canChooseAgain && (
-            <ConfirmAction label="Choose a new time again" confirmLabel="Forget it and choose again"
-              consequence={`The booking is still a no-show${op.refused && op.error ? ` and the last send was refused (${op.error})` : ''}. A new time is sent as a new move. If the earlier move still arrives, it moves the booking and the new move is refused (a no-show is moved only once), so nothing can be moved twice.`}
+            <ConfirmAction label={t('noShow.chooseAgain')} confirmLabel={t('noShow.chooseAgain.confirm')}
+              consequence={op.refused && op.error ? t('noShow.chooseAgain.consequenceRefused', { error: op.error }) : t('noShow.chooseAgain.consequence')}
               onConfirm={async () => {
                 if (!owns(op)) return;
                 end(op);
@@ -175,35 +175,34 @@ export function NoShowMove<R extends { replayed?: boolean }>({
     );
   }
 
-  if (op) return <Button variant="secondary" busy disabled>Reschedule no-show</Button>; // its first attempt is on its way
+  if (op) return <Button variant="secondary" busy disabled>{t('noShow.reschedule')}</Button>; // its first attempt is on its way
   if (state === 'used') {
     return (
       <div className="ws-action">
-        <Button variant="secondary" disabled>Reschedule no-show</Button>
-        <span className="ws-muted">Already moved once after a no-show: a second no-show is final.</span>
+        <Button variant="secondary" disabled>{t('noShow.reschedule')}</Button>
+        <span className="ws-muted">{t('noShow.used')}</span>
       </div>
     );
   }
-  if (!open) return <Button variant="secondary" disabled={disabled} onClick={() => { setOpen(true); setChosen(null); setConfirming(false); }}>Reschedule no-show</Button>;
+  if (!open) return <Button variant="secondary" disabled={disabled} onClick={() => { setOpen(true); setChosen(null); setConfirming(false); }}>{t('noShow.reschedule')}</Button>;
 
   return (
-    <form className="confirm" noValidate onSubmit={review} aria-label="Reschedule no-show">
+    <form className="confirm" noValidate onSubmit={review} aria-label={t('noShow.reschedule')}>
       {!confirming ? (
         <>
-          {picker((t) => { setChosen(t); setFieldError(null); })}
+          {picker((target) => { setChosen(target); setFieldError(null); })}
           {fieldError && <span className="j-field__error" role="alert">{fieldError}</span>}
         </>
       ) : chosen && (
         <div className="confirm-text">
-          Move {who}’s missed time ({missed}) to {chosen.label}? It is booked again at the same price: nothing is paid or refunded.
-          {' '}{consequence} This can be done only once: if the new time is missed too, that no-show is final.
+          <Parts of={t.rich('noShow.confirm', { who, missed, time: chosen.label, consequence })} />
         </div>
       )}
       <div className="confirm-actions">
-        {!confirming ? <Button type="submit">Continue</Button>
-          : <Button busy={sending} disabled={disabled && !sending} onClick={() => { const t = { ...chosen!, version }; setOpen(false); void go(startOp(newRequestKey(), t)); }}>Move to {chosen?.label}</Button>}
+        {!confirming ? <Button type="submit">{shared('action.continue')}</Button>
+          : <Button busy={sending} disabled={disabled && !sending} onClick={() => { const target = { ...chosen!, version }; setOpen(false); void go(startOp(newRequestKey(), target)); }}>{t('noShow.moveTo', { time: chosen?.label ?? '' })}</Button>}
         {/* Back from the confirmation shows the picker again with nothing chosen (it starts empty), so the choice starts again too. */}
-        <Button variant="ghost" data-focus-back disabled={sending} onClick={() => { setChosen(null); setFieldError(null); if (confirming) setConfirming(false); else setOpen(false); }}>Back</Button>
+        <Button variant="ghost" data-focus-back disabled={sending} onClick={() => { setChosen(null); setFieldError(null); if (confirming) setConfirming(false); else setOpen(false); }}>{shared('action.back')}</Button>
       </div>
     </form>
   );
@@ -211,7 +210,7 @@ export function NoShowMove<R extends { replayed?: boolean }>({
 
   function review(e: FormEvent) {
     e.preventDefault();
-    if (!chosen) { setFieldError('Choose the new time.'); return; }
+    if (!chosen) { setFieldError(t('noShow.chooseTime')); return; }
     setFieldError(null);
     setConfirming(true);
   }

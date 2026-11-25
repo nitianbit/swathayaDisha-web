@@ -1,5 +1,7 @@
 import { formatPaise } from '@jansetu/i18n';
 import { ApiError, type ApiClient } from './client.ts';
+import { t } from './i18n/lab/index.ts';
+import { onLanguage } from './i18n/words.ts';
 import { keyOf, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type PatientLookup, type Refusal } from './assisted.ts';
 import { labRefusal, labTotalMinor, recommendationLookup, type LabAddress } from './assistedLab.ts';
 import type { LabBooking } from './partnerLabs.ts';
@@ -18,6 +20,7 @@ import type { CatalogueItem, VisitMode } from './partnerInvoices.ts';
 /** The consent the desk attests; the version names this exact sentence (a change of words is a new version). */
 export const LAB_DESK_CONSENT_VERSION = 'web-lab-desk-v1';
 export const LAB_DESK_CONSENT_STATEMENT =
+  // i18n-ignore: the versioned consent text is recorded as English (round 6f, Q2)
   'The patient (or a family member with them) agreed that this lab books these tests for them on Jansetu; that an account is made for this number if it has none; that their name and phone number are shared with Jansetu; and that the report is released to their Jansetu app.';
 
 export interface DeskCollector { memberId?: string; name: string; phone?: string }
@@ -57,9 +60,11 @@ export function labDeskApi(c: ApiClient, scope: PartnerScope) {
       keyOf(body.requestKey);
       checkId(body.branchId, 'branch');
       if (body.slotId !== undefined) checkId(body.slotId, 'slot');
+      // i18n-ignore: a programming error, not shown (the desk screen asks for these first)
       if (body.visitMode === 'home' && !body.slotId) throw new Error('A home collection needs a time');
+      // i18n-ignore: a programming error, not shown
       if (body.visitMode !== 'home' && (body.address || body.collector)) throw new Error('An address and a collector are for home collections only');
-      if (body.itemIds.length < 1 || body.itemIds.length > 20) throw new Error('Choose 1 to 20 tests');
+      if (body.itemIds.length < 1 || body.itemIds.length > 20) throw new Error('Choose 1 to 20 tests'); // i18n-ignore: a programming error, not shown
       body.itemIds.forEach((id) => checkId(id, 'test'));
       return c.post<DeskReceipt>(`${base()}/bookings`, { body, timeoutMs: SLOW_WRITE_TIMEOUT_MS });
     },
@@ -80,16 +85,13 @@ export const deskItems = (items: readonly CatalogueItem[], mode: VisitMode) =>
 export const deskTotalMinor = (items: readonly CatalogueItem[], chosen: readonly string[]) =>
   labTotalMinor(items.map((i) => ({ itemId: i._id, priceMinor: i.priceMinor })), chosen);
 
-export const LAB_DESK_SWITCHED_OFF_MESSAGE = 'The lab front desk is not switched on yet.';
+export let LAB_DESK_SWITCHED_OFF_MESSAGE = '';
+onLanguage(() => { LAB_DESK_SWITCHED_OFF_MESSAGE = t('desk.switchedOff'); });
 
-const DESK_WORDS: Readonly<Record<string, Refusal>> = {
-  SLOT_REQUIRED: { kind: 'slot', message: 'Choose a time for the home collection.' },
-  COLLECTOR_NOT_MEMBER: { kind: 'other', message: 'This collector is not a member of this lab. Type the collector’s name instead.' },
-  BRANCH_SCOPE_EXCEEDED: { kind: 'doctor', message: 'You do not work at this branch. Choose one of your branches.' },
-  LAB_PARTNER_REQUIRED: { kind: 'other', message: 'The front desk is for labs only.' },
-  PARTNER_NOT_VERIFIED: { kind: 'other', message: 'This lab is not verified or not active, so it cannot book now.' },
-  DEPENDENT_NOT_FOUND: { kind: 'patient', message: 'This family member was not found on the number. Enter the patient again.' },
-  PRICE_CHANGED: { kind: 'price', message: 'The lab’s prices changed.' },
+/** The desk's own refusals: their kind; the words are `desk.refusal.<CODE>`. */
+const DESK_KIND: Readonly<Record<string, Refusal['kind']>> = {
+  SLOT_REQUIRED: 'slot', COLLECTOR_NOT_MEMBER: 'other', BRANCH_SCOPE_EXCEEDED: 'doctor', LAB_PARTNER_REQUIRED: 'other',
+  PARTNER_NOT_VERIFIED: 'other', DEPENDENT_NOT_FOUND: 'patient', PRICE_CHANGED: 'price',
 };
 
 /** One plain sentence for a desk refusal (the lab and shared assisted words first; the price as the server names it). */
@@ -99,11 +101,13 @@ export function deskRefusal(err: unknown): Refusal {
   if (shared.kind === 'price') {
     const p = shared.priceMinor;
     return p === undefined
-      ? { kind: 'price', message: 'The lab’s prices changed. Choose the tests again to see the new total.' }
-      : { kind: 'price', priceMinor: p, message: `The lab’s prices changed: the total is now ${formatPaise(p)}. Tell the patient, then book at the new total.` };
+      ? { kind: 'price', message: t('desk.price.changed') }
+      : { kind: 'price', priceMinor: p, message: t('desk.price.changedTo', { total: formatPaise(p) }) };
   }
-  const known = err instanceof ApiError && err.code ? DESK_WORDS[err.code] : undefined;
-  return known ?? shared;
+  const code = err instanceof ApiError && err.code ? err.code : undefined;
+  const kind = code && Object.hasOwn(DESK_KIND, code) ? DESK_KIND[code] : undefined;
+  const key = `desk.refusal.${code}`;
+  return kind && t.has(key) ? { kind, message: t(key) } : shared;
 }
 
 /** A desk row (paid at the lab: no Jansetu money, the lab bills it). */

@@ -9,9 +9,10 @@ import {
   type SettlementAccount, type SettlementPayout, type StatementLine, type StatementPage, type StatementQuery,
 } from '@jansetu/api';
 import { CALENDAR_DATE, formatDateWith } from '@jansetu/i18n';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, shared, TextField } from '@jansetu/ui';
 import { dirtyKeys, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/finance/index.ts';
 import { definitelyNotRecorded } from '../../requests.ts';
 import { money } from '../partner/billing.tsx';
 
@@ -35,8 +36,8 @@ export const detailsTone = (s: PayoutDetailsState) => (s === 'verified' ? 'ok' :
 
 /** One line for a destination, as the server labels payouts (`destinationLabel`): bank + IFSC + masked number, or the UPI ID. */
 export function detailsLabel(d: PayoutDetailsView | null | undefined): string {
-  if (!d) return 'No payout details';
-  if (d.method === 'upi') return `UPI ${d.upiId}`;
+  if (!d) return t('details.none');
+  if (d.method === 'upi') return t('details.upiLine', { upiId: d.upiId });
   const last4 = d.accountNumberLast4 ?? d.accountNumber?.slice(-4);
   return `${d.bankName ? `${d.bankName} ` : ''}${d.ifsc ?? ''}${last4 ? ` XXXX${last4}` : ''}`.trim();
 }
@@ -45,12 +46,12 @@ export function detailsLabel(d: PayoutDetailsView | null | undefined): string {
  * One money action on an account at a time (record payout, adjustment, verify, edit details, void), enforced in one
  * place: confirmations that were already open are refused while another action runs (WQ3 `perform`).
  */
-export function useOneAtATime(what = 'account') {
+export function useOneAtATime(what = t('busy.what.account')) {
   const inFlight = useRef(false);
   const [busy, setBusy] = useState(false);
   const perform = useCallback(async <T,>(run: () => Promise<T>): Promise<T> => {
     if (inFlight.current) {
-      throw new ApiError(409, `Another action on this ${what} is still running. Wait for it to finish, then try again.`, 'ACTION_IN_FLIGHT');
+      throw new ApiError(409, t('busy.another', { what }), 'ACTION_IN_FLIGHT');
     }
     inFlight.current = true;
     setBusy(true);
@@ -67,20 +68,21 @@ export type Perform = <T>(run: () => Promise<T>) => Promise<T>;
 
 /** Balance and lifetime totals (`financeSummary`). */
 export function SummaryCards({ summary }: { summary: FinanceSummary }) {
-  const t = summary.totals;
+  const totals = summary.totals;
   const last = summary.lastPayout;
   return (
     <>
-      <dl className="fin-cards" aria-label="Balance and totals">
-        <div className="fin-card fin-card--main"><dt>{summary.balanceMinor < 0 ? 'Balance (owed back)' : 'Balance due'}</dt><dd><Signed minor={summary.balanceMinor} /></dd></div>
-        <div className="fin-card"><dt>Earned</dt><dd>{money(t.earnedMinor)}</dd></div>
-        <div className="fin-card"><dt>Reversed</dt><dd>{money(t.reversedMinor)}</dd></div>
-        <div className="fin-card"><dt>Paid out</dt><dd>{money(t.paidOutMinor)}</dd></div>
-        <div className="fin-card"><dt>Adjustments</dt><dd><Signed minor={t.adjustedMinor} /></dd></div>
+      <dl className="fin-cards" aria-label={t('summary.label')}>
+        <div className="fin-card fin-card--main"><dt>{summary.balanceMinor < 0 ? t('summary.balanceOwed') : t('summary.balanceDue')}</dt><dd><Signed minor={summary.balanceMinor} /></dd></div>
+        <div className="fin-card"><dt>{t('summary.earned')}</dt><dd>{money(totals.earnedMinor)}</dd></div>
+        <div className="fin-card"><dt>{t('summary.reversed')}</dt><dd>{money(totals.reversedMinor)}</dd></div>
+        <div className="fin-card"><dt>{t('summary.paidOut')}</dt><dd>{money(totals.paidOutMinor)}</dd></div>
+        <div className="fin-card"><dt>{t('summary.adjustments')}</dt><dd><Signed minor={totals.adjustedMinor} /></dd></div>
       </dl>
       <p className="ws-muted">
-        {last ? <>Last payout: {money(last.amountMinor)} on {formatDate(last.paidOn)} (reference {last.reference}) to {last.destination?.label}.</> : 'No payout yet.'}
-        {' '}Balance = earnings − reversals − payouts ± adjustments.
+        {last ? t('summary.lastPayout', { amount: money(last.amountMinor), date: formatDate(last.paidOn), reference: last.reference, destination: last.destination?.label ?? '' })
+          : t('summary.noPayout')}
+        {' '}{t('summary.formula')}
       </p>
     </>
   );
@@ -92,29 +94,29 @@ export function PayoutDetailsList({ account }: { account: SettlementAccount }) {
   const state = account.payoutDetailsState ?? 'none';
   return (
     <dl className="ws-dl">
-      <dt>Status</dt>
+      <dt>{shared('field.status')}</dt>
       <dd>
         <Badge tone={detailsTone(state)}>{DETAILS_STATE_LABEL[state] ?? state}</Badge>
-        {account.payoutDetailsVersion > 0 ? ` · version ${account.payoutDetailsVersion}` : ''}
+        {account.payoutDetailsVersion > 0 ? ` · ${t('details.version', { version: account.payoutDetailsVersion })}` : ''}
       </dd>
       {d?.method === 'bank' && (
         <>
-          <dt>Paid to</dt><dd>Bank account</dd>
-          <dt>Account holder</dt><dd>{d.accountName || '—'}</dd>
-          <dt>Account number</dt><dd>{d.accountNumber ?? d.accountNumberMasked ?? (d.accountNumberLast4 ? `XXXX${d.accountNumberLast4}` : '—')}</dd>
-          <dt>IFSC</dt><dd>{d.ifsc || '—'}</dd>
-          {d.bankName && <><dt>Bank</dt><dd>{d.bankName}</dd></>}
+          <dt>{t('details.paidTo')}</dt><dd>{t('details.bankAccount')}</dd>
+          <dt>{t('details.accountHolder')}</dt><dd>{d.accountName || '—'}</dd>
+          <dt>{t('details.accountNumber')}</dt><dd>{d.accountNumber ?? d.accountNumberMasked ?? (d.accountNumberLast4 ? `XXXX${d.accountNumberLast4}` : '—')}</dd>
+          <dt>{t('details.ifsc')}</dt><dd>{d.ifsc || '—'}</dd>
+          {d.bankName && <><dt>{t('details.bank')}</dt><dd>{d.bankName}</dd></>}
         </>
       )}
       {d?.method === 'upi' && (
         <>
-          <dt>Paid to</dt><dd>UPI</dd>
-          <dt>UPI ID</dt><dd>{d.upiId}</dd>
-          {d.accountName && <><dt>Name</dt><dd>{d.accountName}</dd></>}
+          <dt>{t('details.paidTo')}</dt><dd>{t('details.upi')}</dd>
+          <dt>{t('details.upiId')}</dt><dd>{d.upiId}</dd>
+          {d.accountName && <><dt>{shared('field.name')}</dt><dd>{d.accountName}</dd></>}
         </>
       )}
-      {account.payoutDetailsChangedAt && <><dt>Last changed</dt><dd>{formatDateTime(account.payoutDetailsChangedAt)}</dd></>}
-      {account.payoutDetailsVerifiedAt && <><dt>Verified</dt><dd>{formatDateTime(account.payoutDetailsVerifiedAt)}</dd></>}
+      {account.payoutDetailsChangedAt && <><dt>{t('details.lastChanged')}</dt><dd>{formatDateTime(account.payoutDetailsChangedAt)}</dd></>}
+      {account.payoutDetailsVerifiedAt && <><dt>{t('details.verified')}</dt><dd>{formatDateTime(account.payoutDetailsVerifiedAt)}</dd></>}
     </dl>
   );
 }
@@ -127,16 +129,17 @@ const STATEMENT_PAGE = 50;
  * Newest first, with the balance after each line, paged back by the server's cursor; optional India-date period, and
  * the same period as a CSV read into memory. `queryKey` must identify the account (and the person's scope).
  */
-export function StatementSection({ queryKey, load, csv, csvPrefix, emptyText }: {
+export function StatementSection({ queryKey, load, csv, csvPrefix, emptyText = t('statement.emptyAll') }: {
   queryKey: readonly unknown[];
   load: (q: StatementQuery) => Promise<StatementPage>;
   csv: (q: PeriodQuery, signal?: AbortSignal) => Promise<Blob>;
   csvPrefix: string;
-  emptyText: string;
+  /** Under "No entries" when no period is chosen. */
+  emptyText?: string;
 }) {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const bad = (from && !isRealDate(from)) || (to && !isRealDate(to)) ? 'Enter real dates.' : from && to && from > to ? 'The period ends before it starts.' : null;
+  const bad = (from && !isRealDate(from)) || (to && !isRealDate(to)) ? t('period.badDates') : from && to && from > to ? t('period.endsBeforeStart') : null;
   const period: PeriodQuery | null = bad ? null : { ...(from ? { from } : {}), ...(to ? { to } : {}) };
   const list = useInfiniteQuery({
     queryKey: [...queryKey, 'statement', period],
@@ -155,26 +158,27 @@ export function StatementSection({ queryKey, load, csv, csvPrefix, emptyText }: 
 
   return (
     <section className="ws-section" aria-labelledby="fin-st-h">
-      <h2 id="fin-st-h">Statement</h2>
-      <div className="ws-search" role="group" aria-label="Statement period">
-        <TextField label="From (India date)" type="date" value={from} onChange={(e) => setFrom(e.target.value)} error={bad} />
-        <TextField label="To (India date)" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      <h2 id="fin-st-h">{t('statement.title')}</h2>
+      <div className="ws-search" role="group" aria-label={t('statement.period')}>
+        <TextField label={t('statement.from')} type="date" value={from} onChange={(e) => setFrom(e.target.value)} error={bad} />
+        <TextField label={t('statement.to')} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         {period && <CsvDownload key={JSON.stringify(period)} period={period} csv={csv} csvPrefix={csvPrefix} />}
       </div>
-      <p className="ws-muted">Newest first. “Balance after” is the whole account’s balance right after each entry, whatever the period shown.</p>
+      <p className="ws-muted">{t('statement.intro')}</p>
       {!period ? null
-        : list.isPending ? <Loading label="Loading the statement…" />
+        : list.isPending ? <Loading label={t('statement.loading')} />
         : list.isError && !list.data ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
-        : lines.length === 0 ? <Empty title="No entries">{filtered ? 'Nothing was recorded in this period.' : emptyText}</Empty>
+        : lines.length === 0 ? <Empty title={t('statement.empty')}>{filtered ? t('statement.emptyPeriod') : emptyText}</Empty>
         : (
           <>
             <div className="ws-table-wrap">
               <table className="j-table">
-                <caption className="j-sr-only">Statement entries, newest first</caption>
+                <caption className="j-sr-only">{t('statement.caption')}</caption>
                 <thead>
                   <tr>
-                    <th scope="col">Date (India time)</th><th scope="col">Description</th><th scope="col">Type</th><th scope="col">Reference</th>
-                    <th scope="col" className="fin-amount">Amount</th><th scope="col" className="fin-amount">Balance after</th>
+                    <th scope="col">{t('statement.column.date')}</th><th scope="col">{t('statement.column.description')}</th>
+                    <th scope="col">{t('statement.column.type')}</th><th scope="col">{t('column.reference')}</th>
+                    <th scope="col" className="fin-amount">{shared('field.amount')}</th><th scope="col" className="fin-amount">{t('statement.column.balanceAfter')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -191,9 +195,9 @@ export function StatementSection({ queryKey, load, csv, csvPrefix, emptyText }: 
                 </tbody>
               </table>
             </div>
-            {list.isFetchNextPageError && <ErrorState message={`Could not load older entries: ${messageOf(list.error)}`} onRetry={() => void list.fetchNextPage()} />}
+            {list.isFetchNextPageError && <ErrorState message={t('statement.olderFailed', { error: messageOf(list.error) })} onRetry={() => void list.fetchNextPage()} />}
             {list.hasNextPage && (
-              <div><Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>Show older entries</Button></div>
+              <div><Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>{t('statement.older')}</Button></div>
             )}
           </>
         )}
@@ -224,7 +228,7 @@ function CsvDownload({ period, csv, csvPrefix }: { period: PeriodQuery; csv: (q:
       const blob = await csv(period, c.signal);
       const real = await isStatementCsv(blob);
       if (c.signal.aborted) return;
-      if (!real) { setError('The server did not return the statement file. Try again.'); return; }
+      if (!real) { setError(t('csv.notAFile')); return; }
       const name = statementCsvName(csvPrefix, period);
       const url = URL.createObjectURL(new Blob([blob], { type: 'text/csv' }));
       setFile({ url, name });
@@ -241,14 +245,17 @@ function CsvDownload({ period, csv, csvPrefix }: { period: PeriodQuery; csv: (q:
     }
   }
 
-  const which = period.from || period.to ? `${period.from ? `from ${formatDate(period.from)} ` : ''}${period.to ? `to ${formatDate(period.to)}` : ''}`.trim() : 'all entries';
+  const which = period.from && period.to ? t('csv.period.fromTo', { from: formatDate(period.from), to: formatDate(period.to) })
+    : period.from ? t('csv.period.from', { from: formatDate(period.from) })
+    : period.to ? t('csv.period.to', { to: formatDate(period.to) })
+    : t('csv.period.all');
   return (
     <div className="ws-action">
       <Button variant="secondary" busy={busy} onClick={() => void download()}>
-        <Download size={16} aria-hidden="true" /> Download CSV ({which})
+        <Download size={16} aria-hidden="true" /> {t('csv.download', { period: which })}
       </Button>
-      {file && <a href={file.url} download={file.name}>Save {file.name} again</a>}
-      {error && <Alert>Could not download the statement: {error}</Alert>}
+      {file && <a href={file.url} download={file.name}>{t('csv.saveAgain', { file: file.name })}</a>}
+      {error && <Alert>{t('csv.failed', { error })}</Alert>}
     </div>
   );
 }
@@ -268,11 +275,11 @@ export function PayoutsTable<P extends SettlementPayout>({ payouts, caption, acc
         <caption className="j-sr-only">{caption}</caption>
         <thead>
           <tr>
-            <th scope="col">Paid on</th>
-            {accountCell && <th scope="col">Account</th>}
-            <th scope="col" className="fin-amount">Amount</th><th scope="col">Method</th><th scope="col">Reference</th>
-            <th scope="col">Sent to</th><th scope="col">Status</th>
-            {actions && <th scope="col">Actions</th>}
+            <th scope="col">{t('payouts.column.paidOn')}</th>
+            {accountCell && <th scope="col">{t('payouts.column.account')}</th>}
+            <th scope="col" className="fin-amount">{shared('field.amount')}</th><th scope="col">{t('payouts.column.method')}</th><th scope="col">{t('column.reference')}</th>
+            <th scope="col">{t('payouts.column.sentTo')}</th><th scope="col">{shared('field.status')}</th>
+            {actions && <th scope="col">{t('payouts.column.actions')}</th>}
           </tr>
         </thead>
         <tbody>
@@ -283,7 +290,7 @@ export function PayoutsTable<P extends SettlementPayout>({ payouts, caption, acc
               <td className="fin-amount">{money(p.amountMinor)}</td>
               <td>{PAYOUT_METHOD_LABEL[p.method] ?? p.method}</td>
               <td>{p.reference}{p.note ? <div className="ws-muted">{p.note}</div> : null}</td>
-              <td>{p.destination?.label}{p.destination ? <div className="ws-muted">Details version {p.destination.detailsVersion}</div> : null}</td>
+              <td>{p.destination?.label}{p.destination ? <div className="ws-muted">{t('payouts.detailsVersion', { version: p.destination.detailsVersion })}</div> : null}</td>
               <td>
                 <Badge tone={p.state === 'voided' ? 'danger' : 'ok'}>{PAYOUT_STATE_LABEL[p.state] ?? p.state}</Badge>
                 {p.state === 'voided' && <div className="ws-muted">{p.voidReason ? `“${p.voidReason}”` : ''}{p.voidedAt ? ` · ${formatDateTime(p.voidedAt)}` : ''}</div>}
@@ -297,13 +304,23 @@ export function PayoutsTable<P extends SettlementPayout>({ payouts, caption, acc
   );
 }
 
-const ACTION_LABEL: Record<string, string> = {
-  'finance.payout_details_changed': 'Payout details changed',
-  'finance.payout_details_verified': 'Payout details verified',
-  'finance.payout_recorded': 'Payout recorded',
-  'finance.payout_voided': 'Payout voided',
-  'finance.adjustment_posted': 'Adjustment posted',
-};
+/** Keys of the finance event names, read at render. */
+const ACTION_LABEL = {
+  'finance.payout_details_changed': 'event.action.detailsChanged',
+  'finance.payout_details_verified': 'event.action.detailsVerified',
+  'finance.payout_recorded': 'event.action.payoutRecorded',
+  'finance.payout_voided': 'event.action.payoutVoided',
+  'finance.adjustment_posted': 'event.action.adjustmentPosted',
+} as const;
+const actionLabel = (action: string) => (Object.hasOwn(ACTION_LABEL, action) ? t(ACTION_LABEL[action as keyof typeof ACTION_LABEL]) : action);
+
+/** "Bank", with the IFSC and the account number's last four digits when known. */
+function bankLine(ifsc: string | undefined, last4: string | undefined): string {
+  if (ifsc && last4) return t('event.bankIfscLast4', { ifsc, last4 });
+  if (ifsc) return t('event.bankIfsc', { ifsc });
+  if (last4) return t('event.bankLast4', { last4 });
+  return t('event.bank');
+}
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
 const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
@@ -315,12 +332,13 @@ export function eventText(e: FinanceEvent): string {
   const version = num(d.version);
   switch (e.action) {
     case 'finance.payout_details_changed':
-      return [d.method === 'upi' ? `UPI ${str(d.upiId) ?? ''}`.trim() : `Bank${str(d.ifsc) ? `, IFSC ${str(d.ifsc)}` : ''}${str(d.last4) ? `, account ending ${str(d.last4)}` : ''}`,
-        version ? `version ${version}` : ''].filter(Boolean).join(' · ');
+      return [d.method === 'upi' ? t('event.upi', { upiId: str(d.upiId) ?? '' }).trim() : bankLine(str(d.ifsc), str(d.last4)),
+        version ? t('details.version', { version }) : ''].filter(Boolean).join(' · ');
     case 'finance.payout_details_verified':
-      return version ? `Version ${version}` : '';
+      return version ? t('event.versionTitle', { version }) : '';
     case 'finance.payout_recorded':
-      return [amount !== undefined ? money(amount) : '', str(d.reference) ? `reference ${str(d.reference)}` : '', str(d.paidOn) ? `paid on ${formatDate(str(d.paidOn))}` : ''].filter(Boolean).join(' · ');
+      return [amount !== undefined ? money(amount) : '', str(d.reference) ? t('event.reference', { reference: str(d.reference)! }) : '',
+        str(d.paidOn) ? t('event.paidOn', { date: formatDate(str(d.paidOn)) }) : ''].filter(Boolean).join(' · ');
     case 'finance.payout_voided':
     case 'finance.adjustment_posted':
       return [amount !== undefined ? (amount < 0 ? `− ${money(-amount)}` : money(amount)) : '', str(d.reason) ? `“${str(d.reason)}”` : ''].filter(Boolean).join(' · ');
@@ -330,13 +348,14 @@ export function eventText(e: FinanceEvent): string {
 }
 
 export function EventsList({ events, selfId }: { events: readonly FinanceEvent[]; selfId?: string }) {
-  const who = (e: FinanceEvent) => (e.byKind === 'admin' ? 'Jansetu admin' : e.byKind === 'doctor' ? 'The doctor' : selfId && e.by === selfId ? 'You' : 'A member');
+  const who = (e: FinanceEvent) => (e.byKind === 'admin' ? t('event.by.admin') : e.byKind === 'doctor' ? t('event.by.doctor')
+    : selfId && e.by === selfId ? t('event.by.you') : t('event.by.member'));
   return (
     <ul className="fin-events">
       {events.map((e) => (
         <li key={e._id}>
           <time dateTime={e.at}>{formatDateTime(e.at)}</time>
-          <strong>{ACTION_LABEL[e.action] ?? e.action}</strong> · {who(e)}
+          <strong>{actionLabel(e.action)}</strong> · {who(e)}
           {eventText(e) ? <div className="ws-muted">{eventText(e)}</div> : null}
         </li>
       ))}
@@ -348,8 +367,9 @@ export function EventsList({ events, selfId }: { events: readonly FinanceEvent[]
  * Q13: a list read one exact cursor page at a time (`pagination {total, nextCursor}`), with the four states, the total and
  * "Show more". `queryKey` must identify the list (account and scope); pages are de-duplicated by `_id`.
  */
-export function PagedSection<T extends { _id: string }>({ id, title, queryKey, load, empty, more = 'Show more', children }: {
-  id: string; title: string; queryKey: readonly unknown[];
+export function PagedSection<T extends { _id: string }>({ id, title, loading, emptyTitle, queryKey, load, empty, more = shared('action.showMore'), children }: {
+  /** The heading, the loading line ("Loading payouts…") and the empty state's title ("No payouts"). */
+  id: string; title: string; loading: string; emptyTitle: string; queryKey: readonly unknown[];
   load: (cursor: string | undefined) => Promise<Page<T>>;
   empty: ReactNode; more?: string; children: (rows: T[]) => ReactNode;
 }) {
@@ -369,14 +389,14 @@ export function PagedSection<T extends { _id: string }>({ id, title, queryKey, l
   return (
     <section className="ws-section" aria-labelledby={id}>
       <h2 id={id}>{title}</h2>
-      {list.isPending ? <Loading label={`Loading ${title.toLowerCase()}…`} />
+      {list.isPending ? <Loading label={loading} />
         : list.isError && !list.data ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
-        : rows.length === 0 ? <Empty title={`No ${title.toLowerCase()}`}>{empty}</Empty>
+        : rows.length === 0 ? <Empty title={emptyTitle}>{empty}</Empty>
         : (
           <>
-            <p className="ws-count">{total} in all · showing {rows.length}</p>
+            <p className="ws-count">{t('list.count', { total, shown: rows.length })}</p>
             {children(rows)}
-            {list.isFetchNextPageError && <ErrorState message={`Could not load more: ${messageOf(list.error)}`} onRetry={() => void list.fetchNextPage()} />}
+            {list.isFetchNextPageError && <ErrorState message={t('list.moreFailed', { error: messageOf(list.error) })} onRetry={() => void list.fetchNextPage()} />}
             {list.hasNextPage && (
               <div><Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>{more}</Button></div>
             )}
@@ -387,17 +407,18 @@ export function PagedSection<T extends { _id: string }>({ id, title, queryKey, l
 }
 
 /** A list section with the four states. */
-export function ListSection<T>({ id, title, q, empty, children }: {
-  id: string; title: string;
+export function ListSection<T>({ id, title, loading, emptyTitle, q, empty, children }: {
+  /** The heading, the loading line and the empty state's title. */
+  id: string; title: string; loading: string; emptyTitle: string;
   q: { isPending: boolean; isError: boolean; error: unknown; data: T[] | undefined; refetch: () => unknown };
   empty: string; children: (rows: T[]) => ReactNode;
 }) {
   return (
     <section className="ws-section" aria-labelledby={id}>
       <h2 id={id}>{title}</h2>
-      {q.isPending ? <Loading label={`Loading ${title.toLowerCase()}…`} />
+      {q.isPending ? <Loading label={loading} />
         : q.isError || !q.data ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : q.data.length === 0 ? <Empty title={`No ${title.toLowerCase()}`}>{empty}</Empty>
+        : q.data.length === 0 ? <Empty title={emptyTitle}>{empty}</Empty>
         : children(q.data)}
     </section>
   );
@@ -460,7 +481,7 @@ export function PayoutDetailsForm({ account, audience, reread, save, perform, on
     update(() => latest);
     setReviewing(false);
     if (touched) {
-      setStale(`The payout details were changed elsewhere while you were editing (now version ${v}). The form shows what is saved now; make your change again if it is still needed.`);
+      setStale(t('form.staleEditing', { version: v }));
     }
   }, [rebaseTo, update]);
 
@@ -474,7 +495,7 @@ export function PayoutDetailsForm({ account, audience, reread, save, perform, on
   const draft = d.draft;
   const built = payoutDetailsProblems(draft);
   const mismatch = draft.method === 'bank' && draft.accountNumber.replace(/\s+/g, '') !== draft.confirmNumber.replace(/\s+/g, '');
-  const allErrors: Record<string, string | undefined> = { ...built.errors, ...(mismatch ? { confirmNumber: 'The two account numbers are not the same.' } : {}) };
+  const allErrors: Record<string, string | undefined> = { ...built.errors, ...(mismatch ? { confirmNumber: t('form.mismatch') } : {}) };
   const errors = tried ? allErrors : {};
   const valid = built.body !== null && !mismatch;
   const set = <K extends keyof DetailsDraft>(k: K, v: DetailsDraft[K]) => { generation.current += 1; d.set(k, v); setReviewing(false); setError(null); };
@@ -509,7 +530,7 @@ export function PayoutDetailsForm({ account, audience, reread, save, perform, on
       if (moved() || v !== reviewedVersion) {
         // A newer destination exists (seen by the re-read or by a refresh meanwhile): show it, send nothing.
         if (baseVersion.current !== v) moveTo(draftOfDetails(now), v, true);
-        else setStale(`The payout details were changed elsewhere while you were saving (now version ${v}). Nothing was saved; the form shows what is saved now. Make your change again if it is still needed.`);
+        else setStale(t('form.staleSaving', { version: v }));
         setReviewing(false);
         onStale?.();
         return null;
@@ -532,11 +553,11 @@ export function PayoutDetailsForm({ account, audience, reread, save, perform, on
           const v = now?.payoutDetailsVersion ?? 0;
           if (baseVersion.current !== v) moveTo(draftOfDetails(now), v, true);
         } catch { /* the page's own refresh shows the details */ }
-        if (live.current) setStale('The payout details were changed elsewhere just as you saved, so nothing was saved. The form shows what is saved now; make your change again if it is still needed.');
+        if (live.current) setStale(t('form.staleRace'));
         return;
       }
-      if (!sent || definitelyNotRecorded(err)) setError(sent ? `Not saved: ${messageOf(err)}` : messageOf(err));
-      else onLost(`The answer did not come back (${messageOf(err)}), so the details may or may not have been saved. Check the payout details shown before changing them again.`);
+      if (!sent || definitelyNotRecorded(err)) setError(sent ? t('form.notSaved', { error: messageOf(err) }) : messageOf(err));
+      else onLost(t('form.lost', { error: messageOf(err) }));
     } finally {
       if (live.current) setBusy(false);
     }
@@ -546,46 +567,44 @@ export function PayoutDetailsForm({ account, audience, reread, save, perform, on
     ? { method: 'bank', ifsc: built.body.ifsc, bankName: built.body.bankName, accountNumberLast4: built.body.accountNumber.slice(-4) }
     : { method: 'upi', upiId: built.body.upiId }) : '';
   return (
-    <form className="rx-form" noValidate onSubmit={review} aria-label="Change payout details">
+    <form className="rx-form" noValidate onSubmit={review} aria-label={t('details.change')}>
       {stale && <Alert tone="warn">{stale}</Alert>}
       <fieldset className="fin-radio">
-        <legend>Pay to</legend>
-        <label><input type="radio" name="fin-method" checked={draft.method === 'bank'} onChange={() => set('method', 'bank')} /> Bank account</label>
-        <label><input type="radio" name="fin-method" checked={draft.method === 'upi'} onChange={() => set('method', 'upi')} /> UPI</label>
+        <legend>{t('form.payTo')}</legend>
+        <label><input type="radio" name="fin-method" checked={draft.method === 'bank'} onChange={() => set('method', 'bank')} /> {t('details.bankAccount')}</label>
+        <label><input type="radio" name="fin-method" checked={draft.method === 'upi'} onChange={() => set('method', 'upi')} /> {t('details.upi')}</label>
       </fieldset>
       {draft.method === 'bank' ? (
         <div className="rx-form-row">
-          <TextField label="Account holder name" value={draft.accountName} maxLength={MAX_ACCOUNT_NAME} error={errors.accountName} onChange={(e) => set('accountName', e.target.value)} />
-          <TextField label="Account number" inputMode="numeric" autoComplete="off" value={draft.accountNumber} error={errors.accountNumber}
-            hint={audience === 'owner' && account?.payoutDetails?.method === 'bank' ? 'Enter the full number: the saved one is shown masked.' : undefined}
+          <TextField label={t('form.accountName')} value={draft.accountName} maxLength={MAX_ACCOUNT_NAME} error={errors.accountName} onChange={(e) => set('accountName', e.target.value)} />
+          <TextField label={t('details.accountNumber')} inputMode="numeric" autoComplete="off" value={draft.accountNumber} error={errors.accountNumber}
+            hint={audience === 'owner' && account?.payoutDetails?.method === 'bank' ? t('form.accountNumberHint') : undefined}
             onChange={(e) => set('accountNumber', e.target.value)} />
-          <TextField label="Account number again" inputMode="numeric" autoComplete="off" value={draft.confirmNumber} error={errors.confirmNumber}
+          <TextField label={t('form.accountNumberAgain')} inputMode="numeric" autoComplete="off" value={draft.confirmNumber} error={errors.confirmNumber}
             onChange={(e) => set('confirmNumber', e.target.value)} />
-          <TextField label="IFSC" value={draft.ifsc} maxLength={11} error={errors.ifsc} onChange={(e) => set('ifsc', e.target.value)} />
-          <TextField label="Bank name (optional)" value={draft.bankName} maxLength={MAX_BANK_NAME} error={errors.bankName} onChange={(e) => set('bankName', e.target.value)} />
+          <TextField label={t('details.ifsc')} value={draft.ifsc} maxLength={11} error={errors.ifsc} onChange={(e) => set('ifsc', e.target.value)} />
+          <TextField label={t('form.bankName')} value={draft.bankName} maxLength={MAX_BANK_NAME} error={errors.bankName} onChange={(e) => set('bankName', e.target.value)} />
         </div>
       ) : (
         <div className="rx-form-row">
-          <TextField label="UPI ID" value={draft.upiId} maxLength={MAX_UPI_ID} error={errors.upiId} onChange={(e) => set('upiId', e.target.value)} />
-          <TextField label="Name (optional)" value={draft.accountName} maxLength={MAX_ACCOUNT_NAME} error={errors.accountName} onChange={(e) => set('accountName', e.target.value)} />
+          <TextField label={t('details.upiId')} value={draft.upiId} maxLength={MAX_UPI_ID} error={errors.upiId} onChange={(e) => set('upiId', e.target.value)} />
+          <TextField label={t('form.nameOptional')} value={draft.accountName} maxLength={MAX_ACCOUNT_NAME} error={errors.accountName} onChange={(e) => set('accountName', e.target.value)} />
         </div>
       )}
       {error && <Alert>{error}</Alert>}
       {!reviewing ? (
         <div className="rx-actions ws-actions">
-          <Button type="submit">Review the change</Button>
-          <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+          <Button type="submit">{t('form.review')}</Button>
+          <Button variant="ghost" onClick={onCancel}>{shared('action.cancel')}</Button>
         </div>
       ) : (
-        <div className="confirm" role="group" aria-label="Save the payout details">
+        <div className="confirm" role="group" aria-label={t('form.confirmLabel')}>
           <div className="confirm-text">
-            {audience === 'owner'
-              ? <>Send payouts to {label} from now on? Jansetu must verify any change (even to the same details) before the next payout: payouts wait until then. The earlier details stop being used.</>
-              : <>Save {label} as the payout details? They replace the current ones and must be verified again before a payout can be recorded to them.</>}
+            {audience === 'owner' ? t('form.confirm.owner', { destination: label }) : t('form.confirm.admin', { destination: label })}
           </div>
           <div className="confirm-actions">
-            <Button busy={busy} onClick={() => void send()}>Save payout details</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setReviewing(false)}>Back</Button>
+            <Button busy={busy} onClick={() => void send()}>{t('form.save')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setReviewing(false)}>{shared('action.back')}</Button>
           </div>
         </div>
       )}

@@ -70,6 +70,7 @@ export function adminQueuesApi(c: ApiClient) {
      * 'absent' = no provider booking exists. Either settles the cancellation (refund) when nothing else is open.
      */
     reconcileCancellation: (bookingId: string, providerOutcome: ProviderOutcome, expectedObligations: string) => {
+      // i18n-ignore: a programming error, not shown
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(bookingId)) throw new Error('Invalid booking id');
       // Refused with 409 EXTERNAL_OBLIGATIONS_CHANGED if the obligations differ from what the admin reviewed.
       return c.post<{ _id: string; status?: string }>(`/external-bookings/bookings/${bookingId}/reconcile-cancellation`,

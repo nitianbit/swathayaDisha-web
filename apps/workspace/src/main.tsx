@@ -8,6 +8,8 @@ import './styles.css';
 import { App } from './App.tsx';
 import { SessionProvider } from './session.tsx';
 import { startApp } from './nativeShell.ts';
+import { t } from './i18n/shell/index.ts';
+import { shared } from '@jansetu/ui';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -38,8 +40,8 @@ void startLanguage('workspace').then(() => startApp(
   ),
   (retry) => root.render(
     <main className="login" role="alert">
-      <p>The app could not open this phone's secure storage, which keeps you signed in safely.</p>
-      <button type="button" onClick={retry}>Try again</button>
+      <p>{t('app.secureStorage')}</p>
+      <button type="button" onClick={retry}>{shared('action.tryAgain')}</button>
     </main>,
   ),
 ));

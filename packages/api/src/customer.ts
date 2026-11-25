@@ -217,7 +217,7 @@ export interface CouponCheck { isValid: boolean; discountAmount?: number; finalA
 export const COUPON_PATTERN = /^[A-Z0-9]{3,50}$/;
 
 const hex = /^[0-9a-fA-F]{24}$/;
-const id = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; };
+const id = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; }; // i18n-ignore: a programming error, not shown
 
 export function customerApi(c: ApiClient) {
   return {
@@ -255,7 +255,7 @@ export function customerApi(c: ApiClient) {
       c.page<Specialist>('/specialists', { query: { page, limit, sortBy: 'rating', sortOrder: 'desc', search: search || undefined } }),
     doctor: (specialistId: string) => c.get<Specialist>(`/specialists/${id(specialistId, 'doctor')}`),
     doctorSlots: (specialistId: string, date: string) => {
-      if (!/^\d{8}$/.test(date)) throw new Error('Invalid date');
+      if (!/^\d{8}$/.test(date)) throw new Error('Invalid date'); // i18n-ignore: a programming error, not shown
       return c.get<Slot[]>(`/slots/specialist/${id(specialistId, 'doctor')}`, { query: { date } });
     },
     /** With a request key: the same key and details again return the first booking (`replayed`), never a second. */

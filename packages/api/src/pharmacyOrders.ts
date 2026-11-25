@@ -1,4 +1,6 @@
 import type { ApiClient, Page } from './client.ts';
+import { t } from './i18n/pharmacy/index.ts';
+import { wordMap } from './i18n/words.ts';
 
 /** Mirrors src1/modules/pharmacyOrders/types (only the fields the screens read). */
 export type OrderStatus =
@@ -136,29 +138,29 @@ export const ORDER_TRANSITIONS: Readonly<Record<OrderStatus, readonly OrderStatu
 export const CANCELLABLE_STATUSES: readonly OrderStatus[] = ['placed', 'accepted', 'packed'];
 
 /** The words staff see for each order status (Orders, order page, prescription review, Quality). */
-export const ORDER_STATUS_LABEL: Readonly<Record<OrderStatus, string>> = {
-  placed: 'Placed',
-  accepted: 'Accepted',
-  packed: 'Packed',
-  ready_for_pickup: 'Ready for pickup',
-  out_for_delivery: 'Out for delivery',
-  delivery_failed: 'Delivery failed',
-  completed: 'Completed',
-  abandoned: 'Abandoned',
-  cancelled: 'Cancelled',
-  rejected: 'Rejected',
-  pending_cancel: 'Cancellation requested',
-};
+export const ORDER_STATUS_LABEL: Readonly<Record<OrderStatus, string>> = wordMap(t, {
+  placed: 'order.status.placed',
+  accepted: 'order.status.accepted',
+  packed: 'order.status.packed',
+  ready_for_pickup: 'order.status.ready_for_pickup',
+  out_for_delivery: 'order.status.out_for_delivery',
+  delivery_failed: 'order.status.delivery_failed',
+  completed: 'order.status.completed',
+  abandoned: 'order.status.abandoned',
+  cancelled: 'order.status.cancelled',
+  rejected: 'order.status.rejected',
+  pending_cancel: 'order.status.pending_cancel',
+});
 
 /** The words staff see for each payment status; an order without one is unpaid (`pending`). */
-export const PAYMENT_STATUS_LABEL: Readonly<Record<PaymentStatus, string>> = {
-  pending: 'Unpaid',
-  authorized: 'Authorised',
-  paid: 'Paid',
-  failed: 'Payment failed',
-  refunded: 'Refunded',
-  partially_paid: 'Partly paid',
-};
+export const PAYMENT_STATUS_LABEL: Readonly<Record<PaymentStatus, string>> = wordMap(t, {
+  pending: 'payment.status.pending',
+  authorized: 'payment.status.authorized',
+  paid: 'payment.status.paid',
+  failed: 'payment.status.failed',
+  refunded: 'payment.status.refunded',
+  partially_paid: 'payment.status.partially_paid',
+});
 
 export const orderStatusLabel = (s: OrderStatus | undefined) => (s ? ORDER_STATUS_LABEL[s] ?? s : '—');
 export const paymentStatusLabel = (s: PaymentStatus | undefined) => PAYMENT_STATUS_LABEL[s ?? 'pending'] ?? s;
@@ -246,7 +248,7 @@ export function fetchableFileUrl(stored: string): string {
 export const REGISTRATION_NUMBER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9/\-. ]{2,59}$/;
 
 const idPath = (id: string) => {
-  if (!/^[0-9a-fA-F]{24}$/.test(id)) throw new Error('Invalid order id');
+  if (!/^[0-9a-fA-F]{24}$/.test(id)) throw new Error('Invalid order id'); // i18n-ignore: a programming error, not shown
   return `/pharmacy-orders/${id}`;
 };
 

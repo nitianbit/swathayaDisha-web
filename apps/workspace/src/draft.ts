@@ -1,4 +1,6 @@
 import { ApiError } from '@jansetu/api';
+import { subscribeLanguage } from '@jansetu/i18n';
+import { t } from './i18n/shell/index.ts';
 import { useCallback, useReducer, useRef } from 'react';
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -76,12 +78,14 @@ export function useDraft<T extends object>(initial: () => T) {
 
 /** Plain words for a conflict found when the server changed a field the person was also changing. */
 export function staleMessage(fields: string[]): string {
-  const list = fields.length > 1 ? `${fields.slice(0, -1).join(', ')} and ${fields.at(-1)}` : fields[0] ?? 'this record';
-  return `Someone else changed the ${list} while you were editing. The form now shows what is saved; make your change again if it is still needed.`;
+  const list = fields.length > 1 ? t('draft.fields', { list: fields.slice(0, -1).join(', '), last: fields.at(-1)! }) : fields[0] ?? t('draft.thisRecord');
+  return t('draft.stale', { fields: list });
 }
 
 /** Q10: the server refused an edit made from an older version of the record (409 RECORD_CHANGED). */
 export const isRecordChanged = (err: unknown) => err instanceof ApiError && err.status === 409 && err.code === 'RECORD_CHANGED';
 
 /** Shown when the record moved under a save but none of the person's own fields were touched by the other change. */
-export const RECORD_CHANGED_MESSAGE = 'Someone else changed this while you were saving, so nothing was saved. The form now shows what is saved; check it and save again.';
+export let RECORD_CHANGED_MESSAGE = t('draft.recordChanged');
+// Screens import it as a string (an ES live binding): read again in the new language on every switch.
+subscribeLanguage(() => { RECORD_CHANGED_MESSAGE = t('draft.recordChanged'); });

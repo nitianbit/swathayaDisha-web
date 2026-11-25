@@ -1,5 +1,7 @@
 import type { ApiClient, Page } from './client.ts';
 import type { PaymentOrder } from './customer.ts';
+import { t } from './i18n/assisted/index.ts';
+import { wordMap } from './i18n/words.ts';
 
 /**
  * Q4b "Consult now" for customers (`/instant`). Mirrors src1/modules/doctors/services/instant.ts (`onlineDoctors`,
@@ -99,7 +101,7 @@ export const INSTANT_PAYMENT_WINDOW_MIN = 30;
 /** onlineDoctorsQuerySchema: speciality 2–80 characters. */
 export const SPECIALITY_LIMITS = { min: 2, max: 80 } as const;
 
-export const INSTANT_MODE_LABEL: Record<InstantMode, string> = { video: 'Video call', call: 'Phone call', chat: 'Chat' };
+export const INSTANT_MODE_LABEL: Record<InstantMode, string> = wordMap(t, { video: 'mode.video', call: 'mode.call', chat: 'mode.chat' });
 
 /** Whether the customer can still act on a waiting request, and how. */
 export function waitingState(r: Pick<InstantRequest, 'status' | 'fundingState' | 'offerExpiresAt'>, now = Date.now()):
@@ -124,10 +126,11 @@ export function countdown(until: string | undefined, now = Date.now()): string {
 }
 
 const hex = /^[0-9a-fA-F]{24}$/;
+// i18n-ignore: a programming error, not shown
 const id = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; };
 const speciality = (s: string) => {
   const v = s.trim();
-  if (v.length < SPECIALITY_LIMITS.min || v.length > SPECIALITY_LIMITS.max) throw new Error('Invalid speciality');
+  if (v.length < SPECIALITY_LIMITS.min || v.length > SPECIALITY_LIMITS.max) throw new Error('Invalid speciality'); // i18n-ignore: a programming error, not shown
   return v;
 };
 const targetBody = (t: InstantTarget) => (t.kind === 'specific' ? { kind: 'specific', doctorId: id(t.doctorId, 'doctor') } : { kind: 'any' });

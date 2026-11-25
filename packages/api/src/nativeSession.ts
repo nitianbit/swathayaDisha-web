@@ -1,4 +1,5 @@
 import { ApiError } from './client.ts';
+import { t } from './i18n/index.ts';
 import type { NativeApp } from './auth.ts';
 
 /**
@@ -36,7 +37,7 @@ export async function rotateNative<T extends { refreshToken: string }>(store: Se
   refresh: (refreshToken: string) => Promise<T>): Promise<T> {
   const key = refreshTokenKey(app);
   const current = await store.get(key);
-  if (!current) throw new ApiError(401, 'Please sign in again', 'SESSION_ENDED');
+  if (!current) throw new ApiError(401, t('session.signInAgain'), 'SESSION_ENDED');
   try {
     const r = await refresh(current);
     await store.set(key, r.refreshToken);

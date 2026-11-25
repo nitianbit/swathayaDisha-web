@@ -3,6 +3,9 @@ import { ApiError, type ApiClient, type Page } from './client.ts';
 import { appointmentInstant } from './cancellationWindow.ts';
 import { fetchableFileUrl } from './pharmacyOrders.ts';
 import { istToday } from './finance.ts';
+import { t as core } from './i18n/index.ts';
+import { t, type AssistedKey } from './i18n/assisted/index.ts';
+import { labelledList, onLanguage, wordMap } from './i18n/words.ts';
 
 /**
  * WQ12: a pharmacy books a doctor consultation for a walk-in patient and pays from its Jansetu wallet (assisted booking
@@ -35,18 +38,18 @@ export const ASSISTED_GENDERS = ['Male', 'Female', 'Other'] as const;
 export type AssistedGender = (typeof ASSISTED_GENDERS)[number];
 
 export type AssistedMode = 'video' | 'call' | 'in-person';
-export const ASSISTED_MODE_LABEL: Readonly<Record<AssistedMode, string>> = { video: 'Video call', call: 'Phone call', 'in-person': 'At the clinic' };
+export const ASSISTED_MODE_LABEL: Readonly<Record<AssistedMode, string>> = wordMap(t, { video: 'mode.video', call: 'mode.call', 'in-person': 'mode.in-person' });
 export type JoinOn = 'partner_device' | 'patient_phone';
 
 /** `preferredLanguage` is a 2–3 letter code; these are the languages the patient may ask the doctor to speak. */
-export const PATIENT_LANGUAGES: readonly { code: string; label: string }[] = [
-  { code: 'hi', label: 'Hindi' }, { code: 'en', label: 'English' }, { code: 'bn', label: 'Bengali' }, { code: 'mr', label: 'Marathi' },
-  { code: 'te', label: 'Telugu' }, { code: 'ta', label: 'Tamil' }, { code: 'gu', label: 'Gujarati' }, { code: 'kn', label: 'Kannada' },
-  { code: 'ml', label: 'Malayalam' }, { code: 'or', label: 'Odia' }, { code: 'pa', label: 'Punjabi' },
+export const PATIENT_LANGUAGES: readonly { code: string; label: string }[] = labelledList(t, [
+  ['hi', 'language.hi'], ['en', 'language.en'], ['bn', 'language.bn'], ['mr', 'language.mr'],
+  ['te', 'language.te'], ['ta', 'language.ta'], ['gu', 'language.gu'], ['kn', 'language.kn'],
+  ['ml', 'language.ml'], ['or', 'language.or'], ['pa', 'language.pa'],
   // The owner's list (design §11.1): codes of 2–3 letters, as `preferredLanguage` requires. Nagamese has no code yet.
-  { code: 'as', label: 'Assamese' }, { code: 'lus', label: 'Mizo' }, { code: 'mni', label: 'Manipuri' }, { code: 'kha', label: 'Khasi' },
-  { code: 'grt', label: 'Garo' }, { code: 'ne', label: 'Nepali' }, { code: 'brx', label: 'Bodo' }, { code: 'trp', label: 'Kokborok' },
-];
+  ['as', 'language.as'], ['lus', 'language.lus'], ['mni', 'language.mni'], ['kha', 'language.kha'],
+  ['grt', 'language.grt'], ['ne', 'language.ne'], ['brx', 'language.brx'], ['trp', 'language.trp'],
+]);
 
 /**
  * The consent the pharmacy attests (`consent: { agreed, statementVersion, statementLanguage }`). The version names the
@@ -55,6 +58,7 @@ export const PATIENT_LANGUAGES: readonly { code: string; label: string }[] = [
 export const CONSENT_STATEMENT_VERSION = 'web-pharmacy-v2';
 export const CONSENT_STATEMENT_LANGUAGE = 'en';
 export const CONSENT_STATEMENT =
+  // i18n-ignore: the versioned consent text is recorded as English (round 6f, Q2)
   'The patient (or a family member with them) agreed that this pharmacy books this consultation for them on Jansetu; that an account is made for this number if it has none; that their name, phone number and the problem they describe are shared with Jansetu and the doctor; and that this pharmacy can see the prescription (medicines, advice and tests, not the diagnosis) for 90 days.';
 
 // ── Shapes (assisted/pharmacyCommands, consultations, bookerView; pharmacyWallet/services) ──
@@ -279,7 +283,9 @@ export interface TopupCheck { state: 'credited' | 'unpaid'; wallet: PharmacyWall
 
 /** Record ids and request keys checked before any request (shared by the assisted modules). */
 export const hex = /^[0-9a-fA-F]{24}$/;
+// i18n-ignore: a programming error, not shown
 export const idOf = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; };
+// i18n-ignore: a programming error, not shown
 export const keyOf = (v: string) => { if (!ASSISTED_KEY_PATTERN.test(v)) throw new Error('Invalid request key'); return v; };
 
 /** `/pharmacy-assisted/*` (phase 1a) and `/pharmacy-bookings` (phase 0): pharmacy token, operational pharmacies only. */
@@ -353,9 +359,9 @@ export type { Page };
 
 // ── Words and rules for the screens ──
 
-export const BOOKING_STATUS_LABEL: Readonly<Record<string, string>> = {
-  pending: 'Waiting', confirmed: 'Booked', completed: 'Done', cancelled: 'Cancelled', no_show: 'Patient did not come',
-};
+export const BOOKING_STATUS_LABEL: Readonly<Record<string, string>> = wordMap(t, {
+  pending: 'status.pending', confirmed: 'status.confirmed', completed: 'status.completed', cancelled: 'status.cancelled', no_show: 'status.no_show',
+});
 export const bookingStatusLabel = (s: string | undefined) => (s ? BOOKING_STATUS_LABEL[s] ?? s : '—');
 
 /** YYYYMMDD → "22 Nov 2026" (the slot's own India date). */
@@ -388,26 +394,26 @@ export function signedPaiseOf(m: WalletMovement): number {
   return m.transactionType === 'credit' || m.transactionType === 'refund' ? abs : -abs;
 }
 
-const MOVEMENT_LABEL: Readonly<Record<string, string>> = {
-  booking_debit: 'Paid for a consultation booking',
-  refund_credit: 'Refund of a cancelled booking',
-  chargeback: 'Taken back after a card dispute',
-  receivable_setoff: 'Used to clear money owed to Jansetu',
-  opening_balance: 'Opening balance',
-  adjustment: 'Correction by Jansetu',
-  withdrawal_hold: 'Withdrawal requested',
-  withdrawal_release: 'Withdrawal cancelled: money back',
-  withdrawal_void: 'Withdrawal bounced: money back',
-  consultation_payment: 'Paid for a consultation',
-  refund: 'Refund',
-  debit: 'Money taken out',
-};
+const MOVEMENT_LABEL: Readonly<Record<string, string>> = wordMap(t, {
+  booking_debit: 'movement.booking_debit',
+  refund_credit: 'movement.refund_credit',
+  chargeback: 'movement.chargeback',
+  receivable_setoff: 'movement.receivable_setoff',
+  opening_balance: 'movement.opening_balance',
+  adjustment: 'movement.adjustment',
+  withdrawal_hold: 'movement.withdrawal_hold',
+  withdrawal_release: 'movement.withdrawal_release',
+  withdrawal_void: 'movement.withdrawal_void',
+  consultation_payment: 'movement.consultation_payment',
+  refund: 'movement.refund',
+  debit: 'movement.debit',
+});
 
 /** Plain words for one wallet movement (the stored kind first; a credit is a top-up when it came from Razorpay). */
 export function movementLabel(m: WalletMovement): string {
   const kind = m.movementType ?? m.transactionType;
-  if (kind === 'credit') return m.referenceType === 'wallet_recharge' ? 'Top-up (card / UPI)' : 'Money added by Jansetu';
-  return MOVEMENT_LABEL[kind] ?? (signedPaiseOf(m) >= 0 ? 'Money added' : 'Money taken out');
+  if (kind === 'credit') return t(m.referenceType === 'wallet_recharge' ? 'movement.topup' : 'movement.adminCredit');
+  return MOVEMENT_LABEL[kind] ?? t(signedPaiseOf(m) >= 0 ? 'movement.credit' : 'movement.debit');
 }
 
 /** Whether the booking pharmacy may cancel it now: an assisted booking that is booked and has not started (§8.7). */
@@ -443,11 +449,11 @@ export function canBookerReschedule(b: BookedConsultation, now = new Date()): bo
   return canBookerCancel(b, now) && hex.test(String(b.specialistId ?? ''));
 }
 
-/** The rule the reschedule enforces, in plain words (shown next to "Change time"). */
-export const RESCHEDULE_RULE =
-  'You can move this consultation to another free time of the same doctor, any time before it starts. The price stays the same: nothing more is taken from your wallet and nothing is refunded. It stays a {mode}. The patient and the doctor are told the new time.';
+/** The rule the reschedule enforces, in plain words (shown next to "Change time"), with `{mode}` left in. */
+export let RESCHEDULE_RULE = '';
+onLanguage(() => { RESCHEDULE_RULE = t('reschedule.rule', { mode: '{mode}' }); });
 export const rescheduleRuleText = (mode: string | undefined) =>
-  RESCHEDULE_RULE.replace('{mode}', mode === 'in-person' ? 'visit at the clinic' : mode === 'call' ? 'phone call' : 'video call');
+  t('reschedule.rule', { mode: t(mode === 'in-person' ? 'reschedule.mode.in-person' : mode === 'call' ? 'reschedule.mode.call' : 'reschedule.mode.video') });
 
 /** The times a booking may move to: the doctor's free times in the booking's own mode, without the time it holds now. */
 export function rescheduleSlots(slots: readonly AssistedSlot[], b: Pick<BookedConsultation, 'slotId' | 'consultationMode' | 'bookingDate' | 'bookingTime'>): AssistedSlot[] {
@@ -462,8 +468,8 @@ export function rescheduleSlots(slots: readonly AssistedSlot[], b: Pick<BookedCo
 export const MAX_TYPED_NAME = 200;
 export function typedNameProblem(text: string): string | null {
   const name = cleanName(text);
-  if (!name) return 'Type the patient’s name.';
-  if (name.length > MAX_TYPED_NAME) return `Use at most ${MAX_TYPED_NAME} characters.`;
+  if (!name) return t('patient.nameEmpty');
+  if (name.length > MAX_TYPED_NAME) return t('field.tooLong', { max: MAX_TYPED_NAME });
   return null;
 }
 /** What the typed-name edit changes on this booking: the holder's link `id`, the name shown for the holder now, and whether the patient is a family member. */
@@ -489,15 +495,9 @@ export function typedNameTarget(b: Pick<BookedConsultation, '_id' | 'userId' | '
 
 /** How the patient joins, in plain words, for the confirmation and the list. */
 export function joinWords(mode: string | undefined, on: JoinOn | undefined): string {
-  if (mode === 'in-person') return 'The patient goes to the doctor’s clinic at the booked time.';
-  if (mode === 'call') {
-    return on === 'partner_device'
-      ? 'The doctor phones this pharmacy’s number at the booked time. Keep the patient with you.'
-      : 'The doctor phones the patient’s number at the booked time.';
-  }
-  return on === 'partner_device'
-    ? 'Open “Booked consultations” on this device. A “Join call” button appears 10 minutes before the time.'
-    : 'The patient signs in to the Jansetu app on their phone with this number and taps Join.';
+  if (mode === 'in-person') return t('join.inPerson');
+  if (mode === 'call') return t(on === 'partner_device' ? 'join.callHere' : 'join.callPatient');
+  return t(on === 'partner_device' ? 'join.videoHere' : 'join.videoPatient');
 }
 
 // ── Refusals in plain words ──
@@ -509,7 +509,7 @@ export interface Refusal { kind: RefusalKind; message: string; priceMinor?: numb
 /** Paise as money ("₹1,234.50"); kept as `rupees` for the screens that import it by that name. */
 export const rupees = formatPaise;
 const waitWords = (seconds: number | undefined) =>
-  !seconds ? 'later' : seconds < 90 ? 'in a minute' : seconds < 3600 ? `in about ${Math.ceil(seconds / 60)} minutes` : `in about ${Math.ceil(seconds / 3600)} hours`;
+  !seconds ? t('wait.later') : seconds < 90 ? t('wait.minute') : seconds < 3600 ? t('wait.minutes', { n: Math.ceil(seconds / 60) }) : t('wait.hours', { n: Math.ceil(seconds / 3600) });
 
 /**
  * The switch is off: 503 `ASSISTED_BOOKING_DISABLED`, or the route does not exist on this server yet (a 404 with no
@@ -520,113 +520,119 @@ export function isSwitchedOff(err: unknown): boolean {
   if (err.code === 'ASSISTED_BOOKING_DISABLED') return true;
   return (err.status === 404 || err.status === 503) && !err.code;
 }
-export const SWITCHED_OFF_MESSAGE = 'Booking for patients is not switched on yet.';
+export let SWITCHED_OFF_MESSAGE = '';
+onLanguage(() => { SWITCHED_OFF_MESSAGE = t('switchedOff'); });
 
-const LIMIT_WORDS: Readonly<Record<string, (wait: string) => string>> = {
-  lookups: (wait) => `You have looked up many patients this hour. Try again ${wait}.`,
-  new_accounts: () => 'Your pharmacy has added the most new patients allowed today. Try again tomorrow, or book for a patient already on Jansetu.',
-  bookings_per_phone: () => 'This phone number already has the most bookings allowed today. Try again tomorrow.',
-  booker_cancellations: () => 'Your pharmacy cancelled many bookings today, so new bookings are paused until tomorrow. You can still cancel.',
+/** `ASSISTED_LIMIT_REACHED`'s `limit` → its words (`{wait}`: when to try again). */
+const LIMIT_WORDS: Readonly<Record<string, AssistedKey>> = {
+  lookups: 'limit.lookups',
+  new_accounts: 'limit.new_accounts',
+  bookings_per_phone: 'limit.bookings_per_phone',
+  booker_cancellations: 'limit.booker_cancellations',
   // WQ16b (r10b): card bookings of one pharmacy waiting for payment at once (ASSISTED_LIMIT_PENDING_CARD_BOOKINGS).
-  pending_card_bookings: () => 'Too many bookings are waiting for payment. Pay or cancel one of them first.',
+  pending_card_bookings: 'limit.pending_card_bookings',
 };
 
-const CODE_WORDS: Readonly<Record<string, Refusal>> = {
-  INSUFFICIENT_BALANCE: { kind: 'topup', message: 'Your Jansetu wallet does not have enough money for this booking. Top up the wallet, then pay again.' },
-  WALLET_FROZEN: { kind: 'wallet', message: 'Your Jansetu wallet is on hold, so it cannot pay for bookings. Please contact Jansetu support.' },
-  WALLET_RECEIVABLE: { kind: 'wallet', message: 'Your wallet owes money to Jansetu after a disputed card payment, so it cannot pay for bookings. Please contact Jansetu support.' },
-  WALLET_INACTIVE: { kind: 'wallet', message: 'Your Jansetu wallet is switched off. Please contact Jansetu support.' },
-  SLOT_NOT_AVAILABLE: { kind: 'slot', message: 'This time was just taken. Choose another time.' },
-  SLOT_STARTED: { kind: 'slot', message: 'This time has already started. Choose a later time.' },
-  DOCTOR_NOT_AVAILABLE: { kind: 'doctor', message: 'This doctor is not taking bookings now. Choose another doctor.' },
-  DOCTOR_NOT_FOUND: { kind: 'doctor', message: 'This doctor is not taking bookings now. Choose another doctor.' },
-  SPECIALIST_NOT_VERIFIED: { kind: 'doctor', message: 'This doctor is not verified yet. Choose another doctor.' },
-  CONSENT_REQUIRED: { kind: 'patient', message: 'Tick “Patient agreed to this booking” first.' },
-  INVALID_PHONE: { kind: 'patient', message: 'Enter a valid 10-digit mobile number.' },
-  DEPENDENT_NOT_FOUND: { kind: 'patient', message: 'This family member was not found on this phone number. Add them by name instead.' },
-  INVALID_COUPON: { kind: 'coupon', message: 'This coupon code does not work for this booking. Remove it or check the code.' },
-  COUPON_NOT_FOR_ASSISTED: { kind: 'coupon', message: 'This coupon cannot be used on a booking made for a patient. Remove it.' },
-  COUPON_EXHAUSTED: { kind: 'coupon', message: 'This coupon has been fully used. Remove it.' },
+/** A refusal's kind and the key of its words (read when it is answered). */
+export type RefusalWords = Readonly<Record<string, { kind: RefusalKind; key: AssistedKey }>>;
+export const refusalOf = (w: { kind: RefusalKind; key: AssistedKey }): Refusal => ({ kind: w.kind, message: t(w.key) });
+
+const CODE_WORDS: RefusalWords = {
+  INSUFFICIENT_BALANCE: { kind: 'topup', key: 'refusal.INSUFFICIENT_BALANCE' },
+  WALLET_FROZEN: { kind: 'wallet', key: 'refusal.WALLET_FROZEN' },
+  WALLET_RECEIVABLE: { kind: 'wallet', key: 'refusal.WALLET_RECEIVABLE' },
+  WALLET_INACTIVE: { kind: 'wallet', key: 'refusal.WALLET_INACTIVE' },
+  SLOT_NOT_AVAILABLE: { kind: 'slot', key: 'refusal.SLOT_NOT_AVAILABLE' },
+  SLOT_STARTED: { kind: 'slot', key: 'refusal.SLOT_STARTED' },
+  DOCTOR_NOT_AVAILABLE: { kind: 'doctor', key: 'refusal.DOCTOR_NOT_AVAILABLE' },
+  DOCTOR_NOT_FOUND: { kind: 'doctor', key: 'refusal.DOCTOR_NOT_AVAILABLE' },
+  SPECIALIST_NOT_VERIFIED: { kind: 'doctor', key: 'refusal.SPECIALIST_NOT_VERIFIED' },
+  CONSENT_REQUIRED: { kind: 'patient', key: 'refusal.CONSENT_REQUIRED' },
+  INVALID_PHONE: { kind: 'patient', key: 'patient.phoneInvalid' },
+  DEPENDENT_NOT_FOUND: { kind: 'patient', key: 'refusal.DEPENDENT_NOT_FOUND' },
+  INVALID_COUPON: { kind: 'coupon', key: 'refusal.INVALID_COUPON' },
+  COUPON_NOT_FOR_ASSISTED: { kind: 'coupon', key: 'refusal.COUPON_NOT_FOR_ASSISTED' },
+  COUPON_EXHAUSTED: { kind: 'coupon', key: 'refusal.COUPON_EXHAUSTED' },
   // WQ16 (r10 §23.3): the card switch is off; a free consultation (nothing to pay) is booked with the wallet method.
-  PAYMENT_METHOD_UNAVAILABLE: { kind: 'card', message: 'Card payment is not switched on yet. Pay from your Jansetu wallet.' },
-  NOTHING_TO_PAY: { kind: 'card', message: 'There is nothing to pay for this consultation, so it cannot be paid by card. Book it with the wallet: nothing is taken from it.' },
-  IDEMPOTENCY_KEY_REUSED: { kind: 'other', message: 'This booking request was already used with other details. Start the booking again.' },
-  REQUEST_ABANDONED: { kind: 'other', message: 'This booking was given up earlier, so it was not made. Start the booking again.' },
-  CUSTOMER_LINKING_UNAVAILABLE: { kind: 'other', message: 'Booking for patients is not ready on the server yet. Try again later.' },
-  INDEXES_OUTDATED: { kind: 'other', message: 'The server needs an update before this can be used. Please ask the Jansetu team.' },
-  PHARMACY_INACTIVE: { kind: 'other', message: 'Your pharmacy account is not active. Please contact Jansetu support.' },
-  PHARMACY_NOT_VERIFIED: { kind: 'other', message: 'Your pharmacy is not verified yet, so it cannot book for patients.' },
-  PHARMACY_PROFILE_REQUIRED: { kind: 'other', message: 'Your pharmacy profile is not complete. Please contact Jansetu support.' },
-  BOOKING_ALREADY_STARTED: { kind: 'other', message: 'The consultation has already started, so it can no longer be cancelled.' },
-  BOOKING_NOT_CANCELLABLE: { kind: 'other', message: 'This consultation is finished, so it cannot be cancelled.' },
-  NO_SHOW_NOT_REFUNDABLE: { kind: 'other', message: 'This consultation was moved after the patient did not come, so it cannot be cancelled for a refund.' },
-  BOOKING_CHANGED: { kind: 'other', message: 'This booking changed since you opened it. Look at it again, then try again.' },
-  BOOKING_NOT_FOUND: { kind: 'other', message: 'This booking was not found.' },
+  PAYMENT_METHOD_UNAVAILABLE: { kind: 'card', key: 'refusal.PAYMENT_METHOD_UNAVAILABLE' },
+  NOTHING_TO_PAY: { kind: 'card', key: 'refusal.NOTHING_TO_PAY' },
+  IDEMPOTENCY_KEY_REUSED: { kind: 'other', key: 'refusal.IDEMPOTENCY_KEY_REUSED' },
+  REQUEST_ABANDONED: { kind: 'other', key: 'refusal.REQUEST_ABANDONED' },
+  CUSTOMER_LINKING_UNAVAILABLE: { kind: 'other', key: 'refusal.CUSTOMER_LINKING_UNAVAILABLE' },
+  INDEXES_OUTDATED: { kind: 'other', key: 'refusal.INDEXES_OUTDATED' },
+  PHARMACY_INACTIVE: { kind: 'other', key: 'refusal.PHARMACY_INACTIVE' },
+  PHARMACY_NOT_VERIFIED: { kind: 'other', key: 'refusal.PHARMACY_NOT_VERIFIED' },
+  PHARMACY_PROFILE_REQUIRED: { kind: 'other', key: 'refusal.PHARMACY_PROFILE_REQUIRED' },
+  BOOKING_ALREADY_STARTED: { kind: 'other', key: 'refusal.BOOKING_ALREADY_STARTED' },
+  BOOKING_NOT_CANCELLABLE: { kind: 'other', key: 'refusal.BOOKING_NOT_CANCELLABLE' },
+  NO_SHOW_NOT_REFUNDABLE: { kind: 'other', key: 'refusal.NO_SHOW_NOT_REFUNDABLE' },
+  BOOKING_CHANGED: { kind: 'other', key: 'refusal.BOOKING_CHANGED' },
+  BOOKING_NOT_FOUND: { kind: 'other', key: 'refusal.BOOKING_NOT_FOUND' },
   // Medicine order from the prescription (phase 0, §18.3).
-  PRESCRIPTION_NOT_READY: { kind: 'other', message: 'The doctor has not written the prescription yet.' },
-  PRESCRIPTION_ACCESS_EXPIRED: { kind: 'other', message: 'This prescription is more than 90 days old, so it can no longer be used here.' },
-  CUSTOMER_CONSENT_REQUIRED: { kind: 'other', message: 'The patient’s agreement is not recorded for your pharmacy, so an order cannot be made from it.' },
-  CUSTOMER_NOT_LINKED: { kind: 'other', message: 'This patient is not linked to your pharmacy, so an order cannot be made from it.' },
-  DISPENSING_COPY_UNAVAILABLE: { kind: 'other', message: 'The prescription copy could not be made just now. Try again in a minute.' },
+  PRESCRIPTION_NOT_READY: { kind: 'other', key: 'refusal.PRESCRIPTION_NOT_READY' },
+  PRESCRIPTION_ACCESS_EXPIRED: { kind: 'other', key: 'refusal.PRESCRIPTION_ACCESS_EXPIRED' },
+  CUSTOMER_CONSENT_REQUIRED: { kind: 'other', key: 'refusal.CUSTOMER_CONSENT_REQUIRED' },
+  CUSTOMER_NOT_LINKED: { kind: 'other', key: 'refusal.CUSTOMER_NOT_LINKED' },
+  DISPENSING_COPY_UNAVAILABLE: { kind: 'other', key: 'refusal.DISPENSING_COPY_UNAVAILABLE' },
   // Wallet top-ups (payment/services, pharmacyWallet/services).
-  TOPUP_BLOCKED: { kind: 'wallet', message: 'This top-up was blocked after a card dispute and will not be added. Please contact Jansetu support.' },
-  PAYMENT_FAILED: { kind: 'other', message: 'This payment failed. No money was added. You can start a new top-up.' },
-  PAYMENT_REFUNDED: { kind: 'other', message: 'This payment was refunded to your card or UPI. No money was added.' },
-  PAYMENT_RECORD_NOT_FOUND: { kind: 'other', message: 'This top-up was not found.' },
-  PAYMENT_SERVICE_UNAVAILABLE: { kind: 'other', message: 'Card and UPI payments are not available right now. Try again later.' },
-  RAZORPAY_NOT_CONFIGURED: { kind: 'card', message: 'Card and UPI payments are not set up on this server yet.' },
+  TOPUP_BLOCKED: { kind: 'wallet', key: 'refusal.TOPUP_BLOCKED' },
+  PAYMENT_FAILED: { kind: 'other', key: 'refusal.PAYMENT_FAILED' },
+  PAYMENT_REFUNDED: { kind: 'other', key: 'refusal.PAYMENT_REFUNDED' },
+  PAYMENT_RECORD_NOT_FOUND: { kind: 'other', key: 'refusal.PAYMENT_RECORD_NOT_FOUND' },
+  PAYMENT_SERVICE_UNAVAILABLE: { kind: 'other', key: 'refusal.PAYMENT_SERVICE_UNAVAILABLE' },
+  RAZORPAY_NOT_CONFIGURED: { kind: 'card', key: 'refusal.RAZORPAY_NOT_CONFIGURED' },
 };
 
 /** One plain sentence for a refusal of the booking, cancel, order or wallet routes, and what the screen should offer. */
 export function assistedRefusal(err: unknown): Refusal {
   if (isSwitchedOff(err)) return { kind: 'off', message: SWITCHED_OFF_MESSAGE };
-  if (!(err instanceof ApiError)) return { kind: 'other', message: 'Something went wrong. Please try again.' };
+  if (!(err instanceof ApiError)) return { kind: 'other', message: core('errors.unknown') };
   if (err.code === 'PRICE_CHANGED') {
     const p = Number(err.details?.priceMinor);
     return Number.isSafeInteger(p) && p >= 0
-      ? { kind: 'price', priceMinor: p, message: `The price has changed. It is now ${rupees(p)}. Check it with the patient, then pay again.` }
-      : { kind: 'price', message: 'The price has changed. Choose the doctor again to see the new price.' };
+      ? { kind: 'price', priceMinor: p, message: t('refusal.priceChangedTo', { price: rupees(p) }) }
+      : { kind: 'price', message: t('refusal.priceChanged') };
   }
   if (err.code === 'ASSISTED_LIMIT_REACHED') {
-    const words = err.limit ? LIMIT_WORDS[err.limit] : undefined;
-    return { kind: 'limit', message: words ? words(waitWords(err.retryAfter)) : `Too many requests. Try again ${waitWords(err.retryAfter)}.` };
+    const words = err.limit && Object.hasOwn(LIMIT_WORDS, err.limit) ? LIMIT_WORDS[err.limit] : undefined;
+    return { kind: 'limit', message: t(words ?? 'limit.tooMany', { wait: waitWords(err.retryAfter) }) };
   }
-  if (err.status === 429) return { kind: 'limit', message: `Too many requests. Try again ${waitWords(err.retryAfter)}.` };
-  const known = err.code ? CODE_WORDS[err.code] : undefined;
-  if (known) return known;
-  if (err.status === 403) return { kind: 'other', message: err.message || 'Your account is not allowed to do this.' };
-  return { kind: 'other', message: err.message || 'Something went wrong. Please try again.' };
+  if (err.status === 429) return { kind: 'limit', message: t('limit.tooMany', { wait: waitWords(err.retryAfter) }) };
+  const known = err.code && Object.hasOwn(CODE_WORDS, err.code) ? CODE_WORDS[err.code] : undefined;
+  if (known) return refusalOf(known);
+  if (err.status === 403) return { kind: 'other', message: err.message || t('refusal.forbidden') };
+  return { kind: 'other', message: err.message || core('errors.unknown') };
 }
 
 export type RescheduleRefusalKind = 'slot' | 'doctor' | 'changed' | 'late' | 'other';
-const RESCHEDULE_WORDS: Readonly<Record<string, { kind: RescheduleRefusalKind; message: string }>> = {
-  SLOT_NOT_AVAILABLE: { kind: 'slot', message: 'This time was just taken, or is no longer free. Choose another time.' },
-  SAME_SLOT: { kind: 'slot', message: 'The consultation is already at this time. Choose another time.' },
-  SLOT_STARTED: { kind: 'slot', message: 'This time has already started. Choose a later time.' },
-  SLOT_NOT_THIS_DOCTOR: { kind: 'slot', message: 'This time belongs to another doctor. Choose one of this doctor’s times.' },
-  DOCTOR_BUSY: { kind: 'slot', message: 'The doctor is not free at that time. Choose another time.' },
-  DOCTOR_NOT_AVAILABLE: { kind: 'doctor', message: 'This doctor is not taking bookings now, so the time cannot be changed. You can cancel instead.' },
-  DOCTOR_NOT_FOUND: { kind: 'doctor', message: 'This doctor is not taking bookings now, so the time cannot be changed. You can cancel instead.' },
-  BOOKING_CHANGED: { kind: 'changed', message: 'This booking changed since you opened it (perhaps on another device). Look at it again, then choose the time again.' },
-  BOOKING_ALREADY_STARTED: { kind: 'late', message: 'Too late: the consultation has already started, so its time can no longer be changed.' },
-  BOOKING_NOT_RESCHEDULABLE: { kind: 'late', message: 'This consultation is cancelled or finished, so its time can no longer be changed.' },
-  BOOKING_NOT_FOUND: { kind: 'late', message: 'This booking was not found.' },
-  INSTANT_CONSULT_COMMAND_REQUIRED: { kind: 'late', message: 'A “Consult now” consultation has no booked time, so it cannot be moved.' },
-  CLINIC_APPOINTMENT: { kind: 'late', message: 'This is a clinic appointment. Ask the clinic to change it.' },
-  IDEMPOTENCY_KEY_REUSED: { kind: 'changed', message: 'This change was already sent with another time. Look at the booking again, then choose the time again.' },
+const RESCHEDULE_WORDS: Readonly<Record<string, { kind: RescheduleRefusalKind; key: AssistedKey }>> = {
+  SLOT_NOT_AVAILABLE: { kind: 'slot', key: 'reschedule.SLOT_NOT_AVAILABLE' },
+  SAME_SLOT: { kind: 'slot', key: 'reschedule.SAME_SLOT' },
+  SLOT_STARTED: { kind: 'slot', key: 'refusal.SLOT_STARTED' },
+  SLOT_NOT_THIS_DOCTOR: { kind: 'slot', key: 'reschedule.SLOT_NOT_THIS_DOCTOR' },
+  DOCTOR_BUSY: { kind: 'slot', key: 'reschedule.DOCTOR_BUSY' },
+  DOCTOR_NOT_AVAILABLE: { kind: 'doctor', key: 'reschedule.DOCTOR_NOT_AVAILABLE' },
+  DOCTOR_NOT_FOUND: { kind: 'doctor', key: 'reschedule.DOCTOR_NOT_AVAILABLE' },
+  BOOKING_CHANGED: { kind: 'changed', key: 'reschedule.BOOKING_CHANGED' },
+  BOOKING_ALREADY_STARTED: { kind: 'late', key: 'reschedule.BOOKING_ALREADY_STARTED' },
+  BOOKING_NOT_RESCHEDULABLE: { kind: 'late', key: 'reschedule.BOOKING_NOT_RESCHEDULABLE' },
+  BOOKING_NOT_FOUND: { kind: 'late', key: 'refusal.BOOKING_NOT_FOUND' },
+  INSTANT_CONSULT_COMMAND_REQUIRED: { kind: 'late', key: 'reschedule.INSTANT_CONSULT_COMMAND_REQUIRED' },
+  CLINIC_APPOINTMENT: { kind: 'late', key: 'reschedule.CLINIC_APPOINTMENT' },
+  IDEMPOTENCY_KEY_REUSED: { kind: 'changed', key: 'reschedule.IDEMPOTENCY_KEY_REUSED' },
 };
 
 /** One plain sentence for a refusal of the reschedule (or of the slot read behind it), and what the screen should do. */
 export function rescheduleRefusal(err: unknown): { kind: RescheduleRefusalKind; message: string } {
   if (isSwitchedOff(err)) return { kind: 'other', message: SWITCHED_OFF_MESSAGE };
-  const known = err instanceof ApiError && err.code ? RESCHEDULE_WORDS[err.code] : undefined;
-  return known ?? { kind: 'other', message: assistedRefusal(err).message };
+  const known = err instanceof ApiError && err.code && Object.hasOwn(RESCHEDULE_WORDS, err.code) ? RESCHEDULE_WORDS[err.code] : undefined;
+  return known ? { kind: known.kind, message: t(known.key) } : { kind: 'other', message: assistedRefusal(err).message };
 }
 
 /** One plain sentence for a refusal of the typed-name edit. */
 export function typedNameRefusal(err: unknown): string {
-  if (err instanceof ApiError && err.code === 'CUSTOMER_NOT_LINKED') return 'This patient is not linked to your pharmacy, so the name cannot be changed here.';
-  if (err instanceof ApiError && err.code === 'VALIDATION_ERROR') return `Type a name of 1 to ${MAX_TYPED_NAME} characters.`;
+  if (err instanceof ApiError && err.code === 'CUSTOMER_NOT_LINKED') return t('typedName.notLinked');
+  if (err instanceof ApiError && err.code === 'VALIDATION_ERROR') return t('typedName.length', { max: MAX_TYPED_NAME });
   return assistedRefusal(err).message;
 }
 
@@ -683,19 +689,19 @@ const isRealDay = (v: string) => {
 export function patientProblems(d: PatientDraft, exists: boolean, today = istToday()): Partial<Record<keyof PatientDraft, string>> {
   const e: Partial<Record<keyof PatientDraft, string>> = {};
   const phone = canonicalPhone(d.phone);
-  if (!phone) e.phone = 'Enter a valid 10-digit mobile number.';
-  else if (!exists && canonicalPhone(d.phoneAgain) !== phone) e.phoneAgain = 'Type the same number again. This number is new to Jansetu, so it is checked twice.';
+  if (!phone) e.phone = t('patient.phoneInvalid');
+  else if (!exists && canonicalPhone(d.phoneAgain) !== phone) e.phoneAgain = t('patient.phoneAgain');
   if (d.who === 'known') {
-    if (!hex.test(d.dependentId)) e.dependentId = 'Choose the family member.';
+    if (!hex.test(d.dependentId)) e.dependentId = t('patient.chooseFamily');
     return e;
   }
   const name = cleanName(d.name);
-  if (!name) e.name = d.who === 'self' ? 'Type the patient’s name.' : 'Type the family member’s name.';
-  else if (name.length > MAX_PERSON_NAME) e.name = `Use at most ${MAX_PERSON_NAME} characters.`;
+  if (!name) e.name = t(d.who === 'self' ? 'patient.nameEmpty' : 'patient.familyNameEmpty');
+  else if (name.length > MAX_PERSON_NAME) e.name = t('field.tooLong', { max: MAX_PERSON_NAME });
   if (d.who === 'family') {
-    if (!d.relation) e.relation = 'Choose how they are related to the phone’s owner.';
-    if (d.dateOfBirth && (!isRealDay(d.dateOfBirth) || d.dateOfBirth > today)) e.dateOfBirth = 'Enter a real date of birth (not in the future), or leave it empty.';
-    if (cleanName(d.holderName).length > MAX_PERSON_NAME) e.holderName = `Use at most ${MAX_PERSON_NAME} characters.`;
+    if (!d.relation) e.relation = t('patient.relation');
+    if (d.dateOfBirth && (!isRealDay(d.dateOfBirth) || d.dateOfBirth > today)) e.dateOfBirth = t('patient.dateOfBirth');
+    if (cleanName(d.holderName).length > MAX_PERSON_NAME) e.holderName = t('field.tooLong', { max: MAX_PERSON_NAME });
   }
   return e;
 }
@@ -733,7 +739,7 @@ export function familyBookedBefore(rows: readonly BookedConsultation[], phone: s
 /** The order lines a prescription suggests, matched to stock by the person (one line per prescribed medicine). */
 export function rxOrderProblems(lines: readonly { medicineId: string; qty: string }[]): string | null {
   const chosen = lines.filter((l) => l.medicineId);
-  if (!chosen.length) return 'Choose at least one medicine from your stock.';
-  if (chosen.some((l) => !/^[1-9]\d{0,4}$/.test(l.qty))) return 'Enter how many units of each chosen medicine (a whole number).';
+  if (!chosen.length) return t('rxOrder.none');
+  if (chosen.some((l) => !/^[1-9]\d{0,4}$/.test(l.qty))) return t('rxOrder.qty');
   return null;
 }

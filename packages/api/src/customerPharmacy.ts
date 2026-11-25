@@ -1,4 +1,5 @@
 import type { ApiClient, Page } from './client.ts';
+import { t } from './i18n/customer/index.ts';
 import type { PaymentOrder } from './customer.ts';
 import type { PaymentMode, PharmacyOrder } from './pharmacyOrders.ts';
 
@@ -85,7 +86,7 @@ export interface CheckoutResult {
 export const PHARMACY_PAYMENT_WINDOW_MIN = 30;
 
 const hex = /^[0-9a-fA-F]{24}$/;
-const id = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; };
+const id = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; }; // i18n-ignore: a programming error, not shown
 const refOf = (v: string | { _id: string }) => (typeof v === 'string' ? v : v._id);
 
 /** A cart in one shape whatever the server sent (an empty or missing cart is an empty cart, never a crash). */
@@ -114,7 +115,7 @@ export function shelfOf(rows: readonly StockRow[]): ShelfItem[] {
     } else {
       byMedicine.set(medicineId, {
         medicineId,
-        name: m.name || m.brandName || m.genericName || 'Medicine',
+        name: m.name || m.brandName || m.genericName || t('store.medicine'),
         detail: [m.strength, m.dosageForm, m.manufacturer].filter(Boolean).join(' · '),
         availableQty: r.availableQty,
         minPrice: price,
@@ -166,7 +167,8 @@ export function customerPharmacyApi(c: ApiClient) {
       form.append('files', file);
       const r = await c.post<{ files?: { url?: string }[] }>('/file/upload/prescriptions', { form });
       const url = r?.files?.[0]?.url;
-      if (typeof url !== 'string' || !url) throw new Error('The upload did not return a file');
+      // The cart shows this message to the customer (a broken server answer).
+      if (typeof url !== 'string' || !url) throw new Error(t('store.uploadNoFile'));
       return url;
     },
     /**

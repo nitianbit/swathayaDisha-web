@@ -1,5 +1,6 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import { normalizeEmail } from './auth.ts';
+import { t } from './i18n/admin/index.ts';
 
 /**
  * WQ10b admin: pharmacy accounts (`/api/v1/pharmacies`, backend `src1/modules/pharmacies`). Owner decision (19 Nov
@@ -116,27 +117,27 @@ export function pharmacyBody(f: PharmacyForm, fields: readonly (keyof PharmacyFo
   const e: FieldErrors = {};
   const body: PharmacyUpdate = {};
   const want = new Set(fields);
-  const t = (k: keyof PharmacyForm) => String(f[k]).trim();
+  const val = (k: keyof PharmacyForm) => String(f[k]).trim();
   if (want.has('name')) {
-    if (!t('name')) e.name = existing ? 'The name cannot be removed. Enter the new name.' : 'Enter the pharmacy’s name.';
-    else if (t('name').length > MAX_PHARMACY_NAME) e.name = `Use at most ${MAX_PHARMACY_NAME} characters.`;
-    else body.name = t('name');
+    if (!val('name')) e.name = existing ? t('pharmacy.form.nameRemoved') : t('pharmacy.form.name');
+    else if (val('name').length > MAX_PHARMACY_NAME) e.name = t('form.maxLength', { max: MAX_PHARMACY_NAME });
+    else body.name = val('name');
   }
   if (want.has('phone')) {
-    if (existing && !f.phone.trim()) e.phone = 'The mobile number cannot be removed: the pharmacy signs in with it. Enter the new number.';
-    else if (!PHARMACY_PHONE_PATTERN.test(f.phone)) e.phone = 'Enter the 10-digit mobile number.';
+    if (existing && !f.phone.trim()) e.phone = t('pharmacy.form.phoneRemoved');
+    else if (!PHARMACY_PHONE_PATTERN.test(f.phone)) e.phone = t('pharmacy.form.phone');
     else body.phone = f.phone;
   }
   if (want.has('email')) {
-    if (t('email')) {
+    if (val('email')) {
       const email = normalizeEmail(f.email);
-      if (!email) e.email = 'Enter a valid email address.';
+      if (!email) e.email = t('pharmacy.form.email');
       else body.email = email;
     } else if (existing?.email) body.email = null;
   }
   if (want.has('pincode')) {
-    if (t('pincode') && !PHARMACY_PINCODE_PATTERN.test(t('pincode'))) e.pincode = 'Enter the 6-digit PIN code.';
-    else if (t('pincode')) body.pincode = t('pincode');
+    if (val('pincode') && !PHARMACY_PINCODE_PATTERN.test(val('pincode'))) e.pincode = t('pharmacy.form.pincode');
+    else if (val('pincode')) body.pincode = val('pincode');
     else if (existing?.pincode) body.pincode = null;
   }
   const limits: Partial<Record<keyof PharmacyForm, number>> = {
@@ -144,9 +145,9 @@ export function pharmacyBody(f: PharmacyForm, fields: readonly (keyof PharmacyFo
   };
   for (const k of OPTIONAL_TEXT) {
     if (!want.has(k)) continue;
-    const v = t(k);
+    const v = val(k);
     const max = limits[k];
-    if (max && v.length > max) e[k] = `Use at most ${max} characters.`;
+    if (max && v.length > max) e[k] = t('form.maxLength', { max });
     else if (v) (body as Record<string, unknown>)[k] = v;
     else if (existing?.[k as keyof PharmacyAccount]) (body as Record<string, unknown>)[k] = null;
   }
@@ -183,6 +184,7 @@ export const pharmacyHolds = (p: PharmacyAccount, body: PharmacyUpdate) =>
 /** Q15: the admin's create key (`createPharmacySchema.requestKey`). */
 export const PHARMACY_REQUEST_KEY_PATTERN = /^[A-Za-z0-9_-]{8,100}$/;
 const checkKey = (key: string) => {
+  // i18n-ignore: a programming error, not shown
   if (!PHARMACY_REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
   return key;
 };
@@ -193,6 +195,7 @@ export function pharmacyState(p: Pick<PharmacyAccount, 'isVerified' | 'isActive'
 }
 
 function checkId(id: string): string {
+  // i18n-ignore: a programming error, not shown
   if (!/^[0-9a-fA-F]{24}$/.test(id)) throw new Error('Invalid pharmacy id');
   return id;
 }
@@ -202,6 +205,7 @@ export function pharmacyAdminApi(c: ApiClient) {
     /** Newest first, 20 a page (`findWithPagination`). */
     list: (q: PharmacyQuery = {}): Promise<Page<PharmacyAccount>> => {
       const name = q.name?.trim();
+      // i18n-ignore: a guard the screen checks first, not shown
       if (q.phone !== undefined && !PHARMACY_PHONE_PATTERN.test(q.phone)) throw new Error('Invalid mobile number');
       return c.page<PharmacyAccount>('/pharmacies', { query: {
         ...(name ? { name } : {}), ...(q.phone ? { phone: q.phone } : {}), isVerified: q.isVerified, isActive: q.isActive,
@@ -238,6 +242,7 @@ export function pharmacyAdminApi(c: ApiClient) {
       c.put<PharmacyAccount>(`/pharmacies/${checkId(id)}`, { body: { ...body, ...(version ? { expectedUpdatedAt: version } : {}) } }),
     /** Q15: the pharmacy that signs in with this mobile number (the admin list's exact `phone` filter), or null. */
     findByPhone: async (phone: string): Promise<PharmacyAccount | null> => {
+      // i18n-ignore: a guard the screen checks first, not shown
       if (!PHARMACY_PHONE_PATTERN.test(phone)) throw new Error('Invalid mobile number');
       const p = await c.page<PharmacyAccount>('/pharmacies', { query: { phone, page: 1, limit: 1 } });
       return p.items.find((x) => x.phone === phone) ?? null;

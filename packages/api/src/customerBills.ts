@@ -1,4 +1,6 @@
 import type { ApiClient, Page } from './client.ts';
+import { t } from './i18n/customer/index.ts';
+import { wordMap } from './i18n/words.ts';
 
 /**
  * Q2 customer "Bills": in-house invoices issued by partner labs and clinics to this customer (linked by phone when the
@@ -74,23 +76,25 @@ export interface BillEvent {
   at: string;
 }
 
-export const BILL_KIND_LABEL: Record<BillDocumentKind, string> = {
-  tax_invoice: 'Tax invoice', bill_of_supply: 'Bill of supply', commercial_invoice: 'Invoice',
-};
+export const BILL_KIND_LABEL: Record<BillDocumentKind, string> = wordMap(t, {
+  tax_invoice: 'bill.kind.tax_invoice', bill_of_supply: 'bill.kind.bill_of_supply', commercial_invoice: 'bill.kind.commercial_invoice',
+});
 
-export const BILL_PAYMENT_MODE: Record<BillPaymentMode, string> = { cash: 'Cash', upi: 'UPI', card: 'Card', bank: 'Bank transfer', other: 'Other' };
+export const BILL_PAYMENT_MODE: Record<BillPaymentMode, string> = wordMap(t, {
+  cash: 'bill.payment.cash', upi: 'bill.payment.upi', card: 'bill.payment.card', bank: 'bill.payment.bank', other: 'bill.payment.other',
+});
 
 /** The GST lines worth showing: CGST + SGST within the state, IGST across states; zero parts are left out. */
-export function gstSplit(t: BillTotals): { label: string; minor: number }[] {
+export function gstSplit(totals: BillTotals): { label: string; minor: number }[] {
   return [
-    { label: 'CGST', minor: t.cgstMinor },
-    { label: 'SGST', minor: t.sgstMinor },
-    { label: 'IGST', minor: t.igstMinor },
+    { label: t('bill.tax.cgst'), minor: totals.cgstMinor },
+    { label: t('bill.tax.sgst'), minor: totals.sgstMinor },
+    { label: t('bill.tax.igst'), minor: totals.igstMinor },
   ].filter((x) => Number(x.minor) > 0);
 }
 
 const hex = /^[0-9a-fA-F]{24}$/;
-const id = (v: string) => { if (!hex.test(v)) throw new Error('Invalid bill id'); return v; };
+const id = (v: string) => { if (!hex.test(v)) throw new Error('Invalid bill id'); return v; }; // i18n-ignore: a programming error, not shown
 
 /** A safe download name from the serial (the server's own file name uses the same shape). */
 export const billFileName = (b: Pick<Bill, 'serial' | 'lifecycleVersion'>) =>
@@ -107,7 +111,7 @@ export function customerBillsApi(c: ApiClient) {
      * token; never a link carrying a token.
      */
     pdf: (invoiceId: string, version: number, signal?: AbortSignal) => {
-      if (!Number.isInteger(version) || version < 0) throw new Error('Invalid bill version');
+      if (!Number.isInteger(version) || version < 0) throw new Error('Invalid bill version'); // i18n-ignore: a programming error, not shown
       return c.blob(`/bills/${id(invoiceId)}/pdf`, { query: { version }, signal });
     },
   };

@@ -3,6 +3,8 @@ import { appointmentInstant } from './cancellationWindow.ts';
 import type { BookingNoShowMove } from './clinic.ts';
 import { noShowMovedOnce } from './noShows.ts';
 import { isRealDate } from './partnerLabs.ts';
+import { t } from './i18n/doctor/index.ts';
+import { wordMap } from './i18n/words.ts';
 import {
   EMAIL_PATTERN, GSTIN_PATTERN, HHMM_PATTERN, INVOICE_PREFIX_PATTERN, OBJECT_ID_PATTERN, PAN_PATTERN, PARTNER_PHONE_PATTERN, type BranchAddress,
   type VerificationState, type Weekday,
@@ -30,13 +32,13 @@ import {
 const ME = '/specialists/me';
 
 function checkId(id: string, what: string): string {
-  if (!OBJECT_ID_PATTERN.test(id)) throw new Error(`Invalid ${what} id`);
+  if (!OBJECT_ID_PATTERN.test(id)) throw new Error(`Invalid ${what} id`); // i18n-ignore: a programming error, not shown
   return id;
 }
 
 /** `YYYY-MM-DD` (what date inputs give) → the backend's `YYYYMMDD` (`ymd` in `doctors/validation`), checked real. */
 export function toYmd(isoDate: string): string {
-  if (!isRealDate(isoDate)) throw new Error('Invalid date');
+  if (!isRealDate(isoDate)) throw new Error('Invalid date'); // i18n-ignore: a programming error, not shown
   return isoDate.replace(/-/g, '');
 }
 
@@ -72,7 +74,9 @@ export function doctorStanding(p: Pick<DoctorProfile, 'isActive' | 'isVerified'>
 
 export type ConsultMode = 'video' | 'call' | 'chat' | 'in-person';
 export const CONSULT_MODES: readonly ConsultMode[] = ['video', 'call', 'chat', 'in-person'];
-export const CONSULT_MODE_LABEL: Record<ConsultMode, string> = { video: 'Video', call: 'Phone call', chat: 'Chat', 'in-person': 'In person' };
+export const CONSULT_MODE_LABEL: Record<ConsultMode, string> = wordMap(t, {
+  video: 'consultMode.video', call: 'consultMode.call', chat: 'consultMode.chat', 'in-person': 'consultMode.inPerson',
+});
 
 /** A working window: whole slots of `slotMinutes` inside it, for these modes, optionally at a clinic branch. */
 export interface ScheduleWindow { start: string; end: string; modes: ConsultMode[]; branchId?: string }
@@ -120,30 +124,32 @@ export function scheduleSlotCount(t: ScheduleInput, day: Weekday): number {
  * of a day do not overlap, a clinic window is in-person only, and only at a clinic branch the doctor consults at:
  * `clinicBranches`, the branches of verified clinics from `GET /me/clinics`).
  */
-export function scheduleProblems(t: ScheduleInput, clinicBranches: ReadonlySet<string>): Partial<Record<'slotMinutes' | Weekday, string>> {
+export function scheduleProblems(input: ScheduleInput, clinicBranches: ReadonlySet<string>): Partial<Record<'slotMinutes' | Weekday, string>> {
   const out: Partial<Record<'slotMinutes' | Weekday, string>> = {};
-  const minutesOk = Number.isInteger(t.slotMinutes) && t.slotMinutes >= SCHEDULE_MINUTES_MIN && t.slotMinutes <= SCHEDULE_MINUTES_MAX;
-  if (!minutesOk) out.slotMinutes = `Enter whole minutes from ${SCHEDULE_MINUTES_MIN} to ${SCHEDULE_MINUTES_MAX}.`;
+  const minutesOk = Number.isInteger(input.slotMinutes) && input.slotMinutes >= SCHEDULE_MINUTES_MIN && input.slotMinutes <= SCHEDULE_MINUTES_MAX;
+  if (!minutesOk) out.slotMinutes = t('schedule.minutes', { min: SCHEDULE_MINUTES_MIN, max: SCHEDULE_MINUTES_MAX });
   for (const day of SCHEDULE_WEEKDAYS) {
-    const windows = t.days[day] ?? [];
+    const windows = input.days[day] ?? [];
     const problem = (() => {
-      if (windows.length > SCHEDULE_WINDOWS_MAX) return `At most ${SCHEDULE_WINDOWS_MAX} windows a day.`;
+      if (windows.length > SCHEDULE_WINDOWS_MAX) return t('schedule.tooManyWindows', { max: SCHEDULE_WINDOWS_MAX });
       for (const w of windows) {
-        if (!HHMM_PATTERN.test(w.start) || !HHMM_PATTERN.test(w.end)) return 'Enter every start and end time (HH:MM).';
-        if (!w.modes.length) return 'Choose at least one consultation type for every window.';
-        if (new Set(w.modes).size !== w.modes.length || w.modes.some((m) => !CONSULT_MODES.includes(m))) return 'Choose each consultation type once.';
+        if (!HHMM_PATTERN.test(w.start) || !HHMM_PATTERN.test(w.end)) return t('schedule.times');
+        if (!w.modes.length) return t('schedule.modesRequired');
+        if (new Set(w.modes).size !== w.modes.length || w.modes.some((m) => !CONSULT_MODES.includes(m))) return t('modes.once');
         if (w.branchId !== undefined) {
-          if (w.modes.some((m) => m !== 'in-person')) return 'Clinic windows are for in-person consultations only.';
+          if (w.modes.some((m) => m !== 'in-person')) return t('schedule.clinicInPerson');
           if (!OBJECT_ID_PATTERN.test(w.branchId) || !clinicBranches.has(w.branchId)) {
-            return 'One window is at a clinic branch you do not consult at (or whose clinic is not verified). Choose another place.';
+            return t('schedule.clinicBranch');
           }
         }
-        if (toMin(w.end) <= toMin(w.start)) return `${w.start}–${w.end}: a window must end after it starts.`;
-        if (minutesOk && toMin(w.end) - toMin(w.start) < t.slotMinutes) return `${w.start}–${w.end} is shorter than one ${t.slotMinutes}-minute slot.`;
+        if (toMin(w.end) <= toMin(w.start)) return t('schedule.endBeforeStart', { start: w.start, end: w.end });
+        if (minutesOk && toMin(w.end) - toMin(w.start) < input.slotMinutes) return t('schedule.tooShort', { start: w.start, end: w.end, minutes: input.slotMinutes });
       }
       const sorted = [...windows].sort((a, b) => toMin(a.start) - toMin(b.start));
       for (let i = 1; i < sorted.length; i++) {
-        if (toMin(sorted[i]!.start) < toMin(sorted[i - 1]!.end)) return `${sorted[i - 1]!.start}–${sorted[i - 1]!.end} and ${sorted[i]!.start}–${sorted[i]!.end} overlap.`;
+        if (toMin(sorted[i]!.start) < toMin(sorted[i - 1]!.end)) {
+          return t('schedule.overlap', { start1: sorted[i - 1]!.start, end1: sorted[i - 1]!.end, start2: sorted[i]!.start, end2: sorted[i]!.end });
+        }
       }
       return null;
     })();
@@ -209,10 +215,10 @@ export interface PresenceWrite extends PresenceInput { expectedPresenceVersion: 
 /** `presenceSchema` + `setPresence`: at least one type when available; a whole-paise fee within bounds. */
 export function presenceProblems(p: PresenceInput): { modes?: string; fee?: string } {
   const out: { modes?: string; fee?: string } = {};
-  if (p.available && p.modes.length === 0) out.modes = 'Choose at least one consultation type.';
-  if (new Set(p.modes).size !== p.modes.length || p.modes.some((m) => !INSTANT_MODES.includes(m))) out.modes = 'Choose each consultation type once.';
+  if (p.available && p.modes.length === 0) out.modes = t('modes.required');
+  if (new Set(p.modes).size !== p.modes.length || p.modes.some((m) => !INSTANT_MODES.includes(m))) out.modes = t('modes.once');
   if (p.instantFeeMinor !== undefined && (!Number.isSafeInteger(p.instantFeeMinor) || p.instantFeeMinor < 0 || p.instantFeeMinor > INSTANT_FEE_MAX_MINOR)) {
-    out.fee = 'Enter a fee from ₹0 to ₹10,00,000 (up to two decimals).';
+    out.fee = t('presence.fee');
   }
   return out;
 }
@@ -238,24 +244,27 @@ export function offerSecondsLeft(o: Pick<InstantOffer, 'offerExpiresAt'>, now: D
 }
 
 /** `accept`'s refusals, in words a doctor can act on (the server's own message is the fallback). */
-export const INSTANT_REFUSAL: Record<string, string> = {
-  OFFER_EXPIRED: 'This offer has expired.',
-  OFFER_NO_LONGER_AVAILABLE: 'Another doctor accepted it first, or the patient withdrew or was refunded.',
-  INSTANT_REQUEST_NOT_FOUND: 'This offer is no longer open to you.',
-  DOCTOR_NOT_AVAILABLE: 'You are not available now for this consultation type: switch “Available now” on with this type, then accept.',
-  SPECIALIZATION_MISMATCH: 'This request is for another speciality than the one on your profile.',
-  COUPON_NOT_FOR_DOCTOR: 'The patient used a coupon for other doctors, so you cannot take this request.',
-  FEE_ABOVE_QUOTE: 'Your instant fee is above what this patient paid. Lower your fee to take requests like this one.',
-  // Q16a re-review (C, `feeAffordable`): with this fee the patient's coupon is worked out again and no longer covers it.
-  OFFER_NO_LONGER_AFFORDABLE: 'What this patient paid no longer covers your fee once their coupon is worked out again, so you cannot take this request. It stays open for other doctors.',
-  DOCTOR_BUSY: 'You already have a consultation at this time.',
-  SPECIALIST_NOT_ACTIVE: 'Your doctor account is not active or not verified, so you cannot take instant consultations. Contact Jansetu.',
-  BOOKING_NOT_FOUND: 'This consultation is not one of yours, or it is no longer running.',
-  RESERVATION_NOT_ACTIVE: 'This consultation is no longer held (it was completed or cancelled).',
-  INVALID_MINUTES: `Extend by 1 to ${EXTEND_MINUTES_MAX} minutes.`,
-  MODES_REQUIRED: 'Choose at least one consultation type.',
-  INVALID_FEE: 'Enter a valid fee.',
-};
+export const INSTANT_REFUSAL: Record<string, string> = Object.freeze(Object.defineProperties({}, {
+  ...Object.getOwnPropertyDescriptors(wordMap(t, {
+    OFFER_EXPIRED: 'instant.refusal.OFFER_EXPIRED',
+    OFFER_NO_LONGER_AVAILABLE: 'instant.refusal.OFFER_NO_LONGER_AVAILABLE',
+    INSTANT_REQUEST_NOT_FOUND: 'instant.refusal.INSTANT_REQUEST_NOT_FOUND',
+    DOCTOR_NOT_AVAILABLE: 'instant.refusal.DOCTOR_NOT_AVAILABLE',
+    SPECIALIZATION_MISMATCH: 'instant.refusal.SPECIALIZATION_MISMATCH',
+    COUPON_NOT_FOR_DOCTOR: 'instant.refusal.COUPON_NOT_FOR_DOCTOR',
+    FEE_ABOVE_QUOTE: 'instant.refusal.FEE_ABOVE_QUOTE',
+    // Q16a re-review (C, `feeAffordable`): with this fee the patient's coupon is worked out again and no longer covers it.
+    OFFER_NO_LONGER_AFFORDABLE: 'instant.refusal.OFFER_NO_LONGER_AFFORDABLE',
+    DOCTOR_BUSY: 'instant.refusal.DOCTOR_BUSY',
+    SPECIALIST_NOT_ACTIVE: 'instant.refusal.SPECIALIST_NOT_ACTIVE',
+    BOOKING_NOT_FOUND: 'instant.refusal.BOOKING_NOT_FOUND',
+    RESERVATION_NOT_ACTIVE: 'instant.refusal.RESERVATION_NOT_ACTIVE',
+    MODES_REQUIRED: 'modes.required',
+    INVALID_FEE: 'instant.refusal.INVALID_FEE',
+  })),
+  // The one refusal with a value in it: read at lookup like the others.
+  INVALID_MINUTES: { get: () => t('instant.refusal.INVALID_MINUTES', { max: EXTEND_MINUTES_MAX }), enumerable: true },
+}));
 
 /**
  * The words for a definite refusal (the server answered and changed nothing), or null when the outcome is not known
@@ -284,9 +293,10 @@ const REQUEST_KEY = /^[A-Za-z0-9_-]{8,100}$/;
 // ── Appointments (specialist portal) ──
 
 export type AppointmentStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show';
-export const APPOINTMENT_STATUS_LABEL: Record<AppointmentStatus, string> = {
-  pending: 'Waiting', confirmed: 'Confirmed', completed: 'Completed', cancelled: 'Cancelled', no_show: 'No-show',
-};
+export const APPOINTMENT_STATUS_LABEL: Record<AppointmentStatus, string> = wordMap(t, {
+  pending: 'appointment.status.pending', confirmed: 'appointment.status.confirmed', completed: 'appointment.status.completed',
+  cancelled: 'appointment.status.cancelled', no_show: 'appointment.status.no_show',
+});
 
 /** A consultation booking as the specialist portal returns it (`IBooking`, the fields the workspace shows). */
 export interface DoctorAppointment {
@@ -462,12 +472,12 @@ export function appointmentActions(b: DoctorAppointment, now: Date, sessionEnd: 
 export const NO_SHOW_GRACE_MS = 15 * 60_000;
 
 /** The words for refusals of an appointment status change (the server's own message is the fallback). */
-export const APPOINTMENT_REFUSAL: Readonly<Record<string, string>> = {
-  NOT_STARTED_YET: 'This appointment has not started yet. Mark it completed once its time has come.',
+export const APPOINTMENT_REFUSAL: Readonly<Record<string, string>> = wordMap(t, {
+  NOT_STARTED_YET: 'appointment.refusal.NOT_STARTED_YET',
   // Q16a/Q16d: a no-show is marked 15 minutes after the start; in a session with several seats, after the session ends.
-  APPOINTMENT_NOT_STARTED: 'It is too early to mark this appointment a no-show: wait until 15 minutes after its time (in a session with several patients, 15 minutes after the session ends).',
-  BOOKING_NOT_PAID: 'This appointment is not paid yet, so it cannot be completed.',
-};
+  APPOINTMENT_NOT_STARTED: 'appointment.refusal.APPOINTMENT_NOT_STARTED',
+  BOOKING_NOT_PAID: 'appointment.refusal.BOOKING_NOT_PAID',
+});
 export const appointmentRefusal = (err: unknown): string | null =>
   (err instanceof ApiError && err.code ? APPOINTMENT_REFUSAL[err.code] ?? null : null);
 
@@ -497,7 +507,7 @@ export interface MyClinics {
 
 /** Branches an in-person window may name: those of verified clinics the doctor consults at (`clinicBranchContext`). */
 export function schedulableBranches(c: MyClinics): { branchId: string; label: string }[] {
-  return c.clinics.filter((m) => m.verified).flatMap((m) => m.branches.map((b) => ({ branchId: b.branchId, label: `${m.name ?? 'Clinic'} · ${b.name}` })));
+  return c.clinics.filter((m) => m.verified).flatMap((m) => m.branches.map((b) => ({ branchId: b.branchId, label: `${m.name ?? t('clinic.unnamed')} · ${b.name}` })));
 }
 
 /** `soloPracticeSchema`. */
@@ -528,7 +538,7 @@ export interface DoctorClinicFound { partner: SoloPractice['partner']; branches:
 /** `doctorClinicSchema`: the practice rules plus a valid email when one is given. */
 export function doctorClinicProblems(p: DoctorClinicInput): Partial<Record<PracticeField | 'contactEmail', string>> {
   const out: Partial<Record<PracticeField | 'contactEmail', string>> = soloPracticeProblems(p);
-  if (p.contactEmail?.trim() && !EMAIL_PATTERN.test(p.contactEmail.trim())) out.contactEmail = 'Enter a valid email address, or leave it empty.';
+  if (p.contactEmail?.trim() && !EMAIL_PATTERN.test(p.contactEmail.trim())) out.contactEmail = t('clinic.email');
   return out;
 }
 
@@ -537,14 +547,14 @@ type PracticeField = 'name' | 'legalName' | 'invoiceSeriesPrefix' | 'gstin' | 'p
 export function soloPracticeProblems(p: SoloPracticeInput): Partial<Record<PracticeField, string>> {
   const out: Partial<Record<PracticeField, string>> = {};
   const len = (s: string | undefined) => (s ?? '').trim().length;
-  if (len(p.name) < 2 || len(p.name) > 120) out.name = 'Enter 2 to 120 characters.';
-  if (len(p.legalName) > 160) out.legalName = 'At most 160 characters.';
-  if (!INVOICE_PREFIX_PATTERN.test(p.invoiceSeriesPrefix.trim().toUpperCase())) out.invoiceSeriesPrefix = '1 to 6 letters or digits, e.g. DRK.';
-  if (p.gstin && !GSTIN_PATTERN.test(p.gstin.trim().toUpperCase())) out.gstin = 'A GSTIN looks like 29ABCDE1234F1Z5.';
-  if (p.pan && !PAN_PATTERN.test(p.pan.trim().toUpperCase())) out.pan = 'A PAN looks like ABCDE1234F.';
-  if (len(p.branch.name) < 2 || len(p.branch.name) > 120) out.branchName = 'Enter 2 to 120 characters.';
-  if (!PARTNER_PHONE_PATTERN.test(p.branch.phone.trim())) out.branchPhone = 'Enter the 10-digit number.';
-  for (const k of ['line1', 'city', 'state', 'stateCode', 'pincode'] as const) if (!len(p.branch.address[k])) out[k] = 'Required.';
+  if (len(p.name) < 2 || len(p.name) > 120) out.name = t('practice.name');
+  if (len(p.legalName) > 160) out.legalName = t('practice.legalName');
+  if (!INVOICE_PREFIX_PATTERN.test(p.invoiceSeriesPrefix.trim().toUpperCase())) out.invoiceSeriesPrefix = t('practice.invoicePrefix');
+  if (p.gstin && !GSTIN_PATTERN.test(p.gstin.trim().toUpperCase())) out.gstin = t('practice.gstin');
+  if (p.pan && !PAN_PATTERN.test(p.pan.trim().toUpperCase())) out.pan = t('practice.pan');
+  if (len(p.branch.name) < 2 || len(p.branch.name) > 120) out.branchName = t('practice.name');
+  if (!PARTNER_PHONE_PATTERN.test(p.branch.phone.trim())) out.branchPhone = t('practice.phone');
+  for (const k of ['line1', 'city', 'state', 'stateCode', 'pincode'] as const) if (!len(p.branch.address[k])) out[k] = t('practice.required');
   return out;
 }
 
@@ -619,7 +629,9 @@ export interface FinanceSummary {
   lastPayout: Payout | null;
 }
 export type LedgerKind = 'earning' | 'reversal' | 'payout' | 'adjustment';
-export const LEDGER_KIND_LABEL: Record<LedgerKind, string> = { earning: 'Earning', reversal: 'Reversal', payout: 'Payout', adjustment: 'Adjustment' };
+export const LEDGER_KIND_LABEL: Record<LedgerKind, string> = wordMap(t, {
+  earning: 'ledger.earning', reversal: 'ledger.reversal', payout: 'ledger.payout', adjustment: 'ledger.adjustment',
+});
 export interface StatementLine {
   _id: string; at: string; kind: LedgerKind; source: string; sourceId: string; description: string;
   reference?: string; note?: string; amountMinor: number; balanceAfterMinor: number;
@@ -636,9 +648,9 @@ const CURSOR_PATTERN = /^\d{1,15}_[0-9a-fA-F]{24}$/;
 
 /** Problems with a period (`range`: real dates, India time; the workspace also asks for from ≤ to). */
 export function periodProblem(from?: string, to?: string): string | null {
-  if (from && !isRealDate(from)) return 'Enter a real “from” date.';
-  if (to && !isRealDate(to)) return 'Enter a real “to” date.';
-  if (from && to && from > to) return 'The “from” date must not be after the “to” date.';
+  if (from && !isRealDate(from)) return t('period.from');
+  if (to && !isRealDate(to)) return t('period.to');
+  if (from && to && from > to) return t('period.order');
   return null;
 }
 
@@ -652,15 +664,15 @@ type PayoutField = 'accountName' | 'accountNumber' | 'ifsc' | 'bankName' | 'upiI
 export function payoutDetailsProblems(i: PayoutDetailsInput): Partial<Record<PayoutField, string>> {
   const out: Partial<Record<PayoutField, string>> = {};
   const name = (i.accountName ?? '').trim();
-  if (name.length > 120) out.accountName = 'At most 120 characters.';
+  if (name.length > 120) out.accountName = t('payout.atMost120');
   if (i.method === 'bank') {
-    if (!name) out.accountName = 'Enter the account holder’s name.';
-    if (!/^\d{9,18}$/.test((i.accountNumber ?? '').replace(/\s+/g, ''))) out.accountNumber = 'Enter 9 to 18 digits.';
-    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test((i.ifsc ?? '').trim().toUpperCase())) out.ifsc = 'An IFSC looks like ABCD0123456.';
-    if ((i.bankName ?? '').trim().length > 120) out.bankName = 'At most 120 characters.';
+    if (!name) out.accountName = t('payout.accountName');
+    if (!/^\d{9,18}$/.test((i.accountNumber ?? '').replace(/\s+/g, ''))) out.accountNumber = t('payout.accountNumber');
+    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test((i.ifsc ?? '').trim().toUpperCase())) out.ifsc = t('payout.ifsc');
+    if ((i.bankName ?? '').trim().length > 120) out.bankName = t('payout.atMost120');
   } else {
     const upi = (i.upiId ?? '').trim().toLowerCase();
-    if (upi.length > 320 || !/^[a-z0-9._-]{2,256}@[a-z][a-z0-9]{1,63}$/.test(upi)) out.upiId = 'A UPI ID looks like name@bank.';
+    if (upi.length > 320 || !/^[a-z0-9._-]{2,256}@[a-z][a-z0-9]{1,63}$/.test(upi)) out.upiId = t('payout.upi');
   }
   return out;
 }
@@ -678,14 +690,14 @@ function payoutBody(i: PayoutDetailsInput): PayoutDetailsInput {
 /** Payouts and events per page (`pageQuerySchema`: 1–500). */
 export const FINANCE_PAGE = 50;
 function pageCursor(cursor?: string): string | undefined {
-  if (cursor !== undefined && !CURSOR_PATTERN.test(cursor)) throw new Error('Invalid cursor');
+  if (cursor !== undefined && !CURSOR_PATTERN.test(cursor)) throw new Error('Invalid cursor'); // i18n-ignore: a programming error, not shown
   return cursor;
 }
 
 function statementQuery(q: StatementQuery) {
-  if (q.before !== undefined && !CURSOR_PATTERN.test(q.before)) throw new Error('Invalid statement cursor');
-  if (q.limit !== undefined && (!Number.isInteger(q.limit) || q.limit < 1 || q.limit > STATEMENT_LIMIT_MAX)) throw new Error('Invalid limit');
-  if (periodProblem(q.from, q.to)) throw new Error('Invalid period');
+  if (q.before !== undefined && !CURSOR_PATTERN.test(q.before)) throw new Error('Invalid statement cursor'); // i18n-ignore: a programming error, not shown
+  if (q.limit !== undefined && (!Number.isInteger(q.limit) || q.limit < 1 || q.limit > STATEMENT_LIMIT_MAX)) throw new Error('Invalid limit'); // i18n-ignore: a programming error, not shown
+  if (periodProblem(q.from, q.to)) throw new Error('Invalid period'); // i18n-ignore: a programming error, not shown
   return { before: q.before, limit: q.limit, from: q.from, to: q.to };
 }
 
@@ -704,7 +716,7 @@ export function doctorToolsApi(c: ApiClient) {
      * there was none): a template changed since is refused with 409 SCHEDULE_CHANGED (Q13).
      */
     saveSchedule: (t: ScheduleInput, expectedUpdatedAt: string | null) => {
-      if (expectedUpdatedAt !== null && Number.isNaN(Date.parse(expectedUpdatedAt))) throw new Error('Invalid expectedUpdatedAt');
+      if (expectedUpdatedAt !== null && Number.isNaN(Date.parse(expectedUpdatedAt))) throw new Error('Invalid expectedUpdatedAt'); // i18n-ignore: a programming error, not shown
       return c.put<ScheduleSaved>(`${ME}/schedule`, { body: { ...scheduleBody(t), expectedUpdatedAt } });
     },
     /** A leave day (`YYYY-MM-DD`): no new bookings that day; booked slots keep their bookings. Repeating it changes nothing. */
@@ -716,8 +728,8 @@ export function doctorToolsApi(c: ApiClient) {
     presence: () => c.get<Presence>(`${ME}/presence`),
     /** An ordered write: refused with 409 PRESENCE_CHANGED unless the stored version is still `expectedPresenceVersion`. */
     setPresence: (p: PresenceWrite) => {
-      if (Object.keys(presenceProblems(p)).length) throw new Error('Invalid presence');
-      if (!Number.isSafeInteger(p.expectedPresenceVersion) || p.expectedPresenceVersion < 0) throw new Error('Invalid presence version');
+      if (Object.keys(presenceProblems(p)).length) throw new Error('Invalid presence'); // i18n-ignore: a programming error, not shown
+      if (!Number.isSafeInteger(p.expectedPresenceVersion) || p.expectedPresenceVersion < 0) throw new Error('Invalid presence version'); // i18n-ignore: a programming error, not shown
       return c.put<Presence>(`${ME}/presence`, { body: { available: p.available, modes: [...p.modes],
         ...(p.instantFeeMinor !== undefined ? { instantFeeMinor: p.instantFeeMinor } : {}), expectedPresenceVersion: p.expectedPresenceVersion } });
     },
@@ -729,8 +741,8 @@ export function doctorToolsApi(c: ApiClient) {
       c.post<{ request: Record<string, unknown>; booking: DoctorAppointment; replayed?: boolean }>(`${ME}/instant/${checkId(requestId, 'request')}/accept`),
     /** Adds time to a running instant consultation. The same `requestKey` with the same minutes extends once (Q13). */
     extend: (bookingId: string, minutes: number, requestKey: string) => {
-      if (!Number.isInteger(minutes) || minutes < 1 || minutes > EXTEND_MINUTES_MAX) throw new Error('Invalid minutes');
-      if (!REQUEST_KEY.test(requestKey)) throw new Error('Invalid request key');
+      if (!Number.isInteger(minutes) || minutes < 1 || minutes > EXTEND_MINUTES_MAX) throw new Error('Invalid minutes'); // i18n-ignore: a programming error, not shown
+      if (!REQUEST_KEY.test(requestKey)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
       return c.post<Reservation>(`${ME}/instant/bookings/${checkId(bookingId, 'booking')}/extend`, { body: { minutes, requestKey } });
     },
     /** One instant consultation with its held interval and extensions (Q13): where a lost extension is looked for. */
@@ -741,7 +753,7 @@ export function doctorToolsApi(c: ApiClient) {
     appointmentsOn: (date: string) => c.get<DoctorAppointment[]>(`${ME}/appointments`, { query: { view: 'day', date: toYmd(date) } }),
     /** Every consultation in one month (`view=month`, `YYYY-MM`). */
     appointmentsIn: (yearMonth: string) => {
-      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(yearMonth)) throw new Error('Invalid month');
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(yearMonth)) throw new Error('Invalid month'); // i18n-ignore: a programming error, not shown
       return c.get<DoctorAppointment[]>(`${ME}/appointments`, { query: { view: 'month', yearMonth: yearMonth.replace('-', '') } });
     },
     /** Q14: the doctor's slots of one India-time day (`YYYY-MM-DD`), to pick a new time for a no-show. */
@@ -751,8 +763,8 @@ export function doctorToolsApi(c: ApiClient) {
      * the booking version the move was decided on (409 BOOKING_CHANGED). The same key and slot answer it again (`replayed`).
      */
     rescheduleNoShow: (bookingId: string, slotId: string, requestKey: string, expectedUpdatedAt?: string) => {
-      if (!REQUEST_KEY.test(requestKey)) throw new Error('Invalid request key');
-      if (expectedUpdatedAt !== undefined && Number.isNaN(Date.parse(expectedUpdatedAt))) throw new Error('Invalid booking version');
+      if (!REQUEST_KEY.test(requestKey)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
+      if (expectedUpdatedAt !== undefined && Number.isNaN(Date.parse(expectedUpdatedAt))) throw new Error('Invalid booking version'); // i18n-ignore: a programming error, not shown
       return c.post<DoctorAppointment & { replayed?: boolean }>(`${ME}/bookings/${checkId(bookingId, 'booking')}/reschedule-no-show`, {
         body: { slotId: checkId(slotId, 'slot'), requestKey, ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}) },
       }).catch((err: unknown) => { throw noShowModeRefusal(err); });
@@ -774,13 +786,13 @@ export function doctorToolsApi(c: ApiClient) {
     practice: () => c.get<SoloPractice | null>(`${ME}/practice`),
     /** Q14: creates the doctor's own clinic exactly once per request key (see `DoctorClinicInput`). */
     createMyClinic: (p: DoctorClinicInput, requestKey: string) => {
-      if (Object.keys(doctorClinicProblems(p)).length) throw new Error('Invalid clinic');
-      if (!REQUEST_KEY.test(requestKey)) throw new Error('Invalid request key');
+      if (Object.keys(doctorClinicProblems(p)).length) throw new Error('Invalid clinic'); // i18n-ignore: a programming error, not shown
+      if (!REQUEST_KEY.test(requestKey)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
       return c.post<DoctorClinicCreated>(`${ME}/clinic`, { body: { ...clinicBody(p), requestKey } });
     },
     /** Q14: the clinic a lost create made, by its key (404 CLINIC_NOT_FOUND: nothing made with it, so far). */
     myClinicByKey: (key: string) => {
-      if (!REQUEST_KEY.test(key)) throw new Error('Invalid request key');
+      if (!REQUEST_KEY.test(key)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
       return c.get<DoctorClinicFound>(`${ME}/clinic/by-key/${key}`);
     },
 
@@ -790,7 +802,7 @@ export function doctorToolsApi(c: ApiClient) {
     statement: (q: StatementQuery = {}) => c.get<StatementPage>(`${ME}/finance/statement`, { query: { ...statementQuery(q) } }),
     /** The period's statement as CSV (oldest first, opening and closing balance), read into a blob. */
     statementCsv: (q: { from?: string; to?: string } = {}, signal?: AbortSignal) => {
-      if (periodProblem(q.from, q.to)) throw new Error('Invalid period');
+      if (periodProblem(q.from, q.to)) throw new Error('Invalid period'); // i18n-ignore: a programming error, not shown
       return c.blob(`${ME}/finance/statement.csv`, { query: { from: q.from, to: q.to }, signal });
     },
     /** Newest first, paged by the exact cursor from `nextCursor` (Q13). */
@@ -802,8 +814,8 @@ export function doctorToolsApi(c: ApiClient) {
      * `expectedDetailsVersion` is the destination version the form was opened on: 409 PAYOUT_DETAILS_CHANGED otherwise (Q13).
      */
     setPayoutDetails: (i: PayoutDetailsInput, expectedDetailsVersion: number) => {
-      if (Object.keys(payoutDetailsProblems(i)).length) throw new Error('Invalid payout details');
-      if (!Number.isSafeInteger(expectedDetailsVersion) || expectedDetailsVersion < 0) throw new Error('Invalid details version');
+      if (Object.keys(payoutDetailsProblems(i)).length) throw new Error('Invalid payout details'); // i18n-ignore: a programming error, not shown
+      if (!Number.isSafeInteger(expectedDetailsVersion) || expectedDetailsVersion < 0) throw new Error('Invalid details version'); // i18n-ignore: a programming error, not shown
       return c.put<SettlementAccountView>(`${ME}/finance/payout-details`, { body: { ...payoutBody(i), expectedDetailsVersion } });
     },
   };
@@ -826,12 +838,12 @@ export function doctorAdminApi(c: ApiClient) {
      */
     search: (text: string, page = 1) => {
       const t = text.trim();
-      if (!t || t.length > MAX_DIRECTORY_SEARCH) throw new Error('Invalid search');
+      if (!t || t.length > MAX_DIRECTORY_SEARCH) throw new Error('Invalid search'); // i18n-ignore: a programming error, not shown
       return c.page<DirectoryDoctor>('/specialists', { query: { search: t, isVerified: 'true', isActive: 'true', page, limit: 20 } });
     },
     /** Q14 `POST /specialists/admin/bookings/:id/reschedule-no-show`: as the doctor's own move, for any booking. */
     rescheduleNoShow: (bookingId: string, slotId: string, requestKey: string, expectedUpdatedAt?: string) => {
-      if (!REQUEST_KEY.test(requestKey)) throw new Error('Invalid request key');
+      if (!REQUEST_KEY.test(requestKey)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
       return c.post<DoctorAppointment & { replayed?: boolean }>(`/specialists/admin/bookings/${checkId(bookingId, 'booking')}/reschedule-no-show`, {
         body: { slotId: checkId(slotId, 'slot'), requestKey, ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}) },
       }).catch((err: unknown) => { throw noShowModeRefusal(err); });

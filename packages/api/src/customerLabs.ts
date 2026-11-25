@@ -1,4 +1,5 @@
 import type { ApiClient, Page } from './client.ts';
+import { t } from './i18n/customer/index.ts';
 import type { PaymentOrder } from './customer.ts';
 import { fetchableFileUrl } from './pharmacyOrders.ts';
 
@@ -133,14 +134,14 @@ export const fromPaise = (minor: number | undefined | null) => (minor == null ||
 export function addressErrors(a: { line1: string; line2?: string; city: string; state?: string; pincode: string; landmark?: string }): Record<string, string> {
   const e: Record<string, string> = {};
   const len = (v: string | undefined) => (v ?? '').trim().length;
-  if (len(a.line1) < 3) e.line1 = 'Enter the house number and street (at least 3 characters).';
-  else if (len(a.line1) > 200) e.line1 = 'Keep this under 200 characters.';
-  if (len(a.line2) > 200) e.line2 = 'Keep this under 200 characters.';
-  if (len(a.city) < 2) e.city = 'Enter the city.';
-  else if (len(a.city) > 80) e.city = 'Keep this under 80 characters.';
-  if (len(a.state) > 80) e.state = 'Keep this under 80 characters.';
-  if (len(a.landmark) > 120) e.landmark = 'Keep this under 120 characters.';
-  if (!LAB_PINCODE_PATTERN.test(a.pincode.trim())) e.pincode = 'Enter a 6-digit pincode.';
+  if (len(a.line1) < 3) e.line1 = t('lab.address.line1');
+  else if (len(a.line1) > 200) e.line1 = t('lab.address.under200');
+  if (len(a.line2) > 200) e.line2 = t('lab.address.under200');
+  if (len(a.city) < 2) e.city = t('lab.address.city');
+  else if (len(a.city) > 80) e.city = t('lab.address.under80');
+  if (len(a.state) > 80) e.state = t('lab.address.under80');
+  if (len(a.landmark) > 120) e.landmark = t('lab.address.under120');
+  if (!LAB_PINCODE_PATTERN.test(a.pincode.trim())) e.pincode = t('lab.address.pincode');
   return e;
 }
 
@@ -172,17 +173,17 @@ export function labTimeline(b: Pick<LabBooking, 'status' | 'visitMode' | 'lifecy
   const order: LabBookingStatus[] = ['pending_payment', 'confirmed', b.visitMode === 'home' ? 'sample_collected' : 'visited', 'processing', 'report_ready', 'completed'];
   const reached = order.indexOf(b.status);
   const steps: TimelineStep[] = [
-    { key: 'booked', label: 'Booked', at: b.createdAt, done: true },
-    { key: 'confirmed', label: 'Paid and confirmed', at: l.confirmedAt ?? l.paidAt, done: !!(l.confirmedAt ?? l.paidAt) || reached >= 1 },
+    { key: 'booked', label: t('lab.step.booked'), at: b.createdAt, done: true },
+    { key: 'confirmed', label: t('lab.step.confirmed'), at: l.confirmedAt ?? l.paidAt, done: !!(l.confirmedAt ?? l.paidAt) || reached >= 1 },
     b.visitMode === 'home'
-      ? { key: 'collected', label: 'Sample collected', at: l.collectedAt, done: !!l.collectedAt || reached >= 2 }
-      : { key: 'visited', label: 'Lab visit done', at: l.visitedAt, done: !!l.visitedAt || reached >= 2 },
-    { key: 'processing', label: 'Sample being tested', at: l.processingAt, done: !!l.processingAt || reached >= 3 },
-    { key: 'report_ready', label: 'Report ready', at: l.reportReadyAt, done: !!l.reportReadyAt || reached >= 4 },
-    { key: 'completed', label: 'Completed', at: l.completedAt, done: !!l.completedAt || reached >= 5 },
+      ? { key: 'collected', label: t('lab.step.collected'), at: l.collectedAt, done: !!l.collectedAt || reached >= 2 }
+      : { key: 'visited', label: t('lab.step.visited'), at: l.visitedAt, done: !!l.visitedAt || reached >= 2 },
+    { key: 'processing', label: t('lab.step.processing'), at: l.processingAt, done: !!l.processingAt || reached >= 3 },
+    { key: 'report_ready', label: t('lab.step.reportReady'), at: l.reportReadyAt, done: !!l.reportReadyAt || reached >= 4 },
+    { key: 'completed', label: t('lab.step.completed'), at: l.completedAt, done: !!l.completedAt || reached >= 5 },
   ];
-  if (b.status === 'cancelled') return [...steps.filter((s) => s.done), { key: 'cancelled', label: 'Cancelled', at: l.cancelledAt, done: true }];
-  if (b.status === 'no_show') return [...steps.filter((s) => s.done), { key: 'no_show', label: 'Marked as not present', at: l.noShowAt, done: true }];
+  if (b.status === 'cancelled') return [...steps.filter((s) => s.done), { key: 'cancelled', label: t('lab.step.cancelled'), at: l.cancelledAt, done: true }];
+  if (b.status === 'no_show') return [...steps.filter((s) => s.done), { key: 'no_show', label: t('lab.step.noShow'), at: l.noShowAt, done: true }];
   return steps;
 }
 
@@ -206,7 +207,7 @@ export function normalizeLab(raw: unknown): PartnerLab {
 }
 
 const hex = /^[0-9a-fA-F]{24}$/;
-const id = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; };
+const id = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; }; // i18n-ignore: a programming error, not shown
 
 /** "YYYY-MM-DD" in IST for `now` plus `days`. */
 export function istDay(now = new Date(), days = 0): string {
@@ -217,7 +218,7 @@ export function customerLabsApi(c: ApiClient) {
   return {
     /** labsQuerySchema: optional city, 6-digit pincode, visit mode. */
     labs: (f: { city?: string; pincode?: string; visitMode?: VisitMode } = {}) => {
-      if (f.pincode && !LAB_PINCODE_PATTERN.test(f.pincode)) throw new Error('Invalid pincode');
+      if (f.pincode && !LAB_PINCODE_PATTERN.test(f.pincode)) throw new Error('Invalid pincode'); // i18n-ignore: a programming error, not shown
       return c.get<PartnerLab[]>('/partner-labs', { query: { city: f.city?.trim() || undefined, pincode: f.pincode, visitMode: f.visitMode } })
         .then((d) => (Array.isArray(d) ? d : []));
     },
@@ -227,7 +228,7 @@ export function customerLabsApi(c: ApiClient) {
       c.get<LabCatalogueItem[]>(`/partner-labs/${id(partnerId, 'lab')}/catalogue`, { query: { visitMode } }).then((d) => (Array.isArray(d) ? d : [])),
     /** branchSlotsQuerySchema: from YYYY-MM-DD (default today, IST), days 1–30 (default 7). */
     slots: (branchId: string, visitMode: VisitMode, from?: string, days = 7) => {
-      if (from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new Error('Invalid date');
+      if (from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new Error('Invalid date'); // i18n-ignore: a programming error, not shown
       return c.get<LabSlot[]>(`/partner-labs/branches/${id(branchId, 'branch')}/slots`, { query: { visitMode, from, days: Math.min(Math.max(days, 1), 30) } })
         .then((d) => (Array.isArray(d) ? d : []));
     },

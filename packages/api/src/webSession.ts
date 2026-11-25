@@ -56,8 +56,9 @@ const IDS_PREFIX = 'sd:ids:';
 const OBJECT_ID = /^[0-9a-fA-F]{24}$/;
 
 export function markerStore(app: string, userId: string) {
+  // i18n-ignore: storage key prefixes, not words
   const base = `${PREFIX}${app}:${userId}:`;
-  const idsBase = `${IDS_PREFIX}${app}:${userId}:`;
+  const idsBase = `${IDS_PREFIX}${app}:${userId}:`; // i18n-ignore: storage key prefix
   return {
     /** WQ11d: an id list of an `ID_LIST_SLOTS` slot (anything that is not a record id is dropped). */
     saveIds(slot: string, ids: readonly unknown[]) {
