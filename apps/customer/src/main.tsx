@@ -6,6 +6,7 @@ import { startLanguage } from '@jansetu/i18n';
 import '@jansetu/ui/tokens.css';
 import './styles.css';
 import { App } from './App.tsx';
+import { t } from './i18n/index.ts';
 import { SessionProvider } from './session.tsx';
 import { startApp } from './nativeShell.ts';
 
@@ -37,8 +38,8 @@ void startLanguage('customer').then(() => startApp(
   ),
   (retry) => root.render(
     <main className="login" role="alert">
-      <p>The app could not open this phone's secure storage, which keeps you signed in safely.</p>
-      <button type="button" onClick={retry}>Try again</button>
+      <p>{t('app.secureStoreFailed')}</p>
+      <button type="button" onClick={retry}>{t('common.tryAgain')}</button>
     </main>,
   ),
 ));

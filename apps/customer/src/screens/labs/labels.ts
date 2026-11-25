@@ -1,24 +1,28 @@
 import type { CustomerLabBooking as LabBooking, CustomerLabBookingStatus as LabBookingStatus, CustomerVisitMode as VisitMode } from '@jansetu/api';
+import { statusOf, type StatusWords } from '../../common.tsx';
+import { t } from '../../i18n/index.ts';
 
-export const LAB_STATUS: Record<LabBookingStatus, { label: string; tone?: 'ok' | 'warn' | 'danger' }> = {
-  pending_payment: { label: 'Awaiting payment', tone: 'warn' },
-  confirmed: { label: 'Confirmed', tone: 'ok' },
-  sample_collected: { label: 'Sample collected', tone: 'ok' },
-  visited: { label: 'Visited', tone: 'ok' },
-  processing: { label: 'Being tested' },
-  report_ready: { label: 'Report ready', tone: 'ok' },
-  completed: { label: 'Completed' },
-  cancelled: { label: 'Cancelled', tone: 'danger' },
-  no_show: { label: 'Not present', tone: 'danger' },
+export const LAB_STATUS: Readonly<Record<LabBookingStatus, StatusWords>> = {
+  pending_payment: { key: 'status.awaitingPayment', tone: 'warn' },
+  confirmed: { key: 'status.confirmed', tone: 'ok' },
+  sample_collected: { key: 'status.sampleCollected', tone: 'ok' },
+  visited: { key: 'status.visited', tone: 'ok' },
+  processing: { key: 'status.beingTested' },
+  report_ready: { key: 'status.reportReady', tone: 'ok' },
+  completed: { key: 'status.completed' },
+  cancelled: { key: 'status.cancelled', tone: 'danger' },
+  no_show: { key: 'status.notPresent', tone: 'danger' },
 };
 
 export const labStatusOf = (b: Pick<LabBooking, 'status' | 'cancellation'>) =>
-  b.status === 'cancelled' && b.cancellation?.reason === 'timeout' ? { label: 'Expired', tone: 'danger' as const }
-    : LAB_STATUS[b.status] ?? { label: String(b.status).replace(/_/g, ' ') };
+  b.status === 'cancelled' && b.cancellation?.reason === 'timeout' ? { label: t('status.expired'), tone: 'danger' as const }
+    : statusOf(LAB_STATUS, b.status);
 
-export const VISIT_MODE_LABEL: Record<VisitMode, string> = { home: 'Home collection', lab: 'Visit the lab' };
+const VISIT_MODE = { home: 'visitMode.home', lab: 'visitMode.lab' } as const satisfies Record<VisitMode, string>;
+/** "Home collection" / "Visit the lab". */
+export const visitModeLabel = (mode: VisitMode) => t(VISIT_MODE[mode]);
 
-export const labTitle = (b: Pick<LabBooking, 'items'>) => b.items.map((i) => i.name).join(', ') || 'Lab test';
+export const labTitle = (b: Pick<LabBooking, 'items'>) => b.items.map((i) => i.name).join(', ') || t('lab.titleFallback');
 
 /** "HH:mm" (IST wall clock from the backend) → "9:30 am". */
 export function clock(hhmm: string): string {

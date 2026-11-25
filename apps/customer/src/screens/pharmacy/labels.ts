@@ -1,35 +1,48 @@
 import type { OrderStatus, PharmacyOrder, PrescriptionRefundStatus } from '@jansetu/api';
+import type { StatusWords } from '../../common.tsx';
+import { t, type CustomerKey } from '../../i18n/index.ts';
 
 /** Customer words for a pharmacy order's state. */
-export const ORDER_STATUS: Record<OrderStatus, { label: string; tone?: 'ok' | 'warn' | 'danger' }> = {
-  placed: { label: 'Placed', tone: 'warn' },
-  accepted: { label: 'Accepted by the pharmacy', tone: 'ok' },
-  packed: { label: 'Packed', tone: 'ok' },
-  ready_for_pickup: { label: 'Ready to collect', tone: 'ok' },
-  out_for_delivery: { label: 'Out for delivery', tone: 'ok' },
-  delivery_failed: { label: 'Delivery failed', tone: 'warn' },
-  completed: { label: 'Completed' },
-  cancelled: { label: 'Cancelled', tone: 'danger' },
-  rejected: { label: 'Not accepted', tone: 'danger' },
-  abandoned: { label: 'Cancelled (not paid in time)', tone: 'danger' },
-  pending_cancel: { label: 'Cancellation requested', tone: 'warn' },
+export const ORDER_STATUS: Readonly<Record<OrderStatus, StatusWords>> = {
+  placed: { key: 'status.placed', tone: 'warn' },
+  accepted: { key: 'status.acceptedByPharmacy', tone: 'ok' },
+  packed: { key: 'status.packed', tone: 'ok' },
+  ready_for_pickup: { key: 'status.readyToCollect', tone: 'ok' },
+  out_for_delivery: { key: 'status.outForDelivery', tone: 'ok' },
+  delivery_failed: { key: 'status.deliveryFailed', tone: 'warn' },
+  completed: { key: 'status.completed' },
+  cancelled: { key: 'status.cancelled', tone: 'danger' },
+  rejected: { key: 'status.notAccepted', tone: 'danger' },
+  abandoned: { key: 'status.cancelledNotPaid', tone: 'danger' },
+  pending_cancel: { key: 'status.cancellationRequested', tone: 'warn' },
 };
 
-export const REFUND_STATUS: Record<PrescriptionRefundStatus, string> = {
-  wallet_pending: 'Your refund is being added to your Jansetu wallet.',
-  wallet_credited: 'Refunded to your Jansetu wallet.',
-  source_processing: 'Your refund is on its way to your card/UPI. Banks can take 5–7 working days.',
-  source_refunded: 'Refunded to your card/UPI. Banks can take 5–7 working days to show it.',
-  manual_review: 'Our team is checking your refund and will contact you if needed.',
-};
+/** An order's status badge; an unknown status shows as the server sent it. */
+export function orderStatusOf(status: OrderStatus) {
+  const s = Object.hasOwn(ORDER_STATUS, status) ? ORDER_STATUS[status] : undefined;
+  return s ? { label: t(s.key), tone: s.tone } : { label: status as string };
+}
 
-export const PAYMENT_MODE: Record<string, string> = {
-  online_payment: 'Online',
-  in_store_payment: 'Pay at the pharmacy',
-  cash_on_delivery: 'Cash on delivery',
+const REFUND_STATUS: Readonly<Record<PrescriptionRefundStatus, CustomerKey>> = {
+  wallet_pending: 'order.refund.walletPending',
+  wallet_credited: 'order.refund.walletCredited',
+  source_processing: 'order.refund.sourceProcessing',
+  source_refunded: 'order.refund.sourceRefunded',
+  manual_review: 'order.refund.manualReview',
 };
+/** Where a prescription refund is; an unknown state shows as the server sent it. */
+export const refundStatusText = (status: PrescriptionRefundStatus) =>
+  (Object.hasOwn(REFUND_STATUS, status) ? t(REFUND_STATUS[status]) : status as string);
 
-export const orderTitle = (o: PharmacyOrder) => (o.orderNumber ? `Order ${o.orderNumber}` : 'Pharmacy order');
+const PAYMENT_MODE: Readonly<Record<string, CustomerKey>> = {
+  online_payment: 'order.paymentMode.online',
+  in_store_payment: 'order.paymentMode.inStore',
+  cash_on_delivery: 'order.paymentMode.cod',
+};
+/** How an order is paid; an unknown mode shows as the server sent it. */
+export const paymentModeLabel = (mode: string) => (Object.hasOwn(PAYMENT_MODE, mode) ? t(PAYMENT_MODE[mode]!) : mode);
+
+export const orderTitle = (o: PharmacyOrder) => (o.orderNumber ? t('order.title', { number: o.orderNumber }) : t('order.titleFallback'));
 export const pharmacyName = (o: PharmacyOrder) =>
   typeof o.pharmacyId === 'object' && o.pharmacyId?.name ? o.pharmacyId.name : undefined;
 export const isUnpaid = (o: PharmacyOrder) => !o.paymentStatus || o.paymentStatus === 'pending' || o.paymentStatus === 'failed';

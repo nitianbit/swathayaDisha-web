@@ -1,4 +1,5 @@
 import { ApiError, customerApi, type ApiClient, type PaymentOrder } from '@jansetu/api';
+import { t } from './i18n/index.ts';
 
 /** Razorpay Checkout (https://checkout.razorpay.com/v1/checkout.js), loaded only when a payment starts. */
 interface RazorpayInstance { open(): void; on(event: 'payment.failed', cb: (r: { error?: { description?: string } }) => void): void }
@@ -14,7 +15,9 @@ export function loadCheckout(): Promise<RazorpayCtor> {
     const s = document.createElement('script');
     s.src = CHECKOUT_SRC;
     s.async = true;
+    // i18n-ignore: never shown (messageOf words any error that is not the server's)
     s.onload = () => (window.Razorpay ? resolve(window.Razorpay) : reject(new Error('Payment page did not load')));
+    // i18n-ignore: never shown (messageOf words any error that is not the server's)
     s.onerror = () => { loading = null; reject(new Error('Could not open the payment page. Check your connection and try again.')); };
     document.head.appendChild(s);
   });
@@ -34,7 +37,7 @@ async function checkout(order: PaymentOrder, prefill: { name?: string; contact?:
       order_id: order.razorpayOrderId,
       amount: Math.round(order.amount * 100),
       currency: order.currency,
-      name: 'Jansetu',
+      name: t('common.brand'),
       description,
       prefill,
       theme: { color: '#0b6e70' },

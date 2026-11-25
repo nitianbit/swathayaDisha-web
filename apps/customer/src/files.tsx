@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { FileText } from 'lucide-react';
 import { Alert, Button } from '@jansetu/ui';
 import { messageOf } from './common.tsx';
+import { t } from './i18n/index.ts';
 
 export type FileKind = 'image' | 'pdf' | 'other';
 
@@ -30,6 +31,7 @@ const EXT: Record<string, string> = { 'image/png': '.png', 'image/jpeg': '.jpg',
  * (and version) it is. Nothing is put in a link that carries
  * a token, and nothing is stored on the device until the customer chooses Save.
  */
+/** `label` names the document in a sentence ("bill PDF", "report 2": `files.*` words). */
 export function PrivateFile(props: { id: string; label: string; baseName: string; load: (signal: AbortSignal) => Promise<Blob> }) {
   // A different document (another bill, another version, another report) starts from nothing: the previous one's
   // fetch is aborted and its blob URL revoked by the unmount, so a link never shows one document under another's name.
@@ -64,19 +66,19 @@ function FileForDocument({ label, baseName, load }: { id: string; label: string;
     return (
       <div className="stack" role="group" aria-label={label}>
         <div className="row">
-          {state.kind !== 'other' && <a className="j-btn j-btn--secondary" href={state.url} target="_blank" rel="noopener">Open {label}</a>}
-          <a className="j-btn j-btn--ghost" href={state.url} download={name}>Save {label}</a>
+          {state.kind !== 'other' && <a className="j-btn j-btn--secondary" href={state.url} target="_blank" rel="noopener">{t('files.open', { document: label })}</a>}
+          <a className="j-btn j-btn--ghost" href={state.url} download={name}>{t('files.save', { document: label })}</a>
         </div>
-        {state.kind === 'other' && <p className="muted">This file can only be saved to your device.</p>}
+        {state.kind === 'other' && <p className="muted">{t('files.saveOnly')}</p>}
       </div>
     );
   }
   return (
     <div className="stack">
       <Button variant="secondary" busy={state.status === 'loading'} onClick={() => void get()}>
-        <FileText size={16} aria-hidden="true" /> Get {label}
+        <FileText size={16} aria-hidden="true" /> {t('files.get', { document: label })}
       </Button>
-      {state.status === 'failed' && <Alert>{label} could not be loaded: {state.message}</Alert>}
+      {state.status === 'failed' && <Alert>{t('files.failed', { document: label, message: state.message })}</Alert>}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 import { ApiError, customerPharmacyApi, PHARMACY_PAYMENT_WINDOW_MIN, requestKeysApi, type Cart, type CartItem, type PaymentMode } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextArea } from '@jansetu/ui';
 import { messageOf, PageHeading } from '../../common.tsx';
+import { t } from '../../i18n/index.ts';
 import { newRequestKey } from '../../pending.ts';
 import { useSession } from '../../session.tsx';
 
@@ -27,14 +28,14 @@ export function CartScreen() {
   const [cartNotice, setCartNotice] = useState<string | null>(null);
   return (
     <>
-      <Link to={storeId ? `/pharmacy/stores/${storeId}` : '/pharmacy'} className="back"><ArrowLeft size={16} aria-hidden="true" /> Continue shopping</Link>
-      <PageHeading title="Cart">{cart.data?.pharmacyName ?? undefined}</PageHeading>
+      <Link to={storeId ? `/pharmacy/stores/${storeId}` : '/pharmacy'} className="back"><ArrowLeft size={16} aria-hidden="true" /> {t('cart.continue')}</Link>
+      <PageHeading title={t('cart.title')}>{cart.data?.pharmacyName ?? undefined}</PageHeading>
       <EarlierAttempt onChange={attemptChanged} />
       {cartNotice && <Alert tone="warn">{cartNotice}</Alert>}
       {cart.isPending ? <Loading /> : cart.isError ? <ErrorState message={messageOf(cart.error)} onRetry={() => void cart.refetch()} />
-        : cart.data.items.length === 0 ? <Empty title="Your cart is empty"><Link to="/pharmacy">Find a pharmacy</Link></Empty>
+        : cart.data.items.length === 0 ? <Empty title={t('cart.empty')}><Link to="/pharmacy">{t('cart.findPharmacy')}</Link></Empty>
         // The pharmacy's pickup/delivery options decide what can be ordered: nothing is offered until they are known.
-        : store.isPending ? <Loading label="Loading the pharmacy…" />
+        : store.isPending ? <Loading label={t('cart.loadingPharmacy')} />
         : store.isError ? <ErrorState message={messageOf(store.error)} onRetry={() => void store.refetch()} />
         // Keyed by the pharmacy: a cart that now belongs to another pharmacy starts with nothing attached (a document
         // meant for one pharmacy is never sent to another; late uploads of the old view land nowhere).
@@ -98,9 +99,9 @@ function CartView({ cart, pickup, delivery, onAttemptChange, onCartChanged }: {
   async function place() {
     setError(null);
     onCartChanged(null);
-    if (uploadingRef.current > 0) { setError('Wait until your prescription has finished attaching.'); return; }
-    if (!modeAllowed) { setError('Choose how you get the order.'); return; }
-    if (mode === 'delivery' && address.trim().length < 10) { setFieldError('Enter the full delivery address.'); return; }
+    if (uploadingRef.current > 0) { setError(t('cart.waitUpload')); return; }
+    if (!modeAllowed) { setError(t('cart.chooseMode')); return; }
+    if (mode === 'delivery' && address.trim().length < 10) { setFieldError(t('cart.addressMissing')); return; }
     setFieldError(null);
     setPlacing(true);
     // Never retried automatically. The key is stored before sending and reused until an order is confirmed.
@@ -132,16 +133,16 @@ function CartView({ cart, pickup, delivery, onAttemptChange, onCartChanged }: {
     } catch (err) {
       if (err instanceof ApiError && err.code === 'REQUEST_ABANDONED') {
         // That attempt can never be placed: the next one gets a new key (only if it is still the stored one).
-        if (endIfCurrent(attempt.requestKey)) setError('That attempt was cancelled. Please place the order again.');
+        if (endIfCurrent(attempt.requestKey)) setError(t('cart.attemptCancelled'));
       } else if (err instanceof ApiError && err.code === 'CART_CHANGED') {
         // The cart now belongs to another pharmacy (changed elsewhere): reload it; the view starts fresh for it.
-        onCartChanged('Your cart changed in another window. Check it and place the order again.');
+        onCartChanged(t('cart.changedElsewhere'));
         await refresh();
       } else if (err instanceof ApiError && err.code === 'CART_PRICE_CHANGED') {
-        setError('Some prices changed since you added the medicines. Check the new total and place the order again.');
+        setError(t('cart.pricesChanged'));
         await refresh();
       } else if (err instanceof ApiError && err.status === 0) {
-        setError('We could not tell whether your order was placed. Use “Check my last order” above.');
+        setError(t('cart.unknownOutcome'));
         onAttemptChange();
         await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] });
         await refresh();
@@ -157,50 +158,50 @@ function CartView({ cart, pickup, delivery, onAttemptChange, onCartChanged }: {
       <ul className="list">
         {cart.items.map((i) => (
           <li key={i.medicineId} className="list-row">
-            <strong>{i.medicineName ?? i.brandName ?? 'Medicine'}</strong>
+            <strong>{i.medicineName ?? i.brandName ?? t('common.medicine')}</strong>
             <div className="row-between">
               <span>{formatRupees(i.unitPrice)} × {i.quantity} = {formatRupees(i.lineTotal)}</span>
-              <div className="stepper" role="group" aria-label={`${i.medicineName ?? 'Medicine'} quantity`}>
-                <Button variant="secondary" disabled={busy || placing} onClick={() => void change(i, -1)} aria-label={`One less ${i.medicineName ?? ''}`}>−</Button>
+              <div className="stepper" role="group" aria-label={t('store.quantityAria', { name: i.medicineName ?? t('common.medicine') })}>
+                <Button variant="secondary" disabled={busy || placing} onClick={() => void change(i, -1)} aria-label={t('store.lessAria', { name: i.medicineName ?? '' })}>−</Button>
                 <span>{i.quantity}</span>
-                <Button variant="secondary" disabled={busy || placing} onClick={() => void change(i, 1)} aria-label={`One more ${i.medicineName ?? ''}`}>+</Button>
+                <Button variant="secondary" disabled={busy || placing} onClick={() => void change(i, 1)} aria-label={t('store.moreAria', { name: i.medicineName ?? '' })}>+</Button>
               </div>
             </div>
-            {i.prescriptionRequired !== false && <span className="muted">Needs a prescription: the pharmacist checks it before packing.</span>}
+            {i.prescriptionRequired !== false && <span className="muted">{t('cart.needsRx')}</span>}
           </li>
         ))}
       </ul>
-      <p><strong>Total {formatRupees(cart.subtotal)}</strong></p>
+      <p><strong>{t('cart.total', { amount: formatRupees(cart.subtotal) })}</strong></p>
       {rx.length > 0 && (
-        <PrescriptionUpload names={rx.map((i) => i.medicineName ?? 'A medicine')} urls={prescriptions} setUrls={setPrescriptions}
+        <PrescriptionUpload names={rx.map((i) => i.medicineName ?? t('cart.aMedicine'))} urls={prescriptions} setUrls={setPrescriptions}
           onUpload={trackUpload} disabled={placing} />
       )}
       {(
         <section className="card stack" aria-labelledby="checkout-h">
-          <h2 id="checkout-h">How you get it</h2>
+          <h2 id="checkout-h">{t('cart.howGet')}</h2>
           <fieldset className="choice">
-            <legend>Pickup or delivery</legend>
-            {pickup && <label><input type="radio" name="mode" checked={mode === 'pickup'} onChange={() => setMode('pickup')} /> Collect at the pharmacy</label>}
-            {delivery && <label><input type="radio" name="mode" checked={mode === 'delivery'} onChange={() => setMode('delivery')} /> Deliver to me</label>}
+            <legend>{t('cart.pickupOrDelivery')}</legend>
+            {pickup && <label><input type="radio" name="mode" checked={mode === 'pickup'} onChange={() => setMode('pickup')} /> {t('cart.collect')}</label>}
+            {delivery && <label><input type="radio" name="mode" checked={mode === 'delivery'} onChange={() => setMode('delivery')} /> {t('cart.deliver')}</label>}
           </fieldset>
           {mode === 'delivery' && (
-            <TextArea label="Delivery address" value={address} maxLength={500} onChange={(e) => setAddress(e.target.value)} error={fieldError}
-              hint="House, street, area, city and pincode." />
+            <TextArea label={t('cart.address')} value={address} maxLength={500} onChange={(e) => setAddress(e.target.value)} error={fieldError}
+              hint={t('cart.addressHint')} />
           )}
           <fieldset className="choice">
-            <legend>How you pay</legend>
-            <label><input type="radio" name="pay" checked={pay === 'online_payment'} onChange={() => setPay('online_payment')} /> Pay online now</label>
+            <legend>{t('cart.howPay')}</legend>
+            <label><input type="radio" name="pay" checked={pay === 'online_payment'} onChange={() => setPay('online_payment')} /> {t('cart.payOnline')}</label>
             <label><input type="radio" name="pay" checked={pay !== 'online_payment'} onChange={() => setPay(offline)} />
-              {mode === 'pickup' ? ' Pay at the pharmacy' : ' Cash on delivery'}</label>
+              {' '}{mode === 'pickup' ? t('order.paymentMode.inStore') : t('order.paymentMode.cod')}</label>
           </fieldset>
-          <TextArea label="Note for the pharmacy (optional)" value={notes} maxLength={1000} onChange={(e) => setNotes(e.target.value)} />
+          <TextArea label={t('cart.note')} value={notes} maxLength={1000} onChange={(e) => setNotes(e.target.value)} />
           {payMode === 'online_payment' && (
-            <p className="muted">Pay within {PHARMACY_PAYMENT_WINDOW_MIN} minutes, or the order is cancelled and the medicines are released.</p>
+            <p className="muted">{t('cart.payWithin', { minutes: PHARMACY_PAYMENT_WINDOW_MIN })}</p>
           )}
           {error && <Alert>{error}</Alert>}
-          {uploading > 0 && <p className="muted">Attaching your prescription… the order can be placed when it is done.</p>}
+          {uploading > 0 && <p className="muted">{t('cart.attaching')}</p>}
           <Button busy={placing} disabled={busy || !modeAllowed || uploading > 0} onClick={() => void place()}>
-            {payMode === 'online_payment' ? `Place order and pay ${formatRupees(cart.subtotal)}` : `Place order · ${formatRupees(cart.subtotal)}`}
+            {payMode === 'online_payment' ? t('cart.placeAndPay', { amount: formatRupees(cart.subtotal) }) : t('cart.place', { amount: formatRupees(cart.subtotal) })}
           </Button>
         </section>
       )}
@@ -224,7 +225,7 @@ function EarlierAttempt({ onChange }: { onChange: () => void }) {
   // The result belongs to the key it was about: a newer unresolved attempt always shows its own recovery.
   const [clearedKey, setClearedKey] = useState<string | null>(null);
   if (!attempt) {
-    return clearedKey ? <Alert tone="ok">Your earlier attempt did not place an order. You can place the order now.</Alert> : null;
+    return clearedKey ? <Alert tone="ok">{t('cart.earlierNone')}</Alert> : null;
   }
   const key = attempt.requestKey;
   async function check() {
@@ -249,8 +250,8 @@ function EarlierAttempt({ onChange }: { onChange: () => void }) {
   }
   return (
     <Alert tone="warn">
-      Your last attempt to place an order may have gone through.{' '}
-      <Button variant="secondary" busy={busy} onClick={() => void check()}>Check my last order</Button>
+      {t('cart.lastAttempt')}{' '}
+      <Button variant="secondary" busy={busy} onClick={() => void check()}>{t('cart.checkLast')}</Button>
       {error && error.key === key && <span> {error.message}</span>}
     </Alert>
   );
@@ -273,14 +274,14 @@ function PrescriptionUpload({ names, urls, setUrls, onUpload, disabled }: {
     onUpload(1);
     try {
       for (const f of Array.from(files)) {
-        if (!/^(image\/(jpeg|png|webp)|application\/pdf)$/.test(f.type)) throw new Error('Attach a photo (JPG, PNG) or a PDF.');
-        if (f.size > 10 * 1024 * 1024) throw new Error('Each file must be under 10 MB.');
+        if (!/^(image\/(jpeg|png|webp)|application\/pdf)$/.test(f.type)) throw new Error(t('cart.rx.type'));
+        if (f.size > 10 * 1024 * 1024) throw new Error(t('cart.rx.size'));
         const url = await customerPharmacyApi(api).uploadPrescription(f);
         // Appended to the list as it is NOW (a removal made meanwhile stays removed).
         setUrls((current) => (current.includes(url) ? current : [...current, url]));
       }
     } catch (err) {
-      setError(err instanceof ApiError ? messageOf(err) : (err as Error).message || 'The file could not be attached.');
+      setError(err instanceof ApiError ? messageOf(err) : (err as Error).message || t('cart.rx.failed'));
     } finally {
       setBusy(false);
       onUpload(-1);
@@ -288,24 +289,21 @@ function PrescriptionUpload({ names, urls, setUrls, onUpload, disabled }: {
   }
   return (
     <section className="card stack" aria-labelledby="rx-h">
-      <h2 id="rx-h">Prescription</h2>
-      <p>
-        {names.join(', ')} {names.length === 1 ? 'needs' : 'need'} a prescription. The pharmacist checks your order before packing
-        it; if it is not approved, you are refunded.
-      </p>
+      <h2 id="rx-h">{t('cart.rx.title')}</h2>
+      <p>{t('cart.rx.needs', { count: names.length, names: names.join(', ') })}</p>
       <label className="file-pick">
-        <span>Attach your prescription (optional)</span>
+        <span>{t('cart.rx.attach')}</span>
         <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" multiple disabled={busy || disabled}
           onChange={(e) => { void add(e.target.files); e.target.value = ''; }} />
       </label>
-      {busy && <Loading label="Attaching…" />}
+      {busy && <Loading label={t('cart.rx.attachingShort')} />}
       {error && <Alert>{error}</Alert>}
       {urls.length > 0 && (
         <ul className="plain">
           {urls.map((u, i) => (
             <li key={u} className="row-between">
-              <span>Prescription {i + 1} attached</span>
-              <Button variant="ghost" disabled={disabled} onClick={() => setUrls((current) => current.filter((x) => x !== u))}>Remove</Button>
+              <span>{t('cart.rx.attached', { number: i + 1 })}</span>
+              <Button variant="ghost" disabled={disabled} onClick={() => setUrls((current) => current.filter((x) => x !== u))}>{t('cart.rx.remove')}</Button>
             </li>
           ))}
         </ul>
