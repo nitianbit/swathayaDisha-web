@@ -28,7 +28,9 @@ export type PartnerPermission =
   | 'finance.view'
   /** r13 (§24.13): the lab wallet: read it; add money to it. */
   | 'wallet.view'
-  | 'wallet.manage';
+  | 'wallet.manage'
+  /** WQ24 (r21 §24.17): book doctor consultations for walk-in patients, paid by the lab (owners hold it; never granted by migration). */
+  | 'assisted.book';
 
 /** Backend `ALL_PERMISSIONS`, in its order, with the words shown to people. */
 export const PARTNER_PERMISSIONS: readonly { value: PartnerPermission; label: string }[] = [
@@ -46,6 +48,7 @@ export const PARTNER_PERMISSIONS: readonly { value: PartnerPermission; label: st
   { value: 'finance.view', label: 'View finance' },
   { value: 'wallet.view', label: 'View the wallet' },
   { value: 'wallet.manage', label: 'Add money to the wallet' },
+  { value: 'assisted.book', label: 'Book doctor consultations for patients' },
 ];
 export const ALL_PARTNER_PERMISSIONS: readonly PartnerPermission[] = PARTNER_PERMISSIONS.map((p) => p.value);
 export const PERMISSION_LABEL: Record<PartnerPermission, string> =
@@ -374,8 +377,10 @@ export function holdsAny(a: Pick<PartnerActorView, 'role' | 'permissions'>, anyO
 /** Delegation ceiling: an owner may grant anything; staff only what they hold. */
 /** WQ20b: the wallet permissions are a lab's (r13); a clinic is never offered them. Unknown kind: none of them. */
 export const WALLET_PERMISSIONS: readonly PartnerPermission[] = ['wallet.view', 'wallet.manage'];
+/** WQ24: booking doctors for patients is a lab's too (r21 `admitLabBooker`: a clinic is 403 LAB_PARTNER_REQUIRED). */
+const LAB_ONLY_PERMISSIONS: readonly PartnerPermission[] = [...WALLET_PERMISSIONS, 'assisted.book'];
 export const permissionsForKind = (kind: PartnerKind | undefined): PartnerPermission[] =>
-  ALL_PARTNER_PERMISSIONS.filter((p) => kind === 'lab' || !WALLET_PERMISSIONS.includes(p));
+  ALL_PARTNER_PERMISSIONS.filter((p) => kind === 'lab' || !LAB_ONLY_PERMISSIONS.includes(p));
 
 export function grantablePermissions(a: Pick<PartnerActorView, 'role' | 'permissions'>, kind?: PartnerKind): PartnerPermission[] {
   const offered = permissionsForKind(kind);

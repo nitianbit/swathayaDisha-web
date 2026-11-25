@@ -179,6 +179,9 @@ export {
   typedNameProblem, typedNameRefusal, typedNameTarget,
 } from './assisted.ts';
 export type { RescheduleAnswer, RescheduleRefusalKind, RescheduleRequest, TypedNameAnswer, TypedNameTarget } from './assisted.ts';
+// WQ24: a lab member books a doctor consultation for a walk-in patient (r21, round 2e): the pharmacy's routes, by booker.
+export { assistedBookerApi, LAB_CONSENT_STATEMENT, LAB_CONSENT_STATEMENT_VERSION, labAssistedApi, labBookerRefusal } from './assisted.ts';
+export type { AssistedBookerApi, BookerKind } from './assisted.ts';
 export {
   ADMIN_TOPUP_BY_KEY_PATH, ADMIN_TOPUP_KEY_PATTERN, ADMIN_TOPUP_PAGE_SIZE, ADMIN_TOPUP_SEARCH_PAGES, ADMIN_TOPUP_WARNING, adminTopupWarning, adminPharmacyWalletApi, adminTopupForm, adminTopupRefusal,
   adminWalletReadError, findAdminTopup, isAdminTopupRow, latestAdminCredit, topupNotFoundWords,
@@ -193,8 +196,9 @@ export {
   moveRefundRefusal, moveRefusedBeforeWriting, outcomeOfAnswer, outcomeOfError, payByClock, payByWords, settleCardPayment,
   bookingPaidBy, bookingPayBy, findMarkedFailed, markFailedFinal, markFailedRefusal, markFailedRefusedBeforeWriting, recheckWords,
   beforeCheckout, bookingWasPaid, cardBookingState, HELD_NOT_STARTED, isCardAnswer, routeCardAnswer, checkoutSeconds, DUPLICATE_WORDS, LATE_PAYMENT_BACK, orderFromBooking, PAY_NOW_MARGIN_MS, payNowOpen, readCardRefund, recheckRefusal,
+  CARD_PERMISSION_WORDS, cardBlockedWords, cardRefundCauseLabel, LAB_PAYER, PHARMACY_PAYER, payerNameOf, payerWord,
 } from './assistedCard.ts';
-export type { AdminCardRefund, CardBookingKind, CardOutcome, CardPaymentAnswer, CardProof, CardRefundMove, CardRefundRecheck, CardRefundState, ReconcileAnswer } from './assistedCard.ts';
+export type { AdminCardRefund, CardBookingKind, CardOutcome, CardPayer, CardRefundPayerKind, CardPaymentAnswer, CardProof, CardRefundMove, CardRefundRecheck, CardRefundState, ReconcileAnswer } from './assistedCard.ts';
 export type {
   AssistedCardPayment, AssistedPaymentMethod, BookingPayment as AssistedBookingPayment, CardRefund, OpenCardOrder, RefundTo,
   AssistedDoctor, AssistedGender, AssistedPatient, AssistedRelation, BookedConsultation, BookingStatus as AssistedBookingStatus, ByKeyAnswer, CancelAnswer,
@@ -247,3 +251,14 @@ export type {
   HolderRecordsGrant, HolderRecordsRequest, OtherConsultation, OtherLabReport, OwnConsultation, RecordsAccess, RecordsAccessState, RecordsGrantBrief,
   RecordsParty, RecordsRequestAnswer, RecordsRequestState, TreatingRecords,
 } from './recordsAccess.ts';
+// WQ26: referral cuts (phase 4a/4b): the admin's rules per partner and category, and the pharmacy's referral earnings.
+export {
+  basisPointsToInput, CAP_PROBLEM, FIXED_PROBLEM, MAX_REFERRAL_REASON, PERCENT_PROBLEM, percentToBasisPoints, pharmacyReferralApi, REFERRAL_BOOKER_KINDS,
+  REFERRAL_CATEGORIES, REFERRAL_CATEGORY_LABEL, REFERRAL_FIXED_MIN_MINOR, REFERRAL_PERCENT_MAX_BP, REFERRAL_PERCENT_MIN_BP, REFERRAL_RULE_REFUSAL,
+  REFERRAL_STATEMENT_PAGE, referralCutsOn, referralDraftOf, referralRowOf, referralRuleBody, referralRuleRefusal, referralRuleRefusedBeforeWriting,
+  referralRulesAdminApi, referralRuleText, referralTermsOf, referralTermsText, sameRuleTerms, ruleTerms,
+} from './referralCuts.ts';
+export type {
+  ReferralBasis, ReferralBookerKind, ReferralCategory, ReferralDraft, ReferralDraftErrors, ReferralMode, ReferralRow, ReferralRule, ReferralRuleEvent,
+  ReferralRuleInput, ReferralStatementLine, ReferralSummary, ReferralTerms,
+} from './referralCuts.ts';

@@ -34,6 +34,7 @@ function PartnerDetail({ partnerId }: { partnerId: string }) {
     <>
       <Link className="ws-back" to="/admin/partners"><ArrowLeft size={16} aria-hidden="true" /> Back to labs and clinics</Link>
       <PageHeading title={p?.name ?? 'Lab or clinic'}>{p ? `${PARTNER_KIND_LABEL[p.kind] ?? p.kind}${p.solo ? ' · single-doctor practice' : ''}` : null}</PageHeading>
+      {p?.kind === 'lab' && <div><Link to={`${root}/referral-cuts`}>Referral cuts</Link></div>}
       {q.isPending ? <Loading label="Loading partner…" />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : (

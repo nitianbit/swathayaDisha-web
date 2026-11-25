@@ -2316,6 +2316,123 @@ Nothing visible changes: English stays byte-identical and no language list shows
   (166). For the integrator: merging WQ22 adds its new files with English (`assistedInstant.ts`, and its `ConsultNowScreen.tsx`
   unless it is the doctor's, already listed) to the allowlist, and any `Intl` money call it adds goes to `formatPaise`.
 
+## WQ26 referral cuts: the admin's rules per partner, the pharmacy's referral earnings (phase 4a/4b web) (2026-11-25, branch `wq26/referral-cuts`)
+
+Backend: r24 on stage `6a8574e9` (ASSISTED_BOOKING_DESIGN.md §26.5, §26.6, §26.15; `src1/modules/referralCuts`). Web base:
+`wq/stage-next-2` 13333e9. Behind `REFERRAL_CUTS_ENABLED` (off by default: rules are saved, nothing is cut); the rule PUT needs
+`ASSISTED_ADMIN_TOOLS_ENABLED`; payouts stay off (`REFERRAL_PAYOUTS_ENABLED`, O1), so earnings show as due. Doctor cuts stay off:
+no screen sets them. Owner rules: the cut is paid TO the booking partner, per partner and per category, as a % of each line or a
+fixed amount per line, taken FROM the provider's earning; a percent is at most 50%, a fixed amount has no upper limit.
+
+- **Admin › Pharmacies › a pharmacy › Referral cuts** (`/admin/pharmacies/:pharmacyId/referral-cuts`) and **Admin › Labs and
+  clinics › a lab › Referral cuts** (`/admin/partners/:partnerId/referral-cuts`; a clinic is told cuts are for pharmacies and
+  labs): one row per category (consultation, lab test, lab package) with the rule as saved (Off / x% of each line with its
+  optional cap / ₹y a line), when it changed and its version, and Edit. The editor: Off, a percent of each line (0.01–50, two
+  decimals, optional cap ≥ ₹0.01) or a fixed amount per line (≥ ₹0.01, no upper limit, no cap); Off sends the saved terms with
+  `isActive: false`. Save opens `ConfirmAction` with the reason the history keeps, bound to the terms and the version it was
+  made from (`expectedVersion`, 0 = create). 409 RECORD_CHANGED: nothing saved, the rules are read again ("Saved now: …") and
+  the editor keeps what was typed on the new version. Sent with the owned PendingOp (`useOwnedOp` / `CheckPanel`): a lost answer
+  is checked by reading the rules (a newer version with the same terms is the change; the same version is not saved yet, and
+  sending it again is safe because the fence lets one attempt through). "Referral cuts are switched off; rules are saved but not
+  applied." shows while an active rule is not `effective`. History: the three categories' events, newest first, with the
+  reason and who.
+- **Pharmacy › Referral earnings** (`/pharmacy/referral`, in the side bar): Due / Earned / Paid to you
+  (`GET /pharmacy-assisted/referral`), "Payouts start once Jansetu switches them on." while `payoutsEnabled` is false, the rates
+  read only (`/referral-rules`), and the statement (date, short ref, category, base, cut; no patient names) in cursor pages
+  (`/referral/statement?before&limit`). Read only.
+- **Shared, not copied**: `ConfirmAction`, `useOwnedOp` / `CheckPanel`, `useOneAtATime`, `useCursorPages` / `CursorPager`,
+  `NoSuchRecord`, `useAdminScope`, the finance cards and `Signed`; money with `formatPaise`; rupees through `rupeesToPaise` /
+  `paiseToInput`. One new API module, `packages/api/src/referralCuts.ts` (`referralRulesAdminApi`, `pharmacyReferralApi`, the
+  draft → terms → body checks, the words, the statement row); its three new files are on the literals allowlist (172).
+
+API gaps (none blocking):
+- No answer carries the master switch: the screens read it from `effective` of an active rule, so with no active rule the page
+  cannot tell (nothing is cut either way).
+- Statement lines carry neither the short ref nor the category as fields (§26.6.2 lists them; r24 added `grossMinor` /
+  `commissionMinor`): the ref is read from the server's words ("… · Ref ABCD2345") and the category from `source` (a lab
+  booking is one row for all its lines). The pharmacy referral statement has no CSV route.
+- The admin settlement list filters `ownerKind` by `partner | doctor` only, and shows a `*_referral` account's kind as its code
+  (seen, not changed: phase 4e/4f).
+## WQ24 lab › Book consultation: a lab books a doctor consultation for a walk-in patient (phase 2e) (2026-11-25, branch `wq24/lab-book-consultation`)
+
+Backend: r21 + r21b (stage `6a8574e9`, design ASSISTED_BOOKING_DESIGN.md §24.16–§24.17; mocked API). Web base: `wq/stage-next-2`
+13333e9. Behind the backend's `ASSISTED_BOOKING_ENABLED_LAB` (off: the lookup, the doctor reads and a new booking answer 503, said as
+"Booking for patients is not switched on yet. Jansetu turns it on for your lab when it is ready."); a card booking also needs
+`ASSISTED_CARD_PAYMENT_ENABLED` (off: the card option is disabled, as for pharmacies).
+
+- **Lab › Book consultation** (`/partner/book-consultation`) and **Lab › Booked consultations** (`/partner/consultations[/:id]`),
+  next to Front desk; lab members holding the new partner permission `assisted.book` (owners hold it; offered for labs only in the
+  staff editor as "Book doctor consultations for patients"); the lab's own members only (the lab wallet and payment routes have no
+  admin mirror). The pharmacy's flow, unchanged: the patient (`POST /partner-workspace/assisted/patients/lookup`), family members
+  the lab booked for before (from its own list), the lab's consent sentence (`web-lab-consult-v1`: "this lab can see the
+  prescription … for 90 days"), **the branch the patient is at** (the member's active branches in scope; chosen at once when there
+  is one), the doctors near that branch and their times (`?branchId`), mode, join ("On this lab’s device"), language, coupon,
+  problem, then "How do you pay?": **the lab wallet** (the WQ20 balance; a member without `wallet.view` is told the lab's wallet pays
+  and its balance is not shown; "Top up now" only with `wallet.manage`) or **card or UPI** (verified and reconciled on the lab's own
+  `/partner-workspace/assisted/payments/verify|reconcile`). One keyed create `POST …/assisted/consultations` with `branchId`.
+- **Booked consultations**: the list (`GET …/assisted/bookings`, the member's branches only), a consultation (`GET …/bookings/:id`;
+  another branch's or another lab's is 404 `BOOKING_NOT_FOUND`, "Consultation not found"), Join call, "Pay now" / "Check payment"
+  for a card booking waiting for payment, change time (same doctor), cancel before the start with the refund back the way it was
+  paid (wallet; card by default, or the wallet on the lab's choice), and the prescription's dispensing copy (`/file/fetch` with the
+  member's token; "the diagnosis is not shown to labs"). No typed-name edit (r21 F6) and no medicine order (pharmacies only).
+- **Money safety, as for pharmacies** (the same code): an owned PendingOp stored before sending, settled only while live and
+  `stillCurrent`; a request key with the check by key, the same request again, and "Give this up" (after a reload only the key);
+  `PRICE_CHANGED` offers the server's price as a new request; card: the pre-checkout reconcile and no second Checkout once a payment
+  is authorized. No token, phone, name or order id in storage, addresses or logs.
+- **Shared, not copied** (owner: no duplicated code). `assisted.ts` `assistedBookerApi(c, kind)` is the one set of consultation
+  routes (`pharmacyAssistedApi` = the pharmacy's + its medicine order; `labAssistedApi` = the lab's, `branchId` checked before
+  sending); `assistedCard.ts` takes a `CardPayer` (`PHARMACY_PAYER` `/payments`, `LAB_PAYER` the lab's routes) in
+  `bookingPaymentApi`, `settleCardPayment`, `beforeCheckout`, `checkCardPayment`, and names the booker in the blocked and not-found
+  words. The screens take a `ConsultBooker` (`pharmacy/consultBooker.ts`: routes, refusal words, query keys, the paying wallet,
+  the card payer, the consent, the pages, a lab's branches): `BookConsultation`, `BookedConsultationsList`,
+  `BookedConsultationDetail` and `ChangeTime` are the pharmacy's, generalised; `PayChoice`/`WalletPay` take a `PayWallet`
+  (`pharmacyPayWallet` by default); `usePatientStep` takes the booker's routes; `consultationCardSource` takes the booker's routes
+  and payer; `JoinFields` and `joinWords` name the booker. The lab screens (`partner/LabConsultScreens.tsx`) only build the lab's
+  booker and the headings. Pharmacy behaviour, look and specs unchanged.
+- **Visible outside these screens**: the lab staff editor offers "Book doctor consultations for patients" (a clinic never).
+
+API gaps:
+- The booker view carries no `assisted.bookedBy.branchId`, so Change time reads the doctor's times with the member's first branch in
+  scope (r21 requires a branch on the slots read; the times do not depend on it), and the booking page cannot name its branch.
+- A lab's refusals of the reschedule (permission, branch scope) fall back to the server's message (the shared reschedule words).
+
+Seen, not changed: the admin card refund queue (`admin/CardRefunds.tsx`) still names only `pharmacyName`, so a lab-paid row shows "—" and
+its words say "the pharmacy" (r21 adds `payerKind`, `payerId`, `payerName`); the pharmacy-only limit words (`new_accounts`,
+`booker_cancellations`, no longer blocking limits) and the `PHARMACY_*` refusals keep their pharmacy words; the document viewer still
+reads files through `pharmacyAssistedApi(api).file` (the same `/file/fetch` for any token).
+
+### WQ24b card refunds name their payer; a lab's refusals in its own words (2026-11-25, branch `wq24b/card-refund-payer`)
+
+On WQ24 33439af. Against r21 (§24.17.3 "Admin": card refund rows add `payerKind`, `payerId`, `payerName`).
+- **Admin › Pharmacy wallets › Card refunds of bookings that need a person**: each row names its payer (`payerName`, else an older
+  answer's `pharmacyName`) under "Paid by" (was "Pharmacy"); the cause "Cancelled by the pharmacy|lab|doctor", the agreement
+  ("The lab's agreement", "Write what the lab agreed to …"), the explanations, the button names and the answers name the payer's
+  wallet. One `payerWord(kind)` (`assistedCard.ts`, an older answer is a pharmacy's) with `payerNameOf` and `cardRefundCauseLabel`;
+  `agreementProblem` takes the payer. Pharmacy rows read exactly as before; the intro now says the bookings may be a pharmacy's, a
+  lab's or a doctor's.
+- **A lab's refusals** go through its `ConsultBooker.refusal` (`labBookerRefusal`) where it can meet them: the patient lookup
+  (`usePatientStep`), the change of time (`rescheduleRefusal(err, refusal)`, the pharmacy's words by default) and the card panel's
+  reads (`CardBookingSource.refusal`). The `PHARMACY_*` refusals (`PHARMACY_INACTIVE`, `PHARMACY_NOT_VERIFIED`,
+  `PHARMACY_PROFILE_REQUIRED`) are raised only by the pharmacy's own guards (`middleware/auth.ts`), so a lab never meets them; the
+  lab's counterparts (`PARTNER_NOT_VERIFIED`, `PARTNER_INACTIVE`, `LAB_PARTNER_REQUIRED`) were already in `labBookerRefusal`.
+- **WQ24 review must-fix: a failed read again no longer tears the booking down.** In TanStack 5 a failed background refetch sets
+  `isError` and keeps the data, so `LabOnly` (`partner/labs.tsx`, also the front desk, lab bookings, slots and wallet),
+  `LabBookFlow` and the shared booked consultation page (pharmacy and lab) replaced a booking, or its waiting card payment,
+  with an error page when the member came back from a UPI app on a weak network (and might pay again). They are now gated on
+  the data (`!data` → error or loading); the booking page says "Could not refresh just now" (the doctor screens'
+  `RefreshFailed`) and keeps the payment panel.
+- **Also from the review**: the wallet pay's top-up reads the balance again only with `wallet.view` (a member with
+  `wallet.manage` alone never calls a read it may not make); a 403 `INSUFFICIENT_PERMISSIONS` on the lab's verify or reconcile is
+  said as a permission (`CARD_PERMISSION_WORDS`), "not active or not verified" only for the account (`PARTNER_NOT_VERIFIED`,
+  inactive); one helper for the lab wallet's routes, query key and keyed top-up (`labWalletOf`, `LabWalletScreen.tsx`), used by
+  the Wallet page and the lab's wallet pay.
+- **Tests**: a failed refetch of the lab and its branches with a card booking held (failing before the fix), Check payment and
+  Pay now from the booking page with a failed read again in between (failing before the fix; the pre-checkout reconcile and the
+  proof on the lab's routes), Change time for a lab (a branch in scope on the slots read), a lab refused at the lookup in the lab's
+  words, and the admin queue with a lab-paid and a doctor-paid refund.
+- Seen, not changed: "Open the booking" in the queue links every row to the admin consultation page, also a lab-test booking's
+  (`bookingKind`).
+
 ## Follow-ups
 
 
@@ -2352,6 +2469,8 @@ Nothing visible changes: English stays byte-identical and no language list shows
 | 2026-11-25 | WQ28 records access, both apps (phase 3f web, on f321df4) | Against r30 233ef1ab (§25.17; mocked API). typecheck clean; Vitest 487/487 (+3 in recordsAccess.test.ts: the treating view reads the booking then the history with bookingId and keeps no contacts or health details; the request and holder routes with ids checked first; where a request stands, incl. an approved one whose grant ended; the catalogue check and the literal scan pass with no file allowlisted). An earlier full run had 2 five-second timeouts in untouched component tests at load ~70 (the same test timed out on the WQ27 base then); clean at load ~24. Playwright workspace 1016/1016 (+8 = 4 journeys x 2: ask, allowed, the other records listed and opened through the file route with the history read three times only; denied and the no-app words; ended and a lost answer to asking checked by reading again; another doctor's consultation and a closed window show nothing) and customer 278/278 (+8 = 4 journeys x 2: Allow on Home then the page's who-can-see and history; a family member's request denied; an ended request said and moved to the past; Stop sharing, and no card when nothing waits), both under `pw-slot.sh` with 2 workers on temporary configs (ports 5557 and 5558, `reuseExistingServer: false`, deleted); both builds with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ27 doctor pays a lab test by card or UPI (phase 3c web, on 292b22d) + WQ25 review items | Against r29 88e152ed (§25.16.4; mocked API). typecheck clean; Vitest 484/484 (doctorLab.test.ts: the card create is the same body with razorpay; a doctor's 403 at verify or reconcile has its own words while the pharmacy's 403 keeps CARD_BLOCKED_WORDS; the card switch is the shared card words); Playwright workspace 1007 passed of 1008 (+16 = 8 journeys x 2: pay by card from a consultation, Checkout closed then Pay now after asking the server, another device's authorized payment gives no second Checkout, cancel to the card, cancel to the wallet (not withdrawable, said before and after), card switched off falls back to the wallet, a lost cancel found as forfeited from the view's payment, the doctor lab switch off from a consultation shown at once; WQ25 journeys updated for r29: the card offered with the wallet as default, "Waiting for payment" in the filter, the doctor's collect words, no family-list loading text). The one failure is the known load-timing check in stock-supply.spec.ts:1277 (as in WQ17c and WQ18b), 6/6 alone. Temporary config on port 5514, `reuseExistingServer: false`, deleted; release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ25 doctor books a lab test (phase 3b web, on 13333e9) | Against r26 + r26b on stage 6a8574e9 (§25.15; mocked API). typecheck clean; Vitest 483/483 (+5 in doctorLab.test.ts: the reads, list, by-key, abandon, cancel and accept under /specialists/me/assisted with the pharmacy's paths unchanged; the lookup and the recommended-tests code with the phone in the body only; a create from a consultation with no phone and a walk-in by phone; a bad consultation id, two sources, no name, the card and a bad key refused before any request; the doctor's words (unverified, consultation not found, window closed, wallet only) with the lab and pharmacy words unchanged and the code field hidden for an unverified doctor; the appointment read keeps the booking only and `labBookableFrom`); Playwright workspace 992/992 (+20 = 10 journeys x 2: book from a consultation, a walk-in with the nav order, the treating window closed, low balance then Add money on Wallet, a lost answer found by key after a reload, cancel with the refund to the doctor wallet, accept a new time, open a released report, an unverified doctor on both pages, another doctor's booking not found; doctor-tools' nav count now 9) on a temporary config (port 5512, `reuseExistingServer: false`, deleted). A targeted run of the shared-piece specs earlier had 1 load-timing failure in pharmacy-extras.spec.ts:825 (admin wallet, untouched), 6/6 alone and green in the full run. Release build with VITE_API_SAME_ORIGIN=true. |
+| 2026-11-25 | WQ24b card refunds name their payer; WQ24 review must-fix (gated on data) and follow-ups, on 33439af | Against r21 (mocked API). typecheck clean; Vitest 491/491 (+4 in `wq24b.test.ts`: `payerWord`, `payerNameOf`, the payer's cause and agreement words with the pharmacy's unchanged, the reschedule refusal in the lab's words; `wq24.test.ts`: a missing permission on the lab's payment routes said as such); Playwright on temporary port 5512 (`reuseExistingServer: false`, config deleted): lab-consult, lab-desk, assisted-booking, card-booking, lab-wallet, admin* and partner-workspace 376/376, and partner-labs, lab-booking, consult-now and pharmacy-extras 184/184; +12 = 6 journeys x 2 (the two failed-refetch journeys fail on 33439af: the held card booking and the booking page's payment panel were unmounted); `VITE_API_SAME_ORIGIN=true npm run build --workspace apps/workspace` built. |
+| 2026-11-25 | WQ24 lab › Book consultation (phase 2e) on 13333e9 | Against r21 + r21b, stage 6a8574e9 (§24.16–§24.17; mocked API). typecheck clean; Vitest 487/487 (+9 in `wq24.test.ts`: every lab route and its query/body, `branchId` refused before sending, the pharmacy routes and bodies unchanged, the lab consent, join and refusal words, card verify/reconcile/pre-checkout on the lab's payment routes with the lab named in the blocked and not-found words (pharmacy words unchanged), `assisted.book` offered to labs only); Playwright workspace 990/992 on temporary port 5511 (`reuseExistingServer: false`, config deleted), +20 = 10 journeys x 2 in `lab-consult.spec.ts` (wallet, card with the balance hidden without `wallet.view`, a lost answer checked by key, a lost answer given up after a reload, a changed price, cancels to the wallet and to the card or the wallet, the dispensing copy, another branch's and another lab's booking not found, no menu without `assisted.book`, switch off); the 2 failures (partner-invoices:1119 desktop, stock-supply:1277 tablet, both outside this round) were 30 s load timeouts while other agents ran their suites, and pass alone (4/4), as in an earlier desktop run (496/496); every pharmacy spec passes unchanged; `VITE_API_SAME_ORIGIN=true npm run build --workspace apps/workspace` built. 1 new file allowlisted (170). |
 
 
 | 2026-11-25 | WQ23b review follow-ups (on 0b14df3) | typecheck clean; Vitest 443/443 (doctorWallet.test.ts and labWallet.test.ts on `adminOwnerWalletApi(c, kind)` and `ownerWalletRefusal(err, kind)`; wq15.test.ts: the close words and the missing-reason words name the owner); Playwright doctor-wallet + lab-wallet + pharmacy-extras + admin + admin-doctors 130/130 (doctor-wallet +4 = 2 journeys x 2: a failed wallet read after a top-up keeps Add money, its answer and the history; a doctor whose wallet closed after a reload still checks this device's top-up and is told it was added; extended: the admin's balance shows a doctor's card money) on a temporary config (port 5496, deleted); release build with VITE_API_SAME_ORIGIN=true. |
@@ -2455,3 +2574,4 @@ Nothing visible changes: English stays byte-identical and no language list shows
 | 2026-11-16 | WC1 review round 2 | Codex WC1 re-review: 2 MEDIUM (older/left-page create success consumed a newer attempt's request; a coupon dropped by an automatic re-check auto-accepted the higher price). Fixed. typecheck clean; Vitest 89/89; Playwright customer 200/200 (new: out-of-order answers across remounts keep the newer attempt and complete it once; coupon dropped by re-check requires accepting the higher price, labs and Consult now); release build with VITE_API_BASE_URL=https://api.example.test. |
 | 2026-11-25 | WQ31 UI translation round 6a (foundation) | typecheck clean (now with `packages/i18n`); Vitest 449/449 (+27: placeholders, plurals, per-word English fallback, loading and the last switch winning, pseudo, start-up and choice storage, formats byte-identical to the old helpers in English with Latin digits elsewhere, the catalogue check, the literal scan, switcher/scope/parts); Playwright workspace 900/900 and customer 270/270 (+4 each: English by default with no language list and nothing stored; a kept language not offered is ignored), all on temporary ports 5476/5477 with `reuseExistingServer: false`, configs deleted; both builds with `VITE_API_SAME_ORIGIN=true` (no pseudo-language in either bundle). |
 | 2026-11-25 | WQ31 6a merged with `wq/stage-next` bd0df6c (branch `wq31/i18n-merged`) | typecheck clean; Vitest 471/471; Playwright workspace 942/942 on temporary port 5486 (`reuseExistingServer: false`, config deleted); both builds with `VITE_API_SAME_ORIGIN=true` (no pseudo-language in either bundle). Lab desk and lab wallet money through `formatPaise` (English unchanged); 7 new files allowlisted (166). |
+| 2026-11-25 | WQ26 referral cuts, phase 4a/4b web (on `wq/stage-next-2` 13333e9) | Against r24 on stage 6a8574e9 (§26.5, §26.6, §26.15; mocked API). typecheck clean; Vitest 488/488 (+10 in referralCuts.test.ts: percent typed → basis points 1–5000 without floating point, fixed ≥ ₹0.01 with no upper limit and no cap, the optional cap, Off keeps the saved terms inactive, the PUT body checked again, the words, the switch read from `effective`, refusals and the before-writing 503s, the statement row's short ref and category, the routes with ids, kinds and cursors checked first); Playwright workspace 984/984 on temporary port 5513 (`reuseExistingServer: false`, config deleted; +12 = 6 journeys x 2 devices in referral-cuts.spec.ts: a % rule set and confirmed with a reason, sent as a create and shown with its history; a fixed rule for a lab, then a lost answer checked by reading the rules; a version conflict (409 RECORD_CHANGED) read again and sent on the new version; the switch-off note and turning a cut off; the pharmacy's earnings, rates and statement pages with nothing kept on the device; a pharmacy cannot reach the admin page); release build with `VITE_API_SAME_ORIGIN=true`. |

@@ -16,7 +16,7 @@ import { SlotDays } from './slotDays.tsx';
 import { UnconfirmedBooking } from './unconfirmedBooking.tsx';
 import { AddressFields, EMPTY_ADDRESS, labAddressLine, labAddressOf, LanguageSelect } from './bookingFields.tsx';
 import { ConsultationPatientSection, PatientSection, useConsultationPatient, usePatientStep } from './patientStep.tsx';
-import { PayChoice } from './walletPay.tsx';
+import { PayChoice, payerWallet } from './walletPay.tsx';
 import { RecommendedTests, useRecommendedTicks } from './recommendedTests.tsx';
 import { CardDueSection, CardPaymentPanel, isOrderFailed, NOT_PAYABLE_WORDS, NotBooked, ORDER_FAILED_WORDS, useCardChoice } from './cardBooking.tsx';
 import { pharmacyLabBooker, type LabBooker } from './labBooker.ts';
@@ -423,6 +423,7 @@ function ReviewAndPay({ booker, review, busy, refused, method, cardOff, onMethod
   method: AssistedPaymentMethod; cardOff: string | null; onMethod: (m: AssistedPaymentMethod) => void;
   onPay: () => void; onBack: () => void; onNewPrice: (priceMinor: number) => void;
 }) {
+  const { api } = useSession();
   const s = review.summary;
   return (
     <section className="ws-section" aria-labelledby="pay-h">
@@ -430,7 +431,7 @@ function ReviewAndPay({ booker, review, busy, refused, method, cardOff, onMethod
       <div className="confirm" role="group" aria-label="Check and pay">
         <SummaryList s={s} />
         {s.couponCode && !s.couponChecked && <p className="ws-muted">Price before the coupon; the coupon is checked when you pay.</p>}
-        <PayChoice payer={booker.payer} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy} method={method} cardOff={cardOff}
+        <PayChoice wallet={payerWallet(api, booker.payer)} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy} method={method} cardOff={cardOff}
           onMethod={onMethod} onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
       </div>
     </section>
