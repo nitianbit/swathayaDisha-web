@@ -2302,6 +2302,25 @@ API gaps (none blocking):
 - The admin settlement list filters `ownerKind` by `partner | doctor` only, and shows a `*_referral` account's kind as its code
   (seen, not changed: phase 4e/4f).
 
+## WQ46 customer sign-in then reload: two Playwright journeys over their time (2026-11-25, branch `wq46/signin-reload`)
+
+`native-session.spec.ts:178` and `pharmacy.spec.ts:370` failed in full customer runs (desktop and phone): after a
+sign-in and a reload the page showed "Signing you in…" or the sign-in screen. **Not an app bug; no app change.**
+
+- **Every failure was the 30 s test timeout**, hit during a full page load near the end of the journey. These two are the
+  longest journeys in the suite: five and seven full page loads. Against the Vite dev server each load fetches every
+  module again: about 3 s with the machine quiet, 4–7 s under load. The app's own steps were instant: the session call
+  went out within milliseconds of the page loading, every answer was handled, and every check passed.
+- **Pass rate on unchanged stage 25a860c** (load average 45–55 from other agents): 8/8 at 1 worker (13.7–19.3 s each);
+  4/12 at 5 workers, the suite's default (all 8 failures "Test timeout of 30000ms exceeded"). With a 90 s budget, 4/4
+  passed at 33–37 s. Against the production build (`vite preview`), all 4 passed in 8–12 s with the default 30 s.
+- **No commit introduced it.** The journey took 18–30 s alone at a313850 (22 Nov), 0aca6c3 and 25a860c alike; it was
+  always close to 30 s and fails when the machine is busy (WQ41's run passed both).
+- **What a patient sees:** nothing wrong. The release build is one bundle, and the restore after a reload (refresh, then
+  the home page, or the sign-in screen for a memory-only web session) completes as soon as the server answers.
+- **Fix (tests only, checks unchanged):** both journeys get `test.setTimeout(90_000)`, as the same files already do for
+  their other long journeys (45 s and 60 s).
+
 ## Follow-ups
 
 

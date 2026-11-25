@@ -176,6 +176,9 @@ test('sign-out holds when the secure store cannot be read: the server is told wi
 });
 
 test('if the stored token cannot be removed, the phone says so and never resumes; the next start finishes the clean-up', async ({ page }) => {
+  // WQ46: five full page loads; against the dev server each fetches every module again (3-7 s on a busy machine),
+  // which overran the default 30 s while every check passed. Time only: the checks are unchanged.
+  test.setTimeout(90_000);
   const b = await mockBackend(page);
   await signIn(page);
   await failStore(page, { remove: true });
