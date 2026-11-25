@@ -5,7 +5,7 @@ export type { OnceOnlyKind, PartnerChoice, PartnerSelection, SignInMode, VerifyA
 export type { NativeApp, NativeRefreshed, NativeSignedIn, NativeTokens, OtpTarget, Profile, SessionRefreshed, SessionSignedIn, SignedIn, UserType } from './auth.ts';
 export {
   ADMIN_ACTOR, ALL_PARTNER_PERMISSIONS, canAddOwner, canChangeBranches, canEditEmail, canEditPermissions, canGiveEmail, EMAIL_IN_USE_MESSAGE, isEmailInUse, isOwnerRequired, memberEmail, canEditProfile, canReopenBranches, REQUEST_KEY_PATTERN, EMAIL_PATTERN, grantablePermissions, permissionsForKind, WALLET_PERMISSIONS, GSTIN_PATTERN,
-  hasGlobalScope, HHMM_PATTERN, holdsAny, INVOICE_PREFIX_PATTERN, ISO_DATE_PATTERN, MAX_HOLIDAYS, MAX_NAME, OBJECT_ID_PATTERN,
+  hasGlobalScope, HHMM_PATTERN, holdsAny, isFinanceReader, INVOICE_PREFIX_PATTERN, ISO_DATE_PATTERN, MAX_HOLIDAYS, MAX_NAME, OBJECT_ID_PATTERN,
   PAN_PATTERN, PARTNER_KIND_LABEL, PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN, partnerAdminApi, partnerWorkspaceApi,
   partnerWorkspaceBase, PERMISSION_LABEL, removalBlock, scopeProblem, TAX_REGIME_LABEL, VERIFICATION_LABEL, WEEKDAYS,
 } from './partners.ts';

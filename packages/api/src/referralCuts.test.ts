@@ -149,7 +149,8 @@ describe('WQ26 referral cuts: routes', () => {
     expect(await pharmacy.rules()).toEqual({ rules: [], switches: { cutsEnabled: true, payoutsEnabled: false } });
     expect(await pharmacy.summary()).toEqual({ earnedMinor: 100, paidMinor: 0, dueMinor: 100, cutsEnabled: true, payoutsEnabled: false });
     expect((await pharmacy.statement()).nextCursor).toBe(CURSOR);
-    await pharmacy.statement(CURSOR, 20);
+    await pharmacy.statement(CURSOR, 20, { from: '2026-11-01', to: '2026-11-30' });
+    expect(() => pharmacy.statement(undefined, 50, { from: '2026-02-30' })).toThrow('Invalid from date');
     await pharmacy.statementCsv({ from: '2026-11-01', to: '2026-11-30' });
     expect(() => pharmacy.statement('not-a-cursor')).toThrow('Invalid statement cursor');
     expect(() => pharmacy.statement(undefined, 201)).toThrow('Invalid limit');
@@ -164,7 +165,7 @@ describe('WQ26 referral cuts: routes', () => {
       'GET /pharmacy-assisted/referral-rules',
       'GET /pharmacy-assisted/referral',
       'GET /pharmacy-assisted/referral/statement?limit=50',
-      `GET /pharmacy-assisted/referral/statement?before=${CURSOR}&limit=20`,
+      `GET /pharmacy-assisted/referral/statement?from=2026-11-01&to=2026-11-30&before=${CURSOR}&limit=20`,
       'GET /pharmacy-assisted/referral/statement.csv?from=2026-11-01&to=2026-11-30',
       'GET /partner-workspace/assisted/referral-rules',
       'GET /partner-workspace/assisted/referral',

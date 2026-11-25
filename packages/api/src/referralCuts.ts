@@ -87,8 +87,8 @@ export interface ReferralSwitches { cutsEnabled: boolean; payoutsEnabled: boolea
 /** A rule list and the switches beside it (null from a server that does not say). */
 export interface ReferralRules { rules: ReferralRule[]; switches: ReferralSwitches | null }
 
-/** `GET …/referral`: the booker's `*_referral` account (`financeSummary`) and the switches. */
-export interface ReferralSummary { earnedMinor: number; paidMinor: number; dueMinor: number; cutsEnabled?: boolean; payoutsEnabled: boolean }
+/** `GET …/referral`: the booker's `*_referral` account (`financeSummary`); payouts paused until the CA answers (O1). */
+export interface ReferralSummary { earnedMinor: number; paidMinor: number; dueMinor: number; payoutsEnabled: boolean }
 
 /** r33: a lab booking's cut line on its referral row. */
 export interface ReferralLine { category: ReferralCategory; baseMinor: number; cutMinor: number }
@@ -285,11 +285,11 @@ export function referralReadsApi(c: ApiClient, reader: ReferralReader) {
   return {
     rules: (): Promise<ReferralRules> => c.getWith<ReferralRule[], { switches: ReferralSwitches }>(`${base()}/referral-rules`).then(rulesOf),
     summary: () => c.get<ReferralSummary>(`${base()}/referral`),
-    /** Newest first; `before` is the previous page's `nextCursor` (`<ms>_<entryId>`). */
-    statement: (before?: string, limit = REFERRAL_STATEMENT_PAGE): Promise<Page<ReferralStatementLine>> => {
+    /** Newest first, of a period (India dates) if given; `before` is the previous page's `nextCursor` (`<ms>_<entryId>`). */
+    statement: (before?: string, limit = REFERRAL_STATEMENT_PAGE, q: PeriodQuery = {}): Promise<Page<ReferralStatementLine>> => {
       if (before !== undefined && !STATEMENT_CURSOR_PATTERN.test(before)) throw new Error('Invalid statement cursor');
       if (!Number.isInteger(limit) || limit < 1 || limit > STATEMENT_PAGE_MAX) throw new Error('Invalid limit');
-      return c.page<ReferralStatementLine>(`${base()}/referral/statement`, { query: { before, limit } });
+      return c.page<ReferralStatementLine>(`${base()}/referral/statement`, { query: { ...period(q), before, limit } });
     },
     /** The statement CSV for a period (the finance CSV), read with the session's token into memory. */
     statementCsv: (q: PeriodQuery = {}, signal?: AbortSignal) => c.blob(`${base()}/referral/statement.csv`, { query: { ...period(q) }, signal }),

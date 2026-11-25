@@ -2322,6 +2322,18 @@ Backend: r33 (`m0/r33-referral-gaps` 335e36c2, ASSISTED_BOOKING_DESIGN.md §26.1
   the integrator: WQ45 extracted the old pharmacy file into `i18n/pharmacy` (`referralEarnings.*`); with WQ26b that file is
   deleted and those keys are unused.
 
+### WQ26c review fixes (Opus review of 5475091, 2026-11-25, branch `wq26c/referral-fixes`)
+
+- **A failed read again keeps what was read**: the earnings, rates and statement sections render their data whenever they
+  have it; only without data do they show the error (with Try again) or the loading line.
+- **The CSV of a period**: the referral statement has the finance statements' period fields (`useStatementPeriod` /
+  `StatementPeriodFields`, now shared with `StatementSection`), so above 5,000 entries (the server's `EXPORT_TOO_LARGE`, said
+  in its words) a shorter period can be exported; the list follows the same period (from its first page).
+- **Lines**: a lab booking also lists its one cut line when that line is not the whole booking.
+- **Words**: a category the page does not know is shown as sent (`t.has`); the pharmacy's categories are
+  `REFERRAL_CATEGORIES`; the finance-reader rule is one helper (`isFinanceReader`) for the finance page and the lab's
+  referral earnings; `ReferralSummary.cutsEnabled` (unused) is gone.
+
 ## WQ24 lab › Book consultation: a lab books a doctor consultation for a walk-in patient (phase 2e) (2026-11-25, branch `wq24/lab-book-consultation`)
 
 Backend: r21 + r21b (stage `6a8574e9`, design ASSISTED_BOOKING_DESIGN.md §24.16–§24.17; mocked API). Web base: `wq/stage-next-2`
@@ -2544,3 +2556,4 @@ On WQ24 33439af. Against r21 (§24.17.3 "Admin": card refund rows add `payerKind
 | 2026-11-25 | WQ31 6a merged with `wq/stage-next` bd0df6c (branch `wq31/i18n-merged`) | typecheck clean; Vitest 471/471; Playwright workspace 942/942 on temporary port 5486 (`reuseExistingServer: false`, config deleted); both builds with `VITE_API_SAME_ORIGIN=true` (no pseudo-language in either bundle). Lab desk and lab wallet money through `formatPaise` (English unchanged); 7 new files allowlisted (166). |
 | 2026-11-25 | WQ26 referral cuts, phase 4a/4b web (on `wq/stage-next-2` 13333e9) | Against r24 on stage 6a8574e9 (§26.5, §26.6, §26.15; mocked API). typecheck clean; Vitest 488/488 (+10 in referralCuts.test.ts: percent typed → basis points 1–5000 without floating point, fixed ≥ ₹0.01 with no upper limit and no cap, the optional cap, Off keeps the saved terms inactive, the PUT body checked again, the words, the switch read from `effective`, refusals and the before-writing 503s, the statement row's short ref and category, the routes with ids, kinds and cursors checked first); Playwright workspace 984/984 on temporary port 5513 (`reuseExistingServer: false`, config deleted; +12 = 6 journeys x 2 devices in referral-cuts.spec.ts: a % rule set and confirmed with a reason, sent as a create and shown with its history; a fixed rule for a lab, then a lost answer checked by reading the rules; a version conflict (409 RECORD_CHANGED) read again and sent on the new version; the switch-off note and turning a cut off; the pharmacy's earnings, rates and statement pages with nothing kept on the device; a pharmacy cannot reach the admin page); release build with `VITE_API_SAME_ORIGIN=true`. |
 | 2026-11-25 | WQ26b referral follow-ups on r33 (on stage 25a860c) | Against r33 335e36c2 (§26.16; mocked API). typecheck clean; Vitest 493/493 (referralCuts.test.ts on r33's shapes: `switches` beside the lists, rows from `shortRef` / `category` / `lines`, the pharmacy and lab bases incl. admin scope and the CSV period); Playwright workspace 1024/1024 on temporary port 5563 through `pw-slot.sh` with 2 workers (`reuseExistingServer: false`, config deleted; referral-cuts.spec.ts now 8 journeys x 2 devices: the switch note from `switches` with no rule set and after the switch changes, a lab booking's lines in the statement, the CSV download, a lab finance member's earnings page and CSV, a branch-limited lab member refused); release build with `VITE_API_SAME_ORIGIN=true`. |
+| 2026-11-25 | WQ26c referral review fixes (on 5475091) | typecheck clean; Vitest 506/506 (the referral statement with a period); Playwright `referral-cuts.spec.ts` + `finance.spec.ts` 54/54 through `pw-slot.sh` with 2 workers on temporary port 5563 (config deleted; +4 = 2 journeys x 2 devices: a lone cut line that is not the whole booking is listed, the whole-statement CSV refused with the server's words and a period exported with the list following it; a lab member without `finance.view` gets no page and reads nothing). |
