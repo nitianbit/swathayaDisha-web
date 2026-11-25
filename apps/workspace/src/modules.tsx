@@ -37,6 +37,7 @@ import { LabBookConsultationScreen, LabBookedConsultationScreen, LabBookedConsul
 import { DoctorWalletAdminScreen, LabWalletAdminScreen } from './screens/admin/LabWalletAdminScreen.tsx';
 import { DoctorWalletScreen } from './screens/doctor/DoctorWalletScreen.tsx';
 import { DoctorBookLabTestScreen, DoctorLabTestScreen, DoctorLabTestsScreen } from './screens/doctor/DoctorLabScreens.tsx';
+import { RecordsScreen } from './screens/doctor/RecordsScreen.tsx';
 import { SlotsScreen } from './screens/partner/SlotsScreen.tsx';
 import { ClinicDoctorsScreen } from './screens/partner/ClinicDoctorsScreen.tsx';
 import { DeskScreen } from './screens/partner/DeskScreen.tsx';
@@ -119,6 +120,8 @@ export const PAGES: readonly WorkspacePage[] = [
     path: '/doctor/appointments', roles: ['specialist'], element: <AppointmentsScreen />,
     nav: { labelKey: 'nav.appointments', icon: Stethoscope, sectionKey: 'nav.section.doctor' },
   },
+  // WQ28 (r30): one consultation's patient records (own consultations; others with the account holder's approval).
+  { path: '/doctor/appointments/:bookingId/records', roles: ['specialist'], element: <RecordsScreen /> },
   {
     path: '/doctor/schedule', roles: ['specialist'], element: <ScheduleScreen />,
     nav: { labelKey: 'nav.schedule', icon: CalendarDays, sectionKey: 'nav.section.doctor' },

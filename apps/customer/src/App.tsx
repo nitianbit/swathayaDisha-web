@@ -12,6 +12,7 @@ import { ExternalBookingScreen } from './screens/ExternalBookingScreen.tsx';
 import { WalletScreen } from './screens/WalletScreen.tsx';
 import { ProfileScreen } from './screens/ProfileScreen.tsx';
 import { FamilyScreen } from './screens/FamilyScreen.tsx';
+import { RecordsScreen } from './screens/records/RecordsScreen.tsx';
 import { DoctorsScreen } from './screens/DoctorsScreen.tsx';
 import { DoctorScreen } from './screens/DoctorScreen.tsx';
 import { StoresScreen } from './screens/pharmacy/StoresScreen.tsx';
@@ -89,6 +90,8 @@ function router() {
       { path: '/wallet', element: <WalletScreen /> },
       { path: '/profile', element: <ProfileScreen /> },
       { path: '/profile/family', element: <FamilyScreen /> },
+      // WQ28 (r30): doctors asking to see records; who can see them.
+      { path: '/profile/records', element: <RecordsScreen /> },
       { path: '*', element: <Empty title={t('app.notFound.title')}>{t('app.notFound.body')}</Empty> },
     ],
   }]);

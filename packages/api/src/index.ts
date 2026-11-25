@@ -246,6 +246,12 @@ export {
   offerCountdown, pharmacyInstantApi,
 } from './assistedInstant.ts';
 export type { InstantBookerByKey, InstantBookerReceipt, InstantBookerRequest, InstantBookerStatus, InstantBookerView, InstantDeskMode, InstantDoctor } from './assistedInstant.ts';
+// WQ28: records access (r30 phase 3f): the doctor's treating view and request, the account holder's answers.
+export { doctorRecordsApi, holderRecordsApi, pickTreating, recordsAccessState, recordsErrorCode } from './recordsAccess.ts';
+export type {
+  HolderRecordsGrant, HolderRecordsRequest, OtherConsultation, OtherLabReport, OwnConsultation, RecordsAccess, RecordsAccessState, RecordsGrantBrief,
+  RecordsParty, RecordsRequestAnswer, RecordsRequestState, TreatingRecords,
+} from './recordsAccess.ts';
 // WQ26: referral cuts (phase 4a/4b): the admin's rules per partner and category, and the pharmacy's referral earnings.
 export {
   basisPointsToInput, CAP_PROBLEM, FIXED_PROBLEM, MAX_REFERRAL_REASON, PERCENT_PROBLEM, percentToBasisPoints, referralReadsApi, REFERRAL_BOOKER_KINDS,

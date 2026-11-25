@@ -2228,6 +2228,58 @@ wallet. Pharmacy and lab card flows unchanged (their specs pass as they were).
 API gaps: none blocking. `cardCheckProblem` says "This payment was not found for your pharmacy." for
 `PAYMENT_RECORD_NOT_FOUND`; a doctor reaches it only for another doctor's record (seen, not changed: pharmacy words).
 
+## WQ28 records access: a treating doctor sees other records with the patient's approval (phase 3f web, both apps) (2026-11-25, branch `wq28/records-access`)
+
+Backend: r30 (`m0/r30-phase3f` 233ef1ab, design ASSISTED_BOOKING_DESIGN.md §25.17; local, being finished: small API changes
+are expected after its review). Web base: WQ27 f321df4. Behind `RECORDS_ACCESS_ENABLED` (off: asking, Allow and Deny answer
+503 `RECORDS_ACCESS_DISABLED`, said in words; the doctor's own consultations and the holder's lists keep working).
+
+- **Doctor › Appointments › "Patient’s records"** (`/doctor/appointments/:bookingId/records`, an id only in the address; on
+  consultations whose treating window can be open, the WQ25 rule). The page reads the consultation for its account, then
+  `GET /specialists/me/patients/:userId/history?bookingId=` (the treating view; the server logs every read, so it is read on
+  opening, after asking and on "Check again" only, never on focus). It shows the doctor's own consultations with that person
+  and "Other records": "Only your own consultations are shown." until a grant is in force, then one list of other doctors'
+  prescriptions and released lab reports, newest first (date, doctor or lab, type, "Open": the full PDF or the report through
+  `/file/fetch` and the WQ17 document viewer). The request state from `access`: none ("Ask the patient to see their other
+  records", a `ConfirmAction` that says the account holder is asked in the app and the request ends after 24 hours or with
+  the treating time), waiting until its expiry ("Check again"), denied and ended (ask again), allowed until the grant's end.
+  "Ask" is one owned request (`records-request:<doctor>:<booking>`): an unknown answer is checked by reading the page again
+  (a newer request or a grant found), resent (a newer request replaces the older) or forgotten. A holder who never signed in
+  to the app is said when asking (`channels.app: false`: "The patient hasn’t used the Jansetu app yet; they can’t approve
+  until they sign in."); no code box (`channels.sms` stays false in phase 3).
+  Another doctor's consultation: "Consultation not found"; a closed window, an unverified doctor and a read log that cannot
+  be written (503) are said in words.
+- **Customer app**: "Requests to see your records" on Home while one waits (Allow / Deny, each behind the app's `Confirm`
+  saying what it means: allowed for up to 12 months while treating, each time recorded, stoppable), and
+  `/profile/records` (linked from Profile): waiting requests, "Doctors who can see your records" with "Stop sharing", and
+  past requests (allowed, denied, ended, replaced). Every answer, refusal or lost answer reads the lists again; an ended
+  request (409 `RECORDS_REQUEST_EXPIRED`) is said and moves to the past.
+- **Privacy**: the api module keeps only what the screens show (no patient contacts, diagnosis, medicines or notes in the
+  query cache; the consultation read keeps the account id only); nothing is stored; the address holds the booking id only.
+- **i18n**: every new word is in a catalogue: `apps/workspace/src/i18n/records` (`workspace-records`) and
+  `apps/customer/src/i18n/records` (`customer-records`), their own catalogues while the doctor area and the customer app are
+  extracted by other rounds (to merge into those later). No file was added to the allowlist. The literal scan now treats
+  `scope` as a technical attribute (the same line as WQ44). The api module `recordsAccess.ts` holds no words (codes only).
+- **Reused**: `ConfirmAction` (workspace) and `Confirm` (customer), `useOwnedOp` and `CheckPanel`, `useDocumentViewer` and
+  `DocumentPreview`. Not used: the cursor list (the holder's routes answer the newest 50 and 100, no cursor).
+
+API gaps: (1) the treating view needs the account id, which the doctor's appointment rows carry but the web did not type: it
+is read from the consultation (one extra read); a `GET …/bookings/:id/records` by booking id would do. (2) The treating view
+still sends the holder's contact details (`patient`) and the own consultations' notes and prices (§25.17 "seen"); the web
+drops them. (3) The doctor gets no notice when the holder answers: "Check again" reads it.
+
+### WQ28b review fixes (review of 7a66e9a, 2026-11-25; same branch)
+
+1. A refused first "Ask" (409 `TREATING_WINDOW_CLOSED`, 403, 404) now shows its words in the confirmation: the page throws
+   an `ApiError` carrying them (`ConfirmAction` shows an `ApiError`'s message; no other screen changes).
+2. Customer: a refusal is worded by its code first, so 503 `RECORDS_ACCESS_DISABLED` and `INDEXES_OUTDATED` say their own
+   words (no "may not have arrived").
+3. The doctor's treating view is never read again on reconnect (`refetchOnReconnect: false`, as on focus); the unconfirmed
+   ask's check puts its own read into the page (`setQueryData`): one logged read, not two.
+4. "You can see these records until …" shows the earlier of the grant's end and the consultation's treating end; a request
+   answered `approved` (a grant already in force) says "The patient has already allowed it.", never "Asked".
+5. Both apps word refusals with `t.has('error.<code>')` instead of their own lists of codes.
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -2523,6 +2575,8 @@ sign-in and a reload the page showed "Signing you in…" or the sign-in screen. 
 | Date | Packet | Checks |
 |---|---|---|
 | 2026-11-25 | WQ45 rounds 6e, 6f, 6i (pharmacy and doctor screens) on wq45a 3233a59 + the WQ24b re-check fixes | typecheck clean; Vitest 506/507 (the literal scan and the catalogue check pass with the 49 files off the allowlist; the one failure, `components/NoShowMove.test.tsx` WQ11b, is a 5 s timeout under load that fails the same way on origin/stage and passed in the wq45a run); Playwright workspace on a temporary config, port 5566 (5556 was held by another agent; `reuseExistingServer: false`, deleted): 1011/1052 with the machine at load 64, then the 41 failures (all 30 s timeouts: page.reload, "Signing you in…") 41/41 with `--last-failed --workers=2`; no assertion changed; `VITE_API_SAME_ORIGIN=true npm run build --workspace apps/workspace` built. |
+| 2026-11-25 | WQ28b review fixes (b199189) + origin/stage 3233a59 merged | typecheck clean; Vitest 510/510 after the merge; Playwright workspace records-access + doctor-tools 64/64 (+2 = 1 journey x 2: a refused first ask keeps its words, then an "already allowed" answer is said so; journey 1 now checks the date is the treating end, not the grant's) on a temporary config (port 5557); customer 280/280 (+2 = 1 journey x 2: a 503 switch-off says its own words and the request still waits) under `pw-slot.sh` with 2 workers (port 5558); configs deleted. |
+| 2026-11-25 | WQ28 records access, both apps (phase 3f web, on f321df4) | Against r30 233ef1ab (§25.17; mocked API). typecheck clean; Vitest 487/487 (+3 in recordsAccess.test.ts: the treating view reads the booking then the history with bookingId and keeps no contacts or health details; the request and holder routes with ids checked first; where a request stands, incl. an approved one whose grant ended; the catalogue check and the literal scan pass with no file allowlisted). An earlier full run had 2 five-second timeouts in untouched component tests at load ~70 (the same test timed out on the WQ27 base then); clean at load ~24. Playwright workspace 1016/1016 (+8 = 4 journeys x 2: ask, allowed, the other records listed and opened through the file route with the history read three times only; denied and the no-app words; ended and a lost answer to asking checked by reading again; another doctor's consultation and a closed window show nothing) and customer 278/278 (+8 = 4 journeys x 2: Allow on Home then the page's who-can-see and history; a family member's request denied; an ended request said and moved to the past; Stop sharing, and no card when nothing waits), both under `pw-slot.sh` with 2 workers on temporary configs (ports 5557 and 5558, `reuseExistingServer: false`, deleted); both builds with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ27 doctor pays a lab test by card or UPI (phase 3c web, on 292b22d) + WQ25 review items | Against r29 88e152ed (§25.16.4; mocked API). typecheck clean; Vitest 484/484 (doctorLab.test.ts: the card create is the same body with razorpay; a doctor's 403 at verify or reconcile has its own words while the pharmacy's 403 keeps CARD_BLOCKED_WORDS; the card switch is the shared card words); Playwright workspace 1007 passed of 1008 (+16 = 8 journeys x 2: pay by card from a consultation, Checkout closed then Pay now after asking the server, another device's authorized payment gives no second Checkout, cancel to the card, cancel to the wallet (not withdrawable, said before and after), card switched off falls back to the wallet, a lost cancel found as forfeited from the view's payment, the doctor lab switch off from a consultation shown at once; WQ25 journeys updated for r29: the card offered with the wallet as default, "Waiting for payment" in the filter, the doctor's collect words, no family-list loading text). The one failure is the known load-timing check in stock-supply.spec.ts:1277 (as in WQ17c and WQ18b), 6/6 alone. Temporary config on port 5514, `reuseExistingServer: false`, deleted; release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ25 doctor books a lab test (phase 3b web, on 13333e9) | Against r26 + r26b on stage 6a8574e9 (§25.15; mocked API). typecheck clean; Vitest 483/483 (+5 in doctorLab.test.ts: the reads, list, by-key, abandon, cancel and accept under /specialists/me/assisted with the pharmacy's paths unchanged; the lookup and the recommended-tests code with the phone in the body only; a create from a consultation with no phone and a walk-in by phone; a bad consultation id, two sources, no name, the card and a bad key refused before any request; the doctor's words (unverified, consultation not found, window closed, wallet only) with the lab and pharmacy words unchanged and the code field hidden for an unverified doctor; the appointment read keeps the booking only and `labBookableFrom`); Playwright workspace 992/992 (+20 = 10 journeys x 2: book from a consultation, a walk-in with the nav order, the treating window closed, low balance then Add money on Wallet, a lost answer found by key after a reload, cancel with the refund to the doctor wallet, accept a new time, open a released report, an unverified doctor on both pages, another doctor's booking not found; doctor-tools' nav count now 9) on a temporary config (port 5512, `reuseExistingServer: false`, deleted). A targeted run of the shared-piece specs earlier had 1 load-timing failure in pharmacy-extras.spec.ts:825 (admin wallet, untouched), 6/6 alone and green in the full run. Release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ24b card refunds name their payer; WQ24 review must-fix (gated on data) and follow-ups, on 33439af | Against r21 (mocked API). typecheck clean; Vitest 491/491 (+4 in `wq24b.test.ts`: `payerWord`, `payerNameOf`, the payer's cause and agreement words with the pharmacy's unchanged, the reschedule refusal in the lab's words; `wq24.test.ts`: a missing permission on the lab's payment routes said as such); Playwright on temporary port 5512 (`reuseExistingServer: false`, config deleted): lab-consult, lab-desk, assisted-booking, card-booking, lab-wallet, admin* and partner-workspace 376/376, and partner-labs, lab-booking, consult-now and pharmacy-extras 184/184; +12 = 6 journeys x 2 (the two failed-refetch journeys fail on 33439af: the held card booking and the booking page's payment panel were unmounted); `VITE_API_SAME_ORIGIN=true npm run build --workspace apps/workspace` built. |
