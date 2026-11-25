@@ -9,6 +9,7 @@ import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import type { Perform } from '../finance/finance.tsx';
 import { CheckPanel, useOwnedOp } from './ownedOp.tsx';
+import type { ConsultBooker } from './consultBooker.ts';
 
 /** One action on this booking at a time, shared by cancel, change time and correct the name (one guard per page). */
 export interface BookingGuard { perform: Perform; busy: boolean }
@@ -25,13 +26,15 @@ interface PendingMove { bookingId: string; slotId: string; expectedUpdatedAt?: s
  * WQ13: move a booked consultation to another free time of the same doctor (`GET /pharmacy-assisted/doctors/:id/slots`
  * in the booking's own mode), then one keyed reschedule. The server replays the same key and slot (before its version
  * fence), so an unknown outcome is resent unchanged; there is no lookup by key, so a check reads the booking again.
+ * WQ24: for a lab member too (`booker`); its doctor read names a branch in the member's scope (r21 requires one; the
+ * doctor's times do not depend on it, and the booker view does not say which branch booked).
  */
-export function ChangeTime({ pharmacyId, booking, guard, onChanged, onDone }: {
-  pharmacyId: string; booking: BookedConsultation; guard: BookingGuard; onChanged: () => void; onDone: (words: string) => void;
+export function ChangeTime({ booker, booking, guard, onChanged, onDone }: {
+  booker: ConsultBooker; booking: BookedConsultation; guard: BookingGuard; onChanged: () => void; onDone: (words: string) => void;
 }) {
-  const { api } = useSession();
-  const assisted = pharmacyAssistedApi(api);
-  const { op, send, settle } = useOwnedOp<PendingMove>(`assisted-reschedule:${pharmacyId}:${booking._id}`);
+  const assisted = booker.api;
+  const branchId = booker.branches?.[0]?.id;
+  const { op, send, settle } = useOwnedOp<PendingMove>(`assisted-reschedule:${booker.id}:${booking._id}`);
   const { perform, busy } = guard;
   const [open, setOpen] = useState(false);
   const [from, setFrom] = useState(() => istToday());
@@ -43,8 +46,8 @@ export function ChangeTime({ pharmacyId, booking, guard, onChanged, onDone }: {
   const doctorId = String(booking.specialistId ?? '');
 
   const slots = useQuery({
-    queryKey: ['assisted-doctors', pharmacyId, 'slots', doctorId, mode ?? '', from],
-    queryFn: () => assisted.doctorSlots(doctorId, { from, days: SLOT_DAYS, ...(mode ? { mode } : {}) }),
+    queryKey: [...booker.doctorsKey, 'slots', doctorId, mode ?? '', from],
+    queryFn: () => assisted.doctorSlots(doctorId, { ...(branchId ? { branchId } : {}), from, days: SLOT_DAYS, ...(mode ? { mode } : {}) }),
     enabled: open && !!mode,
   });
   const days = useMemo(() => {

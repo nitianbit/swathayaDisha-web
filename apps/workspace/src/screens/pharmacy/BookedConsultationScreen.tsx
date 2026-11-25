@@ -5,7 +5,7 @@ import { ArrowLeft, FileText } from 'lucide-react';
 import {
   ApiError, assistedRefusal, canBookerCancel, canBookerReschedule, isAssistedBooking, typedNameTarget, formatSlotDate, joinWords, medicineName,
   bookingPaidBy, bookingPayBy, formatRecommendationCode, bookingWasPaid, LATE_PAYMENT_BACK, orderFromBooking, PATIENT_LANGUAGES, payByWords, pharmacyAssistedApi, pharmacyStockApi, requestKeysApi, rxOrderProblems, type BookedConsultation,
-  type Medicine, type RefundTo, type RxMedicine, type RxOrderRequest,
+  type BookerKind, type Medicine, type RefundTo, type RxMedicine, type RxOrderRequest,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextField } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -18,34 +18,40 @@ import { ChangeTime, CorrectName, type BookingGuard } from './BookingChanges.tsx
 import { DocumentPreview, useDocumentViewer } from './documentViewer.tsx';
 import { CardAwareCancel } from './ownedCancel.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
+import { pharmacyConsultBooker, type ConsultBooker } from './consultBooker.ts';
 
 /**
  * WQ12: one consultation this pharmacy booked (`GET /pharmacy-bookings/:id`): join, cancel, the dispensing copy, an order.
  * WQ13: change its time (same doctor) and correct the name the pharmacy typed for the patient.
  * WQ16: a card booking waiting for its payment ("Pay now" on its one order); a cancel of a card-paid booking chooses where
  * the money goes back (`refundTo`) and says the refund's state.
+ * WQ24: the same page for a lab member (`BookedConsultationDetail` with the lab's booker); a lab has no typed-name edit
+ * (r21 F6) and no medicine order.
  */
 export function BookedConsultationScreen() {
   const { bookingId = '' } = useParams();
   const pharmacyId = usePharmacyId();
+  const { api } = useSession();
   return (
     <>
       <Link to="/pharmacy/consultations" className="ws-back"><ArrowLeft size={16} aria-hidden="true" /> Booked consultations</Link>
       <PageHeading title="Consultation" />
-      <Detail key={`${pharmacyId}:${bookingId}`} pharmacyId={pharmacyId} bookingId={bookingId} />
+      <BookedConsultationDetail key={`${pharmacyId}:${bookingId}`} booker={pharmacyConsultBooker(api, pharmacyId)} bookingId={bookingId} />
     </>
   );
 }
 
 const languageWords = (code: string | undefined) => PATIENT_LANGUAGES.find((l) => l.code === code)?.label ?? code;
 
-function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: string }) {
+export function BookedConsultationDetail({ booker, bookingId }: { booker: ConsultBooker; bookingId: string }) {
   const { api } = useSession();
   const queryClient = useQueryClient();
+  const pharmacyId = booker.id;
+  const org = booker.kind;
   const valid = /^[0-9a-fA-F]{24}$/.test(bookingId);
   const q = useQuery({
-    queryKey: ['pharmacy-bookings', pharmacyId, 'one', bookingId],
-    queryFn: () => pharmacyAssistedApi(api).booking(bookingId),
+    queryKey: [...booker.bookingsKey, 'one', bookingId],
+    queryFn: () => booker.api.booking(bookingId),
     enabled: valid,
     retry: (n, err) => !(err instanceof ApiError && err.status >= 400 && err.status < 500) && n < 2,
   });
@@ -57,18 +63,19 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
   // One change of this booking at a time: cancel, change time and the name share this guard.
   const guard: BookingGuard = useOneAtATime('booking');
   const changed = () => {
-    void queryClient.invalidateQueries({ queryKey: ['pharmacy-bookings', pharmacyId] });
-    void queryClient.invalidateQueries({ queryKey: ['pharmacy-wallet', pharmacyId] });
+    void queryClient.invalidateQueries({ queryKey: booker.bookingsKey });
+    void queryClient.invalidateQueries({ queryKey: booker.wallet.queryKey });
   };
 
   if (!valid || (q.isError && q.error instanceof ApiError && q.error.status === 404 && q.error.code === 'BOOKING_NOT_FOUND')) {
-    return <Empty title="Consultation not found"><Link to="/pharmacy/consultations">See all booked consultations</Link></Empty>;
+    return <Empty title="Consultation not found"><Link to={booker.paths.list}>See all booked consultations</Link></Empty>;
   }
   if (q.isPending) return <Loading label="Loading the consultation…" />;
-  if (q.isError) return <ErrorState message={assistedRefusal(q.error).message} onRetry={() => void q.refetch()} />;
+  if (q.isError) return <ErrorState message={booker.refusal(q.error).message} onRetry={() => void q.refetch()} />;
   const b = q.data;
   const assistedRow = isAssistedBooking(b);
-  const nameTarget = typedNameTarget(b);
+  // r21 F6: a lab has no typed-name edit.
+  const nameTarget = org === 'pharmacy' ? typedNameTarget(b) : null;
   // WQ16b: how it was paid comes from the booker view's `payment` (r10c); on an older server, a card booking made on this
   // device is known by its remembered key. The key also gives the open order back for "Pay now".
   const waiting = assistedRow && waitingForCard(b);
@@ -93,7 +100,7 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
           <dt>Doctor</dt><dd>{b.doctorName ?? '—'}</dd>
           <dt>When</dt><dd>{formatSlotDate(b.bookingDate)}{b.bookingTime ? ` at ${b.bookingTime}` : ''}</dd>
           <dt>How</dt><dd>{modeWords(b.consultationMode)}</dd>
-          {assistedRow && b.status !== 'cancelled' && <><dt>How the patient joins</dt><dd>{joinWords(String(b.consultationMode ?? ''), b.assisted?.join?.on)}</dd></>}
+          {assistedRow && b.status !== 'cancelled' && <><dt>How the patient joins</dt><dd>{joinWords(String(b.consultationMode ?? ''), b.assisted?.join?.on, org)}</dd></>}
           {/* WQ16c: "paid" only when the server says the money was taken (captured, refunded or forfeited). */}
           {assistedRow && typeof b.price === 'number' && (waiting
             ? <><dt>Price</dt><dd>{formatRupees(b.price)} (not paid yet)</dd></>
@@ -101,7 +108,7 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
             : <><dt>{paidBy === 'card' ? 'Paid by card or UPI' : paidBy === 'wallet' ? 'Paid from your wallet' : 'Amount paid'}</dt><dd>{formatRupees(b.price)}</dd></>)}
           {b.assisted?.preferredLanguage && <><dt>Language</dt><dd>{languageWords(b.assisted.preferredLanguage)}</dd></>}
           {b.primaryConcern && <><dt>Problem</dt><dd>{b.primaryConcern}</dd></>}
-          {b.status === 'cancelled' && <><dt>Cancelled</dt><dd>{b.cancellationCause === 'patient' ? 'By the patient' : b.cancellationCause === 'booker' ? 'By your pharmacy' : b.cancellationCause === 'doctor' ? 'By the doctor' : b.cancellationCause === 'admin' ? 'By Jansetu' : b.cancellationCause === 'payment_timeout' ? 'Payment was not completed in time' : '—'}{b.cancellationReason ? `: ${b.cancellationReason}` : ''}</dd></>}
+          {b.status === 'cancelled' && <><dt>Cancelled</dt><dd>{b.cancellationCause === 'patient' ? 'By the patient' : b.cancellationCause === 'booker' ? `By your ${org}` : b.cancellationCause === 'doctor' ? 'By the doctor' : b.cancellationCause === 'admin' ? 'By Jansetu' : b.cancellationCause === 'payment_timeout' ? 'Payment was not completed in time' : '—'}{b.cancellationReason ? `: ${b.cancellationReason}` : ''}</dd></>}
         </dl>
         {b.assisted?.disputed?.state === 'open' && (
           <Alert tone="warn">The account holder told Jansetu this booking is not theirs. Jansetu is looking into it.</Alert>
@@ -114,7 +121,7 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
         <section className="ws-section" aria-labelledby="pay-h">
           <h2 id="pay-h">Payment</h2>
           {cardKey || recordId ? (
-            <CardPaymentPanel source={consultationCardSource(api, b._id, cardKey)} paymentTransactionId={recordId} order={orderFromBooking(b)} payBy={payBy} amountMinor={typeof b.price === 'number' ? Math.round(b.price * 100) : undefined}
+            <CardPaymentPanel source={consultationCardSource(api, b._id, cardKey, booker)} paymentTransactionId={recordId} order={orderFromBooking(b)} payBy={payBy} amountMinor={typeof b.price === 'number' ? Math.round(b.price * 100) : undefined}
               perform={guard.perform} busy={guard.busy}
               onPaid={(_b, note) => { setPayNote({ tone: 'ok', text: `Paid. The consultation is booked. The patient and the doctor are told.${note ? ` ${note}` : ''}` }); changed(); void q.refetch(); }}
               onEnded={(words) => { cards.forget(b._id); setPayNote({ tone: 'error', text: words }); changed(); void q.refetch(); }} />
@@ -130,14 +137,15 @@ function Detail({ pharmacyId, bookingId }: { pharmacyId: string; bookingId: stri
       {assistedRow && nameTarget && <CorrectName pharmacyId={pharmacyId} booking={b} target={nameTarget} guard={guard} onChanged={changed} />}
 
       {moveNote && !cancelNote && <Alert tone="ok">{moveNote}</Alert>}
-      {canBookerReschedule(b) && !cancelNote && <ChangeTime pharmacyId={pharmacyId} booking={b} guard={guard} onChanged={changed} onDone={setMoveNote} />}
+      {canBookerReschedule(b) && !cancelNote && (!booker.branches || booker.branches.length > 0)
+        && <ChangeTime booker={booker} booking={b} guard={guard} onChanged={changed} onDone={setMoveNote} />}
 
       {cancelNote && <Alert tone="ok">{cancelNote}</Alert>}
-      {canBookerCancel(b) && !cancelNote && <CancelBooking pharmacyId={pharmacyId} booking={b} guard={guard} onChanged={changed} paidBy={paidBy} waiting={waiting}
+      {canBookerCancel(b) && !cancelNote && <CancelBooking booker={booker} booking={b} guard={guard} onChanged={changed} paidBy={paidBy} waiting={waiting}
         captured={!b.payment || b.payment.state === 'captured'}
         onDone={(w) => { setMoveNote(null); setPayNote(null); setCancelNote(w); if (cardKey) cards.forget(b._id); }} />}
 
-      <Prescription pharmacyId={pharmacyId} booking={b} onRetry={() => void q.refetch()} />
+      <Prescription pharmacyId={pharmacyId} org={org} booking={b} onRetry={() => void q.refetch()} />
     </>
   );
 }
@@ -150,8 +158,8 @@ interface PendingCancel { bookingId: string; reason?: string; expectedUpdatedAt?
  * `POST /pharmacy-assisted/bookings/:id/cancel`: any time before the start, full refund to the wallet. Sending it again
  * is safe (a cancelled booking answers `alreadyCancelled`, before any version check), so an unknown outcome is resent.
  */
-function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, waiting, captured }: {
-  pharmacyId: string; booking: BookedConsultation; guard: BookingGuard; onChanged: () => void; onDone: (words: string) => void;
+function CancelBooking({ booker, booking, guard, onChanged, onDone, paidBy, waiting, captured }: {
+  booker: ConsultBooker; booking: BookedConsultation; guard: BookingGuard; onChanged: () => void; onDone: (words: string) => void;
   /** WQ16b: from the booker view's `payment` (r10c); `unknown` only on an older server for a booking not made on this device. */
   paidBy: 'card' | 'wallet' | 'unknown';
   /** The server says the money was taken (`payment.state: 'captured'`; assumed on an older server). */
@@ -159,10 +167,9 @@ function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, 
   /** WQ16: a card booking not paid yet: nothing is refunded. */
   waiting: boolean;
 }) {
-  const { api } = useSession();
-  const assisted = pharmacyAssistedApi(api);
+  const assisted = booker.api;
   return (
-    <CardAwareCancel<PendingCancel, BookedConsultation> slot={`assisted-cancel:${pharmacyId}:${booking._id}`} label="Cancel this consultation"
+    <CardAwareCancel<PendingCancel, BookedConsultation> slot={`assisted-cancel:${booker.id}:${booking._id}`} label="Cancel this consultation"
       what="consultation" when={`${formatSlotDate(booking.bookingDate)} at ${booking.bookingTime}`} introLead="You can cancel any time before the consultation starts."
       amount={typeof booking.price === 'number' ? formatRupees(booking.price) : 'The amount'} told="The patient and the doctor are told."
       paidBy={paidBy} waiting={waiting} captured={captured} version={booking.updatedAt} perform={guard.perform} busy={guard.busy}
@@ -170,7 +177,7 @@ function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, 
         label: booking.doctorName ?? '', ...(refundTo ? { refundTo } : {}) })}
       send={(b) => assisted.cancel(b.bookingId, { ...(b.reason ? { reason: b.reason } : {}), ...(b.expectedUpdatedAt ? { expectedUpdatedAt: b.expectedUpdatedAt } : {}),
         ...(b.refundTo ? { refundTo: b.refundTo } : {}) })}
-      refusalWords={(err) => assistedRefusal(err).message}
+      refusalWords={(err) => booker.refusal(err).message}
       onChanged={onChanged}
       isCancelled={async () => { const now = await assisted.booking(booking._id); return now.status === 'cancelled' ? now : null; }}
       // WQ16c: a restored cancellation's choice is not kept here, so no destination is named.
@@ -186,7 +193,7 @@ function CancelBooking({ pharmacyId, booking, guard, onChanged, onDone, paidBy, 
 
 // ── The dispensing copy ──
 
-function Prescription({ pharmacyId, booking, onRetry }: { pharmacyId: string; booking: BookedConsultation; onRetry: () => void }) {
+function Prescription({ pharmacyId, org, booking, onRetry }: { pharmacyId: string; org: BookerKind; booking: BookedConsultation; onRetry: () => void }) {
   const p = booking.prescription;
   const { open, opening, error: fileError, preview } = useDocumentViewer();
 
@@ -208,7 +215,7 @@ function Prescription({ pharmacyId, booking, onRetry }: { pharmacyId: string; bo
     <section className="ws-section" aria-labelledby="rx-h">
       <h2 id="rx-h">Prescription (dispensing copy)</h2>
       <p className="ws-muted">
-        Medicines, advice and tests only: the diagnosis is not shown to pharmacies.
+        Medicines, advice and tests only: the diagnosis is not shown to {org === 'lab' ? 'labs' : 'pharmacies'}.
         {p.prescribedBySpecialistName ? ` Written by ${p.prescribedBySpecialistName}` : ''}{p.prescribedAt ? ` on ${formatDateTime(p.prescribedAt)}` : ''}.
       </p>
       {medicines.length > 0 ? (
@@ -240,7 +247,7 @@ function Prescription({ pharmacyId, booking, onRetry }: { pharmacyId: string; bo
       </div>
       {fileError && <Alert>Could not open the copy: {fileError}</Alert>}
       <DocumentPreview preview={preview} title="Prescription copy" noun="copy" fileName="prescription-copy" />
-      {medicines.length > 0 && <RxOrder pharmacyId={pharmacyId} booking={booking} medicines={medicines} />}
+      {org === 'pharmacy' && medicines.length > 0 && <RxOrder pharmacyId={pharmacyId} booking={booking} medicines={medicines} />}
     </section>
   );
 }

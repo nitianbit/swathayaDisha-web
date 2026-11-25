@@ -2184,6 +2184,54 @@ Nothing visible changes: English stays byte-identical and no language list shows
   (166). For the integrator: merging WQ22 adds its new files with English (`assistedInstant.ts`, and its `ConsultNowScreen.tsx`
   unless it is the doctor's, already listed) to the allowlist, and any `Intl` money call it adds goes to `formatPaise`.
 
+## WQ24 lab › Book consultation: a lab books a doctor consultation for a walk-in patient (phase 2e) (2026-11-25, branch `wq24/lab-book-consultation`)
+
+Backend: r21 + r21b (stage `6a8574e9`, design ASSISTED_BOOKING_DESIGN.md §24.16–§24.17; mocked API). Web base: `wq/stage-next-2`
+13333e9. Behind the backend's `ASSISTED_BOOKING_ENABLED_LAB` (off: the lookup, the doctor reads and a new booking answer 503, said as
+"Booking for patients is not switched on yet. Jansetu turns it on for your lab when it is ready."); a card booking also needs
+`ASSISTED_CARD_PAYMENT_ENABLED` (off: the card option is disabled, as for pharmacies).
+
+- **Lab › Book consultation** (`/partner/book-consultation`) and **Lab › Booked consultations** (`/partner/consultations[/:id]`),
+  next to Front desk; lab members holding the new partner permission `assisted.book` (owners hold it; offered for labs only in the
+  staff editor as "Book doctor consultations for patients"); the lab's own members only (the lab wallet and payment routes have no
+  admin mirror). The pharmacy's flow, unchanged: the patient (`POST /partner-workspace/assisted/patients/lookup`), family members
+  the lab booked for before (from its own list), the lab's consent sentence (`web-lab-consult-v1`: "this lab can see the
+  prescription … for 90 days"), **the branch the patient is at** (the member's active branches in scope; chosen at once when there
+  is one), the doctors near that branch and their times (`?branchId`), mode, join ("On this lab’s device"), language, coupon,
+  problem, then "How do you pay?": **the lab wallet** (the WQ20 balance; a member without `wallet.view` is told the lab's wallet pays
+  and its balance is not shown; "Top up now" only with `wallet.manage`) or **card or UPI** (verified and reconciled on the lab's own
+  `/partner-workspace/assisted/payments/verify|reconcile`). One keyed create `POST …/assisted/consultations` with `branchId`.
+- **Booked consultations**: the list (`GET …/assisted/bookings`, the member's branches only), a consultation (`GET …/bookings/:id`;
+  another branch's or another lab's is 404 `BOOKING_NOT_FOUND`, "Consultation not found"), Join call, "Pay now" / "Check payment"
+  for a card booking waiting for payment, change time (same doctor), cancel before the start with the refund back the way it was
+  paid (wallet; card by default, or the wallet on the lab's choice), and the prescription's dispensing copy (`/file/fetch` with the
+  member's token; "the diagnosis is not shown to labs"). No typed-name edit (r21 F6) and no medicine order (pharmacies only).
+- **Money safety, as for pharmacies** (the same code): an owned PendingOp stored before sending, settled only while live and
+  `stillCurrent`; a request key with the check by key, the same request again, and "Give this up" (after a reload only the key);
+  `PRICE_CHANGED` offers the server's price as a new request; card: the pre-checkout reconcile and no second Checkout once a payment
+  is authorized. No token, phone, name or order id in storage, addresses or logs.
+- **Shared, not copied** (owner: no duplicated code). `assisted.ts` `assistedBookerApi(c, kind)` is the one set of consultation
+  routes (`pharmacyAssistedApi` = the pharmacy's + its medicine order; `labAssistedApi` = the lab's, `branchId` checked before
+  sending); `assistedCard.ts` takes a `CardPayer` (`PHARMACY_PAYER` `/payments`, `LAB_PAYER` the lab's routes) in
+  `bookingPaymentApi`, `settleCardPayment`, `beforeCheckout`, `checkCardPayment`, and names the booker in the blocked and not-found
+  words. The screens take a `ConsultBooker` (`pharmacy/consultBooker.ts`: routes, refusal words, query keys, the paying wallet,
+  the card payer, the consent, the pages, a lab's branches): `BookConsultation`, `BookedConsultationsList`,
+  `BookedConsultationDetail` and `ChangeTime` are the pharmacy's, generalised; `PayChoice`/`WalletPay` take a `PayWallet`
+  (`pharmacyPayWallet` by default); `usePatientStep` takes the booker's routes; `consultationCardSource` takes the booker's routes
+  and payer; `JoinFields` and `joinWords` name the booker. The lab screens (`partner/LabConsultScreens.tsx`) only build the lab's
+  booker and the headings. Pharmacy behaviour, look and specs unchanged.
+- **Visible outside these screens**: the lab staff editor offers "Book doctor consultations for patients" (a clinic never).
+
+API gaps:
+- The booker view carries no `assisted.bookedBy.branchId`, so Change time reads the doctor's times with the member's first branch in
+  scope (r21 requires a branch on the slots read; the times do not depend on it), and the booking page cannot name its branch.
+- A lab's refusals of the reschedule (permission, branch scope) fall back to the server's message (the shared reschedule words).
+
+Seen, not changed: the admin card refund queue (`admin/CardRefunds.tsx`) still names only `pharmacyName`, so a lab-paid row shows "—" and
+its words say "the pharmacy" (r21 adds `payerKind`, `payerId`, `payerName`); the pharmacy-only limit words (`new_accounts`,
+`booker_cancellations`, no longer blocking limits) and the `PHARMACY_*` refusals keep their pharmacy words; the document viewer still
+reads files through `pharmacyAssistedApi(api).file` (the same `/file/fetch` for any token).
+
 ## Follow-ups
 
 
@@ -2217,6 +2265,7 @@ Nothing visible changes: English stays byte-identical and no language list shows
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ24 lab › Book consultation (phase 2e) on 13333e9 | Against r21 + r21b, stage 6a8574e9 (§24.16–§24.17; mocked API). typecheck clean; Vitest 487/487 (+9 in `wq24.test.ts`: every lab route and its query/body, `branchId` refused before sending, the pharmacy routes and bodies unchanged, the lab consent, join and refusal words, card verify/reconcile/pre-checkout on the lab's payment routes with the lab named in the blocked and not-found words (pharmacy words unchanged), `assisted.book` offered to labs only); Playwright workspace 990/992 on temporary port 5511 (`reuseExistingServer: false`, config deleted), +20 = 10 journeys x 2 in `lab-consult.spec.ts` (wallet, card with the balance hidden without `wallet.view`, a lost answer checked by key, a lost answer given up after a reload, a changed price, cancels to the wallet and to the card or the wallet, the dispensing copy, another branch's and another lab's booking not found, no menu without `assisted.book`, switch off); the 2 failures (partner-invoices:1119 desktop, stock-supply:1277 tablet, both outside this round) were 30 s load timeouts while other agents ran their suites, and pass alone (4/4), as in an earlier desktop run (496/496); every pharmacy spec passes unchanged; `VITE_API_SAME_ORIGIN=true npm run build --workspace apps/workspace` built. 1 new file allowlisted (170). |
 
 
 | 2026-11-25 | WQ23b review follow-ups (on 0b14df3) | typecheck clean; Vitest 443/443 (doctorWallet.test.ts and labWallet.test.ts on `adminOwnerWalletApi(c, kind)` and `ownerWalletRefusal(err, kind)`; wq15.test.ts: the close words and the missing-reason words name the owner); Playwright doctor-wallet + lab-wallet + pharmacy-extras + admin + admin-doctors 130/130 (doctor-wallet +4 = 2 journeys x 2: a failed wallet read after a top-up keeps Add money, its answer and the history; a doctor whose wallet closed after a reload still checks this device's top-up and is told it was added; extended: the admin's balance shows a doctor's card money) on a temporary config (port 5496, deleted); release build with VITE_API_SAME_ORIGIN=true. |

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import {
   ApiError, assistedRefusal, beforeCheckout, cardBookingState, checkCardPayment, checkoutSeconds, LATE_CAPTURE_WORDS, orderFromBooking, PAY_NOW_MARGIN_MS, payByWords, payNowOpen,
-  pharmacyAssistedApi, pharmacyLabApi, settleCardPayment, type ApiClient, type AssistedPaymentMethod, type CardBookingKind, type CardOutcome, type OpenCardOrder, type PendingMarker,
+  pharmacyAssistedApi, pharmacyLabApi, settleCardPayment, type ApiClient, type AssistedBookerApi, type AssistedPaymentMethod, type CardBookingKind, type CardOutcome,
+  type CardPayer, type OpenCardOrder, type PendingMarker,
 } from '@jansetu/api';
 import { Alert, Button, formatRupees } from '@jansetu/ui';
 import { useSession } from '../../session.tsx';
@@ -75,12 +76,19 @@ export interface CardBookingSource {
   toldOnPaid: string;
   /** The list where it can be cancelled. */
   listName: string;
+  /** WQ24: where the payment is verified and reconciled (default: the pharmacy's `/payments/*`). */
+  payer?: CardPayer;
 }
 
-/** A consultation (WQ16): the order by the create's key; without it only "Check payment". */
-export function consultationCardSource(api: ApiClient, bookingId: string, requestKey: string | null): CardBookingSource {
-  const assisted = pharmacyAssistedApi(api);
+/**
+ * A consultation (WQ16): the order by the create's key; without it only "Check payment". WQ24: `booker` = a lab member's
+ * routes and payment routes (default: the pharmacy's).
+ */
+export function consultationCardSource(api: ApiClient, bookingId: string, requestKey: string | null,
+  booker?: { api: AssistedBookerApi; payer: CardPayer }): CardBookingSource {
+  const assisted = booker?.api ?? pharmacyAssistedApi(api);
   return {
+    ...(booker ? { payer: booker.payer } : {}),
     kind: 'consultation', canReopen: !!requestKey, description: 'Doctor consultation for a patient',
     toldOnPaid: 'The patient and the doctor are told once it is paid.', listName: 'Booked consultations',
     read: async () => {
@@ -115,7 +123,8 @@ export function labCardSource(api: ApiClient, bookingId: string, requestKey: str
  * Opens Checkout on the booking's order (closing itself before the cut-off), then settles the attempt with the server.
  * Never throws. `reported`: Checkout said the payment went through.
  */
-export async function payCardOrder(api: ApiClient, order: OpenCardOrder, description = 'Doctor consultation for a patient'): Promise<{ step: CardStep; reported: boolean }> {
+export async function payCardOrder(api: ApiClient, order: OpenCardOrder, description = 'Doctor consultation for a patient', payer?: CardPayer):
+  Promise<{ step: CardStep; reported: boolean }> {
   const timeoutSeconds = checkoutSeconds(order.payBy);
   if (timeoutSeconds === 0) return { step: { kind: 'unpaid' }, reported: false };
   let result;
@@ -128,7 +137,7 @@ export async function payCardOrder(api: ApiClient, order: OpenCardOrder, descrip
   }
   const reported = result.kind === 'paid';
   const step = await settleCardPayment(api, order.paymentTransactionId, result.kind === 'paid'
-    ? { razorpayOrderId: result.razorpayOrderId, razorpayPaymentId: result.razorpayPaymentId, razorpaySignature: result.razorpaySignature } : null);
+    ? { razorpayOrderId: result.razorpayOrderId, razorpayPaymentId: result.razorpayPaymentId, razorpaySignature: result.razorpaySignature } : null, payer);
   return { step, reported };
 }
 
@@ -244,11 +253,11 @@ export function CardPaymentPanel({ source, order: initial, amountMinor, payBy, p
         // card-last: a reopen asks the server first (also after the panel was shown again): an authorized payment at
         // Razorpay is on its way, so no second payment page; an unfinished (created) attempt opens it, keeping any warning.
         if (!first) {
-          const pre = await beforeCheckout(api, o.paymentTransactionId);
+          const pre = await beforeCheckout(api, o.paymentTransactionId, source.payer);
           if (pre.kind === 'settled') { await apply(pre.outcome, o); return; }
           if (!pre.created) setNote(null);
         } else setNote(null);
-        const r = await payCardOrder(api, o, source.description);
+        const r = await payCardOrder(api, o, source.description, source.payer);
         await apply(r.step, o, r.reported);
       });
     } catch (err) {
@@ -262,7 +271,7 @@ export function CardPaymentPanel({ source, order: initial, amountMinor, payBy, p
       await perform(async () => {
         const id = order?.paymentTransactionId ?? paymentTransactionId ?? (source.canReopen ? (await freshOrder())?.paymentTransactionId : undefined);
         if (!id) { if (live.current && !source.canReopen) setNote({ tone: 'warn', text: noOrderWords(source.listName) }); return; }
-        await apply(await checkCardPayment(api, id), order);
+        await apply(await checkCardPayment(api, id, source.payer), order);
       });
     } catch (err) {
       if (live.current) setNote({ tone: 'error', text: assistedRefusal(err).message });

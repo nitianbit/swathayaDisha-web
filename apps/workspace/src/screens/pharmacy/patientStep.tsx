@@ -7,6 +7,7 @@ import {
 import { Alert, Badge, Button, TextField } from '@jansetu/ui';
 import { useSession } from '../../session.tsx';
 import type { Perform } from '../finance/finance.tsx';
+import type { ConsultBooker } from './consultBooker.ts';
 
 /**
  * WQ17: the patient step of an assisted booking (WQ12, moved here unchanged from Book consultation so that Book lab test
@@ -14,10 +15,15 @@ import type { Perform } from '../finance/finance.tsx';
  * who the patient is (the owner, a family member booked before, a new family member), the "patient agreed" tick. The
  * phone stays in this state and in POST bodies: never in the address, storage or logs.
  */
-export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onChangePhone, lookupPatient }: {
+export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onChangePhone, lookupPatient, booker }: {
   /** The booker's identity (the pharmacy's id, or for the WQ19 lab desk the workspace's identity). */
   pharmacyId: string;
   perform: Perform;
+  /**
+   * WQ24: a consultation booker's own routes (a lab member's): its lookup, and family members it booked for before from its
+   * own booked list (default: the pharmacy's).
+   */
+  booker?: Pick<ConsultBooker, 'api' | 'bookingsKey'>;
   /**
    * WQ19: another booker's lookup (the lab desk's `POST /lab-desk/patients/lookup`). With it, family members booked before
    * are not offered (only a pharmacy has that list): a family member is typed by name.
@@ -31,7 +37,7 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
   onChangePhone?: () => void;
 }) {
   const { api } = useSession();
-  const assisted = pharmacyAssistedApi(api);
+  const assisted = booker?.api ?? pharmacyAssistedApi(api);
   const [phoneText, setPhoneText] = useState('');
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [lookup, setLookup] = useState<{ phone: string; result: PatientLookup } | null>(null);
@@ -72,7 +78,7 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
 
   // Family members this pharmacy booked for before on this number (its own list; the lookup never lists the family).
   const family = useQuery({
-    queryKey: ['pharmacy-bookings', pharmacyId, 'family-source'],
+    queryKey: [...(booker?.bookingsKey ?? ['pharmacy-bookings', pharmacyId]), 'family-source'],
     queryFn: async () => {
       const first = await assisted.bookings({ limit: 50 });
       const second = first.nextCursor ? await assisted.bookings({ limit: 50, cursor: first.nextCursor }) : null;

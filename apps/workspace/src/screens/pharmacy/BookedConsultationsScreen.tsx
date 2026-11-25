@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  ASSISTED_MODE_LABEL, assistedRefusal, awaitingCardPayment, bookingStatusLabel, isAssistedBooking, formatSlotDate, isSwitchedOff, pharmacyAssistedApi, SWITCHED_OFF_MESSAGE,
+  ASSISTED_MODE_LABEL, awaitingCardPayment, bookingStatusLabel, isAssistedBooking, formatSlotDate, isSwitchedOff, SWITCHED_OFF_MESSAGE,
   type AssistedBookingStatus, type AssistedMode, type BookedConsultation,
 } from '@jansetu/api';
 import { Alert, Badge, Empty, ErrorState, Loading } from '@jansetu/ui';
@@ -10,17 +10,22 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { CursorPager, StatusFilter, useCursorPages } from './cursorList.tsx';
 import { usePharmacyId } from './ownedOp.tsx';
+import { pharmacyConsultBooker, type ConsultBooker } from './consultBooker.ts';
 
-/** WQ12: consultations this pharmacy booked (`GET /pharmacy-bookings`, newest first, cursor-paged; phase 0 + 1a). */
+/**
+ * WQ12: consultations this pharmacy booked (`GET /pharmacy-bookings`, newest first, cursor-paged; phase 0 + 1a).
+ * WQ24: the same list for a lab member (`BookedConsultationsList` with the lab's booker: `GET /partner-workspace/assisted/bookings`).
+ */
 export function BookedConsultationsScreen() {
   const pharmacyId = usePharmacyId();
+  const { api } = useSession();
   return (
     <>
       <PageHeading title="Booked consultations">
         Consultations your pharmacy booked for patients, newest first. Open one to cancel it, join the call or see the prescription.
         {' '}<Link to="/pharmacy/book">Book a new one</Link>.
       </PageHeading>
-      <BookedList key={pharmacyId} pharmacyId={pharmacyId} />
+      <BookedConsultationsList key={pharmacyId} booker={pharmacyConsultBooker(api, pharmacyId)} />
     </>
   );
 }
@@ -49,14 +54,14 @@ export function BookingBadges({ b }: { b: BookedConsultation }) {
   );
 }
 
-function BookedList({ pharmacyId }: { pharmacyId: string }) {
-  const { api } = useSession();
+export function BookedConsultationsList({ booker }: { booker: ConsultBooker }) {
   const [status, setStatus] = useState<AssistedBookingStatus | ''>('');
   const pages = useCursorPages();
   const { cursor } = pages;
+  const list = booker.paths.list;
   const q = useQuery({
-    queryKey: ['pharmacy-bookings', pharmacyId, 'list', status, cursor],
-    queryFn: () => pharmacyAssistedApi(api).bookings({ ...(status ? { status } : {}), ...(cursor ? { cursor } : {}), limit: PAGE_SIZE }),
+    queryKey: [...booker.bookingsKey, 'list', status, cursor],
+    queryFn: () => booker.api.bookings({ ...(status ? { status } : {}), ...(cursor ? { cursor } : {}), limit: PAGE_SIZE }),
   });
 
   return (
@@ -65,10 +70,10 @@ function BookedList({ pharmacyId }: { pharmacyId: string }) {
       <StatusFilter id="bk-status" value={status} options={STATUS_FILTERS} onChange={(v) => { setStatus(v); pages.reset(); }} />
       {q.isPending ? <Loading label="Loading booked consultations…" />
         : q.isError ? (isSwitchedOff(q.error) ? <Alert tone="warn">{SWITCHED_OFF_MESSAGE}</Alert>
-          : <ErrorState message={assistedRefusal(q.error).message} onRetry={() => void q.refetch()} />)
+          : <ErrorState message={booker.refusal(q.error).message} onRetry={() => void q.refetch()} />)
         : q.data.items.length === 0 ? (
           <Empty title={status ? 'No consultations with this status' : 'No consultations booked yet'}>
-            <Link to="/pharmacy/book">Book a consultation</Link> for a patient at your counter.
+            <Link to={booker.paths.book}>Book a consultation</Link> for a patient at your counter.
           </Empty>
         ) : (
           <>
@@ -88,8 +93,8 @@ function BookedList({ pharmacyId }: { pharmacyId: string }) {
                       <td>{statusWords(b)}<BookingBadges b={b} /></td>
                       <td>
                         {waitingForCard(b)
-                          ? <Link to={`/pharmacy/consultations/${b._id}`} aria-label={`Pay now for the consultation of ${b.patientName ?? 'the patient'} with ${b.doctorName ?? 'the doctor'}`}>Pay now</Link>
-                          : <Link to={`/pharmacy/consultations/${b._id}`} aria-label={`Open the consultation of ${b.patientName ?? 'the patient'} with ${b.doctorName ?? 'the doctor'}`}>Open</Link>}
+                          ? <Link to={`${list}/${b._id}`} aria-label={`Pay now for the consultation of ${b.patientName ?? 'the patient'} with ${b.doctorName ?? 'the doctor'}`}>Pay now</Link>
+                          : <Link to={`${list}/${b._id}`} aria-label={`Open the consultation of ${b.patientName ?? 'the patient'} with ${b.doctorName ?? 'the doctor'}`}>Open</Link>}
                       </td>
                     </tr>
                   ))}

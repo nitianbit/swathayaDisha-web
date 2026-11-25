@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  ASSISTED_MODE_LABEL, assistedRefusal, isCardAnswer, routeCardAnswer, CONSENT_STATEMENT_LANGUAGE,
-  CONSENT_STATEMENT_VERSION, formatSlotDate, isSwitchedOff, istToday, joinWords, nextFreeSlot, supportedModes,
-  patientBody, pharmacyAssistedApi, SWITCHED_OFF_MESSAGE, type AssistedCardPayment, type AssistedDoctor, type AssistedMode, type AssistedSlot, type BookedConsultation,
+  ASSISTED_MODE_LABEL, isCardAnswer, routeCardAnswer, CONSENT_STATEMENT_LANGUAGE,
+  formatSlotDate, isSwitchedOff, istToday, joinWords, nextFreeSlot, supportedModes,
+  patientBody, SWITCHED_OFF_MESSAGE, type AssistedCardPayment, type AssistedDoctor, type AssistedMode, type AssistedSlot, type BookedConsultation, type BookerKind,
   type ByKeyAnswer, type ConsultationReceipt, type ConsultationRequest, type JoinOn, type Refusal,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
@@ -20,8 +20,9 @@ import { PatientSection, usePatientStep } from './patientStep.tsx';
 import { SlotDays } from './slotDays.tsx';
 import { useAssistedCreate } from './assistedCreate.ts';
 import { UnconfirmedBooking } from './unconfirmedBooking.tsx';
-import { PayChoice, refusalText } from './walletPay.tsx';
+import { PayChoice, refusalText, type PayWallet } from './walletPay.tsx';
 import { usePharmacyId } from './ownedOp.tsx';
+import { pharmacyConsultBooker, type ConsultBooker } from './consultBooker.ts';
 
 /**
  * WQ12: a pharmacy books a doctor consultation for a walk-in patient (assisted booking phase 1a, §19.3):
@@ -31,15 +32,18 @@ import { usePharmacyId } from './ownedOp.tsx';
  * in POST bodies: never in the address, storage or logs.
  * WQ16 (r10 phase 1b, §23.3): or paid by card or UPI (`paymentMethod: 'razorpay'`: the same body, key and owned request);
  * the booking is then held until its `payBy` and paid on its one Razorpay order (`cardBooking.tsx`).
+ * WQ24 (r21): the same screen books for a lab member (`BookConsultation` with the lab's `ConsultBooker`): its branch,
+ * its routes, its wallet and its card payment routes.
  */
 export function BookConsultationScreen() {
   const pharmacyId = usePharmacyId();
+  const { api } = useSession();
   return (
     <>
       <PageHeading title="Book consultation">
         Book a doctor for a patient at your counter. You pay Jansetu from your wallet, or by card or UPI; you collect the fee from the patient.
       </PageHeading>
-      <Book key={pharmacyId} pharmacyId={pharmacyId} />
+      <BookConsultation key={pharmacyId} booker={pharmacyConsultBooker(api, pharmacyId)} />
     </>
   );
 }
@@ -47,7 +51,11 @@ export function BookConsultationScreen() {
 /** What the screen shows about a booking being sent (kept in session memory with the request, never in storage). */
 interface Summary { patient: string; doctor: string; date: string; time: string; mode: AssistedMode; joinOn?: JoinOn; priceMinor: number; couponCode?: string;
   /** The price came from the server's answer with the coupon applied (PRICE_CHANGED), not from the doctor's fee. */
-  couponChecked?: boolean }
+  couponChecked?: boolean;
+  /** WQ24: the lab branch it is booked at (labs only). */
+  branch?: string;
+  /** WQ24: who books (absent: a pharmacy, as before). */
+  org?: BookerKind }
 interface PendingBooking { request: ConsultationRequest; summary: Summary }
 interface Done { summary: Summary; ref?: string; paidMinor?: number; replayed: boolean; newAccount?: boolean; paidBy?: 'wallet' | 'card'; note?: string }
 /** WQ16: a card booking held until it is paid (or its time is released). */
@@ -59,12 +67,14 @@ const SLOT_DAYS = 7;
 const describeWhen = (s: Summary) => `${formatSlotDate(s.date)} at ${s.time}`;
 
 function SummaryList({ s }: { s: Summary }) {
+  const org = s.org ?? 'pharmacy';
   return (
     <ul className="ws-list">
       <li>Patient: <strong>{s.patient}</strong></li>
+      {s.branch && <li>Booked at: <strong>{s.branch}</strong></li>}
       <li>Doctor: <strong>{s.doctor}</strong></li>
       <li>When: <strong>{describeWhen(s)}</strong></li>
-      <li>How: <strong>{ASSISTED_MODE_LABEL[s.mode]}</strong>{s.mode !== 'in-person' && s.joinOn ? ` (${s.joinOn === 'partner_device' ? 'on this pharmacy’s device' : 'on the patient’s phone'})` : ''}</li>
+      <li>How: <strong>{ASSISTED_MODE_LABEL[s.mode]}</strong>{s.mode !== 'in-person' && s.joinOn ? ` (${s.joinOn === 'partner_device' ? `on this ${org}’s device` : 'on the patient’s phone'})` : ''}</li>
       <li>Price: <strong>{formatRupees(s.priceMinor / 100)}</strong>{s.couponCode ? ` (coupon ${s.couponCode})` : ''}</li>
     </ul>
   );
@@ -74,14 +84,15 @@ function doneFromReceipt(r: ConsultationReceipt, summary: Summary): Done {
   return { summary, ref: r.booking.assisted?.shortRef, paidMinor: r.funding?.amountMinor, replayed: r.replayed, newAccount: r.newAccount,
     paidBy: r.funding?.method === 'razorpay' ? 'card' : 'wallet' };
 }
-function summaryOf(b: BookedConsultation, summary: Summary | undefined): Summary {
+function summaryOf(b: BookedConsultation, summary: Summary | undefined, org: BookerKind): Summary {
   return summary ?? {
     patient: b.patientName ?? 'The patient', doctor: b.doctorName ?? 'The doctor', date: b.bookingDate ?? '', time: b.bookingTime ?? '',
     mode: (b.consultationMode as AssistedMode) ?? 'video', joinOn: b.assisted?.join?.on, priceMinor: Math.round(Number(b.price ?? 0) * 100),
+    ...(org === 'pharmacy' ? {} : { org }),
   };
 }
-function doneFromView(b: BookedConsultation, summary: Summary | undefined, paidBy: Done['paidBy'] = 'wallet'): Done {
-  return { summary: summaryOf(b, summary), ref: b.assisted?.shortRef, paidMinor: typeof b.price === 'number' ? Math.round(b.price * 100) : undefined, replayed: true, paidBy };
+function doneFromView(b: BookedConsultation, summary: Summary | undefined, org: BookerKind, paidBy: Done['paidBy'] = 'wallet'): Done {
+  return { summary: summaryOf(b, summary, org), ref: b.assisted?.shortRef, paidMinor: typeof b.price === 'number' ? Math.round(b.price * 100) : undefined, replayed: true, paidBy };
 }
 
 /** The doctor card's next time: only one the time list would show (a chat-only next time is left out, as in the list). */
@@ -92,9 +103,12 @@ function nextWords(d: AssistedDoctor, modeFilter: AssistedMode | ''): string {
 }
 
 
-function Book({ pharmacyId }: { pharmacyId: string }) {
+/** The booking flow, for a pharmacy or (WQ24) a lab member: `booker` gives the routes, keys, wallet and words. */
+export function BookConsultation({ booker }: { booker: ConsultBooker }) {
   const { api } = useSession();
-  const assisted = pharmacyAssistedApi(api);
+  const assisted = booker.api;
+  const org = booker.kind;
+  const pharmacyId = booker.id;
   const { perform, busy } = useOneAtATime('booking');
   const [off, setOff] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -112,8 +126,8 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
 
   // WQ17b: the keyed create, shared with Book lab test (`assistedCreate.ts`); the card branches plug into its answers.
   const create = useAssistedCreate<PendingBooking, ConsultationReceipt, ByKeyAnswer>({
-    slot: `assisted-book:${pharmacyId}`, perform, book: (request) => assisted.book(request), abandon: (key) => assisted.abandon(key), refusal: assistedRefusal,
-    walletKey: ['pharmacy-wallet', pharmacyId], refreshKeys: [['pharmacy-bookings', pharmacyId], ['assisted-doctors', pharmacyId]],
+    slot: `assisted-book:${pharmacyId}`, perform, book: (request) => assisted.book(request), abandon: (key) => assisted.abandon(key), refusal: booker.refusal,
+    walletKey: booker.wallet.queryKey, refreshKeys: [booker.bookingsKey, booker.doctorsKey],
     onReceipt: (r, p) => afterReceipt(r, p.requestKey, p.body.summary),
     onUsed: (r, p, restored) => afterUsed(r, p, restored),
     onOff: () => setOff(true),
@@ -135,11 +149,17 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   const refreshAfterBooking = create.refresh;
 
   // Step 1: the patient (WQ17: the shared step, `patientStep.tsx`).
-  const pt = usePatientStep({ pharmacyId, perform, onFind: () => setNotice(null), onSwitchedOff: () => setOff(true),
+  const pt = usePatientStep({ pharmacyId, perform, booker, onFind: () => setNotice(null), onSwitchedOff: () => setOff(true),
     onChangePhone: () => { setReview(null); setRefused(null); } });
   const { lookup, patient, patientDone, patientLabel } = pt;
 
-  // Step 2: the doctor and the time.
+  // Step 2: the doctor and the time. WQ24: a lab books at one of its branches (chosen at once when it has one).
+  const branches = booker.branches;
+  const [chosenBranch, setChosenBranch] = useState<string | null>(() => (branches?.length === 1 ? branches[0]!.id : null));
+  const branch = branches?.find((b) => b.id === chosenBranch) ?? null;
+  const branchId = branch?.id ?? null;
+  const branchPart = branchId ? { branchId } : {};
+  const branchReady = !branches || !!branchId;
   const [speciality, setSpeciality] = useState('');
   const [modeFilter, setModeFilter] = useState<AssistedMode | ''>('');
   const [date, setDate] = useState(() => istToday());
@@ -159,22 +179,23 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     setCardDue(null); setEnded(null); setMethod('wallet');
   }
 
-  // The doctor list: nearby first (the pharmacy's pincode, then its city); that day's free times.
+  // The doctor list: nearby first (the pharmacy's pincode, then its city; a lab's branch); that day's free times.
+  const doctorsKey = [...booker.doctorsKey, ...(branchId ? [branchId] : [])];
   const doctors = useQuery({
-    queryKey: ['assisted-doctors', pharmacyId, speciality, modeFilter],
-    queryFn: () => assisted.doctors({ ...(speciality ? { speciality } : {}), ...(modeFilter ? { mode: modeFilter } : {}), limit: 50 }),
-    enabled: patientDone && !off,
+    queryKey: [...doctorsKey, speciality, modeFilter],
+    queryFn: () => assisted.doctors({ ...branchPart, ...(speciality ? { speciality } : {}), ...(modeFilter ? { mode: modeFilter } : {}), limit: 50 }),
+    enabled: patientDone && !off && branchReady,
   });
   // The chosen doctor's free times for a week from the chosen day (`GET /pharmacy-assisted/doctors/:id/slots`).
   const slots = useQuery({
-    queryKey: ['assisted-doctors', pharmacyId, 'slots', doctorId, modeFilter, date],
-    queryFn: () => assisted.doctorSlots(doctorId!, { from: date, days: SLOT_DAYS, ...(modeFilter ? { mode: modeFilter } : {}) }),
-    enabled: patientDone && !off && !!doctorId,
+    queryKey: [...doctorsKey, 'slots', doctorId, modeFilter, date],
+    queryFn: () => assisted.doctorSlots(doctorId!, { ...branchPart, from: date, days: SLOT_DAYS, ...(modeFilter ? { mode: modeFilter } : {}) }),
+    enabled: patientDone && !off && !!doctorId && branchReady,
   });
   const allDoctors = useQuery({
-    queryKey: ['assisted-doctors', pharmacyId, 'specialities'],
-    queryFn: () => assisted.doctors({ limit: 100 }),
-    enabled: patientDone && !off,
+    queryKey: [...doctorsKey, 'specialities'],
+    queryFn: () => assisted.doctors({ ...branchPart, limit: 100 }),
+    enabled: patientDone && !off && branchReady,
     staleTime: 5 * 60_000,
   });
   useEffect(() => {
@@ -204,7 +225,8 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     e.preventDefault();
     setRefused(null);
     const errs: Record<string, string> = {};
-    if (!doctor) errs.doctor = 'Choose a doctor.';
+    if (!branchReady) errs.branch = 'Choose the branch the patient is at.';
+    else if (!doctor) errs.doctor = 'Choose a doctor.';
     else if (!slot) errs.slot = 'Choose a time.';
     else if (!mode) errs.mode = 'Choose how the consultation happens.';
     if (mode) Object.assign(errs, joinProblems(mode, join));
@@ -220,15 +242,15 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     const requestKey = newRequestKey();
     const request: ConsultationRequest = {
       requestKey, phone: lookup.phone, ...patientBody({ ...patient, phone: lookup.phone }),
-      consent: { agreed: true, statementVersion: CONSENT_STATEMENT_VERSION, statementLanguage: CONSENT_STATEMENT_LANGUAGE },
+      consent: { agreed: true, statementVersion: booker.consent.version, statementLanguage: CONSENT_STATEMENT_LANGUAGE },
       preferredLanguage: extras.language, slotId: slot.slotId, consultationMode: mode, ...(joinBody ? { join: joinBody } : {}),
       ...(code ? { couponCode: code } : {}), acceptedPriceMinor: price, ...(concern.trim() ? { primaryConcern: concern.trim() } : {}),
-      paymentMethod: 'wallet',
+      paymentMethod: 'wallet', ...branchPart,
     };
     setReview({
       requestKey, request,
       summary: { patient: patientLabel(), doctor: doctor.name, date: slot.date, time: slot.startTime, mode, ...(joinBody ? { joinOn: joinBody.on } : {}), priceMinor: price,
-        ...(code ? { couponCode: code } : {}) },
+        ...(code ? { couponCode: code } : {}), ...(branch ? { branch: branch.name } : {}), ...(org === 'pharmacy' ? {} : { org }) },
     });
   }
 
@@ -255,10 +277,10 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     const b = r.booking;
     return routeCardAnswer('consultation', { card: isCardAnswer(r), booking: b, order: r.payment ?? null }, { restored }, {
       settle: () => { settle(p.requestKey); setReview(null); refreshAfterBooking(); },
-      done: (card) => { if (card) cards.remember(b._id, p.requestKey); setDone(doneFromView(b, summary, card ? 'card' : 'wallet')); },
+      done: (card) => { if (card) cards.remember(b._id, p.requestKey); setDone(doneFromView(b, summary, org, card ? 'card' : 'wallet')); },
       due: (order) => {
         cards.remember(b._id, p.requestKey);
-        setCardDue({ bookingId: b._id, requestKey: p.requestKey, order, summary: summaryOf(b, summary), ref: b.assisted?.shortRef, autoOpen: false });
+        setCardDue({ bookingId: b._id, requestKey: p.requestKey, order, summary: summaryOf(b, summary, org), ref: b.assisted?.shortRef, autoOpen: false });
       },
       ended: () => setEnded(NOT_PAYABLE_WORDS),
     });
@@ -273,7 +295,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
       <UnconfirmedBooking op={op} what="booking" busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => assisted.byKey(op.requestKey)}
         onUsed={(r, restored) => afterUsed(r, op, restored)}
         onAbandoned={() => create.abandonedByCheck(op.requestKey)}
-        onResend={() => { setResendError(null); void create.send(op).catch((err: unknown) => setResendError(assistedRefusal(err).message)); }}
+        onResend={() => { setResendError(null); void create.send(op).catch((err: unknown) => setResendError(booker.refusal(err).message)); }}
         onGiveUp={() => void create.giveUp(op)}
         extra={orderFailed && (
           <Alert tone="warn">{ORDER_FAILED_WORDS}</Alert>
@@ -285,21 +307,22 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   if (off) {
     return (
       <Alert tone="warn">
-        {SWITCHED_OFF_MESSAGE} Jansetu turns it on for your pharmacy when it is ready. Your other tools work as usual.
+        {SWITCHED_OFF_MESSAGE} Jansetu turns it on for your {org} when it is ready. Your other tools work as usual.
       </Alert>
     );
   }
 
   if (ended) {
-    return <NotBooked words={ended} againLabel="Book another consultation" onAgain={resetAll} listPath="/pharmacy/consultations" listLabel="See booked consultations" />;
+    return <NotBooked words={ended} againLabel="Book another consultation" onAgain={resetAll} listPath={booker.paths.list} listLabel="See booked consultations" />;
   }
 
   if (cardDue) {
     const due = cardDue;
     return (
-      <CardDueSection bookingRef={due.ref} summary={<SummaryList s={due.summary} />} newAccount={due.newAccount} listPath="/pharmacy/consultations"
+      <CardDueSection bookingRef={due.ref} summary={<SummaryList s={due.summary} />} newAccount={due.newAccount} listPath={booker.paths.list}
         listLabel="See booked consultations" held={cardHeld}>
-        <CardPaymentPanel key={due.bookingId} source={consultationCardSource(api, due.bookingId, due.requestKey)} order={due.order} amountMinor={due.summary.priceMinor} perform={perform} busy={busy}
+        <CardPaymentPanel key={due.bookingId} source={consultationCardSource(api, due.bookingId, due.requestKey, booker)} order={due.order}
+          amountMinor={due.summary.priceMinor} perform={perform} busy={busy}
           autoOpen={due.autoOpen} onHeld={setCardHeld}
           onPaid={(_b, note) => { setCardDue(null); setDone({ summary: due.summary, ref: due.ref, paidMinor: due.order?.amountMinor ?? due.summary.priceMinor, replayed: false, newAccount: due.newAccount, paidBy: 'card', ...(note ? { note } : {}) }); refreshAfterBooking(); }}
           onEnded={(words) => { cards.forget(due.bookingId); setCardDue(null); setEnded(words); refreshAfterBooking(); }} />
@@ -320,11 +343,11 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
         {done.note && <Alert tone="warn">{done.note}</Alert>}
         <SummaryList s={done.summary} />
         {done.paidMinor !== undefined && <p>{byCard ? 'Paid by card or UPI' : 'Paid from your wallet'}: <strong>{formatRupees(done.paidMinor / 100)}</strong>. Collect this from the patient.</p>}
-        <p><strong>How the patient joins:</strong> {joinWords(done.summary.mode, done.summary.joinOn)}</p>
+        <p><strong>How the patient joins:</strong> {joinWords(done.summary.mode, done.summary.joinOn, org)}</p>
         {done.newAccount && <p className="ws-muted">This number was new to Jansetu. An account was made for it; the patient can sign in with this number later.</p>}
         <div className="ws-actions">
           <Button onClick={resetAll}>Book another consultation</Button>
-          <Link to="/pharmacy/consultations">See booked consultations</Link>
+          <Link to={booker.paths.list}>See booked consultations</Link>
         </div>
       </section>
     );
@@ -335,12 +358,27 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
     <>
       {notice && <Alert tone="ok">{notice}</Alert>}
 
-      <PatientSection step={pt} busy={busy} frozen={frozenPatient} locked={!!review || busy} />
+      <PatientSection step={pt} busy={busy} frozen={frozenPatient} locked={!!review || busy} booker={org} consent={booker.consent.statement} />
       {patientDone && (
         <section className="ws-section" aria-labelledby="dr-h">
           <h2 id="dr-h">2. Doctor and time</h2>
           <form className="rx-form" noValidate onSubmit={(e) => visitNext(e)}>
             <fieldset className="ws-frozen" disabled={!!review || busy}>
+              {branches && (
+                branches.length === 0 ? <Alert>Your account has no branch to book from. Ask your lab’s owner to add you to a branch.</Alert>
+                  : branches.length > 1 && (
+                    <div className="j-field">
+                      <label htmlFor="dr-branch">Branch the patient is at</label>
+                      <select id="dr-branch" value={chosenBranch ?? ''} aria-invalid={visitErrors.branch ? true : undefined}
+                        aria-describedby={visitErrors.branch ? 'dr-branch-err' : undefined}
+                        onChange={(e) => { setChosenBranch(e.target.value || null); setDoctorId(null); setSlotId(null); setMode(''); }}>
+                        <option value="">Choose…</option>
+                        {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                      </select>
+                      {visitErrors.branch && <span id="dr-branch-err" className="j-field__error" role="alert">{visitErrors.branch}</span>}
+                    </div>
+                  )
+              )}
               <div className="rx-form-row">
                 <div className="j-field">
                   <label htmlFor="dr-spec">Speciality</label>
@@ -360,8 +398,9 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
                   onChange={(e) => { if (e.target.value) { setDate(e.target.value); setSlotId(null); } }} />
               </div>
 
-              {doctors.isPending ? <Loading label="Finding doctors…" />
-                : doctors.isError ? <ErrorState message={assistedRefusal(doctors.error).message} onRetry={() => void doctors.refetch()} />
+              {!branchReady ? <span className="ws-muted">Choose the branch first: doctors near it are shown first.</span>
+                : doctors.isPending ? <Loading label="Finding doctors…" />
+                : doctors.isError ? <ErrorState message={booker.refusal(doctors.error).message} onRetry={() => void doctors.refetch()} />
                 : doctors.data.length === 0 ? <Empty title="No doctors found">Try another speciality, another way, or another day.</Empty>
                 : (
                   <ul className="stock-list" aria-label="Doctors, nearest first">
@@ -385,7 +424,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
                         {doctorId === d.doctorId && (
                           <div className="ws-day">
                             {slots.isPending ? <Loading label="Finding free times…" />
-                              : slots.isError ? <ErrorState message={assistedRefusal(slots.error).message} onRetry={() => void slots.refetch()} />
+                              : slots.isError ? <ErrorState message={booker.refusal(slots.error).message} onRetry={() => void slots.refetch()} />
                               : slotDays.length === 0 ? (
                                 <span>No free times from {formatSlotDate(slots.data.from)} to {formatSlotDate(slots.data.to)}. Choose a later day or another doctor.</span>
                               ) : <SlotDays days={slotDays} chosen={slotId} onChoose={chooseSlot} />}
@@ -410,7 +449,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
                     ))}
                     {visitErrors.mode && <span className="j-field__error" role="alert">{visitErrors.mode}</span>}
                   </fieldset>
-                  <JoinFields mode={mode} value={join} errors={visitErrors} onChange={setJoin} />
+                  <JoinFields mode={mode} value={join} errors={visitErrors} onChange={setJoin} org={org} />
                   <ConsultExtras value={extras} errors={visitErrors} onChange={setExtras} />
                 </>
               )}
@@ -422,7 +461,7 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
       )}
 
       {review && (
-        <ReviewAndPay pharmacyId={pharmacyId} review={review} busy={busy} refused={refused}
+        <ReviewAndPay pharmacyId={pharmacyId} wallet={booker.wallet} org={org} review={review} busy={busy} refused={refused}
           method={method} cardOff={cardOff} onMethod={(m) => { setMethod(m); if (refused?.kind === 'card') setRefused(null); }}
           onPay={() => void pay()} onBack={() => { setReview(null); setRefused(null); }}
           onNewPrice={create.payAtNewPrice} />
@@ -431,8 +470,10 @@ function Book({ pharmacyId }: { pharmacyId: string }) {
   );
 }
 
-function ReviewAndPay({ pharmacyId, review, busy, refused, method, cardOff, onMethod, onPay, onBack, onNewPrice }: {
+function ReviewAndPay({ pharmacyId, wallet, org, review, busy, refused, method, cardOff, onMethod, onPay, onBack, onNewPrice }: {
   pharmacyId: string;
+  wallet: PayWallet;
+  org: BookerKind;
   review: { requestKey: string } & PendingBooking;
   busy: boolean;
   refused: Refusal | null;
@@ -450,8 +491,8 @@ function ReviewAndPay({ pharmacyId, review, busy, refused, method, cardOff, onMe
       <div className="confirm" role="group" aria-label="Check and pay">
         <SummaryList s={s} />
         {s.couponCode && !s.couponChecked && <p className="ws-muted">Price before the coupon; the coupon is checked when you pay.</p>}
-        <p><strong>How the patient joins:</strong> {joinWords(s.mode, s.joinOn)}</p>
-        <PayChoice pharmacyId={pharmacyId} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy} method={method} cardOff={cardOff}
+        <p><strong>How the patient joins:</strong> {joinWords(s.mode, s.joinOn, org)}</p>
+        <PayChoice pharmacyId={pharmacyId} wallet={wallet} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy} method={method} cardOff={cardOff}
           onMethod={onMethod} onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
       </div>
     </section>

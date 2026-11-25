@@ -30,6 +30,7 @@ import { LabBookingScreen } from './screens/partner/LabBookingScreen.tsx';
 import { LabBookingsScreen } from './screens/partner/LabBookingsScreen.tsx';
 import { LabDeskScreen } from './screens/partner/LabDeskScreen.tsx';
 import { LabWalletScreen } from './screens/partner/LabWalletScreen.tsx';
+import { LabBookConsultationScreen, LabBookedConsultationScreen, LabBookedConsultationsScreen } from './screens/partner/LabConsultScreens.tsx';
 import { DoctorWalletAdminScreen, LabWalletAdminScreen } from './screens/admin/LabWalletAdminScreen.tsx';
 import { DoctorWalletScreen } from './screens/doctor/DoctorWalletScreen.tsx';
 import { SlotsScreen } from './screens/partner/SlotsScreen.tsx';
@@ -225,6 +226,16 @@ export const PAGES: readonly WorkspacePage[] = [
     path: '/partner/lab-desk', roles: ['partner'], element: <LabDeskScreen />, partnerPermissions: ['bookings.manage'], partnerKinds: ['lab'],
     nav: { label: 'Front desk', icon: CalendarPlus, section: 'Lab' },
   },
+  // WQ24 (r21): a lab books a doctor consultation for a walk-in patient (`/partner-workspace/assisted/*`; `assisted.book`, labs only).
+  {
+    path: '/partner/book-consultation', roles: ['partner'], element: <LabBookConsultationScreen />, partnerPermissions: ['assisted.book'], partnerKinds: ['lab'],
+    nav: { label: 'Book consultation', icon: Stethoscope, section: 'Lab' },
+  },
+  {
+    path: '/partner/consultations', roles: ['partner'], element: <LabBookedConsultationsScreen />, partnerPermissions: ['assisted.book'], partnerKinds: ['lab'],
+    nav: { label: 'Booked consultations', icon: CalendarCheck, section: 'Lab' },
+  },
+  { path: '/partner/consultations/:bookingId', roles: ['partner'], element: <LabBookedConsultationScreen />, partnerPermissions: ['assisted.book'], partnerKinds: ['lab'] },
   // WQ20 (r13): the lab's own wallet (`/partner-workspace/assisted/wallet*`; `wallet.view` reads, `wallet.manage` adds money).
   {
     path: '/partner/wallet', roles: ['partner'], element: <LabWalletScreen />, partnerPermissions: ['wallet.view', 'wallet.manage'], partnerKinds: ['lab'],

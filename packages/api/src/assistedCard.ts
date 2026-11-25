@@ -1,6 +1,6 @@
 import { formatClock } from '@jansetu/i18n';
 import { ApiError, type ApiClient } from './client.ts';
-import { assistedRefusal, hex, idOf as checkedId, rupees, type BookedConsultation, type BookingPayment, type CancelAnswer, type CardRefund, type OpenCardOrder } from './assisted.ts';
+import { assistedRefusal, hex, idOf as checkedId, rupees, type BookedConsultation, type BookerKind, type BookingPayment, type CancelAnswer, type CardRefund, type OpenCardOrder } from './assisted.ts';
 
 /**
  * WQ16: assisted booking phase 1b, a pharmacy pays a walk-in consultation by card or UPI (backend r10
@@ -23,16 +23,25 @@ export type ReconcileAnswer = ({ state: 'paid' } & CardPaymentAnswer) | { state:
 
 export interface CardProof { paymentTransactionId: string; razorpayOrderId: string; razorpayPaymentId: string; razorpaySignature: string }
 
-export function bookingPaymentApi(c: ApiClient) {
+/**
+ * WQ24: who settles a card payment, and where: a pharmacy at `/payments/*` (the default, unchanged), a lab member at its
+ * workspace (r21: 2d's `/partner-workspace/assisted/payments/verify|reconcile` also settle a consultation the lab booked,
+ * for a member holding `assisted.book`; the answer's `entity` is the lab's booker view).
+ */
+export interface CardPayer { org: BookerKind; base: string }
+export const PHARMACY_PAYER: CardPayer = { org: 'pharmacy', base: '/payments' };
+export const LAB_PAYER: CardPayer = { org: 'lab', base: '/partner-workspace/assisted/payments' };
+
+export function bookingPaymentApi(c: ApiClient, payer: CardPayer = PHARMACY_PAYER) {
   return {
     /** The browser's proof. S6: no `module`; what was paid for comes from the stored record (context `assisted_booking`). */
-    verify: (p: CardProof) => c.post<CardPaymentAnswer>('/payments/verify', {
+    verify: (p: CardProof) => c.post<CardPaymentAnswer>(`${payer.base}/verify`, {
       body: { paymentTransactionId: idOf(p.paymentTransactionId), razorpayOrderId: p.razorpayOrderId, razorpayPaymentId: p.razorpayPaymentId,
         razorpaySignature: p.razorpaySignature },
     }),
     /** The server asks Razorpay about the record's own order and applies a capture exactly once. */
     reconcile: (paymentTransactionId: string) =>
-      c.post<ReconcileAnswer>('/payments/reconcile', { body: { paymentTransactionId: idOf(paymentTransactionId) } }),
+      c.post<ReconcileAnswer>(`${payer.base}/reconcile`, { body: { paymentTransactionId: idOf(paymentTransactionId) } }),
   };
 }
 
@@ -72,29 +81,31 @@ export function outcomeOfAnswer(a: CardPaymentAnswer | ReconcileAnswer | null | 
   return null;
 }
 
-export const CARD_BLOCKED_WORDS =
-  'Your pharmacy account is not active or not verified, so the payment cannot be checked here. If you paid, Jansetu checks it with Razorpay: the booking is confirmed, or the money goes back to the card or UPI.';
+/** WQ24: `org` names the booker's account (the pharmacy's words unchanged). */
+export const cardBlockedWords = (org: BookerKind) =>
+  `Your ${org} account is not active or not verified, so the payment cannot be checked here. If you paid, Jansetu checks it with Razorpay: the booking is confirmed, or the money goes back to the card or UPI.`;
+export const CARD_BLOCKED_WORDS = cardBlockedWords('pharmacy');
 export const DUPLICATE_WORDS = 'This booking was already paid with another payment. This payment is being refunded to the card or UPI.';
 const CARD_FAILED_WORDS = 'This payment failed, so the booking is not paid. If the time is released, book again.';
 
 /** A refusal of verify or reconcile, read for what it settles (`null`: nothing; try the next step or check again). */
-export function outcomeOfError(err: unknown): CardOutcome | null {
+export function outcomeOfError(err: unknown, org: BookerKind = 'pharmacy'): CardOutcome | null {
   if (!(err instanceof ApiError)) return null;
   if (err.code === 'PAYMENT_REFUNDED') return { kind: 'refunded' };
   if (err.code === 'PAYMENT_FAILED') return { kind: 'failed', message: CARD_FAILED_WORDS };
   if (err.code === 'DUPLICATE_PAYMENT_REFUNDED') return { kind: 'duplicate', message: DUPLICATE_WORDS };
   // r10b: a card dispute recorded on this payment: said as it is (never paid, never "not booked").
   if (err.code === 'PAYMENT_DISPUTED') return { kind: 'blocked', message: 'A card dispute was recorded on this booking payment. Please contact Jansetu support.' };
-  if (err.status === 403) return { kind: 'blocked', message: CARD_BLOCKED_WORDS };
+  if (err.status === 403) return { kind: 'blocked', message: cardBlockedWords(org) };
   return null;
 }
 
 /** Plain words for a verify or reconcile refusal that settles nothing (shown with "Check payment"). */
-export function cardCheckProblem(err: unknown): string {
+export function cardCheckProblem(err: unknown, org: BookerKind = 'pharmacy'): string {
   if (err instanceof ApiError) {
     if (err.code === 'PAYMENT_CHANGED') return 'The payment changed while it was checked. Check again.';
     if (err.code === 'RAZORPAY_PAYMENT_FETCH_FAILED' || err.status >= 500 || err.status === 0) return 'Razorpay could not be asked just now. Check again in a minute.';
-    if (err.code === 'PAYMENT_RECORD_NOT_FOUND') return 'This payment was not found for your pharmacy.';
+    if (err.code === 'PAYMENT_RECORD_NOT_FOUND') return `This payment was not found for your ${org}.`;
   }
   return assistedRefusal(err).message;
 }
@@ -103,19 +114,20 @@ export function cardCheckProblem(err: unknown): string {
  * Settles one payment attempt with the server: the proof first (when Checkout gave one), then the server's own check.
  * Never throws. `proof` is null when Checkout was closed without paying (it may still have been paid just before).
  */
-export async function settleCardPayment(api: ApiClient, paymentTransactionId: string, proof: Omit<CardProof, 'paymentTransactionId'> | null): Promise<CardOutcome> {
-  const pay = bookingPaymentApi(api);
+export async function settleCardPayment(api: ApiClient, paymentTransactionId: string, proof: Omit<CardProof, 'paymentTransactionId'> | null,
+  payer: CardPayer = PHARMACY_PAYER): Promise<CardOutcome> {
+  const pay = bookingPaymentApi(api, payer);
   if (proof) {
     try {
       const settled = outcomeOfAnswer(await pay.verify({ paymentTransactionId, ...proof }));
       if (settled) return settled;
     } catch (err) {
-      const settled = outcomeOfError(err);
+      const settled = outcomeOfError(err, payer.org);
       if (settled) return settled;
       // Anything else (a bad signature, a lost answer, Razorpay not answering): the server's own check decides.
     }
   }
-  const checked = await checkCardPayment(api, paymentTransactionId);
+  const checked = await checkCardPayment(api, paymentTransactionId, payer);
   // WQ16c: Checkout reported a payment: "not captured yet" is a payment on its way, never an invitation to pay again.
   return proof && checked.kind === 'unpaid' ? { kind: 'unpaid', inFlight: true } : checked;
 }
@@ -125,25 +137,26 @@ export async function settleCardPayment(api: ApiClient, paymentTransactionId: st
  * Checkout is not opened (`settled`, in flight); a `created` (unfinished) attempt still opens it, with `created` set so the
  * screen keeps its warning. A paid, refunded or refused answer settles it; no usable answer is unknown. Never throws.
  */
-export async function beforeCheckout(api: ApiClient, paymentTransactionId: string): Promise<{ kind: 'open'; created: boolean } | { kind: 'settled'; outcome: CardOutcome }> {
+export async function beforeCheckout(api: ApiClient, paymentTransactionId: string, payer: CardPayer = PHARMACY_PAYER):
+  Promise<{ kind: 'open'; created: boolean } | { kind: 'settled'; outcome: CardOutcome }> {
   try {
-    const a = await bookingPaymentApi(api).reconcile(paymentTransactionId);
+    const a = await bookingPaymentApi(api, payer).reconcile(paymentTransactionId);
     if (a && a.state === 'unpaid') {
       const s = a.gatewayStatuses ?? [];
       return s.includes('authorized') ? { kind: 'settled', outcome: { kind: 'unpaid', inFlight: true } } : { kind: 'open', created: s.includes('created') };
     }
     return { kind: 'settled', outcome: outcomeOfAnswer(a) ?? { kind: 'unknown', message: 'The answer about this payment could not be read.' } };
   } catch (err) {
-    return { kind: 'settled', outcome: outcomeOfError(err) ?? { kind: 'unknown', message: cardCheckProblem(err) } };
+    return { kind: 'settled', outcome: outcomeOfError(err, payer.org) ?? { kind: 'unknown', message: cardCheckProblem(err, payer.org) } };
   }
 }
 
 /** `POST /payments/reconcile` for one card booking payment. Never throws. */
-export async function checkCardPayment(api: ApiClient, paymentTransactionId: string): Promise<CardOutcome> {
+export async function checkCardPayment(api: ApiClient, paymentTransactionId: string, payer: CardPayer = PHARMACY_PAYER): Promise<CardOutcome> {
   try {
-    return outcomeOfAnswer(await bookingPaymentApi(api).reconcile(paymentTransactionId)) ?? { kind: 'unknown', message: 'The answer about this payment could not be read.' };
+    return outcomeOfAnswer(await bookingPaymentApi(api, payer).reconcile(paymentTransactionId)) ?? { kind: 'unknown', message: 'The answer about this payment could not be read.' };
   } catch (err) {
-    return outcomeOfError(err) ?? { kind: 'unknown', message: cardCheckProblem(err) };
+    return outcomeOfError(err, payer.org) ?? { kind: 'unknown', message: cardCheckProblem(err, payer.org) };
   }
 }
 
