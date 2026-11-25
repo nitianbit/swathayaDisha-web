@@ -205,7 +205,7 @@ export function StatementSection({ queryKey, load, csv, csvPrefix, emptyText }: 
  * The statement CSV of one period, read with the session's token into an in-memory blob (never a link with a token).
  * Keyed by the period: changing it aborts a running download and drops the file of the old period.
  */
-function CsvDownload({ period, csv, csvPrefix }: { period: PeriodQuery; csv: (q: PeriodQuery, signal?: AbortSignal) => Promise<Blob>; csvPrefix: string }) {
+export function CsvDownload({ period, csv, csvPrefix }: { period: PeriodQuery; csv: (q: PeriodQuery, signal?: AbortSignal) => Promise<Blob>; csvPrefix: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [file, setFile] = useState<{ url: string; name: string } | null>(null);

@@ -1,8 +1,8 @@
 import { formatPaise } from '@jansetu/i18n';
 import { ApiError, type ApiClient, type Page } from './client.ts';
-import { LEDGER_KIND_LABEL, STATEMENT_CURSOR_PATTERN, STATEMENT_PAGE_MAX, type StatementLine } from './finance.ts';
+import { period, STATEMENT_CURSOR_PATTERN, STATEMENT_PAGE_MAX, type LedgerKind, type PeriodQuery, type StatementLine } from './finance.ts';
 import { paiseToInput, rupeesToPaise } from './partnerInvoices.ts';
-import { checkId } from './partners.ts';
+import { checkId, partnerWorkspaceBase, type PartnerScope } from './partners.ts';
 
 /**
  * WQ26 referral cuts (assisted booking phase 4a/4b; backend `src1/modules/referralCuts`, ASSISTED_BOOKING_DESIGN.md
@@ -17,8 +17,12 @@ import { checkId } from './partners.ts';
  *   ASSISTED_BOOKING_DISABLED while ASSISTED_ADMIN_TOOLS_ENABLED is off, 503 INDEXES_OUTDATED); `GET …/:category/events` →
  *   one row per version, newest first.
  * - Pharmacy (`pharmacyAssistedRouter`, an operational pharmacy): `GET /pharmacy-assisted/referral-rules` (the list without
- *   `updatedBy`), `GET /pharmacy-assisted/referral` → `{earnedMinor, paidMinor, dueMinor, payoutsEnabled}`, `GET
+ *   `updatedBy`), `GET /pharmacy-assisted/referral` → `{earnedMinor, paidMinor, dueMinor, cutsEnabled, payoutsEnabled}`, `GET
  *   /pharmacy-assisted/referral/statement?before&limit` → newest first, `pagination.nextCursor` (`statementPage`).
+ * - r33 (§26.16): the rule lists carry `switches: {cutsEnabled, payoutsEnabled}` beside `data`; referral statement rows carry
+ *   `shortRef`, `category` (`mixed` for a lab booking whose cut lines differ) and a lab booking's cut `lines`; the statement
+ *   has a CSV (`…/referral/statement.csv?from&to`, the finance CSV); a lab reads the same at `/partner-workspace/assisted/…`
+ *   (`finance.view`, partner-wide scope; 403 FINANCE_SCOPE_REQUIRED for a branch-limited member).
  */
 
 /** The bookers whose cuts work (owner, 22 Nov): pharmacies and labs. */
@@ -78,11 +82,28 @@ export interface ReferralRuleInput {
   reason: string;
 }
 
-/** `GET /pharmacy-assisted/referral`: the pharmacy's `pharmacy_referral` account (`financeSummary`). */
-export interface ReferralSummary { earnedMinor: number; paidMinor: number; dueMinor: number; payoutsEnabled: boolean }
+/** r33: `REFERRAL_CUTS_ENABLED` (new bookings are cut) and `REFERRAL_PAYOUTS_ENABLED` (referral balances are paid, O1). */
+export interface ReferralSwitches { cutsEnabled: boolean; payoutsEnabled: boolean }
+/** A rule list and the switches beside it (null from a server that does not say). */
+export interface ReferralRules { rules: ReferralRule[]; switches: ReferralSwitches | null }
 
-/** A statement line of a referral account: an earning carries the booking's base (`grossMinor`); its amount is the cut. */
-export interface ReferralStatementLine extends StatementLine { grossMinor?: number; commissionMinor?: number }
+/** `GET …/referral`: the booker's `*_referral` account (`financeSummary`) and the switches. */
+export interface ReferralSummary { earnedMinor: number; paidMinor: number; dueMinor: number; cutsEnabled?: boolean; payoutsEnabled: boolean }
+
+/** r33: a lab booking's cut line on its referral row. */
+export interface ReferralLine { category: ReferralCategory; baseMinor: number; cutMinor: number }
+
+/**
+ * A statement line of a referral account: an earning carries the booking's base (`grossMinor`); its amount is the cut. r33:
+ * referral rows name the booking by `shortRef` and `category`; a lab booking lists its cut `lines`.
+ */
+export interface ReferralStatementLine extends StatementLine {
+  grossMinor?: number;
+  commissionMinor?: number;
+  shortRef?: string;
+  category?: ReferralCategory | 'mixed';
+  lines?: ReferralLine[];
+}
 
 // ── Terms: parsing, checking and words ──
 
@@ -189,15 +210,6 @@ export function referralTermsText(t: Partial<ReferralTerms>): string {
 /** A rule (or a history row's terms) as one short phrase: "Off" (none, or switched off) or its terms. */
 export const referralRuleText = (rule: Partial<ReferralTerms> | null | undefined) => (!rule || rule.isActive !== true ? 'Off' : referralTermsText(rule));
 
-/**
- * The master switch (`REFERRAL_CUTS_ENABLED`) as a booker's rules show it: an active rule that does not cut now means it is
- * off. Null when no rule is active (nothing is cut either way, and the list does not say). Pharmacy and lab rules only.
- */
-export function referralCutsOn(rules: readonly ReferralRule[]): boolean | null {
-  const active = rules.filter((r) => r.isActive);
-  return active.length ? active.some((r) => r.effective) : null;
-}
-
 // ── Refusals ──
 
 export const REFERRAL_RULE_REFUSAL: Readonly<Record<string, string>> = {
@@ -218,20 +230,16 @@ export const referralRuleRefusedBeforeWriting = (err: unknown) =>
 
 // ── Statement rows ──
 
-/** One referral statement row as the pharmacy reads it: no patient name (the server sends none, M9). */
-export interface ReferralRow { _id: string; at: string; ref: string | null; category: string; baseMinor: number | null; cutMinor: number }
+/** One referral statement row: no patient name (the server sends none, M9). `category` null: not a referral row (a payout…). */
+export interface ReferralRow {
+  _id: string; at: string; kind: LedgerKind; ref: string | null; category: ReferralCategory | 'mixed' | null; lines: ReferralLine[];
+  baseMinor: number | null; cutMinor: number;
+}
 
-/**
- * The row of a statement line. The server words a referral earning "Referral · consultation · <date> · Ref <shortRef>"
- * (`describe`, `partners/services/finance.ts`); the short ref is read from it and the category from `source`, as the
- * lines carry neither as a field (API gap). Other lines (payouts, adjustments) are named by their kind.
- */
+/** The row of a statement line, from r33's fields (`shortRef`, `category`, `lines`); the base only on earnings. */
 export function referralRowOf(l: ReferralStatementLine): ReferralRow {
-  const ref = /\bRef ([A-Za-z0-9]{4,16})$/.exec(l.description ?? '')?.[1] ?? null;
-  const category = l.source === 'referral_consultation' ? (/instant consultation/i.test(l.description ?? '') ? 'Instant consultation' : 'Consultation')
-    : l.source === 'referral_lab_booking' ? 'Lab booking'
-      : LEDGER_KIND_LABEL[l.kind] ?? l.kind;
-  return { _id: l._id, at: l.at, ref, category, baseMinor: l.kind === 'earning' && typeof l.grossMinor === 'number' ? l.grossMinor : null, cutMinor: l.amountMinor };
+  return { _id: l._id, at: l.at, kind: l.kind, ref: l.shortRef ?? null, category: l.category ?? null, lines: l.lines ?? [],
+    baseMinor: l.kind === 'earning' && typeof l.grossMinor === 'number' ? l.grossMinor : null, cutMinor: l.amountMinor };
 }
 
 // ── Routes ──
@@ -239,6 +247,10 @@ export function referralRowOf(l: ReferralStatementLine): ReferralRow {
 export const REFERRAL_STATEMENT_PAGE = 50;
 
 const listOf = <T>(rows: T[] | null | undefined): T[] => (Array.isArray(rows) ? rows : []);
+const rulesOf = (r: { data: ReferralRule[]; meta: Partial<{ switches: ReferralSwitches }> }): ReferralRules => {
+  const sw = r.meta.switches;
+  return { rules: listOf(r.data), switches: sw && typeof sw.cutsEnabled === 'boolean' ? { cutsEnabled: sw.cutsEnabled, payoutsEnabled: sw.payoutsEnabled === true } : null };
+};
 function checkBooker(kind: ReferralBookerKind): ReferralBookerKind {
   if (!REFERRAL_BOOKER_KINDS.includes(kind)) throw new Error('Invalid booker');
   return kind;
@@ -253,8 +265,9 @@ export function referralRulesAdminApi(c: ApiClient) {
   const rulePath = (kind: ReferralBookerKind, id: string, category: ReferralCategory) =>
     `/admin/referral-rules/${checkBooker(kind)}/${checkId(id, kind)}/${checkCategory(category)}`;
   return {
-    list: (kind: ReferralBookerKind, id: string): Promise<ReferralRule[]> =>
-      c.get<ReferralRule[]>('/admin/referral-rules', { query: { bookerKind: checkBooker(kind), bookerId: checkId(id, kind) } }).then(listOf),
+    list: (kind: ReferralBookerKind, id: string): Promise<ReferralRules> =>
+      c.getWith<ReferralRule[], { switches: ReferralSwitches }>('/admin/referral-rules', { query: { bookerKind: checkBooker(kind), bookerId: checkId(id, kind) } })
+        .then(rulesOf),
     /** Creates (`expectedVersion` 0) or changes the rule; 409 RECORD_CHANGED when it moved since that version. */
     put: (kind: ReferralBookerKind, id: string, category: ReferralCategory, terms: ReferralTerms, expectedVersion: number, reason: string) =>
       c.put<ReferralRule>(rulePath(kind, id, category), { body: referralRuleBody(terms, expectedVersion, reason) }),
@@ -263,16 +276,22 @@ export function referralRulesAdminApi(c: ApiClient) {
   };
 }
 
-/** The signed-in pharmacy: its rates (read only), what its cuts earned, and the statement. */
-export function pharmacyReferralApi(c: ApiClient) {
+/** Whose referral earnings: the signed-in pharmacy, or a lab (its member, or an admin acting as owner). */
+export type ReferralReader = { kind: 'pharmacy' } | { kind: 'lab'; scope: PartnerScope };
+
+/** A booker's own reads: its rates (read only) with the switches, what its cuts earned, the statement and its CSV. */
+export function referralReadsApi(c: ApiClient, reader: ReferralReader) {
+  const base = () => (reader.kind === 'pharmacy' ? '/pharmacy-assisted' : `${partnerWorkspaceBase(reader.scope)}/assisted`);
   return {
-    rules: (): Promise<ReferralRule[]> => c.get<ReferralRule[]>('/pharmacy-assisted/referral-rules').then(listOf),
-    summary: () => c.get<ReferralSummary>('/pharmacy-assisted/referral'),
+    rules: (): Promise<ReferralRules> => c.getWith<ReferralRule[], { switches: ReferralSwitches }>(`${base()}/referral-rules`).then(rulesOf),
+    summary: () => c.get<ReferralSummary>(`${base()}/referral`),
     /** Newest first; `before` is the previous page's `nextCursor` (`<ms>_<entryId>`). */
     statement: (before?: string, limit = REFERRAL_STATEMENT_PAGE): Promise<Page<ReferralStatementLine>> => {
       if (before !== undefined && !STATEMENT_CURSOR_PATTERN.test(before)) throw new Error('Invalid statement cursor');
       if (!Number.isInteger(limit) || limit < 1 || limit > STATEMENT_PAGE_MAX) throw new Error('Invalid limit');
-      return c.page<ReferralStatementLine>('/pharmacy-assisted/referral/statement', { query: { before, limit } });
+      return c.page<ReferralStatementLine>(`${base()}/referral/statement`, { query: { before, limit } });
     },
+    /** The statement CSV for a period (the finance CSV), read with the session's token into memory. */
+    statementCsv: (q: PeriodQuery = {}, signal?: AbortSignal) => c.blob(`${base()}/referral/statement.csv`, { query: { ...period(q) }, signal }),
   };
 }

@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { expect, test, type Page, type Route } from '@playwright/test';
 
 /**
@@ -5,12 +6,17 @@ import { expect, test, type Page, type Route } from '@playwright/test';
  * the admin rules (`ruleBodySchema`: percent 1–5000 bp, fixed ≥ 1, cap ≥ 1, `expectedVersion`, reason; `putRule`: 0 =
  * create, else the version fence, 409 RECORD_CHANGED; one event per version; `effective` = active AND
  * REFERRAL_CUTS_ENABLED) and the pharmacy's reads (`/pharmacy-assisted/referral-rules`, `/referral`, `/referral/statement`
- * newest first by `before`, short refs only).
+ * newest first by `before`, short refs only). WQ26b (r33 §26.16): `switches` beside the rule lists, `cutsEnabled` in the
+ * totals, `shortRef` / `category` / `lines` on referral rows, the statement CSV, and a lab's reads at
+ * `/partner-workspace/assisted/referral*` (finance.view with partner-wide scope).
  */
 const ADMIN = 'ad'.repeat(12);
 const OTHER_ADMIN = 'ae'.repeat(12);
 const P1 = 'f1'.repeat(12);
 const LAB = 'c1'.repeat(12);
+const MEMBER = 'c9'.repeat(12);
+const BRANCH = 'b7'.repeat(12);
+const CSV_HEADER = '"Date (IST)","Type","Description","Reference","Note","Amount (INR)","Balance (INR)"';
 const NOW = new Date('2026-11-25T04:30:00.000Z');
 
 type Rec = Record<string, unknown>;
@@ -31,6 +37,10 @@ interface Backend {
   /** The next PUT is saved, then its answer is lost. */
   losePutAfter?: boolean;
   statement: Rec[];
+  /** The lab's own referral statement (its consultations). */
+  labStatement: Rec[];
+  /** The signed-in lab member (`/auth/partner/*`). */
+  me?: Rec;
 }
 
 const terms = (r: Partial<Rule>) => ({ basis: r.basis, percentBasisPoints: r.percentBasisPoints ?? null, fixedMinor: r.fixedMinor ?? null, capMinor: r.capMinor ?? null, isActive: r.isActive });
@@ -41,14 +51,19 @@ const newId = () => (++seq).toString(16).padStart(24, '0');
 /** Newest first: two referral earnings named by short ref, then 50 more, so the statement has a second page. */
 function statementLines(): Rec[] {
   const lines: Rec[] = [];
-  const add = (source: string, description: string, grossMinor: number, amountMinor: number) => {
+  const add = (source: string, description: string, grossMinor: number, amountMinor: number, fields: Rec) => {
     const i = lines.length;
     lines.push({ _id: (i + 1).toString(16).padStart(24, '0'), at: new Date(NOW.getTime() - (i + 1) * 3_600_000).toISOString(), kind: 'earning', source,
-      sourceId: `b${i}`.padEnd(24, '0'), description, amountMinor, grossMinor, commissionMinor: 0 });
+      sourceId: `b${i}`.padEnd(24, '0'), description, amountMinor, grossMinor, commissionMinor: 0, ...fields });
   };
-  add('referral_consultation', 'Referral · consultation · 2026-11-24 · Ref ABCD2345', 50000, 5000);
-  add('referral_lab_booking', 'Referral · lab booking · 2026-11-23 · Ref LMNO2222', 104500, 5500);
-  for (let i = 2; i < 52; i++) add('referral_consultation', `Referral · consultation · 2026-11-20 · Ref CONS${String(i).padStart(4, '0')}`, 30000, 3000);
+  add('referral_consultation', 'Referral · consultation · 2026-11-24 · Ref ABCD2345', 50000, 5000, { shortRef: 'ABCD2345', category: 'consultation' });
+  // r33: one row for the lab booking, its cut lines listed (a third line of another kind was not cut).
+  add('referral_lab_booking', 'Referral · lab booking · 2026-11-23 · Ref LMNO2222', 120000, 5500, { shortRef: 'LMNO2222', category: 'mixed',
+    lines: [{ category: 'lab_test', baseMinor: 30000, cutMinor: 1500 }, { category: 'lab_package', baseMinor: 80000, cutMinor: 4000 }] });
+  for (let i = 2; i < 52; i++) {
+    const ref = `CONS${String(i).padStart(4, '0')}`;
+    add('referral_consultation', `Referral · consultation · 2026-11-20 · Ref ${ref}`, 30000, 3000, { shortRef: ref, category: 'consultation' });
+  }
   let after = lines.reduce((a, l) => a + Number(l.amountMinor), 0);
   for (const l of lines) { l.balanceAfterMinor = after; after -= Number(l.amountMinor); }
   return lines;
@@ -56,7 +71,23 @@ function statementLines(): Rec[] {
 
 async function mockBackend(page: Page): Promise<Backend> {
   await page.clock.setSystemTime(NOW);
-  const b: Backend = { calls: [], rules: [], events: [], cutsOn: true, payoutsOn: false, statement: statementLines() };
+  const b: Backend = { calls: [], rules: [], events: [], cutsOn: true, payoutsOn: false, statement: statementLines(),
+    labStatement: [{ _id: 'f'.repeat(24), at: new Date(NOW.getTime() - 3_600_000).toISOString(), kind: 'earning', source: 'referral_consultation', sourceId: 'd'.repeat(24),
+      description: 'Referral · instant consultation · 2026-11-24 · Ref LABC4444', amountMinor: 3000, balanceAfterMinor: 3000, grossMinor: 40000, commissionMinor: 0,
+      shortRef: 'LABC4444', category: 'consultation' }] };
+  const switches = () => ({ cutsEnabled: b.cutsOn, payoutsEnabled: b.payoutsOn });
+  const csvOf = (rows: Rec[]) => [CSV_HEADER, '"","Opening balance","","","","","0.00"',
+    ...rows.slice().reverse().map((l) => `"2026-11-24 10:00","earning","${l.description}","","","${(Number(l.amountMinor) / 100).toFixed(2)}","0.00"`)].join('\n') + '\n';
+  const csvAnswer = (route: Route, name: string, rows: Rec[]) => route.fulfill({ status: 200, contentType: 'text/csv; charset=utf-8',
+    headers: { 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'no-store' }, body: csvOf(rows) });
+  const statementOf = (route: Route, url: URL, rows: Rec[]) => {
+    const limit = Number(url.searchParams.get('limit') ?? 50);
+    const before = url.searchParams.get('before');
+    const from = before ? rows.findIndex((l) => `${Date.parse(String(l.at))}_${l._id}` === before) + 1 : 0;
+    const page = rows.slice(from, from + limit);
+    const last = page[page.length - 1];
+    return ok(route, page, { pagination: { nextCursor: from + limit < rows.length && last ? `${Date.parse(String(last.at))}_${last._id}` : null } });
+  };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const ok = (route: Route, data: unknown, extra: Rec = {}) => json(route, 200, { success: true, data, ...extra });
   const fail = (route: Route, status: number, code: string, message: string) => json(route, status, { error: status, code, message });
@@ -78,14 +109,32 @@ async function mockBackend(page: Page): Promise<Backend> {
     const body = ['POST', 'PUT'].includes(method) ? req.postDataJSON() : null;
     if (path.startsWith('/auth/session')) return fail(route, 401, 'SESSION_ENDED', 'Please sign in again');
     b.calls.push({ method, path: `${path}${url.search}`, body });
-    if (path === '/auth/admin/send' || path === '/auth/pharmacy/send') return ok(route, undefined);
+    if (path === '/auth/admin/send' || path === '/auth/pharmacy/send' || path === '/auth/partner/send') return ok(route, undefined);
+    if (path === '/auth/partner/verify') return ok(route, { token: 't1', expiresIn: 900, user: {} });
     if (path === '/auth/admin/verify') return ok(route, { token: 'admin', expiresIn: 900, user: {} });
     if (path === '/auth/pharmacy/verify') return ok(route, { token: 'pharmacy', expiresIn: 900, user: {} });
     const auth = req.headers().authorization;
-    if (auth !== 'Bearer admin' && auth !== 'Bearer pharmacy') return fail(route, 401, 'UNAUTHORIZED', 'Authentication is required');
+    if (auth !== 'Bearer admin' && auth !== 'Bearer pharmacy' && auth !== 'Bearer t1') return fail(route, 401, 'UNAUTHORIZED', 'Authentication is required');
     const isAdmin = auth === 'Bearer admin';
+    const isLab = auth === 'Bearer t1';
+    const labPartner = { _id: LAB, kind: 'lab', name: 'City Labs', contact: { phone: '9000000050' }, verification: { state: 'verified' }, activeOwnerCount: 1, isActive: true };
     if (path === '/auth/profile') {
-      return ok(route, isAdmin ? { user: { _id: ADMIN, name: 'Ops Admin' }, userRole: 'admin' } : { user: { _id: P1, name: 'Apollo Pharmacy' }, userRole: 'pharmacy' });
+      return ok(route, isAdmin ? { user: { _id: ADMIN, name: 'Ops Admin' }, userRole: 'admin' }
+        : isLab ? { user: { ...b.me, phone: '9000000060', isActive: true }, partner: labPartner, userRole: 'partner' }
+          : { user: { _id: P1, name: 'Apollo Pharmacy' }, userRole: 'pharmacy' });
+    }
+    // r33 (M17): the lab's referral reads, as its finance (finance.view and partner-wide scope).
+    if (isLab) {
+      if (path === '/partner-workspace/me') return ok(route, labPartner);
+      const lr = /^\/partner-workspace\/assisted\/(referral-rules|referral|referral\/statement|referral\/statement\.csv)$/.exec(path);
+      if (!lr) return fail(route, 404, 'NOT_FOUND', 'Not found');
+      const perms = (b.me?.permissions as string[]) ?? [];
+      if (!perms.includes('finance.view')) return fail(route, 403, 'FORBIDDEN', 'Missing permissions: finance.view');
+      if (((b.me?.branchIds as string[]) ?? []).length) return fail(route, 403, 'FINANCE_SCOPE_REQUIRED', 'Finance covers every branch; a branch-limited member cannot view it');
+      if (lr[1] === 'referral-rules') return ok(route, b.rules.filter((r) => r.bookerKind === 'lab' && r.bookerId === LAB).map((r) => view(r, false)), { switches: switches() });
+      if (lr[1] === 'referral') return ok(route, { earnedMinor: 3000, paidMinor: 0, dueMinor: 3000, ...switches() });
+      if (lr[1] === 'referral/statement') return statementOf(route, url, b.labStatement);
+      return csvAnswer(route, 'lab-referral-statement.csv', b.labStatement);
     }
 
     if (path === `/pharmacies/${P1}` && method === 'GET') {
@@ -103,7 +152,8 @@ async function mockBackend(page: Page): Promise<Backend> {
       if (path === '/admin/referral-rules' && method === 'GET') {
         const kind = url.searchParams.get('bookerKind');
         const id = url.searchParams.get('bookerId');
-        return ok(route, b.rules.filter((r) => r.bookerKind === kind && r.bookerId === id).sort((x, y) => x.category.localeCompare(y.category)).map((r) => view(r, true)));
+        return ok(route, b.rules.filter((r) => r.bookerKind === kind && r.bookerId === id).sort((x, y) => x.category.localeCompare(y.category)).map((r) => view(r, true)),
+          { switches: switches() });
       }
       const m = /^\/admin\/referral-rules\/(pharmacy|lab|doctor)\/([0-9a-f]{24})\/(consultation|lab_test|lab_package)(\/events)?$/.exec(path);
       if (!m) return fail(route, 404, 'NOT_FOUND', 'Not found');
@@ -147,29 +197,24 @@ async function mockBackend(page: Page): Promise<Backend> {
     // Phase 4b pharmacy reads (`pharmacyAssistedRouter`: an operational pharmacy).
     if (path.startsWith('/pharmacy-assisted/')) {
       if (isAdmin) return fail(route, 403, 'FORBIDDEN', 'Pharmacy access is required');
-      if (path === '/pharmacy-assisted/referral-rules') return ok(route, b.rules.filter((r) => r.bookerKind === 'pharmacy' && r.bookerId === P1).map((r) => view(r, false)));
+      if (path === '/pharmacy-assisted/referral-rules') {
+        return ok(route, b.rules.filter((r) => r.bookerKind === 'pharmacy' && r.bookerId === P1).map((r) => view(r, false)), { switches: switches() });
+      }
       if (path === '/pharmacy-assisted/referral') {
         const earned = b.statement.reduce((a, l) => a + Number(l.amountMinor), 0);
-        return ok(route, { earnedMinor: earned, paidMinor: 0, dueMinor: earned, payoutsEnabled: b.payoutsOn });
+        return ok(route, { earnedMinor: earned, paidMinor: 0, dueMinor: earned, ...switches() });
       }
-      if (path === '/pharmacy-assisted/referral/statement') {
-        const limit = Number(url.searchParams.get('limit') ?? 50);
-        const before = url.searchParams.get('before');
-        const from = before ? b.statement.findIndex((l) => `${Date.parse(String(l.at))}_${l._id}` === before) + 1 : 0;
-        const rows = b.statement.slice(from, from + limit);
-        const last = rows[rows.length - 1];
-        const more = from + limit < b.statement.length;
-        return ok(route, rows, { pagination: { nextCursor: more && last ? `${Date.parse(String(last.at))}_${last._id}` : null } });
-      }
+      if (path === '/pharmacy-assisted/referral/statement') return statementOf(route, url, b.statement);
+      if (path === '/pharmacy-assisted/referral/statement.csv') return csvAnswer(route, 'x.csv', b.statement);
     }
     return fail(route, 404, 'NOT_FOUND', 'Not found');
   });
   return b;
 }
 
-async function signIn(page: Page, as: 'Admin' | 'Pharmacy' = 'Admin') {
+async function signIn(page: Page, as: 'Admin' | 'Pharmacy' | 'Lab or clinic staff' = 'Admin') {
   await page.goto('/');
-  if (as === 'Admin') await page.getByLabel('Admin').check();
+  if (as !== 'Pharmacy') await page.getByLabel(as).check();
   await page.getByLabel('Mobile number').fill('9876543210');
   await page.getByRole('button', { name: 'Send code' }).click();
   await page.getByLabel('6-digit code').fill('123456');
@@ -308,7 +353,7 @@ test('a version conflict: nothing is saved, the rules are read again, and the ch
   expect(puts(backend).map((p) => (p.body as Rec).percentBasisPoints)).toEqual([1500, 1500]);
 });
 
-test('switch-off note: shown once an active rule does not cut; turning the cut off sends the saved terms inactive', async ({ page }) => {
+test('switch-off note: from the server’s switches (even with no rule set); turning the cut off sends the saved terms inactive', async ({ page }) => {
   const backend = await mockBackend(page);
   backend.cutsOn = false;
   await signIn(page);
@@ -316,7 +361,8 @@ test('switch-off note: shown once an active rule does not cut; turning the cut o
   const note = page.getByText('Referral cuts are switched off; rules are saved but not applied.');
   const cuts = page.getByRole('region', { name: 'Cuts by category' });
   await expect(cuts.getByRole('row', { name: /^Consultation/ })).toContainText('Off');
-  await expect(note).toHaveCount(0);
+  // WQ26b (r33): the list says the switch is off, so the note shows before any rule exists.
+  await expect(note).toBeVisible();
   await setCut(page, 'consultation', async (e) => {
     await e.getByLabel('Cut', { exact: true }).selectOption('percent');
     await e.getByLabel('Percent', { exact: true }).fill('5');
@@ -324,6 +370,8 @@ test('switch-off note: shown once an active rule does not cut; turning the cut o
   await expect(cuts.getByText('Saved: the consultation cut of Apollo Pharmacy is 5% of each line (version 1).')).toBeVisible();
   await expect(note).toBeVisible();
 
+  // Jansetu switches cuts on meanwhile: the read after the next save no longer shows the note.
+  backend.cutsOn = true;
   await setCut(page, 'consultation', async (e) => {
     await e.getByLabel('Cut', { exact: true }).selectOption('off');
     await e.getByRole('button', { name: 'Save', exact: true }).click();
@@ -339,7 +387,7 @@ test('switch-off note: shown once an active rule does not cut; turning the cut o
   ]);
 });
 
-test('pharmacy: referral earnings (earned, paid, due), its rates and the statement by short ref, read only', async ({ page }) => {
+test('pharmacy: referral earnings (earned, paid, due), its rates and the statement by short ref with a lab booking’s lines, and its CSV; read only', async ({ page }) => {
   const backend = await mockBackend(page);
   backend.rules.push(rule({}), rule({ category: 'lab_test', basis: 'fixed', percentBasisPoints: undefined, fixedMinor: 4000, isActive: false }));
   await signIn(page, 'Pharmacy');
@@ -355,18 +403,33 @@ test('pharmacy: referral earnings (earned, paid, due), its rates and the stateme
   await expect(rates).toContainText('Consultation10% of each line');
   await expect(rates).toContainText('Lab testOff');
   await expect(rates).toContainText('Lab packageOff');
+  await expect(rates).not.toContainText('Jansetu has not switched referral cuts on yet');
 
   const statement = page.getByRole('region', { name: 'Statement' });
   const rows = statement.getByRole('row');
   await expect(rows).toHaveCount(51);
   await expect(rows.nth(1)).toContainText('ABCD2345');
   await expect(rows.nth(1)).toContainText('Consultation₹500.00₹50.00');
-  await expect(rows.nth(2)).toContainText('LMNO2222Lab booking₹1,045.00₹55.00');
+  // r33: one row for the lab booking (short ref, its category), its cut lines listed under it.
+  await expect(rows.nth(2)).toContainText('LMNO2222Lab tests and packages');
+  await expect(rows.nth(2).getByRole('listitem')).toHaveText(['Lab test ₹300.00: cut ₹15.00', 'Lab package ₹800.00: cut ₹40.00']);
+  await expect(rows.nth(2)).toContainText('₹1,200.00₹55.00');
+  await expect(rows.nth(1).getByRole('listitem')).toHaveCount(0);
+
+  // The CSV (the finance CSV), read with the session's token into memory and saved under the booker's name.
+  const download = page.waitForEvent('download');
+  await statement.getByRole('button', { name: 'Download CSV (all entries)' }).click();
+  const file = await download;
+  expect(file.suggestedFilename()).toBe('pharmacy-referral-statement.csv');
+  const text = await readFile((await file.path())!, 'utf8');
+  expect(text.split('\n')[0]).toBe(CSV_HEADER);
+  expect(text).toContain('Ref ABCD2345');
+  expect(backend.calls.filter((c) => c.path.startsWith('/pharmacy-assisted/referral/statement.csv')).map((c) => c.path)).toEqual(['/pharmacy-assisted/referral/statement.csv']);
   await statement.getByRole('button', { name: 'Older' }).click();
   await expect(rows).toHaveCount(3);
   await expect(rows.nth(2)).toContainText('CONS0051');
   await expect(statement.getByRole('button', { name: 'Older' })).toBeDisabled();
-  const reads = backend.calls.filter((c) => c.path.startsWith('/pharmacy-assisted/referral/statement')).map((c) => c.path);
+  const reads = backend.calls.filter((c) => c.path.startsWith('/pharmacy-assisted/referral/statement?')).map((c) => c.path);
   expect(reads).toEqual(['/pharmacy-assisted/referral/statement?limit=50', `/pharmacy-assisted/referral/statement?before=${Date.parse(String(backend.statement[49]!.at))}_${backend.statement[49]!._id}&limit=50`]);
   // Read only: nothing to change here, and nothing about the bookings is kept on this device or in the address.
   await expect(page.getByRole('button', { name: /Edit/ })).toHaveCount(0);
@@ -384,4 +447,44 @@ test('a non-admin cannot reach or change the referral cuts', async ({ page }) =>
   await expect(page.getByText('This page does not exist or is not available to your account.')).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Referral cuts' })).toHaveCount(0);
   expect(backend.calls.some((c) => c.path.startsWith('/admin/referral-rules'))).toBe(false);
+});
+
+const labMember = (o: Rec = {}): Rec => ({ _id: MEMBER, partnerId: LAB, name: 'Meena Accounts', role: 'staff', permissions: ['finance.view'], branchIds: [], ...o });
+
+test('lab: its referral earnings, rates (with the switch note), statement and CSV through the same page, for a finance member', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.me = labMember();
+  backend.cutsOn = false;
+  backend.rules.push(rule({ bookerKind: 'lab', bookerId: LAB, basis: 'fixed', percentBasisPoints: undefined, fixedMinor: 3000 }));
+  await signIn(page, 'Lab or clinic staff');
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Referral earnings' }).click();
+  await expect(page.getByRole('heading', { name: 'Referral earnings', level: 1 })).toBeVisible();
+  await expect(page.getByText('What your lab earns for the consultations it books for patients.', { exact: false })).toBeVisible();
+  const cards = page.getByLabel('Referral earnings', { exact: true });
+  await expect(cards).toContainText('Due to you₹30.00');
+  const rates = page.getByRole('region', { name: 'Your rates' });
+  // A lab books consultations: its one rate, and the server's switch says cuts are off for now.
+  await expect(rates).toContainText('Consultation₹30.00 a line');
+  await expect(rates).not.toContainText('Lab test');
+  await expect(rates).toContainText('Jansetu has not switched referral cuts on yet, so new bookings earn no cut for now.');
+  const statement = page.getByRole('region', { name: 'Statement' });
+  await expect(statement.getByRole('row').nth(1)).toContainText('LABC4444Consultation₹400.00₹30.00');
+  const download = page.waitForEvent('download');
+  await statement.getByRole('button', { name: 'Download CSV (all entries)' }).click();
+  expect((await download).suggestedFilename()).toBe('lab-referral-statement.csv');
+  expect(backend.calls.filter((c) => c.path.startsWith('/partner-workspace/assisted/referral')).map((c) => c.path).sort()).toEqual([
+    '/partner-workspace/assisted/referral', '/partner-workspace/assisted/referral-rules', '/partner-workspace/assisted/referral/statement.csv',
+    '/partner-workspace/assisted/referral/statement?limit=50',
+  ]);
+  expect(await stored(page)).not.toContain('LABC4444');
+});
+
+test('lab: a branch-limited finance member, or one without finance.view, has no referral earnings page and reads nothing', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.me = labMember({ branchIds: [BRANCH] });
+  await signIn(page, 'Lab or clinic staff');
+  await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Referral earnings' })).toHaveCount(0);
+  await page.goto('/#/partner/referral');
+  await expect(page.getByText('This page does not exist or is not available to your account.')).toBeVisible();
+  expect(backend.calls.some((c) => c.path.startsWith('/partner-workspace/assisted/referral'))).toBe(false);
 });
