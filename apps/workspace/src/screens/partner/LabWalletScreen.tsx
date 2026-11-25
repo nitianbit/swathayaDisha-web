@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { holdsAny, LAB_TOPUP_STATE_LABEL, labTopupCheckable, labWalletApi } from '@jansetu/api';
+import { holdsAny, LAB_TOPUP_STATE_LABEL, labTopupCheckable, labWalletApi, type ApiClient } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { useSession } from '../../session.tsx';
 import { CHECK_LABEL, ownerTopupSource, TopUpForm, UNPAID_CHECK_AGAIN, useTopupCheck, type TopupSource } from '../pharmacy/topup.tsx';
@@ -32,14 +32,22 @@ function LabWallet({ ctx }: { ctx: ScopeContext }) {
   );
 }
 
+/**
+ * WQ24b: the lab's own wallet: its routes, its query key and its keyed top-up, shared by this page and the wallet pay of
+ * Book consultation (one cache, one unconfirmed top-up per lab).
+ */
+export function labWalletOf(api: ApiClient, ctx: ScopeContext) {
+  const w = labWalletApi(api, ctx.scope);
+  const queryKey = [...ctx.key, 'lab-wallet'];
+  return { w, queryKey, topup: ownerTopupSource(w, 'lab', scopeIdentity(ctx), queryKey) };
+}
+
 function Wallet({ ctx }: { ctx: ScopeContext }) {
   const { api } = useSession();
-  const w = labWalletApi(api, ctx.scope);
-  const key = [...ctx.key, 'lab-wallet'];
+  const { w, queryKey: key, topup: source } = labWalletOf(api, ctx);
   const wallet = useQuery({ queryKey: [...key, 'balance'], queryFn: () => w.wallet() });
   const history = useCursorPages();
   const entries = useQuery({ queryKey: [...key, 'entries', history.cursor], queryFn: () => w.entries(history.cursor || undefined) });
-  const source = ownerTopupSource(w, 'lab', scopeIdentity(ctx), key);
   return (
     <>
       <WalletBalance wallet={wallet} cardMoney />

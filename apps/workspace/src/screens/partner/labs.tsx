@@ -56,12 +56,14 @@ export function useNow(): Date {
   return now;
 }
 
-/** Slots and lab bookings exist for lab partners only (admins may open any partner's URL). */
+/**
+ * Slots and lab bookings exist for lab partners only (admins may open any partner's URL). WQ24b: gated on the data, so a
+ * failed read again (a refetch on focus, coming back from a UPI app on a weak network) never unmounts the page under it.
+ */
 export function LabOnly({ ctx, children }: { ctx: ScopeContext; children: ReactNode }) {
   const partner = useWorkspacePartner(ctx);
-  if (partner.isPending) return <Loading label="Loading…" />;
-  if (partner.isError) return <ErrorState message={messageOf(partner.error)} onRetry={() => void partner.refetch()} />;
-  if (partner.data?.kind !== 'lab') return <Empty title="Only for labs">Slots and lab bookings are kept by lab partners. {partner.data?.name ?? 'This partner'} is a clinic.</Empty>;
+  if (!partner.data) return partner.isError ? <ErrorState message={messageOf(partner.error)} onRetry={() => void partner.refetch()} /> : <Loading label="Loading…" />;
+  if (partner.data.kind !== 'lab') return <Empty title="Only for labs">Slots and lab bookings are kept by lab partners. {partner.data.name ?? 'This partner'} is a clinic.</Empty>;
   return <>{children}</>;
 }
 

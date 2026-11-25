@@ -377,13 +377,15 @@ test('a booking not made on this device: no refund choice, neutral words; the an
 // ── Admin: card refunds that need a person ──
 
 async function mockAdmin(page: Page, init: { pending?: boolean } = {}) {
-  const b = { calls: [] as { method: string; path: string; body: Json | null }[], loseNextMove: false, moved: false, pending: false, marked: false, loseNextMark: false, dropNextMark: false, recheckFails: false, noReadRoute: false, cause: 'booker' };
+  const b = { calls: [] as { method: string; path: string; body: Json | null }[], loseNextMove: false, moved: false, pending: false, marked: false, loseNextMark: false, dropNextMark: false, recheckFails: false, noReadRoute: false, cause: 'booker',
+    /** WQ24b (r21): who paid, when not the WQ16 pharmacy row (`payerKind`, `payerId`, `payerName`; no `pharmacyName`). */
+    payer: null as Json | null };
   b.pending = !!init.pending;
   let live = false;
   const row = (): Json => ({ refundId: RF, bookingId: BK, paymentRecordId: REC, amountMinor: 50_000, cause: b.cause, method: b.moved ? 'wallet' : 'card',
     state: b.moved ? 'processed' : b.pending && !b.marked ? 'pending' : 'failed',
     lastError: b.moved ? null : b.marked ? 'MARKED_FAILED_BY_ADMIN' : b.pending ? 'GATEWAY_UNREACHABLE' : 'BAD_REQUEST_ERROR', attempts: 3, razorpayRefundId: null, processedAt: null,
-    createdAt: '2026-11-22T04:30:00.000Z', updatedAt: '2026-11-22T05:30:00.000Z', pharmacyId: 'a1'.repeat(12), pharmacyName: 'Asha Medicals' });
+    createdAt: '2026-11-22T04:30:00.000Z', updatedAt: '2026-11-22T05:30:00.000Z', ...(b.payer ?? { pharmacyId: 'a1'.repeat(12), pharmacyName: 'Asha Medicals' }) });
   await page.route('**/api/v1/**', async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -431,6 +433,32 @@ async function mockAdmin(page: Page, init: { pending?: boolean } = {}) {
   });
   return b;
 }
+
+test('admin (WQ24b): a lab-paid or doctor-paid card refund names its payer: the column, the cause, the agreement and the wallet', async ({ page }) => {
+  const b = await mockAdmin(page);
+  b.payer = { payerKind: 'lab', payerId: 'a2'.repeat(12), payerName: 'City Lab' };
+  const section = await openAdminQueue(page);
+  const table = section.getByRole('table', { name: 'Card refunds that need a person, oldest change first' });
+  await expect(table.getByRole('columnheader', { name: 'Paid by' })).toBeVisible();
+  await expect(table.getByRole('cell', { name: 'City Lab' })).toBeVisible();
+  await expect(table.getByText('Cancelled by the lab')).toBeVisible();
+  await table.getByRole('button', { name: /^Move the ₹500\.00 card refund of .* to the lab’s wallet$/ }).click();
+  await expect(section.getByText(/the lab agreed to take the money in its Jansetu wallet instead/).first()).toBeVisible();
+  await section.getByRole('button', { name: 'Next: check before moving' }).click();
+  await expect(section.getByText(/^Write what the lab agreed to/)).toBeVisible();
+  await section.getByLabel('The lab’s agreement').fill('Lab owner agreed on a call');
+  await section.getByRole('button', { name: 'Next: check before moving' }).click();
+  await expect(section.getByText('Move the ₹500.00 card refund of', { exact: false })).toContainText('to the Jansetu wallet of City Lab?');
+  await section.getByRole('button', { name: 'Yes, move to wallet' }).click();
+  await expect(section.getByText(/^Moved to the lab’s wallet: the ₹500\.00 card refund of .* of City Lab\.$/)).toBeVisible();
+  expect(b.calls.filter((c) => c.path.endsWith('/to-wallet')).map((c) => c.body)).toEqual([{ agreement: 'Lab owner agreed on a call' }]);
+
+  b.payer = { payerKind: 'doctor', payerId: 'd9'.repeat(12), payerName: null };
+  b.moved = false;
+  await page.reload();
+  await expect(table.getByText('Cancelled by the doctor')).toBeVisible();
+  await expect(table.getByRole('button', { name: /^Move the ₹500\.00 card refund of .* to the doctor’s wallet$/ })).toBeVisible();
+});
 
 async function openAdminQueue(page: Page) {
   await page.goto('/');

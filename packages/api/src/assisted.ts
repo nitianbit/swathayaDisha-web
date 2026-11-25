@@ -56,6 +56,10 @@ export const CONSENT_STATEMENT_VERSION = 'web-pharmacy-v2';
 export const CONSENT_STATEMENT_LANGUAGE = 'en';
 export const CONSENT_STATEMENT =
   'The patient (or a family member with them) agreed that this pharmacy books this consultation for them on Jansetu; that an account is made for this number if it has none; that their name, phone number and the problem they describe are shared with Jansetu and the doctor; and that this pharmacy can see the prescription (medicines, advice and tests, not the diagnosis) for 90 days.';
+/** WQ24: the same consent when a lab books (r21 decision G: the lab reads the dispensing copy for 90 days). */
+export const LAB_CONSENT_STATEMENT_VERSION = 'web-lab-consult-v1';
+export const LAB_CONSENT_STATEMENT =
+  'The patient (or a family member with them) agreed that this lab books this consultation for them on Jansetu; that an account is made for this number if it has none; that their name, phone number and the problem they describe are shared with Jansetu and the doctor; and that this lab can see the prescription (medicines, advice and tests, not the diagnosis) for 90 days.';
 
 // ── Shapes (assisted/pharmacyCommands, consultations, bookerView; pharmacyWallet/services) ──
 
@@ -75,9 +79,10 @@ export interface AssistedDoctor {
   /** Only when `date` was asked: that day's free times. */
   slots?: AssistedSlot[];
 }
-export interface DoctorQuery { speciality?: string; mode?: AssistedMode; language?: string; date?: string; limit?: number }
+/** WQ24 (r21 §24.17.3): `branchId` is the lab member's branch (required for a lab: "nearby" and its scope); a pharmacy sends none. */
+export interface DoctorQuery { branchId?: string; speciality?: string; mode?: AssistedMode; language?: string; date?: string; limit?: number }
 /** `GET /pharmacy-assisted/doctors/:doctorId/slots` (stage build, `listDoctorSlots`): `from` YYYY-MM-DD, `days` 1–14. */
-export interface DoctorSlotsQuery { from?: string; days?: number; mode?: AssistedMode }
+export interface DoctorSlotsQuery { branchId?: string; from?: string; days?: number; mode?: AssistedMode }
 export interface DoctorSlots {
   doctor: Omit<AssistedDoctor, 'nearby' | 'nextSlot' | 'slots'>;
   /** YYYYMMDD, inclusive. */
@@ -107,6 +112,8 @@ export interface ConsultationRequest {
   primaryConcern?: string;
   /** WQ16 (r10 phase 1b, §23.3): `razorpay` = paid by card or UPI on a Razorpay order; the same body otherwise. */
   paymentMethod: AssistedPaymentMethod;
+  /** WQ24 (r21 `labConsultationSchema`): the lab member's branch the consultation is booked at (labs only). */
+  branchId?: string;
 }
 
 export type AssistedPaymentMethod = 'wallet' | 'razorpay';
@@ -282,41 +289,68 @@ export const hex = /^[0-9a-fA-F]{24}$/;
 export const idOf = (v: string, what: string) => { if (!hex.test(v)) throw new Error(`Invalid ${what} id`); return v; };
 export const keyOf = (v: string) => { if (!ASSISTED_KEY_PATTERN.test(v)) throw new Error('Invalid request key'); return v; };
 
-/** `/pharmacy-assisted/*` (phase 1a) and `/pharmacy-bookings` (phase 0): pharmacy token, operational pharmacies only. */
-export function pharmacyAssistedApi(c: ApiClient) {
+/**
+ * WQ24: who books a consultation for a walk-in patient: a pharmacy (phase 1a) or (r21, round 2e) a lab member at one of
+ * its branches. The same commands and answers; only the routes differ, and a lab names its branch on the doctor reads and
+ * the create (`branchId`, §24.17.3).
+ */
+export type BookerKind = 'pharmacy' | 'lab';
+const BOOKER_ROUTES: Readonly<Record<BookerKind, { base: string; bookings: string }>> = {
+  // `/pharmacy-assisted/*` (phase 1a) and `/pharmacy-bookings` (phase 0): pharmacy token, operational pharmacies only.
+  pharmacy: { base: '/pharmacy-assisted', bookings: '/pharmacy-bookings' },
+  // r21 `registerLabBookerRoutes`: a lab member holding `assisted.book` (owners hold it), an operational lab, its branch scope.
+  lab: { base: '/partner-workspace/assisted', bookings: '/partner-workspace/assisted/bookings' },
+};
+
+/** One booker's consultation routes (the pharmacy's, or a lab member's). */
+export function assistedBookerApi(c: ApiClient, kind: BookerKind) {
+  const { base, bookings } = BOOKER_ROUTES[kind];
+  /** A lab's doctor reads and create name its branch (400 VALIDATION_ERROR without it); checked before sending. */
+  const branchOf = <T extends { branchId?: string }>(q: T): T => { if (kind === 'lab') idOf(q.branchId ?? '', 'branch'); return q; };
   return {
     /** POST: the phone stays in the body. Answers the masked holder name only. */
-    lookup: (phone: string) => c.post<PatientLookup>('/pharmacy-assisted/patients/lookup', { body: { phone } }),
-    doctors: (q: DoctorQuery = {}) => c.get<AssistedDoctor[]>('/pharmacy-assisted/doctors', { query: { ...q } }),
+    lookup: (phone: string) => c.post<PatientLookup>(`${base}/patients/lookup`, { body: { phone } }),
+    doctors: (q: DoctorQuery = {}) => c.get<AssistedDoctor[]>(`${base}/doctors`, { query: { ...branchOf(q) } }),
     /** One doctor's bookable times over `days` days (default 7) from `from` (default today). 404 DOCTOR_NOT_FOUND when not bookable. */
     doctorSlots: (doctorId: string, q: DoctorSlotsQuery = {}) =>
-      c.get<DoctorSlots>(`/pharmacy-assisted/doctors/${idOf(doctorId, 'doctor')}/slots`, { query: { ...q } }),
-    book: (body: ConsultationRequest) => c.post<ConsultationReceipt>('/pharmacy-assisted/consultations', { body, timeoutMs: SLOW_WRITE_TIMEOUT_MS }),
-    byKey: (key: string) => c.get<ByKeyAnswer>(`/pharmacy-assisted/bookings/by-key/${keyOf(key)}`),
-    abandon: (key: string) => c.post<ByKeyAnswer>(`/pharmacy-assisted/bookings/by-key/${keyOf(key)}/abandon`),
+      c.get<DoctorSlots>(`${base}/doctors/${idOf(doctorId, 'doctor')}/slots`, { query: { ...branchOf(q) } }),
+    book: (body: ConsultationRequest) => c.post<ConsultationReceipt>(`${base}/consultations`, { body: branchOf(body), timeoutMs: SLOW_WRITE_TIMEOUT_MS }),
+    byKey: (key: string) => c.get<ByKeyAnswer>(`${base}/bookings/by-key/${keyOf(key)}`),
+    abandon: (key: string) => c.post<ByKeyAnswer>(`${base}/bookings/by-key/${keyOf(key)}/abandon`),
     /** WQ16: `refundTo` (card-paid bookings; ignored by the server for wallet-paid ones), default `card`. */
     cancel: (id: string, body: { reason?: string; expectedUpdatedAt?: string; refundTo?: RefundTo }) =>
-      c.post<CancelAnswer>(`/pharmacy-assisted/bookings/${idOf(id, 'booking')}/cancel`, { body }),
+      c.post<CancelAnswer>(`${base}/bookings/${idOf(id, 'booking')}/cancel`, { body }),
     /**
      * WQ13 (P9, `rescheduleByBooker`): the same doctor and price, before the start, once per request key. The same key and
      * slot again answer `replayed: true` (checked before the version fence, so a resend is safe); the same key with
      * another slot is 409 IDEMPOTENCY_KEY_REUSED.
      */
     reschedule: (id: string, body: RescheduleRequest) =>
-      c.post<RescheduleAnswer>(`/pharmacy-assisted/bookings/${idOf(id, 'booking')}/reschedule`, {
+      c.post<RescheduleAnswer>(`${base}/bookings/${idOf(id, 'booking')}/reschedule`, {
         body: { slotId: idOf(body.slotId, 'slot'), requestKey: keyOf(body.requestKey), ...(body.expectedUpdatedAt ? { expectedUpdatedAt: body.expectedUpdatedAt } : {}) },
         timeoutMs: SLOW_WRITE_TIMEOUT_MS,
       }),
     /** Newest first, cursor-paged (`pagination.nextCursor`), 1–50 a page. */
     bookings: (q: { status?: BookingStatus; cursor?: string; limit?: number } = {}) =>
-      c.page<BookedConsultation>('/pharmacy-bookings', { query: { ...q } }),
-    booking: (id: string) => c.get<BookedConsultation>(`/pharmacy-bookings/${idOf(id, 'booking')}`),
-    /** The dispensing copy PDF, fetched with the pharmacy token. */
+      c.page<BookedConsultation>(bookings, { query: { ...q } }),
+    booking: (id: string) => c.get<BookedConsultation>(`${bookings}/${idOf(id, 'booking')}`),
+    /** The dispensing copy PDF, fetched with the booker's token (r21: a lab member's too, `canReadDispensingCopy`). */
     file: (storedUrl: string, signal?: AbortSignal) => c.blob('/file/fetch', { query: { url: fetchableFileUrl(storedUrl) }, signal }),
+  };
+}
+export type AssistedBookerApi = ReturnType<typeof assistedBookerApi>;
+
+/** The pharmacy's routes (phase 0 + 1a), with its medicine order from a prescription. */
+export function pharmacyAssistedApi(c: ApiClient) {
+  return {
+    ...assistedBookerApi(c, 'pharmacy'),
     /** Phase 0 (§18.3): a medicine order from the booking's prescription, exactly once per request key. */
     orderFromPrescription: (body: RxOrderRequest) => c.post<RxOrderAnswer>('/pharmacy-orders', { body, timeoutMs: SLOW_WRITE_TIMEOUT_MS }),
   };
 }
+
+/** WQ24: a lab member's routes (r21, `/partner-workspace/assisted/*`; the lab's own members, no admin mirror is used). */
+export const labAssistedApi = (c: ApiClient) => assistedBookerApi(c, 'lab');
 
 /**
  * WQ13: `/pharmacy-customers` (§17.4). `setTypedName` changes only the name THIS pharmacy typed for the account holder
@@ -412,7 +446,7 @@ export function movementLabel(m: WalletMovement): string {
 
 /** Whether the booking pharmacy may cancel it now: an assisted booking that is booked and has not started (§8.7). */
 /** An assisted booking (phase 1a): the booker view marks it with `source: 'pharmacy_assisted'` and its `assisted` block. */
-export const isAssistedBooking = (b: BookedConsultation) => b.source === 'pharmacy_assisted' || !!b.assisted?.shortRef;
+export const isAssistedBooking = (b: BookedConsultation) => b.source === 'pharmacy_assisted' || b.source === 'lab_assisted' || !!b.assisted?.shortRef;
 
 /** The modes the create accepts (`consultationMode`); a slot may also list others (e.g. chat), which are left out. */
 export function supportedModes(modes: readonly string[] | undefined, only?: AssistedMode | ''): AssistedMode[] {
@@ -487,12 +521,12 @@ export function typedNameTarget(b: Pick<BookedConsultation, '_id' | 'userId' | '
   return hex.test(id) ? { id: id.toLowerCase(), name: b.patientName ?? null, family: false, markerId: String(b._id).toLowerCase() } : null;
 }
 
-/** How the patient joins, in plain words, for the confirmation and the list. */
-export function joinWords(mode: string | undefined, on: JoinOn | undefined): string {
+/** How the patient joins, in plain words, for the confirmation and the list (WQ24: `org` names the booker). */
+export function joinWords(mode: string | undefined, on: JoinOn | undefined, org: BookerKind = 'pharmacy'): string {
   if (mode === 'in-person') return 'The patient goes to the doctor’s clinic at the booked time.';
   if (mode === 'call') {
     return on === 'partner_device'
-      ? 'The doctor phones this pharmacy’s number at the booked time. Keep the patient with you.'
+      ? `The doctor phones this ${org}’s number at the booked time. Keep the patient with you.`
       : 'The doctor phones the patient’s number at the booked time.';
   }
   return on === 'partner_device'
@@ -616,11 +650,14 @@ const RESCHEDULE_WORDS: Readonly<Record<string, { kind: RescheduleRefusalKind; m
   IDEMPOTENCY_KEY_REUSED: { kind: 'changed', message: 'This change was already sent with another time. Look at the booking again, then choose the time again.' },
 };
 
-/** One plain sentence for a refusal of the reschedule (or of the slot read behind it), and what the screen should do. */
-export function rescheduleRefusal(err: unknown): { kind: RescheduleRefusalKind; message: string } {
+/**
+ * One plain sentence for a refusal of the reschedule (or of the slot read behind it), and what the screen should do.
+ * WQ24b: anything else in the booker's own words (`refusal`: a lab's `labBookerRefusal`; the pharmacy's by default).
+ */
+export function rescheduleRefusal(err: unknown, refusal: (err: unknown) => Refusal = assistedRefusal): { kind: RescheduleRefusalKind; message: string } {
   if (isSwitchedOff(err)) return { kind: 'other', message: SWITCHED_OFF_MESSAGE };
   const known = err instanceof ApiError && err.code ? RESCHEDULE_WORDS[err.code] : undefined;
-  return known ?? { kind: 'other', message: assistedRefusal(err).message };
+  return known ?? { kind: 'other', message: refusal(err).message };
 }
 
 /** One plain sentence for a refusal of the typed-name edit. */
@@ -628,6 +665,23 @@ export function typedNameRefusal(err: unknown): string {
   if (err instanceof ApiError && err.code === 'CUSTOMER_NOT_LINKED') return 'This patient is not linked to your pharmacy, so the name cannot be changed here.';
   if (err instanceof ApiError && err.code === 'VALIDATION_ERROR') return `Type a name of 1 to ${MAX_TYPED_NAME} characters.`;
   return assistedRefusal(err).message;
+}
+
+/**
+ * WQ24: a lab member's refusals (r21 §24.17.3, `admitLabBooker`, `bookerOrigin`, the workspace guard) before the shared
+ * words: the permission, the branch scope, a clinic, an unverified or inactive lab, a branch that is gone.
+ */
+const LAB_BOOKER_WORDS: Readonly<Record<string, Refusal>> = {
+  INSUFFICIENT_PERMISSIONS: { kind: 'other', message: 'Your account cannot book consultations for patients. Ask your lab’s owner.' },
+  BRANCH_SCOPE_EXCEEDED: { kind: 'other', message: 'This branch is not one of yours. Choose one of your branches.' },
+  BRANCH_NOT_AVAILABLE: { kind: 'other', message: 'This branch is not available now. Choose another branch.' },
+  LAB_PARTNER_REQUIRED: { kind: 'other', message: 'Only labs can book consultations for patients.' },
+  PARTNER_NOT_VERIFIED: { kind: 'other', message: 'Your lab is not verified yet, so it cannot book for patients.' },
+  PARTNER_INACTIVE: { kind: 'other', message: 'Your lab account is not active. Please contact Jansetu support.' },
+};
+export function labBookerRefusal(err: unknown): Refusal {
+  const known = err instanceof ApiError && err.code ? LAB_BOOKER_WORDS[err.code] : undefined;
+  return known ?? assistedRefusal(err);
 }
 
 /**
