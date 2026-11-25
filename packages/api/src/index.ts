@@ -5,7 +5,7 @@ export type { OnceOnlyKind, PartnerChoice, PartnerSelection, SignInMode, VerifyA
 export type { NativeApp, NativeRefreshed, NativeSignedIn, NativeTokens, OtpTarget, Profile, SessionRefreshed, SessionSignedIn, SignedIn, UserType } from './auth.ts';
 export {
   ADMIN_ACTOR, ALL_PARTNER_PERMISSIONS, canAddOwner, canChangeBranches, canEditEmail, canEditPermissions, canGiveEmail, EMAIL_IN_USE_MESSAGE, isEmailInUse, isOwnerRequired, memberEmail, canEditProfile, canReopenBranches, REQUEST_KEY_PATTERN, EMAIL_PATTERN, grantablePermissions, permissionsForKind, WALLET_PERMISSIONS, GSTIN_PATTERN,
-  hasGlobalScope, HHMM_PATTERN, holdsAny, INVOICE_PREFIX_PATTERN, ISO_DATE_PATTERN, MAX_HOLIDAYS, MAX_NAME, OBJECT_ID_PATTERN,
+  hasGlobalScope, HHMM_PATTERN, holdsAny, isFinanceReader, INVOICE_PREFIX_PATTERN, ISO_DATE_PATTERN, MAX_HOLIDAYS, MAX_NAME, OBJECT_ID_PATTERN,
   PAN_PATTERN, PARTNER_KIND_LABEL, PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN, partnerAdminApi, partnerWorkspaceApi,
   partnerWorkspaceBase, PERMISSION_LABEL, removalBlock, scopeProblem, TAX_REGIME_LABEL, VERIFICATION_LABEL, WEEKDAYS,
 } from './partners.ts';
@@ -245,16 +245,22 @@ export {
   offerCountdown, pharmacyInstantApi,
 } from './assistedInstant.ts';
 export type { InstantBookerByKey, InstantBookerReceipt, InstantBookerRequest, InstantBookerStatus, InstantBookerView, InstantDeskMode, InstantDoctor } from './assistedInstant.ts';
+// WQ28: records access (r30 phase 3f): the doctor's treating view and request, the account holder's answers.
+export { doctorRecordsApi, holderRecordsApi, pickTreating, recordsAccessState, recordsErrorCode } from './recordsAccess.ts';
+export type {
+  HolderRecordsGrant, HolderRecordsRequest, OtherConsultation, OtherLabReport, OwnConsultation, RecordsAccess, RecordsAccessState, RecordsGrantBrief,
+  RecordsParty, RecordsRequestAnswer, RecordsRequestState, TreatingRecords,
+} from './recordsAccess.ts';
 // WQ26: referral cuts (phase 4a/4b): the admin's rules per partner and category, and the pharmacy's referral earnings.
 export {
-  basisPointsToInput, CAP_PROBLEM, FIXED_PROBLEM, MAX_REFERRAL_REASON, PERCENT_PROBLEM, percentToBasisPoints, pharmacyReferralApi, REFERRAL_BOOKER_KINDS,
+  basisPointsToInput, CAP_PROBLEM, FIXED_PROBLEM, MAX_REFERRAL_REASON, PERCENT_PROBLEM, percentToBasisPoints, referralReadsApi, REFERRAL_BOOKER_KINDS,
   REFERRAL_CATEGORIES, REFERRAL_CATEGORY_LABEL, REFERRAL_FIXED_MIN_MINOR, REFERRAL_PERCENT_MAX_BP, REFERRAL_PERCENT_MIN_BP, REFERRAL_RULE_REFUSAL,
-  REFERRAL_STATEMENT_PAGE, referralCutsOn, referralDraftOf, referralRowOf, referralRuleBody, referralRuleRefusal, referralRuleRefusedBeforeWriting,
+  REFERRAL_STATEMENT_PAGE, referralDraftOf, referralRowOf, referralRuleBody, referralRuleRefusal, referralRuleRefusedBeforeWriting,
   referralRulesAdminApi, referralRuleText, referralTermsOf, referralTermsText, sameRuleTerms, ruleTerms,
 } from './referralCuts.ts';
 export type {
-  ReferralBasis, ReferralBookerKind, ReferralCategory, ReferralDraft, ReferralDraftErrors, ReferralMode, ReferralRow, ReferralRule, ReferralRuleEvent,
-  ReferralRuleInput, ReferralStatementLine, ReferralSummary, ReferralTerms,
+  ReferralBasis, ReferralBookerKind, ReferralCategory, ReferralDraft, ReferralDraftErrors, ReferralLine, ReferralMode, ReferralReader, ReferralRow, ReferralRule,
+  ReferralRuleEvent, ReferralRuleInput, ReferralRules, ReferralStatementLine, ReferralSummary, ReferralSwitches, ReferralTerms,
 } from './referralCuts.ts';
 // WQ29: wallet withdrawals to the bank (r32 round 4d, switched off on the server) and the admin's Recover.
 export {

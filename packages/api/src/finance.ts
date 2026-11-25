@@ -286,7 +286,8 @@ function checkLimit(n: number | undefined, max: number): number | undefined {
   if (!Number.isInteger(n) || n < 1 || n > max) throw new Error('Invalid limit');
   return n;
 }
-function period(q: PeriodQuery): PeriodQuery {
+/** A statement period with real India dates, `from` ≤ `to` (shared with the referral statements). */
+export function period(q: PeriodQuery): PeriodQuery {
   const from = checkDate(q.from, 'from');
   const to = checkDate(q.to, 'to');
   if (from && to && from > to) throw new Error('The period ends before it starts');

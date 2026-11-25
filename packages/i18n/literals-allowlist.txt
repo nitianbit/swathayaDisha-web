@@ -118,7 +118,6 @@ apps/workspace/src/screens/pharmacy/LowStockScreen.tsx
 apps/workspace/src/screens/pharmacy/OrderScreen.tsx
 apps/workspace/src/screens/pharmacy/OrdersScreen.tsx
 apps/workspace/src/screens/pharmacy/QualityScreen.tsx
-apps/workspace/src/screens/pharmacy/ReferralEarningsScreen.tsx
 apps/workspace/src/screens/pharmacy/RxQueueScreen.tsx
 apps/workspace/src/screens/pharmacy/RxReviewScreen.tsx
 apps/workspace/src/screens/pharmacy/SettingsScreen.tsx

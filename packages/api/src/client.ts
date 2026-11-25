@@ -205,6 +205,11 @@ export function createApiClient(options: ApiClientOptions) {
       const body = parseJson(await res.text()) as { data?: T; replayed?: unknown } | null;
       return { data: body?.data as T, replayed: body?.replayed === true };
     }),
+    /** WQ26b (r33): a GET whose answer carries fields beside `data` (the referral `switches`): the data and the whole answer. */
+    getWith: <T, M extends object>(path: string, o?: RequestOptions) => request('GET', path, o ?? {}, async (res) => {
+      const body = parseJson(await res.text()) as ({ data?: T } & Partial<M>) | null;
+      return { data: body?.data as T, meta: (body ?? {}) as Partial<M> };
+    }),
     put: <T>(path: string, o?: RequestOptions) => json<T>('PUT', path, o),
     patch: <T>(path: string, o?: RequestOptions) => json<T>('PATCH', path, o),
     delete: <T>(path: string, o?: RequestOptions) => json<T>('DELETE', path, o),

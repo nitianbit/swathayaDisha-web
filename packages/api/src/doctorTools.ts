@@ -291,6 +291,8 @@ export const APPOINTMENT_STATUS_LABEL: Record<AppointmentStatus, string> = {
 /** A consultation booking as the specialist portal returns it (`IBooking`, the fields the workspace shows). */
 export interface DoctorAppointment {
   _id: string;
+  /** WQ28: the account the consultation belongs to (the records view reads the history by it). */
+  userId?: string;
   bookingType: 'consultation';
   bookingKind?: 'scheduled' | 'instant';
   instantRequestId?: string;
