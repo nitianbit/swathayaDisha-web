@@ -113,12 +113,12 @@ export {
   LEDGER_KIND_LABEL, MAX_ACCOUNT_NAME, MAX_ACCOUNT_SEARCH, MAX_BANK_NAME, MAX_FINANCE_MINOR, MAX_FINANCE_REASON, MAX_PAYOUT_NOTE,
   MAX_PAYOUT_REFERENCE, MAX_UPI_ID, MIN_FINANCE_REASON, MIN_REFERENCE, OWNER_KIND_LABEL, partnerFinanceApi, pharmacyPayoutApi, PAYOUT_METHOD_LABEL, PAYOUT_METHODS,
   PAYOUT_STATE_LABEL, payoutDetailsProblems, payoutProblems, PAYOUTS_LIMIT_MAX, reasonProblem, settlementsApi, STATEMENT_CURSOR_PATTERN,
-  STATEMENT_PAGE_MAX, statementCsvName, UPI_ID_PATTERN,
+  STATEMENT_PAGE_MAX, statementCsvName, UPI_ID_PATTERN, isReferralOwnerKind, REFERRAL_OWNER_KINDS,
 } from './finance.ts';
 export type {
   AccountRow, AccountsPage, AccountsQuery, AdjustmentInput, AdjustmentKeyAbandon, FinanceEvent, FinanceSummary, FinanceTotals, HistoryRef, LedgerEntry, LedgerKind,
   PageQuery, PayoutDetailsInput, PayoutDetailsState, PayoutDetailsView, PayoutKeyAbandon, PayoutMethod, PayoutsQuery, PayoutState, PeriodQuery, QueuePayout, RecordPayoutInput,
-  SettlementAccount, SettlementOwnerKind, SettlementPayout, StatementLine, StatementPage, StatementQuery,
+  SettlementAccount, SettlementOwnerKind, SettlementPayout, StatementLine, StatementPage, StatementQuery, ReferralBlock, ReferralOwnerKind, WithdrawalsBlock,
 } from './finance.ts';
 export {
   appointmentAt, appointmentDay, appointmentRangeProblem, canonicalMobile, CLINIC_APPOINTMENT_STATUS_LABEL, CLINIC_APPOINTMENT_STATUSES, clinicBranchesFor,
@@ -172,7 +172,7 @@ export {
   ASSISTED_GENDERS, ASSISTED_KEY_PATTERN, ASSISTED_RELATIONS, assistedRefusal, BOOKING_STATUS_LABEL, bookingStatusLabel, canBookerCancel, canonicalPhone,
   CONSENT_STATEMENT, CONSENT_STATEMENT_LANGUAGE, CONSENT_STATEMENT_VERSION, ASSISTED_MODE_LABEL, EMPTY_PATIENT, familyBookedBefore, formatSlotDate,
   isAssistedBooking, isAssistedLimit, isSwitchedOff, refusedBeforeWriting, SLOW_WRITE_TIMEOUT_MS, supportedModes, joinWords, MAX_BOOKER_CANCEL_REASON, MAX_CONCERN, MAX_PERSON_NAME, movementLabel, PATIENT_LANGUAGES,
-  patientBody, patientProblems, pharmacyAssistedApi, pharmacyWalletApi, rxOrderProblems, signedPaiseOf, SWITCHED_OFF_MESSAGE, walletBalancePaise, walletState,
+  patientBody, patientProblems, pharmacyAssistedApi, pharmacyWalletApi, rxOrderProblems, isReferralSetOff, signedPaiseOf, SWITCHED_OFF_MESSAGE, walletBalancePaise, walletState,
 } from './assisted.ts';
 // WQ13: booker reschedule, the typed-name edit, the doctor card's next free time; admin wallet credits.
 export {
@@ -265,10 +265,15 @@ export type {
 } from './referralCuts.ts';
 // WQ29: wallet withdrawals to the bank (r32 round 4d, switched off on the server) and the admin's Recover.
 export {
-  adminWithdrawalsApi, doctorWithdrawalsApi, isPaidReference, labWithdrawalsApi, pharmacyWithdrawalsApi, walletRecoverApi, weeklyWait,
+  adminWithdrawalsApi, doctorWithdrawalsApi, isPaidReference, labWithdrawalsApi, pharmacyWithdrawalsApi, quoteChangedOf, walletRecoverApi, weeklyWait,
   withdrawalAmountProblem, withdrawalErrorCode, withdrawalErrorDetails,
 } from './walletWithdrawals.ts';
 export type {
-  AdminWithdrawal, DestinationState, PaidBody, PaidMethod, RecoverAnswer, WalletAfter, Withdrawable, Withdrawal, WithdrawalAnswer, WithdrawalByKey,
+  AdminWithdrawal, DestinationState, PaidBody, PaidMethod, QuoteReason, RecoverAnswer, WalletAfter, Withdrawable, Withdrawal, WithdrawalAnswer, WithdrawalByKey,
   WithdrawalsApi, WithdrawalState,
 } from './walletWithdrawals.ts';
+// WQ48 (r35 rounds 4e/4f): the pharmacy's Finance reads, and the admin's card disputes, top-ups without a lot and set-off.
+export { adminWalletFinanceApi, DISPUTE_STATES, pharmacyFinanceApi, WALLET_KINDS } from './walletFinance.ts';
+export type {
+  DisputeState, FinanceStatementKind, PharmacyFinance, SetOff, SetOffAnswer, SetOffByKey, TopupWithoutLot, WalletDispute, WalletKind,
+} from './walletFinance.ts';

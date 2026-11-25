@@ -5,8 +5,6 @@
 export default {
   /** Page title and the totals' label. */
   'referralEarnings.referralEarnings': 'Referral earnings',
-  /** Under the title, for a pharmacy. */
-  'referralEarnings.whatYourPharmacyEarnsFor': 'What your pharmacy earns for the consultations and lab tests it books for patients. It comes out of the doctor’s or the lab’s earning, not from the patient.',
   /** Under the title, for a lab (labs book consultations with doctors). */
   'referralEarnings.whatYourLabEarnsFor': 'What your lab earns for the consultations it books for patients. It comes out of the doctor’s earning, not from the patient.',
   'referralEarnings.earnings': 'Earnings',

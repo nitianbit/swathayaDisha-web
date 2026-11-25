@@ -18,7 +18,7 @@ import { useOneAtATime } from '../finance/finance.tsx';
 import { NoSuchRecord } from './accountList.tsx';
 import { useAdminScope } from './adminScope.ts';
 import { AddMoney, Balance, UncreditedTopups, type AdminTopupTarget } from './PharmacyWalletsScreen.tsx';
-import { Lots } from './walletLots.tsx';
+import { Lots, SetOffFromReferral, TopupsWithoutLot } from './walletLots.tsx';
 
 /**
  * WQ20 admin: one lab's Jansetu wallet (r13, `/admin/labs/:partnerId/wallet*`); WQ23: one doctor's the same way (r20,
@@ -97,6 +97,8 @@ function OwnerWallet({ kind, scopeKey, ownerId }: { kind: WalletOwnerKind; scope
             </>
           )}
       </section>
+      {/* WQ48 (r35 §26.9): what the wallet owes, paid from the owner's referral earnings (while the server allows it). */}
+      <SetOffFromReferral kind={kind} ownerId={ownerId} owedMinor={Number(view?.receivableMinor ?? 0)} scopeKey={scopeKey} changed={[...scopeKey, ownerId]} />
       <section className="ws-section" aria-labelledby="add-h">
         <h2 id="add-h">{t('adminWallet.addMoney')}</h2>
         {owner.data && wallet.isSuccess ? <AddMoney target={ownerTarget(tools, kind, scopeKey, ownerId, owner.data.name)} wallet={view} />
@@ -105,6 +107,7 @@ function OwnerWallet({ kind, scopeKey, ownerId }: { kind: WalletOwnerKind; scope
       <WalletHistory q={entries} notes empty={t('labWallet.historyEmpty', { name })} first={history.page === 1}
         pager={<CursorPager pages={history} nextCursor={entries.data?.nextCursor} label={t('adminWallet.historyPages')} />} />
       <Lots load={() => w.lots(ownerId)} refusal={tools.refusal} queryKey={[...scopeKey, ownerId, 'lots']} changed={[...scopeKey, ownerId]} />
+      <TopupsWithoutLot kind={kind} ownerId={ownerId} queryKey={[...scopeKey, ownerId, 'no-lot']} changed={[...scopeKey, ownerId]} />
       <section className="ws-section" aria-labelledby="uncredited-h">
         <h2 id="uncredited-h">{t('adminWallet.uncredited')}</h2>
         <UncreditedTopups scopeKey={scopeKey} ownerId={ownerId} ownerName={name} owner={kind} />

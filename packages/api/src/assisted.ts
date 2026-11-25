@@ -445,8 +445,16 @@ const MOVEMENT_LABEL: Readonly<Record<string, string>> = wordMap(t, {
   debit: 'movement.debit',
 });
 
+/**
+ * r35b (§26.9): an owed amount paid from the owner's referral earnings: a wallet row that moves no balance
+ * (`transactionType: 'adjustment'`, the money never passed through the wallet), shown without a sign, never as a debit.
+ */
+export const isReferralSetOff = (m: WalletMovement) =>
+  m.movementType === 'receivable_setoff' && (m.transactionType === 'adjustment' || m.referenceType === 'referral_setoff');
+
 /** Plain words for one wallet movement (the stored kind first; a credit is a top-up when it came from Razorpay). */
 export function movementLabel(m: WalletMovement): string {
+  if (isReferralSetOff(m)) return t('movement.referralSetoff');
   const kind = m.movementType ?? m.transactionType;
   if (kind === 'credit') return t(m.referenceType === 'wallet_recharge' ? 'movement.topup' : 'movement.adminCredit');
   return MOVEMENT_LABEL[kind] ?? t(signedPaiseOf(m) >= 0 ? 'movement.credit' : 'movement.debit');

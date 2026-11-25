@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  ApiError, rupeesToPaise, weeklyWait, withdrawalAmountProblem, withdrawalErrorCode, withdrawalErrorDetails, type PayoutDetailsInput, type SettlementAccount,
+  ApiError, quoteChangedOf, rupeesToPaise, weeklyWait, withdrawalAmountProblem, withdrawalErrorCode, withdrawalErrorDetails, type QuoteReason,
   type Withdrawable, type Withdrawal, type WithdrawalsApi,
 } from '@jansetu/api';
 import { formatPaise } from '@jansetu/i18n';
@@ -11,7 +11,7 @@ import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { t } from '../../i18n/withdrawals/index.ts';
 import { definitelyNotRecorded, newRequestKey, startOp, type PendingOp } from '../../requests.ts';
-import { PayoutDetailsForm, useOneAtATime } from '../finance/finance.tsx';
+import { useOneAtATime } from '../finance/finance.tsx';
 import { CursorPager, useCursorPages } from './cursorList.tsx';
 import { CheckPanel, useOwnedOp } from './ownedOp.tsx';
 
@@ -27,19 +27,23 @@ export interface WithdrawalSource {
   /** The wallet's query key: read again after a request or a cancel (the balance moves). */
   walletKey: readonly unknown[];
   api: WithdrawalsApi;
-  /** May ask for and cancel withdrawals (a lab member needs `wallet.manage`). */
+  /** May ask for withdrawals (a lab member needs `wallet.manage` and, WQ48 r35, partner-wide scope). */
   canAct: boolean;
+  /** WQ48: why not (said instead of the form), when it is not the missing right to manage the wallet. */
+  actNote?: string;
+  /** WQ48 (r35b): may cancel a waiting one (a branch-limited lab manager may cancel the one it asked for); default `canAct`. */
+  canCancel?: boolean;
   /**
-   * Where the destination is set: the pharmacy's form here, a link (a lab's Finance, a doctor's Earnings), or (WQ29b) a lab
-   * member who cannot open Finance is told to ask a lab owner.
+   * Where the destination is set: a link (a lab's Finance, a doctor's Earnings), (WQ29b) a lab member who cannot open
+   * Finance is told to ask a lab owner, or (WQ48) the pharmacy's payout details section on the same Finance page.
    */
-  destination: { save: (body: PayoutDetailsInput, expectedDetailsVersion: number) => Promise<SettlementAccount> } | { link: string; page: 'finance' | 'earnings' }
-    | { askOwner: true };
+  destination: { link: string; page: 'finance' | 'earnings' } | { askOwner: true } | { onPage: true };
 }
 
 const WORDED = ['PAYOUT_DESTINATION_NOT_VERIFIED', 'PAYOUT_DETAILS_CHANGED', 'WALLET_FROZEN', 'WALLET_RECEIVABLE', 'WITHDRAWALS_DISABLED', 'WITHDRAWAL_CHANGED',
   'WITHDRAWAL_NOT_REQUESTED', 'WITHDRAWAL_NOT_FOUND', 'WITHDRAWAL_NOT_PAID', 'IDEMPOTENCY_KEY_REUSED', 'REQUEST_ABANDONED', 'INDEXES_OUTDATED',
-  'SPECIALIST_NOT_VERIFIED', 'REFERENCE_REUSED', 'DISPUTE_NOT_RECORDED', 'NOTHING_TO_RECOVER', 'WITHDRAWAL_LOT_DISPUTED'] as const;
+  'SPECIALIST_NOT_VERIFIED', 'REFERENCE_REUSED', 'DISPUTE_NOT_RECORDED', 'NOTHING_TO_RECOVER', 'WITHDRAWAL_LOT_DISPUTED', 'WITHDRAWAL_QUOTE_CHANGED',
+  'WITHDRAWAL_OPEN', 'FINANCE_SCOPE_REQUIRED', 'REFERRAL_ACCOUNT_USES_HOME', 'REFERRAL_PAYOUTS_DISABLED', 'WALLET_NOT_FOUND'] as const;
 type Worded = (typeof WORDED)[number];
 const isWorded = (code: string | null): code is Worded => (WORDED as readonly (string | null)[]).includes(code);
 const money = (v: unknown) => (Number.isFinite(Number(v)) ? formatPaise(Number(v)) : null);
@@ -51,10 +55,26 @@ export function withdrawalWords(err: unknown): string {
   if (code === 'WITHDRAWAL_BELOW_MINIMUM' && money(d.minimumMinor)) return t('error.WITHDRAWAL_BELOW_MINIMUM', { minimum: money(d.minimumMinor)! });
   if (code === 'WITHDRAWAL_ABOVE_AVAILABLE' && money(d.withdrawableNowMinor)) return t('error.WITHDRAWAL_ABOVE_AVAILABLE', { max: money(d.withdrawableNowMinor)! });
   if (code === 'WITHDRAWAL_WEEKLY_LIMIT' && typeof d.nextAllowedAt === 'string') return t('error.WITHDRAWAL_WEEKLY_LIMIT', { date: formatDateTime(d.nextAllowedAt) });
+  if (code === 'SETOFF_ABOVE_AVAILABLE') {
+    const max = [d.receivableMinor, d.referralDueMinor].filter((v): v is number => Number.isSafeInteger(v)).sort((a, b) => a - b)[0];
+    return max !== undefined ? t('setoff.above', { max: formatPaise(max) }) : t('error.SETOFF_ABOVE_AVAILABLE');
+  }
   return isWorded(code) ? t(`error.${code}`) : messageOf(err);
 }
 /** For `ConfirmAction` (which shows an `ApiError`'s message): the refusal in words, without its code. */
 export const wordedError = (err: unknown) => new ApiError(err instanceof ApiError ? err.status : 0, withdrawalWords(err));
+/** WQ48 (r35): why a quoted amount cannot be withdrawn now, in the words the page already uses for each refusal. */
+function reasonWords(reason: QuoteReason | null | undefined, w: Withdrawable): string {
+  switch (reason) {
+    case 'WITHDRAWALS_DISABLED': return t('error.WITHDRAWALS_DISABLED');
+    case 'BELOW_MINIMUM': return t('amount.belowMinimum', { minimum: formatPaise(w.minimumMinor) });
+    case 'DESTINATION_NOT_VERIFIED': return t('error.PAYOUT_DESTINATION_NOT_VERIFIED');
+    case 'WALLET_RECEIVABLE': return t('error.WALLET_RECEIVABLE');
+    case 'WALLET_FROZEN': return t('error.WALLET_FROZEN');
+    case 'WEEKLY_LIMIT': return t('weekly', { date: w.nextAllowedAt ? formatDateTime(w.nextAllowedAt) : '—' });
+    default: return t('amount.above', { max: formatPaise(w.withdrawableNowMinor) });
+  }
+}
 /** The switch, or indexes not built: refused before anything was written (a sole first attempt asked nothing). */
 const refusedBeforeWriting = (err: unknown) => ['WITHDRAWALS_DISABLED', 'INDEXES_OUTDATED'].includes(withdrawalErrorCode(err) ?? '');
 
@@ -74,7 +94,7 @@ export function WithdrawSection({ source }: { source: WithdrawalSource }) {
 }
 
 /** What can be withdrawn now and later, the rules and the destination. */
-function Overview({ source, w, onNote }: { source: WithdrawalSource; w: Withdrawable; onNote: (n: Note) => void }) {
+function Overview({ source, w }: { source: WithdrawalSource; w: Withdrawable }) {
   const dest = w.destination;
   return (
     <>
@@ -90,38 +110,29 @@ function Overview({ source, w, onNote }: { source: WithdrawalSource; w: Withdraw
       <p className="ws-muted">{t('rules', { minimum: formatPaise(w.minimumMinor) })}</p>
       {dest.state === 'verified' && dest.masked && <p>{t('dest.to', { masked: dest.masked })}</p>}
       {dest.state === 'unverified' && <Alert tone="warn">{t('dest.unverified', { masked: dest.masked ?? '' })}</Alert>}
-      {dest.state === 'none' && <Destination source={source} onNote={onNote} />}
+      {dest.state === 'none' && <Destination source={source} />}
     </>
   );
 }
 
-/** No destination yet: the pharmacy adds it here (the shared payout-details form); a lab or a doctor on its own page. */
-function Destination({ source, onNote }: { source: WithdrawalSource; onNote: (n: Note) => void }) {
-  const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
+/**
+ * No destination yet: where it is added. WQ48: the pharmacy's payout details section on the same Finance page; a lab's
+ * Finance or a doctor's Earnings (a link); or (WQ29b) a lab member who cannot open Finance asks a lab owner.
+ */
+function Destination({ source }: { source: WithdrawalSource }) {
   const d = source.destination;
   if ('askOwner' in d) return <p>{t('dest.askOwner')}</p>;
-  if ('link' in d) {
-    const page = <Link key="page" to={d.link}>{d.page === 'finance' ? t('dest.finance') : t('dest.earnings')}</Link>;
-    return <p><Parts of={t.rich('dest.elsewhere', { page })} /></p>;
-  }
-  const reread = async () => ({ payoutDetails: null, payoutDetailsVersion: (await source.api.withdrawable()).destination.detailsVersion });
-  return (
-    <>
-      <p>{t('dest.none')}</p>
-      {open ? (
-        <PayoutDetailsForm account={null} audience={'owner'} reread={reread} save={d.save}
-          onSaved={() => { setOpen(false); onNote({ tone: 'ok', text: t('dest.saved') }); void queryClient.invalidateQueries({ queryKey: keysOf(source).base }); }}
-          onLost={(message) => { setOpen(false); onNote({ tone: 'warn', text: message }); void queryClient.invalidateQueries({ queryKey: keysOf(source).base }); }}
-          onCancel={() => setOpen(false)} />
-      ) : <div><Button variant="secondary" onClick={() => setOpen(true)}>{t('dest.add')}</Button></div>}
-    </>
-  );
+  if ('onPage' in d) return <p>{t('dest.onPage')}</p>;
+  const page = <Link key="page" to={d.link}>{d.page === 'finance' ? t('dest.finance') : t('dest.earnings')}</Link>;
+  return <p><Parts of={t.rich('dest.elsewhere', { page })} /></p>;
 }
 
 type Note = { tone: 'ok' | 'error' | 'warn'; text: string };
-/** What is sent (`amountMinor`, `detailsVersion`) and, kept with it on this device only, the figures the person confirmed. */
-interface PendingWithdrawal { amountMinor: number; detailsVersion: number; quotedFeeMinor: number; quotedTransferMinor: number }
+/**
+ * What is sent (`amountMinor`, `detailsVersion`, r35: `expectedTransferMinor`, the transfer the person confirmed: the server
+ * refuses with the new quote if the fee moved) and, kept with it on this device only, the fee shown.
+ */
+interface PendingWithdrawal { amountMinor: number; detailsVersion: number; expectedTransferMinor: number; quotedFeeMinor: number }
 interface Review extends PendingWithdrawal { requestKey: string; masked: string }
 
 const feeWords = (r: { feeMinor: number; transferMinor: number; grossMinor: number }) => (r.feeMinor > 0
@@ -157,11 +168,13 @@ function Withdraw({ source, w }: { source: WithdrawalSource; w: Withdrawable }) 
     try {
       const fresh = await perform(() => source.api.withdrawable(amount));
       const q = fresh.quote;
-      if (!q || !q.available) { setError(t('amount.above', { max: formatPaise(fresh.withdrawableNowMinor) })); return; }
+      // WQ48 (r35): the server says why this amount cannot go through now; the page is read again (the switch, the weekly
+      // limit or the destination may have moved).
+      if (!q || !q.available) { setError(reasonWords(q?.reason, fresh)); if (q?.reason && q.reason !== 'BELOW_MINIMUM' && q.reason !== 'ABOVE_WITHDRAWABLE') await refresh(); return; }
       // WQ29b: the destination (and its version, the fence) as the fresh answer has it, not as the page first read it.
       if (fresh.destination.state !== 'verified') { setError(null); await refresh(); return; }
       setReview({ amountMinor: amount, detailsVersion: fresh.destination.detailsVersion, requestKey: newRequestKey(), quotedFeeMinor: q.feeMinor,
-        quotedTransferMinor: q.transferMinor, masked: fresh.destination.masked ?? '' });
+        expectedTransferMinor: q.transferMinor, masked: fresh.destination.masked ?? '' });
     } catch (err) {
       setError(withdrawalWords(err));
     }
@@ -178,15 +191,19 @@ function Withdraw({ source, w }: { source: WithdrawalSource; w: Withdrawable }) 
       const x = r.value.withdrawal;
       // WQ29b: the same key answered an earlier request that is no longer waiting: say what the server holds.
       if (r.value.replayed && x.state !== 'requested') setNote({ tone: 'warn', text: t('replayed', { state: stateWords(x.state) }) });
-      // WQ29b: the server worked the fee out on the card money it holds now (until its fence, r35): never the quote's figures.
-      else if (p.body && (x.feeMinor !== p.body.quotedFeeMinor || x.transferMinor !== p.body.quotedTransferMinor)) {
-        setNote({ tone: 'warn', text: t('changed', { fee: formatPaise(x.feeMinor), transfer: formatPaise(x.transferMinor), gross: formatPaise(x.grossMinor) }) });
-      } else setNote({ tone: 'ok', text: t('done', { transfer: formatPaise(x.transferMinor), masked: x.destination.masked ?? masked }) });
+      else setNote({ tone: 'ok', text: t('done', { transfer: formatPaise(x.transferMinor), masked: x.destination.masked ?? masked }) });
       await refresh();
       return;
     }
     // The switch or the indexes refused the only attempt before anything was written.
     if (r.kind === 'unknown' && sole && refusedBeforeWriting(r.error)) { settle(p.requestKey); setReview(null); setNote({ tone: 'error', text: withdrawalWords(r.error) }); await refresh(); return; }
+    // WQ48 (r35): the card fee moved since the check: nothing was withdrawn; the new figures are shown to confirm again (a new key).
+    const changed = r.kind === 'refused' ? quoteChangedOf(r.error) : null;
+    if (changed && changed.grossMinor === p.body.amountMinor) {
+      setReview((v) => v && { ...v, requestKey: newRequestKey(), quotedFeeMinor: changed.feeMinor, expectedTransferMinor: changed.transferMinor });
+      setNote({ tone: 'warn', text: t('quote.changed') });
+      return;
+    }
     if (r.kind === 'refused') { setReview(null); setNote({ tone: 'error', text: withdrawalWords(r.error) }); await refresh(); }
   }
 
@@ -231,14 +248,14 @@ function Withdraw({ source, w }: { source: WithdrawalSource; w: Withdrawable }) 
   return (
     <>
       {said}
-      <Overview source={source} w={w} onNote={setNote} />
-      {!source.canAct ? <p className="ws-muted">{t('noRights')}</p>
+      <Overview source={source} w={w} />
+      {!source.canAct ? <p className="ws-muted">{source.actNote ?? t('noRights')}</p>
         : wait ? <Alert tone="warn">{t('weekly', { date: formatDateTime(wait) })}</Alert>
         : w.destination.state !== 'verified' ? null
         : review ? (
         <div className="confirm" role="group" aria-label={t('quote.title')}>
           <p>{t('quote.amount', { gross: formatPaise(review.amountMinor) })}</p>
-          <p><strong>{feeWords({ feeMinor: review.quotedFeeMinor, transferMinor: review.quotedTransferMinor, grossMinor: review.amountMinor })}</strong></p>
+          <p><strong>{feeWords({ feeMinor: review.quotedFeeMinor, transferMinor: review.expectedTransferMinor, grossMinor: review.amountMinor })}</strong></p>
           <p>{t('dest.to', { masked: review.masked })}</p>
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => { setNote(null); const { requestKey, masked: _m, ...body } = review; void ask(startOp(requestKey, body)); }}>
@@ -302,7 +319,7 @@ function WithdrawalList({ source }: { source: WithdrawalSource }) {
                   {x.reason && <div className="ws-muted">{t('list.reason', { reason: x.reason })}</div>}
                 </td>
                 <td>
-                  {x.state === 'requested' && source.canAct && (
+                  {x.state === 'requested' && (source.canCancel ?? source.canAct) && (
                     <ConfirmAction label={t('cancel.button')} confirmLabel={t('cancel.confirm')} version={x.version}
                       consequence={t('cancel.consequence', { gross: formatPaise(x.grossMinor) })} onConfirm={() => cancel(x)} />
                   )}

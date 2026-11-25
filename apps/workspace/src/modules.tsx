@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Navigate } from 'react-router';
 import type { LucideIcon } from 'lucide-react';
 import {
   Ban, Boxes, Building2, CalendarCheck, CalendarClock, CalendarDays, ClipboardCheck, ClipboardList, FlaskConical, Handshake, History, Hospital,
@@ -68,7 +69,9 @@ import { PharmacyConsultNowScreen } from './screens/pharmacy/ConsultNowScreen.ts
 import { BookedConsultationScreen } from './screens/pharmacy/BookedConsultationScreen.tsx';
 import { BookedConsultationsScreen } from './screens/pharmacy/BookedConsultationsScreen.tsx';
 import { WalletScreen } from './screens/pharmacy/WalletScreen.tsx';
-import { LabReferralEarningsScreen, PharmacyReferralEarningsScreen } from './screens/finance/ReferralEarningsScreen.tsx';
+import { LabReferralEarningsScreen } from './screens/finance/ReferralEarningsScreen.tsx';
+import { PharmacyFinanceScreen } from './screens/pharmacy/FinanceScreen.tsx';
+import { WalletDisputesScreen } from './screens/admin/WalletDisputesScreen.tsx';
 import { Truck } from 'lucide-react';
 import { PartnerFinanceScreen } from './screens/finance/PartnerFinanceScreen.tsx';
 import { PayoutsQueueScreen } from './screens/finance/PayoutsQueueScreen.tsx';
@@ -181,11 +184,13 @@ export const PAGES: readonly WorkspacePage[] = [
     path: '/pharmacy/wallet', roles: ['pharmacy'], element: <WalletScreen />,
     nav: { labelKey: 'nav.wallet', icon: Wallet, sectionKey: 'nav.section.pharmacy' },
   },
-  // WQ26 (phase 4b): what the pharmacy's referral cuts earned, read only (`/pharmacy-assisted/referral*`).
+  // WQ48 (r35 §26.10): the pharmacy's Finance: wallet, card money and referral tiles, Withdraw, payout details, one statement.
   {
-    path: '/pharmacy/referral', roles: ['pharmacy'], element: <PharmacyReferralEarningsScreen />,
-    nav: { labelKey: 'nav.referralEarnings', icon: HandCoins, sectionKey: 'nav.section.pharmacy' },
+    path: '/pharmacy/finance', roles: ['pharmacy'], element: <PharmacyFinanceScreen />,
+    nav: { labelKey: 'nav.finance', icon: HandCoins, sectionKey: 'nav.section.pharmacy' },
   },
+  // WQ26's "Referral earnings" page is part of Finance now (WQ48); old links land there.
+  { path: '/pharmacy/referral', roles: ['pharmacy'], element: <Navigate to="/pharmacy/finance" replace /> },
   {
     path: '/pharmacy/orders', roles: ['pharmacy'], element: <OrdersScreen />,
     nav: { labelKey: 'nav.orders', icon: Package, sectionKey: 'nav.section.pharmacy' },
@@ -374,6 +379,11 @@ export const PAGES: readonly WorkspacePage[] = [
   {
     path: '/admin/withdrawals', roles: ['admin'], element: <WithdrawalsScreen />,
     nav: { labelKey: 'nav.withdrawals', icon: Banknote, sectionKey: 'nav.section.admin' },
+  },
+  // WQ48 (r35 §26.10): card top-ups with a recorded dispute, every wallet (`/admin/wallet-disputes`), with Recover.
+  {
+    path: '/admin/wallet-disputes', roles: ['admin'], element: <WalletDisputesScreen />,
+    nav: { labelKey: 'nav.cardDisputes', icon: ShieldAlert, sectionKey: 'nav.section.admin' },
   },
 ];
 

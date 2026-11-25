@@ -1,10 +1,10 @@
 import './finance.css';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Download } from 'lucide-react';
 import {
   ApiError, DETAILS_STATE_LABEL, isRealDate, isStatementCsv, LEDGER_KIND_LABEL, MAX_ACCOUNT_NAME, MAX_BANK_NAME, MAX_UPI_ID,
-  PAYOUT_METHOD_LABEL, PAYOUT_STATE_LABEL, payoutDetailsProblems, statementCsvName,
+  PAYOUT_METHOD_LABEL, PAYOUT_STATE_LABEL, payoutDetailsProblems, settlementsApi, statementCsvName,
   type FinanceEvent, type FinanceSummary, type Page, type PayoutDetailsInput, type PayoutDetailsState, type PayoutDetailsView, type PeriodQuery,
   type SettlementAccount, type SettlementPayout, type StatementLine, type StatementPage, type StatementQuery,
 } from '@jansetu/api';
@@ -14,7 +14,9 @@ import { dirtyKeys, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
 import { t } from '../../i18n/finance/index.ts';
 import { definitelyNotRecorded } from '../../requests.ts';
+import { useSession } from '../../session.tsx';
 import { money } from '../partner/billing.tsx';
+import { t as wt } from '../../i18n/withdrawals/index.ts';
 
 /**
  * WQ5 building blocks shared by the partner finance page (members and admins as owner) and the admin settlement pages.
@@ -70,6 +72,22 @@ export function useOneAtATime(kind: BusyKind = 'account') {
   return { perform, busy, running: () => inFlight.current };
 }
 export type Perform = <T>(run: () => Promise<T>) => Promise<T>;
+
+/**
+ * WQ48 (r35 §26.9), admins: whether referral payouts (and paying an owed wallet amount from referral earnings) are paused
+ * (`REFERRAL_PAYOUTS_ENABLED` off, until tax advice), as any referral account says (`payoutsPaused`, one server switch);
+ * null when there is no referral account at all.
+ */
+export function useReferralPayoutsPaused(queryKey: readonly unknown[], enabled = true) {
+  const { api } = useSession();
+  return useQuery({
+    queryKey: [...queryKey, 'referral-payouts-paused'], enabled,
+    queryFn: async () => {
+      const row = (await settlementsApi(api).accounts({ ownerKind: 'referral', limit: 1 })).rows[0];
+      return row ? row.payoutsPaused === true : null;
+    },
+  });
+}
 
 /** Balance and lifetime totals (`financeSummary`). */
 export function SummaryCards({ summary }: { summary: FinanceSummary }) {
@@ -472,7 +490,8 @@ export function draftOfDetails(a: Pick<SettlementAccount, 'payoutDetails'> | nul
  * what is saved now and closes the review. Any change makes the destination unverified until an admin verifies it.
  */
 export function PayoutDetailsForm({ account, audience, reread, save, perform, onSaved, onLost, onStale, onCancel }: {
-  account: SettlementAccount | null;
+  /** WQ48: only the destination and its version are used (a pharmacy's comes from its finance read, masked). */
+  account: Pick<SettlementAccount, 'payoutDetails' | 'payoutDetailsVersion'> | null;
   audience: 'owner' | 'admin';
   /** WQ29: only the destination and its version are read (a pharmacy's comes from its withdrawable answer). */
   reread: () => Promise<Pick<SettlementAccount, 'payoutDetails' | 'payoutDetailsVersion'> | null>;
@@ -582,7 +601,10 @@ export function PayoutDetailsForm({ account, audience, reread, save, perform, on
         if (live.current) setStale(t('form.staleRace'));
         return;
       }
-      if (!sent || definitelyNotRecorded(err)) setError(sent ? t('form.notSaved', { error: messageOf(err) }) : messageOf(err));
+      // WQ48 (r35): a waiting withdrawal to these details, or (r35b) a referral account paid to its home account's details.
+      const code = err instanceof ApiError ? err.code : undefined;
+      if (sent && (code === 'WITHDRAWAL_OPEN' || code === 'REFERRAL_ACCOUNT_USES_HOME')) setError(wt(`error.${code}`));
+      else if (!sent || definitelyNotRecorded(err)) setError(sent ? t('form.notSaved', { error: messageOf(err) }) : messageOf(err));
       else onLost(t('form.lost', { error: messageOf(err) }));
     } finally {
       if (live.current) setBusy(false);

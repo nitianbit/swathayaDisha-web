@@ -14,7 +14,8 @@ import { money } from '../partner/billing.tsx';
 import { detailsLabel, detailsTone, Signed } from './finance.tsx';
 
 const PAGE = 50;
-const KINDS: SettlementOwnerKind[] = ['partner', 'doctor'];
+/** WQ48 (r35 §26.9): the referral accounts too (each kind, or all three). */
+const KINDS: SettlementOwnerKind[] = ['partner', 'doctor', 'pharmacy_referral', 'lab_referral', 'doctor_referral'];
 const STATES: PayoutDetailsState[] = ['none', 'unverified', 'verified'];
 
 /**
@@ -45,9 +46,10 @@ export function SettlementsScreen() {
       <div className="ws-search" role="group" aria-label={t('filters.label')}>
         <div className="j-field ws-filter">
           <label htmlFor="sa-kind">{t('settlements.of')}</label>
-          <select id="sa-kind" value={filter.ownerKind ?? ''} onChange={(e) => change({ ownerKind: (e.target.value || undefined) as SettlementOwnerKind | undefined })}>
+          <select id="sa-kind" value={filter.ownerKind ?? ''} onChange={(e) => change({ ownerKind: (e.target.value || undefined) as AccountsQuery['ownerKind'] })}>
             <option value="">{t('settlements.everyone')}</option>
             {KINDS.map((k) => <option key={k} value={k}>{OWNER_KIND_LABEL[k]}</option>)}
+            <option value="referral">{t('settlements.referralAll')}</option>
           </select>
         </div>
         <div className="j-field ws-filter">
@@ -83,11 +85,24 @@ export function SettlementsScreen() {
                   {list.data.rows.map((a) => (
                     <tr key={a._id}>
                       <td><Link to={`/admin/settlements/${a._id}`}>{a.beneficiaryName}</Link>{!a.isActive && <> <Badge tone="danger">{t('settlements.inactive')}</Badge></>}</td>
-                      <td>{OWNER_KIND_LABEL[a.ownerKind] ?? a.ownerKind}</td>
+                      <td>
+                        {OWNER_KIND_LABEL[a.ownerKind] ?? a.ownerKind}
+                        {a.payoutsPaused && <div><Badge tone="warn">{t('settlements.paused')}</Badge></div>}
+                      </td>
                       <td className="fin-amount"><Signed minor={a.balanceMinor} /></td>
                       <td>
-                        <Badge tone={detailsTone(a.payoutDetailsState)}>{DETAILS_STATE_LABEL[a.payoutDetailsState] ?? a.payoutDetailsState}</Badge>
-                        {a.payoutDetails && <div className="ws-muted">{detailsLabel(a.payoutDetails)}</div>}
+                        {/* r35b: a lab's or doctor's referral account is paid to its own account's details. */}
+                        {a.home && a.home.accountId !== a._id ? (
+                          <>
+                            <Badge tone={detailsTone(a.home.state)}>{DETAILS_STATE_LABEL[a.home.state] ?? a.home.state}</Badge>
+                            {a.home.masked && <div className="ws-muted">{a.home.masked}</div>}
+                          </>
+                        ) : (
+                          <>
+                            <Badge tone={detailsTone(a.payoutDetailsState)}>{DETAILS_STATE_LABEL[a.payoutDetailsState] ?? a.payoutDetailsState}</Badge>
+                            {a.payoutDetails && <div className="ws-muted">{detailsLabel(a.payoutDetails)}</div>}
+                          </>
+                        )}
                       </td>
                     </tr>
                   ))}

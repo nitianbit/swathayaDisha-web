@@ -1,6 +1,7 @@
 import type { ApiClient, Page } from './client.ts';
 import { idOf, keyOf } from './assisted.ts';
 import { partnerWorkspaceBase, type PartnerScope } from './partners.ts';
+import type { PayoutDetailsView } from './finance.ts';
 
 /**
  * WQ29: wallet withdrawals to the bank (backend r32 round 4d, design ASSISTED_BOOKING_DESIGN.md §26.16.4; switched off on
@@ -22,10 +23,17 @@ export interface Withdrawable {
   availableLater: { amountMinor: number; availableAt: string }[];
   /** One withdrawal per rolling 7 days: the next one from this time (null: now). */
   nextAllowedAt: string | null;
-  destination: { state: DestinationState; masked: string | null; detailsVersion: number };
-  /** With `amountMinor`: the fee is taken only on unspent card money. */
-  quote?: { grossMinor: number; feeMinor: number; transferMinor: number; available: boolean };
+  /** r35: `details` (masked) prefills the payout-details form. */
+  destination: { state: DestinationState; masked: string | null; detailsVersion: number; details?: PayoutDetailsView | null };
+  /**
+   * With `amountMinor`: the fee is taken only on unspent card money. r35: `reason` says why a request of this amount would
+   * be refused now (null: it would go through; `available` = `reason === null`).
+   */
+  quote?: { grossMinor: number; feeMinor: number; transferMinor: number; available: boolean; reason?: QuoteReason | null };
 }
+/** r35 (WQ29 gap 2): the first refusal that applies to a quoted amount, in the request's own order of checks. */
+export type QuoteReason = 'WITHDRAWALS_DISABLED' | 'BELOW_MINIMUM' | 'DESTINATION_NOT_VERIFIED' | 'WALLET_RECEIVABLE' | 'WALLET_FROZEN' | 'WEEKLY_LIMIT'
+  | 'ABOVE_WITHDRAWABLE';
 
 export interface Withdrawal {
   _id: string;
@@ -38,7 +46,8 @@ export interface Withdrawal {
   feeLine: string;
   lots: { lotId: string; amountMinor: number; feeMinor: number }[];
   destination: { masked: string | null; detailsVersion: number; homeAccountId?: string };
-  paid: { method: string; reference: string; paidOn: string; at: string; note?: string | null } | null;
+  /** r35: `disputeAcknowledged` when it was marked paid after a card dispute (`disputedMinor` of it is owed back). */
+  paid: { method: string; reference: string; paidOn: string; at: string; note?: string | null; disputeAcknowledged?: boolean; disputedMinor?: number } | null;
   reason: string | null;
   version: number;
   createdAt: string;
@@ -71,9 +80,15 @@ function ownerWithdrawals(c: ApiClient, base: () => string) {
     /** What can be withdrawn now and later, the weekly limit and the destination; with an amount, its quote. */
     withdrawable: (amountMinor?: number) =>
       c.get<Withdrawable>(at('/withdrawable'), { query: amountMinor !== undefined ? { amountMinor: paise(amountMinor) } : {} }),
-    /** One withdrawal per key: the same key and amount answer it again (`replayed`). `detailsVersion` fences the destination. */
-    request: (body: { amountMinor: number; requestKey: string; detailsVersion: number }) =>
-      c.post<WithdrawalAnswer>(at('/withdrawals'), { body: { amountMinor: paise(body.amountMinor), requestKey: keyOf(body.requestKey), detailsVersion: versionOf(body.detailsVersion) } }),
+    /**
+     * One withdrawal per key: the same key and amount answer it again (`replayed`). `detailsVersion` fences the destination;
+     * r35: `expectedTransferMinor` (the quote shown) fences the fee: 409 WITHDRAWAL_QUOTE_CHANGED with the new quote.
+     */
+    request: (body: { amountMinor: number; requestKey: string; detailsVersion: number; expectedTransferMinor?: number }) =>
+      c.post<WithdrawalAnswer>(at('/withdrawals'), { body: {
+        amountMinor: paise(body.amountMinor), requestKey: keyOf(body.requestKey), detailsVersion: versionOf(body.detailsVersion),
+        ...(body.expectedTransferMinor !== undefined ? { expectedTransferMinor: versionOf(body.expectedTransferMinor) } : {}),
+      } }),
     /** Newest first, 1–50 a page, the next page by `nextCursor`. */
     list: (q: { state?: WithdrawalState; cursor?: string; limit?: number } = {}): Promise<Page<Withdrawal>> =>
       c.page<Withdrawal>(at('/withdrawals'), { query: { ...(q.state ? { state: q.state } : {}), cursor: cursorOf(q.cursor), limit: q.limit ?? 20 } }),
@@ -92,7 +107,11 @@ export const labWithdrawalsApi = (c: ApiClient, scope: PartnerScope) => ownerWit
 export const doctorWithdrawalsApi = (c: ApiClient) => ownerWithdrawals(c, () => '/specialists/me/assisted');
 
 export type PaidMethod = 'bank_transfer' | 'upi';
-export interface PaidBody { method: PaidMethod; reference: string; paidOn: string; note?: string; detailsVersion: number; expectedVersion: number; requestKey: string }
+export interface PaidBody {
+  method: PaidMethod; reference: string; paidOn: string; note?: string; detailsVersion: number; expectedVersion: number; requestKey: string;
+  /** r35: the bank transfer already went out although a card dispute was recorded since (else 409 WITHDRAWAL_LOT_DISPUTED). */
+  disputeAcknowledged?: true;
+}
 
 /** `/admin/wallet-withdrawals`: the queue oldest first, one withdrawal, reject, paid (the bank's reference) and void. */
 export function adminWithdrawalsApi(c: ApiClient) {
@@ -106,7 +125,8 @@ export function adminWithdrawalsApi(c: ApiClient) {
     /** Once per key: the same key and body answer it again. */
     paid: (id: string, body: PaidBody) => c.post<{ withdrawal: AdminWithdrawal }>(at(`/${idOf(id, 'withdrawal')}/paid`), { body: {
       method: body.method, reference: body.reference.trim(), paidOn: body.paidOn, ...(body.note?.trim() ? { note: body.note.trim() } : {}),
-      detailsVersion: versionOf(body.detailsVersion), expectedVersion: versionOf(body.expectedVersion), requestKey: keyOf(body.requestKey) } }),
+      detailsVersion: versionOf(body.detailsVersion), expectedVersion: versionOf(body.expectedVersion), requestKey: keyOf(body.requestKey),
+      ...(body.disputeAcknowledged === true ? { disputeAcknowledged: true } : {}) } }),
     /** Only a paid one (the transfer came back): the amount returns to the wallet. */
     void: (id: string, body: { reason: string; expectedVersion: number }) =>
       c.post<{ withdrawal: AdminWithdrawal }>(at(`/${idOf(id, 'withdrawal')}/void`), { body: { reason: body.reason.trim(), expectedVersion: versionOf(body.expectedVersion) } }),
@@ -149,6 +169,14 @@ export const weeklyWait = (w: Pick<Withdrawable, 'nextAllowedAt'>, now = new Dat
 /** The server's code of a refusal, or null. */
 export const withdrawalErrorCode = (err: unknown): string | null =>
   err && typeof err === 'object' && 'code' in err && typeof (err as { code?: unknown }).code === 'string' ? (err as { code: string }).code : null;
+/** r35: the new quote of a 409 WITHDRAWAL_QUOTE_CHANGED (the card fee moved since the screen was read), or null. */
+export function quoteChangedOf(err: unknown): { grossMinor: number; feeMinor: number; transferMinor: number } | null {
+  if (withdrawalErrorCode(err) !== 'WITHDRAWAL_QUOTE_CHANGED') return null;
+  const d = withdrawalErrorDetails(err);
+  const n = (v: unknown) => (Number.isSafeInteger(v) && (v as number) >= 0 ? v as number : null);
+  const grossMinor = n(d.grossMinor), feeMinor = n(d.feeMinor), transferMinor = n(d.transferMinor);
+  return grossMinor !== null && feeMinor !== null && transferMinor !== null ? { grossMinor, feeMinor, transferMinor } : null;
+}
 /** A refusal's safe details (`minimumMinor`, `withdrawableNowMinor`, `nextAllowedAt`). */
 export const withdrawalErrorDetails = (err: unknown): Record<string, unknown> =>
   (err && typeof err === 'object' && 'details' in err && (err as { details?: unknown }).details && typeof (err as { details?: unknown }).details === 'object'

@@ -16,15 +16,16 @@ export default {
 
   /** {masked}: the bank account or UPI ID, partly hidden. */
   'dest.to': 'To: {masked}',
-  'dest.none': 'Add the bank account or UPI ID to send the money to.',
   /** {page}: a link to the page where payout details are added ("Finance", "Earnings"). */
   'dest.elsewhere': 'Add your bank account or UPI ID on the {page} page first.',
   'dest.finance': 'Finance',
   'dest.earnings': 'Earnings',
   /** WQ29b: a lab member who cannot open Finance. */
   'dest.askOwner': 'Ask a lab owner to add payout details in Finance.',
-  'dest.add': 'Add bank account or UPI ID',
-  'dest.saved': 'Saved. Jansetu checks these details before your first withdrawal.',
+  /** WQ48: on the pharmacy's Finance page, where the payout details section is below. */
+  'dest.onPage': 'Add your bank account or UPI ID under “Payout details” on this page first.',
+  /** WQ48: on the pharmacy's Wallet page; {page} is a link to the Finance page. */
+  'movedToFinance': 'To withdraw card money to your bank, open the {page} page.',
   'dest.unverified': 'Jansetu is checking your payout details ({masked}). You can withdraw once they are verified.',
 
   'amount.label': 'Amount to withdraw (₹)',
@@ -42,8 +43,8 @@ export default {
   'quote.send': 'Withdraw {gross}',
   'quote.back': 'Back',
   'done': 'Asked for: {transfer} goes to {masked} once Jansetu pays it out. It is listed below until then.',
-  /** WQ29b: the server worked the fee out differently from the quote shown (the card money changed meanwhile). */
-  'changed': 'The fee changed before it was recorded: card fee {fee}; you receive {transfer} of {gross}. If that is not right, cancel it in the list below.',
+  /** WQ48 (r35): the card fee changed between the check and the withdrawal; the new figures are shown to confirm again. */
+  'quote.changed': 'The card fee changed since you checked. Nothing was withdrawn. Check the new amount, then withdraw again.',
   /** WQ29b: the same request was already recorded earlier and is no longer waiting; {state} is its state now. */
   'replayed': 'This request was already recorded earlier. It is now: {state}.',
 
@@ -103,6 +104,17 @@ export default {
   'error.WITHDRAWAL_LOT_DISPUTED': 'A card dispute was recorded on money this withdrawal holds. Reject it instead of paying it.',
   'error.DISPUTE_NOT_RECORDED': 'Record the card dispute first, then recover the money.',
   'error.NOTHING_TO_RECOVER': 'This top-up was never added to the wallet, so there is nothing to recover.',
+  /** WQ48 (r35). */
+  'error.WITHDRAWAL_QUOTE_CHANGED': 'The card fee changed since you checked. Check the new amount and withdraw again.',
+  /** WQ48 (r35): changing payout details while a withdrawal to them waits. */
+  'error.WITHDRAWAL_OPEN': 'A withdrawal to these details is waiting. Cancel the waiting withdrawal first, then change them.',
+  /** WQ48 (r35): a lab member limited to some branches. */
+  'error.FINANCE_SCOPE_REQUIRED': 'Withdrawals cover the whole lab, so only members who can see every branch can ask for one.',
+  /** WQ48 (r35b): a lab's or a doctor's referral account is paid to that lab's or doctor's own payout details. */
+  'error.REFERRAL_ACCOUNT_USES_HOME': 'Payout details are taken from the lab or doctor’s own account.',
+  'error.REFERRAL_PAYOUTS_DISABLED': 'Paused until tax advice: referral earnings cannot be paid out yet.',
+  'error.SETOFF_ABOVE_AVAILABLE': 'This is more than can be paid from referral earnings now.',
+  'error.WALLET_NOT_FOUND': 'This owner has no wallet or no referral earnings to pay from.',
 
   'admin.title': 'Withdrawals',
   'admin.intro': 'Requests to withdraw wallet money to the bank, oldest first. Pay them by bank transfer or UPI, then mark them paid with the bank’s reference.',
@@ -154,6 +166,13 @@ export default {
   'paid.forget': 'Forget it',
   'paid.forgetConfirm': 'Yes, forget it',
   'paid.forgetConsequence': 'If the earlier request still arrives, the withdrawal is marked paid.',
+  /** WQ48 (r35): the server refused "mark paid" because a card dispute was recorded on the money it holds. */
+  'paid.disputed': 'A card dispute was recorded on money this withdrawal holds. Reject it, unless the bank transfer already went out.',
+  'paid.wentOut': 'The bank transfer already went out',
+  'paid.wentOutConfirm': 'Yes, mark it paid',
+  'paid.wentOutConsequence': 'Mark {transfer} to {masked} as paid although a card dispute was recorded? Nothing more is taken from the wallet for it. Then recover the disputed card top-up on the wallet page: the owner owes that money back.',
+  /** Under a paid withdrawal marked paid after a card dispute; {amount} is owed back by the owner. */
+  'paid.disputeNote': 'Paid after a card dispute: {amount} is owed back.',
 
   'reject.button': 'Reject',
   'reject.reason': 'Why is it rejected? (the owner sees it)',
@@ -199,4 +218,60 @@ export default {
   'recover.replayed': 'This top-up was already recovered. Nothing more was taken.',
   'recover.badge': 'Money taken back',
   'recover.unknown': 'Not confirmed ({error}). The list was read again. Recovering again is safe: a top-up is recovered once.',
+
+  /** WQ48 (r35): the admin's list of card top-ups with a recorded dispute, every wallet. */
+  'disputes.title': 'Card disputes',
+  'disputes.intro': 'Card top-ups whose payment was disputed and lost, newest first. Recover the money from the ones still to recover.',
+  'disputes.filter': 'Show',
+  'disputes.filter.all': 'All',
+  'disputes.state.flagged': 'To recover',
+  'disputes.state.recovered': 'Recovered',
+  /** The top-up was never added to the wallet, so there is nothing to recover. */
+  'disputes.state.blocked': 'Never credited',
+  'disputes.caption': 'Card disputes, newest first',
+  'disputes.wallet': 'Wallet',
+  'disputes.amount': 'Top-up',
+  'disputes.left': 'Left in it',
+  'disputes.when': 'Recorded',
+  'disputes.state': 'State',
+  'disputes.actions': 'Actions',
+  'disputes.none': 'No card disputes here.',
+  /** A payment's short reference (the end of its id; no one's details). */
+  'disputes.ref': 'Payment ref {ref}',
+  'disputes.recoverConsequence': 'Take the {amount} disputed card top-up back from the wallet? It is taken from the balance; what is missing is owed to Jansetu, and the wallet is put on hold. This cannot be undone here.',
+
+  /** WQ48 (r35): an admin wallet page's card top-ups credited before card money was tracked (no lot). */
+  'noLot.title': 'Older card top-ups',
+  'noLot.intro': 'Card top-ups added before card money was tracked. They can never be withdrawn. If the bank took one back, recover it here.',
+  'noLot.none': 'None.',
+  'noLot.caption': 'Older card top-ups, newest first',
+  'noLot.paid': 'Paid',
+  'noLot.amount': 'Amount',
+  'noLot.dispute': 'Card dispute',
+  'noLot.noDispute': 'None recorded',
+  'noLot.disputed': 'Recorded {date}',
+
+  /** WQ48 (r35): an admin wallet that owes Jansetu money, paid from the owner's referral earnings. */
+  'setoff.title': 'Pay what is owed from referral earnings',
+  /** {owed}: what the wallet owes Jansetu. */
+  'setoff.intro': 'The wallet owes {owed}. Pay it from the owner’s referral earnings: what is owed and the referral earnings due both go down by the same amount.',
+  'setoff.paused': 'Paused until tax advice: referral earnings cannot pay what is owed yet.',
+  'setoff.amount': 'Amount (₹)',
+  'setoff.amountHint': 'Up to {owed}, and no more than the referral earnings due.',
+  'setoff.invalid': 'Enter an amount in rupees above zero, up to {owed}.',
+  'setoff.next': 'Next: check',
+  'setoff.consequence': 'Pay {amount} of the {owed} the wallet owes from the owner’s referral earnings? This cannot be undone here. The wallet stays on hold until you release it.',
+  'setoff.confirm': 'Yes, pay it',
+  'setoff.done': 'Paid {amount} from referral earnings.',
+  'setoff.replayed': 'This was already recorded earlier: {amount} paid from referral earnings.',
+  /** {max}: the most that can be paid now. */
+  'setoff.above': 'At most {max} can be paid from referral earnings now.',
+  'setoff.panel': 'Unconfirmed payment from referral earnings',
+  'setoff.unconfirmed': 'The outcome is not known yet ({error}). Sending the same request again is safe: it is recorded once. Or give it up: then it can never be recorded.',
+  'setoff.restored': 'A payment from referral earnings made on this device earlier was not confirmed. Its details are not kept here. Check it, or give it up.',
+  'setoff.notYet': 'Not recorded so far. It may still be on its way.',
+  'setoff.giveUp': 'Give this up',
+  'setoff.givenUp': 'Given up: nothing was paid with that request, and it can never be recorded now.',
+  'setoff.cannotGiveUp': 'It could not be given up yet. Check whether it was recorded, then try again.',
+  'setoff.found': 'It was recorded: {amount} paid from referral earnings.',
 } as const;

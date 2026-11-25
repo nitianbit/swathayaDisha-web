@@ -3,7 +3,7 @@ import { expect, test, type Page, type Route } from '@playwright/test';
 /**
  * WQ29: wallet withdrawals to the bank (backend r32 round 4d, design §26.16.4; switched off on the server until allowed):
  * the pharmacy's "Withdraw to bank" (the quote with the card fee line, ask, list, cancel, the minimum, the weekly limit,
- * the switch off, a lost answer checked by key, payout details added here), the doctor's, and the admin's queue (mark paid
+ * the switch off, a lost answer checked by key; WQ48: on the Finance page, with its payout details section), the doctor's, and the admin's queue (mark paid
  * with the bank's reference, reject, void, a lost answer) and Recover after a card dispute. Mocked API; paise.
  */
 const PH = 'aa'.repeat(12);
@@ -33,6 +33,8 @@ interface Backend {
   lotDisputed: boolean;
   /** The server works the fee out differently from the quote (the card money changed meanwhile). */
   feeShift: number;
+  /** WQ48 (r35): the wallet is on hold (a quote's `reason` is WALLET_FROZEN). */
+  frozen: boolean;
 }
 const rupees = (minor: number) => `₹${(minor / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const feeOf = (amount: number) => (amount === 100_000 ? 2_000 : 0);
@@ -50,7 +52,7 @@ const withdrawal = (i: number, o: Json = {}): Json => {
 async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
   const b: Backend = { calls: [], enabled: true, nowMinor: 300_000, nextAllowedAt: null, destination: { state: 'verified', masked: 'Bank ••••6789', detailsVersion: 3 },
-    withdrawals: [], keys: {}, loseNextRequest: false, weeklyOnRequest: false, losePaidNext: false, flagOnly: false, lotDisputed: false, feeShift: 0,
+    withdrawals: [], keys: {}, loseNextRequest: false, weeklyOnRequest: false, losePaidNext: false, flagOnly: false, lotDisputed: false, feeShift: 0, frozen: false,
     lots: [{ _id: LOT, paymentRecordId: 'c1'.repeat(12), amountMinor: 200_000, gatewayFeeMinor: 4_000, feeState: 'known', disputeState: 'none', closed: false,
       remainingMinor: 150_000, createdAt: '2026-11-10T05:00:00.000Z' }], ...init };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -93,9 +95,12 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
       const sub = own[1]!;
       if (sub === '/withdrawable') {
         const amount = Number(url.searchParams.get('amountMinor') ?? 0);
+        // r35/r35b: `reason` is the first refusal a request of this amount would meet now; `available` = it would go through.
+        const reason = !b.enabled ? 'WITHDRAWALS_DISABLED' : amount < 50_000 ? 'BELOW_MINIMUM' : b.destination.state !== 'verified' ? 'DESTINATION_NOT_VERIFIED'
+          : b.frozen ? 'WALLET_FROZEN' : b.nextAllowedAt ? 'WEEKLY_LIMIT' : amount > b.nowMinor ? 'ABOVE_WITHDRAWABLE' : null;
         return ok(route, { enabled: b.enabled, minimumMinor: 50_000, withdrawableNowMinor: b.nowMinor, availableLater: [{ amountMinor: 50_000, availableAt: LATER }],
-          nextAllowedAt: b.nextAllowedAt, destination: b.destination,
-          ...(amount ? { quote: { grossMinor: amount, feeMinor: feeOf(amount), transferMinor: amount - feeOf(amount), available: amount <= b.nowMinor } } : {}) });
+          nextAllowedAt: b.nextAllowedAt, destination: { ...b.destination, details: null },
+          ...(amount ? { quote: { grossMinor: amount, feeMinor: feeOf(amount), transferMinor: amount - feeOf(amount), available: reason === null, reason } } : {}) });
       }
       if (sub === '/withdrawals' && method === 'POST') {
         if (!b.enabled) return refuse(route, 503, 'WITHDRAWALS_DISABLED');
@@ -104,8 +109,13 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
         if (b.keys[key]) return ok(route, { withdrawal: b.withdrawals.find((x) => x._id === b.keys[key]), wallet: {}, replayed: true });
         if (amount < 50_000) return refuse(route, 400, 'WITHDRAWAL_BELOW_MINIMUM', { minimumMinor: 50_000 });
         if (b.weeklyOnRequest) { b.nextAllowedAt = NEXT_WEEK; return refuse(route, 409, 'WITHDRAWAL_WEEKLY_LIMIT', { nextAllowedAt: NEXT_WEEK }); }
+        // r35: the fee on the card money held now; a transfer other than the one the person was shown is refused with the new quote.
+        const fee = feeOf(amount) + b.feeShift;
+        if (body!.expectedTransferMinor !== undefined && body!.expectedTransferMinor !== amount - fee) {
+          return refuse(route, 409, 'WITHDRAWAL_QUOTE_CHANGED', { grossMinor: amount, feeMinor: fee, transferMinor: amount - fee });
+        }
         const w = withdrawal(b.withdrawals.length + 1, { grossMinor: amount, destination: { masked: b.destination.masked, detailsVersion: body!.detailsVersion },
-          ...(b.feeShift ? { feeMinor: feeOf(amount) + b.feeShift, transferMinor: amount - feeOf(amount) - b.feeShift } : {}) });
+          ...(b.feeShift ? { feeMinor: fee, transferMinor: amount - fee } : {}) });
         b.withdrawals.unshift(w);
         b.keys[key] = String(w._id);
         b.nowMinor -= amount;
@@ -128,10 +138,22 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
       }
     }
     if (path === '/pharmacy-assisted/finance/payout-details' && method === 'PUT') {
-      b.destination = { state: 'unverified', masked: 'UPI asha@okbank', detailsVersion: 1 };
+      // r35: refused while a withdrawal to the current details waits.
+      if (b.withdrawals.some((x) => x.state === 'requested')) return refuse(route, 409, 'WITHDRAWAL_OPEN');
+      b.destination = { state: 'unverified', masked: 'UPI asha@okbank', detailsVersion: b.destination.detailsVersion + 1 };
       return ok(route, { _id: 'f1'.repeat(12), ownerKind: 'pharmacy_referral', ownerId: PH, payoutDetails: { method: 'upi', upiId: 'asha@okbank' }, payoutDetailsState: 'unverified',
         payoutDetailsVersion: 1 });
     }
+    // WQ48 (r35): the pharmacy's Finance page around the section (its blocks, an empty statement, its rates).
+    if (path === '/pharmacy-assisted/finance') {
+      return ok(route, { wallet: { balanceMinor: b.nowMinor, withdrawableNowMinor: b.nowMinor, availableLater: [{ amountMinor: 50_000, availableAt: LATER }], receivableMinor: 0, frozen: b.frozen },
+        referral: { earnedMinor: 0, paidMinor: 0, dueMinor: 0, cutsEnabled: true, payoutsEnabled: false },
+        withdrawals: { openCount: b.withdrawals.filter((x) => x.state === 'requested').length, lastPaidAt: null, enabled: b.enabled },
+        payoutDetails: { ...b.destination, details: b.destination.masked?.startsWith('UPI') ? { method: 'upi', upiId: 'asha@okbank' }
+          : b.destination.masked ? { method: 'bank', accountName: 'Asha Medicals', ifsc: 'HDFC0001234', accountNumberLast4: '6789', accountNumberMasked: 'XXXX6789' } : null } });
+    }
+    if (path === '/pharmacy-assisted/finance/statement') return ok(route, [], 200, { pagination: { nextCursor: null } });
+    if (path === '/pharmacy-assisted/referral-rules') return ok(route, [], 200, { switches: { cutsEnabled: true, payoutsEnabled: false } });
     // ── Admin ──
     if (path === '/admin/wallet-withdrawals') {
       const state = url.searchParams.get('state');
@@ -142,9 +164,12 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
       const w = b.withdrawals.find((x) => x._id === adm[1])!;
       if (!adm[2]) return ok(route, w);
       if (body!.expectedVersion !== w.version && !(adm[3] === 'paid' && w.state === 'paid')) return refuse(route, 409, 'WITHDRAWAL_CHANGED');
-      if (adm[3] === 'paid' && b.lotDisputed) return refuse(route, 409, 'WITHDRAWAL_LOT_DISPUTED');
+      if (adm[3] === 'paid' && b.lotDisputed && body!.disputeAcknowledged !== true) return refuse(route, 409, 'WITHDRAWAL_LOT_DISPUTED');
       if (adm[3] === 'paid') {
-        if (w.state !== 'paid') Object.assign(w, { state: 'paid', version: Number(w.version) + 1, paid: { method: body!.method, reference: body!.reference, paidOn: body!.paidOn, at: NOW.toISOString() } });
+        if (w.state !== 'paid') {
+          Object.assign(w, { state: 'paid', version: Number(w.version) + 1, paid: { method: body!.method, reference: body!.reference, paidOn: body!.paidOn, at: NOW.toISOString(),
+            ...(b.lotDisputed ? { disputeAcknowledged: true, disputedMinor: Number(w.grossMinor) } : {}) } });
+        }
         if (b.losePaidNext) { b.losePaidNext = false; return route.abort('connectionreset'); }
       } else Object.assign(w, { state: adm[3] === 'reject' ? 'rejected' : 'voided', version: Number(w.version) + 1, reason: body!.reason });
       return ok(route, { withdrawal: w });
@@ -186,7 +211,7 @@ const posts = (b: Backend, end: string) => b.calls.filter((c) => c.method === 'P
 test('the quote shows the card fee line before asking; asked for, listed, then cancelled back to the wallet', async ({ page }) => {
   const b = await mockBackend(page);
   await signIn(page);
-  await page.goto('/#/pharmacy/wallet');
+  await page.goto('/#/pharmacy/finance');
   await expect(section(page)).toContainText('Withdrawable now');
   await expect(section(page)).toContainText('₹3,000.00');
   await expect(section(page)).toContainText('₹500.00 on'); // card money that becomes withdrawable later
@@ -214,7 +239,7 @@ test('the quote shows the card fee line before asking; asked for, listed, then c
 test('below the minimum or above what is withdrawable now: said before asking; nothing is sent', async ({ page }) => {
   const b = await mockBackend(page);
   await signIn(page);
-  await page.goto('/#/pharmacy/wallet');
+  await page.goto('/#/pharmacy/finance');
   const amount = section(page).getByLabel('Amount to withdraw (₹)');
   await amount.fill('400');
   await section(page).getByRole('button', { name: 'Next: see the fee' }).click();
@@ -228,7 +253,7 @@ test('below the minimum or above what is withdrawable now: said before asking; n
 test('the weekly limit: the server’s refusal is said with the next date, and then no form is offered', async ({ page }) => {
   const b = await mockBackend(page, { weeklyOnRequest: true });
   await signIn(page);
-  await page.goto('/#/pharmacy/wallet');
+  await page.goto('/#/pharmacy/finance');
   await section(page).getByLabel('Amount to withdraw (₹)').fill('600');
   await section(page).getByRole('button', { name: 'Next: see the fee' }).click();
   await expect(page.getByRole('group', { name: 'Check and withdraw' })).toContainText('No card fee. You receive ₹600.00.');
@@ -241,7 +266,7 @@ test('the weekly limit: the server’s refusal is said with the next date, and t
 test('switched off on the server: said plainly, and nothing to ask for', async ({ page }) => {
   await mockBackend(page, { enabled: false });
   await signIn(page);
-  await page.goto('/#/pharmacy/wallet');
+  await page.goto('/#/pharmacy/finance');
   await expect(section(page)).toContainText('Withdrawals to your bank are not open yet.');
   await expect(section(page).getByLabel('Amount to withdraw (₹)')).toHaveCount(0);
   await expect(section(page)).not.toContainText('Withdrawable now');
@@ -250,7 +275,7 @@ test('switched off on the server: said plainly, and nothing to ask for', async (
 test('a lost answer and a reload: only the key is kept; Check finds it by key, never asked for twice', async ({ page }) => {
   const b = await mockBackend(page, { loseNextRequest: true });
   await signIn(page);
-  await page.goto('/#/pharmacy/wallet');
+  await page.goto('/#/pharmacy/finance');
   await section(page).getByLabel('Amount to withdraw (₹)').fill('1000');
   await section(page).getByRole('button', { name: 'Next: see the fee' }).click();
   await page.getByRole('button', { name: 'Withdraw ₹1,000.00' }).click();
@@ -265,18 +290,21 @@ test('a lost answer and a reload: only the key is kept; Check finds it by key, n
   expect(stored).not.toContain('6789');
 });
 
-test('no payout details yet: the pharmacy adds them here; then they wait for Jansetu’s check', async ({ page }) => {
+test('no payout details yet: the pharmacy adds them under Payout details on the Finance page; then they wait for Jansetu’s check', async ({ page }) => {
   const b = await mockBackend(page, { destination: { state: 'none', masked: null, detailsVersion: 0 } });
   await signIn(page);
-  await page.goto('/#/pharmacy/wallet');
-  await expect(section(page)).toContainText('Add the bank account or UPI ID to send the money to.');
+  await page.goto('/#/pharmacy/finance');
+  await expect(section(page)).toContainText('Add your bank account or UPI ID under “Payout details” on this page first.');
   await expect(section(page).getByLabel('Amount to withdraw (₹)')).toHaveCount(0);
-  await section(page).getByRole('button', { name: 'Add bank account or UPI ID' }).click();
-  await section(page).getByLabel('UPI', { exact: true }).check();
-  await section(page).getByLabel('UPI ID').fill('asha@okbank');
-  await section(page).getByRole('button', { name: 'Review the change' }).click();
-  await section(page).getByRole('button', { name: 'Save payout details' }).click();
-  await expect(section(page).getByText('Saved. Jansetu checks these details before your first withdrawal.')).toBeVisible();
+  const details = page.getByRole('region', { name: 'Payout details' });
+  await expect(details).toContainText('No payout details yet.');
+  await details.getByRole('button', { name: 'Add payout details' }).click();
+  await details.getByLabel('UPI', { exact: true }).check();
+  await details.getByLabel('UPI ID').fill('asha@okbank');
+  await details.getByRole('button', { name: 'Review the change' }).click();
+  await details.getByRole('button', { name: 'Save payout details' }).click();
+  await expect(details.getByText('Saved. Jansetu checks these details before your next withdrawal.')).toBeVisible();
+  await expect(details).toContainText('UPI asha@okbank Waiting for verification');
   await expect(section(page)).toContainText('Jansetu is checking your payout details (UPI asha@okbank).');
   const put = b.calls.find((c) => c.method === 'PUT' && c.path === '/pharmacy-assisted/finance/payout-details');
   expect(put?.body).toMatchObject({ method: 'upi', upiId: 'asha@okbank', expectedDetailsVersion: 0 });
@@ -386,8 +414,8 @@ test('WQ29b: a pharmacy’s card dispute (flag-only switch off, the default) say
   expect(b.calls.filter((c) => c.path.endsWith('/recover'))).toHaveLength(0);
 });
 
-test('WQ29b: Mark paid refused on disputed money is said in words', async ({ page }) => {
-  await mockBackend(page, { withdrawals: [withdrawal(1)], lotDisputed: true });
+test('WQ48: Mark paid refused on disputed money: reject it, or (the transfer went out) mark it paid acknowledging the dispute', async ({ page }) => {
+  const b = await mockBackend(page, { withdrawals: [withdrawal(1)], lotDisputed: true });
   await signIn(page, 'Admin');
   await page.goto('/#/admin/withdrawals');
   const row = page.getByRole('table', { name: 'Withdrawals, oldest first' }).getByRole('row').nth(1);
@@ -395,19 +423,48 @@ test('WQ29b: Mark paid refused on disputed money is said in words', async ({ pag
   await row.getByLabel('Bank reference (UTR)').fill('UTR12345678');
   await row.getByRole('button', { name: 'Next: check' }).click();
   await row.getByRole('button', { name: 'Yes, mark it paid' }).click();
-  await expect(row.getByText('A card dispute was recorded on money this withdrawal holds. Reject it instead of paying it.')).toBeVisible();
+  await expect(row.getByText('A card dispute was recorded on money this withdrawal holds. Reject it, unless the bank transfer already went out.')).toBeVisible();
   await expect(row.getByRole('button', { name: 'Reject' })).toBeVisible();
+  // Offered only after the server's refusal, behind a second step that says what it means.
+  await row.getByRole('button', { name: 'The bank transfer already went out' }).click();
+  await expect(row.getByText('Then recover the disputed card top-up on the wallet page', { exact: false })).toBeVisible();
+  await row.getByRole('button', { name: 'Yes, mark it paid' }).click();
+  await expect(page.getByText('Marked paid: ref 0000A1, ₹980.00.')).toBeVisible();
+  const paid = b.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/paid'));
+  expect(paid).toHaveLength(2);
+  expect(paid[0]!.body).not.toHaveProperty('disputeAcknowledged');
+  expect(paid[1]!.body).toMatchObject({ reference: 'UTR12345678', disputeAcknowledged: true });
+  expect(paid[1]!.body!.requestKey).not.toBe(paid[0]!.body!.requestKey);
+  await page.getByLabel('Show').selectOption({ label: 'Paid' });
+  await expect(page.getByRole('table', { name: 'Withdrawals, oldest first' })).toContainText('Paid after a card dispute: ₹1,000.00 is owed back.');
 });
 
-test('WQ29b: a fee worked out differently from the quote is said with the new figures; a resent request no longer waiting says its state', async ({ page }) => {
+test('WQ48: without a refusal, Mark paid never offers to acknowledge a dispute', async ({ page }) => {
+  await mockBackend(page, { withdrawals: [withdrawal(1)] });
+  await signIn(page, 'Admin');
+  await page.goto('/#/admin/withdrawals');
+  const row = page.getByRole('table', { name: 'Withdrawals, oldest first' }).getByRole('row').nth(1);
+  await row.getByRole('button', { name: 'Mark paid' }).click();
+  await expect(row.getByRole('button', { name: 'The bank transfer already went out' })).toHaveCount(0);
+});
+
+test('WQ48: the fee moved since the check: nothing is withdrawn, the new quote is shown and confirmed again; a resent request no longer waiting says its state', async ({ page }) => {
   const b = await mockBackend(page, { feeShift: 1_000 });
   await signIn(page);
-  await page.goto('/#/pharmacy/wallet');
+  await page.goto('/#/pharmacy/finance');
   await section(page).getByLabel('Amount to withdraw (₹)').fill('1000');
   await section(page).getByRole('button', { name: 'Next: see the fee' }).click();
-  await expect(page.getByRole('group', { name: 'Check and withdraw' })).toContainText('Card fee on unspent card money: ₹20.00.');
+  const review = page.getByRole('group', { name: 'Check and withdraw' });
+  await expect(review).toContainText('Card fee on unspent card money: ₹20.00.');
   await page.getByRole('button', { name: 'Withdraw ₹1,000.00' }).click();
-  await expect(section(page).getByText('The fee changed before it was recorded: card fee ₹30.00; you receive ₹970.00 of ₹1,000.00.', { exact: false })).toBeVisible();
+  await expect(section(page).getByText('The card fee changed since you checked. Nothing was withdrawn.', { exact: false })).toBeVisible();
+  await expect(review).toContainText('Card fee on unspent card money: ₹30.00. You receive ₹970.00 of ₹1,000.00.');
+  expect(b.withdrawals).toHaveLength(0);
+  await page.getByRole('button', { name: 'Withdraw ₹1,000.00' }).click();
+  await expect(section(page).getByText('Asked for: ₹970.00 goes to Bank ••••6789 once Jansetu pays it out.', { exact: false })).toBeVisible();
+  const asked = posts(b, '/wallet/withdrawals');
+  expect(asked.map((c) => c.body!.expectedTransferMinor)).toEqual([98_000, 97_000]);
+  expect(asked[1]!.body!.requestKey).not.toBe(asked[0]!.body!.requestKey);
 
   // A lost answer, then the same request sent again after that withdrawal was cancelled elsewhere.
   b.feeShift = 0;
@@ -421,5 +478,36 @@ test('WQ29b: a fee worked out differently from the quote is said with the new fi
   Object.assign(b.withdrawals[0]!, { state: 'cancelled', version: 1 });
   await section(page).getByRole('button', { name: 'Send the same request again' }).click();
   await expect(section(page).getByText('This request was already recorded earlier. It is now: Cancelled.')).toBeVisible();
-  expect(posts(b, '/wallet/withdrawals')).toHaveLength(3);
+  expect(posts(b, '/wallet/withdrawals')).toHaveLength(4);
+});
+
+test('WQ48: a quoted amount the server would refuse is said with its reason (the wallet on hold)', async ({ page }) => {
+  const b = await mockBackend(page, { frozen: true });
+  await signIn(page);
+  await page.goto('/#/pharmacy/finance');
+  await section(page).getByLabel('Amount to withdraw (₹)').fill('1000');
+  await section(page).getByRole('button', { name: 'Next: see the fee' }).click();
+  await expect(section(page).getByText('The wallet is on hold, so nothing can be withdrawn. Please contact Jansetu support.')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Check and withdraw' })).toHaveCount(0);
+  expect(posts(b, '/wallet/withdrawals')).toHaveLength(0);
+});
+
+test('WQ48: payout details cannot change while a withdrawal to them waits: cancel it first', async ({ page }) => {
+  const b = await mockBackend(page, { withdrawals: [withdrawal(1)] });
+  await signIn(page);
+  await page.goto('/#/pharmacy/finance');
+  const details = page.getByRole('region', { name: 'Payout details' });
+  await expect(details).toContainText('Bank ••••6789 Verified');
+  await details.getByRole('button', { name: 'Change payout details' }).click();
+  // Prefilled from the masked details: the name and IFSC; the account number is typed again.
+  await expect(details.getByLabel('Account holder name')).toHaveValue('Asha Medicals');
+  await expect(details.getByLabel('IFSC')).toHaveValue('HDFC0001234');
+  await expect(details.getByLabel('Account number', { exact: true })).toHaveValue('');
+  await details.getByLabel('Account number', { exact: true }).fill('123456789012');
+  await details.getByLabel('Account number again').fill('123456789012');
+  await details.getByRole('button', { name: 'Review the change' }).click();
+  await details.getByRole('button', { name: 'Save payout details' }).click();
+  await expect(details.getByText('A withdrawal to these details is waiting. Cancel the waiting withdrawal first, then change them.')).toBeVisible();
+  expect(b.destination.state).toBe('verified');
+  expect(b.calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
 });

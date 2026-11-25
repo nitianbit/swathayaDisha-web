@@ -1,16 +1,17 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import {
-  doctorWalletApi, movementLabel, pharmacyPayoutApi, pharmacyWalletApi, pharmacyWithdrawalsApi, signedPaiseOf, walletBalancePaise, walletState, type Page, type PharmacyWallet, type WalletMovement,
+  doctorWalletApi, isReferralSetOff, movementLabel, pharmacyWalletApi, signedPaiseOf, walletBalancePaise, walletState, type Page, type PharmacyWallet, type WalletMovement,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
+import { Link } from 'react-router';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, Parts } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { usePharmacyId } from './ownedOp.tsx';
 import { TopUpForm } from './topup.tsx';
 import { t } from '../../i18n/pharmacy/index.ts';
-import { WithdrawSection } from './withdrawals.tsx';
+import { t as wt } from '../../i18n/withdrawals/index.ts';
 
 /** WQ12: the pharmacy's Jansetu wallet (`GET /pharmacy-wallet`, `/transactions`): balance, hold, history, top-ups. */
 export function WalletScreen() {
@@ -71,9 +72,8 @@ function Wallet({ pharmacyId }: { pharmacyId: string }) {
         <TopUpForm pharmacyId={pharmacyId} />
       </section>
 
-      {/* WQ29 (r32): withdrawals to the bank (switched off on the server until allowed); the destination is added here. */}
-      <WithdrawSection source={{ owner: `pharmacy:${pharmacyId}`, walletKey: ['pharmacy-wallet', pharmacyId], api: pharmacyWithdrawalsApi(api), canAct: true,
-        destination: { save: (body, version) => pharmacyPayoutApi(api).setPayoutDetails(body, version) } }} />
+      {/* WQ48: withdrawals to the bank moved to the Finance page (with the payout details); this page's one action is Add money. */}
+      <p className="ws-muted"><Parts of={wt.rich('movedToFinance', { page: <Link key="page" to="/pharmacy/finance">{wt('dest.finance')}</Link> })} /></p>
 
       <WalletHistory q={movements} empty={t('wallet.topUpsBookingPaymentsAnd')} pager={movements.data && movements.data.totalPages > 1 && (
         <nav className="ws-pager" aria-label={t('wallet.walletHistoryPages')}>
@@ -158,7 +158,9 @@ export function MovementsTable({ rows, notes = false }: { rows: readonly WalletM
                   {m.status && m.status !== 'completed' && <> <Badge tone="warn">{m.status === 'pending' ? t('wallet.status.pending') : t('wallet.status.failed')}</Badge></>}
                 </td>
                 {notes && <td>{m.notes || '—'}</td>}
-                <td>{signed >= 0 ? <span>+{formatRupees(signed / 100)}</span> : <span className="ws-warn-text">−{formatRupees(-signed / 100)}</span>}</td>
+                {/* WQ48 (r35b): paid from referral earnings moves no wallet money: its amount, without a sign. */}
+                <td>{isReferralSetOff(m) ? formatRupees(Math.abs(Number(m.amountPaise ?? 0)) / 100)
+                  : signed >= 0 ? <span>+{formatRupees(signed / 100)}</span> : <span className="ws-warn-text">−{formatRupees(-signed / 100)}</span>}</td>
                 <td>{formatRupees(after)}</td>
               </tr>
             );

@@ -1,38 +1,26 @@
 import { Fragment } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  isFinanceReader, LEDGER_KIND_LABEL, REFERRAL_CATEGORIES, referralReadsApi, referralRowOf, referralRuleText, type PeriodQuery, type ReferralCategory,
-  type ReferralReader, type ReferralRow,
+  isFinanceReader, LEDGER_KIND_LABEL, referralReadsApi, referralRowOf, referralRuleText, type Page, type PeriodQuery, type ReferralCategory,
+  type ReferralReader, type ReferralRow, type ReferralStatementLine,
 } from '@jansetu/api';
 import { formatPaise } from '@jansetu/i18n';
 import { Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
 import { t } from '../../i18n/referral/index.ts';
 import { messageOf } from '../../errors.ts';
-import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { CursorPager, useCursorPages } from '../pharmacy/cursorList.tsx';
-import { usePharmacyId } from '../pharmacy/ownedOp.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from '../partner/scope.tsx';
 import { Signed, StatementPeriodFields, useStatementPeriod } from './finance.tsx';
 
 /**
- * WQ26 / WQ26b (r33): a booking partner's referral earnings, one page for a pharmacy (`/pharmacy-assisted/referral*`) and a
+ * WQ26 / WQ26b (r33): a booking partner's referral earnings (WQ48: the pharmacy's are on its Finance page; its rates and its
+ * statement come from here), one page for a pharmacy (`/pharmacy-assisted/referral*`, until WQ48) and a
  * lab (`/partner-workspace/assisted/referral*`, members with `finance.view` and partner-wide scope): what its cuts earned,
  * were paid and are due, its rates (read only), and the statement (date, short ref, category, base, cut; a lab booking's
  * cut lines under it) in cursor pages, of a period with its CSV (the finance statements' period fields). Payouts are paused
  * until the CA answers (O1). No patient names. WQ26c: a failed read again keeps what was read (data first, then the error).
  */
-export function PharmacyReferralEarningsScreen() {
-  const pharmacyId = usePharmacyId();
-  return (
-    <>
-      <PageHeading title={t('referralEarnings.referralEarnings')}>{t('referralEarnings.whatYourPharmacyEarnsFor')}</PageHeading>
-      <ReferralEarnings key={pharmacyId} reader={{ kind: 'pharmacy' }} queryKey={['pharmacy-referral', pharmacyId]}
-        categories={REFERRAL_CATEGORIES} />
-    </>
-  );
-}
-
 /** `/partner/referral`: a lab's own (the route and the server: `finance.view` and partner-wide scope; labs book consultations). */
 export function LabReferralEarningsScreen() {
   const ctx = usePartnerScope();
@@ -64,7 +52,7 @@ function ReferralEarnings({ reader, queryKey, categories }: { reader: ReferralRe
   const { api } = useSession();
   const r = referralReadsApi(api, reader);
   const summary = useQuery({ queryKey: [...queryKey, 'summary'], queryFn: () => r.summary() });
-  const rules = useQuery({ queryKey: [...queryKey, 'rules'], queryFn: () => r.rules() });
+  const rules = useReferralRules(reader, queryKey);
   const statementPeriod = useStatementPeriod();
   const s = summary.data;
   return (
@@ -87,21 +75,7 @@ function ReferralEarnings({ reader, queryKey, categories }: { reader: ReferralRe
 
       <section className="ws-section" aria-labelledby="ref-rates-h">
         <h2 id="ref-rates-h">{t('referralEarnings.yourRates')}</h2>
-        {!rules.data ? (rules.isError ? <ErrorState message={messageOf(rules.error)} onRetry={() => void rules.refetch()} />
-          : <Loading label={t('referralEarnings.loadingYourRates')} />)
-          : (
-            <>
-              <dl className="ws-dl">
-                {categories.map((c) => (
-                  <Fragment key={c}>
-                    <dt>{categoryWord(c)}</dt><dd>{referralRuleText(rules.data.rules.find((x) => x.category === c))}</dd>
-                  </Fragment>
-                ))}
-              </dl>
-              {rules.data.switches?.cutsEnabled === false && <p className="ws-muted">{t('referralEarnings.jansetuHasNotSwitchedReferral')}</p>}
-              <p className="ws-muted">{t('referralEarnings.jansetuSetsTheseRatesA')}</p>
-            </>
-          )}
+        <ReferralRates q={rules} categories={categories} />
       </section>
 
       <section className="ws-section" aria-labelledby="ref-st-h">
@@ -116,9 +90,37 @@ function ReferralEarnings({ reader, queryKey, categories }: { reader: ReferralRe
   );
 }
 
-/** The statement of one period, newest first in cursor pages (keyed by the period: a new period starts at its first page). */
-function StatementList({ load, queryKey, period, filtered }: {
-  load: ReturnType<typeof referralReadsApi>['statement']; queryKey: readonly string[]; period: PeriodQuery; filtered: boolean;
+/** The booker's rates with the switches (WQ48: also on the pharmacy's Finance page). */
+export function useReferralRules(reader: ReferralReader, queryKey: readonly unknown[]) {
+  const { api } = useSession();
+  return useQuery({ queryKey: [...queryKey, 'rules'], queryFn: () => referralReadsApi(api, reader).rules() });
+}
+
+/** The rates per category, read only (Jansetu sets them). */
+export function ReferralRates({ q, categories }: { q: ReturnType<typeof useReferralRules>; categories: readonly ReferralCategory[] }) {
+  if (!q.data) return q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} /> : <Loading label={t('referralEarnings.loadingYourRates')} />;
+  const rules = q.data;
+  return (
+    <>
+      <dl className="ws-dl">
+        {categories.map((c) => (
+          <Fragment key={c}>
+            <dt>{categoryWord(c)}</dt><dd>{referralRuleText(rules.rules.find((x) => x.category === c))}</dd>
+          </Fragment>
+        ))}
+      </dl>
+      {rules.switches?.cutsEnabled === false && <p className="ws-muted">{t('referralEarnings.jansetuHasNotSwitchedReferral')}</p>}
+      <p className="ws-muted">{t('referralEarnings.jansetuSetsTheseRatesA')}</p>
+    </>
+  );
+}
+
+/**
+ * The statement of one period, newest first in cursor pages (keyed by the period: a new period starts at its first page).
+ * WQ48: also the pharmacy Finance statement's "Referral earnings" (`load`: its `kind=referral` read, the same signature).
+ */
+export function StatementList({ load, queryKey, period, filtered }: {
+  load: (before?: string, limit?: number, q?: PeriodQuery) => Promise<Page<ReferralStatementLine>>; queryKey: readonly unknown[]; period: PeriodQuery; filtered: boolean;
 }) {
   const pages = useCursorPages();
   const statement = useQuery({ queryKey: [...queryKey, period, pages.cursor], queryFn: () => load(pages.cursor || undefined, undefined, period) });

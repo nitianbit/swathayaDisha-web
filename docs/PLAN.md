@@ -2349,6 +2349,61 @@ what is withdrawable is assumed); (3) no list of top-ups credited without a lot,
    "Voided: …"): a paid, rejected or voided row leaves the filter shown when it is read again, and its own confirmation
    with it. The ref is the last six characters of the withdrawal's id (no one's details), also shown on each row.
 
+## WQ48 the 4f finance screens (phase 4e/4f web) (2026-11-25, branch `wq48/finance-screens`)
+
+From web stage 5ade2d5, with origin/stage 53e523e (the i18n integration) merged before any code, so every new word is in a
+catalogue with `t()`. Against backend r35 `m0/r35-phase4ef` bbd6a64b (design §26.10, §26.18.3; stage 198ccc5b) and the r35b
+shapes the coordinator sent (`quote.available` = would go through; `referral.setOffMinor`; set-off wallet rows as
+`adjustment`/`receivable_setoff`; a referral account's `home`; 409 `REFERRAL_ACCOUNT_USES_HOME`; a branch-limited requester
+may cancel). Mocked API in the journeys. Plain words, one primary action per screen.
+
+- **Pharmacy › Finance** (`/pharmacy/finance`, nav "Finance"; `screens/pharmacy/FinanceScreen.tsx`): three tiles from
+  `GET /pharmacy-assisted/finance` (wallet balance with withdrawable now/later, owed and on hold; card money = now + later;
+  referral earned with paid, set off, due and "payouts are paused"), **Withdraw** (the shared `WithdrawSection`; its
+  destination points to the section below), **Payout details** (the masked line and its state; the shared
+  `PayoutDetailsForm` prefilled from `payoutDetails.details`, the account number typed again; `PUT …/finance/payout-details`
+  with `expectedDetailsVersion`), one **Statement** with a Wallet / Referral earnings choice, the shared period fields and
+  CSV (`…/finance/statement?kind=` in cursor pages; `pharmacy-wallet-statement….csv` / `pharmacy-referral-statement….csv`;
+  wallet rows in the wallet history table, referral rows in the referral page's table), and the referral **rates**.
+- **Folded in:** the pharmacy's "Referral earnings" page is now the Finance page's rates section plus the statement's
+  Referral choice; one nav item; `/pharmacy/referral` redirects to Finance. The pharmacy's Wallet page keeps Add money and
+  links to Finance for withdrawals (one primary action each). **The lab keeps its own Referral earnings page**: the lab's
+  Finance is its settlement ledger with its own statement, payouts and events, and the lab has no `kind=` statement, so
+  folding would put two statements with two balances on one page. Its Finance gets the referral tile with a link instead.
+- **Lab and doctor Finance**: the referral and withdrawals tiles from the new blocks (`null`, a clinic: hidden);
+  `financeTiles.tsx` is shared by the three pages.
+- **Withdrawals**: the request sends `expectedTransferMinor` (the transfer shown); 409 `WITHDRAWAL_QUOTE_CHANGED` shows its
+  `details` as the new quote to confirm again (a new key; nothing was withdrawn); WQ29b's "fee changed" note is gone. A
+  quote that cannot go through is said by its `reason` (the words each refusal already had). `WITHDRAWAL_OPEN` ("Cancel the
+  waiting withdrawal first") on every payout-details form (the shared one and the doctor's), `REFERRAL_ACCOUNT_USES_HOME`
+  too. A lab member with `wallet.manage` but branch-limited sees "Withdrawals cover the whole lab…" (`FINANCE_SCOPE_REQUIRED`)
+  instead of the form, and keeps Cancel (r35b: the requester may cancel; the server decides whose it is).
+- **Admin Mark paid**: only after the server refuses with `WITHDRAWAL_LOT_DISPUTED`, "The bank transfer already went out"
+  behind a confirm sends `disputeAcknowledged: true` (a new request); a paid row says "Paid after a card dispute: ₹… is owed
+  back."
+- **Admin › Card disputes** (`/admin/wallet-disputes`, nav "Card disputes"; `GET /admin/wallet-disputes?state`): To recover
+  (default) / Recovered / Never credited / All, a link to each wallet, Recover by lot or by payment id where flagged.
+- **Admin wallet pages** (pharmacy, lab, doctor): "Older card top-ups" (`…/topups-without-lot`) with Recover by payment id
+  where a dispute is recorded; "Pay what is owed from referral earnings" while the wallet owes: one owned request
+  (`setoff-from-referral` with a key; a lost answer checked by key, sent again or given up), shown only when the server
+  allows it: "Paused until tax advice" while referral payouts are off. The switch is read from any referral account's
+  `payoutsPaused` (`GET /settlements/accounts?ownerKind=referral&limit=1`; none = hidden).
+- **Admin › Settlements**: the owner filter takes the three referral kinds and "Referral (all)"; referral rows show
+  "Paused until tax advice" and (r35b) their home account's masked details. A referral account's page names its home
+  account's details (with a link; no edit there) and its payout form uses the home's version and state, or says "Paused
+  until tax advice".
+- **Shared, not copied**: `useRecover` (lots, older top-ups, disputes), `StatementPeriodFields`/`useStatementPeriod`, the
+  referral `StatementList` and `ReferralRates` (exported from the referral page), `MovementsTable`, `PayoutDetailsForm`
+  (its `account` is now only the destination and its version). The in-section destination form of WQ29 is gone (no caller).
+- **i18n**: words in the `withdrawals`, `finance`, `shell` and api `finance`/`assisted` catalogues; nothing added to the
+  allowlist.
+
+API gaps: (1) the admin's wallet pages have no read of the switch or of the owner's referral due, so the set-off section
+infers the switch from a referral account's `payoutsPaused` and learns the most it can pay from a refusal's `details`;
+(2) the owner's withdrawal view has no requester, so a branch-limited manager is offered Cancel on every waiting
+withdrawal and the server refuses the ones it did not ask for; (3) `topups-without-lot` has no recovered marker, so Recover
+stays offered after it (a repeat answers "already recovered").
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -2679,6 +2734,7 @@ sign-in and a reload the page showed "Signing you in…" or the sign-in screen. 
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ48 the 4f finance screens (on 5ade2d5 + origin/stage 53e523e) | Against r35 bbd6a64b (§26.10, §26.18.3) and the r35b shapes (mocked API). typecheck clean; Vitest 525/525 (+5 in walletFinance.test.ts: the pharmacy finance and statement routes with cursor and period, `expectedTransferMinor` and the changed quote read from the refusal, `disputeAcknowledged` only when asked, the disputes, top-ups without a lot and set-off routes with their checks, the referral owner kinds and the set-off row's words); Playwright finance-4f (new) + withdrawals + referral-cuts + finance + lab-wallet + doctor-wallet + pharmacy-extras 206/206 on desktop and tablet (finance-4f 18 = 9 journeys x 2; withdrawals 32 (+6: the dispute acknowledged after the refusal, never offered without it, the quote reason, payout details refused while a withdrawal waits; the fee-changed and payout-details journeys rewritten for r35 and the Finance page); referral-cuts' two pharmacy journeys moved to Finance) on a temporary config (port 5561, deleted). The full workspace suite via pw-slot.sh is still to run. |
 | 2026-11-25 | WQ45 rounds 6e, 6f, 6i (pharmacy and doctor screens) on wq45a 3233a59 + the WQ24b re-check fixes | typecheck clean; Vitest 506/507 (the literal scan and the catalogue check pass with the 49 files off the allowlist; the one failure, `components/NoShowMove.test.tsx` WQ11b, is a 5 s timeout under load that fails the same way on origin/stage and passed in the wq45a run); Playwright workspace on a temporary config, port 5566 (5556 was held by another agent; `reuseExistingServer: false`, deleted): 1011/1052 with the machine at load 64, then the 41 failures (all 30 s timeouts: page.reload, "Signing you in…") 41/41 with `--last-failed --workers=2`; no assertion changed; `VITE_API_SAME_ORIGIN=true npm run build --workspace apps/workspace` built. |
 | 2026-11-25 | WQ29c leftovers (on add6328) | typecheck clean; Vitest 513/513; Playwright withdrawals 26/26 (the admin journey now checks the three notices by short ref; the mock's ids end in their number) on a temporary config (port 5559, deleted). |
 | 2026-11-25 | WQ29b review fixes (09c8e4f) + origin/stage c3b68d2 merged | Against r32b 8b1f6c35 (§26.17.7; mocked API). typecheck clean; Vitest 513/513 after the merge (`chargebackLot` now one function, the lab wallet test on it); Playwright withdrawals + lab-wallet + doctor-wallet + pharmacy-extras 128/128 (withdrawals +6 = 3 journeys x 2: a pharmacy's dispute says and does the take (flag-only switch off), Mark paid refused on disputed money, a fee recorded unlike the quote and a replayed request no longer waiting; the Recover journey now runs with the flag-only switch on) under `pw-slot.sh` with 2 workers on a temporary config (port 5559, deleted). |
