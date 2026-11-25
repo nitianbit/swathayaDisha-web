@@ -2,6 +2,9 @@ import { ApiError, type ApiClient, type Page } from './client.ts';
 import { MAX_ADMIN_CANCEL_REASON, MIN_ADMIN_CANCEL_REASON, type AdminConsultation } from './adminConsultations.ts';
 import { checkId, REQUEST_KEY_PATTERN } from './partners.ts';
 import { noShowMovedOnce } from './noShows.ts';
+import { t as core } from './i18n/index.ts';
+import { t } from './i18n/admin/index.ts';
+import { wordMap } from './i18n/words.ts';
 
 /**
  * WQ18 admin: doctors (`/api/v1/specialists`, backend `src1/modules/specialists`) and their verification (S5), and the S5c
@@ -70,11 +73,11 @@ export const isFenceMismatch = (err: unknown) => err instanceof ApiError && err.
 
 /** The refusals of a verify or unverify, in words (the server's message is the fallback). */
 export function doctorStateRefusal(err: unknown): string {
-  if (!(err instanceof ApiError)) return err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+  if (!(err instanceof ApiError)) return err instanceof Error ? err.message : core('errors.unknown');
   switch (err.code) {
-    case 'SPECIALIST_CHANGED_SINCE_REVIEW': return 'The doctor’s name or registration number changed since you read them, so nothing was changed.';
-    case 'SPECIALIST_NOT_FOUND': return 'This doctor no longer exists.';
-    case 'INDEXES_OUTDATED': return 'The database needs an update (sync-indexes) before doctors can be verified: ask the Jansetu team.';
+    case 'SPECIALIST_CHANGED_SINCE_REVIEW': return t('doctor.stateRefusal.SPECIALIST_CHANGED_SINCE_REVIEW');
+    case 'SPECIALIST_NOT_FOUND': return t('doctor.stateRefusal.SPECIALIST_NOT_FOUND');
+    case 'INDEXES_OUTDATED': return t('doctor.stateRefusal.INDEXES_OUTDATED');
     default: return err.message;
   }
 }
@@ -89,6 +92,7 @@ export function doctorAdminListApi(c: ApiClient) {
     /** Doctors, newest first, 20 a page; every doctor for an admin (verified or not, active or not). */
     list: (q: AdminDoctorQuery = {}): Promise<Page<AdminDoctor>> => {
       const name = q.name?.trim();
+      // i18n-ignore: a guard the screen checks first, not shown
       if (name !== undefined && name.length > MAX_DOCTOR_NAME_SEARCH) throw new Error('Invalid search');
       return c.page<AdminDoctor>('/specialists', { query: {
         name: name || undefined,
@@ -103,7 +107,9 @@ export function doctorAdminListApi(c: ApiClient) {
     get: (id: string) => c.get<AdminDoctor>(`/specialists/${checkId(id, 'doctor')}`),
     /** Verify with the reviewed name and registration number as the fence (409 SPECIALIST_CHANGED_SINCE_REVIEW otherwise). */
     verify: (id: string, fence: VerifyFence) => {
+      // i18n-ignore: a programming error (the screen always passes what it read), not shown
       if (typeof fence.expectedName !== 'string' || !fence.expectedName.trim()) throw new Error('The reviewed name is missing');
+      // i18n-ignore: a programming error (the screen always passes what it read), not shown
       if (typeof fence.expectedRegistrationNumber !== 'string') throw new Error('The reviewed registration number is missing');
       const body: DoctorStateBody = { isVerified: true, expectedName: fence.expectedName, expectedRegistrationNumber: fence.expectedRegistrationNumber };
       return c.put<AdminDoctor>(`/specialists/${checkId(id, 'doctor')}`, { body });
@@ -151,22 +157,22 @@ export function canCloseAndRefund(
 }
 
 /** The refusals of a close, in words (the server's message is the fallback). */
-export const BOOKING_CLOSE_REFUSAL: Record<string, string> = {
-  BOOKING_NOT_FOUND: 'This booking no longer exists.',
-  NOT_A_CONSULTATION: 'Only a consultation or a second opinion is closed here.',
-  USE_INSTANT_ADMIN_CANCEL: 'An instant consultation is cancelled with its own admin cancel, not here.',
-  INSTANT_CONSULT_COMMAND_REQUIRED: 'An instant consultation is cancelled with its own admin cancel, not here.',
-  ALREADY_CANCELLED: 'This booking is already cancelled, so nothing more was done.',
-  BOOKING_NOT_CANCELLABLE: 'This booking can no longer be closed: it was completed or marked a no-show meanwhile.',
-  NO_SHOW_NOT_REFUNDABLE: 'This booking was moved after a no-show: use “Cancel (admin)” in its no-show section instead.',
-  BOOKING_CHANGED: 'The booking changed since you read it, so nothing was done. It is shown as it is now: review it and close it again if it is still needed.',
-  REQUEST_KEY_REUSED: 'This request was already used for another close. Start again.',
-  INDEXES_OUTDATED: 'The database needs an update (sync-indexes) before bookings can be closed here: ask the Jansetu team.',
-  FORBIDDEN: 'Only the Jansetu team can close a booking.',
-};
+export const BOOKING_CLOSE_REFUSAL: Record<string, string> = wordMap(t, {
+  BOOKING_NOT_FOUND: 'close.refusal.BOOKING_NOT_FOUND',
+  NOT_A_CONSULTATION: 'close.refusal.NOT_A_CONSULTATION',
+  USE_INSTANT_ADMIN_CANCEL: 'close.refusal.USE_INSTANT_ADMIN_CANCEL',
+  INSTANT_CONSULT_COMMAND_REQUIRED: 'close.refusal.USE_INSTANT_ADMIN_CANCEL',
+  ALREADY_CANCELLED: 'close.refusal.ALREADY_CANCELLED',
+  BOOKING_NOT_CANCELLABLE: 'close.refusal.BOOKING_NOT_CANCELLABLE',
+  NO_SHOW_NOT_REFUNDABLE: 'close.refusal.NO_SHOW_NOT_REFUNDABLE',
+  BOOKING_CHANGED: 'close.refusal.BOOKING_CHANGED',
+  REQUEST_KEY_REUSED: 'close.refusal.REQUEST_KEY_REUSED',
+  INDEXES_OUTDATED: 'close.refusal.INDEXES_OUTDATED',
+  FORBIDDEN: 'close.refusal.FORBIDDEN',
+});
 export function bookingCloseRefusal(err: unknown): string {
   if (err instanceof ApiError) return (err.code && BOOKING_CLOSE_REFUSAL[err.code]) || err.message;
-  return err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+  return err instanceof Error ? err.message : core('errors.unknown');
 }
 
 /**
@@ -197,9 +203,10 @@ export function closeRefundTarget(b: { assisted?: unknown } | null | undefined):
 
 /** The refund of a close as the server answered it (`refunded` in rupees). `money` formats rupees (the screen's `formatRupees`). */
 export function closeRefundWords(refunded: number, to: CloseRefundTarget, money: (rupees: number) => string): string {
-  if (!(refunded > 0)) return 'Nothing was refunded: no money was held for it through Jansetu.';
-  if (to === 'pharmacy_card') return `${money(refunded)} is being refunded to the card or UPI the pharmacy paid with.`;
-  return to === 'pharmacy_wallet' ? `${money(refunded)} was refunded to the pharmacy that booked it.` : `${money(refunded)} was refunded to the patient’s Jansetu wallet.`;
+  if (!(refunded > 0)) return t('close.refund.none');
+  const amount = money(refunded);
+  if (to === 'pharmacy_card') return t('close.refund.pharmacyCard', { amount });
+  return to === 'pharmacy_wallet' ? t('close.refund.pharmacyWallet', { amount }) : t('close.refund.patient', { amount });
 }
 
 export function bookingCloseApi(c: ApiClient) {
@@ -208,15 +215,18 @@ export function bookingCloseApi(c: ApiClient) {
     close: async (bookingId: string, body: BookingCloseBody): Promise<BookingCloseAnswer> => {
       // `adminCloseSchema.reason`: trimmed, 3 to 500 characters (the same rule as the admin cancel of a moved no-show).
       const reason = body.reason.trim();
+      // i18n-ignore: guards the screen checks first, not shown
       if (reason.length < MIN_ADMIN_CANCEL_REASON || reason.length > MAX_ADMIN_CANCEL_REASON) throw new Error('Invalid reason');
+      // i18n-ignore: a programming error, not shown
       if (!REQUEST_KEY_PATTERN.test(body.requestKey)) throw new Error('Invalid request key');
+      // i18n-ignore: a programming error, not shown
       if (body.expectedUpdatedAt !== undefined && Number.isNaN(Date.parse(body.expectedUpdatedAt))) throw new Error('Invalid version');
       const answer = await c.post<BookingCloseAnswer>(`/specialists/admin/bookings/${checkId(bookingId, 'booking')}/close`, {
         body: { reason, requestKey: body.requestKey, ...(body.expectedUpdatedAt !== undefined ? { expectedUpdatedAt: body.expectedUpdatedAt } : {}) },
       });
       // A 200 that is not a recorded close is not proof of one: the request stays unknown (check or resend).
       if (!answer || typeof answer !== 'object' || !answer.close || answer.close.requestKey !== body.requestKey || typeof answer.refunded !== 'number') {
-        throw new ApiError(502, 'The server’s answer did not confirm the close.', 'UNEXPECTED_ANSWER');
+        throw new ApiError(502, t('close.unconfirmed'), 'UNEXPECTED_ANSWER');
       }
       return answer;
     },

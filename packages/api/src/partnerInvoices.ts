@@ -1,4 +1,6 @@
 import type { ApiClient, Page } from './client.ts';
+import { t as words } from './i18n/partner/index.ts';
+import { valueList, wordMap } from './i18n/words.ts';
 import { GSTIN_PATTERN, OBJECT_ID_PATTERN, partnerWorkspaceBase, type PartnerKind, type PartnerScope, type TaxRegime } from './partners.ts';
 
 /**
@@ -109,15 +111,17 @@ export const INVOICE_STATES: readonly InvoiceState[] = ['issued', 'partly_paid',
 export type InvoicePaymentMode = 'cash' | 'upi' | 'card' | 'bank' | 'other';
 
 /** The words printed on the PDF (`invoicePdf.ts` TITLES), with what they mean for staff. */
-export const DOCUMENT_KIND_LABEL: Record<DocumentKind, string> = {
-  tax_invoice: 'Tax invoice', bill_of_supply: 'Bill of supply', commercial_invoice: 'Invoice (no GST)',
-};
+export const DOCUMENT_KIND_LABEL: Record<DocumentKind, string> = wordMap(words, {
+  tax_invoice: 'document.tax_invoice', bill_of_supply: 'document.bill_of_supply', commercial_invoice: 'document.commercial_invoice',
+});
 /** The PDF calls an issued bill "Unpaid" (`statusAfter`). */
-export const INVOICE_STATE_LABEL: Record<InvoiceState, string> = { issued: 'Unpaid', partly_paid: 'Partly paid', paid: 'Paid', cancelled: 'Cancelled' };
-export const PAYMENT_MODES: readonly { value: InvoicePaymentMode; label: string }[] = [
-  { value: 'cash', label: 'Cash' }, { value: 'upi', label: 'UPI' }, { value: 'card', label: 'Card' },
-  { value: 'bank', label: 'Bank transfer' }, { value: 'other', label: 'Other' },
-];
+export const INVOICE_STATE_LABEL: Record<InvoiceState, string> = wordMap(words, {
+  issued: 'invoice.state.issued', partly_paid: 'invoice.state.partly_paid', paid: 'invoice.state.paid', cancelled: 'invoice.state.cancelled',
+});
+export const PAYMENT_MODES: readonly { value: InvoicePaymentMode; label: string }[] = valueList(words, [
+  ['cash', 'payment.mode.cash'], ['upi', 'payment.mode.upi'], ['card', 'payment.mode.card'],
+  ['bank', 'payment.mode.bank'], ['other', 'payment.mode.other'],
+]);
 
 export interface InvoiceSupplier { name: string; legalName?: string; gstin?: string; pan?: string; address: string; placeOfSupply: string }
 export interface InvoiceCustomer {
@@ -330,13 +334,13 @@ export const takesPayment = (inv: Pick<Invoice, 'paidMinor' | 'dueMinor' | 'life
  */
 export function paymentProblem(splits: readonly { amountMinor: number | null; reference?: string }[], dueMinor: number, allowPartPayments: boolean,
   money: (minor: number) => string = (m) => `₹${(m / 100).toFixed(2)}`): string | null {
-  if (splits.length === 0) return 'Add how the bill was paid.';
-  if (splits.length > MAX_PAYMENT_SPLITS) return `At most ${MAX_PAYMENT_SPLITS} methods in one payment.`;
-  if (splits.some((x) => x.amountMinor === null || !Number.isSafeInteger(x.amountMinor) || x.amountMinor <= 0)) return 'Enter each amount in rupees, more than ₹0.';
-  if (splits.some((x) => (x.reference ?? '').trim().length > MAX_REFERENCE)) return `Use at most ${MAX_REFERENCE} characters for a reference.`;
+  if (splits.length === 0) return words('payment.problem.none');
+  if (splits.length > MAX_PAYMENT_SPLITS) return words('payment.problem.tooManyMethods', { max: MAX_PAYMENT_SPLITS });
+  if (splits.some((x) => x.amountMinor === null || !Number.isSafeInteger(x.amountMinor) || x.amountMinor <= 0)) return words('payment.problem.amount');
+  if (splits.some((x) => (x.reference ?? '').trim().length > MAX_REFERENCE)) return words('payment.problem.reference', { max: MAX_REFERENCE });
   const total = splits.reduce((n, x) => n + (x.amountMinor ?? 0), 0);
-  if (total > dueMinor) return `That is more than is due (${money(dueMinor)}). A bill is never paid more than what is due.`;
-  if (!allowPartPayments && total !== dueMinor) return `Only full payment is taken here: the amounts must add up to ${money(dueMinor)}.`;
+  if (total > dueMinor) return words('payment.problem.overDue', { due: money(dueMinor) });
+  if (!allowPartPayments && total !== dueMinor) return words('payment.problem.fullOnly', { due: money(dueMinor) });
   return null;
 }
 
@@ -361,16 +365,14 @@ export function classifyDocument(s: SupplierTax, lines: readonly { gstRate: numb
 /** `assertTaxConsistent`: why GST lines are refused for this document kind, or null. */
 export function taxRateProblem(kind: DocumentKind): string | null {
   if (kind === 'tax_invoice') return null;
-  return kind === 'commercial_invoice'
-    ? 'This partner is not GST-registered: every line must have GST rate 0'
-    : 'A bill of supply cannot charge GST: every line must have GST rate 0';
+  return kind === 'commercial_invoice' ? words('tax.problem.unregistered') : words('tax.problem.billOfSupply');
 }
 
 /** `assertRegistrationCovers`: a bill printing a GSTIN must come from a branch in that GSTIN's state. */
 export function registrationProblem(kind: DocumentKind, gstin: string | undefined, branchStateCode: string): string | null {
   if (kind === 'commercial_invoice' || !gstin) return null;
   if (gstin.slice(0, 2) === branchStateCode) return null;
-  return `The partner's GST registration (state ${gstin.slice(0, 2)}) does not cover this branch (state ${branchStateCode}); this branch cannot issue GST bills yet`;
+  return words('tax.problem.registration', { gstState: gstin.slice(0, 2), branchState: branchStateCode });
 }
 
 /**
@@ -408,8 +410,8 @@ export function previewInvoice(
     const discount = item.discountMinor ?? 0;
     const gross = item.unitPriceMinor * item.qty;
     let problem: string | null = null;
-    if (!Number.isSafeInteger(gross) || gross > MAX_BILL_MINOR) problem = 'This line is larger than a single bill can be';
-    else if (discount > gross) problem = 'A line discount cannot exceed the line amount';
+    if (!Number.isSafeInteger(gross) || gross > MAX_BILL_MINOR) problem = words('bill.problem.lineTooLarge');
+    else if (discount > gross) problem = words('bill.problem.discount');
     else if (item.gstRate > 0 && rateProblem) problem = rateProblem;
     const amountMinor = problem && problem !== rateProblem ? 0 : gross - discount;
     const taxMinor = Math.round((amountMinor * item.gstRate) / 100);
@@ -429,7 +431,7 @@ export function previewInvoice(
     return { amountMinor, taxMinor, ...(half !== undefined ? { halfMinor: half } : {}), problem };
   });
   const totals: InvoiceTotals = { ...t, totalMinor: t.taxableMinor + t.cgstMinor + t.sgstMinor + t.igstMinor, currency: 'INR' };
-  if (totals.totalMinor > MAX_BILL_MINOR || totals.subtotalMinor > MAX_BILL_MINOR) problems.push('This bill is larger than a single bill can be');
+  if (totals.totalMinor > MAX_BILL_MINOR || totals.subtotalMinor > MAX_BILL_MINOR) problems.push(words('bill.problem.billTooLarge'));
   const reg = registrationProblem(documentKind, supplier.gstin, branchStateCode);
   if (reg) problems.push(reg);
   return { lines, totals, documentKind, sameState, problems };
@@ -438,6 +440,7 @@ export function previewInvoice(
 // ── Paths ──
 
 function checkId(id: string, what: string): string {
+  // i18n-ignore: a programming error, not shown
   if (!OBJECT_ID_PATTERN.test(id)) throw new Error(`Invalid ${what} id`);
   return id;
 }
@@ -445,18 +448,19 @@ function checkId(id: string, what: string): string {
 /** `invoiceKeyParamSchema` allows 1–100 characters; the workspace only ever makes path-safe keys. */
 const BILL_KEY_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
 function checkKey(key: string): string {
-  if (!BILL_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
+  if (!BILL_KEY_PATTERN.test(key)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
   return key;
 }
 /** Q12 `catalogueKeyParamSchema`: 8–100 path-safe characters. */
 function checkItemKey(key: string): string {
-  if (!ITEM_REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
+  if (!ITEM_REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
   return key;
 }
 /** Q12: the search text the server accepts, or undefined for none (an over-long one is refused before any request). */
 function searchText(q: string | undefined): string | undefined {
   const t = q?.trim();
   if (!t) return undefined;
+  // i18n-ignore: a programming error, not shown (the search field holds at most MAX_CATALOGUE_SEARCH characters)
   if (t.length > MAX_CATALOGUE_SEARCH) throw new Error('Search is too long');
   return t;
 }
@@ -464,7 +468,7 @@ function searchText(q: string | undefined): string | undefined {
 /** A customer GSTIN as the server stores it (`trim().uppercase()`), or the problem with it. */
 export function customerGstinProblem(raw: string): string | null {
   const v = raw.trim().toUpperCase();
-  return !v || GSTIN_PATTERN.test(v) ? null : 'Enter a valid 15-character GSTIN.';
+  return !v || GSTIN_PATTERN.test(v) ? null : words('gstin.problem');
 }
 
 /** Catalogue and invoices of one partner workspace (member, or admin acting as owner). Ids are checked before any path. */
@@ -506,7 +510,7 @@ export function partnerBillingApi(c: ApiClient, scope: PartnerScope) {
     createInvoice: (body: NewInvoice) => {
       if (body.appointmentId !== undefined) checkId(body.appointmentId, 'appointment');
       if (body.labBookingId !== undefined) checkId(body.labBookingId, 'lab booking');
-      if (body.appointmentId !== undefined && body.labBookingId !== undefined) throw new Error('A bill is for one appointment or one lab booking');
+      if (body.appointmentId !== undefined && body.labBookingId !== undefined) throw new Error('A bill is for one appointment or one lab booking'); // i18n-ignore: a programming error, not shown
       return c.post<Invoice>(`${base()}/invoices`, { body });
     },
     /** The bill's PDF as of lifecycle `version` (0 = as issued; default = now), read with the session's token. */
@@ -514,13 +518,13 @@ export function partnerBillingApi(c: ApiClient, scope: PartnerScope) {
       c.blob(`${invoice(id)}/pdf`, { query: { version }, signal }),
     /** Q14: always as `splits` with the request key and the version decided on (see `PaymentInput`). */
     recordPayment: (id: string, body: PaymentInput) => {
-      if (!ITEM_REQUEST_KEY_PATTERN.test(body.requestKey)) throw new Error('Invalid request key');
-      if (!Number.isSafeInteger(body.expectedLifecycleVersion) || body.expectedLifecycleVersion < 0) throw new Error('Invalid bill version');
+      if (!ITEM_REQUEST_KEY_PATTERN.test(body.requestKey)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
+      if (!Number.isSafeInteger(body.expectedLifecycleVersion) || body.expectedLifecycleVersion < 0) throw new Error('Invalid bill version'); // i18n-ignore: a programming error, not shown
       const knownMode = (m: string) => PAYMENT_MODES.some((x) => x.value === m);
       if (body.mode !== undefined ? !knownMode(body.mode) || body.splits !== undefined
         : !body.splits || body.splits.length < 1 || body.splits.length > MAX_PAYMENT_SPLITS
           || body.splits.some((x) => !Number.isSafeInteger(x.amountMinor) || x.amountMinor <= 0 || !knownMode(x.mode))) {
-        throw new Error('Invalid payment');
+        throw new Error('Invalid payment'); // i18n-ignore: a programming error, not shown
       }
       return c.post<PaymentAnswer>(`${invoice(id)}/pay`, { body });
     },

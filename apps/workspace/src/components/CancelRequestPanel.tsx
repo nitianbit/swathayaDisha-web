@@ -1,6 +1,7 @@
 import type { PharmacyOrder } from '@jansetu/api';
-import { Alert, formatDateTime } from '@jansetu/ui';
+import { Alert, formatDateTime, shared } from '@jansetu/ui';
 import { ORDER_STATUS_LABEL } from '../screens/pharmacy/orderLabels.ts';
+import { t } from '../i18n/components/index.ts';
 import { ConfirmAction } from './ConfirmAction.tsx';
 
 /** Who is looking: the selling pharmacy and admins decide; a buying pharmacy only reads. */
@@ -8,10 +9,10 @@ export type CancelViewer = 'seller' | 'admin' | 'buyer';
 
 /** Amount-free on purpose: the refund is what the payment records show was paid (it can differ from the order total). */
 export function refundText(order: PharmacyOrder): string {
-  if (order.paymentStatus === 'refunded') return 'The payment was already returned to the customer.';
-  if (order.paymentStatus === 'authorized') return 'The payment is still being confirmed; decide in a few minutes.';
-  if (order.paymentMode !== 'online_payment') return 'The refund is not automatic for a cash or counter payment: an admin arranges it.';
-  return 'What the customer paid online goes back to their Jansetu wallet first (they can ask for it on their card/UPI). If the payment cannot be matched to its record, an admin reviews the refund.';
+  if (order.paymentStatus === 'refunded') return t('cancelRequest.refund.returned');
+  if (order.paymentStatus === 'authorized') return t('cancelRequest.refund.authorized');
+  if (order.paymentMode !== 'online_payment') return t('cancelRequest.refund.offline');
+  return t('cancelRequest.refund.online');
 }
 
 /**
@@ -26,29 +27,31 @@ export function CancelRequestPanel({ order, viewer, onApprove, onReject, heading
 }) {
   const r = order.cancelRequest!;
   const requestId = r.requestId; // fixed for this panel's life (the panel is keyed by it)
-  const by = r.requestedByType === 'user' ? 'the customer' : r.requestedByType === 'admin' ? 'an admin'
-    : viewer === 'seller' ? 'your pharmacy' : 'the pharmacy';
+  const by = r.requestedByType === 'user' ? 'customer' : r.requestedByType === 'admin' ? 'admin'
+    : viewer === 'seller' ? 'yourPharmacy' : 'pharmacy';
+  const date = formatDateTime(r.requestedAt);
   const returned = order.paymentStatus === 'refunded';
   const refund = refundText(order);
   const Heading = headingLevel === 2 ? 'h2' : 'h3';
   const headingId = `cancel-h-${order._id}`;
   return (
     <section className="ws-section" aria-labelledby={headingId}>
-      <Heading id={headingId}>Cancellation requested</Heading>
+      <Heading id={headingId}>{t('cancelRequest.title')}</Heading>
       <Alert tone="warn">
-        Requested by {by} on {formatDateTime(r.requestedAt)}{r.reason ? `: “${r.reason}”` : ''}. Until it is decided the order
-        cannot move. {refund}
+        {r.reason ? t(`cancelRequest.byWithReason.${by}`, { date, reason: r.reason }) : t(`cancelRequest.by.${by}`, { date })} {refund}
       </Alert>
       {viewer !== 'buyer' && (
         <div className="ws-actions">
-          <ConfirmAction label="Approve cancellation" confirmLabel="Yes, cancel the order" danger reason="optional" reasonLabel="Note"
-            consequence={`The order is cancelled and its stock goes back to the pharmacy’s inventory. ${refund}`}
+          <ConfirmAction label={t('cancelRequest.approve')} confirmLabel={t('cancelRequest.approve.confirm')} danger
+            // i18n-ignore: `reason` is a mode (an optional reason field), not words
+            reason="optional" reasonLabel={shared('field.note')}
+            consequence={`${t('cancelRequest.approve.consequence')} ${refund}`}
             onConfirm={(note) => onApprove(requestId, note)} />
-          <ConfirmAction label="Keep the order" confirmLabel="Yes, keep it" reason reasonLabel="Why it is kept (shown to the customer)"
-            disabled={returned}
-            consequence={`The request is declined and the order continues from “${ORDER_STATUS_LABEL[r.fromStatus]}”.`}
+          <ConfirmAction label={t('cancelRequest.keep')} confirmLabel={t('cancelRequest.keep.confirm')} reason
+            reasonLabel={t('cancelRequest.keep.reason')} disabled={returned}
+            consequence={t('cancelRequest.keep.consequence', { status: ORDER_STATUS_LABEL[r.fromStatus] })}
             onConfirm={(note) => onReject(requestId, note)} />
-          {returned && <span className="ws-muted">The payment was already returned, so the order cannot continue: approve to complete the cancellation.</span>}
+          {returned && <span className="ws-muted">{t('cancelRequest.returned')}</span>}
         </div>
       )}
     </section>

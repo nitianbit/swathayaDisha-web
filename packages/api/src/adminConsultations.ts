@@ -4,6 +4,8 @@ import type { ConsultMode, DoctorSlot } from './doctorTools.ts';
 import { toYmd } from './doctorTools.ts';
 import { isRealDate } from './partnerLabs.ts';
 import { noShowMovedOnce } from './noShows.ts';
+import { t } from './i18n/admin/index.ts';
+import { wordMap } from './i18n/words.ts';
 
 /**
  * WQ10b admin: doctor consultation bookings (`GET /api/v1/bookings` as an admin, `bookingType=consultation`; one by
@@ -20,9 +22,10 @@ import { noShowMovedOnce } from './noShows.ts';
 export type ConsultationStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show';
 /** `bookingQuerySchema.status`: the statuses the list can be filtered by (Q15: `no_show` too). */
 export const CONSULTATION_STATUS_FILTERS: readonly ConsultationStatus[] = ['pending', 'confirmed', 'completed', 'cancelled', 'no_show'];
-export const CONSULTATION_STATUS_LABEL: Record<ConsultationStatus, string> = {
-  pending: 'Waiting', confirmed: 'Confirmed', completed: 'Completed', cancelled: 'Cancelled', no_show: 'No-show',
-};
+export const CONSULTATION_STATUS_LABEL: Record<ConsultationStatus, string> = wordMap(t, {
+  pending: 'consultation.status.pending', confirmed: 'consultation.status.confirmed', completed: 'consultation.status.completed',
+  cancelled: 'consultation.status.cancelled', no_show: 'consultation.status.no_show',
+});
 export const CONSULTATIONS_PAGE_SIZE = 20;
 
 /** A consultation booking as the admin reads it (`IBooking`, the fields shown). */
@@ -99,28 +102,29 @@ export const canAdminCancelMovedNoShow = (b: Pick<AdminConsultation, 'status' | 
   (b.status === 'confirmed' || b.status === 'pending') && b.bookingKind !== 'instant' && !b.clinicDesk && b.settlementSystem !== 'clinic' && noShowMovedOnce(b);
 
 /** The refusals of an admin cancel of a moved no-show, in words (the server's message is the fallback). */
-export const ADMIN_CANCEL_REFUSAL: Record<string, string> = {
-  BOOKING_NOT_MOVED_NO_SHOW: 'This booking was not moved after a no-show, so it cannot be cancelled here. Use the ordinary cancellation.',
-  BOOKING_NOT_CANCELLABLE: 'This booking can no longer be cancelled (it was completed, cancelled or marked a no-show again meanwhile).',
-  INSTANT_CONSULT_COMMAND_REQUIRED: 'An instant consultation is cancelled with its own command, not here.',
-  ADMIN_ONLY: 'Only the Jansetu team can cancel a moved no-show.',
-  BOOKING_NOT_FOUND: 'This booking no longer exists.',
+export const ADMIN_CANCEL_REFUSAL: Record<string, string> = wordMap(t, {
+  BOOKING_NOT_MOVED_NO_SHOW: 'consultation.cancelRefusal.BOOKING_NOT_MOVED_NO_SHOW',
+  BOOKING_NOT_CANCELLABLE: 'consultation.cancelRefusal.BOOKING_NOT_CANCELLABLE',
+  INSTANT_CONSULT_COMMAND_REQUIRED: 'consultation.cancelRefusal.INSTANT_CONSULT_COMMAND_REQUIRED',
+  ADMIN_ONLY: 'consultation.cancelRefusal.ADMIN_ONLY',
+  BOOKING_NOT_FOUND: 'consultation.cancelRefusal.BOOKING_NOT_FOUND',
   // Q16a final: a repeat of the admin cancel (the screen reads the booking and says how it was cancelled).
-  ALREADY_CANCELLED: 'This booking is already cancelled: nothing more was done.',
+  ALREADY_CANCELLED: 'consultation.cancelRefusal.ALREADY_CANCELLED',
   // Q16d (F5): a clinic desk appointment (paid at the clinic) is cancelled with the clinic's own cancellation.
-  USE_CLINIC_CANCEL: 'This is a clinic front-desk appointment, paid at the clinic: cancel it from that clinic’s front desk (as its owner), not here.',
-};
+  USE_CLINIC_CANCEL: 'consultation.cancelRefusal.USE_CLINIC_CANCEL',
+});
 
 /** Why the filters cannot be sent (as `bookingQuerySchema` would refuse them), or null. */
 export function consultationQueryProblem(q: ConsultationQuery): string | null {
   const real = (d?: string) => !d || isRealDate(d);
-  if (!real(q.from) || !real(q.to)) return 'Enter real dates.';
-  if (q.from && q.to && q.from > q.to) return 'The period ends before it starts.';
+  if (!real(q.from) || !real(q.to)) return t('consultation.query.realDates');
+  if (q.from && q.to && q.from > q.to) return t('consultation.query.periodOrder');
   return null;
 }
 
 const OBJECT_ID = /^[0-9a-fA-F]{24}$/;
 function checkId(id: string, what: string): string {
+  // i18n-ignore: a programming error, not shown (ids come from the server)
   if (!OBJECT_ID.test(id)) throw new Error(`Invalid ${what} id`);
   return id;
 }
@@ -144,9 +148,10 @@ export function consultationAdminApi(c: ApiClient) {
     get: (id: string) => c.get<AdminConsultation>(`/bookings/${checkId(id, 'booking')}`),
     /** Doctors whose name contains the text (any status), 20 at most. */
     doctors: (name: string) => {
-      const t = name.trim();
-      if (!t || t.length > 100) throw new Error('Invalid search');
-      return c.page<DoctorRef>('/specialists', { query: { name: t, page: 1, limit: 20 } });
+      const text = name.trim();
+      // i18n-ignore: a guard the screen checks first, not shown
+      if (!text || text.length > 100) throw new Error('Invalid search');
+      return c.page<DoctorRef>('/specialists', { query: { name: text, page: 1, limit: 20 } });
     },
     /**
      * `GET /slots/available?specialistId&date&mode`: the doctor's open slots with a seat free on one day (YYYY-MM-DD),
@@ -162,7 +167,9 @@ export function consultationAdminApi(c: ApiClient) {
      */
     cancelMovedNoShow: (id: string, input: { reason: string; refund: boolean }) => {
       const reason = input.reason.trim();
+      // i18n-ignore: guards the screen checks first (with its own words), not shown
       if (reason.length < MIN_ADMIN_CANCEL_REASON || reason.length > MAX_ADMIN_CANCEL_REASON) throw new Error('Invalid reason');
+      // i18n-ignore: a guard the screen checks first (with its own words), not shown
       if (typeof input.refund !== 'boolean') throw new Error('Choose whether the patient is refunded');
       return c.post<AdminConsultation & { refunded?: number }>(`/specialists/admin/bookings/${checkId(id, 'booking')}/cancel-no-show`,
         { body: { reason, refund: input.refund } });

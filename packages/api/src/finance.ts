@@ -1,6 +1,8 @@
 import type { ApiClient, Page } from './client.ts';
 import { OBJECT_ID_PATTERN, partnerWorkspaceBase, REQUEST_KEY_PATTERN, type PartnerScope } from './partners.ts';
 import { isRealDate, istDateOf } from './partnerLabs.ts';
+import { t } from './i18n/finance/index.ts';
+import { wordMap } from './i18n/words.ts';
 
 /**
  * Q5 finance: settlement accounts (partners and doctors), the append-only ledger (statement with running balance, CSV),
@@ -27,14 +29,18 @@ export type LedgerKind = 'earning' | 'reversal' | 'payout' | 'adjustment';
 export type PayoutMethod = 'bank_transfer' | 'upi' | 'other';
 export type PayoutState = 'recorded' | 'voided';
 
-export const OWNER_KIND_LABEL: Record<SettlementOwnerKind, string> = { partner: 'Lab or clinic', doctor: 'Doctor' };
-export const DETAILS_STATE_LABEL: Record<PayoutDetailsState, string> = {
-  none: 'Not given', unverified: 'Waiting for verification', verified: 'Verified',
-};
-export const LEDGER_KIND_LABEL: Record<LedgerKind, string> = { earning: 'Earning', reversal: 'Reversal', payout: 'Payout', adjustment: 'Adjustment' };
-export const PAYOUT_METHOD_LABEL: Record<PayoutMethod, string> = { bank_transfer: 'Bank transfer', upi: 'UPI', other: 'Other' };
+export const OWNER_KIND_LABEL: Record<SettlementOwnerKind, string> = wordMap(t, { partner: 'owner.partner', doctor: 'owner.doctor' });
+export const DETAILS_STATE_LABEL: Record<PayoutDetailsState, string> = wordMap(t, {
+  none: 'details.none', unverified: 'details.unverified', verified: 'details.verified',
+});
+export const LEDGER_KIND_LABEL: Record<LedgerKind, string> = wordMap(t, {
+  earning: 'ledger.earning', reversal: 'ledger.reversal', payout: 'ledger.payout', adjustment: 'ledger.adjustment',
+});
+export const PAYOUT_METHOD_LABEL: Record<PayoutMethod, string> = wordMap(t, {
+  bank_transfer: 'payoutMethod.bank_transfer', upi: 'payoutMethod.upi', other: 'payoutMethod.other',
+});
 export const PAYOUT_METHODS: readonly PayoutMethod[] = ['bank_transfer', 'upi', 'other'];
-export const PAYOUT_STATE_LABEL: Record<PayoutState, string> = { recorded: 'Recorded', voided: 'Voided' };
+export const PAYOUT_STATE_LABEL: Record<PayoutState, string> = wordMap(t, { recorded: 'payoutState.recorded', voided: 'payoutState.voided' });
 
 /** `detailsView`: owners and doctors get the account number masked; admins (who make the transfer) get it in full. */
 export type PayoutDetailsView =
@@ -212,22 +218,22 @@ export function payoutDetailsProblems(raw: {
 }): { body: PayoutDetailsInput | null; errors: Partial<Record<'accountName' | 'accountNumber' | 'ifsc' | 'bankName' | 'upiId', string>> } {
   const errors: Partial<Record<'accountName' | 'accountNumber' | 'ifsc' | 'bankName' | 'upiId', string>> = {};
   const accountName = (raw.accountName ?? '').trim();
-  if (accountName.length > MAX_ACCOUNT_NAME) errors.accountName = `Use at most ${MAX_ACCOUNT_NAME} characters.`;
+  if (accountName.length > MAX_ACCOUNT_NAME) errors.accountName = t('form.maxLength', { max: MAX_ACCOUNT_NAME });
   if (raw.method === 'bank') {
     const accountNumber = (raw.accountNumber ?? '').replace(/\s+/g, '');
     const ifsc = (raw.ifsc ?? '').trim().toUpperCase();
     const bankName = (raw.bankName ?? '').trim();
-    if (!accountName) errors.accountName = 'Enter the account holder’s name.';
-    if (!ACCOUNT_NUMBER_PATTERN.test(accountNumber)) errors.accountNumber = 'The account number must be 9 to 18 digits.';
-    if (!IFSC_PATTERN.test(ifsc)) errors.ifsc = 'The IFSC must look like ABCD0123456.';
-    if (bankName.length > MAX_BANK_NAME) errors.bankName = `Use at most ${MAX_BANK_NAME} characters.`;
+    if (!accountName) errors.accountName = t('details.accountName');
+    if (!ACCOUNT_NUMBER_PATTERN.test(accountNumber)) errors.accountNumber = t('details.accountNumber');
+    if (!IFSC_PATTERN.test(ifsc)) errors.ifsc = t('details.ifsc');
+    if (bankName.length > MAX_BANK_NAME) errors.bankName = t('form.maxLength', { max: MAX_BANK_NAME });
     return {
       errors,
       body: Object.keys(errors).length ? null : { method: 'bank', accountName, accountNumber, ifsc, ...(bankName ? { bankName } : {}) },
     };
   }
   const upiId = (raw.upiId ?? '').trim().toLowerCase();
-  if (upiId.length > MAX_UPI_ID || !UPI_ID_PATTERN.test(upiId)) errors.upiId = 'The UPI ID must look like name@bank.';
+  if (upiId.length > MAX_UPI_ID || !UPI_ID_PATTERN.test(upiId)) errors.upiId = t('details.upiId');
   return { errors, body: Object.keys(errors).length ? null : { method: 'upi', upiId, ...(accountName ? { accountName } : {}) } };
 }
 
@@ -236,23 +242,23 @@ export function payoutProblems(p: { amountMinor: number | null; reference: strin
   Partial<Record<'amount' | 'reference' | 'paidOn' | 'note', string>> {
   const e: Partial<Record<'amount' | 'reference' | 'paidOn' | 'note', string>> = {};
   const a = p.amountMinor;
-  if (a === null) e.amount = 'Enter rupees, like 4500 or 4500.50.';
-  else if (!Number.isSafeInteger(a) || a < 1) e.amount = 'Enter an amount above zero.';
-  else if (a > MAX_FINANCE_MINOR) e.amount = 'This is above the largest payout the server accepts.';
-  else if (a > balanceMinor) e.amount = 'A payout cannot be more than the balance.';
+  if (a === null) e.amount = t('payout.amount.format');
+  else if (!Number.isSafeInteger(a) || a < 1) e.amount = t('payout.amount.zero');
+  else if (a > MAX_FINANCE_MINOR) e.amount = t('payout.amount.tooLarge');
+  else if (a > balanceMinor) e.amount = t('payout.amount.aboveBalance');
   const ref = p.reference.trim();
-  if (ref.length < MIN_REFERENCE || ref.length > MAX_PAYOUT_REFERENCE) e.reference = `Enter the bank reference (UTR), ${MIN_REFERENCE} to ${MAX_PAYOUT_REFERENCE} characters.`;
-  if (!isRealDate(p.paidOn)) e.paidOn = 'Enter the date the money was sent.';
-  else if (p.paidOn > today) e.paidOn = 'The date cannot be in the future.';
-  if (p.note.trim().length > MAX_PAYOUT_NOTE) e.note = `Use at most ${MAX_PAYOUT_NOTE} characters.`;
+  if (ref.length < MIN_REFERENCE || ref.length > MAX_PAYOUT_REFERENCE) e.reference = t('payout.reference', { min: MIN_REFERENCE, max: MAX_PAYOUT_REFERENCE });
+  if (!isRealDate(p.paidOn)) e.paidOn = t('payout.paidOn.missing');
+  else if (p.paidOn > today) e.paidOn = t('payout.paidOn.future');
+  if (p.note.trim().length > MAX_PAYOUT_NOTE) e.note = t('form.maxLength', { max: MAX_PAYOUT_NOTE });
   return e;
 }
 
 /** A reason for an adjustment or a void (`Joi.string().trim().min(3).max(500)`), or its problem. */
 export function reasonProblem(reason: string): string | null {
   const r = reason.trim();
-  if (r.length < MIN_FINANCE_REASON) return `Give a reason (at least ${MIN_FINANCE_REASON} characters).`;
-  if (r.length > MAX_FINANCE_REASON) return `Use at most ${MAX_FINANCE_REASON} characters.`;
+  if (r.length < MIN_FINANCE_REASON) return t('reason.tooShort', { min: MIN_FINANCE_REASON });
+  if (r.length > MAX_FINANCE_REASON) return t('form.maxLength', { max: MAX_FINANCE_REASON });
   return null;
 }
 
@@ -273,39 +279,47 @@ export async function isStatementCsv(blob: Blob): Promise<boolean> {
 // ── Path and query checks ──
 
 function checkId(id: string, what: string): string {
+  // i18n-ignore: a programming error, not shown
   if (!OBJECT_ID_PATTERN.test(id)) throw new Error(`Invalid ${what} id`);
   return id;
 }
 function checkDate(d: string | undefined, what: string): string | undefined {
   if (d === undefined || d === '') return undefined;
+  // i18n-ignore: a programming error, not shown
   if (!isRealDate(d)) throw new Error(`Invalid ${what} date`);
   return d;
 }
 function checkLimit(n: number | undefined, max: number): number | undefined {
   if (n === undefined) return undefined;
+  // i18n-ignore: a programming error, not shown
   if (!Number.isInteger(n) || n < 1 || n > max) throw new Error('Invalid limit');
   return n;
 }
 function period(q: PeriodQuery): PeriodQuery {
   const from = checkDate(q.from, 'from');
   const to = checkDate(q.to, 'to');
+  // i18n-ignore: a guard the screen checks first, not shown
   if (from && to && from > to) throw new Error('The period ends before it starts');
   return { from, to };
 }
 function statementQuery(q: StatementQuery) {
+  // i18n-ignore: a programming error, not shown
   if (q.before !== undefined && !STATEMENT_CURSOR_PATTERN.test(q.before)) throw new Error('Invalid statement cursor');
   return { ...period(q), before: q.before, limit: checkLimit(q.limit, STATEMENT_PAGE_MAX) };
 }
 function checkKey(key: string): string {
+  // i18n-ignore: a programming error, not shown
   if (!REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
   return key;
 }
 function pageQuery(q: PageQuery) {
+  // i18n-ignore: a programming error, not shown
   if (q.cursor !== undefined && !PAGE_CURSOR_PATTERN.test(q.cursor)) throw new Error('Invalid page cursor');
   return { cursor: q.cursor, limit: checkLimit(q.limit, PAGE_LIMIT_MAX) };
 }
 function checkVersion(v: number | undefined, what: string): number | undefined {
   if (v === undefined) return undefined;
+  // i18n-ignore: a programming error, not shown
   if (!Number.isInteger(v) || v < 0) throw new Error(`Invalid ${what} version`);
   return v;
 }
@@ -340,7 +354,9 @@ export function settlementsApi(c: ApiClient) {
   return {
     accounts: (q: AccountsQuery = {}) => {
       const search = q.search?.trim();
+      // i18n-ignore: a guard the screen checks first, not shown
       if (search && search.length > MAX_ACCOUNT_SEARCH) throw new Error('Search is too long');
+      // i18n-ignore: a guard the screen checks first, not shown
       if (q.skip !== undefined && (!Number.isInteger(q.skip) || q.skip < 0)) throw new Error('Invalid skip');
       return c.get<AccountsPage>('/settlements/accounts', { query: {
         ownerKind: q.ownerKind, due: q.due ? 'true' : undefined, search: search || undefined, detailsState: q.detailsState,
@@ -361,6 +377,7 @@ export function settlementsApi(c: ApiClient) {
       c.put<SettlementAccount>(`${acc(id)}/payout-details`, { body: detailsBody(body, expectedDetailsVersion) }),
     /** Verifies exactly `version` (409 PAYOUT_DETAILS_CHANGED if the details changed since); a repeat is answered as done. */
     verifyPayoutDetails: (id: string, version: number) => {
+      // i18n-ignore: a programming error, not shown
       if (!Number.isInteger(version) || version < 1) throw new Error('Invalid details version');
       return c.post<SettlementAccount>(`${acc(id)}/payout-details/verify`, { body: { version } });
     },

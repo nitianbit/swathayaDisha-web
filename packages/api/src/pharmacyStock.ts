@@ -1,5 +1,12 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
+import { t as core } from './i18n/index.ts';
+import { t } from './i18n/pharmacy/index.ts';
+import { onLanguage, wordMap } from './i18n/words.ts';
 import type { InventoryItem, MedicineRef } from './inventory.ts';
+
+type Key = Parameters<typeof t>[0];
+/** `{ <code>: value, label }` whose label is read at use (the words of the current language); `as const` keeps the code type. */
+const option = <const V extends string>(value: V, key: Key) => Object.freeze({ value, get label() { return t(key); } });
 
 /**
  * WQ10a: adding stock by hand and importing a stock file.
@@ -28,11 +35,11 @@ export interface Medicine extends MedicineRef {
 
 /** Adjustment reasons the inventory create accepts (`adjustmentReasons`), with the words staff use for adding stock. */
 export const ADD_STOCK_REASONS = [
-  { value: 'purchase', label: 'New purchase' },
-  { value: 'return', label: 'Returned stock put back' },
-  { value: 'transfer', label: 'Transfer from another shop' },
-  { value: 'correction', label: 'Stock count correction' },
-  { value: 'other', label: 'Other' },
+  option('purchase', 'stock.reason.purchase'),
+  option('return', 'stock.reason.return'),
+  option('transfer', 'stock.reason.transfer'),
+  option('correction', 'stock.reason.correction'),
+  option('other', 'stock.reason.other'),
 ] as const;
 export type AddStockReason = (typeof ADD_STOCK_REASONS)[number]['value'];
 
@@ -100,10 +107,10 @@ export interface StockAdjustment {
 }
 
 /** Q16c: refusals of a delivery's supplier. */
-export const SUPPLIER_REFUSAL: Readonly<Record<string, string>> = {
-  SUPPLIER_NOT_FOUND: 'That supplier is not one of yours any more. Choose another supplier, or none.',
-  SUPPLIER_ARCHIVED: 'That supplier has been archived. Choose an active supplier, or none.',
-};
+export const SUPPLIER_REFUSAL: Readonly<Record<string, string>> = wordMap(t, {
+  SUPPLIER_NOT_FOUND: 'stock.supplierRefusal.SUPPLIER_NOT_FOUND',
+  SUPPLIER_ARCHIVED: 'stock.supplierRefusal.SUPPLIER_ARCHIVED',
+});
 export const isSupplierRefusal = (err: unknown) => err instanceof ApiError && !!err.code && err.code in SUPPLIER_REFUSAL;
 
 const OBJECT_ID = /^[0-9a-fA-F]{24}$/;
@@ -126,25 +133,25 @@ export const serverToday = (now = new Date()) => new Date(now.getTime() + 330 * 
 /** What is wrong with the draft, field by field (the server checks the same and still decides). */
 export function stockEntryProblems(d: StockEntryDraft, today = serverToday()): Partial<Record<keyof StockEntryDraft, string>> {
   const e: Partial<Record<keyof StockEntryDraft, string>> = {};
-  if (!OBJECT_ID.test(d.medicineId)) e.medicineId = 'Choose the medicine.';
+  if (!OBJECT_ID.test(d.medicineId)) e.medicineId = t('stock.medicine');
   const batch = d.batchNumber.trim();
-  if (!batch) e.batchNumber = 'Enter the batch number printed on the pack.';
-  else if (batch.length > STOCK_LIMITS.batchNumber) e.batchNumber = `At most ${STOCK_LIMITS.batchNumber} characters.`;
+  if (!batch) e.batchNumber = t('stock.batch');
+  else if (batch.length > STOCK_LIMITS.batchNumber) e.batchNumber = t('field.atMost', { max: STOCK_LIMITS.batchNumber });
   const expiry = d.expiry.replace(/-/g, '');
-  if (!isRealYyyymmdd(expiry)) e.expiry = 'Enter the expiry date.';
-  else if (expiry < today) e.expiry = 'This batch has expired. Expired stock cannot be added.';
+  if (!isRealYyyymmdd(expiry)) e.expiry = t('stock.expiry');
+  else if (expiry < today) e.expiry = t('stock.expired');
   const qty = d.quantity.trim();
-  if (!/^\d+$/.test(qty) || !Number.isSafeInteger(Number(qty)) || Number(qty) < 1) e.quantity = 'Enter the number of units, at least 1.';
+  if (!/^\d+$/.test(qty) || !Number.isSafeInteger(Number(qty)) || Number(qty) < 1) e.quantity = t('stock.quantity');
   for (const k of ['mrp', 'retailPrice', 'purchasePrice'] as const) {
     const v = d[k].trim();
-    if (v && !RUPEES.test(v)) e[k] = 'Enter an amount in rupees, e.g. 42.50.';
+    if (v && !RUPEES.test(v)) e[k] = t('stock.rupees');
   }
-  if (d.rackLocation.trim().length > STOCK_LIMITS.rackLocation) e.rackLocation = `At most ${STOCK_LIMITS.rackLocation} characters.`;
+  if (d.rackLocation.trim().length > STOCK_LIMITS.rackLocation) e.rackLocation = t('field.atMost', { max: STOCK_LIMITS.rackLocation });
   const reorder = d.reorderThreshold.trim();
-  if (reorder && (!/^\d+$/.test(reorder) || !Number.isSafeInteger(Number(reorder)))) e.reorderThreshold = 'Enter a whole number of units.';
-  if (d.note.trim().length > MAX_STOCK_NOTE) e.note = `At most ${MAX_STOCK_NOTE} characters.`;
-  if (!ADD_STOCK_REASONS.some((r) => r.value === d.reason)) e.reason = 'Choose why the stock is added.';
-  if (d.supplierId && !OBJECT_ID.test(d.supplierId)) e.supplierId = 'Choose the supplier again.';
+  if (reorder && (!/^\d+$/.test(reorder) || !Number.isSafeInteger(Number(reorder)))) e.reorderThreshold = t('stock.reorder');
+  if (d.note.trim().length > MAX_STOCK_NOTE) e.note = t('field.atMost', { max: MAX_STOCK_NOTE });
+  if (!ADD_STOCK_REASONS.some((r) => r.value === d.reason)) e.reason = t('stock.reasonRequired');
+  if (d.supplierId && !OBJECT_ID.test(d.supplierId)) e.supplierId = t('stock.supplierAgain');
   return e;
 }
 
@@ -170,7 +177,7 @@ export function stockEntryBody(d: StockEntryDraft): StockEntry {
 }
 
 const checkKey = (key: string) => {
-  if (!PHARMACY_REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
+  if (!PHARMACY_REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
   return key;
 };
 
@@ -237,88 +244,97 @@ export interface InventoryImport {
   supplier?: DeliverySupplier | null;
 }
 
-export const IMPORT_STATUS_LABEL: Readonly<Record<ImportStatus, string>> = {
-  pending: 'Uploading',
-  previewed: 'Checked, not added yet',
-  committing: 'Being added',
-  committed: 'Added',
-  partially_committed: 'Partly added',
-  failed: 'Not added',
-};
-export const IMPORT_ROW_STATUS_LABEL: Readonly<Record<ImportRowStatus, string>> = {
-  valid: 'Ready', error: 'Problem', skipped: 'Skipped', committed: 'Added', failed: 'Failed',
-};
+export const IMPORT_STATUS_LABEL: Readonly<Record<ImportStatus, string>> = wordMap(t, {
+  pending: 'import.status.pending',
+  previewed: 'import.status.previewed',
+  committing: 'import.status.committing',
+  committed: 'import.status.committed',
+  partially_committed: 'import.status.partially_committed',
+  failed: 'import.status.failed',
+});
+export const IMPORT_ROW_STATUS_LABEL: Readonly<Record<ImportRowStatus, string>> = wordMap(t, {
+  valid: 'import.row.valid', error: 'import.row.error', skipped: 'import.row.skipped', committed: 'import.row.committed', failed: 'import.row.failed',
+});
 /** `importMode` (applyRowToInventory: create_only skips medicines already in stock, update_only skips new ones). */
+const importMode = (value: ImportMode, label: Key, hint: Key) =>
+  Object.freeze({ value, get label() { return t(label); }, get hint() { return t(hint); } });
 export const IMPORT_MODES: readonly { value: ImportMode; label: string; hint: string }[] = [
-  { value: 'upsert', label: 'Add every row', hint: 'Medicines already in your stock get the new batch; others are added.' },
-  { value: 'update_only', label: 'Only medicines already in my stock', hint: 'Rows for other medicines are skipped.' },
-  { value: 'create_only', label: 'Only medicines not yet in my stock', hint: 'Rows for medicines you already stock are skipped.' },
+  importMode('upsert', 'import.mode.upsert', 'import.mode.upsertHint'),
+  importMode('update_only', 'import.mode.updateOnly', 'import.mode.updateOnlyHint'),
+  importMode('create_only', 'import.mode.createOnly', 'import.mode.createOnlyHint'),
 ];
 
 /**
  * The columns `validateRow` reads, on the first sheet; any other column is ignored. Q15: headers match in any case and
  * without surrounding spaces, and the expiry may be any of `IMPORT_EXPIRY_FORMS`.
  */
+/** `header` is the column name the importer reads (never translated); `need` and `format` are words, read at use. */
+const column = (header: string, need: Key, format: Key) =>
+  Object.freeze({ header, get need() { return t(need); }, get format() { return t(format); } });
 export const IMPORT_COLUMNS: readonly { header: string; need: string; format: string }[] = [
   // Q16c: in the server template's order (`IMPORT_COLUMNS` of the importer).
-  { header: 'medicine name', need: 'Required', format: 'As in the medicine list. A name not in the list adds a new medicine. A row whose name starts with # is a note and is not imported.' },
-  { header: 'quantity to add', need: 'Required to add units', format: 'Whole number from 0 to 1,000,000 (1,000 is fine). 0 only updates prices and rack.' },
-  { header: 'batch number', need: 'When adding units', format: 'As printed on the pack.' },
-  { header: 'expiry date', need: 'When adding units', format: 'Day first, e.g. 31-12-2027 (see below). Not in the past, at most 15 years ahead.' },
-  { header: 'mrp', need: 'Optional — blank keeps the current price', format: 'Rupees, e.g. 42.50 or 1,250.00. Use a point for paise: 1,5 is refused. 0 sets the price to ₹0.' },
-  { header: 'retail price', need: 'Optional — blank keeps the current price', format: 'Your selling price in rupees. A new medicine without one is not on sale until you price it.' },
-  { header: 'wholesale price', need: 'Optional — blank keeps the current price', format: 'Rupees.' },
-  { header: 'purchase price', need: 'Optional — blank keeps the current price', format: 'Rupees.' },
-  { header: 'gst percent', need: 'Optional', format: '0 to 100, written 18 or 18%. Used only for a new medicine.' },
-  { header: 'hsn code', need: 'Optional', format: 'Used only for a new medicine.' },
-  { header: 'prescription required', need: 'Optional', format: 'For a new medicine: “no” if it is sold without a prescription. Left blank, a new medicine needs a prescription.' },
-  { header: 'generic name', need: 'Optional', format: 'Used only for a new medicine.' },
-  { header: 'brand name', need: 'Optional', format: 'Used only for a new medicine.' },
-  { header: 'rack location', need: 'Optional', format: 'e.g. B2.' },
-  { header: 'active status', need: 'Optional', format: '“no” to keep a new medicine inactive.' },
-  { header: 'supplier', need: 'Optional', format: 'One of your suppliers, by name as on your supplier list. Recorded for rows that add units. Or choose one supplier for the whole file below.' },
+  column('medicine name', 'import.need.required', 'import.format.medicineName'),
+  column('quantity to add', 'import.need.toAddUnits', 'import.format.quantity'),
+  column('batch number', 'import.need.whenAdding', 'import.format.batch'),
+  column('expiry date', 'import.need.whenAdding', 'import.format.expiry'),
+  column('mrp', 'import.need.keepsPrice', 'import.format.mrp'),
+  column('retail price', 'import.need.keepsPrice', 'import.format.retail'),
+  column('wholesale price', 'import.need.keepsPrice', 'import.format.rupees'),
+  column('purchase price', 'import.need.keepsPrice', 'import.format.rupees'),
+  column('gst percent', 'import.need.optional', 'import.format.gst'),
+  column('hsn code', 'import.need.optional', 'import.format.newOnly'),
+  column('prescription required', 'import.need.optional', 'import.format.prescription'),
+  column('generic name', 'import.need.optional', 'import.format.newOnly'),
+  column('brand name', 'import.need.optional', 'import.format.newOnly'),
+  column('rack location', 'import.need.optional', 'import.format.rack'),
+  column('active status', 'import.need.optional', 'import.format.active'),
+  column('supplier', 'import.need.optional', 'import.format.supplier'),
 ];
 
 /**
  * The expiry date forms the import reads (Q15 review, `expiryOf` / `EXPIRY_FORMS`), as shown to staff. Anything else is
  * refused on its row with the server's words ("expiry date must be a valid date: …").
  */
-export const IMPORT_EXPIRY_FORMS: readonly string[] = [
-  'YYYYMMDD, for example 20271231 (as text or a number)',
-  'YYYY-MM-DD, for example 2027-12-31',
-  'DD-MM-YYYY or DD/MM/YYYY, day first, for example 31-12-2027 or 31/12/2027',
-  'MM/YYYY or MM-YYYY, as printed on packs, for example 12/2027: the last day of that month',
-  'a date cell in Excel',
-];
+export const IMPORT_EXPIRY_FORMS: readonly string[] = (() => {
+  const keys: readonly Key[] = ['import.expiry.ymd', 'import.expiry.isoDate', 'import.expiry.dayFirst', 'import.expiry.monthYear', 'import.expiry.excel'];
+  // Each item is read at use (an index getter), so the list is in the current language.
+  const list: string[] = [];
+  keys.forEach((key, i) => Object.defineProperty(list, i, { get: () => t(key), enumerable: true }));
+  return Object.freeze(list);
+})();
 
 /**
  * Q15 re-review: how the import reads numbers. Grouping commas are fine ("1,000", "10,00,000"); a price with a decimal
  * comma ("1,5") or extra text ("12 rs") is refused on its row.
  */
-export const IMPORT_NUMBER_NOTE = 'Numbers may use commas between thousands, such as 1,000 or 10,00,000. Write paise with a point (12.50): a price such as 1,5 or 12 rs is refused on its row.';
+export let IMPORT_NUMBER_NOTE = '';
+onLanguage(() => { IMPORT_NUMBER_NOTE = t('import.numberNote'); });
 
 /** The upload route's multer limits. */
 export const IMPORT_ACCEPT = '.xlsx,.xls,.csv';
 export const IMPORT_MAX_BYTES = 10 * 1024 * 1024;
 
 export function importFileProblem(f: { name: string; size: number } | null | undefined): string | null {
-  if (!f) return 'Choose the file to import.';
+  if (!f) return t('import.file.choose');
   const ext = /\.[^.]+$/.exec(f.name.toLowerCase())?.[0] ?? '';
-  if (!IMPORT_ACCEPT.split(',').includes(ext)) return 'Use an Excel (.xlsx, .xls) or CSV (.csv) file.';
-  if (f.size === 0) return 'This file is empty.';
-  if (f.size > IMPORT_MAX_BYTES) return 'The file is larger than 10 MB. Split it into smaller files.';
+  if (!IMPORT_ACCEPT.split(',').includes(ext)) return t('import.file.type');
+  if (f.size === 0) return t('import.file.empty');
+  if (f.size > IMPORT_MAX_BYTES) return t('import.file.tooLarge');
   return null;
 }
 
 /** The one way of writing a date that is always read right: day first, then month, then the year in full. */
-export const IMPORT_DATE_FORMAT = 'DD-MM-YYYY (day first), for example 31-12-2027';
+export let IMPORT_DATE_FORMAT = '';
+onLanguage(() => { IMPORT_DATE_FORMAT = t('import.dateFormat'); });
 
 /** Q16c `TEMPLATE_EXAMPLE_MARK`: the example row's name says to delete it, and the importer refuses a row so named. */
 export const TEMPLATE_EXAMPLE_MARK = '(example - delete this row)';
 /** The example row of the template (one per column, as the server's template has it). */
 const TEMPLATE_EXAMPLE: Readonly<Record<string, string>> = {
+  // i18n-ignore: the template file's example cell (data the importer reads, refused by its mark)
   'medicine name': `Paracetamol 500 mg tablet ${TEMPLATE_EXAMPLE_MARK}`, 'quantity to add': '100', 'batch number': 'PCM2412',
   'expiry date': '31-12-2027', mrp: '30', 'retail price': '28', 'wholesale price': '25', 'purchase price': '20', 'gst percent': '12',
+  // i18n-ignore: the template file's example cells (data, as in the server's template)
   'hsn code': '3004', 'prescription required': 'no', 'generic name': 'Paracetamol', 'brand name': 'Example brand',
   'rack location': 'A-3', 'active status': 'yes', supplier: '',
 };
@@ -339,20 +355,20 @@ export const IMPORT_TIMEOUT_MS = 120_000;
  * Q16c: the server's refusals of an upload (400, the file is removed), in words. The server's own message is the fallback,
  * so a code added later still reads right. Dates written month first are refused per row, not here (`monthFirstRows`).
  */
-export const IMPORT_UPLOAD_REFUSAL: Readonly<Record<string, string>> = {
-  FILE_REQUIRED: 'Choose the file to import.',
-  UNSUPPORTED_FILE_TYPE: 'Use an Excel (.xlsx, .xls) or CSV (.csv) file.',
-  FILE_TOO_LARGE: 'The file is larger than 10 MB. Split it into smaller files.',
-  UNEXPECTED_FILE_FIELD: 'Upload one file at a time.',
-  UPLOAD_INVALID: 'The upload did not arrive whole. Choose the file and check it again.',
-  PARSE_FAILED: 'The file could not be read. Save it again as .xlsx or .csv and upload it again.',
-  IMPORT_FILE_EMPTY: 'The first sheet of the file has no rows. Fill in the template and upload it again.',
-  IMPORT_COLUMNS_MISSING: 'The first row has no “medicine name” column. Keep the column names of the template in the first row.',
+export const IMPORT_UPLOAD_REFUSAL: Readonly<Record<string, string>> = wordMap(t, {
+  FILE_REQUIRED: 'import.file.choose',
+  UNSUPPORTED_FILE_TYPE: 'import.file.type',
+  FILE_TOO_LARGE: 'import.file.tooLarge',
+  UNEXPECTED_FILE_FIELD: 'import.refusal.UNEXPECTED_FILE_FIELD',
+  UPLOAD_INVALID: 'import.refusal.UPLOAD_INVALID',
+  PARSE_FAILED: 'import.refusal.PARSE_FAILED',
+  IMPORT_FILE_EMPTY: 'import.refusal.IMPORT_FILE_EMPTY',
+  IMPORT_COLUMNS_MISSING: 'import.refusal.IMPORT_COLUMNS_MISSING',
   // Q16c re-review (`assertImportSize`): more than 200,000 cells (all sheets), or a read longer than 5 seconds.
-  IMPORT_FILE_TOO_BIG: 'The file is too big to import at once (at most 200,000 cells). Split it into smaller files and import them one after another.',
-};
+  IMPORT_FILE_TOO_BIG: 'import.refusal.IMPORT_FILE_TOO_BIG',
+});
 export function importUploadRefusal(err: unknown): string {
-  if (!(err instanceof ApiError)) return err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+  if (!(err instanceof ApiError)) return err instanceof Error ? err.message : core('errors.unknown');
   const known = err.code ? IMPORT_UPLOAD_REFUSAL[err.code] : undefined;
   return known ?? err.message;
 }
@@ -364,9 +380,11 @@ export const monthFirstRows = (rows: readonly ImportRow[]) =>
 /** A price as the import will apply it: a number (0 included), or 'keep' when the cell was blank (Q16c). */
 export type ImportPrice = number | 'keep';
 export const importPriceOf = (v: number | null | undefined): ImportPrice => (typeof v === 'number' && Number.isFinite(v) ? v : 'keep');
+const priceField = <const K extends 'mrp' | 'retailPrice' | 'purchasePrice' | 'wholesalePrice'>(key: K, word: Key) =>
+  Object.freeze({ key, get label() { return t(word); } });
 export const IMPORT_PRICE_FIELDS = [
-  { key: 'mrp', label: 'MRP' }, { key: 'retailPrice', label: 'selling price' },
-  { key: 'purchasePrice', label: 'purchase price' }, { key: 'wholesalePrice', label: 'wholesale price' },
+  priceField('mrp', 'import.price.mrp'), priceField('retailPrice', 'import.price.retailPrice'),
+  priceField('purchasePrice', 'import.price.purchasePrice'), priceField('wholesalePrice', 'import.price.wholesalePrice'),
 ] as const;
 type PriceKey = (typeof IMPORT_PRICE_FIELDS)[number]['key'];
 /**
@@ -458,7 +476,7 @@ export const isImportClaimed = (err: unknown) =>
   err instanceof ApiError && err.status === 409 && (err.code === 'IMPORT_NOT_RETRYABLE' || err.code === 'IMPORT_ALREADY_PROCESSING');
 
 const importPath = (id: string) => {
-  if (!OBJECT_ID.test(id)) throw new Error('Invalid import id');
+  if (!OBJECT_ID.test(id)) throw new Error('Invalid import id'); // i18n-ignore: a programming error, not shown
   return `/pharmacy-inventory-imports/${id}`;
 };
 
@@ -468,7 +486,7 @@ export function pharmacyStockApi(c: ApiClient) {
     medicines: (search: string, page = 1) =>
       c.page<Medicine>('/pharmacy-medicines', { query: { search: search.trim() || undefined, isActive: 'true', page, limit: 20 } }),
     medicine: (id: string) => {
-      if (!OBJECT_ID.test(id)) throw new Error('Invalid medicine id');
+      if (!OBJECT_ID.test(id)) throw new Error('Invalid medicine id'); // i18n-ignore: a programming error, not shown
       return c.get<Medicine>(`/pharmacy-medicines/${id}`);
     },
     /**

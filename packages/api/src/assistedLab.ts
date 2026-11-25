@@ -1,8 +1,10 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import {
-  assistedRefusal, idOf, keyOf, MAX_PERSON_NAME, SLOW_WRITE_TIMEOUT_MS, type AssistedCardPayment, type AssistedPatient, type AssistedPaymentMethod, type BookingPayment,
-  type CardRefund, type PatientLookup, type Refusal, type RefundTo,
+  assistedRefusal, idOf, keyOf, MAX_PERSON_NAME, refusalOf, SLOW_WRITE_TIMEOUT_MS, type AssistedCardPayment, type AssistedPatient, type AssistedPaymentMethod, type BookingPayment,
+  type CardRefund, type PatientLookup, type Refusal, type RefusalWords, type RefundTo,
 } from './assisted.ts';
+import { t, type AssistedKey } from './i18n/assisted/index.ts';
+import { onLanguage } from './i18n/words.ts';
 import { LAB_BOOKING_STATUS_LABEL, type LabBookingStatus } from './partnerLabs.ts';
 import type { VisitMode } from './partnerInvoices.ts';
 
@@ -155,9 +157,9 @@ export function doctorLabBody(body: LabCreateRequest): LabCreateRequest {
   if (b.fromBookingId !== undefined) {
     idOf(b.fromBookingId, 'consultation');
     const name = String(b.typedName ?? '').trim();
-    if (!name || name.length > MAX_PERSON_NAME) throw new Error('Invalid patient name');
-    if (b.phone !== undefined || b.patient !== undefined) throw new Error('One patient source only');
-  } else if (!b.phone || !b.patient) throw new Error('A patient is needed');
+    if (!name || name.length > MAX_PERSON_NAME) throw new Error('Invalid patient name'); // i18n-ignore: a programming error, not shown
+    if (b.phone !== undefined || b.patient !== undefined) throw new Error('One patient source only'); // i18n-ignore: a programming error, not shown
+  } else if (!b.phone || !b.patient) throw new Error('A patient is needed'); // i18n-ignore: a programming error, not shown
   return body;
 }
 
@@ -181,51 +183,54 @@ export function labTotalMinor(items: readonly Pick<AssistedLabItem, 'itemId' | '
 /** Branches that take this visit mode. */
 export const branchesFor = (lab: AssistedLab, mode: VisitMode) => lab.branches.filter((b) => (mode === 'home' ? b.homeCollection : b.inLab));
 
-export const LAB_SWITCHED_OFF_MESSAGE = 'Booking lab tests for patients is not switched on yet.';
+export let LAB_SWITCHED_OFF_MESSAGE = '';
+onLanguage(() => { LAB_SWITCHED_OFF_MESSAGE = t('lab.switchedOff'); });
 
-const LAB_WORDS: Readonly<Record<string, Refusal>> = {
-  LAB_NOT_FOUND: { kind: 'doctor', message: 'This lab is not taking bookings now. Choose another lab.' },
-  BRANCH_NOT_AVAILABLE: { kind: 'doctor', message: 'This branch is not taking bookings now. Choose another branch or lab.' },
-  VISIT_MODE_NOT_SUPPORTED: { kind: 'doctor', message: 'This branch does not offer this kind of visit. Choose another branch or visit.' },
-  SLOT_UNAVAILABLE: { kind: 'slot', message: 'This time was just taken. Choose another time.' },
-  CATALOGUE_ITEM_NOT_AVAILABLE: { kind: 'other', message: 'One of the chosen tests is no longer offered here. Choose the tests again.' },
-  ADDRESS_REQUIRED: { kind: 'patient', message: 'Enter the address for the home collection.' },
-  LAB_BOOKING_NOT_FOUND: { kind: 'other', message: 'This lab booking was not found.' },
-  LAB_BOOKING_CHANGED: { kind: 'other', message: 'This booking changed since you opened it. Look at it again, then try again.' },
-  LAB_BOOKING_NOT_CANCELLABLE: { kind: 'other', message: 'This lab booking can no longer be cancelled (the sample is taken or the test is done).' },
-  CANCELLATION_WINDOW_CLOSED: { kind: 'other', message: 'Too late to cancel: lab bookings can be cancelled up to 1 hour before the time.' },
-  NO_SHOW_NOT_REFUNDABLE: { kind: 'other', message: 'This booking was moved after the patient did not come, so it cannot be cancelled for a refund.' },
-  NO_PENDING_RESCHEDULE: { kind: 'other', message: 'There is no new time to accept any more. Look at the booking again.' },
-  RESCHEDULE_CHANGED: { kind: 'other', message: 'The lab changed the time again. Look at the new time, then accept it or cancel.' },
+const LAB_WORDS: RefusalWords = {
+  LAB_NOT_FOUND: { kind: 'doctor', key: 'lab.LAB_NOT_FOUND' },
+  BRANCH_NOT_AVAILABLE: { kind: 'doctor', key: 'lab.BRANCH_NOT_AVAILABLE' },
+  VISIT_MODE_NOT_SUPPORTED: { kind: 'doctor', key: 'lab.VISIT_MODE_NOT_SUPPORTED' },
+  SLOT_UNAVAILABLE: { kind: 'slot', key: 'refusal.SLOT_NOT_AVAILABLE' },
+  CATALOGUE_ITEM_NOT_AVAILABLE: { kind: 'other', key: 'lab.CATALOGUE_ITEM_NOT_AVAILABLE' },
+  ADDRESS_REQUIRED: { kind: 'patient', key: 'lab.ADDRESS_REQUIRED' },
+  LAB_BOOKING_NOT_FOUND: { kind: 'other', key: 'lab.LAB_BOOKING_NOT_FOUND' },
+  LAB_BOOKING_CHANGED: { kind: 'other', key: 'refusal.BOOKING_CHANGED' },
+  LAB_BOOKING_NOT_CANCELLABLE: { kind: 'other', key: 'lab.LAB_BOOKING_NOT_CANCELLABLE' },
+  CANCELLATION_WINDOW_CLOSED: { kind: 'other', key: 'lab.CANCELLATION_WINDOW_CLOSED' },
+  NO_SHOW_NOT_REFUNDABLE: { kind: 'other', key: 'lab.NO_SHOW_NOT_REFUNDABLE' },
+  NO_PENDING_RESCHEDULE: { kind: 'other', key: 'lab.NO_PENDING_RESCHEDULE' },
+  RESCHEDULE_CHANGED: { kind: 'other', key: 'lab.RESCHEDULE_CHANGED' },
 };
+const knownIn = (words: RefusalWords, err: unknown) =>
+  err instanceof ApiError && err.code && Object.hasOwn(words, err.code) ? refusalOf(words[err.code]!) : undefined;
 
 /** One plain sentence for a refusal of the lab routes (the shared assisted words first for wallet, price, limits, switch). */
 export function labRefusal(err: unknown): Refusal {
   const shared = assistedRefusal(err);
   if (shared.kind === 'off') return { kind: 'off', message: LAB_SWITCHED_OFF_MESSAGE };
-  const known = err instanceof ApiError && err.code ? LAB_WORDS[err.code] : undefined;
-  return known ?? shared;
+  return knownIn(LAB_WORDS, err) ?? shared;
 }
 
 // ── WQ25: a doctor books (backend r26 phase 3b, design §25.15) ──
 
 /** Every doctor route needs a verified, active doctor (403 `SPECIALIST_NOT_VERIFIED`): said plainly, nothing else shown. */
-export const DOCTOR_LAB_CLOSED_MESSAGE = 'Booking lab tests for your patients opens once Jansetu has verified your account and it is active.';
+export let DOCTOR_LAB_CLOSED_MESSAGE = '';
+onLanguage(() => { DOCTOR_LAB_CLOSED_MESSAGE = t('lab.doctorClosed'); });
 /** The consent a doctor attests; the version names this exact sentence (a change of words is a new version). */
 export const DOCTOR_LAB_CONSENT_VERSION = 'web-doctor-lab-v1';
 export const DOCTOR_LAB_CONSENT_STATEMENT =
+  // i18n-ignore: the versioned consent text is recorded as English (round 6f, Q2)
   'The patient (or a family member with them) agreed that this doctor books these lab tests for them on Jansetu; that an account is made for their mobile number if it has none; that their name and mobile number are shared with Jansetu and the lab; and that this doctor can see the released report for 90 days.';
 
-const DOCTOR_LAB_WORDS: Readonly<Record<string, Refusal>> = {
-  SPECIALIST_NOT_VERIFIED: { kind: 'other', message: DOCTOR_LAB_CLOSED_MESSAGE },
+const DOCTOR_LAB_WORDS: RefusalWords = {
+  SPECIALIST_NOT_VERIFIED: { kind: 'other', key: 'lab.doctorClosed' },
   // `fromBookingId`: another doctor's consultation, a missing one, an unpaid card booking or one reported "not mine".
-  BOOKING_NOT_FOUND: { kind: 'patient', message: 'This consultation was not found among yours. Book for the patient by their mobile number instead.' },
-  TREATING_WINDOW_CLOSED: { kind: 'patient', message: 'This consultation is not open for booking tests now (it is open while you treat the patient). Book for the patient by their mobile number instead.' },
+  BOOKING_NOT_FOUND: { kind: 'patient', key: 'lab.doctor.BOOKING_NOT_FOUND' },
+  TREATING_WINDOW_CLOSED: { kind: 'patient', key: 'lab.doctor.TREATING_WINDOW_CLOSED' },
 };
 /** The doctor's words first (its account, its consultation), then the lab and shared words (WQ27: the card's too). */
 export function doctorLabRefusal(err: unknown): Refusal {
-  const known = err instanceof ApiError && err.code ? DOCTOR_LAB_WORDS[err.code] : undefined;
-  return known ?? labRefusal(err);
+  return knownIn(DOCTOR_LAB_WORDS, err) ?? labRefusal(err);
 }
 
 // ── WQ21: the recommended-tests code (backend r16 phase 3d, design §25.12.4) ──
@@ -248,7 +253,7 @@ export const formatRecommendationCode = (code: string) => (code.length === 8 ? `
 export function recommendationLookup(c: ApiClient, path: string) {
   return (code: string, phone: string) => {
     const clean = cleanRecommendationCode(code);
-    if (!clean) throw new Error('Invalid recommendation code');
+    if (!clean) throw new Error('Invalid recommendation code'); // i18n-ignore: a programming error, not shown
     return c.post<TestRecommendation>(path, { body: { code: clean, phone } });
   };
 }
@@ -272,11 +277,11 @@ export function matchRecommended(items: readonly { itemId: string; name: string 
   return { itemIds, unmatched };
 }
 
-const REC_WORDS: Readonly<Record<string, string>> = {
-  INVALID_CODE: 'This code is not valid. Check it on the prescription.',
-  VALIDATION_ERROR: 'This code is not valid. Check it on the prescription.',
-  RECOMMENDATION_NOT_FOUND: 'No recommended tests were found for this code and this mobile number. Check both with the patient.',
-  INVALID_PHONE: 'Enter a valid 10-digit mobile number.',
+const REC_WORDS: Readonly<Record<string, AssistedKey>> = {
+  INVALID_CODE: 'recommendation.invalid',
+  VALIDATION_ERROR: 'recommendation.invalid',
+  RECOMMENDATION_NOT_FOUND: 'recommendation.notFound',
+  INVALID_PHONE: 'patient.phoneInvalid',
 };
 /**
  * The field is hidden: the switch is off (503 `RECOMMENDATIONS_DISABLED`, or a server without the route), or (WQ21b, the lab
@@ -287,6 +292,6 @@ export const recommendationsOff = (err: unknown) => err instanceof ApiError
   && (err.code === 'RECOMMENDATIONS_DISABLED' || ((err.status === 404 || err.status === 503) && !err.code)
     || (err.status === 403 && (err.code === 'LAB_PARTNER_REQUIRED' || err.code === 'PARTNER_NOT_VERIFIED' || err.code === 'SPECIALIST_NOT_VERIFIED')));
 export function recommendationRefusal(err: unknown): string {
-  if (err instanceof ApiError && err.code && REC_WORDS[err.code]) return REC_WORDS[err.code]!;
+  if (err instanceof ApiError && err.code && Object.hasOwn(REC_WORDS, err.code)) return t(REC_WORDS[err.code]!);
   return assistedRefusal(err).message;
 }

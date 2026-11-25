@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { hasGlobalScope, holdsAny, partnerFinanceApi } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/finance/index.ts';
 import { useSession } from '../../session.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from '../partner/scope.tsx';
 import {
@@ -43,61 +44,61 @@ function PartnerFinance({ ctx }: { ctx: ScopeContext }) {
   const s = summary.data;
   return (
     <>
-      <PartnerPageHeading ctx={ctx} title="Finance" partnerName={name}>
-        Money Jansetu collected online for {name ?? 'this partner'} and paid out. Bills paid at the counter are not part of it.
+      <PartnerPageHeading ctx={ctx} title={t('partner.title')} partnerName={name}>
+        {name != null ? t('partner.intro', { name }) : t('partner.introUnnamed')}
       </PartnerPageHeading>
       {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
-      {summary.isPending ? <Loading label="Loading finance…" />
+      {summary.isPending ? <Loading label={t('partner.loading')} />
         : summary.isError || !s ? <ErrorState message={messageOf(summary.error)} onRetry={() => void summary.refetch()} />
         : (
           <>
             <section className="ws-section" aria-labelledby="fin-bal-h">
-              <h2 id="fin-bal-h">Balance</h2>
+              <h2 id="fin-bal-h">{t('balance.title')}</h2>
               {!s.account ? (
-                <Empty title="Nothing earned yet">Earnings from online bookings appear here once the first one is completed.</Empty>
+                <Empty title={t('partner.nothingEarned')}>{t('partner.nothingEarnedText')}</Empty>
               ) : <SummaryCards summary={s} />}
             </section>
 
             <section className="ws-section" aria-labelledby="fin-dest-h">
-              <h2 id="fin-dest-h">Where payouts are sent</h2>
-              <Alert tone="warn">
-                Any change to these details, even to the same values, must be verified again by Jansetu before the next payout.
-                Payouts wait until then.
-              </Alert>
+              <h2 id="fin-dest-h">{t('partner.destination')}</h2>
+              <Alert tone="warn">{t('partner.destinationWarning')}</Alert>
               {s.account?.payoutDetails ? <PayoutDetailsList account={s.account} />
-                : <p className="ws-muted">No payout details yet{isOwner ? ': add a bank account or UPI ID so Jansetu can pay out the balance.' : '.'}</p>}
-              {s.account?.payoutDetailsState === 'unverified' && <p className="ws-muted">Jansetu has not verified these details yet; no payout is made until it has.</p>}
+                : <p className="ws-muted">{isOwner ? t('partner.noDetailsOwner') : t('details.noneYet')}</p>}
+              {s.account?.payoutDetailsState === 'unverified' && <p className="ws-muted">{t('partner.unverified')}</p>}
               {!isOwner ? (
-                <p className="ws-muted">Only an owner can change where payouts are sent.</p>
+                <p className="ws-muted">{t('partner.ownerOnly')}</p>
               ) : editing ? (
                 <PayoutDetailsForm account={s.account} audience={admin ? 'admin' : 'owner'}
                   reread={async () => (await fin.summary()).account}
                   save={(body, version) => fin.setPayoutDetails(body, version)}
                   onSaved={(a) => {
                     setEditing(false);
-                    setNotice({ tone: 'ok', text: `Payout details saved (version ${a.payoutDetailsVersion}). They wait for Jansetu’s verification; no payout is made until then.` });
+                    setNotice({ tone: 'ok', text: t('partner.saved', { version: a.payoutDetailsVersion }) });
                     reload();
                   }}
                   onLost={(text) => { setEditing(false); setNotice({ tone: 'warn', text }); reload(); }}
                   onStale={reload}
                   onCancel={() => setEditing(false)} />
               ) : (
-                <div><Button variant="secondary" onClick={() => { setNotice(null); setEditing(true); }}>{s.account?.payoutDetails ? 'Change payout details' : 'Add payout details'}</Button></div>
+                <div><Button variant="secondary" onClick={() => { setNotice(null); setEditing(true); }}>{s.account?.payoutDetails ? t('details.change') : t('details.add')}</Button></div>
               )}
             </section>
 
             {s.account && (
               <StatementSection queryKey={key} load={(q) => fin.statement(q)} csv={(q, signal) => fin.statementCsv(q, signal)}
-                csvPrefix="partner" emptyText="Earnings, payouts and adjustments appear here." />
+                // i18n-ignore: the start of the CSV file name, not words
+                csvPrefix="partner" />
             )}
           </>
         )}
-      <PagedSection id="fin-po-h" title="Payouts" queryKey={[...key, 'payouts']} load={(cursor) => fin.payouts({ cursor, limit: PAGE })}
-        empty="Transfers Jansetu records appear here." more="Show older payouts">
-        {(rows) => <PayoutsTable payouts={rows} caption="Payouts, newest first" />}
+      <PagedSection id="fin-po-h" title={t('payouts.title')} loading={t('payouts.loading')} emptyTitle={t('payouts.empty')}
+        queryKey={[...key, 'payouts']} load={(cursor) => fin.payouts({ cursor, limit: PAGE })}
+        empty={t('payouts.emptyText.partner')} more={t('payouts.older')}>
+        {(rows) => <PayoutsTable payouts={rows} caption={t('payouts.caption.partner')} />}
       </PagedSection>
-      <PagedSection id="fin-ev-h" title="Finance events" queryKey={[...key, 'events']} load={(cursor) => fin.events({ cursor, limit: PAGE })}
-        empty="Changes to payout details, payouts and adjustments appear here." more="Show older events">
+      <PagedSection id="fin-ev-h" title={t('events.title')} loading={t('events.loading')} emptyTitle={t('events.empty')}
+        queryKey={[...key, 'events']} load={(cursor) => fin.events({ cursor, limit: PAGE })}
+        empty={t('events.emptyText')} more={t('events.older')}>
         {(rows) => <EventsList events={rows} selfId={ctx.actor.memberId} />}
       </PagedSection>
     </>

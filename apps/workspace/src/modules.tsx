@@ -11,6 +11,7 @@ import { TestTube, TestTubes } from 'lucide-react';
 import { HandCoins } from 'lucide-react';
 import { hasGlobalScope, holdsAny, type PartnerKind, type PartnerPermission } from '@jansetu/api';
 import type { StaffRole, StaffUser } from './session.tsx';
+import type { ShellKey as NavKey } from './i18n/shell/index.ts';
 import { AdminLabBookingsScreen } from './screens/admin/AdminLabBookingsScreen.tsx';
 import { ConsultationScreen } from './screens/admin/ConsultationScreen.tsx';
 import { ConsultationsScreen } from './screens/admin/ConsultationsScreen.tsx';
@@ -86,8 +87,8 @@ export interface WorkspacePage {
   path: string;
   roles: readonly StaffRole[];
   element: ReactNode;
-  /** Present for pages shown in the side navigation. */
-  nav?: { label: string; icon: LucideIcon; section: string };
+  /** Present for pages shown in the side navigation: the page name and its group, as shell catalogue keys. */
+  nav?: { labelKey: NavKey; icon: LucideIcon; sectionKey: NavKey | '' };
   /**
    * Partners only (mirrors the backend route guard): the member needs at least one of these permissions; owners hold
    * all. Pages for other roles ignore it.
@@ -108,181 +109,181 @@ const DOCTOR_READERS: readonly PartnerPermission[] = ['staff.manage', 'bookings.
 const DESK_READERS: readonly PartnerPermission[] = ['bookings.view', 'bookings.manage'];
 
 export const PAGES: readonly WorkspacePage[] = [
-  { path: '/', roles: ['admin', 'pharmacy', 'partner', 'specialist'], element: <HomeScreen />, nav: { label: 'Home', icon: House, section: '' } },
+  { path: '/', roles: ['admin', 'pharmacy', 'partner', 'specialist'], element: <HomeScreen />, nav: { labelKey: 'nav.home', icon: House, sectionKey: '' } },
   // WQ4: doctors (`specialist` sessions; every route is `requireSpecialist` under /specialists/me).
   {
     path: '/doctor/consult-now', roles: ['specialist'], element: <ConsultNowScreen />,
-    nav: { label: 'Consult now', icon: Video, section: 'Doctor' },
+    nav: { labelKey: 'nav.consultNow', icon: Video, sectionKey: 'nav.section.doctor' },
   },
   {
     path: '/doctor/appointments', roles: ['specialist'], element: <AppointmentsScreen />,
-    nav: { label: 'Appointments', icon: Stethoscope, section: 'Doctor' },
+    nav: { labelKey: 'nav.appointments', icon: Stethoscope, sectionKey: 'nav.section.doctor' },
   },
   {
     path: '/doctor/schedule', roles: ['specialist'], element: <ScheduleScreen />,
-    nav: { label: 'Schedule', icon: CalendarDays, section: 'Doctor' },
+    nav: { labelKey: 'nav.schedule', icon: CalendarDays, sectionKey: 'nav.section.doctor' },
   },
   {
     path: '/doctor/clinics', roles: ['specialist'], element: <ClinicsScreen />,
-    nav: { label: 'Clinics', icon: Hospital, section: 'Doctor' },
+    nav: { labelKey: 'nav.clinics', icon: Hospital, sectionKey: 'nav.section.doctor' },
   },
   {
     path: '/doctor/earnings', roles: ['specialist'], element: <EarningsScreen />,
-    nav: { label: 'Earnings', icon: Wallet, section: 'Doctor' },
+    nav: { labelKey: 'nav.earnings', icon: Wallet, sectionKey: 'nav.section.doctor' },
   },
   // WQ23 (r20): the doctor's own wallet (`/specialists/me/assisted/wallet*`; a verified, active doctor).
   {
     path: '/doctor/wallet', roles: ['specialist'], element: <DoctorWalletScreen />,
-    nav: { label: 'Wallet', icon: Banknote, section: 'Doctor' },
+    nav: { labelKey: 'nav.wallet', icon: Banknote, sectionKey: 'nav.section.doctor' },
   },
   // WQ25 (r26): a doctor books lab tests for its patients (`/specialists/me/assisted/labs*`, `…/lab-bookings*`), paid from
   // the wallet: from one of its consultations (`/from/:fromBookingId`, linked from Appointments) or for a walk-in by phone.
   {
     path: '/doctor/lab-book', roles: ['specialist'], element: <DoctorBookLabTestScreen />,
-    nav: { label: 'Book lab test', icon: TestTube, section: 'Doctor' },
+    nav: { labelKey: 'nav.bookLabTest', icon: TestTube, sectionKey: 'nav.section.doctor' },
   },
   { path: '/doctor/lab-book/from/:fromBookingId', roles: ['specialist'], element: <DoctorBookLabTestScreen /> },
   {
     path: '/doctor/lab-tests', roles: ['specialist'], element: <DoctorLabTestsScreen />,
-    nav: { label: 'Lab tests booked', icon: TestTubes, section: 'Doctor' },
+    nav: { labelKey: 'nav.labTestsBooked', icon: TestTubes, sectionKey: 'nav.section.doctor' },
   },
   { path: '/doctor/lab-tests/:bookingId', roles: ['specialist'], element: <DoctorLabTestScreen /> },
   // WQ12: assisted booking for walk-in patients (`/pharmacy-assisted`, `/pharmacy-bookings`) and the wallet (`/pharmacy-wallet`).
   {
     path: '/pharmacy/book', roles: ['pharmacy'], element: <BookConsultationScreen />,
-    nav: { label: 'Book consultation', icon: CalendarPlus, section: 'Pharmacy' },
+    nav: { labelKey: 'nav.bookConsultation', icon: CalendarPlus, sectionKey: 'nav.section.pharmacy' },
   },
   // WQ22 (r17): an instant consultation for a walk-in, paid from the wallet (`/pharmacy-assisted/instant/*`).
   {
     path: '/pharmacy/consult-now', roles: ['pharmacy'], element: <PharmacyConsultNowScreen />,
-    nav: { label: 'Consult now', icon: Video, section: 'Pharmacy' },
+    nav: { labelKey: 'nav.consultNow', icon: Video, sectionKey: 'nav.section.pharmacy' },
   },
   {
     path: '/pharmacy/consultations', roles: ['pharmacy'], element: <BookedConsultationsScreen />,
-    nav: { label: 'Booked consultations', icon: CalendarCheck, section: 'Pharmacy' },
+    nav: { labelKey: 'nav.bookedConsultations', icon: CalendarCheck, sectionKey: 'nav.section.pharmacy' },
   },
   { path: '/pharmacy/consultations/:bookingId', roles: ['pharmacy'], element: <BookedConsultationScreen /> },
   // WQ17: lab tests for walk-in patients (assisted booking phase 2a, `/pharmacy-assisted/labs*`, `/pharmacy-assisted/lab-bookings*`).
   {
     path: '/pharmacy/lab-book', roles: ['pharmacy'], element: <BookLabTestScreen />,
-    nav: { label: 'Book lab test', icon: TestTube, section: 'Pharmacy' },
+    nav: { labelKey: 'nav.bookLabTest', icon: TestTube, sectionKey: 'nav.section.pharmacy' },
   },
   {
     path: '/pharmacy/lab-tests', roles: ['pharmacy'], element: <BookedLabTestsScreen />,
-    nav: { label: 'Booked lab tests', icon: TestTubes, section: 'Pharmacy' },
+    nav: { labelKey: 'nav.bookedLabTests', icon: TestTubes, sectionKey: 'nav.section.pharmacy' },
   },
   { path: '/pharmacy/lab-tests/:bookingId', roles: ['pharmacy'], element: <BookedLabTestScreen /> },
   {
     path: '/pharmacy/wallet', roles: ['pharmacy'], element: <WalletScreen />,
-    nav: { label: 'Wallet', icon: Wallet, section: 'Pharmacy' },
+    nav: { labelKey: 'nav.wallet', icon: Wallet, sectionKey: 'nav.section.pharmacy' },
   },
   // WQ26 (phase 4b): what the pharmacy's referral cuts earned, read only (`/pharmacy-assisted/referral*`).
   {
     path: '/pharmacy/referral', roles: ['pharmacy'], element: <ReferralEarningsScreen />,
-    nav: { label: 'Referral earnings', icon: HandCoins, section: 'Pharmacy' },
+    nav: { labelKey: 'nav.referralEarnings', icon: HandCoins, sectionKey: 'nav.section.pharmacy' },
   },
   {
     path: '/pharmacy/orders', roles: ['pharmacy'], element: <OrdersScreen />,
-    nav: { label: 'Orders', icon: Package, section: 'Pharmacy' },
+    nav: { labelKey: 'nav.orders', icon: Package, sectionKey: 'nav.section.pharmacy' },
   },
   { path: '/pharmacy/orders/:orderId', roles: ['pharmacy'], element: <OrderScreen /> },
   {
     path: '/pharmacy/prescriptions', roles: ['pharmacy'], element: <RxQueueScreen />,
-    nav: { label: 'Prescription review', icon: ClipboardCheck, section: 'Pharmacy' },
+    nav: { labelKey: 'nav.prescriptionReview', icon: ClipboardCheck, sectionKey: 'nav.section.pharmacy' },
   },
   { path: '/pharmacy/prescriptions/:orderId', roles: ['pharmacy'], element: <RxReviewScreen /> },
-  { path: '/pharmacy/stock', roles: ['pharmacy'], element: <StockScreen />, nav: { label: 'Stock', icon: Boxes, section: 'Pharmacy' } },
+  { path: '/pharmacy/stock', roles: ['pharmacy'], element: <StockScreen />, nav: { labelKey: 'nav.stock', icon: Boxes, sectionKey: 'nav.section.pharmacy' } },
   // WQ10a: add stock, stock imports (`/pharmacy-inventory-imports`) and suppliers (`/pharmacy-suppliers`).
   { path: '/pharmacy/stock/add', roles: ['pharmacy'], element: <AddStockScreen /> },
   { path: '/pharmacy/stock/import', roles: ['pharmacy'], element: <ImportStockScreen /> },
   { path: '/pharmacy/stock/imports/:importId', roles: ['pharmacy'], element: <ImportScreen /> },
   {
     path: '/pharmacy/suppliers', roles: ['pharmacy'], element: <SuppliersScreen />,
-    nav: { label: 'Suppliers', icon: Truck, section: 'Pharmacy' },
+    nav: { labelKey: 'nav.suppliers', icon: Truck, sectionKey: 'nav.section.pharmacy' },
   },
   {
     path: '/pharmacy/low-stock', roles: ['pharmacy'], element: <LowStockScreen />,
-    nav: { label: 'Low stock', icon: TrendingDown, section: 'Pharmacy' },
+    nav: { labelKey: 'nav.lowStock', icon: TrendingDown, sectionKey: 'nav.section.pharmacy' },
   },
   {
     path: '/pharmacy/quality', roles: ['pharmacy'], element: <QualityScreen />,
-    nav: { label: 'Quality', icon: ShieldAlert, section: 'Pharmacy' },
+    nav: { labelKey: 'nav.quality', icon: ShieldAlert, sectionKey: 'nav.section.pharmacy' },
   },
   {
     path: '/pharmacy/settings', roles: ['pharmacy'], element: <SettingsScreen />,
-    nav: { label: 'Settings', icon: Settings, section: 'Pharmacy' },
+    nav: { labelKey: 'nav.settings', icon: Settings, sectionKey: 'nav.section.pharmacy' },
   },
-  { path: '/partner', roles: ['partner'], element: <ProfileScreen />, nav: { label: 'Profile', icon: Building2, section: 'Organisation' } },
+  { path: '/partner', roles: ['partner'], element: <ProfileScreen />, nav: { labelKey: 'nav.profile', icon: Building2, sectionKey: 'nav.section.organisation' } },
   {
     path: '/partner/staff', roles: ['partner'], element: <StaffScreen />, partnerPermissions: ['staff.manage'],
-    nav: { label: 'Staff', icon: Users, section: 'Organisation' },
+    nav: { labelKey: 'nav.staff', icon: Users, sectionKey: 'nav.section.organisation' },
   },
   {
     path: '/partner/branches', roles: ['partner'], element: <BranchesScreen />, partnerPermissions: ['branches.manage'],
-    nav: { label: 'Branches', icon: MapPin, section: 'Organisation' },
+    nav: { labelKey: 'nav.branches', icon: MapPin, sectionKey: 'nav.section.organisation' },
   },
   {
     path: '/partner/audit', roles: ['partner'], element: <AuditScreen />, partnerPermissions: ['staff.manage'], partnerWide: true,
-    nav: { label: 'Activity log', icon: History, section: 'Organisation' },
+    nav: { labelKey: 'nav.activityLog', icon: History, sectionKey: 'nav.section.organisation' },
   },
   // WQ2: catalogue (readers: catalogue.manage or invoices.create) and in-house bills (`INVOICE_READERS` in partners/routes).
   {
     path: '/partner/catalogue', roles: ['partner'], element: <CatalogueScreen />, partnerPermissions: ['catalogue.manage', 'invoices.create'],
-    nav: { label: 'Price list', icon: ClipboardList, section: 'Billing' },
+    nav: { labelKey: 'nav.priceList', icon: ClipboardList, sectionKey: 'nav.section.billing' },
   },
   {
     path: '/partner/invoices', roles: ['partner'], element: <InvoicesScreen />, partnerPermissions: INVOICE_READERS,
-    nav: { label: 'Bills', icon: Receipt, section: 'Billing' },
+    nav: { labelKey: 'nav.bills', icon: Receipt, sectionKey: 'nav.section.billing' },
   },
   { path: '/partner/invoices/new', roles: ['partner'], element: <NewInvoiceScreen />, partnerPermissions: ['invoices.create'] },
   { path: '/partner/invoices/:invoiceId', roles: ['partner'], element: <InvoiceScreen />, partnerPermissions: INVOICE_READERS },
   // WQ3: lab slots and online lab bookings (labs only).
   {
     path: '/partner/lab-bookings', roles: ['partner'], element: <LabBookingsScreen />, partnerPermissions: LAB_READERS, partnerKinds: ['lab'],
-    nav: { label: 'Lab bookings', icon: FlaskConical, section: 'Lab' },
+    nav: { labelKey: 'nav.labBookings', icon: FlaskConical, sectionKey: 'nav.section.lab' },
   },
   { path: '/partner/lab-bookings/:bookingId', roles: ['partner'], element: <LabBookingScreen />, partnerPermissions: LAB_READERS, partnerKinds: ['lab'] },
   // WQ19 (r12): the lab front desk books the lab's own tests for a patient at the counter (`bookings.manage`, labs only).
   {
     path: '/partner/lab-desk', roles: ['partner'], element: <LabDeskScreen />, partnerPermissions: ['bookings.manage'], partnerKinds: ['lab'],
-    nav: { label: 'Front desk', icon: CalendarPlus, section: 'Lab' },
+    nav: { labelKey: 'nav.frontDesk', icon: CalendarPlus, sectionKey: 'nav.section.lab' },
   },
   // WQ24 (r21): a lab books a doctor consultation for a walk-in patient (`/partner-workspace/assisted/*`; `assisted.book`, labs only).
   {
     path: '/partner/book-consultation', roles: ['partner'], element: <LabBookConsultationScreen />, partnerPermissions: ['assisted.book'], partnerKinds: ['lab'],
-    nav: { label: 'Book consultation', icon: Stethoscope, section: 'Lab' },
+    nav: { labelKey: 'nav.bookConsultation', icon: Stethoscope, sectionKey: 'nav.section.lab' },
   },
   {
     path: '/partner/consultations', roles: ['partner'], element: <LabBookedConsultationsScreen />, partnerPermissions: ['assisted.book'], partnerKinds: ['lab'],
-    nav: { label: 'Booked consultations', icon: CalendarCheck, section: 'Lab' },
+    nav: { labelKey: 'nav.bookedConsultations', icon: CalendarCheck, sectionKey: 'nav.section.lab' },
   },
   { path: '/partner/consultations/:bookingId', roles: ['partner'], element: <LabBookedConsultationScreen />, partnerPermissions: ['assisted.book'], partnerKinds: ['lab'] },
   // WQ20 (r13): the lab's own wallet (`/partner-workspace/assisted/wallet*`; `wallet.view` reads, `wallet.manage` adds money).
   {
     path: '/partner/wallet', roles: ['partner'], element: <LabWalletScreen />, partnerPermissions: ['wallet.view', 'wallet.manage'], partnerKinds: ['lab'],
-    nav: { label: 'Wallet', icon: Wallet, section: 'Lab' },
+    nav: { labelKey: 'nav.wallet', icon: Wallet, sectionKey: 'nav.section.lab' },
   },
   {
     path: '/partner/slots', roles: ['partner'], element: <SlotsScreen />, partnerPermissions: SLOT_READERS, partnerKinds: ['lab'],
-    nav: { label: 'Slots', icon: CalendarClock, section: 'Lab' },
+    nav: { labelKey: 'nav.slots', icon: CalendarClock, sectionKey: 'nav.section.lab' },
   },
   // WQ5: finance needs `finance.view` AND partner-wide scope (`assertPartnerFinanceReader`); owners change the destination.
   {
     path: '/partner/finance', roles: ['partner'], element: <PartnerFinanceScreen />, partnerPermissions: ['finance.view'], partnerWide: true,
-    nav: { label: 'Finance', icon: Wallet, section: 'Billing' },
+    nav: { labelKey: 'nav.finance', icon: Wallet, sectionKey: 'nav.section.billing' },
   },
   // WQ6: clinic doctors (by invitation) and the front desk (clinics only).
   {
     path: '/partner/desk', roles: ['partner'], element: <DeskScreen />, partnerPermissions: DESK_READERS, partnerKinds: ['clinic'],
-    nav: { label: 'Front desk', icon: CalendarCheck, section: 'Clinic' },
+    nav: { labelKey: 'nav.frontDesk', icon: CalendarCheck, sectionKey: 'nav.section.clinic' },
   },
   {
     path: '/partner/clinic-doctors', roles: ['partner'], element: <ClinicDoctorsScreen />, partnerPermissions: DOCTOR_READERS, partnerKinds: ['clinic'],
-    nav: { label: 'Doctors', icon: Stethoscope, section: 'Clinic' },
+    nav: { labelKey: 'nav.doctors', icon: Stethoscope, sectionKey: 'nav.section.clinic' },
   },
   {
     path: '/admin/partners', roles: ['admin'], element: <PartnersScreen />,
-    nav: { label: 'Labs and clinics', icon: Handshake, section: 'Admin' },
+    nav: { labelKey: 'nav.labsAndClinics', icon: Handshake, sectionKey: 'nav.section.admin' },
   },
   { path: '/admin/partners/new', roles: ['admin'], element: <NewPartnerScreen /> },
   { path: '/admin/partners/:partnerId', roles: ['admin'], element: <PartnerScreen /> },
@@ -308,12 +309,12 @@ export const PAGES: readonly WorkspacePage[] = [
   { path: '/admin/partners/:partnerId/clinic-doctors', roles: ['admin'], element: <ClinicDoctorsScreen /> },
   {
     path: '/admin/lab-bookings', roles: ['admin'], element: <AdminLabBookingsScreen />,
-    nav: { label: 'Lab bookings', icon: FlaskConical, section: 'Admin' },
+    nav: { labelKey: 'nav.labBookings', icon: FlaskConical, sectionKey: 'nav.section.admin' },
   },
   // WQ10b: pharmacy accounts (only admins create pharmacies) and doctor consultations (the one move of a no-show).
   {
     path: '/admin/pharmacies', roles: ['admin'], element: <PharmaciesScreen />,
-    nav: { label: 'Pharmacies', icon: Store, section: 'Admin' },
+    nav: { labelKey: 'nav.pharmacies', icon: Store, sectionKey: 'nav.section.admin' },
   },
   { path: '/admin/pharmacies/new', roles: ['admin'], element: <NewPharmacyScreen /> },
   { path: '/admin/pharmacies/:pharmacyId', roles: ['admin'], element: <PharmacyScreen /> },
@@ -322,43 +323,43 @@ export const PAGES: readonly WorkspacePage[] = [
   // WQ13: a pharmacy's wallet and the admin's manual credit (`/pharmacy-wallet?pharmacyId=`, `POST /pharmacy-wallet/topup` + Idempotency-Key).
   {
     path: '/admin/pharmacy-wallets', roles: ['admin'], element: <PharmacyWalletsScreen />,
-    nav: { label: 'Pharmacy wallets', icon: Wallet, section: 'Admin' },
+    nav: { labelKey: 'nav.pharmacyWallets', icon: Wallet, sectionKey: 'nav.section.admin' },
   },
   { path: '/admin/pharmacy-wallets/:pharmacyId', roles: ['admin'], element: <PharmacyWalletScreen /> },
   // WQ18: doctor accounts and their verification (S5 fence: `expectedName`, `expectedRegistrationNumber`).
   {
     path: '/admin/doctors', roles: ['admin'], element: <DoctorsScreen />,
-    nav: { label: 'Doctors', icon: Stethoscope, section: 'Admin' },
+    nav: { labelKey: 'nav.doctors', icon: Stethoscope, sectionKey: 'nav.section.admin' },
   },
   { path: '/admin/doctors/:doctorId', roles: ['admin'], element: <DoctorScreen /> },
   // WQ23 (r20): a doctor's wallet for admins (`/admin/doctors/:specialistId/wallet*`).
   { path: '/admin/doctors/:doctorId/wallet', roles: ['admin'], element: <DoctorWalletAdminScreen /> },
   {
     path: '/admin/consultations', roles: ['admin'], element: <ConsultationsScreen />,
-    nav: { label: 'Consultations', icon: CalendarSearch, section: 'Admin' },
+    nav: { labelKey: 'nav.consultations', icon: CalendarSearch, sectionKey: 'nav.section.admin' },
   },
   { path: '/admin/consultations/:bookingId', roles: ['admin'], element: <ConsultationScreen /> },
   {
     path: '/admin/order-cancellations', roles: ['admin'], element: <OrderCancellationsScreen />,
-    nav: { label: 'Order cancellations', icon: PackageX, section: 'Admin' },
+    nav: { labelKey: 'nav.orderCancellations', icon: PackageX, sectionKey: 'nav.section.admin' },
   },
   {
     path: '/admin/refunds', roles: ['admin'], element: <RefundsScreen />,
-    nav: { label: 'Refunds needing attention', icon: Undo2, section: 'Admin' },
+    nav: { labelKey: 'nav.refundsNeedingAttention', icon: Undo2, sectionKey: 'nav.section.admin' },
   },
   {
     path: '/admin/external-cancellations', roles: ['admin'], element: <ExternalCancellationsScreen />,
-    nav: { label: 'External cancellations', icon: Ban, section: 'Admin' },
+    nav: { labelKey: 'nav.externalCancellations', icon: Ban, sectionKey: 'nav.section.admin' },
   },
   // WQ5: settlement accounts, payouts and adjustments (`/api/v1/settlements`, admins only).
   {
     path: '/admin/settlements', roles: ['admin'], element: <SettlementsScreen />,
-    nav: { label: 'Settlements', icon: Landmark, section: 'Admin' },
+    nav: { labelKey: 'nav.settlements', icon: Landmark, sectionKey: 'nav.section.admin' },
   },
   { path: '/admin/settlements/:accountId', roles: ['admin'], element: <SettlementAccountScreen /> },
   {
     path: '/admin/payouts', roles: ['admin'], element: <PayoutsQueueScreen />,
-    nav: { label: 'Payouts', icon: Banknote, section: 'Admin' },
+    nav: { labelKey: 'nav.payouts', icon: Banknote, sectionKey: 'nav.section.admin' },
   },
 ];
 

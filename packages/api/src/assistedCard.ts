@@ -1,6 +1,8 @@
 import { formatClock } from '@jansetu/i18n';
 import { ApiError, type ApiClient } from './client.ts';
 import { assistedRefusal, hex, idOf as checkedId, rupees, type BookedConsultation, type BookerKind, type BookingPayment, type CancelAnswer, type CardRefund, type OpenCardOrder } from './assisted.ts';
+import { t, type AssistedKey } from './i18n/assisted/index.ts';
+import { onLanguage, wordMap } from './i18n/words.ts';
 
 /**
  * WQ16: assisted booking phase 1b, a pharmacy pays a walk-in consultation by card or UPI (backend r10
@@ -82,25 +84,27 @@ export function outcomeOfAnswer(a: CardPaymentAnswer | ReconcileAnswer | null | 
 }
 
 /** WQ24: `org` names the booker's account (the pharmacy's words unchanged). */
-export const cardBlockedWords = (org: BookerKind) =>
-  `Your ${org} account is not active or not verified, so the payment cannot be checked here. If you paid, Jansetu checks it with Razorpay: the booking is confirmed, or the money goes back to the card or UPI.`;
-export const CARD_BLOCKED_WORDS = cardBlockedWords('pharmacy');
-export const DOCTOR_CARD_BLOCKED_WORDS =
-  'Your account is not verified and active, so the payment cannot be checked here. If you paid, Jansetu returns the money to the card or UPI, and the booking is not made.';
+export const cardBlockedWords = (org: BookerKind) => t(org === 'lab' ? 'card.blockedLab' : 'card.blocked');
+export let CARD_BLOCKED_WORDS = '';
+export let DOCTOR_CARD_BLOCKED_WORDS = '';
 /** WQ24b: a lab member without `assisted.book` (403 INSUFFICIENT_PERMISSIONS on the lab's payment routes): a permission, not the account. */
-export const CARD_PERMISSION_WORDS =
-  'Your account is not allowed to check this payment: it needs the right to book consultations for patients. Ask your lab’s owner. If you paid, Jansetu checks it with Razorpay: the booking is confirmed, or the money goes back to the card or UPI.';
-export const DUPLICATE_WORDS = 'This booking was already paid with another payment. This payment is being refunded to the card or UPI.';
-const CARD_FAILED_WORDS = 'This payment failed, so the booking is not paid. If the time is released, book again.';
+export let CARD_PERMISSION_WORDS = '';
+export let DUPLICATE_WORDS = '';
+onLanguage(() => {
+  CARD_BLOCKED_WORDS = t('card.blocked');
+  DOCTOR_CARD_BLOCKED_WORDS = t('card.blockedDoctor');
+  CARD_PERMISSION_WORDS = t('card.permission');
+  DUPLICATE_WORDS = t('card.duplicate');
+});
 
 /** A refusal of verify or reconcile, read for what it settles (`null`: nothing; try the next step or check again). */
 export function outcomeOfError(err: unknown, org: BookerKind = 'pharmacy'): CardOutcome | null {
   if (!(err instanceof ApiError)) return null;
   if (err.code === 'PAYMENT_REFUNDED') return { kind: 'refunded' };
-  if (err.code === 'PAYMENT_FAILED') return { kind: 'failed', message: CARD_FAILED_WORDS };
+  if (err.code === 'PAYMENT_FAILED') return { kind: 'failed', message: t('card.failed') };
   if (err.code === 'DUPLICATE_PAYMENT_REFUNDED') return { kind: 'duplicate', message: DUPLICATE_WORDS };
   // r10b: a card dispute recorded on this payment: said as it is (never paid, never "not booked").
-  if (err.code === 'PAYMENT_DISPUTED') return { kind: 'blocked', message: 'A card dispute was recorded on this booking payment. Please contact Jansetu support.' };
+  if (err.code === 'PAYMENT_DISPUTED') return { kind: 'blocked', message: t('card.disputed') };
   // WQ27 (r29 DR9): a doctor no longer verified and active; the server returns its capture to the card.
   if (err.code === 'SPECIALIST_NOT_VERIFIED') return { kind: 'blocked', message: DOCTOR_CARD_BLOCKED_WORDS };
   // WQ24b re-check: the permission words ("Ask your lab’s owner") only for a lab member.
@@ -111,9 +115,9 @@ export function outcomeOfError(err: unknown, org: BookerKind = 'pharmacy'): Card
 /** Plain words for a verify or reconcile refusal that settles nothing (shown with "Check payment"). */
 export function cardCheckProblem(err: unknown, org: BookerKind = 'pharmacy'): string {
   if (err instanceof ApiError) {
-    if (err.code === 'PAYMENT_CHANGED') return 'The payment changed while it was checked. Check again.';
-    if (err.code === 'RAZORPAY_PAYMENT_FETCH_FAILED' || err.status >= 500 || err.status === 0) return 'Razorpay could not be asked just now. Check again in a minute.';
-    if (err.code === 'PAYMENT_RECORD_NOT_FOUND') return `This payment was not found for your ${org}.`;
+    if (err.code === 'PAYMENT_CHANGED') return t('card.changed');
+    if (err.code === 'RAZORPAY_PAYMENT_FETCH_FAILED' || err.status >= 500 || err.status === 0) return t('card.razorpayDown');
+    if (err.code === 'PAYMENT_RECORD_NOT_FOUND') return t(org === 'lab' ? 'card.notFoundLab' : 'card.notFound');
   }
   return assistedRefusal(err).message;
 }
@@ -153,7 +157,7 @@ export async function beforeCheckout(api: ApiClient, paymentTransactionId: strin
       const s = a.gatewayStatuses ?? [];
       return s.includes('authorized') ? { kind: 'settled', outcome: { kind: 'unpaid', inFlight: true } } : { kind: 'open', created: s.includes('created') };
     }
-    return { kind: 'settled', outcome: outcomeOfAnswer(a) ?? { kind: 'unknown', message: 'The answer about this payment could not be read.' } };
+    return { kind: 'settled', outcome: outcomeOfAnswer(a) ?? { kind: 'unknown', message: t('card.unreadable') } };
   } catch (err) {
     return { kind: 'settled', outcome: outcomeOfError(err, payer.org) ?? { kind: 'unknown', message: cardCheckProblem(err, payer.org) } };
   }
@@ -162,7 +166,7 @@ export async function beforeCheckout(api: ApiClient, paymentTransactionId: strin
 /** `POST /payments/reconcile` for one card booking payment. Never throws. */
 export async function checkCardPayment(api: ApiClient, paymentTransactionId: string, payer: CardPayer = PHARMACY_PAYER): Promise<CardOutcome> {
   try {
-    return outcomeOfAnswer(await bookingPaymentApi(api, payer).reconcile(paymentTransactionId)) ?? { kind: 'unknown', message: 'The answer about this payment could not be read.' };
+    return outcomeOfAnswer(await bookingPaymentApi(api, payer).reconcile(paymentTransactionId)) ?? { kind: 'unknown', message: t('card.unreadable') };
   } catch (err) {
     return outcomeOfError(err, payer.org) ?? { kind: 'unknown', message: cardCheckProblem(err, payer.org) };
   }
@@ -170,8 +174,8 @@ export async function checkCardPayment(api: ApiClient, paymentTransactionId: str
 
 /** "Pay before 14:35 or the time is released." (India time, 24-hour like the slot times). */
 export function payByWords(payBy: string | undefined | null): string {
-  const t = payByClock(payBy);
-  return t ? `Pay before ${t} or the time is released.` : 'Pay within 30 minutes of booking or the time is released.';
+  const time = payByClock(payBy);
+  return time ? t('card.payBy', { time }) : t('card.payWithin');
 }
 export function payByClock(payBy: string | undefined | null): string | null {
   const d = payBy ? new Date(payBy) : null;
@@ -210,7 +214,8 @@ export function cardBookingState(kind: CardBookingKind, b: { status?: string; pa
 }
 /** A by-key answer of a card booking carries `payment` (r10/r14); a booker view says how it was paid (r10c). */
 export const isCardAnswer = (r: { booking?: { payment?: { method?: string } } }) => 'payment' in r || r.booking?.payment?.method === 'razorpay';
-export const HELD_NOT_STARTED = 'The booking is held, but its card payment could not be started. Send the same request again to get the payment page.';
+export let HELD_NOT_STARTED = '';
+onLanguage(() => { HELD_NOT_STARTED = t('card.heldNotStarted'); });
 
 /**
  * WQ21 L1: what a create's answer, or a by-key `used` answer (`byKey`), means for the booking screen — the same for a
@@ -260,53 +265,55 @@ export function bookingPayBy(b: Pick<BookedConsultation, 'payment' | 'createdAt'
 }
 
 /** WQ16c: said whenever a card booking is cancelled (or released) before it was paid. */
-export const LATE_PAYMENT_BACK = 'If a payment arrives later, it goes back to the card.';
-export const LATE_CAPTURE_WORDS =
-  'The payment came after the booking could no longer take it (the time was released, it was cancelled, or the doctor is not available). The amount is being refunded to the card or UPI it was paid with. Nothing is booked: book again if the patient still wants it.';
+export let LATE_PAYMENT_BACK = '';
+export let LATE_CAPTURE_WORDS = '';
+onLanguage(() => {
+  LATE_PAYMENT_BACK = t('card.lateBack');
+  LATE_CAPTURE_WORDS = t('card.lateCapture');
+});
 
 
 /** The refund of a card-paid booking in plain words, from the server's state only (only `processed` is done). */
 export function cardRefundWords(r: CardRefund): string {
   const amount = rupees(r.amountMinor);
   if (r.method === 'wallet') {
-    return r.state === 'processed'
-      ? `${amount} is back in your Jansetu wallet. This money pays for bookings; it cannot be withdrawn.`
-      : `${amount} is being returned to your Jansetu wallet.`;
+    return t(r.state === 'processed' ? 'refund.walletDone' : 'refund.walletPending', { amount });
   }
   switch (r.state) {
-    case 'processed': return `${amount} was refunded to the card or UPI it was paid with.`;
-    case 'pending': return `Refund of ${amount} to the card or UPI: in progress. It usually reaches the card in 5 to 7 working days.`;
-    case 'failed': return `The refund of ${amount} to the card or UPI did not go through. Jansetu will contact you to return it another way.`;
-    case 'manual_review': return `The refund of ${amount} is held for a check by Jansetu. Jansetu will contact you.`;
-    default: return `Refund of ${amount}: ${r.state}.`;
+    case 'processed': return t('refund.processed', { amount });
+    case 'pending': return t('refund.pending', { amount });
+    case 'failed': return t('refund.failed', { amount });
+    case 'manual_review': return t('refund.manual_review', { amount });
+    default: return t('refund.other', { amount, state: r.state });
   }
 }
 
 /** What a cancellation did with the money (WQ12 words for a wallet booking; the `refund` for a card booking). */
 /** `told`: who hears of it (WQ17c: a lab test tells the patient only). */
-export function cancelWords(a: Pick<CancelAnswer, 'refundedMinor' | 'alreadyCancelled' | 'refund'> & { booking?: unknown }, told = 'The patient and the doctor are told.'): string {
-  if (a.alreadyCancelled) return 'It was already cancelled. Nothing was refunded twice.';
+export function cancelWords(a: Pick<CancelAnswer, 'refundedMinor' | 'alreadyCancelled' | 'refund'> & { booking?: unknown }, told = t('cancel.told')): string {
+  if (a.alreadyCancelled) return t('cancel.already');
   // r10: `refund` is present only for a card booking (null: cancelled before it was paid).
-  if (!('refund' in a)) return `Cancelled. ${rupees(a.refundedMinor)} is back in your Jansetu wallet. ${told}`;
-  if (!a.refund) return `Cancelled. It was not paid, so nothing is refunded. ${LATE_PAYMENT_BACK}`;
-  return `Cancelled. ${cardRefundWords(a.refund)} ${told}`;
+  if (!('refund' in a)) return t('cancel.wallet', { amount: rupees(a.refundedMinor), told });
+  if (!a.refund) return t('cancel.unpaid', { later: LATE_PAYMENT_BACK });
+  return t('cancel.card', { refund: cardRefundWords(a.refund), told });
 }
 
 // ── Admin: card refunds of assisted bookings that need a person (r10 `cardRefunds.ts`, §23.3 "Admin") ──
 
 export const CARD_REFUND_STATES = ['pending', 'processed', 'failed', 'manual_review'] as const;
 export type CardRefundState = (typeof CARD_REFUND_STATES)[number];
-export const CARD_REFUND_STATE_LABEL: Readonly<Record<string, string>> = {
-  pending: 'Refund to card in progress', processed: 'Refunded', failed: 'Refund to card failed', manual_review: 'Held for a check',
-};
-export const CARD_REFUND_CAUSE_LABEL: Readonly<Record<string, string>> = {
-  booker: 'Cancelled by the pharmacy', patient: 'Cancelled by the patient', doctor: 'Cancelled by the doctor', admin: 'Cancelled by Jansetu',
-  late_capture: 'Paid after the booking was released',
-  extra_capture: 'Second payment, refunded',
-};
+export const CARD_REFUND_STATE_LABEL: Readonly<Record<string, string>> = wordMap(t, {
+  pending: 'refundState.pending', processed: 'refundState.processed', failed: 'refundState.failed', manual_review: 'refundState.manual_review',
+});
+export const CARD_REFUND_CAUSE_LABEL: Readonly<Record<string, string>> = wordMap(t, {
+  booker: 'refundCause.booker', patient: 'refundCause.patient', doctor: 'refundCause.doctor', admin: 'refundCause.admin',
+  late_capture: 'refundCause.late_capture',
+  extra_capture: 'refundCause.extra_capture',
+});
+const BOOKER_CANCEL = { pharmacy: 'refundCause.booker', lab: 'refundCause.bookerLab', doctor: 'refundCause.doctor' } as const;
 /** WQ24b: the cause in words; a booker's own cancel names who paid (r21: a lab, or a doctor, books too). */
 export const cardRefundCauseLabel = (cause: string, payerKind?: string | null): string | undefined =>
-  (cause === 'booker' ? `Cancelled by the ${payerWord(payerKind)}` : CARD_REFUND_CAUSE_LABEL[cause]);
+  (cause === 'booker' ? t(BOOKER_CANCEL[payerWord(payerKind)]) : CARD_REFUND_CAUSE_LABEL[cause]);
 /** `cardRefundToWalletSchema.agreement`: 1–500 characters after trimming. */
 export const MAX_REFUND_AGREEMENT = 500;
 const clean = (s: string) => s.trim().replace(/\s+/g, ' ');
@@ -314,8 +321,8 @@ const clean = (s: string) => s.trim().replace(/\s+/g, ' ');
 /** `payer`: whose agreement it is (WQ24b; the pharmacy's by default). */
 export function agreementProblem(text: string, payer: CardRefundPayerKind = 'pharmacy'): string | undefined {
   const a = clean(text);
-  if (!a) return `Write what the ${payer} agreed to, and how (for example “Agreed on a call with the ${payer === 'doctor' ? 'doctor' : 'owner'} on 23 Nov”).`;
-  if (a.length > MAX_REFUND_AGREEMENT) return `Use at most ${MAX_REFUND_AGREEMENT} characters.`;
+  if (!a) return t(payer === 'lab' ? 'agreement.emptyLab' : payer === 'doctor' ? 'agreement.emptyDoctor' : 'agreement.empty');
+  if (a.length > MAX_REFUND_AGREEMENT) return t('field.tooLong', { max: MAX_REFUND_AGREEMENT });
   return undefined;
 }
 
@@ -339,6 +346,9 @@ export type AdminCardRefund = CardRefund & {
 };
 /** WQ24b: the payer as a word ("pharmacy", "lab", "doctor"); an older answer (no `payerKind`) is a pharmacy's. */
 export const payerWord = (kind: string | null | undefined): CardRefundPayerKind => (kind === 'lab' || kind === 'doctor' ? kind : 'pharmacy');
+const PAYER = { pharmacy: 'payer.pharmacy', lab: 'payer.lab', doctor: 'payer.doctor' } as const;
+/** The payer in words ("pharmacy", "lab", "doctor"), for a sentence about it. */
+export const payerLabel = (kind: string | null | undefined): string => t(PAYER[payerWord(kind)]);
 /** The payer's name on a row (`payerName`, else an older answer's `pharmacyName`), or null. */
 export const payerNameOf = (r: Pick<AdminCardRefund, 'payerName' | 'pharmacyName'>): string | null => r.payerName || r.pharmacyName || null;
 /** r10b `recheckCardRefund`: the row after asking Razorpay, and every refund Razorpay holds for the payment. */
@@ -358,18 +368,18 @@ export function adminCardRefundsApi(c: ApiClient) {
      * processed to the wallet counts; anything else is a 502, so the request stays unknown.
      */
     toWallet: async (refundId: string, agreement: string): Promise<CardRefundMove> => {
-      if (!hex.test(refundId)) throw new Error('Invalid refund id');
+      if (!hex.test(refundId)) throw new Error('Invalid refund id'); // i18n-ignore: a programming error, not shown
       const a = clean(agreement);
-      if (agreementProblem(a)) throw new Error('Invalid agreement');
+      if (agreementProblem(a)) throw new Error('Invalid agreement'); // i18n-ignore: a programming error, not shown
       const r = await c.post<Partial<CardRefundMove> | null>(`/admin/assisted/card-refunds/${refundId.toLowerCase()}/to-wallet`, { body: { agreement: a } });
-      if (!r?.refund || r.refund.method !== 'wallet' || r.refund.state !== 'processed') throw new ApiError(502, 'The answer about this refund could not be read.');
+      if (!r?.refund || r.refund.method !== 'wallet' || r.refund.state !== 'processed') throw new ApiError(502, t('refund.unreadable'));
       return { refund: r.refund, replayed: r.replayed === true };
     },
     /** r10b `POST …/:id/recheck`: asks Razorpay now (a pending row may be sent or settled); moves no wallet money. */
     recheck: async (refundId: string): Promise<CardRefundRecheck> => {
-      if (!hex.test(refundId)) throw new Error('Invalid refund id');
+      if (!hex.test(refundId)) throw new Error('Invalid refund id'); // i18n-ignore: a programming error, not shown
       const r = await c.post<Partial<CardRefundRecheck> | null>(`/admin/assisted/card-refunds/${refundId.toLowerCase()}/recheck`);
-      if (!r?.refund || !Array.isArray(r.gateway)) throw new ApiError(502, 'The answer about this refund could not be read.');
+      if (!r?.refund || !Array.isArray(r.gateway)) throw new ApiError(502, t('refund.unreadable'));
       return { refund: r.refund, gateway: r.gateway };
     },
     /**
@@ -377,11 +387,11 @@ export function adminCardRefundsApi(c: ApiClient) {
      * read (then it may be moved to the wallet). Only an answer showing it failed counts; anything else is a 502.
      */
     markFailed: async (refundId: string, reason: string): Promise<{ refund: AdminCardRefund }> => {
-      if (!hex.test(refundId)) throw new Error('Invalid refund id');
+      if (!hex.test(refundId)) throw new Error('Invalid refund id'); // i18n-ignore: a programming error, not shown
       const why = clean(reason);
-      if (!why || why.length > MAX_REFUND_AGREEMENT) throw new Error('Invalid reason');
+      if (!why || why.length > MAX_REFUND_AGREEMENT) throw new Error('Invalid reason'); // i18n-ignore: a programming error, not shown
       const r = await c.post<{ refund?: AdminCardRefund } | null>(`/admin/assisted/card-refunds/${refundId.toLowerCase()}/mark-failed`, { body: { reason: why } });
-      if (!r?.refund || r.refund.state !== 'failed') throw new ApiError(502, 'The answer about this refund could not be read.');
+      if (!r?.refund || r.refund.state !== 'failed') throw new ApiError(502, t('refund.unreadable'));
       return { refund: r.refund };
     },
   };
@@ -390,9 +400,9 @@ export function adminCardRefundsApi(c: ApiClient) {
 /** The words for a recheck answer: the row's state and what Razorpay holds. */
 export function recheckWords(r: CardRefundRecheck): string {
   const state = CARD_REFUND_STATE_LABEL[r.refund.state] ?? r.refund.state;
-  const held = r.gateway.length === 0 ? 'Razorpay holds no refund of this payment yet.'
-    : `Razorpay holds ${r.gateway.length} refund${r.gateway.length === 1 ? '' : 's'} of this payment (${r.gateway.map((g) => g.status).join(', ')}).`;
-  return `Checked with Razorpay: ${state}. ${held}`;
+  const held = r.gateway.length === 0 ? t('recheck.none')
+    : t('recheck.held', { count: r.gateway.length, statuses: r.gateway.map((g) => g.status).join(', ') });
+  return t('recheck.words', { state, held });
 }
 
 /**
@@ -401,14 +411,14 @@ export function recheckWords(r: CardRefundRecheck): string {
  * refund): on an older server without the route the outcome stays unknown.
  */
 export async function readCardRefund(api: ApiClient, refundId: string): Promise<AdminCardRefund> {
-  if (!hex.test(refundId)) throw new Error('Invalid refund id');
+  if (!hex.test(refundId)) throw new Error('Invalid refund id'); // i18n-ignore: a programming error, not shown
   try {
     const r = await api.get<AdminCardRefund | null>(`/admin/assisted/card-refunds/${refundId.toLowerCase()}`);
-    if (!r || !hex.test(String(r.refundId)) || typeof r.state !== 'string') throw new ApiError(502, 'The answer about this refund could not be read.');
+    if (!r || !hex.test(String(r.refundId)) || typeof r.state !== 'string') throw new ApiError(502, t('refund.unreadable'));
     return r;
   } catch (err) {
     if (err instanceof ApiError && ((err.status === 404 && !err.code) || err.status === 405)) {
-      throw new ApiError(err.status, 'Not available on this server yet. The outcome is not known.', 'ROUTE_NOT_AVAILABLE');
+      throw new ApiError(err.status, t('refund.routeMissing'), 'ROUTE_NOT_AVAILABLE');
     }
     throw err;
   }
@@ -427,25 +437,34 @@ export async function findMovedRefund(api: ApiClient, refundId: string): Promise
   return r.method === 'wallet' && r.state === 'processed' ? r : null;
 }
 
-const MOVE_WORDS: Readonly<Record<string, string>> = {
-  REFUND_NOT_FAILED: 'Only a refund that failed or is held for a check can be moved to the wallet. Nothing was changed. Read the list again.',
-  CHARGEBACK_RECORDED: 'A card dispute was recorded on this payment: the bank already took the money back. Nothing was moved.',
-  REFUND_NOT_FOUND: 'This refund was not found. Nothing was changed.',
-  REFUND_CHANGED: 'This refund changed while it was being moved. Read the list again, then try again.',
-  REFUND_AT_GATEWAY: 'Razorpay already has a refund of this payment, done or on its way, so nothing was moved. Tap “Recheck” to see it.',
-  GATEWAY_LOOKUP_FAILED: 'Razorpay could not be asked about this payment just now. Nothing was moved. Try again in a minute.',
-  VALIDATION_ERROR: `Write the agreement in 1 to ${MAX_REFUND_AGREEMENT} characters. Nothing was changed.`,
+/** A refusal code → the key of its words (`{max}`: the longest text allowed). */
+const MOVE_WORDS: Readonly<Record<string, AssistedKey>> = {
+  REFUND_NOT_FAILED: 'move.REFUND_NOT_FAILED',
+  CHARGEBACK_RECORDED: 'move.CHARGEBACK_RECORDED',
+  REFUND_NOT_FOUND: 'refund.notFound',
+  REFUND_CHANGED: 'move.REFUND_CHANGED',
+  REFUND_AT_GATEWAY: 'move.REFUND_AT_GATEWAY',
+  GATEWAY_LOOKUP_FAILED: 'move.GATEWAY_LOOKUP_FAILED',
+  VALIDATION_ERROR: 'move.VALIDATION_ERROR',
 };
+const wordsFor = (map: Readonly<Record<string, AssistedKey>>, err: unknown): string | null =>
+  err instanceof ApiError && err.code && Object.hasOwn(map, err.code) ? t(map[err.code]!, { max: MAX_REFUND_AGREEMENT }) : null;
+
+/** "Move to wallet" and "Mark failed" share these; `forbidden` is the 403 sentence of each. */
+function refundRefusal(err: unknown, forbidden: 'move.forbidden' | 'mark.forbidden'): string {
+  const known = wordsFor(MOVE_WORDS, err);
+  if (known) return known;
+  if (err instanceof ApiError && err.status === 404 && !err.code) return t('move.routeMissing');
+  if (err instanceof ApiError && (err.code === 'ASSISTED_BOOKING_DISABLED' || (err.status === 503 && !err.code))) {
+    return t('move.switchedOff');
+  }
+  if (err instanceof ApiError && err.status === 403) return t(forbidden);
+  return assistedRefusal(err).message;
+}
 
 /** One plain sentence for a refusal of "Move to wallet". */
 export function moveRefundRefusal(err: unknown): string {
-  if (err instanceof ApiError && err.code && MOVE_WORDS[err.code]) return MOVE_WORDS[err.code]!;
-  if (err instanceof ApiError && err.status === 404 && !err.code) return 'Not available on this server yet. Nothing was changed.';
-  if (err instanceof ApiError && (err.code === 'ASSISTED_BOOKING_DISABLED' || (err.status === 503 && !err.code))) {
-    return 'The admin tools are switched off on this server, so refunds cannot be moved here. Nothing was changed.';
-  }
-  if (err instanceof ApiError && err.status === 403) return 'Only Jansetu admins can move a refund.';
-  return assistedRefusal(err).message;
+  return refundRefusal(err, 'move.forbidden');
 }
 
 /** Refused before any write (`assertAdminToolsOn` is the first line): for a sole first attempt nothing was moved. */
@@ -459,18 +478,17 @@ export const moveRefusedBeforeWriting = (err: unknown) => err instanceof ApiErro
 export const moveRefundFinal = (err: unknown) => err instanceof ApiError && ((err.status === 409 && ['REFUND_NOT_FAILED', 'CHARGEBACK_RECORDED', 'REFUND_AT_GATEWAY'].includes(err.code ?? ''))
   || (err.status === 404 && err.code === 'REFUND_NOT_FOUND'));
 
-const MARK_WORDS: Readonly<Record<string, string>> = {
-  REFUND_AT_GATEWAY: 'Razorpay already has a refund of this payment, done or on its way, so it was not marked failed. Tap “Recheck” to see it.',
-  REFUND_BUSY: 'This refund is being worked on right now. Nothing was changed. Try again in a few minutes.',
-  REFUND_NOT_PENDING: 'Only a card refund still in progress can be marked failed. Read the list again.',
-  GATEWAY_LOOKUP_FAILED: 'Razorpay could not be asked about this payment just now. Nothing was changed. Try again in a minute.',
-  REFUND_NOT_FOUND: 'This refund was not found. Nothing was changed.',
-  VALIDATION_ERROR: `Write a reason of 1 to ${MAX_REFUND_AGREEMENT} characters. Nothing was changed.`,
+const MARK_WORDS: Readonly<Record<string, AssistedKey>> = {
+  REFUND_AT_GATEWAY: 'mark.REFUND_AT_GATEWAY',
+  REFUND_BUSY: 'mark.REFUND_BUSY',
+  REFUND_NOT_PENDING: 'mark.REFUND_NOT_PENDING',
+  GATEWAY_LOOKUP_FAILED: 'mark.GATEWAY_LOOKUP_FAILED',
+  REFUND_NOT_FOUND: 'refund.notFound',
+  VALIDATION_ERROR: 'mark.VALIDATION_ERROR',
 };
 /** One plain sentence for a refusal of "Mark failed" or "Recheck". */
 export function markFailedRefusal(err: unknown): string {
-  if (err instanceof ApiError && err.code && MARK_WORDS[err.code]) return MARK_WORDS[err.code]!;
-  return moveRefundRefusal(err).replace('Only Jansetu admins can move a refund.', 'Only Jansetu admins can change a refund.');
+  return wordsFor(MARK_WORDS, err) ?? refundRefusal(err, 'mark.forbidden');
 }
 /** Refused before any change (switch, Razorpay not answering: the row is freed): for a sole first attempt nothing was marked. */
 export const markFailedRefusedBeforeWriting = (err: unknown) => err instanceof ApiError
@@ -485,8 +503,8 @@ export const markFailedFinal = (err: unknown) => err instanceof ApiError
 /** WQ16c: a refusal of "Recheck". A 5xx (Razorpay not answering included) may come after the refund was sent: not known. */
 export function recheckRefusal(err: unknown): string {
   if (err instanceof ApiError && (err.status >= 500 || err.status === 0) && err.status !== 503) {
-    return 'Razorpay could not be asked just now. The outcome is not known: tap “Recheck” again in a minute.';
+    return t('recheck.razorpayDown');
   }
-  if (err instanceof ApiError && err.code === 'REFUND_BUSY') return 'This refund is being worked on right now. Try again in a few minutes.';
+  if (err instanceof ApiError && err.code === 'REFUND_BUSY') return t('recheck.busy');
   return markFailedRefusal(err);
 }

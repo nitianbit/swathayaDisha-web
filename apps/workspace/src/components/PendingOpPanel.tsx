@@ -3,6 +3,7 @@ import { Alert, Button } from '@jansetu/ui';
 import { ConfirmAction } from './ConfirmAction.tsx';
 import type { Page } from '@jansetu/api';
 import { messageOf } from '../errors.ts';
+import { t } from '../i18n/components/index.ts';
 import { findByKey, type PendingOp } from '../requests.ts';
 
 interface Props<B, R extends { requestKey?: string; createdAt?: string }> {
@@ -40,7 +41,7 @@ interface Props<B, R extends { requestKey?: string; createdAt?: string }> {
  * Render with `key={op.attempts}` so a lookup result never outlives a later attempt.
  */
 export function PendingOpPanel<B, R extends { requestKey?: string; createdAt?: string }>(
-  { label, op, summary, busy, onResend, fetchPage, onFound, onDiscard, abandon, forget, abandonWhenNotFound, abandonLabel = 'Cancel it and start again' }: Props<B, R>,
+  { label, op, summary, busy, onResend, fetchPage, onFound, onDiscard, abandon, forget, abandonWhenNotFound, abandonLabel = t('pending.abandon') }: Props<B, R>,
 ) {
   const [checking, setChecking] = useState(false);
   const [note, setNote] = useState<{ tone: 'warn' | 'error'; text: string } | null>(null);
@@ -56,10 +57,10 @@ export function PendingOpPanel<B, R extends { requestKey?: string; createdAt?: s
       if (r.state === 'abandoned') { onDiscard?.(); return; }
       // The server says it WAS recorded and returns that exact record.
       if (r.record) { onFound(r.record); return; }
-      setNote({ tone: 'error', text: 'It was recorded, but its record could not be shown. Reload the page.' });
+      setNote({ tone: 'error', text: t('pending.recordedNotShown') });
       setNotFound(false);
     } catch (err) {
-      setNote({ tone: 'error', text: `Could not cancel it: ${messageOf(err)}` });
+      setNote({ tone: 'error', text: t('pending.abandonFailed', { reason: messageOf(err) }) });
     } finally {
       setAbandoning(false);
     }
@@ -74,16 +75,16 @@ export function PendingOpPanel<B, R extends { requestKey?: string; createdAt?: s
       else if (op.restored) {
         setNotFound(true);
         setNote({ tone: 'warn', text: abandon || !forget
-          ? 'Not found in the records. It may still be on its way. To make the request again, first cancel this one: once cancelled it can never be recorded.'
-          : 'Not found in the records. It may still be on its way, or it was never recorded: this cannot be told apart from here.' });
+          ? t('pending.restoredNotFound.cancelFirst')
+          : t('pending.restoredNotFound.unknown') });
       } else {
         setNotFound(true);
         setNote({ tone: 'warn', text: abandon && abandonWhenNotFound
-          ? 'Not recorded so far, but it may still be finishing. Send the same request again (it is never recorded twice), or give it up: the server then makes sure it can never be recorded.'
-          : 'Not found in the recent records. That does not prove it was not recorded: it may still be finishing. Send the same request again; if it was not recorded it will be now, and if it was you get its record.' });
+          ? t('pending.notFound.giveUp')
+          : t('pending.notFound.resend') });
       }
     } catch (err) {
-      setNote({ tone: 'error', text: `Could not check the records: ${messageOf(err)}` });
+      setNote({ tone: 'error', text: t('pending.checkFailed', { reason: messageOf(err) }) });
     } finally {
       setChecking(false);
     }
@@ -92,14 +93,10 @@ export function PendingOpPanel<B, R extends { requestKey?: string; createdAt?: s
   if (op.restored) {
     return (
       <div className="confirm" role="group" aria-label={label}>
-        <Alert tone="warn">
-          A request made earlier on this device (before the page was reloaded, or before you signed out) has not been
-          confirmed yet. Its details are not kept, so it cannot be sent again from here. Check whether it was recorded
-          before making it again.
-        </Alert>
+        <Alert tone="warn">{t('pending.restored')}</Alert>
         {note && <Alert tone={note.tone}>{note.text}</Alert>}
         <div className="confirm-actions">
-          <Button busy={checking} disabled={abandoning} onClick={() => void check()}>Check whether it was recorded</Button>
+          <Button busy={checking} disabled={abandoning} onClick={() => void check()}>{t('pending.check')}</Button>
           {notFound && abandon && <Button variant="secondary" busy={abandoning} disabled={checking} onClick={() => void cancelIt()}>{abandonLabel}</Button>}
           {notFound && !abandon && forget && (
             <ConfirmAction label={forget.label} danger confirmLabel={forget.confirmLabel} consequence={forget.consequence}
@@ -113,14 +110,13 @@ export function PendingOpPanel<B, R extends { requestKey?: string; createdAt?: s
   return (
     <div className="confirm" role="group" aria-label={label}>
       <Alert tone="warn">
-        {busy ? 'Sending… ' : ''}The outcome of this request is not known yet{op.error ? ` (${op.error})` : ''}. It may already be
-        recorded. Sending the same request again is safe: it is never recorded twice. If it keeps being refused, ask an admin.
+        {busy ? `${t('pending.sending')} ` : ''}{op.error ? t('pending.unknownWithError', { error: op.error }) : t('pending.unknown')}
       </Alert>
       {summary}
       {note && <Alert tone={note.tone}>{note.text}</Alert>}
       <div className="confirm-actions">
-        <Button busy={busy} disabled={checking} onClick={onResend}>Send the same request again</Button>
-        <Button variant="secondary" busy={checking} disabled={busy} onClick={() => void check()}>Check whether it was recorded</Button>
+        <Button busy={busy} disabled={checking} onClick={onResend}>{t('pending.resend')}</Button>
+        <Button variant="secondary" busy={checking} disabled={busy} onClick={() => void check()}>{t('pending.check')}</Button>
         {notFound && !busy && abandon && abandonWhenNotFound && (
           <Button variant="secondary" busy={abandoning} disabled={checking} onClick={() => void cancelIt()}>{abandonLabel}</Button>
         )}

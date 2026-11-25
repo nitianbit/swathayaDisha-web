@@ -101,7 +101,7 @@ export function sellableQty(item: Pick<InventoryItem, 'availableQty' | 'batches'
 
 const hex = /^[0-9a-fA-F]{24}$/;
 const batchPath = (itemId: string, batchId: string) => {
-  if (!hex.test(itemId) || !hex.test(batchId)) throw new Error('Invalid batch reference');
+  if (!hex.test(itemId) || !hex.test(batchId)) throw new Error('Invalid batch reference'); // i18n-ignore: a programming error, not shown
   return `/pharmacy-inventory/${itemId}/batches/${batchId}`;
 };
 

@@ -1,4 +1,6 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
+import { t as words } from './i18n/lab/index.ts';
+import { wordMap } from './i18n/words.ts';
 import { noShowMovedOnce } from './noShows.ts';
 import type { VisitMode } from './partnerInvoices.ts';
 import {
@@ -19,7 +21,7 @@ import {
  */
 
 export const LAB_VISIT_MODES: readonly VisitMode[] = ['home', 'lab'];
-export const LAB_VISIT_MODE_LABEL: Record<VisitMode, string> = { home: 'Home collection', lab: 'At the lab' };
+export const LAB_VISIT_MODE_LABEL: Record<VisitMode, string> = wordMap(words, { home: 'visitMode.home', lab: 'visitMode.lab' });
 
 // ── Slots (model/slot.ts, validation/labBooking.ts) ──
 
@@ -82,11 +84,11 @@ export const ROLLING_DAYS = 30;
 export const TEMPLATE_WEEKDAYS: readonly Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const SUNDAY_FIRST: readonly Weekday[] = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
-export const SLOT_CLOSURE_LABEL: Record<Exclude<SlotClosure, null>, string> = {
-  holiday: 'Closed: branch holiday',
-  template: 'Closed: no longer in the weekly template',
-  manual: 'Closed by staff',
-};
+export const SLOT_CLOSURE_LABEL: Record<Exclude<SlotClosure, null>, string> = wordMap(words, {
+  holiday: 'slot.closure.holiday',
+  template: 'slot.closure.template',
+  manual: 'slot.closure.manual',
+});
 
 const toMinutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
 const toHHMM = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
@@ -142,19 +144,19 @@ export function slotTimesFor(t: Pick<SlotTemplateInput, 'slotMinutes' | 'days'>,
 export function templateProblems(t: SlotTemplateInput): Partial<Record<'slotMinutes' | 'capacity' | Weekday, string>> {
   const out: Partial<Record<'slotMinutes' | 'capacity' | Weekday, string>> = {};
   if (!Number.isInteger(t.slotMinutes) || t.slotMinutes < SLOT_MINUTES_MIN || t.slotMinutes > SLOT_MINUTES_MAX) {
-    out.slotMinutes = `Enter whole minutes from ${SLOT_MINUTES_MIN} to ${SLOT_MINUTES_MAX}.`;
+    out.slotMinutes = words('slot.problem.minutes', { min: SLOT_MINUTES_MIN, max: SLOT_MINUTES_MAX });
   }
   if (!Number.isInteger(t.capacity) || t.capacity < 1 || t.capacity > SLOT_SEATS_MAX) {
-    out.capacity = `Enter a number of seats from 1 to ${SLOT_SEATS_MAX}.`;
+    out.capacity = words('slot.problem.seats', { max: SLOT_SEATS_MAX });
   }
   for (const day of TEMPLATE_WEEKDAYS) {
     const windows = t.days[day] ?? [];
-    if (windows.length > MAX_WINDOWS_PER_DAY) { out[day] = `At most ${MAX_WINDOWS_PER_DAY} time windows a day.`; continue; }
-    if (windows.some((w) => !HHMM_PATTERN.test(w.start) || !HHMM_PATTERN.test(w.end))) { out[day] = 'Enter each time as HH:MM.'; continue; }
+    if (windows.length > MAX_WINDOWS_PER_DAY) { out[day] = words('slot.problem.windows', { max: MAX_WINDOWS_PER_DAY }); continue; }
+    if (windows.some((w) => !HHMM_PATTERN.test(w.start) || !HHMM_PATTERN.test(w.end))) { out[day] = words('slot.problem.timeFormat'); continue; }
     const sorted = [...windows].sort((a, b) => toMinutes(a.start) - toMinutes(b.start));
     for (let i = 0; i < sorted.length; i++) {
-      if (toMinutes(sorted[i]!.end) <= toMinutes(sorted[i]!.start)) { out[day] = 'A window must end after it starts.'; break; }
-      if (i > 0 && toMinutes(sorted[i]!.start) < toMinutes(sorted[i - 1]!.end)) { out[day] = 'These windows overlap.'; break; }
+      if (toMinutes(sorted[i]!.end) <= toMinutes(sorted[i]!.start)) { out[day] = words('slot.problem.windowOrder'); break; }
+      if (i > 0 && toMinutes(sorted[i]!.start) < toMinutes(sorted[i - 1]!.end)) { out[day] = words('slot.problem.overlap'); break; }
     }
   }
   return out;
@@ -182,18 +184,18 @@ export function templateInput(t: Pick<SlotTemplate, 'slotMinutes' | 'capacity' |
 export function manualSlotProblems(s: Pick<NewManualSlot, 'date' | 'startTime' | 'endTime' | 'capacity'>):
   Partial<Record<'date' | 'startTime' | 'endTime' | 'capacity', string>> {
   const out: Partial<Record<'date' | 'startTime' | 'endTime' | 'capacity', string>> = {};
-  if (!isRealDate(s.date)) out.date = 'Enter a real date.';
-  if (!HHMM_PATTERN.test(s.startTime)) out.startTime = 'Enter the start time.';
-  if (!HHMM_PATTERN.test(s.endTime)) out.endTime = 'Enter the end time.';
-  else if (!out.startTime && toMinutes(s.endTime) <= toMinutes(s.startTime)) out.endTime = 'A slot must end after it starts.';
-  if (!Number.isInteger(s.capacity) || s.capacity < 1 || s.capacity > SLOT_SEATS_MAX) out.capacity = `Enter a number of seats from 1 to ${SLOT_SEATS_MAX}.`;
+  if (!isRealDate(s.date)) out.date = words('slot.problem.date');
+  if (!HHMM_PATTERN.test(s.startTime)) out.startTime = words('slot.problem.start');
+  if (!HHMM_PATTERN.test(s.endTime)) out.endTime = words('slot.problem.end');
+  else if (!out.startTime && toMinutes(s.endTime) <= toMinutes(s.startTime)) out.endTime = words('slot.problem.order');
+  if (!Number.isInteger(s.capacity) || s.capacity < 1 || s.capacity > SLOT_SEATS_MAX) out.capacity = words('slot.problem.seats', { max: SLOT_SEATS_MAX });
   return out;
 }
 
 /** `setSlotCapacity` + `slotCapacitySchema`: 0–500 and never below the seats already booked. */
 export function capacityProblem(slot: Pick<LabSlot, 'booked'>, capacity: number): string | null {
-  if (!Number.isInteger(capacity) || capacity < SLOT_CAPACITY_MIN || capacity > SLOT_SEATS_MAX) return `Enter a number from ${SLOT_CAPACITY_MIN} to ${SLOT_SEATS_MAX}.`;
-  if (capacity < slot.booked) return `${slot.booked} ${slot.booked === 1 ? 'seat is' : 'seats are'} already booked: the capacity cannot be lower.`;
+  if (!Number.isInteger(capacity) || capacity < SLOT_CAPACITY_MIN || capacity > SLOT_SEATS_MAX) return words('slot.problem.capacity', { min: SLOT_CAPACITY_MIN, max: SLOT_SEATS_MAX });
+  if (capacity < slot.booked) return words('slot.problem.belowBooked', { count: slot.booked });
   return null;
 }
 
@@ -216,12 +218,15 @@ export type LabBookingStatus =
 export const LAB_BOOKING_STATUSES: readonly LabBookingStatus[] = [
   'pending_payment', 'confirmed', 'sample_collected', 'visited', 'processing', 'report_ready', 'completed', 'cancelled', 'no_show',
 ];
-export const LAB_BOOKING_STATUS_LABEL: Record<LabBookingStatus, string> = {
-  pending_payment: 'Waiting for payment', confirmed: 'Confirmed', sample_collected: 'Sample collected', visited: 'Visited',
-  processing: 'Processing', report_ready: 'Report released', completed: 'Completed', cancelled: 'Cancelled', no_show: 'No-show',
-};
+export const LAB_BOOKING_STATUS_LABEL: Record<LabBookingStatus, string> = wordMap(words, {
+  pending_payment: 'booking.status.pending_payment', confirmed: 'booking.status.confirmed', sample_collected: 'booking.status.sample_collected',
+  visited: 'booking.status.visited', processing: 'booking.status.processing', report_ready: 'booking.status.report_ready',
+  completed: 'booking.status.completed', cancelled: 'booking.status.cancelled', no_show: 'booking.status.no_show',
+});
 export type LabPaymentStatus = 'pending' | 'paid' | 'refunded';
-export const LAB_PAYMENT_STATUS_LABEL: Record<LabPaymentStatus, string> = { pending: 'Not paid yet', paid: 'Paid online', refunded: 'Refunded' };
+export const LAB_PAYMENT_STATUS_LABEL: Record<LabPaymentStatus, string> = wordMap(words, {
+  pending: 'booking.payment.pending', paid: 'booking.payment.paid', refunded: 'booking.payment.refunded',
+});
 
 /** r12: a desk walk-in has no seat: `walkIn`, its IST arrival as `date`/`startTime`, no `slotId` or `endTime`. */
 export interface LabBookingSlot { slotId: string; date: string; startTime: string; endTime: string; startsAt: string; walkIn?: boolean }
@@ -340,9 +345,9 @@ export const REPORT_ACCEPT = 'application/pdf,image/jpeg,image/png,image/webp,.p
 /** Why a chosen file cannot be uploaded as a report, or null. */
 export function reportFileProblem(f: Pick<File, 'name' | 'size'>): string | null {
   const name = f.name.toLowerCase();
-  if (!REPORT_EXTENSIONS.some((e) => name.endsWith(e))) return `${f.name}: only PDF, JPEG, PNG or WebP files can be uploaded.`;
-  if (f.size === 0) return `${f.name} is empty.`;
-  if (f.size > REPORT_MAX_BYTES) return `${f.name} is larger than 10 MB.`;
+  if (!REPORT_EXTENSIONS.some((e) => name.endsWith(e))) return words('report.file.type', { file: f.name });
+  if (f.size === 0) return words('report.file.empty', { file: f.name });
+  if (f.size > REPORT_MAX_BYTES) return words('report.file.tooLarge', { file: f.name });
   return null;
 }
 
@@ -417,14 +422,14 @@ export function labActions(b: Pick<LabBooking, 'status' | 'paymentStatus' | 'vis
   if (b.paymentStatus !== 'paid' && !desk) return [];
   const manage = holdsAny(actor, ['bookings.manage']);
   const out: LabActionOffer[] = [];
-  const waiting = b.reschedule?.pending ? 'The customer has not answered the new time yet.' : undefined;
+  const waiting = b.reschedule?.pending ? words('booking.blocked.rescheduleWaiting') : undefined;
   if (b.status === 'confirmed' && manage) {
     if (b.visitMode === 'home') out.push({ action: 'assign' }, { action: 'collect', blocked: waiting });
     else out.push({ action: 'visit', blocked: waiting });
     // r12: a walk-in is tested on arrival: never a no-show (409 WALK_IN_ARRIVED) nor moved (409 WALK_IN_NOT_RESCHEDULABLE).
     if (!b.slot?.walkIn) {
       const ended = labSlotEnd(b.slot).getTime() <= now.getTime();
-      out.push({ action: 'no_show', blocked: waiting ?? (ended ? undefined : `A no-show can be marked only after the slot has ended (${b.slot.endTime}).`) });
+      out.push({ action: 'no_show', blocked: waiting ?? (ended ? undefined : words('booking.blocked.noShow', { end: b.slot.endTime })) });
       // Q14: a booking moved after a no-show is neither moved again the ordinary way (409 NO_SHOW_RESCHEDULE_USED) nor
       // rejected for a refund (409 NO_SHOW_NOT_REFUNDABLE). r12: a desk row is cancelled with the desk cancel (no money).
       if (!noShowMovedOnce(b)) out.push({ action: 'reschedule' }, ...(desk ? [] : [{ action: 'reject' as const }]));
@@ -434,7 +439,7 @@ export function labActions(b: Pick<LabBooking, 'status' | 'paymentStatus' | 'vis
   if (b.status === 'processing' || b.status === 'report_ready') {
     if (holdsAny(actor, ['reports.upload'])) out.push({ action: 'upload' });
     if (holdsAny(actor, ['reports.release'])) {
-      out.push({ action: 'release', blocked: b.report.draftFiles.length ? undefined : 'Upload a report first.' });
+      out.push({ action: 'release', blocked: b.report.draftFiles.length ? undefined : words('booking.blocked.release') });
     }
   }
   if (b.status === 'report_ready' && manage) out.push({ action: 'complete' });
@@ -458,14 +463,16 @@ export function eligibleSigners(members: readonly PartnerMember[], branchId: str
 // ── Paths ──
 
 function checkId(id: string, what: string): string {
+  // i18n-ignore: a programming error, not shown
   if (!OBJECT_ID_PATTERN.test(id)) throw new Error(`Invalid ${what} id`);
   return id;
 }
 function checkMode(mode: string): VisitMode {
-  if (mode !== 'home' && mode !== 'lab') throw new Error('Invalid visit mode');
+  if (mode !== 'home' && mode !== 'lab') throw new Error('Invalid visit mode'); // i18n-ignore: a programming error, not shown
   return mode;
 }
 function checkDate(date: string | undefined, what: string): string | undefined {
+  // i18n-ignore: a programming error, not shown
   if (date !== undefined && !isRealDate(date)) throw new Error(`Invalid ${what} date`);
   return date;
 }
@@ -481,7 +488,7 @@ export function partnerLabsApi(c: ApiClient, scope: PartnerScope) {
    */
   const fence = (v: number | undefined) => {
     if (v === undefined) return {};
-    if (!Number.isSafeInteger(v) || v < 0) throw new Error('Invalid booking version');
+    if (!Number.isSafeInteger(v) || v < 0) throw new Error('Invalid booking version'); // i18n-ignore: a programming error, not shown
     return { expectedVersion: v };
   };
   const act = (id: string, command: string, v?: number) => c.post<LabBooking>(`${booking(id)}/${command}`, { body: fence(v) });
@@ -513,8 +520,8 @@ export function partnerLabsApi(c: ApiClient, scope: PartnerScope) {
 
     /** One page of bookings, soonest slot first; pass the last page's `nextCursor` for the next one. */
     bookings: (q: LabBookingQuery = {}): Promise<Page<LabBooking>> => {
-      if (q.cursor !== undefined && !LAB_BOOKING_CURSOR_PATTERN.test(q.cursor)) throw new Error('Invalid cursor');
-      if (q.limit !== undefined && (!Number.isInteger(q.limit) || q.limit < 1 || q.limit > LAB_BOOKINGS_PAGE_MAX)) throw new Error('Invalid page size');
+      if (q.cursor !== undefined && !LAB_BOOKING_CURSOR_PATTERN.test(q.cursor)) throw new Error('Invalid cursor'); // i18n-ignore: a programming error, not shown
+      if (q.limit !== undefined && (!Number.isInteger(q.limit) || q.limit < 1 || q.limit > LAB_BOOKINGS_PAGE_MAX)) throw new Error('Invalid page size'); // i18n-ignore: a programming error, not shown
       return c.page<LabBooking>(`${base()}/lab-bookings`, {
         query: {
           status: q.status, branchId: q.branchId === undefined ? undefined : checkId(q.branchId, 'branch'),
@@ -545,8 +552,8 @@ export function partnerLabsApi(c: ApiClient, scope: PartnerScope) {
      * The same key and slot again answer the move already made (`replayed`); a booking moved once is 409 NO_SHOW_RESCHEDULE_USED.
      */
     rescheduleNoShow: (id: string, slotId: string, requestKey: string, expectedVersion?: number) => {
-      if (!REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
-      if (expectedVersion !== undefined && (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0)) throw new Error('Invalid booking version');
+      if (!REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
+      if (expectedVersion !== undefined && (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0)) throw new Error('Invalid booking version'); // i18n-ignore: a programming error, not shown
       return c.post<LabBooking & { replayed?: boolean }>(`${booking(id)}/reschedule-no-show`, {
         body: { slotId: checkId(slotId, 'slot'), requestKey, ...(expectedVersion !== undefined ? { expectedVersion } : {}) },
       });
@@ -557,7 +564,7 @@ export function partnerLabsApi(c: ApiClient, scope: PartnerScope) {
      * `?requestKey=`: the same key again answers the booking with that file already attached (`replayed`), never a copy.
      */
     uploadReport: (id: string, file: File, requestKey: string) => {
-      if (!REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
+      if (!REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
       const form = new FormData();
       form.append('files', file, file.name);
       // WQ11d: a report of up to 10 MB on a slow connection takes long: the answer is awaited up to 2 minutes, not 20 s.
@@ -568,7 +575,7 @@ export function partnerLabsApi(c: ApiClient, scope: PartnerScope) {
      * `signerMemberId`); admins must name the signer. Releasing an already released file changes nothing.
      */
     releaseReport: (id: string, file: string, signerMemberId?: string, v?: number) => {
-      if (reportFileBooking(file) !== id.toLowerCase()) throw new Error('Not a report file of this booking');
+      if (reportFileBooking(file) !== id.toLowerCase()) throw new Error('Not a report file of this booking'); // i18n-ignore: a programming error, not shown
       if (signerMemberId !== undefined) checkId(signerMemberId, 'signer');
       return c.post<LabBooking>(`${booking(id)}/reports/release`, { body: { file, ...(signerMemberId ? { signerMemberId } : {}), ...fence(v) } });
     },
@@ -577,7 +584,7 @@ export function partnerLabsApi(c: ApiClient, scope: PartnerScope) {
      * drafts for report staff, released files for booking staff too). Never a link with a token in it.
      */
     reportFile: (bookingId: string, stored: string, signal?: AbortSignal) => {
-      if (reportFileBooking(stored) !== checkId(bookingId, 'booking').toLowerCase()) throw new Error('Not a report file of this booking');
+      if (reportFileBooking(stored) !== checkId(bookingId, 'booking').toLowerCase()) throw new Error('Not a report file of this booking'); // i18n-ignore: a programming error, not shown
       return c.blob('/file/fetch', { query: { url: stored }, signal });
     },
   };
@@ -597,15 +604,15 @@ export function labBookingsAdminApi(c: ApiClient) {
      */
     cancelMovedNoShow: (bookingId: string, body: AdminNoShowCancel) => {
       const reason = body.reason.trim();
-      if (reason.length < MIN_LAB_REASON || reason.length > MAX_LAB_REASON) throw new Error('Invalid reason');
-      if (typeof body.refund !== 'boolean') throw new Error('Choose whether the patient is refunded');
+      if (reason.length < MIN_LAB_REASON || reason.length > MAX_LAB_REASON) throw new Error('Invalid reason'); // i18n-ignore: a programming error, not shown
+      if (typeof body.refund !== 'boolean') throw new Error('Choose whether the patient is refunded'); // i18n-ignore: a programming error, not shown
       return c.post<{ booking: LabBooking; refunded: number }>(`/partner-workspace/admin/lab-bookings/${checkId(bookingId, 'booking')}/cancel-no-show`,
         { body: { reason, refund: body.refund } });
     },
     /** One page, newest booked first (`page` from 1, `limit` up to 200). */
     list: (q: AdminLabBookingQuery = {}): Promise<Page<AdminLabBookingRow>> => {
-      if (q.page !== undefined && (!Number.isInteger(q.page) || q.page < 1)) throw new Error('Invalid page');
-      if (q.limit !== undefined && (!Number.isInteger(q.limit) || q.limit < 1 || q.limit > ADMIN_LAB_BOOKINGS_PAGE_MAX)) throw new Error('Invalid page size');
+      if (q.page !== undefined && (!Number.isInteger(q.page) || q.page < 1)) throw new Error('Invalid page'); // i18n-ignore: a programming error, not shown
+      if (q.limit !== undefined && (!Number.isInteger(q.limit) || q.limit < 1 || q.limit > ADMIN_LAB_BOOKINGS_PAGE_MAX)) throw new Error('Invalid page size'); // i18n-ignore: a programming error, not shown
       return c.page<AdminLabBookingRow>('/partner-workspace/admin/lab-bookings', {
         query: {
           partnerId: q.partnerId === undefined ? undefined : checkId(q.partnerId, 'partner'), status: q.status,

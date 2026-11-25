@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import {
   adminCardRefundsApi, adminWalletReadError, agreementProblem, isSwitchedOff, cardRefundCauseLabel, CARD_REFUND_STATE_LABEL, findMarkedFailed, findMovedRefund,
   markFailedFinal, markFailedRefusal, markFailedRefusedBeforeWriting, MAX_REFUND_AGREEMENT, moveRefundFinal, moveRefundRefusal, moveRefusedBeforeWriting,
-  payerNameOf, payerWord, recheckRefusal, recheckWords, type AdminCardRefund, type CardRefund,
+  payerLabel, payerNameOf, payerWord, recheckRefusal, recheckWords, type AdminCardRefund, type CardRefund,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea } from '@jansetu/ui';
 import { t } from '../../i18n/admin/index.ts';
@@ -27,8 +27,8 @@ import { humanCode } from './RefundsScreen.tsx';
  * named by `pharmacyName`): the words and the wallet named are the payer's.
  */
 const refundWords = (r: CardRefund) => t('cardRefunds.refund', { amount: formatRupees(r.amountMinor / 100), date: formatDateTime(r.createdAt) });
-/** Who paid for the row's booking: "pharmacy", "lab" or "doctor" (WQ24b). */
-const payerOf = (r: AdminCardRefund) => payerWord(r.payerKind);
+/** Who paid for the row's booking, in words: "pharmacy", "lab" or "doctor" (WQ24b). */
+const payerOf = (r: AdminCardRefund) => payerLabel(r.payerKind);
 const nameOf = (r: AdminCardRefund) => payerNameOf(r) ?? t('cardRefunds.thePayer', { payer: payerOf(r) });
 /** The first sentence of an unconfirmed request's notice (shared with the wallet pages). */
 export const notKnownYet = (error?: string | null) => (error ? t('adminWallet.unknownWith', { error }) : t('adminWallet.unknown'));
@@ -87,7 +87,7 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
   function check(e: FormEvent) {
     e.preventDefault();
     if (!chosen) return;
-    const problem = chosen.action === 'move' ? agreementProblem(text, payerOf(chosen.row))
+    const problem = chosen.action === 'move' ? agreementProblem(text, payerWord(chosen.row.payerKind))
       : !text.trim() ? t('cardRefunds.writeWhy') : text.trim().length > MAX_REFUND_AGREEMENT ? t('cardRefunds.atMost', { max: MAX_REFUND_AGREEMENT }) : undefined;
     setTextError(problem);
     if (problem) return;

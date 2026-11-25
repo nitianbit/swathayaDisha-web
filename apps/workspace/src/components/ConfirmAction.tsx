@@ -1,5 +1,7 @@
 import { useRef, useState, type ReactNode } from 'react';
-import { Alert, Button, TextArea } from '@jansetu/ui';
+import { subscribeLanguage } from '@jansetu/i18n';
+import { Alert, Button, shared, TextArea } from '@jansetu/ui';
+import { t } from '../i18n/components/index.ts';
 import { messageOf } from '../errors.ts';
 import { FOCUS_HOST_STYLE, usePanelFocus } from './focus.ts';
 
@@ -25,7 +27,9 @@ interface Props {
   onConfirm: (reason: string, openedOn?: string | number) => Promise<unknown>;
 }
 
-export const CHANGED_WHILE_OPEN = 'This changed while the confirmation was open, so nothing was done. Check what is shown now and try again.';
+/** Read again on every language change (an ES live binding), so an importer always gets the current words. */
+export let CHANGED_WHILE_OPEN = t('confirm.changedWhileOpen');
+subscribeLanguage(() => { CHANGED_WHILE_OPEN = t('confirm.changedWhileOpen'); });
 
 /**
  * Two-step action: the first click explains the consequence (and asks for a reason), the second performs it. Used for
@@ -38,7 +42,7 @@ export const CHANGED_WHILE_OPEN = 'This changed while the confirmation was open,
  * closes.
  */
 export function ConfirmAction({
-  label, consequence, confirmLabel, reason = false, reasonLabel = 'Reason', maxReason = 500, danger = false, disabled, version,
+  label, consequence, confirmLabel, reason = false, reasonLabel = shared('field.reason'), maxReason = 500, danger = false, disabled, version,
   onConfirm,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -61,16 +65,16 @@ export function ConfirmAction({
     setShownFor({ identity, confirmLabel });
     if (open) {
       reset();
-      setNote(error ? `${shownFor.confirmLabel}: ${error}` : null);
+      setNote(error ? t('confirm.stepNote', { step: shownFor.confirmLabel, message: error }) : null);
     }
   } else if (open && !busy && version !== undefined && openedOn !== version) {
     reset();
-    setNote(error ? `${confirmLabel}: ${error}` : CHANGED_WHILE_OPEN);
+    setNote(error ? t('confirm.stepNote', { step: confirmLabel, message: error }) : t('confirm.changedWhileOpen'));
   }
 
   async function confirm() {
     const value = text.trim();
-    if (reason === true && value.length < 3) { setFieldError('Give a reason (at least 3 characters).'); return; }
+    if (reason === true && value.length < 3) { setFieldError(t('confirm.reasonTooShort')); return; }
     const mine = generation.current;
     const step = confirmLabel;
     setFieldError(null);
@@ -81,7 +85,7 @@ export function ConfirmAction({
       if (generation.current === mine) reset();
     } catch (err) {
       if (generation.current === mine) setError(messageOf(err));
-      else setNote(`${step}: ${messageOf(err)}`);
+      else setNote(t('confirm.stepNote', { step, message: messageOf(err) }));
     } finally {
       setBusy(false);
     }
@@ -99,14 +103,14 @@ export function ConfirmAction({
         <div className="confirm" role="group" aria-label={label}>
           <div className="confirm-text">{consequence}</div>
           {reason && (
-            <TextArea label={reason === 'optional' ? `${reasonLabel} (optional)` : reasonLabel} value={text} maxLength={maxReason}
+            <TextArea label={reason === 'optional' ? t('confirm.optional', { label: reasonLabel }) : reasonLabel} value={text} maxLength={maxReason}
               onChange={(e) => setText(e.target.value)} error={fieldError} />
           )}
           {error && <Alert>{error}</Alert>}
           <div className="confirm-actions">
             {/* A step that started after this was opened blocks it too (screens with one-step-at-a-time guards refuse it anyway). */}
             <Button variant={danger ? 'danger' : 'primary'} busy={busy} disabled={disabled && !busy} onClick={() => void confirm()}>{confirmLabel}</Button>
-            <Button variant="ghost" data-focus-back disabled={busy} onClick={reset}>Back</Button>
+            <Button variant="ghost" data-focus-back disabled={busy} onClick={reset}>{shared('action.back')}</Button>
           </div>
         </div>
       )}

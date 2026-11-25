@@ -8,6 +8,8 @@ import {
   type Principal, type SignedIn, type UserType, type VerificationState,
 } from '@jansetu/api';
 import { Reconnecting, ReconnectingStart } from '@jansetu/ui';
+import { subscribeLanguage } from '@jansetu/i18n';
+import { t } from './i18n/shell/index.ts';
 
 /** Who may sign in to the workspace today (WQ4: doctors as `specialist`). HR joins when its module exists. */
 export type StaffRole = Extract<UserType, 'admin' | 'pharmacy' | 'partner' | 'specialist'>;
@@ -31,7 +33,8 @@ export interface StaffUser {
   id: string;
   name: string;
   /** "Admin", "Pharmacy", "Doctor", or the partner's kind ("Lab" / "Clinic"). */
-  roleLabel: string;
+  /** Read at render, in the current language (docs/I18N_PLAN.md §3.4 rule 2). */
+  readonly roleLabel: string;
   raw: Record<string, unknown>;
   /** Partners only. */
   partner?: PartnerSession;
@@ -109,14 +112,20 @@ function partnerSessionOf(member: Record<string, unknown>, partner: Record<strin
   };
 }
 
-const ROLE_LABEL: Record<Exclude<StaffRole, 'partner'>, string> = { admin: 'Admin', pharmacy: 'Pharmacy', specialist: 'Doctor' };
 
 /** Q16b: a lab or clinic sign-in in a build whose API is on another origin (no first-party cookie session there). */
-export const PARTNER_NEEDS_SAME_ORIGIN = 'Lab and clinic sign-in needs the workspace served from the Jansetu site itself (the same-origin build). Ask your administrator for the right address.';
+export let PARTNER_NEEDS_SAME_ORIGIN = '';
 
 /** WQ11a: said while a sign-out has not reached the server yet (this browser never resumes that session meanwhile). */
-export const SIGNED_OUT_HERE = 'You are signed out on this device. The server has not confirmed it yet: the workspace keeps trying, and nobody is signed back in here until it does.';
-const withNote = (notice: string | undefined, note: string) => (notice ? `${notice} ${note}` : note);
+export let SIGNED_OUT_HERE = '';
+// Imported as strings (ES live bindings): read again in the new language on every switch.
+const readWords = () => {
+  PARTNER_NEEDS_SAME_ORIGIN = t('session.partnerSameOrigin');
+  SIGNED_OUT_HERE = t('session.signedOutHere');
+};
+readWords();
+subscribeLanguage(readWords);
+const withNote = (notice: string | undefined, note: string) => (notice ? t('session.note', { notice, note }) : note);
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const isPending = (v: unknown): v is PendingMarker =>
@@ -203,9 +212,8 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     void (async () => {
       let clean = await attempt();
       if (clean || cleanup.current !== mine) { if (cleanup.current === mine) cleanup.current = null; return; }
-      setState((s) => (s.status === 'signed_out' ? { status: 'signed_out', notice: `${s.notice ? `${s.notice} ` : ''}${marked
-        ? 'This phone could not clear its saved sign-in yet; it will be cleared when the app next opens.'
-        : 'This phone could not finish signing out yet. Keep the app open for a moment while it tries again.'}` } : s));
+      setState((s) => (s.status === 'signed_out' ? { status: 'signed_out', notice: withNote(s.notice, marked
+        ? t('session.phoneNotCleared') : t('session.phoneNotSignedOut')) } : s));
       // Not recorded durably either: keep trying while the app is open (stops when a new sign-in replaces it).
       while (!clean && !marked && cleanup.current === mine) {
         await pause(5000);
@@ -292,16 +300,16 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       r = await rotate();
     } catch (err) {
       if (gen !== generation.current) return null;
-      if (!isTransientSessionError(err)) { endLocally('Your session has ended. Please sign in again.'); return null; }
+      if (!isTransientSessionError(err)) { endLocally(t('session.ended')); return null; }
       setReconnecting(true);
       clearTimeout(retry.current.timer);
       const n = retry.current.n + 1;
       retry.current = { n, timer: setTimeout(() => { if (gen === generation.current) void renewRef.current(null).catch(() => undefined); }, Math.min(60, 2 ** n) * 1000) };
-      throw err instanceof ApiError ? err : new ApiError(0, 'Could not reach the server. Check your connection and try again.', 'NETWORK');
+      throw err instanceof ApiError ? err : new ApiError(0, t('session.network'), 'NETWORK');
     }
     if (gen !== generation.current) return null;
     if (!samePrincipal(r.principal, principal.current)) {
-      endLocally('Someone else signed in to the workspace in this browser. Please sign in again.');
+      endLocally(t('session.someoneElse'));
       return null;
     }
     token.current = r.token;
@@ -323,7 +331,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     ...(mode !== 'memory' ? { renew: (sent: string) => renewRef.current(sent) } : {}),
     // Only a 401 for the token in use now ends the session; a late answer for an older token changes nothing.
     onUnauthorized: (sent) => {
-      if (sent === token.current) signOut('Your session has ended. Please sign in again.');
+      if (sent === token.current) signOut(t('session.ended'));
     },
     // WQ15 (r9): a clinic member whose doctor account is not verified or not active is refused on every partner call.
     // The session ends like a 401 (signed out on the server too, so a reload does not resume it), with the reason.
@@ -350,14 +358,14 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     // The server's view of the account decides, not the button the user pressed.
     if (!STAFF_ROLES.includes(role as StaffRole) || (expected && role !== expected)) {
       token.current = null;
-      throw new ApiError(403, 'This account cannot use the staff workspace.');
+      throw new ApiError(403, t('session.notStaff'));
     }
     const raw = profile.user ?? {};
     const id = typeof raw._id === 'string' ? raw._id : '';
     const partner = role === 'partner' ? partnerSessionOf(raw, profile.partner) : undefined;
     if (!/^[0-9a-fA-F]{24}$/.test(id) || partner === null) {
       token.current = null;
-      throw new ApiError(502, 'Sign-in returned an incomplete profile. Please try again.');
+      throw new ApiError(502, t('session.incompleteProfile'));
     }
     principal.current = { userId: id, userType: role as string };
     markers.current = markerStore(APP, id);
@@ -373,7 +381,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     setState({ status: 'signed_in', user: {
       role: staffRole, id, raw,
       name: partner ? partner.member.name : displayName(raw, staffRole),
-      roleLabel: partner ? PARTNER_KIND_LABEL[partner.partner.kind] : ROLE_LABEL[staffRole as Exclude<StaffRole, 'partner'>],
+      get roleLabel() { return partner ? PARTNER_KIND_LABEL[partner.partner.kind] : t(`shell.role.${staffRole as Exclude<StaffRole, 'partner'>}`); },
       ...(partner ? { partner } : {}),
       ...(staffRole === 'specialist' ? { doctor: {
         ...(typeof raw.specialization === 'string' && raw.specialization.trim() ? { specialization: raw.specialization.trim() } : {}),
@@ -396,14 +404,14 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
         // An unreadable record counts as pending: resuming is only allowed when it is known that nobody signed out.
         if (secure && signOutState(NATIVE_APP) !== 'none') {
           await nativeSignOut(secure, NATIVE_APP, (rt) => auth.logoutNative(NATIVE_APP, rt, null));
-          throw new ApiError(401, 'Signed out', 'SESSION_ENDED');
+          throw new ApiError(401, 'Signed out', 'SESSION_ENDED'); // i18n-ignore: rejects a renewal after sign-out, never shown
         }
         // WQ11a: a sign-out in this browser has not reached the server yet: finish it BEFORE any refresh, never resume.
         // An unreadable record counts as pending, as on the phone.
         if (!secure && webSignOutState(APP) !== 'none') {
           if (isSignedOutAnswer(await auth.logoutSession(null).catch(() => null))) clearWebSignOutPending(APP);
           else unfinished = true;
-          throw new ApiError(401, 'Signed out', 'SESSION_ENDED');
+          throw new ApiError(401, 'Signed out', 'SESSION_ENDED'); // i18n-ignore: rejects a renewal after sign-out, never shown
         }
         const r = await rotate();
         if (gen !== generation.current) return;
@@ -453,13 +461,13 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
 
   useEffect(() => channel?.listen((m) => {
     if (m.type === 'signed-out') {
-      if (principal.current) endLocally('You signed out in another tab.');
+      if (principal.current) endLocally(t('session.otherTab'));
       return;
     }
     // WQ11a: another tab signed in, so the browser's session is new: a clean-up still retrying here must not end it.
     if (!secure) cleanup.current = null;
     if (principal.current && !samePrincipal(principal.current, m)) {
-      endLocally('Someone else signed in to the workspace in this browser. Please sign in again.');
+      endLocally(t('session.someoneElse'));
     } else if (!principal.current) {
       void restore();
     }
@@ -487,7 +495,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       await secure!.set(refreshTokenKey(NATIVE_APP), n.refreshToken);
     } catch {
       await auth.logoutNative(NATIVE_APP, n.refreshToken, n.token).catch(() => undefined);
-      throw new ApiError(0, 'This phone could not save your sign-in. Please try again.', 'SECURE_STORE');
+      throw new ApiError(0, t('session.secureStore'), 'SECURE_STORE');
     }
     cleanup.current = null; // a retrying clean-up must not remove the new token
     clearSignOutPending(NATIVE_APP); // the new token replaced whatever an unfinished sign-out left behind
@@ -496,7 +504,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
   /** Admits a fresh sign-in (verify or partner select) and tells the other tabs. */
   const admit = useCallback(async (gen: number, signedIn: SignedIn | undefined, role: StaffRole) => {
     if (gen !== generation.current) return;
-    if (!signedIn?.token) throw new ApiError(502, 'Sign-in did not return a session. Please try again.');
+    if (!signedIn?.token) throw new ApiError(502, t('session.noSession'));
     let admitted;
     try {
       admitted = await establish(gen, signedIn.token, signedIn.expiresIn, role);
@@ -533,7 +541,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     const selection = role === 'partner' ? partnerSelectionOf(answer) : null;
     if (selection) {
       if (gen !== generation.current) return null;
-      if (selection.choices.length === 0) throw new ApiError(403, 'None of your lab or clinic workspaces is available.');
+      if (selection.choices.length === 0) throw new ApiError(403, t('session.noWorkspace'));
       return selection;
     }
     replacedWebSession();

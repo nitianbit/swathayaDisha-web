@@ -1,4 +1,5 @@
 export { ApiError, createApiClient } from './client.ts';
+export { messageOf } from './messages.ts';
 export type { ApiClient, ApiClientOptions, Page, QueryValue, RequestOptions } from './client.ts';
 export { authApi, CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, EMAIL_NOT_REGISTERED_MESSAGE, EMAIL_NOT_REGISTERED_STAFF_MESSAGE, isClinicDoctorNotVerified, isEmailNotRegistered, maskTarget, MAX_EMAIL, normalizeEmail, OTP_PATTERN, parseLoginIdentifier, partnerSelectionOf, PHONE_PATTERN, requestKeysApi, targetKey, targetKind } from './auth.ts';
 export type { OnceOnlyKind, PartnerChoice, PartnerSelection, SignInMode, VerifyAnswer } from './auth.ts';
@@ -196,7 +197,7 @@ export {
   moveRefundRefusal, moveRefusedBeforeWriting, outcomeOfAnswer, outcomeOfError, payByClock, payByWords, settleCardPayment,
   bookingPaidBy, bookingPayBy, findMarkedFailed, markFailedFinal, markFailedRefusal, markFailedRefusedBeforeWriting, recheckWords,
   beforeCheckout, bookingWasPaid, cardBookingState, HELD_NOT_STARTED, isCardAnswer, routeCardAnswer, checkoutSeconds, DUPLICATE_WORDS, LATE_PAYMENT_BACK, orderFromBooking, PAY_NOW_MARGIN_MS, payNowOpen, readCardRefund, recheckRefusal,
-  CARD_PERMISSION_WORDS, cardBlockedWords, cardRefundCauseLabel, LAB_PAYER, PHARMACY_PAYER, payerNameOf, payerWord,
+  CARD_PERMISSION_WORDS, cardBlockedWords, cardRefundCauseLabel, LAB_PAYER, PHARMACY_PAYER, payerLabel, payerNameOf, payerWord,
 } from './assistedCard.ts';
 export type { AdminCardRefund, CardBookingKind, CardOutcome, CardPayer, CardRefundPayerKind, CardPaymentAnswer, CardProof, CardRefundMove, CardRefundRecheck, CardRefundState, ReconcileAnswer } from './assistedCard.ts';
 export type {

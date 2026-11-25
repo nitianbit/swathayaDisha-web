@@ -1,7 +1,9 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import {
-  assistedRefusal, idOf, keyOf, MAX_CONCERN, rupees, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type JoinOn, type Refusal,
+  assistedRefusal, idOf, keyOf, MAX_CONCERN, refusalOf, rupees, SLOW_WRITE_TIMEOUT_MS, type AssistedPatient, type JoinOn, type Refusal, type RefusalWords,
 } from './assisted.ts';
+import { t } from './i18n/assisted/index.ts';
+import { onLanguage } from './i18n/words.ts';
 import { countdown, SPECIALITY_LIMITS, waitingState, type InstantQuote, type InstantSpeciality, type InstantTarget } from './instantConsult.ts';
 
 /**
@@ -70,16 +72,18 @@ export type InstantBookerByKey = { state: 'used'; request: InstantBookerView } |
 
 const speciality = (s: string) => {
   const v = s.trim();
-  if (v.length < SPECIALITY_LIMITS.min || v.length > SPECIALITY_LIMITS.max) throw new Error('Invalid speciality');
+  if (v.length < SPECIALITY_LIMITS.min || v.length > SPECIALITY_LIMITS.max) throw new Error('Invalid speciality'); // i18n-ignore: a programming error, not shown
   return v;
 };
+// i18n-ignore: a programming error, not shown
 const modeOf = (m: string): InstantDeskMode => { if (m !== 'video' && m !== 'call') throw new Error('Invalid mode'); return m; };
-const targetBody = (t: InstantTarget): InstantTarget => (t.kind === 'specific' ? { kind: 'specific', doctorId: idOf(t.doctorId, 'doctor') } : { kind: 'any' });
+const targetBody = (target: InstantTarget): InstantTarget => (target.kind === 'specific' ? { kind: 'specific', doctorId: idOf(target.doctorId, 'doctor') } : { kind: 'any' });
+// i18n-ignore: a programming error, not shown
 const versionOf = (v: number) => { if (!Number.isSafeInteger(v) || v < 0) throw new Error('Invalid version'); return v; };
 
 /** The body checked before it is sent (speciality, mode, the doctor's id, the concern's length). */
 export function bookerInstantBody(body: InstantBookerRequest): InstantBookerRequest {
-  if (body.primaryConcern !== undefined && body.primaryConcern.length > MAX_CONCERN) throw new Error('Invalid concern');
+  if (body.primaryConcern !== undefined && body.primaryConcern.length > MAX_CONCERN) throw new Error('Invalid concern'); // i18n-ignore: a programming error, not shown
   return { ...body, specialization: speciality(body.specialization), mode: modeOf(body.mode), target: targetBody(body.target) };
 }
 
@@ -128,16 +132,17 @@ export const INSTANT_ACTIVITY_MS = 60_000;
 /** How often the open screen reads the request while it waits. */
 export const INSTANT_POLL_MS = 5_000;
 
-export const INSTANT_SWITCHED_OFF_MESSAGE = 'Consult now for patients is not switched on yet.';
-const INSTANT_WORDS: Readonly<Record<string, Refusal>> = {
-  NO_DOCTOR_ONLINE: { kind: 'doctor', message: 'No doctor of this speciality is online now. Try again in a few minutes, or book a time instead.' },
-  DOCTOR_NOT_ONLINE: { kind: 'doctor', message: 'This doctor is not online any more. Choose “Any available doctor” or another doctor.' },
-  DOCTOR_REQUIRED: { kind: 'doctor', message: 'Choose a doctor, or “Any available doctor”.' },
-  INSTANT_REQUEST_NOT_FOUND: { kind: 'other', message: 'This request was not found.' },
-  REQUEST_NOT_OPEN: { kind: 'other', message: 'This request is no longer waiting for a doctor. It is shown as it is now.' },
-  REQUEST_NOT_REFUNDABLE: { kind: 'other', message: 'A doctor has already accepted, so it can no longer be refunded here. Cancel the booking instead.' },
-  INSTANT_REQUEST_CHANGED: { kind: 'other', message: 'The request changed meanwhile (a doctor may have accepted). It is shown as it is now.' },
-  PAYMENT_METHOD_UNAVAILABLE: { kind: 'other', message: 'Consult now can only be paid from the Jansetu wallet.' },
+export let INSTANT_SWITCHED_OFF_MESSAGE = '';
+onLanguage(() => { INSTANT_SWITCHED_OFF_MESSAGE = t('instant.switchedOff'); });
+const INSTANT_WORDS: RefusalWords = {
+  NO_DOCTOR_ONLINE: { kind: 'doctor', key: 'instant.NO_DOCTOR_ONLINE' },
+  DOCTOR_NOT_ONLINE: { kind: 'doctor', key: 'instant.DOCTOR_NOT_ONLINE' },
+  DOCTOR_REQUIRED: { kind: 'doctor', key: 'instant.DOCTOR_REQUIRED' },
+  INSTANT_REQUEST_NOT_FOUND: { kind: 'other', key: 'instant.INSTANT_REQUEST_NOT_FOUND' },
+  REQUEST_NOT_OPEN: { kind: 'other', key: 'instant.REQUEST_NOT_OPEN' },
+  REQUEST_NOT_REFUNDABLE: { kind: 'other', key: 'instant.REQUEST_NOT_REFUNDABLE' },
+  INSTANT_REQUEST_CHANGED: { kind: 'other', key: 'instant.INSTANT_REQUEST_CHANGED' },
+  PAYMENT_METHOD_UNAVAILABLE: { kind: 'other', key: 'instant.PAYMENT_METHOD_UNAVAILABLE' },
 };
 
 /** QUOTE_CHANGED's `details` (the quote and discount the server names, paise), or null for any other answer: the one parser. */
@@ -153,14 +158,14 @@ export function changedQuote(err: unknown): { quotedAmountMinor: number; discoun
 export function instantBookerRefusal(err: unknown): Refusal {
   if (err instanceof ApiError && err.code === 'QUOTE_CHANGED') {
     const q = changedQuote(err);
-    if (!q) return { kind: 'price', message: 'The price has changed. Choose the doctor again to see the new price.' };
+    if (!q) return { kind: 'price', message: t('refusal.priceChanged') };
     const pay = Math.max(0, q.quotedAmountMinor - q.discountMinor);
-    return { kind: 'price', priceMinor: pay, message: `The price has changed. It is now ${rupees(pay)}. Check it with the patient, then pay again.` };
+    return { kind: 'price', priceMinor: pay, message: t('refusal.priceChangedTo', { price: rupees(pay) }) };
   }
   // WQ22c L3: a server without r17 has no such routes (a 404 with no code): said as not switched on, never "Route not found".
   if (err instanceof ApiError && err.status === 404 && !err.code) return { kind: 'off', message: INSTANT_SWITCHED_OFF_MESSAGE };
   const shared = assistedRefusal(err);
   if (shared.kind === 'off') return { kind: 'off', message: INSTANT_SWITCHED_OFF_MESSAGE };
-  const known = err instanceof ApiError && err.code ? INSTANT_WORDS[err.code] : undefined;
-  return known ?? shared;
+  const known = err instanceof ApiError && err.code && Object.hasOwn(INSTANT_WORDS, err.code) ? INSTANT_WORDS[err.code] : undefined;
+  return known ? refusalOf(known) : shared;
 }

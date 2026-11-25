@@ -92,8 +92,10 @@ packages/i18n/                    workspace package (@jansetu/i18n): i18next onl
   src/catalogues.test.ts          the catalogue check (§5.4)
   src/literals.test.ts            the no-literal scan + its shrinking allowlist (§4.1)
   scripts/i18n.mjs                export / import / prune of translator files (§5)
-packages/ui/src/i18n/             shared words (Loading…, Try again, Back …)
-packages/api/src/i18n/            statuses, refusals, error-code words
+packages/ui/src/i18n/             shared words (Loading…, Try again, Back …): `shared` from @jansetu/ui, keys listed atop en.ts
+packages/api/src/i18n/            core: errors.<CODE> words of `messageOf`, sign-in and session words
+packages/api/src/i18n/<area>/     statuses, refusals, error-code words per area (assisted, pharmacy, customer, doctor,
+                                  partner, lab, admin, finance); words.ts: wordMap / labelledList / valueList / onLanguage
 apps/customer/src/i18n/           the customer app
 apps/workspace/src/i18n/<area>/   shell, pharmacy, lab, clinic, partner, doctor, admin, finance
 ```
@@ -140,7 +142,9 @@ t.has(`errors.${code}`);                                          // for codes f
 ### 3.4 Rules for code (every round)
 
 1. **No words at module load.** Module-level maps hold keys (`BOOKING_STATUS_LABEL = { pending: 'booking.status.pending',
-   … }`); `t` runs at render or in the event handler.
+   … }`); `t` runs at render or in the event handler. WQ42 kept the exported shapes of `packages/api` (so the screens
+   needed no change): `wordMap` and the list helpers read the words at each lookup, and an exported string constant is
+   an `export let` set again on every language change (`onLanguage`, an ES live binding).
 2. **No words in long-lived state.** Session notices become codes (`'expired' | 'signed_out_here' | …`, one `noticeWords`
    for both apps instead of two `withNote`); `roleLabel` is computed at render.
 3. **Whole sentences.** Joining whole sentences is fine; building a sentence from fragments is not. Default parameters

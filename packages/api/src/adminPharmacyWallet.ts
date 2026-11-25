@@ -1,6 +1,8 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import { assistedRefusal, isSwitchedOff, type PharmacyWallet, type WalletMovement } from './assisted.ts';
 import type { WalletOwner } from './labWallet.ts';
+import { t } from './i18n/admin/index.ts';
+import { onLanguage, wordMap } from './i18n/words.ts';
 
 /**
  * WQ13 admin: a pharmacy's Jansetu wallet and the admin's manual credit (backend `src1/modules/pharmacyWallet`, q16
@@ -35,6 +37,7 @@ const hex = /^[0-9a-fA-F]{24}$/;
  * (admin), one exact read on the ledger's unique indexes: `{ state: 'credited', transaction, wallet }` or `{ state: 'not_found' }`.
  */
 export const ADMIN_TOPUP_BY_KEY_PATH = (key: string) => `/pharmacy-wallet/topups/admin/by-key/${key}`;
+// i18n-ignore: a programming error, not shown
 const pharmacyIdOf = (v: string) => { if (!hex.test(v)) throw new Error('Invalid pharmacy id'); return v.toLowerCase(); };
 const cleanNote = (s: string) => s.trim().replace(/\s+/g, ' ');
 
@@ -51,12 +54,13 @@ export function adminPharmacyWalletApi(c: ApiClient) {
      * 404 without a code, or 405): then the history is searched.
      */
     topupByKey: async (pharmacyId: string, key: string): Promise<{ state: 'used'; row: WalletMovement } | { state: 'none' } | { state: 'unavailable' }> => {
+      // i18n-ignore: a programming error, not shown
       if (!ADMIN_TOPUP_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
       try {
         const r = await c.get<{ state?: string; transaction?: WalletMovement | null } | null>(ADMIN_TOPUP_BY_KEY_PATH(key), { query: { pharmacyId: pharmacyIdOf(pharmacyId) } });
         if (r?.state === 'credited' && r.transaction && typeof r.transaction === 'object') return { state: 'used', row: r.transaction };
         if (r?.state === 'not_found') return { state: 'none' };
-        throw new ApiError(502, 'The answer about this top-up could not be read.');
+        throw new ApiError(502, t('topup.answerUnreadable'));
       } catch (err) {
         if (err instanceof ApiError && ((err.status === 404 && !err.code) || err.status === 405)) return { state: 'unavailable' };
         throw err;
@@ -74,27 +78,33 @@ export function adminPharmacyWalletApi(c: ApiClient) {
      * answer the closure again (`replayed`). `paymentId` here is always the payment record id.
      */
     closeCompensated: async (paymentRecordId: string, body: { reason: string; requestKey: string }): Promise<CompensatedClose> => {
+      // i18n-ignore: a programming error, not shown
       if (!hex.test(paymentRecordId)) throw new Error('Invalid payment id');
+      // i18n-ignore: a programming error, not shown
       if (!ADMIN_TOPUP_KEY_PATTERN.test(body.requestKey)) throw new Error('Invalid request key');
       const reason = cleanNote(body.reason);
+      // i18n-ignore: a guard the screen checks first (closeReasonProblem), not shown
       if (closeReasonFault(reason)) throw new Error('Invalid reason');
       const r = await c.post<Partial<CompensatedClose> | null>(`/admin/wallet-payments/${paymentRecordId.toLowerCase()}/close-compensated`,
         { body: { reason, requestKey: body.requestKey } });
       // WQ15b L1: only a closure is a close; anything else (a 502 here) leaves the request unknown, never claimed closed.
-      if (r?.closed !== true) throw new ApiError(502, 'The answer about this top-up could not be read.');
+      if (r?.closed !== true) throw new ApiError(502, t('topup.answerUnreadable'));
       return r as CompensatedClose;
     },
     /** r9: did this admin's close with `key` happen? 'closed' with the closure, or 'not_found'. Anything else is thrown. */
     closeCompensatedByKey: async (key: string): Promise<{ state: 'closed'; close: CompensatedClose } | { state: 'not_found' }> => {
+      // i18n-ignore: a programming error, not shown
       if (!ADMIN_TOPUP_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
       const r = await c.get<{ state?: string } & Partial<CompensatedClose> | null>(`/admin/wallet-payments/close-compensated/by-key/${key}`);
       if (r?.state === 'closed' && r.closed === true) return { state: 'closed', close: r as CompensatedClose };
       if (r?.state === 'not_found') return { state: 'not_found' };
-      throw new ApiError(502, 'The answer about this top-up could not be read.');
+      throw new ApiError(502, t('topup.answerUnreadable'));
     },
     /** The admin credit: the key in the `Idempotency-Key` header, the same body on every resend. Answers the wallet. */
     topup: (body: AdminTopupBody, idempotencyKey: string) => {
+      // i18n-ignore: a programming error, not shown
       if (!ADMIN_TOPUP_KEY_PATTERN.test(idempotencyKey)) throw new Error('Invalid request key');
+      // i18n-ignore: a guard the screen checks first (adminTopupForm), not shown
       if (!Number.isSafeInteger(body.amount) || body.amount < 1) throw new Error('Invalid amount');
       return c.post<PharmacyWallet>('/pharmacy-wallet/topup', {
         body: { pharmacyId: pharmacyIdOf(body.pharmacyId), amount: body.amount, notes: cleanNote(body.notes) },
@@ -108,11 +118,11 @@ export function adminPharmacyWalletApi(c: ApiClient) {
 export function adminTopupForm(amountText: string, noteText: string): { amount?: string; notes?: string; value?: { amount: number; notes: string } } {
   const out: { amount?: string; notes?: string } = {};
   const a = amountText.trim().replace(/,/g, '');
-  if (!/^\d{1,7}$/.test(a) || Number(a) < 1) out.amount = 'Enter a whole number of rupees, 1 or more (for example 500).';
-  else if (Number(a) > MAX_ADMIN_TOPUP_RUPEES) out.amount = 'At most ₹2,00,000 at one time.';
+  if (!/^\d{1,7}$/.test(a) || Number(a) < 1) out.amount = t('topup.form.amount');
+  else if (Number(a) > MAX_ADMIN_TOPUP_RUPEES) out.amount = t('topup.form.amountMax');
   const notes = cleanNote(noteText);
-  if (notes.length < MIN_ADMIN_TOPUP_NOTE) out.notes = 'Write why the money is added, for example “stage testing” or “support credit”.';
-  else if (notes.length > MAX_ADMIN_TOPUP_NOTE) out.notes = `Use at most ${MAX_ADMIN_TOPUP_NOTE} characters.`;
+  if (notes.length < MIN_ADMIN_TOPUP_NOTE) out.notes = t('topup.form.note');
+  else if (notes.length > MAX_ADMIN_TOPUP_NOTE) out.notes = t('form.maxLength', { max: MAX_ADMIN_TOPUP_NOTE });
   if (out.amount || out.notes) return out;
   return { value: { amount: Number(a), notes } };
 }
@@ -153,40 +163,41 @@ export const latestAdminCredit = (rows: readonly WalletMovement[]): WalletMoveme
 
 /** The words when the credit was not found: by the exact by-key read (`exact`, WQ14 W3(c)), or by the fallback search. */
 export function topupNotFoundWords(s: { complete: boolean; searched: number; exact?: boolean }, canResend: boolean): string {
-  if (!s.complete) return `Only the latest ${s.searched} movements were searched; the credit may be older. Ask the tech team before adding money again.`;
-  return canResend
-    ? 'Not added so far. It may still be on its way. Sending the same request again is safe: the money is never added twice.'
-    : `Not found${s.exact ? '' : ' in the wallet history'} so far. It may still be on its way. Look at the history again in a minute before adding money again.`;
+  if (!s.complete) return t('topup.notFound.partial', { searched: s.searched });
+  return canResend ? t('topup.notFound.resend') : s.exact ? t('topup.notFound.exact') : t('topup.notFound.history');
 }
 
-const TOPUP_WORDS: Readonly<Record<string, string>> = {
-  PHARMACY_NOT_FOUND: 'This pharmacy was not found. Nothing was added.',
-  PHARMACY_ID_REQUIRED: 'Choose a pharmacy first. Nothing was added.',
-  IDEMPOTENCY_KEY_REUSED: 'This request was already used with a different amount or note, so nothing more was added. Look at the history below before adding money again.',
-  IDEMPOTENCY_KEY_REQUIRED: 'The request was not sent correctly, so nothing was added. Reload the page and try again.',
-  VALIDATION_ERROR: 'Check the amount (a whole number of rupees, 1 or more) and the note. Nothing was added.',
-};
+const TOPUP_WORDS: Readonly<Record<string, string>> = wordMap(t, {
+  PHARMACY_NOT_FOUND: 'topup.refusal.PHARMACY_NOT_FOUND',
+  PHARMACY_ID_REQUIRED: 'topup.refusal.PHARMACY_ID_REQUIRED',
+  IDEMPOTENCY_KEY_REUSED: 'topup.refusal.IDEMPOTENCY_KEY_REUSED',
+  IDEMPOTENCY_KEY_REQUIRED: 'topup.refusal.IDEMPOTENCY_KEY_REQUIRED',
+  VALIDATION_ERROR: 'topup.refusal.VALIDATION_ERROR',
+});
 
 /** One plain sentence for a failed READ on the wallet screens (never "nothing was added": nothing was being added). */
 export function adminWalletReadError(err: unknown): string {
-  if (err instanceof ApiError && err.code === 'PHARMACY_NOT_FOUND') return 'This pharmacy was not found.';
-  if (err instanceof ApiError && (err.code === 'PHARMACY_ID_REQUIRED' || err.code === 'VALIDATION_ERROR')) return 'This is not a pharmacy that can be read. Choose it from the list.';
-  if (err instanceof ApiError && err.status === 403) return 'Only Jansetu admins can see pharmacy wallets.';
+  if (err instanceof ApiError && err.code === 'PHARMACY_NOT_FOUND') return t('topup.read.notFound');
+  if (err instanceof ApiError && (err.code === 'PHARMACY_ID_REQUIRED' || err.code === 'VALIDATION_ERROR')) return t('topup.read.notReadable');
+  if (err instanceof ApiError && err.status === 403) return t('topup.read.forbidden');
   return assistedRefusal(err).message;
 }
 
 /** One plain sentence for a refusal of the admin credit. */
 export function adminTopupRefusal(err: unknown): string {
   if (err instanceof ApiError && err.code && TOPUP_WORDS[err.code]) return TOPUP_WORDS[err.code]!;
-  if (err instanceof ApiError && err.status === 403) return 'Only Jansetu admins can add money to a pharmacy wallet.';
+  if (err instanceof ApiError && err.status === 403) return t('topup.refusal.forbidden');
   return assistedRefusal(err).message;
 }
 
 /** S6: the warning shown on the form and its review (owner wording). */
 /** WQ20: the same words for a lab's wallet. */
-export const adminTopupWarning = (owner: WalletOwner) =>
-  `Do not use this to make up for a card top-up that never arrived. Ask the tech team to run the top-up check instead, or the ${owner} could be paid twice.`;
-export const ADMIN_TOPUP_WARNING = adminTopupWarning('pharmacy');
+const TOPUP_WARNING: Readonly<Record<WalletOwner, string>> = wordMap(t, {
+  pharmacy: 'topup.warning.pharmacy', lab: 'topup.warning.lab', doctor: 'topup.warning.doctor',
+});
+export const adminTopupWarning = (owner: WalletOwner) => TOPUP_WARNING[owner];
+export let ADMIN_TOPUP_WARNING = '';
+onLanguage(() => { ADMIN_TOPUP_WARNING = adminTopupWarning('pharmacy'); });
 
 // ── WQ15: card top-ups not credited, closed as already paid by hand (backend r9, design §22) ──
 
@@ -225,35 +236,40 @@ export interface CompensatedClose {
 /** `closeCompensatedSchema.reason`: 1–500 characters after trimming. */
 export const MAX_CLOSE_REASON = 500;
 const closeReasonFault = (r: string): 'empty' | 'long' | null => (!r ? 'empty' : r.length > MAX_CLOSE_REASON ? 'long' : null);
+const CLOSE_REASON_EMPTY: Readonly<Record<WalletOwner, string>> = wordMap(t, {
+  pharmacy: 'compensated.reason.pharmacy', lab: 'compensated.reason.lab', doctor: 'compensated.reason.doctor',
+});
 export function closeReasonProblem(text: string, owner: WalletOwner): string | undefined {
   const fault = closeReasonFault(cleanNote(text));
-  if (fault === 'empty') return `Write why this top-up is closed, for example who paid the ${owner} and how.`;
-  if (fault === 'long') return `Use at most ${MAX_CLOSE_REASON} characters.`;
+  if (fault === 'empty') return CLOSE_REASON_EMPTY[owner];
+  if (fault === 'long') return t('form.maxLength', { max: MAX_CLOSE_REASON });
   return undefined;
 }
 
 /** Owner wording: shown on the section and on the confirm step. */
-export const closeCompensatedExplain = (owner: WalletOwner) =>
-  `Use this only when Jansetu support already paid this amount to the ${owner} another way. The top-up can then never be credited.`;
+const CLOSE_EXPLAIN: Readonly<Record<WalletOwner, string>> = wordMap(t, {
+  pharmacy: 'compensated.explain.pharmacy', lab: 'compensated.explain.lab', doctor: 'compensated.explain.doctor',
+});
+export const closeCompensatedExplain = (owner: WalletOwner) => CLOSE_EXPLAIN[owner];
 
-const CLOSE_WORDS: Readonly<Record<string, string>> = {
-  TOPUP_ALREADY_CREDITED: 'This top-up was already credited, nothing to close.',
-  TOPUP_REFUNDED: 'This top-up was already refunded to the card, nothing to close.',
-  TOPUP_BLOCKED: 'This top-up was already blocked after a lost card dispute. It is never credited, so there is nothing to close.',
-  IDEMPOTENCY_KEY_REUSED: 'This request was already used for another top-up or another reason, so nothing was changed. Read the list again, then try again.',
-  PAYMENT_AMBIGUOUS: 'More than one top-up carries this payment id, so nothing was changed. Ask the tech team.',
-  TOPUP_NOT_FOUND: 'This top-up was not found (it is not a pharmacy card top-up). Nothing was changed.',
-  TOPUP_NOT_FOUND_BY_PAYMENT_ID: 'This top-up was not found (it is not a pharmacy card top-up). Nothing was changed.',
-  INDEXES_OUTDATED: 'The server needs an update before top-ups can be closed. Nothing was changed. Please ask the Jansetu team.',
-  WALLET_CHANGED: 'This top-up changed while it was being closed. Read the list again, then try again.',
-  VALIDATION_ERROR: `Write a reason of 1 to ${MAX_CLOSE_REASON} characters. Nothing was changed.`,
-};
+const CLOSE_WORDS: Readonly<Record<string, string>> = wordMap(t, {
+  TOPUP_ALREADY_CREDITED: 'compensated.refusal.TOPUP_ALREADY_CREDITED',
+  TOPUP_REFUNDED: 'compensated.refusal.TOPUP_REFUNDED',
+  TOPUP_BLOCKED: 'compensated.refusal.TOPUP_BLOCKED',
+  IDEMPOTENCY_KEY_REUSED: 'compensated.refusal.IDEMPOTENCY_KEY_REUSED',
+  PAYMENT_AMBIGUOUS: 'compensated.refusal.PAYMENT_AMBIGUOUS',
+  TOPUP_NOT_FOUND: 'compensated.refusal.TOPUP_NOT_FOUND',
+  TOPUP_NOT_FOUND_BY_PAYMENT_ID: 'compensated.refusal.TOPUP_NOT_FOUND',
+  INDEXES_OUTDATED: 'compensated.refusal.INDEXES_OUTDATED',
+  WALLET_CHANGED: 'compensated.refusal.WALLET_CHANGED',
+});
 
 /** One plain sentence for a refusal of the close (or of its by-key read). */
 export function closeCompensatedRefusal(err: unknown): string {
+  if (err instanceof ApiError && err.code === 'VALIDATION_ERROR') return t('compensated.refusal.VALIDATION_ERROR', { max: MAX_CLOSE_REASON });
   if (err instanceof ApiError && err.code && CLOSE_WORDS[err.code]) return CLOSE_WORDS[err.code]!;
-  if (isSwitchedOff(err)) return 'The admin tools are switched off on this server, so top-ups cannot be closed here. Nothing was changed.';
-  if (err instanceof ApiError && err.status === 403) return 'Only Jansetu admins can close a top-up.';
+  if (isSwitchedOff(err)) return t('compensated.refusal.switchedOff');
+  if (err instanceof ApiError && err.status === 403) return t('compensated.refusal.forbidden');
   return assistedRefusal(err).message;
 }
 

@@ -3,17 +3,15 @@ import {
   ApiError, CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, EMAIL_NOT_REGISTERED_MESSAGE, EMAIL_NOT_REGISTERED_STAFF_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, PARTNER_KIND_LABEL, parseLoginIdentifier,
   targetKey, targetKind, type OtpTarget, type PartnerSelection,
 } from '@jansetu/api';
-import { Alert, Button, LanguageSwitcher, TextField, useCooldowns } from '@jansetu/ui';
+import { Alert, Button, LanguageSwitcher, Parts, TextField, useCooldowns } from '@jansetu/ui';
+import { t } from '../i18n/shell/index.ts';
+import { BRAND } from '../Shell.tsx';
 import { messageOf } from '../errors.ts';
 import { useSession, type StaffRole } from '../session.tsx';
 
 const RESEND_SECONDS = 30;
-const ROLES: { value: StaffRole; label: string }[] = [
-  { value: 'pharmacy', label: 'Pharmacy staff' },
-  { value: 'partner', label: 'Lab or clinic staff' },
-  { value: 'specialist', label: 'Doctor' },
-  { value: 'admin', label: 'Admin' },
-];
+/** The sign-in roles, in this order; each one's words are `login.role.<role>`. */
+const ROLES: readonly StaffRole[] = ['pharmacy', 'partner', 'specialist', 'admin'];
 
 export function LoginScreen({ notice }: { notice?: string }) {
   const { requestCode, verifyCode, choosePartner } = useSession();
@@ -58,7 +56,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
     setError(null);
     // The role is captured with the destination (the role choice is frozen while sending).
     const next = step === 'identify' ? (typed ? { role, target: typed } : null) : sent;
-    if (!next) { setFieldError('Enter a 10-digit mobile number or an email address.'); focusOn('identifier'); return; }
+    if (!next) { setFieldError(t('login.identifier.missing')); focusOn('identifier'); return; }
     setFieldError(null);
     setBusy(true);
     try {
@@ -80,7 +78,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
   async function verify(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!OTP_PATTERN.test(otp)) { setFieldError('Enter the 6-digit code.'); focusOn('code'); return; }
+    if (!OTP_PATTERN.test(otp)) { setFieldError(t('login.code.missing')); focusOn('code'); return; }
     if (!sent) { setStep('identify'); return; }
     setFieldError(null);
     setBusy(true);
@@ -117,7 +115,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
     // Q7: only a lab/clinic sign-in has a workspace choice, opened for the role the code was sent for.
     if (!selection || sent?.role !== 'partner') return;
     setError(null);
-    if (!selection.choices.some((c) => c.partnerId === chosen)) { setFieldError('Choose the workspace to open.'); chooseRef.current?.focus(); return; }
+    if (!selection.choices.some((c) => c.partnerId === chosen)) { setFieldError(t('login.choose.missing')); chooseRef.current?.focus(); return; }
     setFieldError(null);
     setBusy(true);
     try {
@@ -127,7 +125,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
         // One use, 5 minutes: a new code is the only way on.
         setSelection(null);
         setStep('code');
-        setError('This sign-in has expired. Request a new code to continue.');
+        setError(t('login.expired'));
       } else {
         // WQ15b L3: a refusal (the clinic one included) keeps the choice: since r9b the ticket stays valid, so another
         // workspace can be opened from the same list. An older backend answers the next select 401 SELECTION_EXPIRED (above).
@@ -140,42 +138,42 @@ export function LoginScreen({ notice }: { notice?: string }) {
   return (
     <main className="login">
       <div className="login-card">
-        <div className="ws-brand login-brand">Jansetu <span>Workspace</span></div>
+        <div className="ws-brand login-brand">{BRAND} <span>{t('shell.workspace')}</span></div>
         <LanguageSwitcher />
-        <h1 id="page-title" tabIndex={-1}>Sign in</h1>
+        <h1 id="page-title" tabIndex={-1}>{t('login.title')}</h1>
         {notice && <Alert tone="warn">{notice}</Alert>}
         {/* WQ15: a refusal that also ended the session is said once (as the notice). */}
         {error && error !== notice && <Alert>{error}</Alert>}
         {/* WQ15: after the clinic refusal ended the session, the way to another workspace: a lab or clinic sign-in. */}
         {step === 'identify' && notice === CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE && role !== 'partner' && (
           <div className="login-actions">
-            <Button variant="secondary" onClick={() => { setRole('partner'); setError(null); focusOn('identifier'); }}>Choose another workspace</Button>
+            <Button variant="secondary" onClick={() => { setRole('partner'); setError(null); focusOn('identifier'); }}>{t('login.chooseAnother')}</Button>
           </div>
         )}
 
         {step === 'identify' ? (
           <form onSubmit={send} className="login-form" noValidate>
             <fieldset className="login-roles" disabled={busy}>
-              <legend>I am signing in as</legend>
+              <legend>{t('login.roles')}</legend>
               {ROLES.map((r) => (
-                <label key={r.value} className="login-role">
-                  <input type="radio" name="role" value={r.value} checked={role === r.value}
-                    onChange={() => setRole(r.value)} />
-                  {r.label}
+                <label key={r} className="login-role">
+                  <input type="radio" name="role" value={r} checked={role === r}
+                    onChange={() => setRole(r)} />
+                  {t(`login.role.${r}`)}
                 </label>
               ))}
             </fieldset>
             {/* WQ11a: a shared staff PC: the browser must not offer the previous person's number. */}
-            <TextField ref={identifierRef} label="Mobile number or email" type="text" inputMode="text" autoComplete="off" autoCapitalize="none"
+            <TextField ref={identifierRef} label={t('login.identifier')} type="text" inputMode="text" autoComplete="off" autoCapitalize="none"
               spellCheck={false} maxLength={MAX_EMAIL} value={identifier} onChange={(e) => setIdentifier(e.target.value)}
-              error={fieldError} hint="We will send a 6-digit code by SMS to a mobile number, or to an email address." />
-            <Button type="submit" busy={busy} disabled={waiting}>{waiting ? `Send code in ${cooldown}s` : 'Send code'}</Button>
+              error={fieldError} hint={t('login.identifier.hint')} />
+            <Button type="submit" busy={busy} disabled={waiting}>{waiting ? t('login.sendIn', { seconds: cooldown }) : t('login.send')}</Button>
           </form>
         ) : step === 'choose' && selection ? (
           <form onSubmit={(e) => void open(e)} className="login-form" noValidate>
             <fieldset className="login-roles" aria-describedby={fieldError ? 'choose-error' : undefined}>
               <legend ref={chooseRef} tabIndex={-1}>
-                Your {target && targetKind(target) === 'email' ? 'email' : 'number'} belongs to several workspaces. Which one do you want to open?
+                {target && targetKind(target) === 'email' ? t('login.choose.email') : t('login.choose.number')}
               </legend>
               {selection.choices.map((c) => (
                 <label key={c.partnerId} className="login-role">
@@ -184,35 +182,37 @@ export function LoginScreen({ notice }: { notice?: string }) {
                   <span>
                     <strong>{c.name}</strong>
                     <span className="login-choice-meta">
-                      {PARTNER_KIND_LABEL[c.kind] ?? c.kind}{c.solo ? ' · single-doctor practice' : ''} · {c.role === 'owner' ? 'Owner' : 'Staff'}
+                      {t(c.solo ? 'login.choice.solo' : 'login.choice', {
+                        kind: PARTNER_KIND_LABEL[c.kind] ?? c.kind, role: c.role === 'owner' ? t('login.choice.owner') : t('login.choice.staff'),
+                      })}
                     </span>
                   </span>
                 </label>
               ))}
               {fieldError && <span id="choose-error" className="j-field__error" role="alert">{fieldError}</span>}
             </fieldset>
-            <Button type="submit" busy={busy}>Open workspace</Button>
+            <Button type="submit" busy={busy}>{t('login.open')}</Button>
             <div className="login-actions">
               <Button variant="ghost" disabled={busy}
                 onClick={() => { setSelection(null); setStep('identify'); setError(null); setFieldError(null); focusOn('identifier'); }}>
-                Start again
+                {t('login.startAgain')}
               </Button>
             </div>
           </form>
         ) : (
           <form onSubmit={verify} className="login-form" noValidate>
-            {target && <p id={sentId}>We sent a 6-digit code to your {targetKind(target)} <strong>{maskTarget(target)}</strong>.</p>}
-            <TextField ref={codeRef} label="6-digit code" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+            {target && <p id={sentId}><Parts of={t.rich(targetKind(target) === 'email' ? 'login.sent.email' : 'login.sent.phone', { target: <strong>{maskTarget(target)}</strong> })} /></p>}
+            <TextField ref={codeRef} label={t('login.code')} inputMode="numeric" autoComplete="one-time-code" maxLength={6}
               aria-describedby={target ? sentId : undefined}
               value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} error={fieldError} />
-            <Button type="submit" busy={busy}>Verify and sign in</Button>
+            <Button type="submit" busy={busy}>{t('login.verify')}</Button>
             <div className="login-actions">
               <Button variant="ghost" disabled={busy || waiting} onClick={() => void send()}>
-                {waiting ? `Resend code in ${cooldown}s` : 'Resend code'}
+                {waiting ? t('login.resendIn', { seconds: cooldown }) : t('login.resend')}
               </Button>
               <Button variant="ghost" disabled={busy}
                 onClick={() => { setStep('identify'); setError(null); setFieldError(null); focusOn('identifier'); }}>
-                Change number or email
+                {t('login.change')}
               </Button>
             </div>
           </form>

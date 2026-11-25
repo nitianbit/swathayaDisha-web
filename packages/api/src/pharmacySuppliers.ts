@@ -1,4 +1,6 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
+import { t } from './i18n/pharmacy/index.ts';
+import { wordMap } from './i18n/words.ts';
 import { EMAIL_PATTERN } from './partners.ts';
 
 /**
@@ -13,9 +15,10 @@ export type SupplierField = (typeof SUPPLIER_FIELDS)[number];
 export const SUPPLIER_LIMITS: Readonly<Record<SupplierField, number>> = { displayName: 120, contactName: 120, phone: 32, email: 254, address: 500 };
 /** fieldsSchema.phone */
 export const SUPPLIER_PHONE_PATTERN = /^[+0-9(). -]+$/;
-export const SUPPLIER_FIELD_LABEL: Readonly<Record<SupplierField, string>> = {
-  displayName: 'Supplier name', contactName: 'Contact person', phone: 'Phone', email: 'Email', address: 'Address',
-};
+export const SUPPLIER_FIELD_LABEL: Readonly<Record<SupplierField, string>> = wordMap(t, {
+  displayName: 'supplier.field.displayName', contactName: 'supplier.field.contactName', phone: 'supplier.field.phone',
+  email: 'supplier.field.email', address: 'supplier.field.address',
+});
 /** Q15 `PHARMACY_REQUEST_KEY`. */
 export const SUPPLIER_REQUEST_KEY_PATTERN = /^[A-Za-z0-9_-]{8,100}$/;
 /** listQuery `limit` maximum. */
@@ -51,19 +54,19 @@ export function supplierProblems(d: SupplierDraft): Partial<Record<SupplierField
   const e: Partial<Record<SupplierField, string>> = {};
   for (const f of SUPPLIER_FIELDS) {
     const v = d[f].trim();
-    if (f === 'displayName' && !v) e[f] = 'Enter the supplier’s name.';
-    else if (v.length > SUPPLIER_LIMITS[f]) e[f] = `At most ${SUPPLIER_LIMITS[f]} characters.`;
+    if (f === 'displayName' && !v) e[f] = t('supplier.nameRequired');
+    else if (v.length > SUPPLIER_LIMITS[f]) e[f] = t('field.atMost', { max: SUPPLIER_LIMITS[f] });
   }
   const phone = d.phone.trim();
-  if (!e.phone && phone && !SUPPLIER_PHONE_PATTERN.test(phone)) e.phone = 'Use digits, spaces and + ( ) . - only.';
+  if (!e.phone && phone && !SUPPLIER_PHONE_PATTERN.test(phone)) e.phone = t('supplier.phone');
   const email = d.email.trim();
-  if (!e.email && email && !EMAIL_PATTERN.test(email)) e.email = 'Enter an email such as orders@distributor.in.';
+  if (!e.email && email && !EMAIL_PATTERN.test(email)) e.email = t('supplier.email');
   return e;
 }
 
 const clean = (f: SupplierField, v: string): string | null => {
-  const t = v.trim();
-  return f === 'displayName' || t ? t : null;
+  const trimmed = v.trim();
+  return f === 'displayName' || trimmed ? trimmed : null;
 };
 
 /** Create body: the name and only the optional fields that were filled (absent ones are stored as null). */
@@ -95,11 +98,11 @@ export const isSupplierConflict = (err: unknown) => err instanceof ApiError && e
 
 /** isSupplierId: lower-case hex only. */
 const supplierPath = (id: string) => {
-  if (!/^[0-9a-f]{24}$/.test(id)) throw new Error('Invalid supplier id');
+  if (!/^[0-9a-f]{24}$/.test(id)) throw new Error('Invalid supplier id'); // i18n-ignore: a programming error, not shown
   return `/pharmacy-suppliers/${id}`;
 };
 const checkRevision = (r: number) => {
-  if (!Number.isSafeInteger(r) || r < 1) throw new Error('Invalid supplier revision');
+  if (!Number.isSafeInteger(r) || r < 1) throw new Error('Invalid supplier revision'); // i18n-ignore: a programming error, not shown
   return r;
 };
 
@@ -110,13 +113,13 @@ export function pharmacySuppliersApi(c: ApiClient) {
       c.page<PharmacySupplier>('/pharmacy-suppliers', { query: { ...q } }),
     /** Exactly once per `requestKey` (Q15): a repeat answers the supplier the key made (`replayed`), never a second one. */
     create: async (fields: SupplierFields, requestKey: string): Promise<{ supplier: PharmacySupplier; replayed: boolean }> => {
-      if (!SUPPLIER_REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
+      if (!SUPPLIER_REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
       const r = await c.postKeyed<PharmacySupplier>('/pharmacy-suppliers', { body: { ...fields, requestKey } });
       return { supplier: r.data, replayed: r.replayed };
     },
     /** Q15 `GET /pharmacy-suppliers/by-key/:key`: the supplier a key made (as it is now); null on 404 (nothing so far). */
     createdByKey: async (requestKey: string): Promise<PharmacySupplier | null> => {
-      if (!SUPPLIER_REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
+      if (!SUPPLIER_REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
       try {
         return await c.get<PharmacySupplier>(`/pharmacy-suppliers/by-key/${requestKey}`);
       } catch (err) {
@@ -129,7 +132,7 @@ export function pharmacySuppliersApi(c: ApiClient) {
      * send is 409 REQUEST_ABANDONED); 'used' = it created this one.
      */
     abandonCreate: (requestKey: string) => {
-      if (!SUPPLIER_REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key');
+      if (!SUPPLIER_REQUEST_KEY_PATTERN.test(requestKey)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
       return c.post<{ state: 'abandoned' } | { state: 'used'; supplier: PharmacySupplier | null }>(`/pharmacy-suppliers/by-key/${requestKey}/abandon`, { body: {} });
     },
     /** 409 SUPPLIER_CONFLICT when the supplier is archived or its revision is no longer `expectedRevision`. */

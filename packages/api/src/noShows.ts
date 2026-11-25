@@ -1,4 +1,6 @@
 import { ApiError } from './client.ts';
+import { t } from './i18n/doctor/index.ts';
+import { wordMap } from './i18n/words.ts';
 
 /**
  * Q14 (owner, 18 Nov 2026): a no-show is not refunded and earns nobody anything. It may be moved ONCE to a later slot
@@ -25,22 +27,22 @@ export const noShowMovedOnce = (b: NoShowHistory) => (b.noShowReschedules ?? 0) 
  * The words for the server's refusals of a no-show move (the server's own message is the fallback). `SAME_SLOT`,
  * `SLOT_STARTED`, `SLOT_NOT_AVAILABLE`, `SLOT_UNAVAILABLE` and `SLOT_NOT_THIS_DOCTOR` mean: choose another time.
  */
-export const NO_SHOW_MOVE_REFUSAL: Record<string, string> = {
-  NO_SHOW_RESCHEDULE_USED: 'This booking was already moved once after a no-show. A second no-show is final, so it cannot be moved again.',
-  BOOKING_NOT_NO_SHOW: 'This booking is no longer a no-show, so there is nothing to move.',
-  SAME_SLOT: 'That is the time that was missed. Pick a later time.',
-  SLOT_STARTED: 'That time has already started. Pick a later time.',
-  SLOT_NOT_AVAILABLE: 'That time is no longer free. Pick another time.',
+export const NO_SHOW_MOVE_REFUSAL: Record<string, string> = wordMap(t, {
+  NO_SHOW_RESCHEDULE_USED: 'noShow.refusal.NO_SHOW_RESCHEDULE_USED',
+  BOOKING_NOT_NO_SHOW: 'noShow.refusal.BOOKING_NOT_NO_SHOW',
+  SAME_SLOT: 'noShow.refusal.SAME_SLOT',
+  SLOT_STARTED: 'noShow.refusal.SLOT_STARTED',
+  SLOT_NOT_AVAILABLE: 'noShow.refusal.SLOT_NOT_AVAILABLE',
   // WQ11b: the lab move's code (`partners/services/slots.ts takeSeat`: closed, full, started or a holiday).
-  SLOT_UNAVAILABLE: 'That time is no longer free. Pick another time.',
+  SLOT_UNAVAILABLE: 'noShow.refusal.SLOT_NOT_AVAILABLE',
   // Q15 (`rescheduleWithHolds`): every move stays with the booking's doctor.
-  SLOT_NOT_THIS_DOCTOR: 'That time belongs to another doctor. Pick one of this doctor’s times.',
-  IDEMPOTENCY_KEY_REUSED: 'This request was already used for a different time. Reload the page and start again.',
+  SLOT_NOT_THIS_DOCTOR: 'noShow.refusal.SLOT_NOT_THIS_DOCTOR',
+  IDEMPOTENCY_KEY_REUSED: 'noShow.refusal.IDEMPOTENCY_KEY_REUSED',
   // Q14 review (`rescheduleWithHolds`): a desk appointment is moved by its clinic only.
-  CLINIC_APPOINTMENT: 'The clinic can move this appointment: it was booked at its front desk.',
+  CLINIC_APPOINTMENT: 'noShow.refusal.CLINIC_APPOINTMENT',
   // WQ11c: a slot that does not take the booking's consultation type (`assertSlotMode`, named so by `noShowModeRefusal`).
-  SLOT_MODE_NOT_OFFERED: 'That time is not offered for this consultation type. Pick another time.',
-};
+  SLOT_MODE_NOT_OFFERED: 'noShow.refusal.SLOT_MODE_NOT_OFFERED',
+});
 
 /**
  * A move refused because of the chosen time (the person picks another; the booking itself is unchanged). The doctor,

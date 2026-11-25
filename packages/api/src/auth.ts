@@ -1,4 +1,6 @@
 import { ApiError, type ApiClient } from './client.ts';
+import { t } from './i18n/index.ts';
+import { onLanguage } from './i18n/words.ts';
 
 /** The backend's login kinds (`/auth/:userType/send|verify`). */
 export type UserType = 'user' | 'admin' | 'specialist' | 'hr' | 'pharmacy' | 'partner';
@@ -151,10 +153,9 @@ export function maskTarget(t: OtpTarget): string {
  * account uses answers 404 `EMAIL_NOT_REGISTERED`.
  */
 export const isEmailNotRegistered = (err: unknown) => err instanceof ApiError && err.code === 'EMAIL_NOT_REGISTERED';
-export const EMAIL_NOT_REGISTERED_MESSAGE = 'No account uses this email. Sign in with your mobile number, then add this email to your profile.';
+export let EMAIL_NOT_REGISTERED_MESSAGE = '';
 /** Doctors and pharmacies have no profile email screen: the team adds it. */
-export const EMAIL_NOT_REGISTERED_STAFF_MESSAGE =
-  'No account uses this email. Sign in with your mobile number. To use email sign-in, ask the Jansetu team to add it to your account.';
+export let EMAIL_NOT_REGISTERED_STAFF_MESSAGE = '';
 
 /**
  * r9 (design §22.2): a lab/clinic member linked to a doctor who is not verified and active is refused with 403
@@ -165,8 +166,12 @@ export const EMAIL_NOT_REGISTERED_STAFF_MESSAGE =
 export const CLINIC_DOCTOR_NOT_VERIFIED_CODES: readonly string[] = ['CLINIC_OWNER_DOCTOR_NOT_VERIFIED', 'CLINIC_DOCTOR_NOT_VERIFIED'];
 export const isClinicDoctorNotVerified = (err: unknown) =>
   err instanceof ApiError && err.status === 403 && CLINIC_DOCTOR_NOT_VERIFIED_CODES.includes(err.code ?? '');
-export const CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE =
-  'Your doctor account is not verified or not active, so this clinic workspace is closed for you. Contact the Jansetu team.';
+export let CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE = '';
+onLanguage(() => {
+  EMAIL_NOT_REGISTERED_MESSAGE = t('auth.emailNotRegistered');
+  EMAIL_NOT_REGISTERED_STAFF_MESSAGE = t('auth.emailNotRegisteredStaff');
+  CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE = t('auth.clinicDoctorNotVerified');
+});
 
 /** D4: once-only operations whose outcome a reloaded page never saw. */
 export type OnceOnlyKind = 'customer_return' | 'supplier_return' | 'booking_create' | 'pharmacy_checkout' | 'lab_booking_create' | 'instant_request_create'
@@ -198,11 +203,12 @@ interface PartnerSelector {
 }
 
 /** Q16b: partner members get no bearer token; their verify and select must open a cookie or native session. */
+// i18n-ignore: a programming error (the app chose no session kind), not shown
 const partnerNeedsSession = () => new ApiError(400, "Partner sign-in needs session 'cookie' (web) or 'native' (phone app)", 'SESSION_REQUIRED');
 
 function partnerSelector(c: ApiClient): PartnerSelector {
   return ((ticket: string, partnerId: string, mode: SignInMode) => {
-    if (!OBJECT_ID.test(partnerId)) throw new Error('Invalid partner id');
+    if (!OBJECT_ID.test(partnerId)) throw new Error('Invalid partner id'); // i18n-ignore: a programming error, not shown
     if (mode.kind === 'bearer') return Promise.reject(partnerNeedsSession());
     const body = { ticket, partnerId };
     if (mode.kind === 'cookie') {

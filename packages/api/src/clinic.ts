@@ -2,6 +2,8 @@ import type { ApiClient } from './client.ts';
 import { appointmentInstant } from './cancellationWindow.ts';
 import type { ClinicDoctor, InvoiceState } from './partnerInvoices.ts';
 import { addDays, isRealDate } from './partnerLabs.ts';
+import { t } from './i18n/partner/index.ts';
+import { wordMap } from './i18n/words.ts';
 import {
   hasGlobalScope, holdsAny, OBJECT_ID_PATTERN, partnerWorkspaceBase, REQUEST_KEY_PATTERN, type Branch, type PartnerActorView, type PartnerScope,
 } from './partners.ts';
@@ -35,9 +37,9 @@ export interface ClinicDoctorRow extends ClinicDoctor {
 
 export type DoctorInviteState = 'pending' | 'accepted' | 'declined' | 'revoked';
 export const DOCTOR_INVITE_STATES: readonly DoctorInviteState[] = ['pending', 'accepted', 'declined', 'revoked'];
-export const DOCTOR_INVITE_STATE_LABEL: Record<DoctorInviteState, string> = {
-  pending: 'Waiting for the doctor', accepted: 'Accepted', declined: 'Declined by the doctor', revoked: 'Revoked',
-};
+export const DOCTOR_INVITE_STATE_LABEL: Record<DoctorInviteState, string> = wordMap(t, {
+  pending: 'clinic.invite.pending', accepted: 'clinic.invite.accepted', declined: 'clinic.invite.declined', revoked: 'clinic.invite.revoked',
+});
 
 /** `IClinicDoctorInvite` as stored; Q13: the list adds the doctor's current name and speciality (no contact details). */
 export interface DoctorInvite {
@@ -101,21 +103,21 @@ export function clinicBranchesFor(branches: readonly Branch[], actor: Pick<Partn
 export function linkProblems(input: { doctorId: string; branchIds: readonly string[] }, offered: readonly Pick<Branch, '_id'>[]):
   Partial<Record<'doctorId' | 'branchIds', string>> {
   const out: Partial<Record<'doctorId' | 'branchIds', string>> = {};
-  if (!OBJECT_ID_PATTERN.test(input.doctorId)) out.doctorId = 'Choose the doctor.';
-  if (input.branchIds.length > MAX_LINK_BRANCHES) out.branchIds = `Choose at most ${MAX_LINK_BRANCHES} branches.`;
-  else if (input.branchIds.some((b) => !offered.some((o) => o._id === b))) out.branchIds = 'Choose branches of this clinic that take in-clinic consultations.';
+  if (!OBJECT_ID_PATTERN.test(input.doctorId)) out.doctorId = t('clinic.link.problem.doctor');
+  if (input.branchIds.length > MAX_LINK_BRANCHES) out.branchIds = t('clinic.link.problem.tooManyBranches', { max: MAX_LINK_BRANCHES });
+  else if (input.branchIds.some((b) => !offered.some((o) => o._id === b))) out.branchIds = t('clinic.link.problem.branches');
   return out;
 }
 
 /** Q14: the server's refusals of a link, in words an admin can act on (the server's message is the fallback). */
-export const LINK_REFUSAL: Record<string, string> = {
-  DOCTOR_NOT_FOUND: 'This doctor was not found.',
-  DOCTOR_NOT_ELIGIBLE: 'Only active, verified doctors can be linked to a clinic.',
-  DOCTOR_PHONE_REQUIRED: 'This doctor has no mobile number on their profile (it is their clinic sign-in). Add one first.',
-  DOCTOR_ALREADY_MEMBER: 'This doctor already consults at this clinic.',
-  PHONE_USED_BY_ANOTHER_DOCTOR: 'This doctor’s mobile number belongs to another doctor at this clinic.',
-  DOCTOR_LINK_ADMIN_ONLY: 'Doctors are linked to clinics by the Jansetu team after checking. Ask them to add this doctor.',
-};
+export const LINK_REFUSAL: Record<string, string> = wordMap(t, {
+  DOCTOR_NOT_FOUND: 'clinic.link.refusal.DOCTOR_NOT_FOUND',
+  DOCTOR_NOT_ELIGIBLE: 'clinic.link.refusal.DOCTOR_NOT_ELIGIBLE',
+  DOCTOR_PHONE_REQUIRED: 'clinic.link.refusal.DOCTOR_PHONE_REQUIRED',
+  DOCTOR_ALREADY_MEMBER: 'clinic.link.refusal.DOCTOR_ALREADY_MEMBER',
+  PHONE_USED_BY_ANOTHER_DOCTOR: 'clinic.link.refusal.PHONE_USED_BY_ANOTHER_DOCTOR',
+  DOCTOR_LINK_ADMIN_ONLY: 'clinic.link.refusal.DOCTOR_LINK_ADMIN_ONLY',
+});
 
 /** Active doctors who consult at this branch (a doctor's empty branch list = every branch). */
 export const doctorsAtBranch = <D extends Pick<ClinicDoctor, 'active' | 'branchIds'>>(doctors: readonly D[], branchId: string): D[] =>
@@ -141,9 +143,10 @@ export interface DeskSlot {
 
 export type ClinicAppointmentStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show';
 export const CLINIC_APPOINTMENT_STATUSES: readonly ClinicAppointmentStatus[] = ['pending', 'confirmed', 'completed', 'cancelled', 'no_show'];
-export const CLINIC_APPOINTMENT_STATUS_LABEL: Record<ClinicAppointmentStatus, string> = {
-  pending: 'Waiting for payment', confirmed: 'Booked', completed: 'Seen', cancelled: 'Cancelled', no_show: 'Did not come',
-};
+export const CLINIC_APPOINTMENT_STATUS_LABEL: Record<ClinicAppointmentStatus, string> = wordMap(t, {
+  pending: 'clinic.status.pending', confirmed: 'clinic.status.confirmed', completed: 'clinic.status.completed', cancelled: 'clinic.status.cancelled',
+  no_show: 'clinic.status.no_show',
+});
 
 /** `deskView`: what every desk command answers. */
 export interface DeskAppointment {
@@ -230,11 +233,11 @@ export function familyMemberProblems(p: { name: string; relation: string; gender
   Partial<Record<'name' | 'relation' | 'gender' | 'dateOfBirth', string>> {
   const out: Partial<Record<'name' | 'relation' | 'gender' | 'dateOfBirth', string>> = {};
   const name = p.name.trim();
-  if (!name) out.name = 'Enter the family member’s name.';
-  else if (name.length > MAX_FAMILY_NAME) out.name = `Use at most ${MAX_FAMILY_NAME} characters.`;
-  if (!(DESK_RELATIONS as readonly string[]).includes(p.relation)) out.relation = 'Choose how they are related to the account holder.';
-  if (p.gender && !(DESK_GENDERS as readonly string[]).includes(p.gender)) out.gender = 'Choose a gender, or leave it empty.';
-  if (p.dateOfBirth && (!isRealDate(p.dateOfBirth) || Date.parse(`${p.dateOfBirth}T00:00:00Z`) > now.getTime())) out.dateOfBirth = 'Enter a real date that is not in the future.';
+  if (!name) out.name = t('clinic.family.problem.name');
+  else if (name.length > MAX_FAMILY_NAME) out.name = t('clinic.problem.tooLong', { max: MAX_FAMILY_NAME });
+  if (!(DESK_RELATIONS as readonly string[]).includes(p.relation)) out.relation = t('clinic.family.problem.relation');
+  if (p.gender && !(DESK_GENDERS as readonly string[]).includes(p.gender)) out.gender = t('clinic.family.problem.gender');
+  if (p.dateOfBirth && (!isRealDate(p.dateOfBirth) || Date.parse(`${p.dateOfBirth}T00:00:00Z`) > now.getTime())) out.dateOfBirth = t('clinic.family.problem.dateOfBirth');
   return out;
 }
 
@@ -270,18 +273,18 @@ export const MAX_DESK_CANCEL_REASON = 500;
 /** Why the server would refuse this desk booking's details (`deskBookingSchema`, `normalizePhone`), per field. */
 export function deskBookingProblems(d: { phone: string; name: string; notes: string }): Partial<Record<'phone' | 'name' | 'notes', string>> {
   const out: Partial<Record<'phone' | 'name' | 'notes', string>> = {};
-  if (!d.phone.trim()) out.phone = 'Enter the patient’s mobile number.';
-  else if (!canonicalMobile(d.phone)) out.phone = 'Enter a ten-digit mobile number.';
-  if (d.name.trim().length > MAX_DESK_NAME) out.name = `Use at most ${MAX_DESK_NAME} characters.`;
-  if (d.notes.trim().length > MAX_DESK_NOTES) out.notes = `Use at most ${MAX_DESK_NOTES} characters.`;
+  if (!d.phone.trim()) out.phone = t('clinic.desk.problem.phone');
+  else if (!canonicalMobile(d.phone)) out.phone = t('clinic.desk.problem.mobile');
+  if (d.name.trim().length > MAX_DESK_NAME) out.name = t('clinic.problem.tooLong', { max: MAX_DESK_NAME });
+  if (d.notes.trim().length > MAX_DESK_NOTES) out.notes = t('clinic.problem.tooLong', { max: MAX_DESK_NOTES });
   return out;
 }
 
 /** `listClinicAppointments`: real dates, from ≤ to, at most 31 days; null when fine. */
 export function appointmentRangeProblem(from: string, to: string): string | null {
-  if (!isRealDate(from) || !isRealDate(to)) return 'Enter real dates.';
-  if (to < from) return 'The end date is before the start date.';
-  if (to > addDays(from, MAX_APPOINTMENT_DAYS - 1)) return `At most ${MAX_APPOINTMENT_DAYS} days at a time.`;
+  if (!isRealDate(from) || !isRealDate(to)) return t('clinic.range.problem.dates');
+  if (to < from) return t('clinic.range.problem.order');
+  if (to > addDays(from, MAX_APPOINTMENT_DAYS - 1)) return t('clinic.range.problem.tooLong', { max: MAX_APPOINTMENT_DAYS });
   return null;
 }
 
@@ -334,14 +337,14 @@ export function deskActions(a: Pick<ClinicAppointment, 'source' | 'status' | 'ar
     const at = appointmentAt(a);
     // Q16d (`closeDeskAppointment`, 409 NOT_STARTED_YET only on an earlier day): seen any time on the appointment's day.
     const dayCame = /^\d{8}$/.test(a.bookingDate) && istYmd(now) >= a.bookingDate;
-    out.push({ action: 'complete', blocked: dayCame ? undefined : 'A visit can be marked as seen from the day of the appointment.' });
+    out.push({ action: 'complete', blocked: dayCame ? undefined : t('clinic.desk.blocked.seen') });
     // Q16d (`noShowAllowedFromSlot`, 409 APPOINTMENT_NOT_STARTED): 15 minutes after the time; a session: after its end.
     const end = slot && slot.seats > 1 && slot.endTime ? appointmentInstant(a.bookingDate, slot.endTime)?.at : undefined;
     const from = end && at && end.getTime() > at.getTime() ? end : at;
     const noShowFrom = from ? from.getTime() + NO_SHOW_GRACE_MS : null;
     out.push({ action: 'no_show', blocked: noShowFrom !== null && noShowFrom <= now.getTime() ? undefined
-      : from === end && end ? 'In a session with several patients, a no-show can be marked 15 minutes after the session ends.'
-      : 'A no-show can be marked 15 minutes after the appointment time.' });
+      : from === end && end ? t('clinic.desk.blocked.noShowSession')
+      : t('clinic.desk.blocked.noShow') });
   }
   if (MOVABLE.includes(a.status)) out.push({ action: 'reschedule' }, { action: 'cancel' });
   if (a.status === 'no_show') out.push({ action: 'reschedule_no_show' });
@@ -351,21 +354,23 @@ export function deskActions(a: Pick<ClinicAppointment, 'source' | 'status' | 'ar
 // ── Paths ──
 
 function checkId(id: string, what: string): string {
+  // i18n-ignore: a programming error, not shown
   if (!OBJECT_ID_PATTERN.test(id)) throw new Error(`Invalid ${what} id`);
   return id;
 }
 function checkDate(date: string, what: string): string {
+  // i18n-ignore: a programming error, not shown
   if (!isRealDate(date)) throw new Error(`Invalid ${what} date`);
   return date;
 }
 function checkKey(key: string): string {
-  if (!REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key');
+  if (!REQUEST_KEY_PATTERN.test(key)) throw new Error('Invalid request key'); // i18n-ignore: a programming error, not shown
   return key;
 }
 /** Q13 `deskStepSchema.expectedUpdatedAt` (an ISO date): the version the step was decided on, when known. */
 function expected(updatedAt: string | undefined): { expectedUpdatedAt?: string } {
   if (updatedAt === undefined) return {};
-  if (Number.isNaN(Date.parse(updatedAt))) throw new Error('Invalid appointment version');
+  if (Number.isNaN(Date.parse(updatedAt))) throw new Error('Invalid appointment version'); // i18n-ignore: a programming error, not shown
   return { expectedUpdatedAt: updatedAt };
 }
 const STATES = new Set<string>(DOCTOR_INVITE_STATES);
@@ -380,7 +385,7 @@ export function partnerClinicApi(c: ApiClient, scope: PartnerScope) {
     doctors: () => c.get<ClinicDoctorRow[]>(`${base()}/doctors`),
     /** Newest first, at most 200, only invitations wholly inside a restricted manager's branches (staff.manage). */
     invites: (state?: DoctorInviteState) => {
-      if (state !== undefined && !STATES.has(state)) throw new Error('Invalid invitation state');
+      if (state !== undefined && !STATES.has(state)) throw new Error('Invalid invitation state'); // i18n-ignore: a programming error, not shown
       return c.get<DoctorInvite[]>(`${base()}/doctor-invites`, { query: { state } });
     },
     /**
@@ -390,7 +395,7 @@ export function partnerClinicApi(c: ApiClient, scope: PartnerScope) {
     linkDoctor: (input: LinkDoctorInput) => {
       for (const b of input.branchIds) checkId(b, 'branch');
       checkKey(input.requestKey);
-      if (input.branchIds.length > MAX_LINK_BRANCHES) throw new Error('Too many branches');
+      if (input.branchIds.length > MAX_LINK_BRANCHES) throw new Error('Too many branches'); // i18n-ignore: a programming error, not shown
       return c.post<DoctorLinkResult>(`${base()}/doctors`, { body: { doctorId: checkId(input.doctorId, 'doctor').toLowerCase(), branchIds: input.branchIds, requestKey: input.requestKey } });
     },
     /** Q14: the owner (or an admin) removes a doctor from the clinic (404 DOCTOR_NOT_AT_CLINIC, 409 DOCTOR_IS_OWNER). */
@@ -404,8 +409,9 @@ export function partnerClinicApi(c: ApiClient, scope: PartnerScope) {
     }),
     appointments: (q: AppointmentQuery) => {
       const problem = appointmentRangeProblem(q.from, q.to);
+      // i18n-ignore: a programming error, not shown (the screen checks the range first)
       if (problem) throw new Error(`Invalid appointment dates: ${problem}`);
-      if (q.status !== undefined && !STATUSES.has(q.status)) throw new Error('Invalid appointment status');
+      if (q.status !== undefined && !STATUSES.has(q.status)) throw new Error('Invalid appointment status'); // i18n-ignore: a programming error, not shown
       return c.get<ClinicAppointment[]>(`${base()}/appointments`, {
         query: {
           from: q.from, to: q.to, status: q.status,
@@ -424,7 +430,7 @@ export function partnerClinicApi(c: ApiClient, scope: PartnerScope) {
       checkKey(body.requestKey);
       if (body.patient && 'dependentId' in body.patient) checkId(body.patient.dependentId, 'family member');
       const phone = canonicalMobile(body.customer.phone);
-      if (!phone) throw new Error('Invalid mobile number');
+      if (!phone) throw new Error('Invalid mobile number'); // i18n-ignore: a programming error, not shown
       return c.post<DeskBookingResult>(`${base()}/appointments`, { body: { ...body, customer: { ...body.customer, phone } } });
     },
     /** Q13: the appointment this desk member's `key` booked, within their clinic and branches (404 BOOKING_NOT_FOUND otherwise). */
