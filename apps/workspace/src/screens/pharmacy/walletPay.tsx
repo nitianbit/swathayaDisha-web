@@ -1,9 +1,13 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { assistedRefusal, walletBalancePaise, walletState, type AssistedPaymentMethod, type Refusal } from '@jansetu/api';
+import {
+  assistedRefusal, doctorWalletApi, pharmacyWalletApi, walletBalancePaise, walletState, type ApiClient, type AssistedPaymentMethod, type BookerKind, type PharmacyWallet,
+  type Refusal,
+} from '@jansetu/api';
 import { Alert, Button, ErrorState, formatRupees, Loading } from '@jansetu/ui';
-import { TopUpForm } from './topup.tsx';
-import { usePayerWallet, walletHoldWords, type WalletPayer } from './WalletScreen.tsx';
+import { pharmacyTopupSource, TopUpForm, type TopupSource } from './topup.tsx';
+import { walletHoldWords, walletKeyOf, type WalletPayer } from './WalletScreen.tsx';
 
 /**
  * WQ17: paying an assisted booking from the pharmacy's Jansetu wallet (WQ12, moved here unchanged from Book consultation
@@ -12,8 +16,33 @@ import { usePayerWallet, walletHoldWords, type WalletPayer } from './WalletScree
  * Wallet page.
  */
 
-/** Review (WQ25): where the booker collects: the pharmacy at its counter; a doctor from its patient (no counter). */
-const counterWords = (payer: WalletPayer) => (payer.kind === 'pharmacy' ? ' at your counter' : '');
+/**
+ * WQ24: the wallet that pays a booking: the pharmacy's (WQ12), a lab's (WQ20) when a lab member books, or (WQ25) a doctor's
+ * own. `read` is null when this person cannot see the balance, `topup` null when they cannot add money here, `page` null
+ * when they cannot open the wallet page.
+ */
+export interface PayWallet {
+  owner: BookerKind | 'doctor';
+  /** The wallet's query key (the balance is read under `[...queryKey, 'balance']`, as its page reads it). */
+  queryKey: readonly unknown[];
+  read: (() => Promise<PharmacyWallet | null>) | null;
+  topup: TopupSource | null;
+  page: string | null;
+}
+export const pharmacyPayWallet = (api: ApiClient, pharmacyId: string): PayWallet => ({
+  owner: 'pharmacy', queryKey: walletKeyOf({ kind: 'pharmacy', id: pharmacyId }), read: () => pharmacyWalletApi(api).wallet(),
+  topup: pharmacyTopupSource(api, pharmacyId), page: '/pharmacy/wallet',
+});
+/** WQ25: a doctor's own wallet (WQ23): money is added on its Wallet page, not here. */
+export const doctorPayWallet = (api: ApiClient, doctorId: string): PayWallet => ({
+  owner: 'doctor', queryKey: walletKeyOf({ kind: 'doctor', id: doctorId }), read: () => doctorWalletApi(api).wallet(), topup: null, page: '/doctor/wallet',
+});
+/** WQ25's payer (a pharmacy or a doctor) as the wallet that pays. */
+export const payerWallet = (api: ApiClient, payer: WalletPayer): PayWallet =>
+  (payer.kind === 'doctor' ? doctorPayWallet(api, payer.id) : pharmacyPayWallet(api, payer.id));
+
+/** Review (WQ25): where the booker collects: a pharmacy or a lab at its counter; a doctor from its patient (no counter). */
+const counterWords = (owner: PayWallet['owner']) => (owner === 'doctor' ? '' : ' at your counter');
 
 /** Plain refusal words, adjusted when a coupon explains the new price. */
 export function refusalText(r: Refusal, coupon?: string): string {
@@ -34,22 +63,25 @@ export function RefusalAlert({ refused, couponCode, onNewPrice }: { refused: Ref
   );
 }
 
-export function WalletPay({ payer, priceMinor, couponCode, refused, busy, onPay, onBack, onNewPrice, payLabel }: {
-  payer: WalletPayer; priceMinor: number; couponCode?: string; refused: Refusal | null; busy: boolean;
+export function WalletPay({ wallet: w, priceMinor, couponCode, refused, busy, onPay, onBack, onNewPrice, payLabel }: {
+  /** WQ24: the wallet that pays (`pharmacyPayWallet`, `doctorPayWallet`, or a lab's). */
+  wallet: PayWallet;
+  priceMinor: number; couponCode?: string; refused: Refusal | null; busy: boolean;
   onPay: () => void; onBack: () => void; onNewPrice: (priceMinor: number) => void;
   /** WQ22: the pay button's words (default "Pay ₹X from wallet"). */
   payLabel?: (amount: string) => string;
 }) {
-  const wallet = usePayerWallet(payer);
+  const wallet = useQuery({ queryKey: [...w.queryKey, 'balance'], queryFn: () => w.read!(), enabled: !!w.read });
   const balance = walletBalancePaise(wallet.data);
   const hold = walletHoldWords(wallet.data);
   const short = wallet.data !== undefined && walletState(wallet.data) === 'ok' && balance < priceMinor;
   const [showTopUp, setShowTopUp] = useState(false);
   const needTopUp = short || refused?.kind === 'topup';
-  const where = counterWords(payer);
+  const where = counterWords(w.owner);
   return (
     <>
-      {wallet.isPending ? <Loading label="Reading your wallet…" />
+      {!w.read ? <p className="ws-muted">Your {w.owner}’s Jansetu wallet pays for this booking. Your account cannot see its balance.</p>
+        : wallet.isPending ? <Loading label="Reading your wallet…" />
         : wallet.isError ? <ErrorState message={assistedRefusal(wallet.error).message} onRetry={() => void wallet.refetch()} />
         : (
           <p>
@@ -62,18 +94,22 @@ export function WalletPay({ payer, priceMinor, couponCode, refused, busy, onPay,
       {needTopUp && !hold && (
         <Alert tone="warn">
           {short ? `Your wallet needs ${formatRupees((priceMinor - balance) / 100)} more for this booking.` : 'Your wallet needs more money for this booking.'}
-          {payer.kind === 'pharmacy' ? (
+          {w.topup ? (
             <>
               {' '}<Button variant="secondary" onClick={() => setShowTopUp(true)}>Top up now</Button>{' '}
-              or open the <Link to="/pharmacy/wallet">Wallet</Link> page (this booking is not kept if you leave).
+              {w.page && <>or open the <Link to={w.page}>Wallet</Link> page (this booking is not kept if you leave).</>}
             </>
-          ) : (
+          ) : w.owner === 'doctor' && w.page ? (
             // WQ25: a doctor adds money on its own Wallet page (WQ23).
-            <>{' '}<Link to="/doctor/wallet">Add money</Link> on your Wallet page, then book again (this booking is not kept if you leave).</>
-          )}
+            <>{' '}<Link to={w.page}>Add money</Link> on your Wallet page, then book again (this booking is not kept if you leave).</>
+          ) : ' Ask someone who can add money to the wallet, then pay again.'}
         </Alert>
       )}
-      {showTopUp && payer.kind === 'pharmacy' && <TopUpForm pharmacyId={payer.id} suggested={Math.max(1, (priceMinor - balance) / 100)} onCredited={() => void wallet.refetch()} />}
+      {showTopUp && w.topup && (
+        // WQ24b: the balance is read again only where this person may read it (`wallet.manage` without `wallet.view`: never).
+        <TopUpForm pharmacyId={w.topup.owner} source={w.topup} suggested={Math.max(1, (priceMinor - balance) / 100)}
+          {...(w.read ? { onCredited: () => void wallet.refetch() } : {})} />
+      )}
       <span className="ws-muted">Collect {formatRupees(priceMinor / 100)} from the patient{where}. If the booking is cancelled, the money comes back to your wallet.</span>
       <div className="confirm-actions">
         <Button busy={busy} disabled={!!hold || short || (refused?.kind === 'price')} onClick={onPay}>
@@ -88,10 +124,10 @@ export function WalletPay({ payer, priceMinor, couponCode, refused, busy, onPay,
 /**
  * WQ17c: "How do you pay?" (WQ16, moved here from Book consultation so that Book lab test offers card or UPI the very same
  * way): the wallet (the default) or card or UPI, only when there is something to pay; a switched-off card is said next to it.
- * WQ27: a doctor's lab test too (`payer`).
+ * WQ27: a doctor's lab test too; WQ24: a lab's consultation (`wallet`).
  */
-export function PayChoice({ payer, priceMinor, couponCode, refused, busy, method, cardOff, onMethod, onPay, onBack, onNewPrice }: {
-  payer: WalletPayer; priceMinor: number; couponCode?: string; refused: Refusal | null; busy: boolean;
+export function PayChoice({ wallet, priceMinor, couponCode, refused, busy, method, cardOff, onMethod, onPay, onBack, onNewPrice }: {
+  wallet: PayWallet; priceMinor: number; couponCode?: string; refused: Refusal | null; busy: boolean;
   method: AssistedPaymentMethod; cardOff: string | null; onMethod: (m: AssistedPaymentMethod) => void;
   onPay: () => void; onBack: () => void; onNewPrice: (priceMinor: number) => void;
 }) {
@@ -118,7 +154,7 @@ export function PayChoice({ payer, priceMinor, couponCode, refused, busy, method
         <>
           <RefusalAlert refused={refused} couponCode={couponCode} onNewPrice={onNewPrice} />
           <span className="ws-muted">
-            Collect {formatRupees(priceMinor / 100)} from the patient{counterWords(payer)}. You pay it on the Razorpay page next. The time is held for 30
+            Collect {formatRupees(priceMinor / 100)} from the patient{counterWords(wallet.owner)}. You pay it on the Razorpay page next. The time is held for 30
             minutes while you pay. If the booking is cancelled later, the money goes back to the card or UPI, or to your wallet if you choose.
           </span>
           <div className="confirm-actions">
@@ -127,7 +163,7 @@ export function PayChoice({ payer, priceMinor, couponCode, refused, busy, method
           </div>
         </>
       ) : (
-        <WalletPay payer={payer} priceMinor={priceMinor} couponCode={couponCode} refused={refused} busy={busy}
+        <WalletPay wallet={wallet} priceMinor={priceMinor} couponCode={couponCode} refused={refused} busy={busy}
           onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
       )}
     </>

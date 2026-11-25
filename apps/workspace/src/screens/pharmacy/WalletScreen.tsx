@@ -29,11 +29,13 @@ export function useWallet(pharmacyId: string) {
 
 /** WQ25: whose wallet pays a booking: the pharmacy's (`/pharmacy-wallet`) or a doctor's own (`/specialists/me/assisted/wallet`, WQ23). */
 export interface WalletPayer { kind: 'pharmacy' | 'doctor'; id: string }
+/** The payer's wallet query key (its page, its balance and a booking's wallet pay read under it). */
+export const walletKeyOf = (payer: WalletPayer) => [payer.kind === 'doctor' ? 'doctor-wallet' : 'pharmacy-wallet', payer.id] as const;
 /** The payer's balance, under the query key its Wallet page reads. */
 export function usePayerWallet(payer: WalletPayer) {
   const { api } = useSession();
   return useQuery({
-    queryKey: [payer.kind === 'doctor' ? 'doctor-wallet' : 'pharmacy-wallet', payer.id, 'balance'],
+    queryKey: [...walletKeyOf(payer), 'balance'],
     queryFn: (): Promise<PharmacyWallet | null> => (payer.kind === 'doctor' ? doctorWalletApi(api).wallet() : pharmacyWalletApi(api).wallet()),
   });
 }

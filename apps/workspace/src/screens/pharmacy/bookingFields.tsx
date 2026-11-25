@@ -1,4 +1,4 @@
-import { canonicalPhone, MAX_CONCERN, PATIENT_LANGUAGES, type JoinOn, type LabAddress } from '@jansetu/api';
+import { canonicalPhone, MAX_CONCERN, PATIENT_LANGUAGES, type BookerKind, type JoinOn, type LabAddress } from '@jansetu/api';
 import { TextArea, TextField } from '@jansetu/ui';
 
 /**
@@ -68,8 +68,10 @@ export function joinOf(mode: string, j: JoinDraft): { on: JoinOn; phone?: string
   return { on: j.on, ...(mode === 'call' && j.on === 'patient_phone' && j.phone.trim() ? { phone: canonicalPhone(j.phone)! } : {}) };
 }
 
-/** "Where does the patient join?" (and the number to call), for a video or phone consultation. */
-export function JoinFields({ mode, value, errors, onChange }: { mode: string; value: JoinDraft; errors: Record<string, string>; onChange: (j: JoinDraft) => void }) {
+/** "Where does the patient join?" (and the number to call), for a video or phone consultation (WQ24: `org` names the booker). */
+export function JoinFields({ mode, value, errors, onChange, org = 'pharmacy' }: {
+  mode: string; value: JoinDraft; errors: Record<string, string>; onChange: (j: JoinDraft) => void; org?: BookerKind;
+}) {
   if (mode !== 'video' && mode !== 'call') return null;
   return (
     <>
@@ -77,7 +79,7 @@ export function JoinFields({ mode, value, errors, onChange }: { mode: string; va
         <legend>Where does the patient join?</legend>
         <label className="ws-check">
           <input type="radio" name="join" checked={value.on === 'partner_device'} onChange={() => onChange({ ...value, on: 'partner_device' })} />
-          {mode === 'call' ? 'The doctor calls this pharmacy (the patient stays with you)' : 'On this pharmacy’s device'}
+          {mode === 'call' ? `The doctor calls this ${org} (the patient stays with you)` : `On this ${org}’s device`}
         </label>
         <label className="ws-check">
           <input type="radio" name="join" checked={value.on === 'patient_phone'} onChange={() => onChange({ ...value, on: 'patient_phone' })} />

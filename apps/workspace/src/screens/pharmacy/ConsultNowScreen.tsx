@@ -19,7 +19,7 @@ import { JoinCall } from './BookedConsultationScreen.tsx';
 import { usePharmacyId } from './ownedOp.tsx';
 import { PatientSection, usePatientStep } from './patientStep.tsx';
 import { UnconfirmedBooking } from './unconfirmedBooking.tsx';
-import { WalletPay } from './walletPay.tsx';
+import { pharmacyPayWallet, WalletPay } from './walletPay.tsx';
 
 /**
  * WQ22: "Consult now" (assisted booking round 3e, backend r17, design §25.12): a pharmacy connects a patient at its
@@ -234,7 +234,7 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
           <div className="confirm" role="group" aria-label="Check and pay">
             <SummaryList s={review.summary} />
             {review.summary.couponCode && !review.summary.couponChecked && <p className="ws-muted">Price before the coupon; the coupon is checked when you pay.</p>}
-            <WalletPay payer={{ kind: 'pharmacy', id: pharmacyId }} priceMinor={review.summary.priceMinor} couponCode={review.summary.couponCode} refused={refused} busy={busy}
+            <WalletPay wallet={pharmacyPayWallet(api, pharmacyId)} priceMinor={review.summary.priceMinor} couponCode={review.summary.couponCode} refused={refused} busy={busy}
               payLabel={(amount) => `Pay ${amount} from wallet and request`}
               onPay={() => void create.pay()} onBack={() => { setReview(null); setRefused(null); }} onNewPrice={useNewQuote} />
           </div>
