@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
-  MAX_REFERRAL_REASON, OBJECT_ID_PATTERN, partnerAdminApi, pharmacyAdminApi, REFERRAL_CATEGORIES, REFERRAL_CATEGORY_LABEL, REFERRAL_RULE_REFUSAL, referralCutsOn, referralDraftOf, referralRuleRefusal,
+  MAX_REFERRAL_REASON, OBJECT_ID_PATTERN, partnerAdminApi, pharmacyAdminApi, REFERRAL_CATEGORIES, REFERRAL_CATEGORY_LABEL, REFERRAL_RULE_REFUSAL, referralDraftOf, referralRuleRefusal,
   referralRuleRefusedBeforeWriting, referralRulesAdminApi, referralRuleText, referralTermsOf, referralTermsText, sameRuleTerms,
   type ReferralBookerKind, type ReferralCategory, type ReferralDraft, type ReferralRule, type ReferralRuleEvent, type ReferralTerms,
 } from '@jansetu/api';
@@ -120,7 +120,7 @@ function Rules({ kind, bookerId, name, pageKey }: { kind: ReferralBookerKind; bo
   const readNow = async () => {
     const fresh = await rulesApi.list(kind, bookerId);
     queryClient.setQueryData(rulesKey, fresh);
-    return fresh;
+    return fresh.rules;
   };
   const ruleOf = (list: readonly ReferralRule[] | undefined, c: ReferralCategory) => list?.find((r) => r.category === c) ?? null;
   const savedWords = (c: ReferralCategory, r: ReferralRule | null) => {
@@ -181,7 +181,8 @@ function Rules({ kind, bookerId, name, pageKey }: { kind: ReferralBookerKind; bo
 
   const pending = op && !(guard.busy && op.attempts === 1 && !op.uncertain) ? op : undefined;
   const pendingWords = (b: RuleChange) => ({ category: catWord(b.category), terms: referralRuleText(b.terms) });
-  const on = rules.data ? referralCutsOn(rules.data) : null;
+  // r33: the server says whether REFERRAL_CUTS_ENABLED is on (null from a server that does not say: no note).
+  const on = rules.data?.switches?.cutsEnabled ?? null;
   return (
     <section className="ws-section" aria-labelledby="rc-h">
       <h2 id="rc-h">{t('referralCuts.byCategory')}</h2>
@@ -202,7 +203,7 @@ function Rules({ kind, bookerId, name, pageKey }: { kind: ReferralBookerKind; bo
               </thead>
               <tbody>
                 {REFERRAL_CATEGORIES.map((c) => {
-                  const r = ruleOf(rules.data, c);
+                  const r = ruleOf(rules.data.rules, c);
                   return (
                     <tr key={c}>
                       <th scope="row">{REFERRAL_CATEGORY_LABEL[c]}</th>

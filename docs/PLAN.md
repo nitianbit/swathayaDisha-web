@@ -2301,6 +2301,27 @@ API gaps (none blocking):
   booking is one row for all its lines). The pharmacy referral statement has no CSV route.
 - The admin settlement list filters `ownerKind` by `partner | doctor` only, and shows a `*_referral` account's kind as its code
   (seen, not changed: phase 4e/4f).
+### WQ26b referral follow-ups on r33's API (2026-11-25, branch `wq26b/referral-followups`)
+
+Backend: r33 (`m0/r33-referral-gaps` 335e36c2, ASSISTED_BOOKING_DESIGN.md §26.16; local, under review). Web base: stage 25a860c.
+
+- **The switch from the server**: the admin page's "Referral cuts are switched off; rules are saved but not applied." and the
+  rates note read `switches.cutsEnabled` (beside the rule lists), also when no rule is set; nothing is inferred from
+  `effective` (`referralCutsOn` removed). A server that does not send `switches` shows no note.
+- **Statement rows from fields**: `shortRef`, `category` and `lines` (r33) instead of parsing `description`; a lab booking
+  stays one row (`Lab tests and packages` when its cut lines differ) with its lines under it ("Lab test ₹300.00: cut ₹15.00").
+- **CSV**: "Download CSV (all entries)" on the referral statement, the finance screens' `CsvDownload` (now exported), read
+  with the token into memory (`…/referral/statement.csv`, saved as `pharmacy-referral-statement.csv` /
+  `lab-referral-statement.csv`).
+- **Lab › Referral earnings** (`/partner/referral`, side bar, labs only, `finance.view` with partner-wide scope, as the
+  backend's `assertPartnerFinanceReader`): the pharmacy's page through one component with the booker kind
+  (`screens/finance/ReferralEarningsScreen.tsx`; `referralReadsApi(c, { kind: 'pharmacy' } | { kind: 'lab', scope })`); a lab
+  shows its consultation rate only (labs book consultations). `screens/pharmacy/ReferralEarningsScreen.tsx` is gone.
+- **i18n**: the page's words come from a new catalogue `apps/workspace/src/i18n/referral` (`t()`; keys as WQ45 named them,
+  `referralEarnings.*`); the page is not on the allowlist. `literals.test.ts` treats `scope` as technical (as WQ44 does). For
+  the integrator: WQ45 extracted the old pharmacy file into `i18n/pharmacy` (`referralEarnings.*`); with WQ26b that file is
+  deleted and those keys are unused.
+
 ## WQ24 lab › Book consultation: a lab books a doctor consultation for a walk-in patient (phase 2e) (2026-11-25, branch `wq24/lab-book-consultation`)
 
 Backend: r21 + r21b (stage `6a8574e9`, design ASSISTED_BOOKING_DESIGN.md §24.16–§24.17; mocked API). Web base: `wq/stage-next-2`
@@ -2580,3 +2601,4 @@ Left (for the next rounds):
 | 2026-11-25 | WQ31 6a merged with `wq/stage-next` bd0df6c (branch `wq31/i18n-merged`) | typecheck clean; Vitest 471/471; Playwright workspace 942/942 on temporary port 5486 (`reuseExistingServer: false`, config deleted); both builds with `VITE_API_SAME_ORIGIN=true` (no pseudo-language in either bundle). Lab desk and lab wallet money through `formatPaise` (English unchanged); 7 new files allowlisted (166). |
 | 2026-11-25 | WQ26 referral cuts, phase 4a/4b web (on `wq/stage-next-2` 13333e9) | Against r24 on stage 6a8574e9 (§26.5, §26.6, §26.15; mocked API). typecheck clean; Vitest 488/488 (+10 in referralCuts.test.ts: percent typed → basis points 1–5000 without floating point, fixed ≥ ₹0.01 with no upper limit and no cap, the optional cap, Off keeps the saved terms inactive, the PUT body checked again, the words, the switch read from `effective`, refusals and the before-writing 503s, the statement row's short ref and category, the routes with ids, kinds and cursors checked first); Playwright workspace 984/984 on temporary port 5513 (`reuseExistingServer: false`, config deleted; +12 = 6 journeys x 2 devices in referral-cuts.spec.ts: a % rule set and confirmed with a reason, sent as a create and shown with its history; a fixed rule for a lab, then a lost answer checked by reading the rules; a version conflict (409 RECORD_CHANGED) read again and sent on the new version; the switch-off note and turning a cut off; the pharmacy's earnings, rates and statement pages with nothing kept on the device; a pharmacy cannot reach the admin page); release build with `VITE_API_SAME_ORIGIN=true`. |
 | 2026-11-25 | WQ40 i18next + react-i18next engine (branch `wq40/react-i18next` on stage bac568e) | typecheck clean; Vitest 495/495 (+2: values inserted as written with no escaping, nesting or second pass; only words shaped like their English are used; the 6a i18n, switcher and scope tests pass unchanged on the new engine); Playwright on temporary ports 5541/5542 (`reuseExistingServer: false`, configs deleted): workspace 1004/1004 (932 in the full run, which shared the machine with the customer suite; the 72 that timed out, nearly all right after a `page.reload()`, all passed when run again alone) and customer 266/270: the 4 failures are `native-session.spec.ts:178` and `pharmacy.spec.ts:370` on both devices, which fail the same way on unchanged stage bac568e (pre-existing, not WQ40); both builds with `VITE_API_SAME_ORIGIN=true` (no pseudo-language in either bundle; main chunk +56 kB, +18 kB gzip, for i18next and react-i18next). |
+| 2026-11-25 | WQ26b referral follow-ups on r33 (on stage 25a860c) | Against r33 335e36c2 (§26.16; mocked API). typecheck clean; Vitest 493/493 (referralCuts.test.ts on r33's shapes: `switches` beside the lists, rows from `shortRef` / `category` / `lines`, the pharmacy and lab bases incl. admin scope and the CSV period); Playwright workspace 1024/1024 on temporary port 5563 through `pw-slot.sh` with 2 workers (`reuseExistingServer: false`, config deleted; referral-cuts.spec.ts now 8 journeys x 2 devices: the switch note from `switches` with no rule set and after the switch changes, a lab booking's lines in the statement, the CSV download, a lab finance member's earnings page and CSV, a branch-limited lab member refused); release build with `VITE_API_SAME_ORIGIN=true`. |

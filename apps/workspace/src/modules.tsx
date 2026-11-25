@@ -67,7 +67,7 @@ import { PharmacyConsultNowScreen } from './screens/pharmacy/ConsultNowScreen.ts
 import { BookedConsultationScreen } from './screens/pharmacy/BookedConsultationScreen.tsx';
 import { BookedConsultationsScreen } from './screens/pharmacy/BookedConsultationsScreen.tsx';
 import { WalletScreen } from './screens/pharmacy/WalletScreen.tsx';
-import { ReferralEarningsScreen } from './screens/pharmacy/ReferralEarningsScreen.tsx';
+import { LabReferralEarningsScreen, PharmacyReferralEarningsScreen } from './screens/finance/ReferralEarningsScreen.tsx';
 import { Truck } from 'lucide-react';
 import { PartnerFinanceScreen } from './screens/finance/PartnerFinanceScreen.tsx';
 import { PayoutsQueueScreen } from './screens/finance/PayoutsQueueScreen.tsx';
@@ -179,7 +179,7 @@ export const PAGES: readonly WorkspacePage[] = [
   },
   // WQ26 (phase 4b): what the pharmacy's referral cuts earned, read only (`/pharmacy-assisted/referral*`).
   {
-    path: '/pharmacy/referral', roles: ['pharmacy'], element: <ReferralEarningsScreen />,
+    path: '/pharmacy/referral', roles: ['pharmacy'], element: <PharmacyReferralEarningsScreen />,
     nav: { labelKey: 'nav.referralEarnings', icon: HandCoins, sectionKey: 'nav.section.pharmacy' },
   },
   {
@@ -262,6 +262,11 @@ export const PAGES: readonly WorkspacePage[] = [
   {
     path: '/partner/wallet', roles: ['partner'], element: <LabWalletScreen />, partnerPermissions: ['wallet.view', 'wallet.manage'], partnerKinds: ['lab'],
     nav: { labelKey: 'nav.wallet', icon: Wallet, sectionKey: 'nav.section.lab' },
+  },
+  // WQ26b (r33, M17): the lab's referral earnings (`/partner-workspace/assisted/referral*`; finance.view with partner-wide scope).
+  {
+    path: '/partner/referral', roles: ['partner'], element: <LabReferralEarningsScreen />, partnerPermissions: ['finance.view'], partnerKinds: ['lab'],
+    partnerWide: true, nav: { labelKey: 'nav.referralEarnings', icon: HandCoins, sectionKey: 'nav.section.lab' },
   },
   {
     path: '/partner/slots', roles: ['partner'], element: <SlotsScreen />, partnerPermissions: SLOT_READERS, partnerKinds: ['lab'],

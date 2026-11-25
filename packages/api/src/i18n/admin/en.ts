@@ -106,9 +106,6 @@ export default {
   'referral.category.consultation': 'Consultation',
   'referral.category.lab_test': 'Lab test',
   'referral.category.lab_package': 'Lab package',
-  /** A row of a pharmacy's referral statement. */
-  'referral.row.instantConsultation': 'Instant consultation',
-  'referral.row.labBooking': 'Lab booking',
   'referral.problem.percent': 'Enter a percentage from 0.01 to 50, with at most two decimals.',
   'referral.problem.fixed': 'Enter the amount per line in rupees, at least ₹0.01, with at most two decimals.',
   'referral.problem.cap': 'Enter the cap per line in rupees, at least ₹0.01, or leave it empty.',
