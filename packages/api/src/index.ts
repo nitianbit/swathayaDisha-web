@@ -41,11 +41,11 @@ export {
 } from './pharmacyOrders.ts';
 export type {
   BatchAllocation, CancelRequest, CustomerReturn, CustomerReturnLine, CustomerReturnRequest, DeliveryException,
-  DeliveryExceptionType, OrderItem, OrderQuery, OrderStatus, PaymentMode, PaymentStatus, Pharmacist, PharmacyOrder, PharmacyOwnProfile,
+  DeliveryExceptionType, OrderItem, OrderQuery, OrderStatus, PaymentMode, PaymentStatus, Pharmacist, PharmacyOrder, PharmacyOwnProfile, OrderBill,
   PrescriptionRefund, PrescriptionRefundStatus, PrescriptionReview, PrescriptionReviewRequest, PrescriptionStatus, Ref,
 } from './pharmacyOrders.ts';
 export {
-  BATCH_ACTION_FROM, formatExpiry, inventoryApi, medicineName, REALLOCATABLE_ORDER_STATUSES, sellableQty, todayYyyymmdd,
+  BATCH_ACTION_FROM, formatExpiry, inventoryApi, isRxMedicine, medicineName, REALLOCATABLE_ORDER_STATUSES, sellableQty, todayYyyymmdd,
 } from './inventory.ts';
 export type {
   Batch, BatchStatus, Dispensed, HeldUnit, ImpactedOrder, InventoryItem, MedicineRef, QualityHoldRow, RecallTrace, Supplier,
@@ -278,5 +278,5 @@ export type {
   DisputeState, FinanceStatementKind, PharmacyFinance, SetOff, SetOffAnswer, SetOffByKey, TopupWithoutLot, WalletDispute, WalletKind,
 } from './walletFinance.ts';
 // WQ50: the pharmacy's counter sale (a linked or walk-in customer, its stock, an optional prescription, paid at the counter).
-export { COUNTER_PAYMENTS, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, pharmacySaleApi, saleCandidates, saleRequestBody, usableCustomers, walkInProblems } from './pharmacySale.ts';
-export type { CounterPayment, SaleAnswer, SaleBody, SaleCustomer, SaleLine } from './pharmacySale.ts';
+export { COUNTER_PAYMENTS, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, pharmacySaleApi, SALE_KEY_PATTERN, saleRequestBody, usableCustomers, walkInProblems } from './pharmacySale.ts';
+export type { CounterPayment, SaleAnswer, SaleBody, SaleByKey, SaleCustomer, SaleLine } from './pharmacySale.ts';

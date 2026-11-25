@@ -20,7 +20,15 @@ export interface Batch {
   recallReference?: string;
 }
 
-export interface MedicineRef { _id: string; name?: string; genericName?: string; brandName?: string; strength?: string; dosageForm?: string }
+export interface MedicineRef {
+  _id: string; name?: string; genericName?: string; brandName?: string; strength?: string; dosageForm?: string;
+  /** r36: on the pharmacy's stock list (a prescription medicine puts a sale under pharmacist review); r36b renames it (`rx`). */
+  prescriptionRequired?: boolean;
+  rx?: boolean;
+}
+
+/** Whether a stock row's medicine needs a prescription, as the stock list says (the one place that reads the field). */
+export const isRxMedicine = (m: InventoryItem['medicineId']) => typeof m === 'object' && !!m && (m.rx === true || m.prescriptionRequired === true);
 
 export interface InventoryItem {
   _id: string;

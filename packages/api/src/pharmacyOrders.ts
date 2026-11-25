@@ -88,6 +88,8 @@ export interface PharmacyOrder {
   isWalkIn?: boolean;
   /** How a counter payment was made, as marked paid (`cash`, `upi`, …). */
   paymentSource?: string;
+  /** r36, the pharmacy's order read: what a cash memo prints (payment filled once paid). */
+  bill?: OrderBill;
   paidAt?: string;
   paymentStatus?: PaymentStatus;
   paymentMode?: PaymentMode;
@@ -104,6 +106,13 @@ export interface PharmacyOrder {
   prescriptionReview?: PrescriptionReview;
   notes?: string;
   createdAt?: string;
+}
+
+export interface OrderBill {
+  pharmacy: { name: string | null; address: string | null; city: string | null; state: string | null; pincode: string | null; gstNumber: string | null;
+    drugLicenseNumber: string | null } | null;
+  paymentMethod: string | null;
+  paidAt: string | null;
 }
 
 export interface OrderQuery {

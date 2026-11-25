@@ -2515,8 +2515,24 @@ unpaid, then marked paid). Cookie sessions need nothing new: every route is on t
 12. Sellable stock counts with India's date (`todayYyyymmdd` now uses `istDateOf`, the server's `istTodayYyyymmdd` rule;
     shared by the stock screens).
 
-Waiting for r36: the request key (item 1), `POST /pharmacy-customers/search` (item 3), the prescription flag in the stock
-list, the names rule on the order read.
+Waiting for r36 then: the request key (item 1), `POST /pharmacy-customers/search` (item 3), the prescription flag in the
+stock list, the names rule on the order read (all done in part 2). Part 1's full suite: 1146/1146 on ff743be (pw-slot.sh).
+
+### WQ50b part 2: built to r36 (backend stage 135b5639; same branch, on ff743be)
+
+- **The create's request key (r36):** an owned request with its key (`requestKey`): a lost answer is sent again with the
+  same stored body and key (a replay answers the first sale, `replayed`), checked by the key
+  (`GET /pharmacy-orders/by-key/:key`) or given up by it (`…/abandon`; then it can never be made), through the shared
+  `useKeyedCheck`. WQ50b part 1's line-and-time matching and its Forget are gone. 409 `IDEMPOTENCY_KEY_REUSED` reads the key
+  (a sale made under it is shown); 409 `REQUEST_ABANDONED` and 503 `INDEXES_OUTDATED` are worded (the latter, like the
+  503 prescription gate, ends a sole first attempt: nothing was written).
+- **A replay answers the order as it is now:** the sale page shows a cancelled, abandoned or rejected sale as such, with no
+  bill and nothing to print.
+- **Prescription medicines before the sale:** the stock list's flag (r36 `medicineId.prescriptionRequired`; r36b renames it,
+  probably `rx`) is read by one helper, `isRxMedicine` (both names), and marks the line and says the pharmacist's step.
+- **Customer search** is `POST /pharmacy-customers/search` (no name or phone in an address).
+- **The bill** is r36's `bill` on the order read: the selling pharmacy's name, address, GSTIN and drug licence, how and when
+  it was paid; the customer as this pharmacy may name them (the order read applies the list's rule); each line's batches.
 
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
@@ -2882,7 +2898,8 @@ has 11 items (+ Bills, Services and prices) and 3 new journeys (no clinic, unver
 
 | Date | Packet | Checks |
 |---|---|---|
-| 2026-11-26 | WQ50b part 1 (on stage 06c2080) | typecheck clean; Vitest 529/529 (pharmacySale.test.ts: the body built before sending, rows without a holder left out, a lost sale never matched to an order that existed before or is closed); Playwright pharmacy-sale 10/10 (5 journeys x 2: walk-in cash sale with the GST-inclusive bill, its own page after a reload; Rx sale with Create waiting for the upload and back from the review; refusals incl. the 503 prescription gate; a lost answer ignoring earlier and cancelled sales; Forget only after a late second check) + orders, stock, stock-supply, prescription-review, pharmacy-extras 254/254 on a temporary config (port 5564); the full suite via pw-slot.sh runs on this commit (result in the report). |
+| 2026-11-26 | WQ50b part 2 (r36 135b5639 shapes, on ff743be) | typecheck clean; Vitest 528/528 (pharmacySale.test.ts: the POST search, the keyed create, by-key and abandon routes, a bad key refused before sending); Playwright pharmacy-sale 14/14 (7 journeys x 2: walk-in cash sale with the r36 bill; Rx marked before the sale; refusals incl. INDEXES_OUTDATED; a resend under the same key answers the first sale; checked by key then given up; a replay of a sale cancelled meanwhile prints no bill; a resend refused as another body reads the key) + orders, stock, stock-supply, prescription-review, pharmacy-extras 254/254 on a temporary config (port 5564); the full suite via pw-slot.sh runs on this commit (result in the report). |
+| 2026-11-26 | WQ50b part 1 (on stage 06c2080) | typecheck clean; Vitest 529/529 (pharmacySale.test.ts: the body built before sending, rows without a holder left out, a lost sale never matched to an order that existed before or is closed); Playwright pharmacy-sale 10/10 (5 journeys x 2: walk-in cash sale with the GST-inclusive bill, its own page after a reload; Rx sale with Create waiting for the upload and back from the review; refusals incl. the 503 prescription gate; a lost answer ignoring earlier and cancelled sales; Forget only after a late second check) + orders, stock, stock-supply, prescription-review, pharmacy-extras 254/254 on a temporary config (port 5564); the full suite via pw-slot.sh 1146/1146 (15.9 min). |
 | 2026-11-26 | WQ50 Pharmacy › New sale (on stage ebcbfd7) | Against backend 43f46f57 (mocked API). typecheck clean; Vitest 529/529 (+3 in pharmacySale.test.ts: the routes and bodies with no price and no request key, the walk-in checks, the lost-sale match); Playwright pharmacy-sale 8/8 (4 journeys x desktop and tablet: a walk-in cash sale with its bill printed; a known customer with a prescription medicine and its file, not payable before the pharmacist; refusals checked before asking and the server's stock refusal; a lost answer found by Check, never resent) + orders, stock, prescription-review, pharmacy-extras 172/172 on a temporary config (port 5564, deleted); the full suite via pw-slot.sh runs on this commit (result in the report). |
 | 2026-11-25 | WQ48b part 2 (r35b 43f46f57 shapes, on c6a373a) | typecheck clean; Vitest 526/526; Playwright finance-4f + withdrawals 60/60 (+1 journey x 2: nothing due, no set-off offered; at most the smaller of owed and due; the older top-up marked recovered; a lab set-off entry's amount from its change of what is owed; no switch probe), finance + referral-cuts + lab-wallet + doctor-wallet + pharmacy-extras 156/156 on a temporary config (port 5563); the full suite via pw-slot.sh runs on this commit (result in the report). |
 | 2026-11-25 | WQ48b part 1 (on stage 984cc7f) and the full suite on WQ48 4ee5c9b | WQ48 4ee5c9b: full workspace suite 1120/1120 via pw-slot.sh (22.3 min, port 5562, temporary config deleted). WQ48b: typecheck clean; Vitest 526/526 (walletFinance.test.ts: a cleared owed amount is a debit, a lab set-off entry's amount from its receivable change or none); Playwright finance-4f + withdrawals 58/58 (+4 journeys x 2: against r35 nothing missing or NaN and no details form on a referral account; payouts on, the referral payout check names the home details; an unknown quote reason and a lab not verified; a resend refused for a changed fee, then checked by key and given up), and finance + referral-cuts + lab-wallet + doctor-wallet + pharmacy-extras + assisted-booking 196/196 on a temporary config (port 5563, deleted). |

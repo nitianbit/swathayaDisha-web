@@ -68,6 +68,8 @@ export default {
   'total.estimate': 'About {amount}',
   'total.taxNote': 'From your selling prices. Prices include tax. The bill shows the final amount.',
   /** WQ50b: the server then uses the stock's wholesale price, if it has one. */
+  /** r36: {medicines}: the prescription medicines in the sale. */
+  'total.rx': 'Needs a prescription: {medicines}. Your pharmacist approves the prescription before the sale is paid.',
   'total.unpriced': 'A medicine has no selling price set: the sale uses its wholesale price, or is refused when there is none. Set the selling price in Stock.',
 
   'review.title': 'Check the sale',
@@ -81,16 +83,16 @@ export default {
 
   'unconfirmed.panel': 'Unconfirmed sale',
   /** {error}: why the answer was not read. */
-  'unconfirmed.text': 'The outcome of this sale is not known yet ({error}). It may already be recorded, so it is not sent again. Check whether it was recorded.',
-  'unconfirmed.restored': 'A sale started on this device earlier was not confirmed. Its details are not kept here. Look for it in Orders before selling again.',
-  'unconfirmed.lookInOrders': 'Look for it in Orders (newest first). Forget it here only once you know.',
+  'unconfirmed.text': 'The outcome of this sale is not known yet ({error}). It may already be recorded. Sending the same sale again is safe: it is never made twice. Or give it up: then it can never be made.',
+  'unconfirmed.restored': 'A sale started on this device earlier was not confirmed. Its details are not kept here. Check it, or give it up: then it can never be made.',
+  'unconfirmed.resend': 'Send the same sale again',
+  'unconfirmed.giveUp': 'Give this up',
+  'unconfirmed.notYet': 'Not recorded so far. It may still be on its way. Sending the same sale again is safe.',
+  'unconfirmed.notYetRestored': 'Not recorded so far. It may still be on its way. Give it up to make sure it never is, then sell again.',
+  'unconfirmed.givenUp': 'Given up: nothing was sold with that request, and it can never be made now.',
+  'unconfirmed.cannotGiveUp': 'It could not be given up yet. Check whether it was recorded, then try again.',
   /** In place of the reason when none was given. */
   'unconfirmed.noAnswer': 'no answer came back',
-  'unconfirmed.notFound': 'Not recorded so far. It may still be on its way: check again in a moment.',
-  'unconfirmed.several': 'Several sales like this one were found. Look in Orders.',
-  'unconfirmed.forget': 'Forget it',
-  'unconfirmed.forgetConfirm': 'Yes, forget it',
-  'unconfirmed.forgetConsequence': 'If it was recorded after all, it appears in Orders; cancel it there if it is not wanted.',
 
   'refusal.INSUFFICIENT_BATCH_STOCK': 'Not enough of a medicine is in stock now. Search it again and lower the quantity.',
   'refusal.INSUFFICIENT_STOCK': 'Not enough of a medicine is in stock now. Search it again and lower the quantity.',
@@ -107,10 +109,16 @@ export default {
   'refusal.ORDER_TERMINAL': 'This sale is closed, so it cannot be marked paid.',
   'refusal.ORDER_CANCEL_PENDING': 'A cancellation of this sale waits for a decision. Decide it in Orders first.',
   'refusal.ORDER_ALREADY_REFUNDED': 'This sale was refunded, so it cannot be marked paid.',
+  /** r36: until the server's indexes are built, a keyed sale is refused (nothing is written). */
+  'refusal.INDEXES_OUTDATED': 'Sales cannot be made until the server is updated. Please ask the Jansetu team.',
+  'refusal.IDEMPOTENCY_KEY_REUSED': 'This request was already used for a different sale. Start the sale again.',
+  'refusal.REQUEST_ABANDONED': 'This sale was given up earlier, so it can never be made. Start it again.',
 
   'done.intro': 'The bill of this sale, and its payment at the counter.',
   'done.loading': 'Loading the sale…',
   'done.notFound': 'Sale not found',
+  /** {order}: the order number; {state}: Cancelled, Abandoned or Rejected. It is not printed. */
+  'done.closed': 'Sale {order}: {state}. It has no bill to print.',
   /** WQ50b: from the prescription review back to the sale it was opened from. */
   'done.backToSale': 'Back to the sale',
   'done.print': 'Print the bill',
@@ -122,6 +130,11 @@ export default {
   /** {gstin}: the pharmacy's GST number. */
   'bill.gstin': 'GSTIN {gstin}',
   'bill.walkIn': 'Walk-in customer',
+  /** {number}: the pharmacy's drug licence number. */
+  'bill.drugLicence': 'Drug licence {number}',
+  /** How an unpaid-at-sale order was paid, when the payment method is the order's mode. */
+  'bill.atCounter': 'payment at the counter',
+  'bill.onDelivery': 'cash on delivery',
   'bill.batch': 'Batch and expiry',
   /** {batch}: batch number; {expiry}: its expiry date. */
   'bill.batchLine': '{batch}, expires {expiry}',

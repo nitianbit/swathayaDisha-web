@@ -3,8 +3,8 @@ import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
-  ApiError, COUNTER_PAYMENTS, formatExpiry, inventoryApi, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, medicineName, pharmacyOrdersApi, pharmacyProfileApi,
-  pharmacySaleApi, saleCandidates, saleRequestBody, sellableQty, usableCustomers, walkInProblems,
+  ApiError, COUNTER_PAYMENTS, formatExpiry, inventoryApi, isRxMedicine, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, medicineName, pharmacyOrdersApi,
+  pharmacySaleApi, saleRequestBody, sellableQty, usableCustomers, walkInProblems,
   type CounterPayment, type InventoryItem, type PharmacyOrder, type SaleBody,
 } from '@jansetu/api';
 import { formatRupees } from '@jansetu/i18n';
@@ -13,18 +13,17 @@ import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { t } from '../../i18n/sale/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
-import { definitelyNotRecorded, newRequestKey, startOp } from '../../requests.ts';
+import { definitelyNotRecorded, newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
-import { canMarkPaid, orderLabel, paymentWaitsForPharmacist } from './orderLabels.ts';
-import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
-import { PHARMACY_PROFILE_KEY } from './RxReviewScreen.tsx';
+import { canMarkPaid, ORDER_STATUS_LABEL, orderLabel, paymentWaitsForPharmacist } from './orderLabels.ts';
+import { CheckPanel, useKeyedCheck, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 
 /**
  * WQ50: Pharmacy › New sale, one screen for a counter sale: the customer (one this pharmacy already has, or a walk-in by
  * name and phone, linked with the patient's agreement), medicines from active stock, an optional prescription, then the
- * one primary action, "Create sale" (an owned request: r35 has no request key for it, so a lost answer is looked for
- * among this customer's in-store orders that did not exist before it was sent, never sent again). WQ50b: the created
+ * one primary action, "Create sale" (an owned request with its key, r36: a lost answer is sent again unchanged under the
+ * same key, checked by the key, or given up by the key: one sale per key, whatever happens). WQ50b: the created
  * sale has its own page (`/pharmacy/sale/:orderId`): its bill (printable) and the counter payment (cash or UPI, marked
  * paid); an order with a prescription medicine waits for the pharmacist.
  */
@@ -41,25 +40,26 @@ export function SaleScreen() {
 // ── The sale ──
 
 type Customer = { kind: 'existing'; id: string; label: string } | { kind: 'walkin' };
-interface Line { medicineId: string; name: string; qty: string; max: number; price: number | null }
+interface Line { medicineId: string; name: string; qty: string; max: number; price: number | null; rx: boolean }
 type Errors = Partial<Record<'customer' | 'name' | 'phone' | 'consent' | 'lines', string>>;
-/** The stored request (this tab's memory only): the sale, and the customer's in-store orders that existed before it. */
-type PendingSale = SaleBody & { before: string[] };
 
 const codeOf = (err: unknown) => (err instanceof ApiError ? err.code ?? null : null);
 /** The server's refusals of a sale this page words (pharmacyOrders, pharmacyCustomers, the pharmacy guard). */
 const REFUSALS = ['INSUFFICIENT_BATCH_STOCK', 'INSUFFICIENT_STOCK', 'MEDICINE_NOT_AVAILABLE', 'PRICE_NOT_AVAILABLE', 'DUPLICATE_ORDER_MEDICINE',
   'CUSTOMER_NOT_LINKED', 'USER_NOT_FOUND', 'CONSENT_REQUIRED', 'FORBIDDEN', 'PRESCRIPTION_CHECKOUT_UNAVAILABLE', 'PRESCRIPTION_REVIEW_REQUIRED',
-  'MARK_PAID_NOT_ALLOWED', 'ORDER_TERMINAL', 'ORDER_CANCEL_PENDING', 'ORDER_ALREADY_REFUNDED'] as const;
+  'MARK_PAID_NOT_ALLOWED', 'ORDER_TERMINAL', 'ORDER_CANCEL_PENDING', 'ORDER_ALREADY_REFUNDED', 'INDEXES_OUTDATED', 'IDEMPOTENCY_KEY_REUSED',
+  'REQUEST_ABANDONED'] as const;
+/** Refused before anything was written (503: the prescription gate, or the server's indexes not built yet). */
+const REFUSED_BEFORE_WRITING = ['PRESCRIPTION_CHECKOUT_UNAVAILABLE', 'INDEXES_OUTDATED'];
 type Refusal = (typeof REFUSALS)[number];
 /** A refusal in words (the server's code), else the server's message. */
 function saleWords(err: unknown): string {
   const code = codeOf(err);
   return (REFUSALS as readonly (string | null)[]).includes(code) ? t(`refusal.${code as Refusal}`) : messageOf(err);
 }
+/** A sale that is no longer one (cancelled, abandoned or rejected): no bill is shown or printed. */
+const CLOSED: readonly PharmacyOrder['status'][] = ['cancelled', 'abandoned', 'rejected'];
 const qtyOf = (l: Line) => (/^\d{1,5}$/.test(l.qty.trim()) ? Number(l.qty.trim()) : NaN);
-/** After a lost answer, Forget only once a check found nothing at least 30 s after the attempt, and not on the first check. */
-const FORGET_AFTER_MS = 30_000;
 
 function SaleForm({ pharmacyId }: { pharmacyId: string }) {
   const { api } = useSession();
@@ -67,7 +67,7 @@ function SaleForm({ pharmacyId }: { pharmacyId: string }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { perform, busy } = useOneAtATime('order');
-  const { op, send, settle } = useOwnedOp<PendingSale>(`pharmacy-sale:${pharmacyId}`);
+  const { op, send, settle } = useOwnedOp<SaleBody>(`pharmacy-sale:${pharmacyId}`);
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [walkIn, setWalkIn] = useState({ name: '', phone: '', consent: false });
   const [lines, setLines] = useState<Line[]>([]);
@@ -76,13 +76,20 @@ function SaleForm({ pharmacyId }: { pharmacyId: string }) {
   const [errors, setErrors] = useState<Errors>({});
   const [review, setReview] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const [checks, setChecks] = useState({ count: 0, lastAt: 0 });
 
   const linesOk = lines.length > 0 && lines.every((l) => Number.isInteger(qtyOf(l)) && qtyOf(l) >= 1 && qtyOf(l) <= l.max);
   const estimate = lines.reduce((a, l) => a + (Number.isFinite(qtyOf(l)) && l.price !== null ? qtyOf(l) * l.price : 0), 0);
   const unpriced = lines.some((l) => l.price === null);
   const shownCustomer = customer?.kind === 'existing' ? customer.label : customer?.kind === 'walkin' ? `${walkIn.name.trim()} · ${walkIn.phone.trim()}` : '';
   const done = (orderId: string) => navigate(`/pharmacy/sale/${orderId}`, { replace: true });
+  const keyed = useKeyedCheck(settle, { byKey: sale.byKey, abandon: sale.abandon }, {
+    found: async (r) => { await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] }); done(r.order._id); },
+    givenUp: () => { setReview(false); setNote(t('unconfirmed.givenUp')); },
+    notYet: (restored) => (restored ? t('unconfirmed.notYetRestored') : t('unconfirmed.notYet')),
+    cannotGiveUp: () => setNote(t('unconfirmed.cannotGiveUp')),
+    failed: (err) => setNote(saleWords(err)),
+  });
+  const rxLines = lines.filter((l) => l.rx);
 
   function check(e: FormEvent) {
     e.preventDefault();
@@ -102,57 +109,60 @@ function SaleForm({ pharmacyId }: { pharmacyId: string }) {
     setReview(Object.keys(errs).length === 0);
   }
 
+  /** Sends `p` (its key and body, unchanged on a resend); one sale per key on the server. */
+  async function ask(p: PendingOp<SaleBody>) {
+    const sole = p.attempts === 0 && !p.uncertain;
+    const r = await perform(() => send(p, (b) => sale.create(saleRequestBody(b), p.requestKey)));
+    if (r.kind === 'stale') return;
+    if (r.kind === 'ok') {
+      await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] });
+      done(r.value.order._id);
+      return;
+    }
+    // 503s decided before anything is written: the only attempt asked for nothing.
+    const code = codeOf(r.error);
+    if (r.kind === 'unknown' && sole && code && REFUSED_BEFORE_WRITING.includes(code)) { settle(p.requestKey); setReview(false); setNote(saleWords(r.error)); return; }
+    // r36: the key was used for another body: what it holds is read by the key (a sale made under it is shown).
+    if (code === 'IDEMPOTENCY_KEY_REUSED') {
+      const held = await sale.byKey(p.requestKey).catch(() => null);
+      if (held?.state === 'used') { settle(p.requestKey); await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] }); done(held.order._id); return; }
+    }
+    if (r.kind === 'refused') { setReview(false); setNote(saleWords(r.error)); return; }
+    if (code && REFUSALS.includes(code as Refusal)) setNote(saleWords(r.error));
+  }
+
   /**
-   * The walk-in is linked first (found or made by phone: safe to repeat), the customer's in-store orders are read (so a
-   * lost answer is never matched to one of them), then the sale is created once. Nothing in here throws from inside the
-   * owned request: its body is built before it is sent.
+   * The walk-in is linked first (found or made by phone: safe to repeat), then the sale is sent with a new key. Its body is
+   * built (and checked) before it is sent, so nothing inside the owned request throws.
    */
   async function create() {
     if (!customer || uploading) return;
     setNote(null);
+    let body: SaleBody;
     try {
-      await perform(async () => {
-        const customerId = customer.kind === 'existing' ? customer.id : (await sale.linkWalkIn(walkIn)).userId;
-        const body: SaleBody = { customerId, items: lines.map((l) => ({ medicineId: l.medicineId, orderedQty: qtyOf(l) })),
-          isWalkIn: customer.kind === 'walkin', prescriptionUrls: prescriptions };
-        const request = saleRequestBody(body);
-        const before = (await sale.recentFor(customerId)).items.map((o) => o._id);
-        const p = startOp<PendingSale>(newRequestKey(), { ...body, before });
-        const r = await send(p, () => sale.create(request));
-        if (r.kind === 'ok') {
-          await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] });
-          done(r.value.order._id);
-          return;
-        }
-        // 503 PRESCRIPTION_CHECKOUT_UNAVAILABLE is decided before anything is written (the prescription gate runs first).
-        if (r.kind === 'unknown' && codeOf(r.error) === 'PRESCRIPTION_CHECKOUT_UNAVAILABLE' && r.error instanceof ApiError && r.error.status === 503) {
-          settle(p.requestKey); setReview(false); setNote(saleWords(r.error)); return;
-        }
-        if (r.kind === 'refused') { setReview(false); setNote(saleWords(r.error)); }
-      });
+      const customerId = customer.kind === 'existing' ? customer.id : (await perform(() => sale.linkWalkIn(walkIn))).userId;
+      body = { customerId, items: lines.map((l) => ({ medicineId: l.medicineId, orderedQty: qtyOf(l) })), isWalkIn: customer.kind === 'walkin', prescriptionUrls: prescriptions };
+      saleRequestBody(body);
     } catch (err) {
-      // The walk-in's link, the read before, or the one-at-a-time guard refused or did not answer: no sale was sent.
+      // The walk-in's link (or the one-at-a-time guard) refused or did not answer: no sale was sent.
       setReview(false);
       setNote(definitelyNotRecorded(err) ? saleWords(err) : t('walkIn.notConfirmed', { error: messageOf(err) }));
+      return;
     }
+    await ask(startOp(newRequestKey(), body));
   }
 
   if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
     const restored = !!op.restored || !op.body;
-    const late = checks.count >= 2 && checks.lastAt - op.lastAttemptAt >= FORGET_AFTER_MS;
     return (
-      <CheckPanel label={t('unconfirmed.panel')}
-        onCheck={async () => {
-          setChecks((c) => ({ count: c.count + 1, lastAt: Date.now() }));
-          if (restored) return t('unconfirmed.lookInOrders');
-          const found = saleCandidates((await sale.recentFor(op.body.customerId)).items, op.body, op.body.before);
-          if (found.length === 1) { settle(op.requestKey); done(found[0]!._id); return null; }
-          return found.length > 1 ? t('unconfirmed.several') : t('unconfirmed.notFound');
-        }}
-        forget={late ? { label: t('unconfirmed.forget'), confirmLabel: t('unconfirmed.forgetConfirm'), consequence: t('unconfirmed.forgetConsequence'),
-          onForget: () => { settle(op.requestKey); setReview(false); } } : undefined}>
-        <Alert tone="warn">{restored ? t('unconfirmed.restored') : t('unconfirmed.text', { error: op.error || t('unconfirmed.noAnswer') })}</Alert>
-      </CheckPanel>
+      <>
+        {note && <Alert>{note}</Alert>}
+        <CheckPanel label={t('unconfirmed.panel')} onCheck={() => keyed.check(op)}
+          resend={restored ? undefined : { label: t('unconfirmed.resend'), busy: busy && !keyed.givingUp, onClick: () => { setNote(null); void ask(op); } }}
+          giveUp={{ label: t('unconfirmed.giveUp'), busy: keyed.givingUp, onClick: () => void keyed.giveUp(op, perform) }}>
+          <Alert tone="warn">{restored ? t('unconfirmed.restored') : t('unconfirmed.text', { error: op.error || t('unconfirmed.noAnswer') })}</Alert>
+        </CheckPanel>
+      </>
     );
   }
 
@@ -169,6 +179,8 @@ function SaleForm({ pharmacyId }: { pharmacyId: string }) {
         <h2 id="sale-total-h" className="j-sr-only">{t('total.title')}</h2>
         <p><strong>{t('total.estimate', { amount: formatRupees(estimate) })}</strong></p>
         <p className="ws-muted">{unpriced ? t('total.unpriced') : t('total.taxNote')}</p>
+        {/* r36: the stock list names prescription medicines, so the pharmacist's step is said before the sale is made. */}
+        {rxLines.length > 0 && <Alert tone="warn">{t('total.rx', { medicines: rxLines.map((l) => l.name).join(', ') })}</Alert>}
         {review ? (
           <div className="confirm" role="group" aria-label={t('review.title')}>
             <p>{t('review.text', { customer: shownCustomer, count: lines.length, amount: formatRupees(estimate) })}</p>
@@ -192,7 +204,7 @@ function CustomerPicker({ customer, walkIn, errors, disabled, onCustomer, onWalk
   const [text, setText] = useState('');
   const [search, setSearch] = useState<string | null>(null);
   const q = useQuery({ queryKey: ['pharmacy-sale', 'customers', search], queryFn: () => pharmacySaleApi(api).customers(search ?? ''), enabled: search !== null });
-  const rows = usableCustomers(q.data?.items ?? []);
+  const rows = usableCustomers(q.data ?? []);
   const label = (c: (typeof rows)[number]) => [c.userId.name ?? c.typedName ?? t('customer.unnamed'), c.userId.phone].filter(Boolean).join(' · ');
   const mode = customer?.kind === 'walkin' ? 'walkin' : 'existing';
   return (
@@ -254,7 +266,8 @@ function MedicinePicker({ lines, error, disabled, onLines }: { lines: Line[]; er
   const add = (i: InventoryItem) => {
     const id = idOfItem(i);
     if (lines.some((l) => l.medicineId === id)) return;
-    onLines([...lines, { medicineId: id, name: medicineName(i.medicineId), qty: '1', max: sellableQty(i), price: typeof i.retailPrice === 'number' ? i.retailPrice : null }]);
+    onLines([...lines, { medicineId: id, name: medicineName(i.medicineId), qty: '1', max: sellableQty(i), price: typeof i.retailPrice === 'number' ? i.retailPrice : null,
+      rx: isRxMedicine(i.medicineId) }]);
   };
   const sellable = (q.data?.items ?? []).filter((i) => i.isActive !== false && sellableQty(i) > 0);
   return (
@@ -269,7 +282,7 @@ function MedicinePicker({ lines, error, disabled, onLines }: { lines: Line[]; er
             <tbody>
               {lines.map((l, i) => (
                 <tr key={l.medicineId}>
-                  <td>{l.name}<div className="ws-muted">{t('lines.inStock', { count: l.max })}</div></td>
+                  <td>{l.name}{l.rx && <> <Badge tone="warn">{t('bill.rx')}</Badge></>}<div className="ws-muted">{t('lines.inStock', { count: l.max })}</div></td>
                   <td>
                     <TextField label={t('lines.qtyOf', { medicine: l.name })} inputMode="numeric" value={l.qty} disabled={disabled} autoComplete="off"
                       onChange={(e) => onLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} />
@@ -298,7 +311,8 @@ function MedicinePicker({ lines, error, disabled, onLines }: { lines: Line[]; er
                   const name = medicineName(i.medicineId);
                   return (
                     <li key={i._id}>
-                      {name} · {t('lines.inStock', { count: sellableQty(i) })}{typeof i.retailPrice === 'number' ? ` · ${formatRupees(i.retailPrice)}` : ''}{' '}
+                      {name}{isRxMedicine(i.medicineId) && <> <Badge tone="warn">{t('bill.rx')}</Badge></>}
+                      {' · '}{t('lines.inStock', { count: sellableQty(i) })}{typeof i.retailPrice === 'number' ? ` · ${formatRupees(i.retailPrice)}` : ''}{' '}
                       <Button variant="secondary" disabled={lines.some((l) => l.medicineId === idOfItem(i))} onClick={() => add(i)}>{t('lines.add', { medicine: name })}</Button>
                     </li>
                   );
@@ -366,14 +380,17 @@ export function SaleBillScreen() {
 function SaleDone({ orderId }: { orderId: string }) {
   const { api } = useSession();
   const q = useQuery({ queryKey: ['pharmacy-orders', 'detail', orderId], queryFn: () => pharmacyOrdersApi(api).get(orderId) });
-  const profile = useQuery({ queryKey: PHARMACY_PROFILE_KEY, queryFn: () => pharmacyProfileApi(api).me() });
   return (
     <>
       <PageHeading title={t('title')}>{t('done.intro')}</PageHeading>
       {!q.data ? (q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} /> : <Loading label={t('done.loading')} />)
-        : (
+        // A keyed replay (and this read) answers the order as it is now: a closed one has no bill to print.
+        : CLOSED.includes(q.data.status) ? (
+          <Alert tone="warn">{t('done.closed', { order: orderLabel(q.data), state: ORDER_STATUS_LABEL[q.data.status] ?? q.data.status })}{' '}
+            <Link to={`/pharmacy/orders/${q.data._id}`}>{t('done.openOrder')}</Link></Alert>
+        ) : (
           <>
-            <Bill order={q.data} pharmacy={profile.data} />
+            <Bill order={q.data} />
             <Payment order={q.data} />
             <div className="ws-actions sale-noprint">
               <Button variant="secondary" onClick={() => window.print()}>{t('done.print')}</Button>
@@ -386,18 +403,31 @@ function SaleDone({ orderId }: { orderId: string }) {
   );
 }
 
-const PAYMENT_WORDS: Readonly<Record<string, () => string>> = { cash: () => t('payment.cash'), upi: () => t('payment.upi') };
+const PAYMENT_WORDS: Readonly<Record<string, () => string>> = {
+  cash: () => t('payment.cash'), upi: () => t('payment.upi'), in_store_payment: () => t('bill.atCounter'), cash_on_delivery: () => t('bill.onDelivery'),
+};
 
-function Bill({ order: o, pharmacy }: { order: PharmacyOrder; pharmacy?: { name?: string; address?: string; city?: string; state?: string; pincode?: string; gstNumber?: string } }) {
+/**
+ * The cash memo: r36's `bill` on the pharmacy's order read (the selling pharmacy's name, address, GSTIN and drug licence;
+ * once paid, how and when), the customer as this pharmacy may name them, and each line's batches with their expiry.
+ */
+function Bill({ order: o }: { order: PharmacyOrder }) {
   const paid = o.paymentStatus === 'paid';
-  const address = pharmacy ? [pharmacy.address, pharmacy.city, pharmacy.state, pharmacy.pincode].filter(Boolean).join(', ') : '';
-  const how = o.paymentSource ? PAYMENT_WORDS[o.paymentSource]?.() ?? o.paymentSource : null;
+  const ph = o.bill?.pharmacy ?? null;
+  const address = ph ? [ph.address, ph.city, ph.state, ph.pincode].filter(Boolean).join(', ') : '';
+  const method = o.bill?.paymentMethod ?? o.paymentSource ?? null;
+  const how = method ? PAYMENT_WORDS[method]?.() ?? method : null;
+  const c = typeof o.customerId === 'object' && o.customerId ? o.customerId : null;
+  const customer = c ? [c.name, c.phone].filter(Boolean).join(' · ') : '';
   return (
     <section className="ws-section sale-bill" aria-labelledby="sale-bill-h">
-      {pharmacy?.name && <p className="sale-bill-head"><strong>{pharmacy.name}</strong>{address ? <><br />{address}</> : null}
-        {pharmacy.gstNumber ? <><br />{t('bill.gstin', { gstin: pharmacy.gstNumber })}</> : null}</p>}
+      {ph?.name && (
+        <p className="sale-bill-head"><strong>{ph.name}</strong>{address ? <><br />{address}</> : null}
+          {ph.gstNumber ? <><br />{t('bill.gstin', { gstin: ph.gstNumber })}</> : null}
+          {ph.drugLicenseNumber ? <><br />{t('bill.drugLicence', { number: ph.drugLicenseNumber })}</> : null}</p>
+      )}
       <h2 id="sale-bill-h">{t('bill.title', { order: orderLabel(o) })}</h2>
-      <p>{formatDateTime(o.createdAt)}{o.isWalkIn ? ` · ${t('bill.walkIn')}` : ''}</p>
+      <p>{formatDateTime(o.createdAt)}{customer ? ` · ${customer}` : ''}{o.isWalkIn ? ` · ${t('bill.walkIn')}` : ''}</p>
       <div className="ws-table-wrap">
         <table className="j-table">
           <caption className="j-sr-only">{t('bill.caption')}</caption>
@@ -420,7 +450,8 @@ function Bill({ order: o, pharmacy }: { order: PharmacyOrder; pharmacy?: { name?
         <dt>{t('bill.total')}</dt><dd><strong>{formatRupees(o.grandTotal)}</strong></dd>
         {/* Prices include GST: the tax is part of the total, never added to it. */}
         {typeof o.taxTotal === 'number' && <><dt>{t('bill.gstIncluded')}</dt><dd>{t('bill.ofWhichGst', { amount: formatRupees(o.taxTotal) })}</dd></>}
-        <dt>{t('bill.payment')}</dt><dd>{paid ? (how ? t('bill.paidBy', { how }) : t('bill.paid')) : t('bill.unpaid')}</dd>
+        <dt>{t('bill.payment')}</dt>
+        <dd>{paid ? (how ? t('bill.paidBy', { how }) : t('bill.paid')) : t('bill.unpaid')}{paid && o.bill?.paidAt ? ` · ${formatDateTime(o.bill.paidAt)}` : ''}</dd>
       </dl>
     </section>
   );

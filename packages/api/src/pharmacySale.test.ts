@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { createApiClient } from './client.ts';
-import { pharmacySaleApi, saleCandidates, saleRequestBody, usableCustomers, walkInProblems, type SaleBody } from './pharmacySale.ts';
+import { pharmacySaleApi, saleRequestBody, usableCustomers, walkInProblems } from './pharmacySale.ts';
 import { pharmacyOrdersApi } from './pharmacyOrders.ts';
-import type { PharmacyOrder } from './pharmacyOrders.ts';
 
-// WQ50: the pharmacy's counter sale (backend stage 43f46f57).
+// WQ50 / WQ50b: the pharmacy's counter sale (backend r36, stage 135b5639).
 
 const CUST = 'c1'.repeat(12);
 const MED = 'a1'.repeat(12);
 const ORDER = 'b1'.repeat(12);
+const KEY = 'k'.repeat(32);
 type Call = { url: string; method: string; body: unknown };
 function client() {
   const calls: Call[] = [];
@@ -20,36 +20,42 @@ function client() {
 }
 
 describe('WQ50 counter sale', () => {
-  it('the routes and the bodies: an in-store pickup paid at the counter, no price and no request key sent', async () => {
+  it('the routes and the bodies: a POST search (nothing in the address), an in-store pickup paid at the counter with its key, no price sent', async () => {
     const { c, calls } = client();
     const s = pharmacySaleApi(c);
     await s.customers('');
     await s.customers(' ravi ');
     await s.linkWalkIn({ name: '  Meena   Shah ', phone: '9123456780' });
-    await s.create(saleRequestBody({ customerId: CUST, items: [{ medicineId: MED, orderedQty: 2 }], isWalkIn: true, prescriptionUrls: [] }));
-    await s.create(saleRequestBody({ customerId: CUST, items: [{ medicineId: MED, orderedQty: 1 }], isWalkIn: false, prescriptionUrls: ['/api/static/x.pdf'] }));
-    await s.recentFor(CUST);
+    await s.create(saleRequestBody({ customerId: CUST, items: [{ medicineId: MED, orderedQty: 2 }], isWalkIn: true, prescriptionUrls: [] }), KEY);
+    await s.create(saleRequestBody({ customerId: CUST, items: [{ medicineId: MED, orderedQty: 1 }], isWalkIn: false, prescriptionUrls: ['/api/static/x.pdf'] }), KEY);
+    await s.byKey(KEY);
+    await s.abandon(KEY);
     await pharmacyOrdersApi(c).get(ORDER);
     await pharmacyOrdersApi(c).markPaid(ORDER, { paymentSource: 'upi' });
     await s.uploadPrescription(new File(['%PDF'], 'rx.pdf'));
     expect(calls.map((x) => `${x.method} ${x.url}`)).toEqual([
-      'GET /api/v1/pharmacy-customers?page=1&limit=20',
-      'GET /api/v1/pharmacy-customers?search=ravi&page=1&limit=20',
+      'POST /api/v1/pharmacy-customers/search',
+      'POST /api/v1/pharmacy-customers/search',
       'POST /api/v1/pharmacy-customers',
       'POST /api/v1/pharmacy-orders',
       'POST /api/v1/pharmacy-orders',
-      `GET /api/v1/pharmacy-orders?customerId=${CUST}&orderType=in_store&limit=20`,
+      `GET /api/v1/pharmacy-orders/by-key/${KEY}`,
+      `POST /api/v1/pharmacy-orders/by-key/${KEY}/abandon`,
       `GET /api/v1/pharmacy-orders/${ORDER}`,
       `POST /api/v1/pharmacy-orders/${ORDER}/mark-paid`,
       'POST /api/v1/file/upload/pharmacy-order-prescription',
     ]);
+    expect(calls[0]!.body).toEqual({ page: 1, limit: 20 });
+    expect(calls[1]!.body).toEqual({ search: 'ravi', page: 1, limit: 20 });
     expect(calls[2]!.body).toEqual({ name: 'Meena Shah', phone: '9123456780', consent: true });
     expect(calls[3]!.body).toEqual({ orderType: 'in_store', customerId: CUST, items: [{ medicineId: MED, orderedQty: 2 }], paymentMode: 'in_store_payment',
-      deliveryMode: 'pickup', isWalkIn: true });
-    expect(calls[4]!.body).toMatchObject({ prescriptionUrls: ['/api/static/x.pdf'] });
-    expect(calls[7]!.body).toEqual({ paymentSource: 'upi' });
-    // A bad id is a throw while the body is built, before any owned request is sent.
+      deliveryMode: 'pickup', isWalkIn: true, requestKey: KEY });
+    expect(calls[4]!.body).toMatchObject({ prescriptionUrls: ['/api/static/x.pdf'], requestKey: KEY });
+    expect(calls[8]!.body).toEqual({ paymentSource: 'upi' });
+    // A bad id or key is a throw before anything is sent.
     expect(() => saleRequestBody({ customerId: 'nope', items: [], isWalkIn: false, prescriptionUrls: [] })).toThrow();
+    expect(() => s.byKey('bad key')).toThrow();
+    expect(calls).toHaveLength(10);
     expect(usableCustomers([{ _id: 'x', userId: null }, { _id: 'y', userId: { name: 'A' } }, { _id: 'z', userId: { _id: CUST } }]).map((r) => r._id)).toEqual(['z']);
   });
 
@@ -57,20 +63,5 @@ describe('WQ50 counter sale', () => {
     expect(walkInProblems({ name: 'Meena', phone: '9123456780', consent: true })).toEqual({});
     expect(walkInProblems({ name: ' ', phone: '12345', consent: false })).toEqual({ name: true, phone: true, consent: true });
     expect(walkInProblems({ name: 'x'.repeat(201), phone: '9123456780', consent: true })).toEqual({ name: true });
-  });
-
-  it('a lost sale is an open in-store order of this customer with the same lines that did not exist before it was sent', () => {
-    const body: SaleBody = { customerId: CUST, items: [{ medicineId: MED, orderedQty: 2 }], isWalkIn: false, prescriptionUrls: [] };
-    const order = (o: Partial<PharmacyOrder>) => ({ _id: ORDER, pharmacyId: 'p', customerId: CUST.toUpperCase(), orderType: 'in_store', status: 'placed',
-      items: [{ medicineId: MED, orderedQty: 2, unitPrice: 20, lineTotal: 40 }], createdAt: '2026-11-26T05:29:30.000Z', ...o }) as PharmacyOrder;
-    const OLD = 'd1'.repeat(12);
-    expect(saleCandidates([order({})], body, []).length).toBe(1);
-    expect(saleCandidates([order({ customerId: { _id: CUST, name: 'R' } })], body, []).length).toBe(1);
-    // An identical sale made before this one, a cancelled, rejected or abandoned one, another channel or other lines: never.
-    expect(saleCandidates([order({ _id: OLD })], body, [OLD.toUpperCase()])).toEqual([]);
-    for (const status of ['cancelled', 'rejected', 'abandoned'] as const) expect(saleCandidates([order({ status })], body, [])).toEqual([]);
-    expect(saleCandidates([order({ orderType: 'online' })], body, [])).toEqual([]);
-    expect(saleCandidates([order({ items: [{ medicineId: MED, orderedQty: 3, unitPrice: 20, lineTotal: 60 }] })], body, [])).toEqual([]);
-    expect(saleCandidates([order({}), order({ _id: 'e1'.repeat(12) })], body, []).length).toBe(2);
   });
 });
