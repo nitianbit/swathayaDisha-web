@@ -10,13 +10,13 @@ import { Alert, Button, ErrorState, formatDateTime, Loading } from '@jansetu/ui'
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { changedFields, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime, type Perform } from '../finance/finance.tsx';
 import { NoSuchRecord } from './accountList.tsx';
 import { useAdminScope } from './adminScope.ts';
-import { EMAIL_TAKEN, PHONE_TAKEN } from './NewPharmacyScreen.tsx';
 import { PharmacyBadges } from './PharmaciesScreen.tsx';
 import { DetailFields, SignInFields } from './pharmacyFields.tsx';
 
@@ -28,7 +28,11 @@ import { DetailFields, SignInFields } from './pharmacyFields.tsx';
 export function PharmacyScreen() {
   const { pharmacyId = '' } = useParams();
   const scope = useAdminScope('pharmacies');
-  if (!OBJECT_ID_PATTERN.test(pharmacyId)) return <NoSuchRecord back="/admin/pharmacies" backLabel="Back to pharmacies" title="Pharmacy">Open it from the pharmacy list.</NoSuchRecord>;
+  if (!OBJECT_ID_PATTERN.test(pharmacyId)) return (
+    <NoSuchRecord back="/admin/pharmacies" backLabel={t('common.backToPharmacies')} title={t('pharmacy.title')} missing={t('pharmacy.noSuch')}>
+      {t('pharmacy.openFromList')}
+    </NoSuchRecord>
+  );
   // One subtree per admin and pharmacy: a half-typed form never follows the admin to another pharmacy.
   return <PharmacyDetail key={`${scope.identity}:${pharmacyId}`} pharmacyId={pharmacyId} scopeKey={scope.key} />;
 }
@@ -36,10 +40,13 @@ export function PharmacyScreen() {
 /** The fields of the details form (the sign-in contacts have their own, confirmed, change). */
 type Details = Omit<PharmacyForm, 'phone' | 'email'>;
 const detailsOf = (p: PharmacyAccount): Details => { const { phone: _p, email: _e, ...rest } = pharmacyForm(p); return rest; };
-const DETAIL_LABEL: Record<keyof Details, string> = {
-  name: 'name', nickname: 'short name', ownerName: 'owner’s name', address: 'address', city: 'city', state: 'state', pincode: 'PIN code',
-  gstNumber: 'GST number', drugLicenseNumber: 'drug licence number', pickupAvailable: 'pickup', deliveryAvailable: 'delivery',
-};
+const DETAIL_LABEL = {
+  name: 'pharmacy.field.name', nickname: 'pharmacy.field.nickname', ownerName: 'pharmacy.field.ownerName', address: 'pharmacy.field.address',
+  city: 'pharmacy.field.city', state: 'pharmacy.field.state', pincode: 'pharmacy.field.pincode', gstNumber: 'pharmacy.field.gstNumber',
+  drugLicenseNumber: 'pharmacy.field.drugLicenseNumber', pickupAvailable: 'pharmacy.field.pickupAvailable', deliveryAvailable: 'pharmacy.field.deliveryAvailable',
+} as const satisfies Record<keyof Details, Parameters<typeof t>[0]>;
+/** The fields someone else changed meanwhile, in words. */
+const detailsStale = (fields: readonly (keyof Details)[]) => staleMessage(fields.map((k) => t(DETAIL_LABEL[k])));
 
 function PharmacyDetail({ pharmacyId, scopeKey }: { pharmacyId: string; scopeKey: readonly string[] }) {
   const { api } = useSession();
@@ -60,10 +67,10 @@ function PharmacyDetail({ pharmacyId, scopeKey }: { pharmacyId: string; scopeKey
   const p = q.data;
   return (
     <>
-      <Link className="ws-back" to="/admin/pharmacies"><ArrowLeft size={16} aria-hidden="true" /> Back to pharmacies</Link>
-      <PageHeading title={p?.name ?? 'Pharmacy'}>{p ? [p.ownerName, p.city].filter(Boolean).join(' · ') || null : null}</PageHeading>
-      <div><Link to={`/admin/pharmacy-wallets/${pharmacyId}`}>Wallet and adding money</Link> · <Link to={`/admin/pharmacies/${pharmacyId}/referral-cuts`}>Referral cuts</Link></div>
-      {q.isPending ? <Loading label="Loading pharmacy…" />
+      <Link className="ws-back" to="/admin/pharmacies"><ArrowLeft size={16} aria-hidden="true" /> {t('common.backToPharmacies')}</Link>
+      <PageHeading title={p?.name ?? t('pharmacy.title')}>{p ? [p.ownerName, p.city].filter(Boolean).join(' · ') || null : null}</PageHeading>
+      <div><Link to={`/admin/pharmacy-wallets/${pharmacyId}`}>{t('pharmacy.walletLink')}</Link> · <Link to={`/admin/pharmacies/${pharmacyId}/referral-cuts`}>{t('pharmacy.referralCutsLink')}</Link></div>
+      {q.isPending ? <Loading label={t('pharmacy.loading')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : (
           <>
@@ -111,13 +118,13 @@ function StateSection({ p, perform, busy, reread, readNow, update }: SectionProp
       await update(body, typeof openedOn === 'string' ? openedOn : undefined);
       say('ok', done);
     } catch (err) {
-      if (isRecordChanged(err)) say('warn', `${name} was changed by someone else meanwhile, so nothing was changed. Check what is shown now and try again.`);
-      else if (definitelyNotRecorded(err)) say('error', `Not changed: ${messageOf(err)}`);
+      if (isRecordChanged(err)) say('warn', t('pharmacy.changedMeanwhile', { name }));
+      else if (definitelyNotRecorded(err)) say('error', t('common.notChanged', { reason: messageOf(err) }));
       else {
         // The answer was lost: the pharmacy as saved now tells whether the change went through.
         const now = await readNow().catch(() => null);
         if (now && pharmacyHolds(now, body)) say('ok', done);
-        else say('warn', `Not confirmed: ${messageOf(err)} The status shown is what is saved now; try again if it is still needed.`);
+        else say('warn', t('pharmacy.notConfirmedStatus', { reason: messageOf(err) }));
       }
     } finally {
       await reread();
@@ -125,33 +132,30 @@ function StateSection({ p, perform, busy, reread, readNow, update }: SectionProp
   });
   return (
     <section className="ws-section" aria-labelledby="ph-state-h">
-      <h2 id="ph-state-h">Status</h2>
+      <h2 id="ph-state-h">{t('common.status')}</h2>
       {outcome && <Alert tone={outcome.tone}>{outcome.text}</Alert>}
       <dl className="ws-dl">
-        <dt>Status</dt><dd><PharmacyBadges p={p} /></dd>
-        {p.archivedAt && <><dt>Archived</dt><dd>{formatDateTime(p.archivedAt)}{p.archiveReason ? ` (${p.archiveReason})` : ''}</dd></>}
-        <dt>Pharmacist</dt><dd>{p.pharmacist ? `${p.pharmacist.name} (${p.pharmacist.registrationNumber})` : 'Not added yet (the pharmacy adds it in its settings)'}</dd>
-        <dt>Added</dt><dd>{p.createdAt ? formatDateTime(p.createdAt) : '—'}</dd>
+        <dt>{t('common.status')}</dt><dd><PharmacyBadges p={p} /></dd>
+        {p.archivedAt && <><dt>{t('pharmacy.archived')}</dt><dd>{formatDateTime(p.archivedAt)}{p.archiveReason ? ` (${p.archiveReason})` : ''}</dd></>}
+        <dt>{t('pharmacy.pharmacist')}</dt><dd>{p.pharmacist ? `${p.pharmacist.name} (${p.pharmacist.registrationNumber})` : t('pharmacy.noPharmacist')}</dd>
+        <dt>{t('common.added')}</dt><dd>{p.createdAt ? formatDateTime(p.createdAt) : '—'}</dd>
       </dl>
       <div className="ws-actions">
         {!s.verified && (
-          <ConfirmAction key="verify" label="Verify" confirmLabel={`Verify ${p.name}`} disabled={busy} version={p.updatedAt}
-            consequence={`${p.name} is marked verified: customers can find it and order from it${s.active ? '' : ' once it is active again'}.`}
-            onConfirm={(_r, openedOn) => act({ isVerified: true }, openedOn, `${p.name} is verified.`)} />
+          <ConfirmAction key="verify" label={t('common.verify')} confirmLabel={t('common.verifyNamed', { name: p.name })} disabled={busy} version={p.updatedAt}
+            consequence={t(s.active ? 'pharmacy.verify.consequence' : 'pharmacy.verify.consequenceInactive', { name: p.name })}
+            onConfirm={(_r, openedOn) => act({ isVerified: true }, openedOn, t('pharmacy.verify.done', { name: p.name }))} />
         )}
         {s.active ? (
-          <ConfirmAction key="deactivate" label="Deactivate" danger confirmLabel={`Deactivate ${p.name}`} disabled={busy} version={p.updatedAt}
-            consequence={`${p.name} can no longer sign in, and customers no longer see it. Its orders and stock stay as they are. You can activate it again.`}
-            onConfirm={(_r, openedOn) => act({ isActive: false }, openedOn, `${p.name} was deactivated: it can no longer sign in, and customers no longer see it.`)} />
+          <ConfirmAction key="deactivate" label={t('pharmacy.deactivate.label')} danger confirmLabel={t('pharmacy.deactivate.confirm', { name: p.name })} disabled={busy}
+            version={p.updatedAt} consequence={t('pharmacy.deactivate.consequence', { name: p.name })}
+            onConfirm={(_r, openedOn) => act({ isActive: false }, openedOn, t('pharmacy.deactivate.done', { name: p.name }))} />
         ) : p.archivedAt ? (
-          <p className="ws-muted">
-            {p.name} is archived: it cannot sign in and customers do not see it. An archived pharmacy cannot be activated here; the
-            tech team restores it if it should come back.
-          </p>
+          <p className="ws-muted">{t('pharmacy.archivedNote', { name: p.name })}</p>
         ) : (
-          <ConfirmAction key="activate" label="Activate" confirmLabel={`Activate ${p.name}`} disabled={busy} version={p.updatedAt}
-            consequence={`${p.name} can sign in again${s.verified ? ', and customers see it again' : '. Customers see it once it is verified'}.`}
-            onConfirm={(_r, openedOn) => act({ isActive: true }, openedOn, `${p.name} is active again: it can sign in${s.verified ? ', and customers see it' : ''}.`)} />
+          <ConfirmAction key="activate" label={t('pharmacy.activate.label')} confirmLabel={t('pharmacy.activate.confirm', { name: p.name })} disabled={busy} version={p.updatedAt}
+            consequence={t(s.verified ? 'pharmacy.activate.consequenceVerified' : 'pharmacy.activate.consequence', { name: p.name })}
+            onConfirm={(_r, openedOn) => act({ isActive: true }, openedOn, t(s.verified ? 'pharmacy.activate.doneVerified' : 'pharmacy.activate.done', { name: p.name }))} />
         )}
       </div>
     </section>
@@ -187,7 +191,7 @@ function SignInSection({ p, perform, busy, reread, readNow, update }: SectionPro
     const { body, errors: errs } = pharmacyBody(form, fields, p);
     setErrors(errs);
     if (Object.keys(errs).length) return;
-    if (Object.keys(body).length === 0) { setNotice('Nothing has changed.'); return; }
+    if (Object.keys(body).length === 0) { setNotice(t('pharmacy.nothingChanged')); return; }
     setReview(body);
   }
   const confirm = (body: PharmacyUpdate, baseline: { phone: string; email: string }) => perform(async () => {
@@ -197,7 +201,7 @@ function SignInSection({ p, perform, busy, reread, readNow, update }: SectionPro
       if (!live.current) return;
       if (fresh.phone !== baseline.phone || (fresh.email ?? '') !== baseline.email) {
         setReview(null); setForm(pharmacyForm(fresh)); setOpen({ phone: fresh.phone, email: fresh.email ?? '' });
-        setError(`Someone else changed how ${fresh.name} signs in while you were editing, so nothing was changed. The form now shows what is saved; check it again.`);
+        setError(t('pharmacy.signIn.changedMeanwhile', { name: fresh.name }));
         return;
       }
       const signedOut = signsPharmacyOut(fresh, body);
@@ -214,7 +218,9 @@ function SignInSection({ p, perform, busy, reread, readNow, update }: SectionPro
       }
       if (!live.current) return;
       setOpen(null); setReview(null);
-      setNotice(`${saved.name} now signs in with ${saved.phone}${saved.email ? ` or ${saved.email}` : ' only'}.${signedOut ? ' It was signed out and signs in again with these.' : ''}`);
+      const signsIn = saved.email ? t('pharmacy.signIn.savedBoth', { name: saved.name, phone: saved.phone, email: saved.email })
+        : t('pharmacy.signIn.savedPhone', { name: saved.name, phone: saved.phone });
+      setNotice(signedOut ? `${signsIn} ${t('pharmacy.signIn.signedOut')}` : signsIn);
     } catch (err) {
       if (!live.current) return;
       setReview(null);
@@ -222,10 +228,10 @@ function SignInSection({ p, perform, busy, reread, readNow, update }: SectionPro
         const now = await readNow().catch(() => null);
         if (!live.current) return;
         if (now) { setForm(pharmacyForm(now)); setOpen({ phone: now.phone, email: now.email ?? '' }); }
-        setError(`Someone else changed ${p.name} while you were saving, so nothing was changed. The form now shows what is saved; check it again.`);
-      } else if (isPharmacyPhoneTaken(err)) setErrors({ phone: PHONE_TAKEN });
-      else if (isPharmacyEmailTaken(err)) setErrors({ email: EMAIL_TAKEN });
-      else setError(definitelyNotRecorded(err) ? messageOf(err) : `Not confirmed: ${messageOf(err)} Check the details shown and try again.`);
+        setError(t('pharmacy.savingChanged', { name: p.name }));
+      } else if (isPharmacyPhoneTaken(err)) setErrors({ phone: t('pharmacy.phoneTaken') });
+      else if (isPharmacyEmailTaken(err)) setErrors({ email: t('pharmacy.emailTaken') });
+      else setError(definitelyNotRecorded(err) ? messageOf(err) : t('pharmacy.notConfirmedDetails', { reason: messageOf(err) }));
     } finally {
       await reread();
     }
@@ -233,43 +239,42 @@ function SignInSection({ p, perform, busy, reread, readNow, update }: SectionPro
 
   return (
     <section className="ws-section" aria-labelledby="ph-signin-h">
-      <h2 id="ph-signin-h">Sign-in</h2>
+      <h2 id="ph-signin-h">{t('pharmacy.signIn.title')}</h2>
       <dl className="ws-dl">
-        <dt>Mobile number</dt><dd>{p.phone}</dd>
-        <dt>Email</dt><dd>{p.email || <span className="ws-muted">None</span>}</dd>
+        <dt>{t('pharmacy.mobileNumber')}</dt><dd>{p.phone}</dd>
+        <dt>{t('pharmacy.email')}</dt><dd>{p.email || <span className="ws-muted">{t('pharmacy.noEmail')}</span>}</dd>
       </dl>
       {notice && <Alert tone="ok">{notice}</Alert>}
       {!open ? (
-        <div><Button variant="secondary" disabled={busy} onClick={start}>Change mobile number or email</Button></div>
+        <div><Button variant="secondary" disabled={busy} onClick={start}>{t('pharmacy.signIn.change')}</Button></div>
       ) : (
         <form className="rx-form" noValidate onSubmit={check}>
-          <p className="ws-muted">The pharmacy signs in with these. Change them only when the pharmacy asks and you have checked it is them.</p>
+          <p className="ws-muted">{t('pharmacy.signIn.intro')}</p>
           <fieldset className="ws-frozen" disabled={busy}>
             <SignInFields form={form} errors={errors} set={set} />
           </fieldset>
           {error && <Alert>{error}</Alert>}
           {!review ? (
             <div className="ws-actions">
-              <Button type="submit" disabled={busy}>Continue</Button>
-              <Button variant="ghost" disabled={busy} onClick={() => { setOpen(null); setError(null); }}>Cancel</Button>
+              <Button type="submit" disabled={busy}>{t('pharmacy.signIn.continue')}</Button>
+              <Button variant="ghost" disabled={busy} onClick={() => { setOpen(null); setError(null); }}>{t('common.cancel')}</Button>
             </div>
           ) : (
-            <div className="confirm" role="group" aria-label="Change how the pharmacy signs in">
+            <div className="confirm" role="group" aria-label={t('pharmacy.signIn.confirmLabel')}>
               <div className="confirm-text">
-                {review.phone && <p>From now on {p.name} signs in with mobile number {review.phone}; {p.phone} no longer works for signing in.</p>}
-                {review.email && <p>{p.email ? `Its sign-in email changes from ${p.email} to ${review.email}; the old one no longer works.` : `It can also sign in with ${review.email}.`}</p>}
-                {review.email === null && p.email && <p>Its sign-in email {p.email} is removed: it signs in with its mobile number only.</p>}
+                {review.phone && <p>{t('pharmacy.signIn.newPhone', { name: p.name, phone: review.phone, oldPhone: p.phone })}</p>}
+                {review.email && <p>{p.email ? t('pharmacy.signIn.newEmail', { oldEmail: p.email, email: review.email }) : t('pharmacy.signIn.addedEmail', { email: review.email })}</p>}
+                {review.email === null && p.email && <p>{t('pharmacy.signIn.removedEmail', { email: p.email })}</p>}
                 {signsPharmacyOut(p, review) ? (
                   <p>
-                    <strong>This signs {p.name} out</strong> on every computer and phone where it is signed in now. It signs in again with the
-                    new details. An app signed in long ago may stay signed in; to stop all access at once, deactivate the pharmacy.
+                    {t.rich('pharmacy.signIn.signsOutWhere', { signsOut: <strong key="out">{t('pharmacy.signIn.signsOut', { name: p.name })}</strong> })}
                   </p>
-                ) : <p>Anyone already signed in stays signed in.</p>}
-                <p>Tell the pharmacy before you change it.</p>
+                ) : <p>{t('pharmacy.signIn.staysSignedIn')}</p>}
+                <p>{t('pharmacy.signIn.tell')}</p>
               </div>
               <div className="confirm-actions">
-                <Button busy={busy} onClick={() => void confirm(review, open).catch((err: unknown) => setError(messageOf(err)))}>Change sign-in</Button>
-                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>Back</Button>
+                <Button busy={busy} onClick={() => void confirm(review, open).catch((err: unknown) => setError(messageOf(err)))}>{t('pharmacy.signIn.confirm')}</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('common.back')}</Button>
               </div>
             </div>
           )}
@@ -297,7 +302,7 @@ function DetailsSection({ p, perform, busy, reread, readNow, update }: SectionPr
   const serverValue = JSON.stringify(detailsOf(p));
   useEffect(() => {
     const c = rebaseTo(JSON.parse(serverValue) as Details);
-    if (c.length) setStale(staleMessage(c.map((k) => DETAIL_LABEL[k])));
+    if (c.length) setStale(detailsStale(c));
   }, [serverValue, rebaseTo]);
 
   const bodyOf = (record: PharmacyAccount) => {
@@ -311,17 +316,17 @@ function DetailsSection({ p, perform, busy, reread, readNow, update }: SectionPr
     const first = bodyOf(p);
     setErrors(first.errors);
     if (Object.keys(first.errors).length) return;
-    if (Object.keys(first.body).length === 0) { setNotice('Nothing has changed.'); return; }
+    if (Object.keys(first.body).length === 0) { setNotice(t('pharmacy.nothingChanged')); return; }
     void perform(async () => {
       try {
         const fresh = await readNow();
         if (!live.current) return;
         const conflicts = rebaseTo(detailsOf(fresh));
-        if (conflicts.length) { setStale(staleMessage(conflicts.map((k) => DETAIL_LABEL[k]))); return; }
+        if (conflicts.length) { setStale(detailsStale(conflicts)); return; }
         const { body, errors: errs } = bodyOf(fresh);
         setErrors(errs);
         if (Object.keys(errs).length) return;
-        if (Object.keys(body).length === 0) { setNotice('Nothing has changed.'); return; }
+        if (Object.keys(body).length === 0) { setNotice(t('pharmacy.nothingChanged')); return; }
         try {
           await update(body, fresh.updatedAt);
         } catch (err) {
@@ -329,13 +334,13 @@ function DetailsSection({ p, perform, busy, reread, readNow, update }: SectionPr
             const now = await readNow();
             if (!live.current) return;
             const c = rebaseTo(detailsOf(now));
-            setStale(c.length ? staleMessage(c.map((k) => DETAIL_LABEL[k])) : RECORD_CHANGED_MESSAGE);
+            setStale(c.length ? detailsStale(c) : RECORD_CHANGED_MESSAGE);
             return;
           }
           if (definitelyNotRecorded(err)) throw err;
           if (!pharmacyHolds(await readNow(), body)) throw err; // the answer was lost: saved only if the record holds it
         }
-        if (live.current) setNotice('Saved.');
+        if (live.current) setNotice(t('pharmacy.details.saved'));
       } catch (err) {
         if (live.current) setError(messageOf(err));
       } finally {
@@ -346,16 +351,16 @@ function DetailsSection({ p, perform, busy, reread, readNow, update }: SectionPr
 
   return (
     <section className="ws-section" aria-labelledby="ph-details-h">
-      <h2 id="ph-details-h">Details</h2>
+      <h2 id="ph-details-h">{t('pharmacy.details.title')}</h2>
       <form className="rx-form" noValidate onSubmit={save}>
-        <p className="ws-muted">To remove an optional detail, empty its field and save. The name cannot be removed.</p>
+        <p className="ws-muted">{t('pharmacy.details.intro')}</p>
         <fieldset className="ws-frozen" disabled={busy}>
           <DetailFields form={{ ...pharmacyForm(p), ...d.draft }} errors={errors} set={(k, v) => d.set(k as keyof Details, v as never)} />
         </fieldset>
         {stale && <Alert tone="warn">{stale}</Alert>}
         {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}
-        <div><Button type="submit" busy={busy} disabled={busy}>Save details</Button></div>
+        <div><Button type="submit" busy={busy} disabled={busy}>{t('pharmacy.details.save')}</Button></div>
       </form>
     </section>
   );

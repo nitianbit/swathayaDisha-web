@@ -8,6 +8,7 @@ import {
 } from '@jansetu/api';
 import { Alert, Button, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { afterFailure, beginAttempt, newRequestKey, ownsKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
@@ -18,9 +19,6 @@ import { DetailFields, SignInFields } from './pharmacyFields.tsx';
 /** An unconfirmed pharmacy creation: the request key it is sent with (Q15) and what was typed. */
 type Pending = PendingOp<{ body: NewPharmacy; draft: PharmacyForm }>;
 const slotOf = (identity: string) => `pharmacy-create:${identity}`;
-
-export const PHONE_TAKEN = 'Another pharmacy already signs in with this mobile number. Use a different number, or find that pharmacy in the list.';
-export const EMAIL_TAKEN = 'Another pharmacy already uses this email. Use a different email.';
 
 /**
  * Admin: add a pharmacy (owner decision, 19 Nov 2026: only admins create pharmacies). Q15: `POST /pharmacies` is exactly
@@ -102,7 +100,7 @@ function NewPharmacy({ identity, scopeKey }: { identity: string; scopeKey: reado
       const h = await admin.findByPhone(phone);
       if (!live.current) return;
       setHolder(h);
-      if (h) setErrors({ phone: `${h.name} already signs in with this mobile number. Use a different number.` });
+      if (h) setErrors({ phone: t('newPharmacy.holderTaken', { name: h.name }) });
     } catch { /* the general refusal stays */ }
   }
 
@@ -122,15 +120,15 @@ function NewPharmacy({ identity, scopeKey }: { identity: string; scopeKey: reado
       // The key was given up (e.g. in another tab): nothing was or can ever be created with it.
       if (wasAbandoned(err)) {
         settle(attempt.requestKey);
-        if (live.current) setError('This request was given up earlier, so nothing was created with it. Check the form and add the pharmacy again.');
+        if (live.current) setError(t('newPharmacy.givenUpEarlier'));
         return;
       }
       const next = afterFailure(attempt, err, messageOf(err));
       store(next ?? undefined);
       if (next || !live.current) return;
       // Refused, nothing created: the form unlocks with what was typed.
-      if (isPharmacyPhoneTaken(err)) { setErrors({ phone: PHONE_TAKEN }); void nameHolder(attempt.body.body.phone); }
-      else if (isPharmacyEmailTaken(err)) setErrors({ email: EMAIL_TAKEN });
+      if (isPharmacyPhoneTaken(err)) { setErrors({ phone: t('pharmacy.phoneTaken') }); void nameHolder(attempt.body.body.phone); }
+      else if (isPharmacyEmailTaken(err)) setErrors({ email: t('pharmacy.emailTaken') });
       else setError(messageOf(err));
     }
   });
@@ -146,11 +144,11 @@ function NewPharmacy({ identity, scopeKey }: { identity: string; scopeKey: reado
       settle(p.requestKey);
       if (r.state === 'used') {
         if (r.pharmacy) { await open(r.pharmacy._id); return; }
-        setNotice('It had already been created. Find it in the pharmacy list.');
+        setNotice(t('newPharmacy.alreadyCreated'));
         return;
       }
       if (p.restored) setForm(EMPTY_PHARMACY_FORM);
-      setNotice('Given up: nothing was created, and that request can never create a pharmacy. You can change the form and add it again.');
+      setNotice(t('newPharmacy.givenUp'));
     } catch (err) {
       if (ownsTheKey(p)) setError(messageOf(err));
     }
@@ -169,35 +167,31 @@ function NewPharmacy({ identity, scopeKey }: { identity: string; scopeKey: reado
   const firstOnItsWay = !!p && guard.busy && p.attempts === 1 && !p.uncertain;
   return (
     <>
-      <Link className="ws-back" to="/admin/pharmacies"><ArrowLeft size={16} aria-hidden="true" /> Back to pharmacies</Link>
-      <PageHeading title="Add a pharmacy">It starts as not verified: customers see it once you verify it. It signs in with its mobile number.</PageHeading>
+      <Link className="ws-back" to="/admin/pharmacies"><ArrowLeft size={16} aria-hidden="true" /> {t('common.backToPharmacies')}</Link>
+      <PageHeading title={t('pharmacies.add')}>{t('newPharmacy.intro')}</PageHeading>
       {found && (
         <section className="ws-section" aria-labelledby="found-h">
-          <h2 id="found-h">{found.name} was created</h2>
-          <p className="ws-muted">The request whose answer was lost did go through. Nothing was created twice.</p>
+          <h2 id="found-h">{t('newPharmacy.created', { name: found.name })}</h2>
+          <p className="ws-muted">{t('newPharmacy.createdOnce')}</p>
           <div className="ws-actions">
-            <Link className="j-btn j-btn--primary" to={`/admin/pharmacies/${found._id}`}>Open {found.name}</Link>
-            <Button variant="secondary" onClick={() => { setFound(null); setForm(EMPTY_PHARMACY_FORM); }}>Add another</Button>
+            <Link className="j-btn j-btn--primary" to={`/admin/pharmacies/${found._id}`}>{t('newPharmacy.open', { name: found.name })}</Link>
+            <Button variant="secondary" onClick={() => { setFound(null); setForm(EMPTY_PHARMACY_FORM); }}>{t('newPharmacy.addAnother')}</Button>
           </div>
         </section>
       )}
       {notice && <Alert tone="ok">{notice}</Alert>}
       {p?.restored ? (
         <section className="ws-section" aria-labelledby="unconfirmed-h">
-          <h2 id="unconfirmed-h">An unconfirmed pharmacy</h2>
-          {lookup.isPending ? <Loading label="Checking whether it was created…" />
+          <h2 id="unconfirmed-h">{t('newPharmacy.restored.title')}</h2>
+          {lookup.isPending ? <Loading label={t('newPharmacy.restored.checking')} />
             : lookup.isError ? <ErrorState message={messageOf(lookup.error)} onRetry={() => void lookup.refetch()} />
             : (
               <>
-                <Alert tone="warn">
-                  Before the page reloaded, a pharmacy was being added and its answer never arrived. Nothing has been created with it so
-                  far, but the request could still arrive. Give it up so it never can, then add the pharmacy again. Its details are not
-                  kept on this device.
-                </Alert>
+                <Alert tone="warn">{t('newPharmacy.restored.text')}</Alert>
                 {error && <Alert>{error}</Alert>}
                 <div className="ws-actions">
-                  <Button busy={guard.busy} onClick={() => void giveUp(p).catch((err: unknown) => setError(messageOf(err)))}>Give up this create</Button>
-                  <Button variant="secondary" disabled={guard.busy || lookup.isFetching} onClick={() => void lookup.refetch()}>Check again</Button>
+                  <Button busy={guard.busy} onClick={() => void giveUp(p).catch((err: unknown) => setError(messageOf(err)))}>{t('newPharmacy.giveUp')}</Button>
+                  <Button variant="secondary" disabled={guard.busy || lookup.isFetching} onClick={() => void lookup.refetch()}>{t('newPharmacy.checkAgain')}</Button>
                 </div>
               </>
             )}
@@ -205,27 +199,27 @@ function NewPharmacy({ identity, scopeKey }: { identity: string; scopeKey: reado
       ) : !found && (
         <form className="rx-form ws-section" noValidate onSubmit={submit}>
           {p && !firstOnItsWay && (
-            <div className="confirm" role="group" aria-label="Unconfirmed pharmacy">
+            <div className="confirm" role="group" aria-label={t('newPharmacy.unconfirmed.label')}>
               <Alert tone="warn">
-                {`We could not confirm whether ${p.body.body.name} was created${p.error ? ` (${p.error})` : ''}. `}
-                Send again to find out: it sends the same request, so it can never create a second pharmacy. Or give it up: then it can
-                never be created, and you can change the form. The form stays locked until one of these is done.
+                {p.error ? t('newPharmacy.unconfirmed.leadError', { name: p.body.body.name, error: p.error })
+                  : t('newPharmacy.unconfirmed.lead', { name: p.body.body.name })}
+                {' '}{t('newPharmacy.unconfirmed.next')}
               </Alert>
               {error && <Alert>{error}</Alert>}
               <div className="confirm-actions">
-                <Button busy={guard.busy} onClick={() => void send(p).catch((err: unknown) => setError(messageOf(err)))}>Send again</Button>
+                <Button busy={guard.busy} onClick={() => void send(p).catch((err: unknown) => setError(messageOf(err)))}>{t('newPharmacy.sendAgain')}</Button>
                 <Button variant="secondary" disabled={guard.busy} onClick={() => void giveUp(p).catch((err: unknown) => setError(messageOf(err)))}>
-                  Give up this create
+                  {t('newPharmacy.giveUp')}
                 </Button>
               </div>
             </div>
           )}
           <SignInFields form={form} errors={errors} set={set} disabled={locked} />
-          {holder && <p><Link to={`/admin/pharmacies/${holder._id}`}>Open {holder.name}</Link></p>}
+          {holder && <p><Link to={`/admin/pharmacies/${holder._id}`}>{t('newPharmacy.open', { name: holder.name })}</Link></p>}
           <DetailFields form={form} errors={errors} set={set} disabled={locked} />
           {!p && error && <Alert>{error}</Alert>}
           <div className="ws-actions">
-            <Button type="submit" busy={firstOnItsWay} disabled={locked}>Add pharmacy</Button>
+            <Button type="submit" busy={firstOnItsWay} disabled={locked}>{t('newPharmacy.submit')}</Button>
           </div>
         </form>
       )}

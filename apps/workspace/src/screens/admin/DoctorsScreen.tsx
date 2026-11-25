@@ -3,6 +3,7 @@ import { Link } from 'react-router';
 import { doctorAdminListApi, doctorEligibility, MAX_DOCTOR_NAME_SEARCH, type AdminDoctor, type AdminDoctorQuery } from '@jansetu/api';
 import { Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { NameSearch, Pager, StateBadges, StateFilterSelects, stateFiltersOf, useNameSearch } from './accountList.tsx';
@@ -30,26 +31,30 @@ function Doctors({ scopeKey }: { scopeKey: readonly string[] }) {
 
   return (
     <>
-      <PageHeading title="Doctors">Doctor accounts: verify a doctor, or take a verification away.</PageHeading>
+      <PageHeading title={t('doctors.title')}>{t('doctors.intro')}</PageHeading>
       <NameSearch s={search} />
+      {/* i18n-ignore: an id prefix, not words */}
       <StateFilterSelects idPrefix="dr" q={q} setFilter={setFilter} />
-      {list.isPending ? <Loading label="Loading doctors…" />
+      {list.isPending ? <Loading label={t('doctors.loading')} />
         : list.isError ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
         : list.data.items.length === 0 && page === 1 ? (
-          <Empty title={filtered ? 'No doctors match' : 'No doctors yet'}>{filtered ? 'Change the search or filters.' : 'Doctors who sign up appear here.'}</Empty>
+          <Empty title={filtered ? t('doctors.noneMatch') : t('doctors.noneYet')}>{filtered ? t('common.changeSearch') : t('doctors.noneYetHint')}</Empty>
         ) : (
           <>
-            <p className="ws-count" aria-live="polite">{list.data.total} {list.data.total === 1 ? 'doctor' : 'doctors'}</p>
+            <p className="ws-count" aria-live="polite">{t('doctors.count', { count: list.data.total })}</p>
             <div className="ws-table-wrap">
               <table className="j-table">
-                <caption className="j-sr-only">Doctors, newest first</caption>
+                <caption className="j-sr-only">{t('doctors.caption')}</caption>
                 <thead>
-                  <tr><th scope="col">Name</th><th scope="col">Speciality</th><th scope="col">Registration number</th><th scope="col">Status</th><th scope="col">Added</th></tr>
+                  <tr>
+                    <th scope="col">{t('common.name')}</th><th scope="col">{t('doctor.speciality')}</th>
+                    <th scope="col">{t('doctor.registrationNumber')}</th><th scope="col">{t('common.status')}</th><th scope="col">{t('common.added')}</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {list.data.items.map((d) => (
                     <tr key={d._id}>
-                      <td><Link to={`/admin/doctors/${d._id}`}>{d.name || 'No name'}</Link></td>
+                      <td><Link to={`/admin/doctors/${d._id}`}>{d.name || t('common.noName')}</Link></td>
                       <td>{d.specialization || '—'}</td>
                       <td>{d.medicalRegistrationNumber?.trim() || '—'}</td>
                       <td><DoctorBadges d={d} /></td>

@@ -8,6 +8,7 @@ import {
   closeCompensatedExplain, closeCompensatedFinal, closeCompensatedRefusal, closeReasonProblem, closeRefusedBeforeWriting, MAX_CLOSE_REASON, type CompensatedClose, type UncreditedTopup, type WalletOwner,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
@@ -15,7 +16,7 @@ import { useOneAtATime } from '../finance/finance.tsx';
 import { CheckPanel, useOwnedOp } from '../pharmacy/ownedOp.tsx';
 import { MovementsTable } from '../pharmacy/WalletScreen.tsx';
 import { useAdminScope } from './adminScope.ts';
-import { CardRefundsQueue } from './CardRefunds.tsx';
+import { CardRefundsQueue, notKnownYet } from './CardRefunds.tsx';
 import { PharmacyBadges } from './PharmaciesScreen.tsx';
 
 /**
@@ -28,11 +29,11 @@ export function PharmacyWalletsScreen() {
   const scope = useAdminScope('pharmacy-wallets');
   return (
     <>
-      <PageHeading title="Pharmacy wallets">See a pharmacy’s Jansetu wallet and add money to it (for stage testing or a support credit).</PageHeading>
+      <PageHeading title={t('pharmacyWallets.title')}>{t('pharmacyWallets.intro')}</PageHeading>
       <PickPharmacy key={scope.identity} scopeKey={scope.key} />
       {/* WQ16: card refunds of consultations booked by pharmacies (every pharmacy; the rows do not name one). */}
       <section className="ws-section" aria-labelledby="card-refunds-h">
-        <h2 id="card-refunds-h">Card refunds of bookings that need a person</h2>
+        <h2 id="card-refunds-h">{t('pharmacyWallets.cardRefunds')}</h2>
         <CardRefundsQueue key={scope.identity} scopeKey={scope.key} />
       </section>
     </>
@@ -54,35 +55,44 @@ function PickPharmacy({ scopeKey }: { scopeKey: readonly string[] }) {
   return (
     <>
       <form className="ws-search" role="search" onSubmit={submit}>
-        <TextField label="Find a pharmacy by name" value={text} maxLength={100} onChange={(e) => setText(e.target.value)} />
-        <Button type="submit" variant="secondary">Search</Button>
+        <TextField label={t('pharmacyWallets.findByName')} value={text} maxLength={100} onChange={(e) => setText(e.target.value)} />
+        <Button type="submit" variant="secondary">{t('common.search')}</Button>
       </form>
-      {list.isPending ? <Loading label="Loading pharmacies…" />
+      {list.isPending ? <Loading label={t('pharmacyWallets.loading')} />
         : list.isError ? <ErrorState message={adminWalletReadError(list.error)} onRetry={() => void list.refetch()} />
-        : list.data.items.length === 0 ? <Empty title={name ? 'No pharmacies match' : 'No pharmacies yet'}>{name ? 'Try another name.' : 'Add pharmacies under Pharmacies.'}</Empty>
+        : list.data.items.length === 0 ? (
+          <Empty title={name ? t('pharmacyWallets.noneMatch') : t('pharmacyWallets.noneYet')}>
+            {name ? t('pharmacyWallets.tryAnother') : t('pharmacyWallets.addUnder')}
+          </Empty>
+        )
         : (
           <>
             <div className="ws-table-wrap">
               <table className="j-table">
-                <caption className="j-sr-only">Pharmacies</caption>
-                <thead><tr><th scope="col">Pharmacy</th><th scope="col">City</th><th scope="col">Status</th><th scope="col"><span className="j-sr-only">Wallet</span></th></tr></thead>
+                <caption className="j-sr-only">{t('pharmacyWallets.caption')}</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">{t('adminWallet.col.pharmacy')}</th><th scope="col">{t('pharmacyWallets.col.city')}</th><th scope="col">{t('common.status')}</th>
+                    <th scope="col"><span className="j-sr-only">{t('pharmacyWallets.col.wallet')}</span></th>
+                  </tr>
+                </thead>
                 <tbody>
                   {list.data.items.map((p) => (
                     <tr key={p._id}>
                       <td>{p.name}</td>
                       <td>{p.city || '—'}</td>
                       <td><PharmacyBadges p={p} /></td>
-                      <td><Link to={`/admin/pharmacy-wallets/${p._id}`} aria-label={`Open the wallet of ${p.name}`}>Open wallet</Link></td>
+                      <td><Link to={`/admin/pharmacy-wallets/${p._id}`} aria-label={t('pharmacyWallets.openAria', { name: p.name })}>{t('pharmacyWallets.open')}</Link></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             {last > 1 && (
-              <nav className="ws-pager" aria-label="Pages">
-                <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
-                <span>Page {page} of {last}</span>
-                <Button variant="secondary" disabled={page >= last} onClick={() => setPage(page + 1)}>Next</Button>
+              <nav className="ws-pager" aria-label={t('common.pages')}>
+                <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>{t('common.previous')}</Button>
+                <span>{t('common.pageOf', { page, lastPage: last })}</span>
+                <Button variant="secondary" disabled={page >= last} onClick={() => setPage(page + 1)}>{t('common.next')}</Button>
               </nav>
             )}
           </>
@@ -95,13 +105,15 @@ function PickPharmacy({ scopeKey }: { scopeKey: readonly string[] }) {
 export function PharmacyWalletScreen() {
   const { pharmacyId = '' } = useParams();
   const scope = useAdminScope('pharmacy-wallets');
-  const back = <Link className="ws-back" to="/admin/pharmacy-wallets"><ArrowLeft size={16} aria-hidden="true" /> Pharmacy wallets</Link>;
+  const back = <Link className="ws-back" to="/admin/pharmacy-wallets"><ArrowLeft size={16} aria-hidden="true" /> {t('pharmacyWallets.title')}</Link>;
   if (!OBJECT_ID_PATTERN.test(pharmacyId)) {
-    return <>{back}<PageHeading title="Pharmacy wallet" /><Empty title="No such pharmacy">Choose it from the pharmacy wallets list.</Empty></>;
+    return <>{back}<PageHeading title={t('pharmacyWallet.title')} /><Empty title={t('pharmacyWallet.noSuch')}>{t('pharmacyWallet.noSuchText')}</Empty></>;
   }
   return <>{back}<WalletDetail key={`${scope.identity}:${pharmacyId}`} scopeKey={scope.key} pharmacyId={pharmacyId.toLowerCase()} /></>;
 }
 
+/** The wallet owner of these pages (a code, not words). */
+const PHARMACY: WalletOwner = 'pharmacy';
 const movementsKey = (scopeKey: readonly string[], pharmacyId: string, page: number) => [...scopeKey, pharmacyId, 'movements', page];
 
 function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; pharmacyId: string }) {
@@ -111,42 +123,42 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
   const pharmacy = useQuery({ queryKey: [...scopeKey, pharmacyId, 'pharmacy'], queryFn: () => pharmacyAdminApi(api).get(pharmacyId) });
   const wallet = useQuery({ queryKey: [...scopeKey, pharmacyId, 'wallet'], queryFn: () => wallets.wallet(pharmacyId) });
   const movements = useQuery({ queryKey: movementsKey(scopeKey, pharmacyId, page), queryFn: () => wallets.movements(pharmacyId, page) });
-  const name = pharmacy.data?.name ?? 'this pharmacy';
+  const name = pharmacy.data?.name ?? t('pharmacyWallet.thisPharmacy');
 
   return (
     <>
-      <PageHeading title={pharmacy.data ? `Wallet: ${pharmacy.data.name}` : 'Pharmacy wallet'}>
+      <PageHeading title={pharmacy.data ? t('adminWallet.titleNamed', { name: pharmacy.data.name }) : t('pharmacyWallet.title')}>
         {pharmacy.data ? [pharmacy.data.city, pharmacy.data.phone].filter(Boolean).join(' · ') : null}
       </PageHeading>
       {pharmacy.isError && <ErrorState message={adminWalletReadError(pharmacy.error)} onRetry={() => void pharmacy.refetch()} />}
 
       <section className="ws-section" aria-labelledby="bal-h">
-        <h2 id="bal-h">Balance</h2>
-        {wallet.isPending ? <Loading label="Loading the wallet…" />
+        <h2 id="bal-h">{t('adminWallet.balance')}</h2>
+        {wallet.isPending ? <Loading label={t('adminWallet.loadingWallet')} />
           : wallet.isError ? <ErrorState message={adminWalletReadError(wallet.error)} onRetry={() => void wallet.refetch()} />
-          : <Balance w={wallet.data} owner="pharmacy" />}
+          : <Balance w={wallet.data} owner={PHARMACY} />}
       </section>
 
       <section className="ws-section" aria-labelledby="add-h">
-        <h2 id="add-h">Add money</h2>
+        <h2 id="add-h">{t('adminWallet.addMoney')}</h2>
         {pharmacy.data && wallet.isSuccess
           ? <AddMoney target={pharmacyTarget(api, scopeKey, pharmacyId, pharmacy.data.name)} wallet={wallet.data} />
-          : pharmacy.isPending || wallet.isPending ? <Loading label="Loading…" /> : <p className="ws-muted">The pharmacy and its wallet must load first.</p>}
+          : pharmacy.isPending || wallet.isPending ? <Loading label={t('adminWallet.loading')} /> : <p className="ws-muted">{t('adminWallet.mustLoad.pharmacy')}</p>}
       </section>
 
       <section className="ws-section" aria-labelledby="hist-h">
-        <h2 id="hist-h">Recent money in and out</h2>
-        {movements.isPending ? <Loading label="Loading the history…" />
+        <h2 id="hist-h">{t('pharmacyWallet.history')}</h2>
+        {movements.isPending ? <Loading label={t('pharmacyWallet.loadingHistory')} />
           : movements.isError ? <ErrorState message={adminWalletReadError(movements.error)} onRetry={() => void movements.refetch()} />
-          : movements.data.items.length === 0 ? <Empty title="No money in or out yet">Top-ups, booking payments, refunds and admin credits of {name} are listed here.</Empty>
+          : movements.data.items.length === 0 ? <Empty title={t('pharmacyWallet.noMovements')}>{t('pharmacyWallet.noMovementsText', { name })}</Empty>
           : (
             <>
               <MovementsTable rows={movements.data.items} notes />
               {movements.data.totalPages > 1 && (
-                <nav className="ws-pager" aria-label="Wallet history pages">
-                  <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Newer</Button>
-                  <span>Page {page} of {movements.data.totalPages}</span>
-                  <Button variant="secondary" disabled={page >= movements.data.totalPages} onClick={() => setPage(page + 1)}>Older</Button>
+                <nav className="ws-pager" aria-label={t('adminWallet.historyPages')}>
+                  <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>{t('pharmacyWallet.newer')}</Button>
+                  <span>{t('common.pageOf', { page, lastPage: movements.data.totalPages })}</span>
+                  <Button variant="secondary" disabled={page >= movements.data.totalPages} onClick={() => setPage(page + 1)}>{t('pharmacyWallet.older')}</Button>
                 </nav>
               )}
             </>
@@ -154,8 +166,8 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
       </section>
 
       <section className="ws-section" aria-labelledby="uncredited-h">
-        <h2 id="uncredited-h">Card top-ups not credited</h2>
-        <UncreditedTopups scopeKey={scopeKey} ownerId={pharmacyId} ownerName={name} owner="pharmacy" />
+        <h2 id="uncredited-h">{t('adminWallet.uncredited')}</h2>
+        <UncreditedTopups scopeKey={scopeKey} ownerId={pharmacyId} ownerName={name} owner={PHARMACY} />
       </section>
     </>
   );
@@ -165,21 +177,23 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
 export function Balance({ w, owner }: { w: PharmacyWallet | null; owner: WalletOwner }) {
   if (!w) {
     // r20: reading a doctor's wallet makes none; the first money added (by the doctor or here) does.
-    return <p>This {owner} has no wallet yet. {owner === 'doctor' ? 'It is made when money is first added, by the doctor or here.' : `It is made when the ${owner} opens its wallet, or when money is added here.`}</p>;
+    return <p>{t(`adminWallet.noWallet.${owner}`)}</p>;
   }
   const state = walletState(w);
   const owed = Number(w.receivableMinor ?? 0);
   return (
     <>
-      <dl className="fin-cards" aria-label="Wallet">
-        <div className="fin-card fin-card--main"><dt>Money in the wallet</dt><dd>{formatRupees(walletBalancePaise(w) / 100)}</dd></div>
-        {owed > 0 && <div className="fin-card"><dt>Owed to Jansetu</dt><dd>{formatRupees(owed / 100)}</dd></div>}
-        {owner !== 'pharmacy' && <div className="fin-card"><dt>Card money (withdrawals coming later)</dt><dd>{formatRupees(Number(w.withdrawableMinor ?? 0) / 100)}</dd></div>}
+      <dl className="fin-cards" aria-label={t('adminWallet.cards')}>
+        <div className="fin-card fin-card--main"><dt>{t('adminWallet.moneyIn')}</dt><dd>{formatRupees(walletBalancePaise(w) / 100)}</dd></div>
+        {owed > 0 && <div className="fin-card"><dt>{t('adminWallet.owed')}</dt><dd>{formatRupees(owed / 100)}</dd></div>}
+        {owner !== 'pharmacy' && <div className="fin-card"><dt>{t('adminWallet.cardMoney')}</dt><dd>{formatRupees(Number(w.withdrawableMinor ?? 0) / 100)}</dd></div>}
       </dl>
-      {state === 'owing' && <Alert tone="warn">The wallet owes {formatRupees(owed / 100)} to Jansetu after a disputed card payment. It cannot pay for bookings. Money added clears this first.</Alert>}
-      {state !== 'owing' && w.frozen === true && <Alert tone="warn">The wallet is on hold{w.frozenReason ? ` (${w.frozenReason})` : ''}, so it cannot pay for bookings. Money can still be added.</Alert>}
-      {state === 'off' && <Alert tone="warn">The wallet is switched off.</Alert>}
-      {state === 'ok' && <p className="ws-muted"><Badge tone="ok">Can pay for bookings</Badge></p>}
+      {state === 'owing' && <Alert tone="warn">{t('adminWallet.owing', { amount: formatRupees(owed / 100) })}</Alert>}
+      {state !== 'owing' && w.frozen === true && (
+        <Alert tone="warn">{w.frozenReason ? t('adminWallet.onHoldReason', { reason: w.frozenReason }) : t('adminWallet.onHold')}</Alert>
+      )}
+      {state === 'off' && <Alert tone="warn">{t('adminWallet.off')}</Alert>}
+      {state === 'ok' && <p className="ws-muted"><Badge tone="ok">{t('adminWallet.canPay')}</Badge></p>}
     </>
   );
 }
@@ -260,7 +274,10 @@ export function AddMoney({ target, wallet }: { target: AdminTopupTarget; wallet:
     setReview(null);
     setAmount('');
     setNote('');
-    setDone(`${formatRupees(body.amount)} was added to the wallet of ${pharmacyName}${w ? `. Balance now: ${formatRupees(walletBalancePaise(w) / 100)}` : ''}.${again ? ' It was added once, even though it was sent more than once.' : ''}`);
+    const amount = formatRupees(body.amount);
+    const first = w ? t('adminWallet.add.doneBalance', { amount, name: pharmacyName, balance: formatRupees(walletBalancePaise(w) / 100) })
+      : t('adminWallet.add.done', { amount, name: pharmacyName });
+    setDone(again ? `${first} ${t('adminWallet.add.once')}` : first);
     void reread();
   };
 
@@ -296,7 +313,7 @@ export function AddMoney({ target, wallet }: { target: AdminTopupTarget; wallet:
     return (
       <>
         {resendError && <Alert>{resendError}</Alert>}
-        <CheckPanel label="Unconfirmed money added"
+        <CheckPanel label={t('adminWallet.add.unconfirmed')}
           onCheck={async () => {
             const found = await target.findCredit(op.requestKey);
             void reread();
@@ -305,23 +322,23 @@ export function AddMoney({ target, wallet }: { target: AdminTopupTarget; wallet:
               if (carriedKey() === op.requestKey) memory.delete(carrySlot);
               settle(op.requestKey);
               setReview(null);
-              setDone(`It was added: ${formatRupees(signedPaiseOf(found.row) / 100)} on ${formatDateTime(found.row.createdAt)}. Nothing was added twice.`);
+              setDone(t('adminWallet.add.found', { amount: formatRupees(signedPaiseOf(found.row) / 100), date: formatDateTime(found.row.createdAt) }));
               return null;
             }
             return topupNotFoundWords(found, !restored);
           }}
           resend={restored ? undefined : {
-            label: 'Send the same request again', busy,
+            label: t('adminWallet.sendAgain'), busy,
             onClick: () => { setResendError(null); void sendTopup(op).catch((err: unknown) => setResendError(adminTopupRefusal(err))); },
           }}
-          forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it',
+          forget={{ label: t('adminWallet.forget'), confirmLabel: t('adminWallet.forgetConfirm'),
             onForget: () => { carry(op.requestKey); settle(op.requestKey); },
-            acknowledge: 'I understand the money may already have been added to this wallet.',
-            consequence: `The money may already have been added, or may still arrive. Forgetting it does not undo it. Check the wallet history, or ask the tech team, before adding money again: otherwise the ${target.owner} could be paid twice.` }}>
+            acknowledge: t('adminWallet.add.acknowledge'),
+            consequence: t(`adminWallet.add.forget.${target.owner}`) }}>
           <Alert tone="warn">
             {restored
-              ? 'Money added earlier on this device (before the page was reloaded) was not confirmed. Its details are not kept here. Check the wallet history for it.'
-              : `The outcome of this request is not known yet${op.error ? ` (${op.error})` : ''}. ${formatRupees(op.body.body.amount)} may already be added to the wallet of ${op.body.pharmacyName}. Sending the same request again is safe: it is never added twice.`}
+              ? t('adminWallet.add.restored')
+              : `${notKnownYet(op.error)} ${t('adminWallet.add.mayBeAdded', { amount: formatRupees(op.body.body.amount), name: op.body.pharmacyName })}`}
           </Alert>
         </CheckPanel>
       </>
@@ -331,45 +348,46 @@ export function AddMoney({ target, wallet }: { target: AdminTopupTarget; wallet:
   const balance = walletBalancePaise(wallet);
   const owed = Number(wallet?.receivableMinor ?? 0);
   return (
-    <form className="rx-form" noValidate onSubmit={check} aria-label="Add money to the wallet">
+    <form className="rx-form" noValidate onSubmit={check} aria-label={t('adminWallet.add.form')}>
       <Alert tone="warn">{adminTopupWarning(target.owner)}</Alert>
       {done && <Alert tone="ok">{done}</Alert>}
       <fieldset className="ws-frozen" disabled={!!review || busy}>
         <div className="rx-form-row">
-          <TextField label="Amount to add (₹)" inputMode="numeric" autoComplete="off" value={amount} error={errors.amount}
-            hint="Whole rupees, 1 or more." onChange={(e) => setAmount(e.target.value)} />
+          <TextField label={t('adminWallet.add.amount')} inputMode="numeric" autoComplete="off" value={amount} error={errors.amount}
+            hint={t('adminWallet.add.amountHint')} onChange={(e) => setAmount(e.target.value)} />
         </div>
-        <TextArea label="Why is the money added?" value={note} maxLength={MAX_ADMIN_TOPUP_NOTE} error={errors.notes}
-          hint="Required. For example “stage testing” or “support credit”. Kept with the credit." onChange={(e) => setNote(e.target.value)} />
+        <TextArea label={t('adminWallet.add.why')} value={note} maxLength={MAX_ADMIN_TOPUP_NOTE} error={errors.notes}
+          hint={t('adminWallet.add.whyHint')} onChange={(e) => setNote(e.target.value)} />
       </fieldset>
-      {refused && <Alert>Not added: {refused}</Alert>}
+      {refused && <Alert>{t('adminWallet.add.notAdded', { reason: refused })}</Alert>}
       {!review ? (
-        <div><Button type="submit">Next: check before adding</Button></div>
+        <div><Button type="submit">{t('adminWallet.add.next')}</Button></div>
       ) : (
-        <div className="confirm" role="group" aria-label="Add this money">
+        <div className="confirm" role="group" aria-label={t('adminWallet.add.review')}>
           <div className="confirm-text">
-            Add <strong>{formatRupees(review.body.amount)}</strong> to the wallet of <strong>{review.pharmacyName}</strong>?
+            {t.rich('adminWallet.add.question', {
+              amount: <strong key="a">{formatRupees(review.body.amount)}</strong>, name: <strong key="n">{review.pharmacyName}</strong>,
+            })}
           </div>
           <ul className="ws-list">
-            <li>Note: <strong>{review.body.notes}</strong></li>
+            <li>{t.rich('adminWallet.add.note', { note: <strong key="n">{review.body.notes}</strong> })}</li>
             <li>
-              {recent.isFetching && !recent.data ? 'Reading the last money added by an admin…'
-                : lastCredit
-                  ? <>Last money added by {String(lastCredit.actor?.id ?? '').toLowerCase() === admin.id.toLowerCase() ? 'you' : 'an admin'}: <strong>{formatRupees(signedPaiseOf(lastCredit) / 100)}</strong> on {formatDateTime(lastCredit.createdAt)}{lastCredit.notes ? ` (“${lastCredit.notes}”)` : ''}. Make sure this is not the same credit.</>
-                  : recent.isError ? 'Could not read the last money added by an admin. Look at the history below.'
-                  : `No money added by an admin in the latest ${ADMIN_TOPUP_PAGE_SIZE} movements.`}
+              {recent.isFetching && !recent.data ? t('adminWallet.add.readingLast')
+                : lastCredit ? <LastCredit row={lastCredit} mine={String(lastCredit.actor?.id ?? '').toLowerCase() === admin.id.toLowerCase()} />
+                  : recent.isError ? t('adminWallet.add.lastUnread')
+                  : t('adminWallet.add.noneLatest', { size: ADMIN_TOPUP_PAGE_SIZE })}
             </li>
             {owed > 0
-              ? <li>{formatRupees(Math.min(owed, review.body.amount * 100) / 100)} of it first clears what the {target.owner} owes Jansetu.</li>
-              : <li>Balance after: {formatRupees((balance + review.body.amount * 100) / 100)}</li>}
+              ? <li>{t(`adminWallet.add.clears.${target.owner}`, { amount: formatRupees(Math.min(owed, review.body.amount * 100) / 100) })}</li>
+              : <li>{t('adminWallet.add.balanceAfter', { amount: formatRupees((balance + review.body.amount * 100) / 100) })}</li>}
           </ul>
           <span className="ws-muted">{adminTopupWarning(target.owner)}</span>
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => {
               const { requestKey, ...pending } = review;
               void sendTopup(startOp(requestKey, pending)).catch((err: unknown) => { setReview(null); setRefused(adminTopupRefusal(err)); });
-            }}>Yes, add {formatRupees(review.body.amount)}</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>Back</Button>
+            }}>{t('adminWallet.add.confirm', { amount: formatRupees(review.body.amount) })}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('adminWallet.back')}</Button>
           </div>
         </div>
       )}
@@ -377,13 +395,18 @@ export function AddMoney({ target, wallet }: { target: AdminTopupTarget; wallet:
   );
 }
 
+/** The last money an admin added to this wallet, on the review (`mine`: added by the admin signed in). */
+function LastCredit({ row, mine }: { row: WalletMovement; mine: boolean }) {
+  const params = { amount: <strong key="a">{formatRupees(signedPaiseOf(row) / 100)}</strong>, date: formatDateTime(row.createdAt) };
+  if (row.notes) return <>{t.rich(mine ? 'adminWallet.add.lastByYouNote' : 'adminWallet.add.lastByAdminNote', { ...params, note: row.notes })}</>;
+  return <>{t.rich(mine ? 'adminWallet.add.lastByYou' : 'adminWallet.add.lastByAdmin', params)}</>;
+}
+
 interface PendingClose { row: UncreditedTopup; reason: string }
 
-const UNCREDITED_STATE: Readonly<Record<string, string>> = {
-  paid_not_credited: 'Paid, not credited',
-  not_checked_with_gateway: 'Not checked with Razorpay',
-};
-const topupWords = (r: UncreditedTopup) => `${formatRupees(r.amountMinor / 100)} top-up of ${formatDateTime(r.createdAt)}`;
+/** An uncredited top-up's state in words (`adminWallet.uncreditedState.<state>`); an unknown state shows as sent. */
+const uncreditedState = (state: string) => { const key = `adminWallet.uncreditedState.${state}`; return t.has(key) ? t(key) : state; };
+const topupWords = (r: UncreditedTopup) => t('adminWallet.topup', { amount: formatRupees(r.amountMinor / 100), date: formatDateTime(r.createdAt) });
 
 /**
  * WQ15 (backend r9, design §22): the pharmacy's card top-ups that were never credited (`GET /admin/wallet-recharges/uncredited`,
@@ -416,11 +439,11 @@ export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pha
     setChosen(null);
     setReview(null);
     setReason('');
-    const what = `the ${row ? topupWords(row) : `${formatRupees(c.amountPaise / 100)} top-up`}`;
+    const what = { topup: row ? topupWords(row) : t('adminWallet.topupAmount', { amount: formatRupees(c.amountPaise / 100) }) };
     // WQ15b N2: a replayed answer (this key's earlier attempt, or a close under another key) never claims this admin closed it.
-    setDone(how === 'checked' ? `It was closed: ${what} will never be credited to the wallet.`
-      : c.replayed ? `This top-up was already closed as paid by hand: ${what} will never be credited to the wallet. Nothing more was changed.`
-      : `Marked as already paid by hand: ${what} will never be credited to the wallet.${how === 'resent' ? ' It was closed once, even though it was sent more than once.' : ''}`);
+    setDone(how === 'checked' ? t('adminWallet.close.checked', what)
+      : c.replayed ? t('adminWallet.close.replayed', what)
+      : `${t('adminWallet.close.done', what)}${how === 'resent' ? ` ${t('adminWallet.close.once')}` : ''}`);
     void reread();
   };
   const refuse = (err: unknown) => { setChosen(null); setReview(null); setRefused(closeCompensatedRefusal(err)); void reread(); };
@@ -466,7 +489,7 @@ export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pha
       <>
         <p>{closeCompensatedExplain(owner)}</p>
         {resendError && <Alert>{resendError}</Alert>}
-        <CheckPanel label="Unconfirmed close"
+        <CheckPanel label={t('adminWallet.close.unconfirmed')}
           onCheck={async () => {
             const found = await wallets.closeCompensatedByKey(op.requestKey);
             void reread();
@@ -476,19 +499,19 @@ export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pha
               return null;
             }
             return restored
-              ? 'Not closed so far. It may still be on its way. Read the list again in a minute before closing it again.'
-              : 'Not closed so far. It may still be on its way. Sending the same request again is safe: it is closed only once.';
+              ? t('adminWallet.close.notYetRestored')
+              : t('adminWallet.close.notYet');
           }}
           resend={restored ? undefined : {
-            label: 'Send the same request again', busy,
+            label: t('adminWallet.sendAgain'), busy,
             onClick: () => { setResendError(null); void sendClose(op).catch((err: unknown) => setResendError(closeCompensatedRefusal(err))); },
           }}
-          forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget: () => settle(op.requestKey),
-            consequence: 'The top-up may already be closed, or may still be closed. Forgetting it does not undo that. Read the list again before closing it again: a top-up already closed is never closed twice.' }}>
+          forget={{ label: t('adminWallet.forget'), confirmLabel: t('adminWallet.forgetConfirm'), onForget: () => settle(op.requestKey),
+            consequence: t('adminWallet.close.forget') }}>
           <Alert tone="warn">
             {restored
-              ? 'A top-up marked as already paid by hand earlier on this device (before the page was reloaded) was not confirmed. Its details are not kept here. Check whether it was recorded.'
-              : `The outcome of this request is not known yet${op.error ? ` (${op.error})` : ''}. The ${topupWords(op.body.row)} may already be closed. Sending the same request again is safe: it is closed only once.`}
+              ? t('adminWallet.close.restored')
+              : `${notKnownYet(op.error)} ${t('adminWallet.close.mayBeClosed', { topup: topupWords(op.body.row) })}`}
           </Alert>
         </CheckPanel>
       </>
@@ -500,25 +523,30 @@ export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pha
     <>
       <p>{closeCompensatedExplain(owner)}</p>
       {done && <Alert tone="ok">{done}</Alert>}
-      {refused && <Alert>Not closed: {refused}</Alert>}
-      {list.isPending ? <Loading label="Loading card top-ups…" />
+      {refused && <Alert>{t('adminWallet.close.notClosed', { reason: refused })}</Alert>}
+      {list.isPending ? <Loading label={t('adminWallet.loadingTopups')} />
         : list.isError ? <ErrorState message={adminWalletReadError(list.error)} onRetry={() => void list.refetch()} />
-        : rows.length === 0 ? <Empty title="No card top-ups waiting">Card top-ups of {pharmacyName} that were not credited to the wallet are listed here.</Empty>
+        : rows.length === 0 ? <Empty title={t('adminWallet.close.empty')}>{t('adminWallet.close.emptyText', { name: pharmacyName })}</Empty>
         : (
           <div className="ws-table-wrap">
             <table className="j-table">
-              <caption className="j-sr-only">Card top-ups not credited, oldest first</caption>
-              <thead><tr><th scope="col">When</th><th scope="col">Amount</th><th scope="col">State</th><th scope="col">Payment reference</th><th scope="col"><span className="j-sr-only">Action</span></th></tr></thead>
+              <caption className="j-sr-only">{t('adminWallet.close.caption')}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">{t('adminWallet.col.when')}</th><th scope="col">{t('common.amount')}</th><th scope="col">{t('adminWallet.col.state')}</th>
+                  <th scope="col">{t('adminWallet.close.col.reference')}</th><th scope="col"><span className="j-sr-only">{t('common.action')}</span></th>
+                </tr>
+              </thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.paymentTransactionId}>
                     <td>{formatDateTime(r.createdAt)}</td>
                     <td>{formatRupees(r.amountMinor / 100)}</td>
-                    <td><Badge tone={r.state === 'paid_not_credited' ? 'warn' : undefined}>{UNCREDITED_STATE[r.state] ?? r.state}</Badge></td>
-                    <td>{r.razorpayOrderId ? `Razorpay order ${r.razorpayOrderId}` : `Record ${r.paymentTransactionId}`}</td>
+                    <td><Badge tone={r.state === 'paid_not_credited' ? 'warn' : undefined}>{uncreditedState(r.state)}</Badge></td>
+                    <td>{r.razorpayOrderId ? t('adminWallet.close.razorpayOrder', { id: r.razorpayOrderId }) : t('adminWallet.close.record', { id: r.paymentTransactionId })}</td>
                     <td>
                       <Button variant="secondary" disabled={busy || (!!review && chosen?.paymentTransactionId !== r.paymentTransactionId)}
-                        aria-label={`Mark the ${topupWords(r)} as already paid by hand`} onClick={() => start(r)}>Mark as already paid by hand</Button>
+                        aria-label={t('adminWallet.close.markAria', { topup: topupWords(r) })} onClick={() => start(r)}>{t('adminWallet.close.mark')}</Button>
                     </td>
                   </tr>
                 ))}
@@ -527,32 +555,36 @@ export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pha
           </div>
         )}
       {chosen && (
-        <form className="rx-form" noValidate onSubmit={check} aria-label="Mark as already paid by hand">
-          <p>The <strong>{topupWords(chosen)}</strong>{chosen.razorpayOrderId ? ` (Razorpay order ${chosen.razorpayOrderId})` : ''}.</p>
+        <form className="rx-form" noValidate onSubmit={check} aria-label={t('adminWallet.close.mark')}>
+          <p>
+            {chosen.razorpayOrderId
+              ? t.rich('adminWallet.close.chosenOrder', { topup: <strong key="t">{topupWords(chosen)}</strong>, order: chosen.razorpayOrderId })
+              : t.rich('adminWallet.close.chosen', { topup: <strong key="t">{topupWords(chosen)}</strong> })}
+          </p>
           <fieldset className="ws-frozen" disabled={!!review || busy}>
-            <TextArea label="Why is it closed?" value={reason} maxLength={MAX_CLOSE_REASON} error={reasonError}
-              hint={`Required. For example who at Jansetu support paid the ${owner}, how and when.`} onChange={(e) => setReason(e.target.value)} />
+            <TextArea label={t('adminWallet.close.why')} value={reason} maxLength={MAX_CLOSE_REASON} error={reasonError}
+              hint={t(`adminWallet.close.whyHint.${owner}`)} onChange={(e) => setReason(e.target.value)} />
           </fieldset>
           {!review ? (
             <div className="confirm-actions">
-              <Button type="submit">Next: check before closing</Button>
-              <Button variant="ghost" onClick={() => setChosen(null)}>Cancel</Button>
+              <Button type="submit">{t('adminWallet.close.next')}</Button>
+              <Button variant="ghost" onClick={() => setChosen(null)}>{t('adminWallet.cancel')}</Button>
             </div>
           ) : (
-            <div className="confirm" role="group" aria-label="Close this top-up">
+            <div className="confirm" role="group" aria-label={t('adminWallet.close.review')}>
               <div className="confirm-text">
-                Mark the <strong>{topupWords(review.row)}</strong> of <strong>{pharmacyName}</strong> as already paid by hand?
+                {t.rich('adminWallet.close.question', { topup: <strong key="t">{topupWords(review.row)}</strong>, name: <strong key="n">{pharmacyName}</strong> })}
               </div>
               <ul className="ws-list">
-                <li>Reason: <strong>{review.reason}</strong></li>
+                <li>{t.rich('adminWallet.reasonIs', { reason: <strong key="r">{review.reason}</strong> })}</li>
                 <li>{closeCompensatedExplain(owner)}</li>
               </ul>
               <div className="confirm-actions">
                 <Button busy={busy} onClick={() => {
                   const { requestKey, ...pending } = review;
                   void sendClose(startOp(requestKey, pending)).catch((err: unknown) => refuse(err));
-                }}>Yes, mark as already paid</Button>
-                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>Back</Button>
+                }}>{t('adminWallet.close.confirm')}</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('adminWallet.back')}</Button>
               </div>
             </div>
           )}

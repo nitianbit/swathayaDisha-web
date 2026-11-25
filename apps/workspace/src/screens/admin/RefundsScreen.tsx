@@ -4,33 +4,28 @@ import { Badge, Empty, ErrorState, formatDateTime, formatRupees, Loading } from 
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
+import { t } from '../../i18n/admin/index.ts';
 import { useSession } from '../../session.tsx';
 import { REFUND_STATUS_LABEL } from '../pharmacy/orderLabels.ts';
 
-/** `RefundCause` (`pharmacyOrders/prescriptionRefund.ts`). */
-export const REFUND_CAUSE_LABEL: Record<string, string> = {
-  prescription_rejected: 'Prescription rejected',
-  delivery_not_collected: 'Not collected',
-  delivery_refused: 'Refused at the door',
-  stock_hold_cancelled: 'Cancelled for held stock',
-  // WQ11b: a pharmacy order cancelled after payment (`cancelOrder` → `buildIntent(order, s, 'order_cancelled')`).
-  order_cancelled: 'Order cancelled',
-};
-/** Why a refund is stuck (`prescriptionRefund.lastError`), in words; the code stays next to it for support. */
-export const REFUND_PROBLEM_LABEL: Record<string, string> = {
-  WALLET_INACTIVE: 'The customer’s wallet is inactive',
-  WALLET_CREDIT_FAILED: 'The wallet credit failed',
-  PRIOR_REFUND_AMOUNT_MISMATCH: 'An earlier refund of this order does not match the amount',
-  PAID_PAYMENT_RECORD_NOT_FOUND: 'The order’s payment record was not found',
-  PAYMENT_AMOUNT_INVALID: 'The order’s paid amount is not valid',
-};
 /** A code the screen has no words for yet: shown readably ("Some new reason"), never as a raw constant alone. */
 export const humanCode = (code: string) => {
-  const t = code.replace(/[_.]+/g, ' ').trim().toLowerCase();
-  return t ? t[0]!.toUpperCase() + t.slice(1) : code;
+  const words = code.replace(/[_.]+/g, ' ').trim().toLowerCase();
+  return words ? words[0]!.toUpperCase() + words.slice(1) : code;
 };
-export const refundCause = (cause: string) => REFUND_CAUSE_LABEL[cause] ?? humanCode(cause);
-export const refundProblem = (code: string) => `${REFUND_PROBLEM_LABEL[code] ?? humanCode(code)} (${code})`;
+/**
+ * A `RefundCause` (`pharmacyOrders/prescriptionRefund.ts`; WQ11b: `order_cancelled`, a pharmacy order cancelled after
+ * payment) in words: `refunds.cause.<cause>` in the admin catalogue.
+ */
+export const refundCause = (cause: string) => {
+  const key = `refunds.cause.${cause}`;
+  return t.has(key) ? t(key) : humanCode(cause);
+};
+/** Why a refund is stuck (`prescriptionRefund.lastError`), in words (`refunds.problem.<code>`); the code stays next to it for support. */
+export const refundProblem = (code: string) => {
+  const key = `refunds.problem.${code}`;
+  return `${t.has(key) ? t(key) : humanCode(code)} (${code})`;
+};
 
 /** Pharmacy refunds that did not settle on their own (P2): waiting wallet credits, finance reviews, slow card refunds. */
 export function RefundsScreen() {
@@ -40,19 +35,17 @@ export function RefundsScreen() {
 
   return (
     <>
-      <PageHeading title="Refunds needing attention">
-        Pharmacy refunds that did not complete on their own. Waiting wallet credits can be retried; finance reviews are
-        settled outside this workspace.
-      </PageHeading>
-      {q.isPending ? <Loading label="Loading refunds…" />
+      <PageHeading title={t('refunds.title')}>{t('refunds.intro')}</PageHeading>
+      {q.isPending ? <Loading label={t('refunds.loading')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : q.data.length === 0 ? <Empty title="No refund needs attention" />
+        : q.data.length === 0 ? <Empty title={t('refunds.empty')} />
         : (
           <div className="ws-table-wrap">
             <table className="j-table">
               <thead>
-                <tr><th scope="col">Order</th><th scope="col">Why</th><th scope="col">Refund</th><th scope="col">Amount</th>
-                  <th scope="col">Problem</th><th scope="col">Since</th><th scope="col">Action</th></tr>
+                <tr><th scope="col">{t('refunds.col.order')}</th><th scope="col">{t('refunds.col.why')}</th><th scope="col">{t('refunds.col.refund')}</th>
+                  <th scope="col">{t('common.amount')}</th><th scope="col">{t('refunds.col.problem')}</th><th scope="col">{t('refunds.col.since')}</th>
+                  <th scope="col">{t('common.action')}</th></tr>
               </thead>
               <tbody>
                 {q.data.map((r) => {
@@ -67,14 +60,14 @@ export function RefundsScreen() {
                       <td>{formatDateTime(refund.updatedAt ?? r.updatedAt)}</td>
                       <td>
                         {refund.status === 'wallet_pending' ? (
-                          <ConfirmAction label="Retry" confirmLabel="Retry now"
-                            consequence={`Try again to credit ${formatRupees(refund.walletAmount)} to the customer’s wallet.`}
+                          <ConfirmAction label={t('refunds.retry')} confirmLabel={t('refunds.retryNow')}
+                            consequence={t('refunds.retryConsequence', { amount: formatRupees(refund.walletAmount) })}
                             onConfirm={async () => {
                               try { await pharmacyOrdersApi(api).retryRefund(r._id); }
                               finally { await queryClient.invalidateQueries({ queryKey: ['admin', 'refunds-attention'] }); }
                             }} />
-                        ) : refund.status === 'manual_review' ? <span className="ws-muted">Finance to review</span>
-                          : <span className="ws-muted">Waiting for the payment provider</span>}
+                        ) : refund.status === 'manual_review' ? <span className="ws-muted">{t('refunds.financeReview')}</span>
+                          : <span className="ws-muted">{t('refunds.waitingProvider')}</span>}
                       </td>
                     </tr>
                   );
@@ -83,7 +76,7 @@ export function RefundsScreen() {
             </table>
           </div>
         )}
-      {q.data && q.data.length >= 100 && <span className="ws-muted">Showing the first 100.</span>}
+      {q.data && q.data.length >= 100 && <span className="ws-muted">{t('refunds.first100')}</span>}
     </>
   );
 }

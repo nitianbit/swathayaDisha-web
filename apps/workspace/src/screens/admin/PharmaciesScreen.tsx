@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 import { PHARMACY_PHONE_PATTERN, pharmacyAdminApi, pharmacyState, type PharmacyAccount, type PharmacyQuery } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { NameSearch, Pager, StateBadges, StateFilterSelects, stateFiltersOf, useNameSearch } from './accountList.tsx';
@@ -32,23 +33,27 @@ function Pharmacies({ scopeKey }: { scopeKey: readonly string[] }) {
 
   return (
     <>
-      <PageHeading title="Pharmacies">Pharmacy accounts: add a pharmacy, verify it, and change its details or how it signs in.</PageHeading>
-      <div><Link className="j-btn j-btn--primary" to="/admin/pharmacies/new">Add a pharmacy</Link></div>
+      <PageHeading title={t('pharmacies.title')}>{t('pharmacies.intro')}</PageHeading>
+      <div><Link className="j-btn j-btn--primary" to="/admin/pharmacies/new">{t('pharmacies.add')}</Link></div>
       <NameSearch s={search} />
       <PhoneLookup scopeKey={scopeKey} />
+      {/* i18n-ignore: an id prefix, not words */}
       <StateFilterSelects idPrefix="ph" q={q} setFilter={setFilter} />
-      {list.isPending ? <Loading label="Loading pharmacies…" />
+      {list.isPending ? <Loading label={t('pharmacies.loading')} />
         : list.isError ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
         : list.data.items.length === 0 && page === 1 ? (
-          <Empty title={filtered ? 'No pharmacies match' : 'No pharmacies yet'}>{filtered ? 'Change the search or filters.' : 'Pharmacies you add appear here.'}</Empty>
+          <Empty title={filtered ? t('pharmacies.noneMatch') : t('pharmacies.noneYet')}>{filtered ? t('common.changeSearch') : t('pharmacies.noneYetHint')}</Empty>
         ) : (
           <>
-            <p className="ws-count" aria-live="polite">{list.data.total} {list.data.total === 1 ? 'pharmacy' : 'pharmacies'}</p>
+            <p className="ws-count" aria-live="polite">{t('pharmacies.count', { count: list.data.total })}</p>
             <div className="ws-table-wrap">
               <table className="j-table">
-                <caption className="j-sr-only">Pharmacies</caption>
+                <caption className="j-sr-only">{t('pharmacies.title')}</caption>
                 <thead>
-                  <tr><th scope="col">Name</th><th scope="col">Owner</th><th scope="col">Signs in with</th><th scope="col">City</th><th scope="col">Status</th><th scope="col">Added</th></tr>
+                  <tr>
+                    <th scope="col">{t('common.name')}</th><th scope="col">{t('pharmacies.owner')}</th><th scope="col">{t('doctor.signsInWith')}</th>
+                    <th scope="col">{t('pharmacies.city')}</th><th scope="col">{t('common.status')}</th><th scope="col">{t('common.added')}</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {list.data.items.map((p) => (
@@ -87,25 +92,25 @@ function PhoneLookup({ scopeKey }: { scopeKey: readonly string[] }) {
   });
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!PHARMACY_PHONE_PATTERN.test(text)) { setError('Enter the 10-digit mobile number.'); return; }
+    if (!PHARMACY_PHONE_PATTERN.test(text)) { setError(t('pharmacies.enterPhone')); return; }
     setError(null);
     setPhone(text);
   };
   return (
-    <section aria-label="Find by mobile number">
+    <section aria-label={t('pharmacies.findByPhone')}>
       <form className="ws-search" role="search" onSubmit={submit}>
-        <TextField label="Find by mobile number" inputMode="numeric" maxLength={10} autoComplete="off" value={text} error={error ?? undefined}
+        <TextField label={t('pharmacies.findByPhone')} inputMode="numeric" maxLength={10} autoComplete="off" value={text} error={error ?? undefined}
           onChange={(e) => setText(e.target.value.replace(/\D/g, ''))} />
-        <Button type="submit" variant="secondary">Find</Button>
+        <Button type="submit" variant="secondary">{t('pharmacies.find')}</Button>
       </form>
       {!phone ? null
-        : found.isPending ? <Loading label="Finding the pharmacy…" />
+        : found.isPending ? <Loading label={t('pharmacies.finding')} />
         : found.isError ? <ErrorState message={messageOf(found.error)} onRetry={() => void found.refetch()} />
         : found.data ? (
           <Alert tone="ok">
-            <Link to={`/admin/pharmacies/${found.data._id}`}>{found.data.name}</Link> signs in with {phone}. <PharmacyBadges p={found.data} />
+            {t.rich('pharmacies.foundByPhone', { pharmacy: <Link key="pharmacy" to={`/admin/pharmacies/${found.data._id}`}>{found.data.name}</Link>, phone })} <PharmacyBadges p={found.data} />
           </Alert>
-        ) : <p className="ws-muted">No pharmacy signs in with {phone}.</p>}
+        ) : <p className="ws-muted">{t('pharmacies.noneByPhone', { phone })}</p>}
     </section>
   );
 }

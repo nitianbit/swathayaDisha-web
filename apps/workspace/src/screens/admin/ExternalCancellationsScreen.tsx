@@ -5,16 +5,17 @@ import { adminQueuesApi, ApiError, formatExpiry, type OpenCancellation } from '@
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 
 const PAGE_SIZE = 20;
 
-const STATE_LABEL: Record<OpenCancellation['cancel']['state'], string> = {
-  requested: 'Waiting to cancel at the provider',
-  calling: 'Cancelling at the provider now',
-  unknown: 'Provider outcome unknown',
-};
+const STATE_LABEL = {
+  requested: 'externalCancellations.state.requested',
+  calling: 'externalCancellations.state.calling',
+  unknown: 'externalCancellations.state.unknown',
+} as const satisfies Record<OpenCancellation['cancel']['state'], string>;
 
 /**
  * External bookings whose cancellation could not be proven automatically (A2b). The admin checks with the provider,
@@ -34,24 +35,22 @@ export function ExternalCancellationsScreen() {
 
   return (
     <>
-      <PageHeading title="External cancellations">
-        Lab and doctor bookings whose cancellation at the provider is not confirmed. No refund is made until it is.
-      </PageHeading>
-      <div className="ws-tabs" role="group" aria-label="Which cancellations">
+      <PageHeading title={t('externalCancellations.title')}>{t('externalCancellations.intro')}</PageHeading>
+      <div className="ws-tabs" role="group" aria-label={t('externalCancellations.which')}>
         <Button variant={scope === 'admin' ? 'primary' : 'secondary'} aria-pressed={scope === 'admin'} onClick={() => setParams({})}>
-          Waiting for an admin
+          {t('externalCancellations.waitingAdmin')}
         </Button>
         <Button variant={scope === 'open' ? 'primary' : 'secondary'} aria-pressed={scope === 'open'} onClick={() => setParams({ scope: 'open' })}>
-          All open
+          {t('externalCancellations.allOpen')}
         </Button>
       </div>
-      {q.isPending ? <Loading label="Loading cancellations…" />
+      {q.isPending ? <Loading label={t('externalCancellations.loading')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : q.data.items.length === 0 ? (
-          <Empty title={scope === 'admin' ? 'Nothing is waiting for an admin' : 'No open cancellations'} />
+          <Empty title={scope === 'admin' ? t('externalCancellations.noneWaiting') : t('externalCancellations.noneOpen')} />
         ) : (
           <>
-            <p className="ws-count">{q.data.total} {scope === 'admin' ? 'waiting for an admin' : 'open'}</p>
+            <p className="ws-count">{t(scope === 'admin' ? 'externalCancellations.countWaiting' : 'externalCancellations.countOpen', { count: q.data.total })}</p>
             <ul className="stock-list">
               {q.data.items.map((c) => (
                 // Keyed by the obligations: if they change, the card (and any open confirmation) starts over.
@@ -61,12 +60,12 @@ export function ExternalCancellationsScreen() {
               ))}
             </ul>
             {q.data.totalPages > 1 && (
-              <nav className="ws-pager" aria-label="Pages">
+              <nav className="ws-pager" aria-label={t('common.pages')}>
                 <Button variant="secondary" disabled={page <= 1}
-                  onClick={() => setParams({ ...(scope === 'open' ? { scope } : {}), page: String(page - 1) })}>Previous</Button>
-                <span>Page {page} of {q.data.totalPages}</span>
+                  onClick={() => setParams({ ...(scope === 'open' ? { scope } : {}), page: String(page - 1) })}>{t('common.previous')}</Button>
+                <span>{t('common.pageOf', { page, lastPage: q.data.totalPages })}</span>
                 <Button variant="secondary" disabled={page >= q.data.totalPages}
-                  onClick={() => setParams({ ...(scope === 'open' ? { scope } : {}), page: String(page + 1) })}>Next</Button>
+                  onClick={() => setParams({ ...(scope === 'open' ? { scope } : {}), page: String(page + 1) })}>{t('common.next')}</Button>
               </nav>
             )}
           </>
@@ -96,22 +95,25 @@ function CancellationCard({ c, changed, onChanged, onReviewed }:
   return (
     <li className="ws-section">
       <div className="stock-head">
-        <h2>{c.patientName ?? 'Patient'}</h2>
+        <h2>{c.patientName ?? t('externalCancellations.patient')}</h2>
         <span>{c.integration} · {formatExpiry(c.bookingDate)} {c.bookingTime ?? ''} · {formatRupees(c.price)} {c.paymentStatus ?? ''}</span>
-        <Badge tone={c.cancel.state === 'unknown' ? 'danger' : 'warn'}>{STATE_LABEL[c.cancel.state]}</Badge>
+        <Badge tone={c.cancel.state === 'unknown' ? 'danger' : 'warn'}>{t(STATE_LABEL[c.cancel.state])}</Badge>
       </div>
       {what && <div className="ws-muted">{what}</div>}
       <dl className="ws-dl">
-        <dt>Requested</dt><dd>{formatDateTime(c.cancel.at)} by {c.cancel.by}{c.cancel.reason ? ` — “${c.cancel.reason}”` : ''}</dd>
-        <dt>Provider calls</dt><dd>{c.cancel.calls}{c.cancel.nextAt ? `, next ${formatDateTime(c.cancel.nextAt)}` : ''}</dd>
-        {c.cancel.blockedBy && <><dt>Blocked by</dt><dd>{c.cancel.blockedBy.replace(/_/g, ' ')}</dd></>}
-        {c.cancel.error && <><dt>Last error</dt><dd>{c.cancel.error}</dd></>}
-        <dt>Provider bookings</dt>
+        <dt>{t('externalCancellations.requested')}</dt>
+        <dd>{c.cancel.reason ? t('externalCancellations.requestedByReason', { at: formatDateTime(c.cancel.at), by: c.cancel.by, reason: c.cancel.reason })
+          : t('externalCancellations.requestedBy', { at: formatDateTime(c.cancel.at), by: c.cancel.by })}</dd>
+        <dt>{t('externalCancellations.calls')}</dt>
+        <dd>{c.cancel.nextAt ? t('externalCancellations.callsNext', { calls: c.cancel.calls, at: formatDateTime(c.cancel.nextAt) }) : c.cancel.calls}</dd>
+        {c.cancel.blockedBy && <><dt>{t('externalCancellations.blockedBy')}</dt><dd>{c.cancel.blockedBy.replace(/_/g, ' ')}</dd></>}
+        {c.cancel.error && <><dt>{t('externalCancellations.lastError')}</dt><dd>{c.cancel.error}</dd></>}
+        <dt>{t('externalCancellations.providerBookings')}</dt>
         <dd>
-          {c.providerRefs.length === 0 ? 'None recorded' : (
+          {c.providerRefs.length === 0 ? t('externalCancellations.noneRecorded') : (
             <ul className="ws-list">
               {c.providerRefs.map((r) => (
-                <li key={r.ref}><code>{r.ref}</code> {r.cancelled ? <Badge tone="ok">cancelled</Badge> : <Badge tone="warn">not confirmed</Badge>}</li>
+                <li key={r.ref}><code>{r.ref}</code> {r.cancelled ? <Badge tone="ok">{t('externalCancellations.ref.cancelled')}</Badge> : <Badge tone="warn">{t('externalCancellations.ref.notConfirmed')}</Badge>}</li>
               ))}
             </ul>
           )}
@@ -119,31 +121,30 @@ function CancellationCard({ c, changed, onChanged, onReviewed }:
       </dl>
       {changed && (
         <Alert>
-          The provider bookings changed while you were reviewing. Check every booking listed above with the provider again
-          before recording anything.{' '}
-          <Button variant="ghost" onClick={onReviewed}>I have checked the updated list</Button>
+          {t('externalCancellations.changed')}{' '}
+          <Button variant="ghost" onClick={onReviewed}>{t('externalCancellations.checked')}</Button>
         </Alert>
       )}
       {!c.cancel.needsAdmin ? (
-        <span className="ws-muted">Still being retried automatically. Act only if the provider has already told you the outcome.</span>
+        <span className="ws-muted">{t('externalCancellations.retrying')}</span>
       ) : (
-        <Alert tone="warn">Check with {c.integration} before recording anything. What you record releases the refund.</Alert>
+        <Alert tone="warn">{t('externalCancellations.checkWith', { provider: c.integration })}</Alert>
       )}
       <div className="ws-actions">
         {/* Always possible (reconcileProviderState): it also settles an attempt or a reschedule whose outcome is unknown. */}
-        <ConfirmAction label="Provider confirms cancelled…" confirmLabel="Record: cancelled at the provider" danger disabled={changed}
-          consequence={<>You confirm that the provider holds no active booking for this: every booking it had
-            {open.length ? <> (including <code>{open.map((r) => r.ref).join(', ')}</code>)</> : null}, also any made by a
-            reschedule, is cancelled. The customer is then refunded.</>}
+        <ConfirmAction label={t('externalCancellations.confirmsCancelled')} confirmLabel={t('externalCancellations.recordCancelled')} danger disabled={changed}
+          consequence={open.length
+            ? <>{t.rich('externalCancellations.cancelledConsequenceRefs', { refs: <code key="refs">{open.map((r) => r.ref).join(', ')}</code> })}</>
+            : t('externalCancellations.cancelledConsequence')}
           onConfirm={() => reconcile('cancelled')} />
         {/* Refused by the backend while references exist (EXTERNAL_PROVIDER_REFERENCE_EXISTS). */}
-        <ConfirmAction label="No booking at the provider…" confirmLabel="Record: no provider booking exists" danger
+        <ConfirmAction label={t('externalCancellations.noBooking')} confirmLabel={t('externalCancellations.recordAbsent')} danger
           disabled={changed || c.providerRefs.length > 0}
-          consequence="You confirm that the provider holds no booking for this at all. The customer is then refunded."
+          consequence={t('externalCancellations.absentConsequence')}
           onConfirm={() => reconcile('absent')} />
       </div>
       {c.providerRefs.length > 0 && (
-        <span className="ws-muted">“No booking at the provider” is not possible while provider booking references exist.</span>
+        <span className="ws-muted">{t('externalCancellations.absentImpossible')}</span>
       )}
     </li>
   );

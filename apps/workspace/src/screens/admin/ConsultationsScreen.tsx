@@ -7,6 +7,7 @@ import {
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { formatYmd } from '../doctor/doctor.tsx';
@@ -34,7 +35,8 @@ export const consultationTone = (s: AdminConsultation['status']) =>
 /** "Video", "Instant · Video", "Clinic front desk · In person". */
 export function consultationKind(b: Pick<AdminConsultation, 'bookingKind' | 'clinicDesk' | 'clinicVisit' | 'consultationMode'>): string {
   const mode = b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode : '';
-  const kind = b.bookingKind === 'instant' ? 'Instant' : b.clinicDesk ? 'Clinic front desk' : b.clinicVisit ? 'At a clinic' : '';
+  const kind = b.bookingKind === 'instant' ? t('consultations.kind.instant') : b.clinicDesk ? t('consultations.kind.clinicDesk')
+    : b.clinicVisit ? t('consultations.kind.atClinic') : '';
   return [kind, mode].filter(Boolean).join(' · ') || '—';
 }
 
@@ -58,43 +60,49 @@ function Consultations({ scopeKey }: { scopeKey: readonly string[] }) {
   const [doctorName, setDoctorName] = useState<string | null>(null);
   const lastPage = Math.max(1, list.data?.totalPages ?? 1);
   const filtered = !!(q.status || q.specialistId || q.from || q.to);
-  const shownDoctor = doctorName ?? list.data?.items.find((b) => b.specialistId === q.specialistId)?.doctorName ?? 'the chosen doctor';
+  const shownDoctor = doctorName ?? list.data?.items.find((b) => b.specialistId === q.specialistId)?.doctorName ?? t('consultations.chosenDoctor');
 
   return (
     <>
-      <PageHeading title="Consultations">Doctor consultation bookings. Open one to see its no-show history or move a no-show once.</PageHeading>
-      <div className="ws-search" role="group" aria-label="Filters">
+      <PageHeading title={t('consultations.title')}>{t('consultations.intro')}</PageHeading>
+      <div className="ws-search" role="group" aria-label={t('common.filters')}>
         <div className="j-field ws-filter">
-          <label htmlFor="cs-status">Status</label>
+          <label htmlFor="cs-status">{t('common.status')}</label>
           <select id="cs-status" value={q.status ?? ''} onChange={(e) => setFilter('status', e.target.value)}>
-            <option value="">Any status</option>
+            <option value="">{t('consultations.anyStatus')}</option>
             {CONSULTATION_STATUS_FILTERS.map((s) => <option key={s} value={s}>{CONSULTATION_STATUS_LABEL[s]}</option>)}
           </select>
         </div>
-        <TextField label="Appointments from" type="date" value={q.from ?? ''} onChange={(e) => setFilter('from', e.target.value)} />
-        <TextField label="Appointments to" type="date" value={q.to ?? ''} onChange={(e) => setFilter('to', e.target.value)} />
+        <TextField label={t('consultations.from')} type="date" value={q.from ?? ''} onChange={(e) => setFilter('from', e.target.value)} />
+        <TextField label={t('consultations.to')} type="date" value={q.to ?? ''} onChange={(e) => setFilter('to', e.target.value)} />
       </div>
       {q.specialistId ? (
         <p>
-          Doctor: <strong>{shownDoctor}</strong>{' '}
-          <Button variant="ghost" onClick={() => { setDoctorName(null); setFilter('doctor', ''); }}>All doctors</Button>
+          {t.rich('consultations.doctorFilter', { doctor: <strong key="doctor">{shownDoctor}</strong> })}{' '}
+          <Button variant="ghost" onClick={() => { setDoctorName(null); setFilter('doctor', ''); }}>{t('consultations.allDoctors')}</Button>
         </p>
       ) : (
         <DoctorFilter scopeKey={scopeKey} onChoose={(d) => { setDoctorName(d.name); setFilter('doctor', d._id); }} />
       )}
       {problem ? <Alert>{problem}</Alert>
-        : list.isPending ? <Loading label="Loading consultations…" />
+        : list.isPending ? <Loading label={t('consultations.loading')} />
         : list.isError ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
         : list.data.items.length === 0 && page === 1 ? (
-          <Empty title={filtered ? 'No consultations match' : 'No consultations yet'}>{filtered ? 'Change the filters.' : 'Consultations booked in the app appear here.'}</Empty>
+          <Empty title={filtered ? t('consultations.noneMatch') : t('consultations.noneYet')}>
+            {filtered ? t('consultations.changeFilters') : t('consultations.noneYetHint')}
+          </Empty>
         ) : (
           <>
-            <p className="ws-count" aria-live="polite">{list.data.total} {list.data.total === 1 ? 'consultation' : 'consultations'}</p>
+            <p className="ws-count" aria-live="polite">{t('consultations.count', { count: list.data.total })}</p>
             <div className="ws-table-wrap">
               <table className="j-table">
-                <caption className="j-sr-only">Consultations</caption>
+                <caption className="j-sr-only">{t('consultations.title')}</caption>
                 <thead>
-                  <tr><th scope="col">Appointment</th><th scope="col">Patient</th><th scope="col">Doctor</th><th scope="col">Kind</th><th scope="col">Status</th><th scope="col">Payment</th></tr>
+                  <tr>
+                    <th scope="col">{t('consultation.field.appointment')}</th><th scope="col">{t('consultation.field.patient')}</th>
+                    <th scope="col">{t('consultation.field.doctor')}</th><th scope="col">{t('consultation.field.kind')}</th>
+                    <th scope="col">{t('common.status')}</th><th scope="col">{t('consultation.field.payment')}</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {list.data.items.map((b) => (
@@ -105,7 +113,7 @@ function Consultations({ scopeKey }: { scopeKey: readonly string[] }) {
                       <td>{consultationKind(b)}</td>
                       <td>
                         <Badge tone={consultationTone(b.status)}>{CONSULTATION_STATUS_LABEL[b.status] ?? b.status}</Badge>
-                        {(b.noShows?.length ?? 0) > 0 && <div className="ws-muted">Moved after a no-show</div>}
+                        {(b.noShows?.length ?? 0) > 0 && <div className="ws-muted">{t('consultations.movedAfterNoShow')}</div>}
                       </td>
                       <td>{paymentLabel(b)}</td>
                     </tr>
@@ -114,10 +122,10 @@ function Consultations({ scopeKey }: { scopeKey: readonly string[] }) {
               </table>
             </div>
             {(lastPage > 1 || page > 1) && (
-              <nav className="ws-pager" aria-label="Pages">
-                <Button variant="secondary" disabled={page <= 1} onClick={() => setFilter('page', page - 1 > 1 ? String(page - 1) : '')}>Previous</Button>
-                <span>Page {page} of {lastPage}</span>
-                <Button variant="secondary" disabled={page >= lastPage} onClick={() => setFilter('page', String(page + 1))}>Next</Button>
+              <nav className="ws-pager" aria-label={t('common.pages')}>
+                <Button variant="secondary" disabled={page <= 1} onClick={() => setFilter('page', page - 1 > 1 ? String(page - 1) : '')}>{t('common.previous')}</Button>
+                <span>{t('common.pageOf', { page, lastPage })}</span>
+                <Button variant="secondary" disabled={page >= lastPage} onClick={() => setFilter('page', String(page + 1))}>{t('common.next')}</Button>
               </nav>
             )}
           </>
@@ -130,7 +138,9 @@ function Consultations({ scopeKey }: { scopeKey: readonly string[] }) {
 export const patientLabel = (b: Pick<AdminConsultation, 'patientName'>) => (b.patientName?.trim() ? b.patientName.trim() : '—');
 
 export const paymentLabel = (b: Pick<AdminConsultation, 'paymentStatus' | 'settlementSystem'>) =>
-  b.paymentStatus === 'paid' ? 'Paid' : b.paymentStatus === 'refunded' ? 'Refunded' : b.settlementSystem === 'clinic' ? 'At the clinic' : b.paymentStatus === 'failed' ? 'Payment failed' : 'Not paid';
+  t(b.paymentStatus === 'paid' ? 'consultations.payment.paid' : b.paymentStatus === 'refunded' ? 'consultations.payment.refunded'
+    : b.settlementSystem === 'clinic' ? 'consultations.payment.atClinic' : b.paymentStatus === 'failed' ? 'consultations.payment.failed'
+    : 'consultations.payment.notPaid');
 
 /** Find a doctor by part of their name (any status) and filter by them. */
 function DoctorFilter({ scopeKey, onChoose }: { scopeKey: readonly string[]; onChoose: (d: DoctorRef) => void }) {
@@ -140,21 +150,21 @@ function DoctorFilter({ scopeKey, onChoose }: { scopeKey: readonly string[]; onC
   const found = useQuery({ queryKey: [...scopeKey, 'doctors', search], queryFn: () => consultationAdminApi(api).doctors(search), enabled: !!search });
   const submit = (e: FormEvent) => { e.preventDefault(); setSearch(text.trim()); };
   return (
-    <section aria-label="Doctor">
+    <section aria-label={t('consultation.field.doctor')}>
       <form className="ws-search" role="search" onSubmit={submit}>
-        <TextField label="Doctor’s name" value={text} maxLength={100} onChange={(e) => setText(e.target.value)} />
-        <Button type="submit" variant="secondary" disabled={!text.trim()}>Find doctor</Button>
+        <TextField label={t('consultations.doctorName')} value={text} maxLength={100} onChange={(e) => setText(e.target.value)} />
+        <Button type="submit" variant="secondary" disabled={!text.trim()}>{t('consultations.findDoctor')}</Button>
       </form>
       {!search ? null
-        : found.isPending ? <Loading label="Finding doctors…" />
+        : found.isPending ? <Loading label={t('consultations.findingDoctors')} />
         : found.isError ? <ErrorState message={messageOf(found.error)} onRetry={() => void found.refetch()} />
-        : found.data.items.length === 0 ? <p className="ws-muted">No doctor’s name contains “{search}”.</p>
+        : found.data.items.length === 0 ? <p className="ws-muted">{t('consultations.noDoctorFound', { search })}</p>
         : (
-          <ul className="ws-list" aria-label="Doctors found">
+          <ul className="ws-list" aria-label={t('consultations.doctorsFound')}>
             {found.data.items.map((d) => (
               <li key={d._id}>
                 <Button variant="secondary" onClick={() => onChoose(d)}>
-                  {d.name}{d.specialization ? ` · ${d.specialization}` : ''}{d.isActive === false ? ' · inactive' : ''}
+                  {d.name}{d.specialization ? ` · ${d.specialization}` : ''}{d.isActive === false ? ` · ${t('consultations.inactive')}` : ''}
                 </Button>
               </li>
             ))}

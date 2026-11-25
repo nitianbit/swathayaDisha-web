@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import { Badge, Button, Empty, TextField } from '@jansetu/ui';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 
 /**
@@ -48,29 +49,29 @@ export function useNameSearch(params: URLSearchParams, setFilter: (key: string, 
 export function NameSearch({ s }: { s: ReturnType<typeof useNameSearch> }) {
   return (
     <form className="ws-search" role="search" onSubmit={s.submit}>
-      <TextField label="Search by name" value={s.search} maxLength={s.maxLength} onChange={(e) => s.setSearch(e.target.value)} />
-      <Button type="submit" variant="secondary">Search</Button>
+      <TextField label={t('common.searchByName')} value={s.search} maxLength={s.maxLength} onChange={(e) => s.setSearch(e.target.value)} />
+      <Button type="submit" variant="secondary">{t('common.search')}</Button>
     </form>
   );
 }
 /** The verification and active filters (`idPrefix` keeps the labels' ids unique per page). */
 export function StateFilterSelects({ idPrefix, q, setFilter }: { idPrefix: string; q: StateFilters; setFilter: (key: string, value: string) => void }) {
   return (
-    <div className="ws-search" role="group" aria-label="Filters">
+    <div className="ws-search" role="group" aria-label={t('common.filters')}>
       <div className="j-field ws-filter">
-        <label htmlFor={`${idPrefix}-verified`}>Verification</label>
+        <label htmlFor={`${idPrefix}-verified`}>{t('common.verification')}</label>
         <select id={`${idPrefix}-verified`} value={q.isVerified ?? ''} onChange={(e) => setFilter('isVerified', e.target.value)}>
-          <option value="">Verified or not</option>
-          <option value="true">Verified</option>
-          <option value="false">Not verified</option>
+          <option value="">{t('common.verifiedOrNot')}</option>
+          <option value="true">{t('common.verified')}</option>
+          <option value="false">{t('common.notVerified')}</option>
         </select>
       </div>
       <div className="j-field ws-filter">
-        <label htmlFor={`${idPrefix}-active`}>Active</label>
+        <label htmlFor={`${idPrefix}-active`}>{t('common.active')}</label>
         <select id={`${idPrefix}-active`} value={q.isActive ?? ''} onChange={(e) => setFilter('isActive', e.target.value)}>
-          <option value="">Active or not</option>
-          <option value="true">Active</option>
-          <option value="false">Inactive</option>
+          <option value="">{t('common.activeOrNot')}</option>
+          <option value="true">{t('common.active')}</option>
+          <option value="false">{t('common.inactive')}</option>
         </select>
       </div>
     </div>
@@ -81,8 +82,8 @@ export function StateFilterSelects({ idPrefix, q, setFilter }: { idPrefix: strin
 export function StateBadges({ verified, active }: { verified: boolean; active: boolean }) {
   return (
     <>
-      <Badge tone={verified ? 'ok' : 'warn'}>{verified ? 'Verified' : 'Not verified'}</Badge>
-      {!active && <> <Badge tone="danger">Inactive</Badge></>}
+      <Badge tone={verified ? 'ok' : 'warn'}>{verified ? t('common.verified') : t('common.notVerified')}</Badge>
+      {!active && <> <Badge tone="danger">{t('common.inactive')}</Badge></>}
     </>
   );
 }
@@ -91,21 +92,23 @@ export function StateBadges({ verified, active }: { verified: boolean; active: b
 export function Pager({ page, lastPage, setFilter }: { page: number; lastPage: number; setFilter: (key: string, value: string) => void }) {
   if (lastPage <= 1 && page <= 1) return null;
   return (
-    <nav className="ws-pager" aria-label="Pages">
-      <Button variant="secondary" disabled={page <= 1} onClick={() => setFilter('page', page - 1 > 1 ? String(page - 1) : '')}>Previous</Button>
-      <span>Page {page} of {lastPage}</span>
-      <Button variant="secondary" disabled={page >= lastPage} onClick={() => setFilter('page', String(page + 1))}>Next</Button>
+    <nav className="ws-pager" aria-label={t('common.pages')}>
+      <Button variant="secondary" disabled={page <= 1} onClick={() => setFilter('page', page - 1 > 1 ? String(page - 1) : '')}>{t('common.previous')}</Button>
+      <span>{t('common.pageOf', { page, lastPage })}</span>
+      <Button variant="secondary" disabled={page >= lastPage} onClick={() => setFilter('page', String(page + 1))}>{t('common.next')}</Button>
     </nav>
   );
 }
 
-/** A record page opened with an id that cannot exist. */
-export function NoSuchRecord({ back, backLabel, title, children }: { back: string; backLabel: string; title: string; children: ReactNode }) {
+/** A record page opened with an id that cannot exist (`missing`: "No such pharmacy"). */
+export function NoSuchRecord({ back, backLabel, title, missing, children }: {
+  back: string; backLabel: string; title: string; missing: string; children: ReactNode;
+}) {
   return (
     <>
       <Link className="ws-back" to={back}><ArrowLeft size={16} aria-hidden="true" /> {backLabel}</Link>
       <PageHeading title={title} />
-      <Empty title={`No such ${title.toLowerCase()}`}>{children}</Empty>
+      <Empty title={missing}>{children}</Empty>
     </>
   );
 }

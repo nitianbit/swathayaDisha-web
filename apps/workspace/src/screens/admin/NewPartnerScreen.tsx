@@ -9,6 +9,7 @@ import {
 } from '@jansetu/api';
 import { Alert, Button, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/admin/index.ts';
 import { afterFailure, beginAttempt, newRequestKey, ownsKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
@@ -25,28 +26,29 @@ interface Draft {
 /** Checks against `createPartnerSchema` and builds the request (optional fields only when filled in). */
 export function newPartnerBody(d: Draft): { body: NewPartner; errors: Record<string, string> } {
   const e: Record<string, string> = {};
-  const t = (s: string) => s.trim();
+  const trim = (s: string) => s.trim();
   const up = (s: string) => s.trim().toUpperCase();
-  if (!t(d.name)) e.name = 'Enter the name customers will see.';
-  else if (t(d.name).length > MAX_NAME) e.name = `Use at most ${MAX_NAME} characters.`;
-  if (t(d.legalName).length > MAX_NAME) e.legalName = `Use at most ${MAX_NAME} characters.`;
-  if (t(d.gstin) && !GSTIN_PATTERN.test(up(d.gstin))) e.gstin = 'Enter a valid 15-character GSTIN.';
-  if (t(d.pan) && !PAN_PATTERN.test(up(d.pan))) e.pan = 'Enter a valid 10-character PAN.';
-  if (!PARTNER_PHONE_PATTERN.test(d.contactPhone)) e.contactPhone = 'Enter the 10-digit contact number.';
-  if (t(d.contactEmail) && !EMAIL_PATTERN.test(t(d.contactEmail))) e.contactEmail = 'Enter a valid email address.';
-  if (!INVOICE_PREFIX_PATTERN.test(up(d.prefix))) e.prefix = 'Use 1 to 6 letters or digits.';
-  if (!t(d.ownerName)) e.ownerName = 'Enter the owner’s name.';
-  else if (t(d.ownerName).length > MAX_NAME) e.ownerName = `Use at most ${MAX_NAME} characters.`;
-  if (!PARTNER_PHONE_PATTERN.test(d.ownerPhone)) e.ownerPhone = 'Enter the owner’s 10-digit mobile number.';
+  const tooLong = () => t('newPartner.tooLong', { max: MAX_NAME });
+  if (!trim(d.name)) e.name = t('newPartner.nameMissing');
+  else if (trim(d.name).length > MAX_NAME) e.name = tooLong();
+  if (trim(d.legalName).length > MAX_NAME) e.legalName = tooLong();
+  if (trim(d.gstin) && !GSTIN_PATTERN.test(up(d.gstin))) e.gstin = t('partners.gstinInvalid');
+  if (trim(d.pan) && !PAN_PATTERN.test(up(d.pan))) e.pan = t('partners.panInvalid');
+  if (!PARTNER_PHONE_PATTERN.test(d.contactPhone)) e.contactPhone = t('newPartner.contactPhoneInvalid');
+  if (trim(d.contactEmail) && !EMAIL_PATTERN.test(trim(d.contactEmail))) e.contactEmail = t('newPartner.emailInvalid');
+  if (!INVOICE_PREFIX_PATTERN.test(up(d.prefix))) e.prefix = t('partners.prefixInvalid');
+  if (!trim(d.ownerName)) e.ownerName = t('newPartner.ownerNameMissing');
+  else if (trim(d.ownerName).length > MAX_NAME) e.ownerName = tooLong();
+  if (!PARTNER_PHONE_PATTERN.test(d.ownerPhone)) e.ownerPhone = t('newPartner.ownerPhoneInvalid');
   const ownerEmail = memberEmail(d.ownerEmail ?? '');
-  if (ownerEmail === null) e.ownerEmail = 'Enter a valid email address, or leave it empty.';
+  if (ownerEmail === null) e.ownerEmail = t('newPartner.ownerEmailInvalid');
   const body: NewPartner = {
-    kind: d.kind, name: t(d.name), contactPhone: d.contactPhone, taxRegime: d.taxRegime, invoiceSeriesPrefix: up(d.prefix),
-    firstOwner: { name: t(d.ownerName), phone: d.ownerPhone, ...(ownerEmail ? { email: ownerEmail } : {}) },
-    ...(t(d.legalName) ? { legalName: t(d.legalName) } : {}),
-    ...(t(d.gstin) ? { gstin: up(d.gstin) } : {}),
-    ...(t(d.pan) ? { pan: up(d.pan) } : {}),
-    ...(t(d.contactEmail) ? { contactEmail: t(d.contactEmail) } : {}),
+    kind: d.kind, name: trim(d.name), contactPhone: d.contactPhone, taxRegime: d.taxRegime, invoiceSeriesPrefix: up(d.prefix),
+    firstOwner: { name: trim(d.ownerName), phone: d.ownerPhone, ...(ownerEmail ? { email: ownerEmail } : {}) },
+    ...(trim(d.legalName) ? { legalName: trim(d.legalName) } : {}),
+    ...(trim(d.gstin) ? { gstin: up(d.gstin) } : {}),
+    ...(trim(d.pan) ? { pan: up(d.pan) } : {}),
+    ...(trim(d.contactEmail) ? { contactEmail: trim(d.contactEmail) } : {}),
     ...(d.kind === 'clinic' && d.solo ? { solo: true } : {}),
   };
   return { body, errors: e };
@@ -158,12 +160,12 @@ export function NewPartnerScreen() {
       if (r.state === 'used') {
         settle(p.requestKey);
         if (r.partner) { await open(r.partner._id); return; }
-        setNotice('It had already been created. Find it in the list.');
+        setNotice(t('newPartner.alreadyCreated'));
         return;
       }
       settle(p.requestKey);
       if (p.restored) setD(EMPTY);
-      setNotice('Given up: nothing was created and that request can never create a partner. You can create it again.');
+      setNotice(t('newPartner.givenUp'));
     } catch (err) {
       if (ownsTheKey(p)) setError(messageOf(err));
     } finally {
@@ -182,35 +184,31 @@ export function NewPartnerScreen() {
 
   return (
     <>
-      <Link className="ws-back" to="/admin/partners"><ArrowLeft size={16} aria-hidden="true" /> Back to labs and clinics</Link>
-      <PageHeading title="Add a lab or clinic">It starts waiting for verification; its owner can use the workspace once it is verified.</PageHeading>
+      <Link className="ws-back" to="/admin/partners"><ArrowLeft size={16} aria-hidden="true" /> {t('common.backToPartners')}</Link>
+      <PageHeading title={t('newPartner.title')}>{t('newPartner.intro')}</PageHeading>
       {found && (
         <section className="ws-section" aria-labelledby="found-h">
-          <h2 id="found-h">{found.name} was created</h2>
-          <p className="ws-muted">The creation that was unconfirmed before the page reloaded did go through.</p>
+          <h2 id="found-h">{t('newPartner.foundTitle', { name: found.name })}</h2>
+          <p className="ws-muted">{t('newPartner.foundBody')}</p>
           <div className="ws-actions">
-            <Link className="j-btn j-btn--primary" to={`/admin/partners/${found._id}`}>Open {found.name}</Link>
-            <Button variant="secondary" onClick={() => setFound(null)}>Add another</Button>
+            <Link className="j-btn j-btn--primary" to={`/admin/partners/${found._id}`}>{t('newPartner.foundOpen', { name: found.name })}</Link>
+            <Button variant="secondary" onClick={() => setFound(null)}>{t('newPartner.addAnother')}</Button>
           </div>
         </section>
       )}
       {notice && <Alert tone="ok">{notice}</Alert>}
       {pending?.restored ? (
         <section className="ws-section" aria-labelledby="unconfirmed-h">
-          <h2 id="unconfirmed-h">An unconfirmed creation</h2>
-          {lookup.isPending ? <Loading label="Checking whether it was created…" />
+          <h2 id="unconfirmed-h">{t('newPartner.restoredTitle')}</h2>
+          {lookup.isPending ? <Loading label={t('newPartner.restoredChecking')} />
             : lookup.isError ? <ErrorState message={messageOf(lookup.error)} onRetry={() => void lookup.refetch()} />
             : (
               <>
-                <Alert tone="warn">
-                  Before the page reloaded, a lab or clinic was being created and its answer never arrived. Nothing has
-                  been created with it so far, but the request could still arrive. Give it up so it never can, then
-                  start again. Its details are not kept on this device.
-                </Alert>
+                <Alert tone="warn">{t('newPartner.restoredBody')}</Alert>
                 {error && <Alert>{error}</Alert>}
                 <div className="ws-actions">
-                  <Button busy={busy} onClick={() => void giveUp(pending)}>Give up this create</Button>
-                  <Button variant="secondary" disabled={busy} onClick={() => void lookup.refetch()}>Check again</Button>
+                  <Button busy={busy} onClick={() => void giveUp(pending)}>{t('newPartner.giveUp')}</Button>
+                  <Button variant="secondary" disabled={busy} onClick={() => void lookup.refetch()}>{t('newPartner.checkAgain')}</Button>
                 </div>
               </>
             )}
@@ -218,57 +216,57 @@ export function NewPartnerScreen() {
       ) : !found && (
       <form className="rx-form ws-section" noValidate onSubmit={submit}>
         {pending && (
-          <div className="confirm" role="group" aria-label="Unconfirmed creation">
+          <div className="confirm" role="group" aria-label={t('newPartner.pendingLabel')}>
             <Alert tone="warn">
-              {`We could not confirm whether ${pending.body.body.name} was created${pending.error ? ` (${pending.error})` : ''}. `}
-              Send again to find out: it sends the same request, so it can never create a second one. Or give it up: then
-              it can never be created, and you can change the form. The form stays locked until one of these is done.
+              {pending.error
+                ? t('newPartner.pendingBodyWithError', { name: pending.body.body.name, error: pending.error })
+                : t('newPartner.pendingBody', { name: pending.body.body.name })}
             </Alert>
             {error && <Alert>{error}</Alert>}
             <div className="confirm-actions">
-              <Button busy={busy} onClick={() => void send(pending)}>Send again</Button>
-              <Button variant="secondary" disabled={busy} onClick={() => void giveUp(pending)}>Give up this create</Button>
+              <Button busy={busy} onClick={() => void send(pending)}>{t('newPartner.sendAgain')}</Button>
+              <Button variant="secondary" disabled={busy} onClick={() => void giveUp(pending)}>{t('newPartner.giveUp')}</Button>
             </div>
           </div>
         )}
         <fieldset className="ws-checks" disabled={locked}>
-          <legend>Type</legend>
-          <label className="ws-check"><input type="radio" name="kind" checked={d.kind === 'lab'} onChange={() => setD((x) => ({ ...x, kind: 'lab' }))} /> Lab</label>
-          <label className="ws-check"><input type="radio" name="kind" checked={d.kind === 'clinic'} onChange={() => setD((x) => ({ ...x, kind: 'clinic' }))} /> Clinic</label>
+          <legend>{t('common.type')}</legend>
+          <label className="ws-check"><input type="radio" name="kind" checked={d.kind === 'lab'} onChange={() => setD((x) => ({ ...x, kind: 'lab' }))} /> {t('newPartner.kindLab')}</label>
+          <label className="ws-check"><input type="radio" name="kind" checked={d.kind === 'clinic'} onChange={() => setD((x) => ({ ...x, kind: 'clinic' }))} /> {t('newPartner.kindClinic')}</label>
           {d.kind === 'clinic' && (
             <label className="ws-check">
-              <input type="checkbox" checked={d.solo} onChange={(e) => setD((x) => ({ ...x, solo: e.target.checked }))} /> Single-doctor practice
+              <input type="checkbox" checked={d.solo} onChange={(e) => setD((x) => ({ ...x, solo: e.target.checked }))} /> {t('newPartner.solo')}
             </label>
           )}
         </fieldset>
         <div className="rx-form-row">
-          <TextField label="Display name" maxLength={MAX_NAME} {...text('name')} />
-          <TextField label="Legal name (optional)" maxLength={MAX_NAME} {...text('legalName')} />
+          <TextField label={t('newPartner.displayName')} maxLength={MAX_NAME} {...text('name')} />
+          <TextField label={t('newPartner.legalName')} maxLength={MAX_NAME} {...text('legalName')} />
         </div>
         <div className="rx-form-row">
-          <TextField label="Contact phone" inputMode="numeric" maxLength={10} {...text('contactPhone', true)} />
-          <TextField label="Contact email (optional)" type="email" {...text('contactEmail')} />
+          <TextField label={t('newPartner.contactPhone')} inputMode="numeric" maxLength={10} {...text('contactPhone', true)} />
+          <TextField label={t('newPartner.contactEmail')} type="email" {...text('contactEmail')} />
         </div>
         <div className="rx-form-row">
-          <TextField label="GSTIN (optional)" maxLength={15} {...text('gstin')} />
-          <TextField label="PAN (optional)" maxLength={10} {...text('pan')} />
+          <TextField label={t('newPartner.gstin')} maxLength={15} {...text('gstin')} />
+          <TextField label={t('newPartner.pan')} maxLength={10} {...text('pan')} />
           <div className="j-field">
-            <label htmlFor="np-tax">Tax</label>
+            <label htmlFor="np-tax">{t('partners.taxLabel')}</label>
             <select id="np-tax" value={d.taxRegime} disabled={locked} onChange={(e) => setD((x) => ({ ...x, taxRegime: e.target.value as TaxRegime }))}>
               {REGIMES.map((r) => <option key={r} value={r}>{TAX_REGIME_LABEL[r]}</option>)}
             </select>
           </div>
-          <TextField label="Invoice prefix" maxLength={6} hint="1 to 6 letters or digits, printed on every invoice" {...text('prefix')} />
+          <TextField label={t('partners.invoicePrefix')} maxLength={6} hint={t('newPartner.prefixHint')} {...text('prefix')} />
         </div>
-        <h2>First owner</h2>
+        <h2>{t('newPartner.firstOwner')}</h2>
         <div className="rx-form-row">
-          <TextField label="Owner name" maxLength={MAX_NAME} {...text('ownerName')} />
-          <TextField label="Owner mobile number" inputMode="numeric" maxLength={10} {...text('ownerPhone', true)} />
-          <TextField label="Owner email (optional)" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} maxLength={MAX_EMAIL}
-            hint="The owner can sign in with this email too" {...text('ownerEmail')} />
+          <TextField label={t('newPartner.ownerName')} maxLength={MAX_NAME} {...text('ownerName')} />
+          <TextField label={t('newPartner.ownerPhone')} inputMode="numeric" maxLength={10} {...text('ownerPhone', true)} />
+          <TextField label={t('newPartner.ownerEmail')} type="email" inputMode="email" autoCapitalize="none" spellCheck={false} maxLength={MAX_EMAIL}
+            hint={t('newPartner.ownerEmailHint')} {...text('ownerEmail')} />
         </div>
         {!pending && error && <Alert>{error}</Alert>}
-        {!locked && <div><Button type="submit" busy={busy}>Create</Button></div>}
+        {!locked && <div><Button type="submit" busy={busy}>{t('newPartner.create')}</Button></div>}
       </form>
       )}
     </>
