@@ -9,15 +9,14 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { usePharmacyId } from './ownedOp.tsx';
 import { TopUpForm } from './topup.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /** WQ12: the pharmacy's Jansetu wallet (`GET /pharmacy-wallet`, `/transactions`): balance, hold, history, top-ups. */
 export function WalletScreen() {
   const pharmacyId = usePharmacyId();
   return (
     <>
-      <PageHeading title="Wallet">
-        Your Jansetu wallet pays for consultations you book for patients. Collect the amount from the patient at your counter.
-      </PageHeading>
+      <PageHeading title={t('common.wallet')}>{t('wallet.yourJansetuWalletPaysFor')}</PageHeading>
       <Wallet key={pharmacyId} pharmacyId={pharmacyId} />
     </>
   );
@@ -44,10 +43,10 @@ export function usePayerWallet(payer: WalletPayer) {
 export function walletHoldWords(w: PharmacyWallet | null | undefined): string | null {
   const s = walletState(w);
   if (s === 'owing') {
-    return `Your wallet owes ${formatRupees(Number(w?.receivableMinor ?? 0) / 100)} to Jansetu after a disputed card payment. It cannot pay for bookings. The next money added clears this first. Please contact Jansetu support.`;
+    return t('wallet.yourWalletOwesToJansetu', { amount: formatRupees(Number(w?.receivableMinor ?? 0) / 100) });
   }
-  if (s === 'frozen') return 'Your wallet is on hold, so it cannot pay for bookings. Money can still be added. Please contact Jansetu support.';
-  if (s === 'off') return 'Your wallet is switched off. Please contact Jansetu support.';
+  if (s === 'frozen') return t('wallet.yourWalletIsOnHold');
+  if (s === 'off') return t('wallet.yourWalletIsSwitchedOff');
   return null;
 }
 
@@ -67,15 +66,15 @@ function Wallet({ pharmacyId }: { pharmacyId: string }) {
       <WalletBalance wallet={wallet} />
 
       <section className="ws-section" aria-labelledby="top-h">
-        <h2 id="top-h">Add money</h2>
+        <h2 id="top-h">{t('common.addMoney')}</h2>
         <TopUpForm pharmacyId={pharmacyId} />
       </section>
 
-      <WalletHistory q={movements} empty="Top-ups, booking payments and refunds are listed here." pager={movements.data && movements.data.totalPages > 1 && (
-        <nav className="ws-pager" aria-label="Wallet history pages">
-          <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Newer</Button>
-          <span>Page {page} of {movements.data.totalPages}</span>
-          <Button variant="secondary" disabled={page >= movements.data.totalPages} onClick={() => setPage(page + 1)}>Older</Button>
+      <WalletHistory q={movements} empty={t('wallet.topUpsBookingPaymentsAnd')} pager={movements.data && movements.data.totalPages > 1 && (
+        <nav className="ws-pager" aria-label={t('wallet.walletHistoryPages')}>
+          <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>{t('common.newer')}</Button>
+          <span>{t('common.page')}{page}{t('common.of')}{movements.data.totalPages}</span>
+          <Button variant="secondary" disabled={page >= movements.data.totalPages} onClick={() => setPage(page + 1)}>{t('common.older')}</Button>
         </nav>
       )} />
     </>
@@ -90,17 +89,17 @@ export function WalletBalance({ wallet, cardMoney = false }: { wallet: UseQueryR
   const hold = walletHoldWords(wallet.data ?? undefined);
   return (
     <section className="ws-section" aria-labelledby="bal-h">
-      <h2 id="bal-h">Balance</h2>
-      {wallet.isPending ? <Loading label="Loading your wallet…" />
+      <h2 id="bal-h">{t('wallet.balance')}</h2>
+      {wallet.isPending ? <Loading label={t('wallet.loadingYourWallet')} />
         : wallet.isError ? <ErrorState message={messageOf(wallet.error)} onRetry={() => void wallet.refetch()} />
         : (
           <>
-            <dl className="fin-cards" aria-label="Wallet">
-              <div className="fin-card fin-card--main"><dt>Money in your wallet</dt><dd>{formatRupees(walletBalancePaise(wallet.data) / 100)}</dd></div>
+            <dl className="fin-cards" aria-label={t('common.wallet')}>
+              <div className="fin-card fin-card--main"><dt>{t('wallet.moneyInYourWallet')}</dt><dd>{formatRupees(walletBalancePaise(wallet.data) / 100)}</dd></div>
               {Number(wallet.data?.receivableMinor ?? 0) > 0 && (
-                <div className="fin-card"><dt>Owed to Jansetu</dt><dd>{formatRupees(Number(wallet.data?.receivableMinor) / 100)}</dd></div>
+                <div className="fin-card"><dt>{t('wallet.owedToJansetu')}</dt><dd>{formatRupees(Number(wallet.data?.receivableMinor) / 100)}</dd></div>
               )}
-              {cardMoney && <div className="fin-card"><dt>Card money (withdrawals coming later)</dt><dd>{formatRupees(Number(wallet.data?.withdrawableMinor ?? 0) / 100)}</dd></div>}
+              {cardMoney && <div className="fin-card"><dt>{t('wallet.cardMoneyWithdrawalsComingLater')}</dt><dd>{formatRupees(Number(wallet.data?.withdrawableMinor ?? 0) / 100)}</dd></div>}
             </dl>
             {hold && <Alert tone="warn">{hold}</Alert>}
           </>
@@ -116,10 +115,10 @@ export function WalletHistory({ q, empty, pager, first = true, notes = false }: 
 }) {
   return (
     <section className="ws-section" aria-labelledby="hist-h">
-      <h2 id="hist-h">Wallet history</h2>
-      {q.isPending ? <Loading label="Loading wallet history…" />
+      <h2 id="hist-h">{t('wallet.walletHistory')}</h2>
+      {q.isPending ? <Loading label={t('wallet.loadingWalletHistory')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : q.data.items.length === 0 && first ? <Empty title="No money in or out yet">{empty}</Empty>
+        : q.data.items.length === 0 && first ? <Empty title={t('wallet.noMoneyInOrOut')}>{empty}</Empty>
         : (
           <>
             <MovementsTable rows={q.data.items} notes={notes} />
@@ -138,9 +137,9 @@ export function MovementsTable({ rows, notes = false }: { rows: readonly WalletM
   return (
     <div className="ws-table-wrap">
       <table className="j-table">
-        <caption className="j-sr-only">Wallet history, newest first</caption>
+        <caption className="j-sr-only">{t('wallet.walletHistoryNewestFirst')}</caption>
         <thead>
-          <tr><th scope="col">When</th><th scope="col">What</th>{notes && <th scope="col">Note</th>}<th scope="col">In / out</th><th scope="col">Balance after</th></tr>
+          <tr><th scope={'col'}>{t('common.when')}</th><th scope={'col'}>{t('wallet.what')}</th>{notes && <th scope={'col'}>{t('common.note')}</th>}<th scope={'col'}>{t('wallet.inOut')}</th><th scope={'col'}>{t('wallet.balanceAfter')}</th></tr>
         </thead>
         <tbody>
           {rows.map((m) => {

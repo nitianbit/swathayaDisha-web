@@ -20,6 +20,7 @@ import { PayChoice, payerWallet } from './walletPay.tsx';
 import { RecommendedTests, useRecommendedTicks } from './recommendedTests.tsx';
 import { CardDueSection, CardPaymentPanel, isOrderFailed, NOT_PAYABLE_WORDS, NotBooked, ORDER_FAILED_WORDS, useCardChoice } from './cardBooking.tsx';
 import { pharmacyLabBooker, type LabBooker } from './labBooker.ts';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ17: a pharmacy books a lab test for a walk-in patient (assisted booking phase 2a, backend r11, design §24.11): the same
@@ -35,9 +36,7 @@ export function BookLabTestScreen() {
   const { api } = useSession();
   return (
     <>
-      <PageHeading title="Book lab test">
-        Book a lab test for a patient at your counter. Jansetu takes the price from your wallet; you collect it from the patient.
-      </PageHeading>
+      <PageHeading title={t('bookLabTest.bookLabTest')}>{t('bookLabTest.bookALabTestFor')}</PageHeading>
       <BookLabTest key={pharmacyId} booker={pharmacyLabBooker(api, pharmacyId)} />
     </>
   );
@@ -58,19 +57,19 @@ const SLOT_DAYS = 7;
 function SummaryList({ s }: { s: ShownSummary }) {
   return (
     <ul className="ws-list">
-      <li>Patient: <strong>{s.patient}</strong></li>
-      <li>Lab: <strong>{s.lab}</strong>, {s.branch}</li>
-      <li>Visit: <strong>{LAB_VISIT_MODE_LABEL[s.mode]}</strong>{s.address ? ` at ${s.address}` : ''}</li>
-      <li>When: <strong>{formatSlotDate(s.date)} at {s.time}</strong></li>
-      <li>Tests: <strong>{s.tests.join(', ')}</strong></li>
-      {s.priceMinor !== undefined && <li>Price: <strong>{formatRupees(s.priceMinor / 100)}</strong>{s.couponCode ? ` (coupon ${s.couponCode})` : ''}</li>}
+      <li>{t('common.patient')}<strong>{s.patient}</strong></li>
+      <li>{t('bookLabTest.lab')}<strong>{s.lab}</strong>, {s.branch}</li>
+      <li>{t('bookLabTest.visit')}<strong>{LAB_VISIT_MODE_LABEL[s.mode]}</strong>{s.address ? ` at ${s.address}` : ''}</li>
+      <li>{t('common.when2')}<strong>{formatSlotDate(s.date)}{t('bookLabTest.at')}{s.time}</strong></li>
+      <li>{t('bookLabTest.tests')}<strong>{s.tests.join(', ')}</strong></li>
+      {s.priceMinor !== undefined && <li>{t('common.price')}<strong>{formatRupees(s.priceMinor / 100)}</strong>{s.couponCode ? ` (coupon ${s.couponCode})` : ''}</li>}
     </ul>
   );
 }
 
 function summaryOf(b: LabBookingView, summary: Summary | undefined): ShownSummary {
   return summary ?? {
-    patient: b.patientName ?? 'The patient', lab: b.lab?.name ?? 'The lab', branch: b.branch?.name ?? '', mode: (b.visitMode as Mode) ?? 'lab',
+    patient: b.patientName ?? t('common.thePatient'), lab: b.lab?.name ?? t('bookLabTest.theLab'), branch: b.branch?.name ?? '', mode: (b.visitMode as Mode) ?? 'lab',
     date: b.slot?.date?.replace(/-/g, '') ?? '', time: b.slot?.startTime ?? '', tests: (b.items ?? []).map((i) => i.name),
   };
 }
@@ -125,7 +124,7 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
     routeCardAnswer('lab', { card: v.funding?.method === 'razorpay', booking: v.booking, order: v.payment ?? null }, null, {
       done: (card) => setDone({ ...base, paidBy: card ? 'card' : 'wallet' }),
       due: (order) => setCardDue({ bookingId: v.booking._id, requestKey, order, summary, ref: v.booking.assisted?.shortRef, newAccount: v.newAccount, autoOpen: !!order }),
-      ended: () => setEnded(NOT_PAYABLE_WORDS),
+      ended: () => setEnded(NOT_PAYABLE_WORDS()),
     });
   }
 
@@ -137,7 +136,7 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
       settle: () => { settle(requestKey); setReview(null); create.refresh(); },
       done: () => setDone(doneFromView(b, summary)),
       due: (order) => setCardDue({ bookingId: b._id, requestKey, order, summary: summaryOf(b, summary), ref: b.assisted?.shortRef, autoOpen: false }),
-      ended: () => setEnded(NOT_PAYABLE_WORDS),
+      ended: () => setEnded(NOT_PAYABLE_WORDS()),
     });
   }
 
@@ -211,15 +210,15 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
     e.preventDefault();
     setRefused(null);
     const errs: Record<string, string> = {};
-    if (!lab) errs.lab = 'Choose a lab.';
-    else if (!branch) errs.branch = 'Choose a branch.';
-    if (itemIds.length === 0) errs.items = 'Choose at least one test.';
-    else if (itemIds.length > 20) errs.items = 'Choose at most 20 tests.';
-    if (!slot) errs.slot = 'Choose a time.';
+    if (!lab) errs.lab = t('bookLabTest.chooseALab');
+    else if (!branch) errs.branch = t('bookLabTest.chooseABranch');
+    if (itemIds.length === 0) errs.items = t('bookLabTest.chooseAtLeastOneTest');
+    else if (itemIds.length > 20) errs.items = t('bookLabTest.chooseAtMost20Tests');
+    if (!slot) errs.slot = t('common.chooseATime');
     if (mode === 'home') for (const [k, v] of Object.entries(addressErrors(address))) errs[`address.${k}`] = v;
-    if (!language) errs.language = 'Choose the language the patient speaks.';
+    if (!language) errs.language = t('common.chooseTheLanguageThePatient');
     const code = coupon.trim().toUpperCase();
-    if (code && !/^[A-Z0-9_-]{2,50}$/.test(code)) errs.coupon = 'Check the coupon code (letters and numbers only).';
+    if (code && !/^[A-Z0-9_-]{2,50}$/.test(code)) errs.coupon = t('common.checkTheCouponCodeLetters');
     setErrors(errs);
     // The patient: a walk-in by phone, or (WQ25) the doctor's own consultation with the name the doctor typed.
     const source: LabPatientSource | null = fromConsultation ? (cs.done ? { fromBookingId: fromBookingId!.toLowerCase(), typedName: cs.typedName } : null)
@@ -246,9 +245,9 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
   // An unconfirmed booking stays on screen while it is resent or given up (its first attempt shows the review busy).
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
     return (
-      <UnconfirmedBooking op={op} what="lab booking" busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => labsApi.byKey(op.requestKey)}
+      <UnconfirmedBooking op={op} what={t('bookLabTest.labBooking')} busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => labsApi.byKey(op.requestKey)}
         onUsed={(r, restored) => afterUsed(r, op.requestKey, restored ? undefined : op.body?.summary, restored)}
-        extra={orderFailed && <Alert tone="warn">{ORDER_FAILED_WORDS}</Alert>}
+        extra={orderFailed && <Alert tone="warn">{ORDER_FAILED_WORDS()}</Alert>}
         onAbandoned={() => create.abandonedByCheck(op.requestKey)}
         onResend={() => { setResendError(null); void create.send(op).catch((err: unknown) => setResendError(booker.refusal(err).message)); }}
         onGiveUp={() => void create.giveUp(op)}
@@ -257,18 +256,18 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
   }
 
   if (off) {
-    return <Alert tone="warn">{LAB_SWITCHED_OFF_MESSAGE} Jansetu turns it on {booker.words.offFor} when it is ready. Your other tools work as usual.</Alert>;
+    return <Alert tone="warn">{LAB_SWITCHED_OFF_MESSAGE}{t('bookLabTest.jansetuTurnsItOn')}{booker.words.offFor}{t('common.whenItIsReadyYour')}</Alert>;
   }
 
   if (ended) {
-    return <NotBooked words={ended} againLabel="Book another lab test" onAgain={resetAll} listPath={booker.paths.list} listLabel="See booked lab tests" />;
+    return <NotBooked words={ended} againLabel={t('bookLabTest.bookAnotherLabTest')} onAgain={resetAll} listPath={booker.paths.list} listLabel={t('bookLabTest.seeBookedLabTests')} />;
   }
 
   if (cardDue) {
     const due = cardDue;
     return (
       <CardDueSection bookingRef={due.ref} summary={<SummaryList s={due.summary} />} newAccount={due.newAccount} listPath={booker.paths.list}
-        listLabel="See booked lab tests" held={cardHeld}>
+        listLabel={t('bookLabTest.seeBookedLabTests')} held={cardHeld}>
         <CardPaymentPanel key={due.bookingId} source={booker.cardSource(api, due.bookingId, due.requestKey)} order={due.order} amountMinor={due.summary.priceMinor}
           perform={perform} busy={busy} autoOpen={due.autoOpen} onHeld={setCardHeld}
           onPaid={(_b, note) => { setCardDue(null); setDone({ summary: due.summary, ref: due.ref, paidMinor: due.order?.amountMinor ?? due.summary.priceMinor, replayed: false, newAccount: due.newAccount, paidBy: 'card', ...(note ? { note } : {}) }); create.refresh(); }}
@@ -281,19 +280,19 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
     const byCard = done.paidBy === 'card';
     return (
       <section className="ws-section" aria-labelledby="done-h">
-        <h2 id="done-h">{done.replayed ? 'Already booked' : 'Booked'}</h2>
+        <h2 id="done-h">{done.replayed ? t('common.alreadyBooked') : 'Booked'}</h2>
         <Alert tone="ok">
-          {done.replayed ? 'This booking was already made. Nothing was booked or charged twice.'
-            : byCard ? 'The lab test is booked and paid by card or UPI.' : 'The lab test is booked and paid from your wallet.'}
-          {done.ref ? <> Booking reference: <strong>{done.ref}</strong>.</> : null}
+          {done.replayed ? t('common.thisBookingWasAlreadyMade')
+            : byCard ? t('bookLabTest.theLabTestIsBooked') : t('bookLabTest.theLabTestIsBooked2')}
+          {done.ref ? <>{t('common.bookingReference')}<strong>{done.ref}</strong>.</> : null}
         </Alert>
         {done.note && <Alert tone="warn">{done.note}</Alert>}
         <SummaryList s={done.summary} />
-        {done.paidMinor !== undefined && <p>{byCard ? 'Paid by card or UPI' : 'Paid from your wallet'}: <strong>{formatRupees(done.paidMinor / 100)}</strong>. Collect this from the patient.</p>}
-        {done.newAccount && <p className="ws-muted">This number was new to Jansetu. An account was made for it; the patient can sign in with this number later.</p>}
+        {done.paidMinor !== undefined && <p>{byCard ? t('common.paidByCardOrUpi') : t('common.paidFromYourWallet')}: <strong>{formatRupees(done.paidMinor / 100)}</strong>{t('common.collectThisFromThePatient')}</p>}
+        {done.newAccount && <p className="ws-muted">{t('common.thisNumberWasNewTo')}</p>}
         <div className="ws-actions">
-          <Button onClick={resetAll}>Book another lab test</Button>
-          <Link to={booker.paths.list}>See booked lab tests</Link>
+          <Button onClick={resetAll}>{t('bookLabTest.bookAnotherLabTest')}</Button>
+          <Link to={booker.paths.list}>{t('bookLabTest.seeBookedLabTests')}</Link>
         </div>
       </section>
     );
@@ -304,18 +303,18 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
     <>
       {notice && <Alert tone="ok">{notice}</Alert>}
       {fromConsultation ? <ConsultationPatientSection step={cs} frozen={patientDone || frozen} locked={frozen} consent={booker.consent.statement} walkInPath={booker.paths.book} />
-        : <PatientSection step={pt} busy={busy} frozen={patientDone || frozen} locked={frozen} nextLabel="Next: choose the lab" booker={booker.kind}
+        : <PatientSection step={pt} busy={busy} frozen={patientDone || frozen} locked={frozen} nextLabel={t('common.nextChooseTheLab')} booker={booker.kind}
           consent={booker.consent.statement} />}
 
       {patientDone && (
         <section className="ws-section" aria-labelledby="lab-h">
-          <h2 id="lab-h">2. Lab, tests and time</h2>
+          <h2 id="lab-h">{t('bookLabTest.n2LabTestsAndTime')}</h2>
           {lookup && !fromConsultation && <RecommendedTests load={booker.loadRecommendation} phone={lookup.phone} perform={perform} disabled={frozen} ticks={recTicks}
             label={booker.words.recommendationLabel} />}
           <form className="rx-form" noValidate onSubmit={visitNext}>
             <fieldset className="ws-frozen" disabled={frozen}>
               <fieldset className="ws-checks">
-                <legend>Where is the sample taken?</legend>
+                <legend>{t('bookLabTest.whereIsTheSampleTaken')}</legend>
                 {(['lab', 'home'] as const).map((m) => (
                   <label key={m} className="ws-check">
                     <input type="radio" name="visit" checked={mode === m} onChange={() => chooseMode(m)} />
@@ -324,21 +323,21 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
                 ))}
               </fieldset>
 
-              {labs.isPending ? <Loading label="Finding labs…" />
+              {labs.isPending ? <Loading label={t('bookLabTest.findingLabs')} />
                 : labs.isError ? <ErrorState message={booker.refusal(labs.error).message} onRetry={() => void labs.refetch()} />
-                : labs.data.length === 0 ? <Empty title="No labs found">Try the other kind of visit.</Empty>
+                : labs.data.length === 0 ? <Empty title={t('bookLabTest.noLabsFound')}>{t('bookLabTest.tryTheOtherKindOf')}</Empty>
                 : (
-                  <ul className="stock-list" aria-label="Labs, nearest first">
+                  <ul className="stock-list" aria-label={t('bookLabTest.labsNearestFirst')}>
                     {labs.data.map((l) => (
                       <li key={l.partnerId} className="ws-section">
                         <div className="stock-head">
                           <h3>{l.name}</h3>
-                          {l.nearby === 'pincode' ? <Badge tone="ok">Near you</Badge> : l.nearby === 'city' ? <Badge>Same city</Badge> : null}
+                          {l.nearby === 'pincode' ? <Badge tone="ok">{t('common.nearYou')}</Badge> : l.nearby === 'city' ? <Badge>{t('common.sameCity')}</Badge> : null}
                         </div>
                         <div className="ws-actions">
-                          <span className="ws-muted">{branchesFor(l, mode).map((b) => b.name).join(' · ') || 'No branch for this visit'}</span>
-                          {partnerId === l.partnerId ? <Badge tone="ok">Chosen</Badge>
-                            : <Button variant="secondary" aria-label={`Choose ${l.name}`} onClick={() => chooseLab(l.partnerId)}>Choose</Button>}
+                          <span className="ws-muted">{branchesFor(l, mode).map((b) => b.name).join(' · ') || t('bookLabTest.noBranchForThisVisit')}</span>
+                          {partnerId === l.partnerId ? <Badge tone="ok">{t('common.chosen')}</Badge>
+                            : <Button variant="secondary" aria-label={t('common.choose4', { name: l.name })} onClick={() => chooseLab(l.partnerId)}>{t('common.choose2')}</Button>}
                         </div>
                       </li>
                     ))}
@@ -348,7 +347,7 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
 
               {lab && branches.length > 1 && (
                 <fieldset className="ws-checks">
-                  <legend>Branch</legend>
+                  <legend>{t('bookLabTest.branch')}</legend>
                   {branches.map((b) => (
                     <label key={b.branchId} className="ws-check">
                       <input type="radio" name="branch" checked={branchId === b.branchId} onChange={() => { setBranchId(b.branchId); setSlotId(null); }} />
@@ -358,14 +357,14 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
                   {errors.branch && <span className="j-field__error" role="alert">{errors.branch}</span>}
                 </fieldset>
               )}
-              {lab && branches.length === 0 && <Alert tone="warn">This lab has no branch for this kind of visit. Choose another lab or visit.</Alert>}
+              {lab && branches.length === 0 && <Alert tone="warn">{t('bookLabTest.thisLabHasNoBranch')}</Alert>}
 
               {lab && (
                 <fieldset className="ws-checks">
-                  <legend>Tests</legend>
-                  {catalogue.isPending ? <Loading label="Loading tests…" />
+                  <legend>{t('common.tests')}</legend>
+                  {catalogue.isPending ? <Loading label={t('bookLabTest.loadingTests')} />
                     : catalogue.isError ? <ErrorState message={booker.refusal(catalogue.error).message} onRetry={() => void catalogue.refetch()} />
-                    : items.length === 0 ? <span>No tests for this kind of visit here.</span>
+                    : items.length === 0 ? <span>{t('bookLabTest.noTestsForThisKind')}</span>
                     : items.map((i) => (
                       <label key={i.itemId} className="ws-check">
                         <input type="checkbox" checked={itemIds.includes(i.itemId)} onChange={() => toggleItem(i.itemId)} />
@@ -379,12 +378,12 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
 
               {branch && (
                 <>
-                  <TextField label="From day" type="date" value={date} min={istToday()} hint={`Free times for ${SLOT_DAYS} days from this day.`}
+                  <TextField label={t('common.fromDay')} type="date" value={date} min={istToday()} hint={t('common.freeTimesForDaysFrom', { SLOT_DAYS })}
                     onChange={(e) => { if (e.target.value) { setDate(e.target.value); setSlotId(null); } }} />
                   <div className="ws-day">
-                    {slots.isPending ? <Loading label="Finding free times…" />
+                    {slots.isPending ? <Loading label={t('common.findingFreeTimes')} />
                       : slots.isError ? <ErrorState message={booker.refusal(slots.error).message} onRetry={() => void slots.refetch()} />
-                      : slotDays.length === 0 ? <span>No free times in these days. Choose a later day or another branch.</span>
+                      : slotDays.length === 0 ? <span>{t('bookLabTest.noFreeTimesInThese')}</span>
                       : <SlotDays days={slotDays} chosen={slotId} onChoose={(s) => setSlotId(s.slotId)} />}
                   </div>
                   {errors.slot && <span className="j-field__error" role="alert">{errors.slot}</span>}
@@ -397,13 +396,13 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
                 <>
                   <div className="rx-form-row">
                     <LanguageSelect id="lab-lang" value={language} error={errors.language} onChange={setLanguage} />
-                    <TextField label="Coupon code (optional)" value={coupon} error={errors.coupon} maxLength={50} hint="Only if the patient has one." onChange={(e) => setCoupon(e.target.value)} />
+                    <TextField label={t('common.couponCodeOptional')} value={coupon} error={errors.coupon} maxLength={50} hint={t('common.onlyIfThePatientHas')} onChange={(e) => setCoupon(e.target.value)} />
                   </div>
                 </>
               )}
             </fieldset>
             {refused && !review && <Alert>{refused.message}</Alert>}
-            {!review && <div><Button type="submit">Next: check the price</Button></div>}
+            {!review && <div><Button type="submit">{t('common.nextCheckThePrice')}</Button></div>}
           </form>
         </section>
       )}
@@ -427,10 +426,10 @@ function ReviewAndPay({ booker, review, busy, refused, method, cardOff, onMethod
   const s = review.summary;
   return (
     <section className="ws-section" aria-labelledby="pay-h">
-      <h2 id="pay-h">3. Check and pay</h2>
-      <div className="confirm" role="group" aria-label="Check and pay">
+      <h2 id="pay-h">{t('common.n3CheckAndPay')}</h2>
+      <div className="confirm" role="group" aria-label={t('common.checkAndPay')}>
         <SummaryList s={s} />
-        {s.couponCode && !s.couponChecked && <p className="ws-muted">Price before the coupon; the coupon is checked when you pay.</p>}
+        {s.couponCode && !s.couponChecked && <p className="ws-muted">{t('common.priceBeforeTheCouponThe')}</p>}
         <PayChoice wallet={payerWallet(api, booker.payer)} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy} method={method} cardOff={cardOff}
           onMethod={onMethod} onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
       </div>

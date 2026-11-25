@@ -3,6 +3,7 @@ import { ApiError, doctorToolsApi, HEARTBEAT_MS, instantRefusal, type Presence, 
 import { messageOf } from '../../errors.ts';
 import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
+import { t } from '../../i18n/doctor/index.ts';
 
 /**
  * A doctor's "available now", as the server last acknowledged it (Q13: `GET /me/presence` on start and on demand, the
@@ -118,7 +119,7 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
 
   /** One operation at a time (a read or a change); the busy flag also holds the heartbeat back. */
   const exclusive = useCallback(async <T,>(run: (mine: number) => Promise<T>): Promise<T> => {
-    if (busyRef.current) throw new Error('A change is already being sent.');
+    if (busyRef.current) throw new Error(t('presence.aChangeIsAlreadyBeing'));
     busyRef.current = true;
     setBusy(true);
     const mine = ++generation.current;
@@ -160,7 +161,7 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
     if (started.current) return;
     started.current = true;
     if (memory.get(PENDING_SLOT)) {
-      setUnconfirmed({ message: 'a change sent before this page was reloaded was never confirmed' });
+      setUnconfirmed({ message: t('presence.aChangeSentBeforeThis') });
     }
     void refresh()
       .catch((err: unknown) => { if (!aborted(err)) setLoadError(messageOf(err)); })
@@ -169,7 +170,7 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
 
   const set = useCallback((input: PresenceInput) => exclusive(async (mine) => {
     const base = uncertain.current ? lastRead.current : acknowledged.current;
-    if (!base) throw new Error('Check what the server has first.');
+    if (!base) throw new Error(t('presence.checkWhatTheServerHas'));
     const wasUncertain = uncertain.current;
     // Going off stops the heartbeats at once, whatever the answer: without them the server drops the doctor in 2 minutes.
     if (!input.available) setLive(false);
@@ -234,7 +235,7 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
           void refresh().catch(() => undefined);
           return true;
         }
-        setProblem(`The last heartbeat did not reach the server (${messageOf(err)}). If this goes on for two minutes you stop being offered consultations.`);
+        setProblem(t('presence.theLastHeartbeatDidNot', { value: messageOf(err) }));
       } finally {
         beatInFlight.current = false;
       }

@@ -15,6 +15,7 @@ import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 import { SupplierSelect, useActiveSuppliers } from './SupplierPicker.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * What is kept (in session memory only) for an entry being sent: the request and the words to describe it. Q15: it is
@@ -34,9 +35,8 @@ export function AddStockScreen() {
   const pharmacyId = usePharmacyId();
   return (
     <>
-      <Link to="/pharmacy/stock" className="ws-back"><ArrowLeft size={16} aria-hidden="true" /> Stock</Link>
-      <PageHeading title="Add stock">
-        Add the units of one batch you received. To add many medicines at once, <Link to="/pharmacy/stock/import">import a file</Link>.
+      <Link to="/pharmacy/stock" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('common.stock')}</Link>
+      <PageHeading title={t('common.addStock')}>{t('addStock.addTheUnitsOfOne')}<Link to="/pharmacy/stock/import">{t('addStock.importAFile')}</Link>.
       </PageHeading>
       <AddStock key={pharmacyId} pharmacyId={pharmacyId} />
     </>
@@ -159,7 +159,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
     if (r.kind === 'unknown' && wasAbandoned(r.error)) {
       // Given up meanwhile (e.g. in another tab): the server says this key can never add anything.
       settle(p.requestKey);
-      setNotice('This entry was given up earlier, so nothing was added with it. Add the units again if they are still to be added.');
+      setNotice(t('addStock.thisEntryWasGivenUp'));
       return;
     }
     if (r.kind === 'ok') {
@@ -167,7 +167,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
       setErrors({});
       void refresh();
       const replayed = !!r.value.replayed;
-      showAdded(p, (what) => (replayed ? `Already added: ${what}. Nothing was added twice.` : `Added ${what}.`), search || itemSearch(r.value.items));
+      showAdded(p, (what) => (replayed ? t('addStock.alreadyAddedNothingWasAdded', { what }) : t('addStock.added', { what })), search || itemSearch(r.value.items));
     } else if (r.kind === 'refused') {
       // Q16c: the supplier is no longer one of the pharmacy's active ones: read them again and ask for another.
       if (isSupplierRefusal(r.error)) {
@@ -186,7 +186,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
     setErrors({});
     setReview(null);
     void refresh();
-    showAdded(p, (what) => `Recorded: ${what} was added. Nothing was added twice.`, itemSearch(items));
+    showAdded(p, (what) => t('addStock.recordedWasAddedNothingWas', { what }), itemSearch(items));
   }
 
   /**
@@ -200,7 +200,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
       const r = await perform(() => stock.abandonStock(p.requestKey));
       if (r.state === 'used') { await recorded(p, r.items); return; }
       settle(p.requestKey);
-      setNotice('Given up: nothing was added with that entry, and it can never be added now. Check the details and add the units again.');
+      setNotice(t('addStock.givenUpNothingWasAdded'));
     } catch (err) {
       setResendError(messageOf(err));
     } finally {
@@ -231,26 +231,26 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
     return (
       <>
         {resendError && <Alert>{resendError}</Alert>}
-        <CheckPanel label="Unconfirmed stock entry"
+        <CheckPanel label={t('addStock.unconfirmedStockEntry')}
           onCheck={async () => {
             const items = await stock.savedByKey(op.requestKey);
             if (!items) {
               return restored
-                ? 'Not recorded so far. It may still be on its way. Give it up to make sure it never is, then add the units again.'
-                : 'Not recorded so far. It may still be on its way. Sending the same entry again is safe: it is never added twice.';
+                ? t('addStock.notRecordedSoFarIt')
+                : t('addStock.notRecordedSoFarIt2');
             }
             await recorded(op, items);
             return null;
           }}
           resend={restored ? undefined : {
-            label: 'Send the same entry again', busy: busy && !givingUp,
+            label: t('addStock.sendTheSameEntryAgain'), busy: busy && !givingUp,
             onClick: () => { setResendError(null); void sendEntry(op, '').catch((err: unknown) => setResendError(messageOf(err))); },
           }}
-          giveUp={{ label: 'Give this up', busy: givingUp, onClick: () => void giveUp(op) }}>
+          giveUp={{ label: t('common.giveThisUp'), busy: givingUp, onClick: () => void giveUp(op) }}>
           <Alert tone="warn">
             {restored
-              ? 'A stock entry made earlier on this device (before the page was reloaded, or before you signed out) was not confirmed. Its details are not kept here. Check it, or give it up: then it can never be added.'
-              : `This stock entry was not confirmed${op.error ? ` (${op.error})` : ''}. The units may already be in stock. Sending the same entry again is safe: it is never added twice. Or give it up: then it can never be added.`}
+              ? t('addStock.aStockEntryMadeEarlier')
+              : t('addStock.thisStockEntryWasNot', { value: op.error ? ` (${op.error})` : '' })}
           </Alert>
           {!restored && op.body && <div>{describeOp(op.body)}</div>}
         </CheckPanel>
@@ -264,52 +264,52 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
       {done && (
         <Alert tone="ok">
           {done.text}{' '}
-          <Link to={done.search ? `/pharmacy/stock?q=${encodeURIComponent(done.search)}` : '/pharmacy/stock'}>See it in Stock</Link>
+          <Link to={done.search ? `/pharmacy/stock?q=${encodeURIComponent(done.search)}` : '/pharmacy/stock'}>{t('addStock.seeItInStock')}</Link>
         </Alert>
       )}
       <section className="ws-section" aria-labelledby="med-h">
-        <h2 id="med-h">Medicine</h2>
+        <h2 id="med-h">{t('common.medicine')}</h2>
         {chosen ? (
           <div className="ws-actions">
             <strong>{medicineName(chosen)}</strong>
             {chosen.dosageForm && <span className="ws-muted">{chosen.dosageForm}</span>}
             {chosen.manufacturer && <span className="ws-muted">{chosen.manufacturer}</span>}
-            <Button variant="ghost" disabled={!!review || busy} onClick={changeMedicine}>Change medicine</Button>
+            <Button variant="ghost" disabled={!!review || busy} onClick={changeMedicine}>{t('addStock.changeMedicine')}</Button>
           </div>
         ) : presetMissing ? (
           <>
-            <Alert tone="warn">Medicine not found — pick another.</Alert>
+            <Alert tone="warn">{t('addStock.medicineNotFoundPickAnother')}</Alert>
             <MedicinePicker pharmacyId={pharmacyId} error={errors.medicineId} onChoose={(m) => { setPicked(m); setParams({}, { replace: true }); setErrors((e) => ({ ...e, medicineId: undefined })); }} />
           </>
-        ) : preset && presetQ.isPending ? <Loading label="Loading medicine…" />
+        ) : preset && presetQ.isPending ? <Loading label={t('addStock.loadingMedicine')} />
           : preset && presetQ.isError ? <ErrorState message={messageOf(presetQ.error)} onRetry={() => void presetQ.refetch()} />
           : <MedicinePicker pharmacyId={pharmacyId} error={errors.medicineId} onChoose={(m) => { setPicked(m); setErrors((e) => ({ ...e, medicineId: undefined })); }} />}
       </section>
 
       <form className="rx-form ws-section" noValidate aria-labelledby="batch-h" onSubmit={check}>
-        <h2 id="batch-h">Batch</h2>
+        <h2 id="batch-h">{t('common.batch')}</h2>
         <fieldset className="ws-frozen" disabled={!!review || busy}>
           <div className="rx-form-row">
-            <TextField label="Batch number" value={draft.batchNumber} maxLength={STOCK_LIMITS.batchNumber} error={errors.batchNumber}
-              hint="As printed on the pack. Saved in capital letters." onChange={(e) => set('batchNumber', e.target.value)} />
-            <TextField label="Expiry date" type="date" value={draft.expiry} error={errors.expiry} onChange={(e) => set('expiry', e.target.value)} />
-            <TextField label="Units received" inputMode="numeric" value={draft.quantity} error={errors.quantity}
+            <TextField label={t('addStock.batchNumber')} value={draft.batchNumber} maxLength={STOCK_LIMITS.batchNumber} error={errors.batchNumber}
+              hint={t('addStock.asPrintedOnThePack')} onChange={(e) => set('batchNumber', e.target.value)} />
+            <TextField label={t('common.expiryDate')} type="date" value={draft.expiry} error={errors.expiry} onChange={(e) => set('expiry', e.target.value)} />
+            <TextField label={t('addStock.unitsReceived')} inputMode="numeric" value={draft.quantity} error={errors.quantity}
               onChange={(e) => set('quantity', e.target.value.replace(/\D/g, ''))} />
           </div>
           <div className="rx-form-row">
-            <TextField label="MRP per unit (₹, optional)" inputMode="decimal" value={draft.mrp} error={errors.mrp} onChange={(e) => set('mrp', e.target.value)} />
-            <TextField label="Selling price per unit (₹, optional)" inputMode="decimal" value={draft.retailPrice} error={errors.retailPrice}
-              hint="What customers pay. Left empty, the current price stays." onChange={(e) => set('retailPrice', e.target.value)} />
-            <TextField label="Purchase price per unit (₹, optional)" inputMode="decimal" value={draft.purchasePrice} error={errors.purchasePrice}
+            <TextField label={t('addStock.mrpPerUnitOptional')} inputMode="decimal" value={draft.mrp} error={errors.mrp} onChange={(e) => set('mrp', e.target.value)} />
+            <TextField label={t('addStock.sellingPricePerUnitOptional')} inputMode="decimal" value={draft.retailPrice} error={errors.retailPrice}
+              hint={t('addStock.whatCustomersPayLeftEmpty')} onChange={(e) => set('retailPrice', e.target.value)} />
+            <TextField label={t('addStock.purchasePricePerUnitOptional')} inputMode="decimal" value={draft.purchasePrice} error={errors.purchasePrice}
               onChange={(e) => set('purchasePrice', e.target.value)} />
           </div>
           <div className="rx-form-row">
-            <TextField label="Rack (optional)" value={draft.rackLocation} maxLength={STOCK_LIMITS.rackLocation} error={errors.rackLocation}
+            <TextField label={t('addStock.rackOptional')} value={draft.rackLocation} maxLength={STOCK_LIMITS.rackLocation} error={errors.rackLocation}
               onChange={(e) => set('rackLocation', e.target.value)} />
-            <TextField label="Reorder when stock falls to (optional)" inputMode="numeric" value={draft.reorderThreshold} error={errors.reorderThreshold}
+            <TextField label={t('addStock.reorderWhenStockFallsTo')} inputMode="numeric" value={draft.reorderThreshold} error={errors.reorderThreshold}
               onChange={(e) => set('reorderThreshold', e.target.value.replace(/\D/g, ''))} />
             <div className="j-field">
-              <label htmlFor="stock-reason">Why is it added?</label>
+              <label htmlFor="stock-reason">{t('addStock.whyIsItAdded')}</label>
               <select id="stock-reason" value={draft.reason} onChange={(e) => set('reason', e.target.value as AddStockReason)}>
                 {ADD_STOCK_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
@@ -317,37 +317,37 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
           </div>
           <div className="rx-form-row">
             {suppliers.isError ? (
-              <Alert tone="warn">Your suppliers could not be read ({messageOf(suppliers.error)}). You can add the stock without one.</Alert>
+              <Alert tone="warn">{t('common.yourSuppliersCouldNotBe')}{messageOf(suppliers.error)}{t('addStock.youCanAddTheStock')}</Alert>
             ) : (
-              <SupplierSelect id="stock-supplier" label="Supplier (optional)" suppliers={supplierList} value={draft.supplierId ?? ''}
-                noneLabel={suppliers.isPending ? 'Loading suppliers…' : 'Not said'} error={errors.supplierId}
-                hint={supplierList.length === 0 && !suppliers.isPending ? 'You have no active suppliers. Add them on the Suppliers page.' : 'Who delivered these units. Shown in the stock history.'}
+              <SupplierSelect id="stock-supplier" label={t('addStock.supplierOptional')} suppliers={supplierList} value={draft.supplierId ?? ''}
+                noneLabel={suppliers.isPending ? t('common.loadingSuppliers') : t('common.notSaid')} error={errors.supplierId}
+                hint={supplierList.length === 0 && !suppliers.isPending ? t('addStock.youHaveNoActiveSuppliers') : t('addStock.whoDeliveredTheseUnitsShown')}
                 onChange={(v) => { set('supplierId', v); setErrors((e) => ({ ...e, supplierId: undefined })); }} />
             )}
           </div>
-          <TextArea label="Note (optional)" value={draft.note} maxLength={MAX_STOCK_NOTE} error={errors.note}
-            hint="For example the supplier’s bill number." onChange={(e) => set('note', e.target.value)} />
+          <TextArea label={t('addStock.noteOptional')} value={draft.note} maxLength={MAX_STOCK_NOTE} error={errors.note}
+            hint={t('addStock.forExampleTheSupplierS')} onChange={(e) => set('note', e.target.value)} />
         </fieldset>
-        {refused && <Alert>Not added: {refused}</Alert>}
-        {!review && <div><Button type="submit">Check and add</Button></div>}
+        {refused && <Alert>{t('addStock.notAdded')}{refused}</Alert>}
+        {!review && <div><Button type="submit">{t('addStock.checkAndAdd')}</Button></div>}
       </form>
 
       {review && (
-        <div className="confirm" role="group" aria-label="Add this stock">
-          <div className="confirm-text">Add {describe(review.entry, review.medicineName)}?</div>
+        <div className="confirm" role="group" aria-label={t('addStock.addThisStock')}>
+          <div className="confirm-text">{t('addStock.add')}{describe(review.entry, review.medicineName)}?</div>
           <ul className="ws-list">
-            {review.entry.mrp !== undefined && <li>MRP {formatRupees(review.entry.mrp)}</li>}
-            {review.entry.retailPrice !== undefined && <li>Selling price {formatRupees(review.entry.retailPrice)}</li>}
-            {review.entry.purchasePrice !== undefined && <li>Purchase price {formatRupees(review.entry.purchasePrice)}</li>}
-            {review.entry.rackLocation && <li>Rack {review.entry.rackLocation}</li>}
-            {review.entry.reorderThreshold !== undefined && <li>Reorder at {review.entry.reorderThreshold}</li>}
-            <li>Supplier: {review.supplierName ?? 'not said'}</li>
+            {review.entry.mrp !== undefined && <li>{t('addStock.mrp')}{formatRupees(review.entry.mrp)}</li>}
+            {review.entry.retailPrice !== undefined && <li>{t('addStock.sellingPrice')}{formatRupees(review.entry.retailPrice)}</li>}
+            {review.entry.purchasePrice !== undefined && <li>{t('addStock.purchasePrice')}{formatRupees(review.entry.purchasePrice)}</li>}
+            {review.entry.rackLocation && <li>{t('addStock.rack')}{review.entry.rackLocation}</li>}
+            {review.entry.reorderThreshold !== undefined && <li>{t('addStock.reorderAt')}{review.entry.reorderThreshold}</li>}
+            <li>{t('addStock.supplier')}{review.supplierName ?? 'not said'}</li>
             <li>{ADD_STOCK_REASONS.find((r) => r.value === review.entry.reason)?.label}</li>
           </ul>
-          <span className="ws-muted">The units are on sale once added if the medicine has a selling price (without one it is not on sale until priced). The workspace cannot take them out again, so check the number.</span>
+          <span className="ws-muted">{t('addStock.theUnitsAreOnSale')}</span>
           <div className="confirm-actions">
-            <Button busy={busy} onClick={() => void add()}>Yes, add to stock</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>Back</Button>
+            <Button busy={busy} onClick={() => void add()}>{t('addStock.yesAddToStock')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('common.back')}</Button>
           </div>
         </div>
       )}
@@ -356,9 +356,9 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
   );
 }
 
-const SOURCE_LABEL: Readonly<Record<NonNullable<StockAdjustment['sourceType']>, string>> = {
-  manual: 'Added by hand', inventory_import: 'Import', order: 'Order',
-};
+const SOURCE_LABEL = (): Readonly<Record<NonNullable<StockAdjustment['sourceType']>, string>> => ({
+  manual: t('addStock.addedByHand'), inventory_import: 'Import', order: 'Order',
+});
 const HISTORY_SIZE = 20;
 
 /** WQ11c: the latest stock changes (`GET /pharmacy-inventory/adjustments`, newest first) with each delivery's supplier. */
@@ -370,20 +370,20 @@ function StockHistory({ pharmacyId, suppliers }: { pharmacyId: string; suppliers
     queryFn: () => pharmacyStockApi(api).adjustments(page, HISTORY_SIZE),
   });
   const supplierOf = (a: StockAdjustment) =>
-    a.supplier?.displayName ?? (a.supplierId ? suppliers.find((s) => s.supplierId === String(a.supplierId).toLowerCase())?.displayName ?? 'A supplier' : '—');
+    a.supplier?.displayName ?? (a.supplierId ? suppliers.find((s) => s.supplierId === String(a.supplierId).toLowerCase())?.displayName ?? t('common.aSupplier') : '—');
   return (
     <section className="ws-section" aria-labelledby="hist-h">
-      <h2 id="hist-h">Stock history</h2>
-      {q.isPending ? <Loading label="Loading stock history…" />
+      <h2 id="hist-h">{t('addStock.stockHistory')}</h2>
+      {q.isPending ? <Loading label={t('addStock.loadingStockHistory')} />
         : q.isError && q.data === undefined ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : q.data.items.length === 0 ? <Empty title="No stock changes yet">Stock you add, import or sell is listed here.</Empty>
+        : q.data.items.length === 0 ? <Empty title={t('addStock.noStockChangesYet')}>{t('addStock.stockYouAddImportOr')}</Empty>
         : (
           <>
             <div className="ws-table-wrap">
               <table className="j-table">
-                <caption className="j-sr-only">Stock changes, newest first</caption>
+                <caption className="j-sr-only">{t('addStock.stockChangesNewestFirst')}</caption>
                 <thead>
-                  <tr><th scope="col">When</th><th scope="col">Medicine</th><th scope="col">Change</th><th scope="col">Batch</th><th scope="col">Supplier</th><th scope="col">How</th></tr>
+                  <tr><th scope={'col'}>{t('common.when')}</th><th scope={'col'}>{t('common.medicine')}</th><th scope={'col'}>{t('common.change')}</th><th scope={'col'}>{t('common.batch')}</th><th scope={'col'}>{t('common.supplier')}</th><th scope={'col'}>{t('common.how')}</th></tr>
                 </thead>
                 <tbody>
                   {q.data.items.map((a) => (
@@ -393,17 +393,17 @@ function StockHistory({ pharmacyId, suppliers }: { pharmacyId: string; suppliers
                       <td>{a.adjustmentType === 'remove' ? `−${a.quantity}` : a.adjustmentType === 'add' ? `+${a.quantity}` : `set ${a.quantity}`}</td>
                       <td>{a.batchNumber ? `${a.batchNumber}${a.expiryDate ? ` · ${formatExpiry(a.expiryDate)}` : ''}` : '—'}</td>
                       <td>{supplierOf(a)}</td>
-                      <td>{a.sourceType ? SOURCE_LABEL[a.sourceType] ?? a.sourceType : '—'}{a.notes ? <div className="ws-muted">{a.notes}</div> : null}</td>
+                      <td>{a.sourceType ? SOURCE_LABEL()[a.sourceType] ?? a.sourceType : '—'}{a.notes ? <div className="ws-muted">{a.notes}</div> : null}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             {q.data.totalPages > 1 && (
-              <nav className="ws-pager" aria-label="Stock history pages">
-                <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Newer</Button>
-                <span>Page {page} of {q.data.totalPages}</span>
-                <Button variant="secondary" disabled={page >= q.data.totalPages} onClick={() => setPage(page + 1)}>Older</Button>
+              <nav className="ws-pager" aria-label={t('addStock.stockHistoryPages')}>
+                <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>{t('common.newer')}</Button>
+                <span>{t('common.page')}{page}{t('common.of')}{q.data.totalPages}</span>
+                <Button variant="secondary" disabled={page >= q.data.totalPages} onClick={() => setPage(page + 1)}>{t('common.older')}</Button>
               </nav>
             )}
           </>
@@ -425,28 +425,26 @@ function MedicinePicker({ pharmacyId, error, onChoose }: { pharmacyId: string; e
   return (
     <>
       <div className="ws-search">
-        <TextField label="Find the medicine" value={text} error={error} placeholder="Name, brand or generic name"
+        <TextField label={t('addStock.findTheMedicine')} value={text} error={error} placeholder={t('common.nameBrandOrGenericName')}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } }} />
-        <Button type="button" variant="secondary" onClick={go}>Search</Button>
+        <Button type="button" variant="secondary" onClick={go}>{t('common.search')}</Button>
       </div>
       {search === null ? null
-        : q.isPending ? <Loading label="Searching medicines…" />
+        : q.isPending ? <Loading label={t('common.searchingMedicines')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : q.data.items.length === 0 ? (
-          <Empty title={`No medicine matches “${search}”`}>
-            A medicine that is not in the list yet is added by <Link to="/pharmacy/stock/import">importing a file</Link> with its name.
-          </Empty>
+          <Empty title={t('addStock.noMedicineMatches', { search })}>{t('addStock.aMedicineThatIsNot')}<Link to="/pharmacy/stock/import">{t('addStock.importingAFile')}</Link>{t('addStock.withItsName')}</Empty>
         ) : (
-          <ul className="ws-list" aria-label="Medicines found">
+          <ul className="ws-list" aria-label={t('addStock.medicinesFound')}>
             {q.data.items.map((m) => (
               <li key={m._id} className="ws-actions">
                 <span>{medicineName(m)}{m.dosageForm ? ` · ${m.dosageForm}` : ''}{m.manufacturer ? ` · ${m.manufacturer}` : ''}</span>
-                <Button variant="secondary" aria-label={`Choose ${medicineName(m)}`} onClick={() => onChoose(m)}>Choose</Button>
+                <Button variant="secondary" aria-label={t('common.choose', { value: medicineName(m) })} onClick={() => onChoose(m)}>{t('common.choose2')}</Button>
               </li>
             ))}
             {q.data.total > q.data.items.length && (
-              <li className="ws-muted">Showing {q.data.items.length} of {q.data.total}. Type more of the name to narrow the list.</li>
+              <li className="ws-muted">{t('common.showing')}{q.data.items.length}{t('common.of')}{q.data.total}{t('addStock.typeMoreOfTheName')}</li>
             )}
           </ul>
         )}

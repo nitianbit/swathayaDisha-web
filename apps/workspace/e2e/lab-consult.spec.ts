@@ -55,6 +55,8 @@ interface Backend {
   unverified?: boolean;
   /** WQ24b: background reads (the lab, its branches, one booking) are lost on the network. */
   failReads?: boolean;
+  /** WQ24b re-check: the doctor reads answer 503 with no code (a proxy during a deploy). */
+  doctorsDown?: boolean;
 }
 
 const doctor = { doctorId: DOC, name: 'Dr Meera Rao', specialization: 'General Physician', languages: ['Hindi'], city: 'Bengaluru', experienceYears: 8, feeMinor: 50_000, nearby: 'pincode' };
@@ -173,6 +175,7 @@ async function mockBackend(page: Page, me: Me, init: { bookings?: Rec[]; record?
       if (b.off) return fail(route, 503, 'ASSISTED_BOOKING_DISABLED', 'Booking for patients is not switched on');
       return ok(route, body?.phone === PHONE ? { exists: true, holderNameMasked: 'R*** K***' } : { exists: false, holderNameMasked: null });
     }
+    if ((as === '/doctors' || as === `/doctors/${DOC}/slots`) && b.doctorsDown) return json(route, 503, { message: 'Service Unavailable' });
     if (as === '/doctors' || as === `/doctors/${DOC}/slots`) {
       const problem = branchProblem(url.searchParams.get('branchId'));
       if (problem) return fail(route, ...problem);
@@ -590,4 +593,30 @@ test('WQ24b: change time from the booking page: the doctor’s other times read 
   expect(moves).toHaveLength(1);
   expect(moves[0]!.body).toMatchObject({ slotId: SLOT2, expectedUpdatedAt: CREATED });
   expect(String(moves[0]!.body!.requestKey)).toMatch(/^[A-Za-z0-9]{32}$/);
+});
+
+test('WQ24b re-check: a held card booking stays on screen when a background doctor read answers 503 with no code', async ({ page }) => {
+  test.setTimeout(45_000);
+  const b = await mockBackend(page, owner);
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Book consultation' }).click();
+  await patient(page);
+  await page.getByLabel('Branch the patient is at').selectOption({ label: 'Indiranagar' });
+  await doctorAndTime(page);
+  await page.evaluate(() => { (window as unknown as { __rzClose: boolean }).__rzClose = true; });
+  await page.getByLabel('Pay by card or UPI').check();
+  await page.getByRole('button', { name: 'Pay ₹500.00 by card or UPI' }).click();
+  await expect(page.getByRole('heading', { name: 'Booking held: waiting for payment' })).toBeVisible();
+  // A deploy: the doctors are read again on focus and the proxy answers 503 with no code (as "switched off").
+  b.doctorsDown = true;
+  const before = b.calls.filter((c) => c.path.startsWith('/partner-workspace/assisted/doctors')).length;
+  await page.clock.setFixedTime(new Date(NOW.getTime() + 20_000));
+  await page.evaluate(() => { window.dispatchEvent(new Event('visibilitychange')); document.dispatchEvent(new Event('visibilitychange')); });
+  await expect.poll(() => b.calls.filter((c) => c.path.startsWith('/partner-workspace/assisted/doctors')).length, { timeout: 10_000 }).toBeGreaterThan(before + 1);
+  await page.waitForTimeout(3_500);
+  await expect(page.getByRole('heading', { name: 'Booking held: waiting for payment' })).toBeVisible();
+  await expect(page.getByText(/not switched on yet/)).toHaveCount(0);
+  await page.evaluate(() => { (window as unknown as { __rzClose: boolean }).__rzClose = false; });
+  await page.getByRole('button', { name: 'Pay now ₹500.00' }).click();
+  await expect(page.getByRole('heading', { name: 'Booked', exact: true })).toBeVisible();
 });

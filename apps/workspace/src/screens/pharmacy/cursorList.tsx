@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@jansetu/ui';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ17: the newest-first, cursor-paged lists of what a pharmacy booked (consultations, lab tests): a status filter and
@@ -20,9 +21,9 @@ export function CursorPager({ pages, nextCursor, label }: { pages: ReturnType<ty
   if (pages.page <= 1 && !nextCursor) return null;
   return (
     <nav className="ws-pager" aria-label={label}>
-      <Button variant="secondary" disabled={pages.page <= 1} onClick={pages.newer}>Newer</Button>
-      <span>Page {pages.page}</span>
-      <Button variant="secondary" disabled={!nextCursor} onClick={() => pages.older(nextCursor!)}>Older</Button>
+      <Button variant="secondary" disabled={pages.page <= 1} onClick={pages.newer}>{t('common.newer')}</Button>
+      <span>{t('common.page')}{pages.page}</span>
+      <Button variant="secondary" disabled={!nextCursor} onClick={() => pages.older(nextCursor!)}>{t('common.older')}</Button>
     </nav>
   );
 }
@@ -33,7 +34,7 @@ export function StatusFilter<T extends string>({ id, value, options, onChange }:
   return (
     <div className="ws-filter">
       <div className="j-field">
-        <label htmlFor={id}>Status</label>
+        <label htmlFor={id}>{t('common.status')}</label>
         <select id={id} value={value} onChange={(e) => onChange(e.target.value as T | '')}>
           {options.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
         </select>

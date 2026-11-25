@@ -6,6 +6,7 @@ import { useSession, useStaff } from '../../session.tsx';
 import { CursorPager, useCursorPages } from '../pharmacy/cursorList.tsx';
 import { DeviceTopups, ownerTopupSource, TopUpForm } from '../pharmacy/topup.tsx';
 import { usePayerWallet, WalletBalance, WalletHistory } from '../pharmacy/WalletScreen.tsx';
+import { t } from '../../i18n/doctor/index.ts';
 
 /**
  * WQ23: the doctor's own Jansetu wallet (assisted booking round 3a, backend r20, design §25.12), on the very pieces the
@@ -20,7 +21,7 @@ export function DoctorWalletScreen() {
   const doctor = useStaff();
   return (
     <>
-      <PageHeading title="Wallet">Your Jansetu wallet. Add money by card or UPI; collect from your patient at your counter.</PageHeading>
+      <PageHeading title={t('doctorWallet.wallet')}>{t('doctorWallet.yourJansetuWalletAddMoney')}</PageHeading>
       <Wallet key={doctor.id} doctorId={doctor.id} />
     </>
   );
@@ -42,11 +43,11 @@ function Wallet({ doctorId }: { doctorId: string }) {
       {wallet.data && !closed ? (
         <>
           <section className="ws-section" aria-labelledby="top-h">
-            <h2 id="top-h">Add money</h2>
+            <h2 id="top-h">{t('doctorWallet.addMoney')}</h2>
             <TopUpForm pharmacyId={source.owner} source={source} />
           </section>
-          <WalletHistory q={entries} empty="Top-ups and bookings paid from the wallet are listed here." first={history.page === 1}
-            pager={<CursorPager pages={history} nextCursor={entries.data?.nextCursor} label="Wallet history pages" />} />
+          <WalletHistory q={entries} empty={t('doctorWallet.topUpsAndBookingsPaid')} first={history.page === 1}
+            pager={<CursorPager pages={history} nextCursor={entries.data?.nextCursor} label={t('doctorWallet.walletHistoryPages')} />} />
         </>
       ) : (
         // This device's unconfirmed top-ups, kept in place while the wallet is read again (so a check's answer stays).

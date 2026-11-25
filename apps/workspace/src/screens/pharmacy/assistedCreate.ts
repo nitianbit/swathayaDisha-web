@@ -4,6 +4,7 @@ import { refusedBeforeWriting, type Refusal } from '@jansetu/api';
 import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
 import type { Perform } from '../finance/finance.tsx';
 import { useOwnedOp, type SendResult } from './ownedOp.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * What every assisted create keeps while one is checked and sent: the request (with its key, and for the pharmacy's
@@ -76,7 +77,7 @@ export function useAssistedCreate<P extends PendingCreate, R, A extends { state:
     if (r.kind === 'unknown' && wasAbandoned(r.error)) {
       settle(p.requestKey);
       setReview(null);
-      o.onNotice(`This booking was given up earlier, so ${nothing} with it. Book again if the patient still wants it.`);
+      o.onNotice(t('assistedCreate.thisBookingWasGivenUp', { nothing }));
       return;
     }
     // A limit, the switch, the indexes or customer linking refused the only attempt before any booking write
@@ -136,10 +137,10 @@ export function useAssistedCreate<P extends PendingCreate, R, A extends { state:
         return;
       }
       // Only `abandoned` means given up; any other answer leaves it unknown (the panel stays).
-      if (r.state !== 'abandoned') { setResendError('It could not be given up yet. Check whether it was recorded, then try again.'); return; }
+      if (r.state !== 'abandoned') { setResendError(t('common.itCouldNotBeGiven')); return; }
       settle(p.requestKey);
       setReview(null);
-      o.onNotice(`Given up: ${nothing} with that request, and it can never be booked now. You can book again.`);
+      o.onNotice(t('assistedCreate.givenUpWithThatRequest', { nothing }));
     } catch (err) {
       setResendError(o.refusal(err).message);
     } finally {
@@ -151,7 +152,7 @@ export function useAssistedCreate<P extends PendingCreate, R, A extends { state:
   function abandonedByCheck(requestKey: string) {
     settle(requestKey);
     setReview(null);
-    o.onNotice(`That booking was given up, so ${nothing} with it. You can book again.`);
+    o.onNotice(t('assistedCreate.thatBookingWasGivenUp', { nothing }));
   }
 
   return { op, settle, review, setReview, refused, setRefused, resendError, setResendError, givingUp, send: sendCreate, pay, payAtNewPrice, giveUp, rotateKey,

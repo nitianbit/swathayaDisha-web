@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Alert } from '@jansetu/ui';
 import type { PendingOp } from '../../requests.ts';
 import { CheckPanel } from './ownedOp.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 type Used = { state: 'used' };
 /**
@@ -33,22 +34,22 @@ export function UnconfirmedBooking<B, A extends { state: string }>({ op, what, b
   return (
     <>
       {resendError && <Alert>{resendError}</Alert>}
-      <CheckPanel label={`Unconfirmed ${what}`}
+      <CheckPanel label={t('unconfirmedBooking.unconfirmed', { what })}
         onCheck={async () => {
           const r = await byKey();
           if (r.state === 'used') return onUsed(r as A & Used, restored);
           if (r.state === 'abandoned') { onAbandoned(); return null; }
           return restored
-            ? 'Not booked so far. It may still be on its way. Give it up to make sure it never is, then book again.'
-            : `Not booked so far. It may still be on its way. Sending the same request again is safe: it is ${twice}.`;
+            ? t('unconfirmedBooking.notBookedSoFarIt')
+            : t('unconfirmedBooking.notBookedSoFarIt2', { twice });
         }}
-        resend={restored ? undefined : { label: 'Send the same request again', busy: busy && !givingUp, onClick: onResend }}
-        giveUp={{ label: 'Give this up', busy: givingUp, onClick: onGiveUp }}>
+        resend={restored ? undefined : { label: t('common.sendTheSameRequestAgain'), busy: busy && !givingUp, onClick: onResend }}
+        giveUp={{ label: t('common.giveThisUp'), busy: givingUp, onClick: onGiveUp }}>
         {!restored && extra}
         <Alert tone="warn">
           {restored
-            ? `A ${what} made earlier on this device (before the page was reloaded, or before you signed out) was not confirmed. Its details are not kept here. Check it, or give it up: then it can never be booked.`
-            : `The outcome of this request is not known yet${op.error ? ` (${op.error})` : ''}. The booking may already be made${charged ? ' and paid' : ''}. Sending the same request again is safe: it is ${twice}. Or give it up: then it can never be booked.`}
+            ? t('unconfirmedBooking.aMadeEarlierOnThis', { what })
+            : t('unconfirmedBooking.theOutcomeOfThisRequest', { value: op.error ? ` (${op.error})` : '', value2: charged ? ' and paid' : '', twice })}
         </Alert>
         {!restored && summary}
       </CheckPanel>

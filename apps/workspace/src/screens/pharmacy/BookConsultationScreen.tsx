@@ -23,6 +23,7 @@ import { UnconfirmedBooking } from './unconfirmedBooking.tsx';
 import { PayChoice, refusalText, type PayWallet } from './walletPay.tsx';
 import { usePharmacyId } from './ownedOp.tsx';
 import { pharmacyConsultBooker, type ConsultBooker } from './consultBooker.ts';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ12: a pharmacy books a doctor consultation for a walk-in patient (assisted booking phase 1a, §19.3):
@@ -40,9 +41,7 @@ export function BookConsultationScreen() {
   const { api } = useSession();
   return (
     <>
-      <PageHeading title="Book consultation">
-        Book a doctor for a patient at your counter. You pay Jansetu from your wallet, or by card or UPI; you collect the fee from the patient.
-      </PageHeading>
+      <PageHeading title={t('bookConsultation.bookConsultation')}>{t('bookConsultation.bookADoctorForA')}</PageHeading>
       <BookConsultation key={pharmacyId} booker={pharmacyConsultBooker(api, pharmacyId)} />
     </>
   );
@@ -70,12 +69,12 @@ function SummaryList({ s }: { s: Summary }) {
   const org = s.org ?? 'pharmacy';
   return (
     <ul className="ws-list">
-      <li>Patient: <strong>{s.patient}</strong></li>
-      {s.branch && <li>Booked at: <strong>{s.branch}</strong></li>}
-      <li>Doctor: <strong>{s.doctor}</strong></li>
-      <li>When: <strong>{describeWhen(s)}</strong></li>
-      <li>How: <strong>{ASSISTED_MODE_LABEL[s.mode]}</strong>{s.mode !== 'in-person' && s.joinOn ? ` (${s.joinOn === 'partner_device' ? `on this ${org}’s device` : 'on the patient’s phone'})` : ''}</li>
-      <li>Price: <strong>{formatRupees(s.priceMinor / 100)}</strong>{s.couponCode ? ` (coupon ${s.couponCode})` : ''}</li>
+      <li>{t('common.patient')}<strong>{s.patient}</strong></li>
+      {s.branch && <li>{t('bookConsultation.bookedAt')}<strong>{s.branch}</strong></li>}
+      <li>{t('common.doctor')}<strong>{s.doctor}</strong></li>
+      <li>{t('common.when2')}<strong>{describeWhen(s)}</strong></li>
+      <li>{t('common.how2')}<strong>{ASSISTED_MODE_LABEL[s.mode]}</strong>{s.mode !== 'in-person' && s.joinOn ? t('bookConsultation.joinsOn', { where: s.joinOn === 'partner_device' ? t(`bookConsultation.onThisDevice.${org}`) : t('bookConsultation.onThePatientsPhone') }) : ''}</li>
+      <li>{t('common.price')}<strong>{formatRupees(s.priceMinor / 100)}</strong>{s.couponCode ? ` (coupon ${s.couponCode})` : ''}</li>
     </ul>
   );
 }
@@ -86,7 +85,7 @@ function doneFromReceipt(r: ConsultationReceipt, summary: Summary): Done {
 }
 function summaryOf(b: BookedConsultation, summary: Summary | undefined, org: BookerKind): Summary {
   return summary ?? {
-    patient: b.patientName ?? 'The patient', doctor: b.doctorName ?? 'The doctor', date: b.bookingDate ?? '', time: b.bookingTime ?? '',
+    patient: b.patientName ?? t('common.thePatient'), doctor: b.doctorName ?? t('common.theDoctor'), date: b.bookingDate ?? '', time: b.bookingTime ?? '',
     mode: (b.consultationMode as AssistedMode) ?? 'video', joinOn: b.assisted?.join?.on, priceMinor: Math.round(Number(b.price ?? 0) * 100),
     ...(org === 'pharmacy' ? {} : { org }),
   };
@@ -98,8 +97,8 @@ function doneFromView(b: BookedConsultation, summary: Summary | undefined, org: 
 /** The doctor card's next time: only one the time list would show (a chat-only next time is left out, as in the list). */
 function nextWords(d: AssistedDoctor, modeFilter: AssistedMode | ''): string {
   const next = nextFreeSlot(d, modeFilter);
-  if (next) return `Next free time: ${formatSlotDate(next.date)} at ${next.startTime}`;
-  return d.nextSlot ? 'Choose to see the free times' : 'No free times soon';
+  if (next) return t('bookConsultation.nextFreeTimeAt', { when: formatSlotDate(next.date), startTime: next.startTime });
+  return d.nextSlot ? t('bookConsultation.chooseToSeeTheFree') : t('bookConsultation.noFreeTimesSoon');
 }
 
 
@@ -225,10 +224,10 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
     e.preventDefault();
     setRefused(null);
     const errs: Record<string, string> = {};
-    if (!branchReady) errs.branch = 'Choose the branch the patient is at.';
-    else if (!doctor) errs.doctor = 'Choose a doctor.';
-    else if (!slot) errs.slot = 'Choose a time.';
-    else if (!mode) errs.mode = 'Choose how the consultation happens.';
+    if (!branchReady) errs.branch = t('bookConsultation.chooseTheBranchThePatient');
+    else if (!doctor) errs.doctor = t('bookConsultation.chooseADoctor');
+    else if (!slot) errs.slot = t('common.chooseATime');
+    else if (!mode) errs.mode = t('bookConsultation.chooseHowTheConsultationHappens');
     if (mode) Object.assign(errs, joinProblems(mode, join));
     Object.assign(errs, consultExtrasProblems(extras));
     const code = couponOf(extras);
@@ -263,7 +262,7 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
     routeCardAnswer('consultation', { card, booking: r.booking, order: r.payment ?? null }, null, {
       done: () => setDone(doneFromReceipt(r, summary)),
       due: (order) => setCardDue({ bookingId: r.booking._id, requestKey, order, summary, ref: r.booking.assisted?.shortRef, newAccount: r.newAccount, autoOpen: !!order }),
-      ended: () => { cards.forget(r.booking._id); setEnded(NOT_PAYABLE_WORDS); },
+      ended: () => { cards.forget(r.booking._id); setEnded(NOT_PAYABLE_WORDS()); },
     });
   }
 
@@ -282,7 +281,7 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
         cards.remember(b._id, p.requestKey);
         setCardDue({ bookingId: b._id, requestKey: p.requestKey, order, summary: summaryOf(b, summary, org), ref: b.assisted?.shortRef, autoOpen: false });
       },
-      ended: () => setEnded(NOT_PAYABLE_WORDS),
+      ended: () => setEnded(NOT_PAYABLE_WORDS()),
     });
   }
 
@@ -292,35 +291,27 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
   // An unconfirmed booking stays on screen while it is resent or given up (its first attempt shows the review busy).
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
     return (
-      <UnconfirmedBooking op={op} what="booking" busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => assisted.byKey(op.requestKey)}
+      <UnconfirmedBooking op={op} what={t('bookConsultation.booking')} busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => assisted.byKey(op.requestKey)}
         onUsed={(r, restored) => afterUsed(r, op, restored)}
         onAbandoned={() => create.abandonedByCheck(op.requestKey)}
         onResend={() => { setResendError(null); void create.send(op).catch((err: unknown) => setResendError(booker.refusal(err).message)); }}
         onGiveUp={() => void create.giveUp(op)}
         extra={orderFailed && (
-          <Alert tone="warn">{ORDER_FAILED_WORDS}</Alert>
+          <Alert tone="warn">{ORDER_FAILED_WORDS()}</Alert>
         )}
         summary={op.body && <SummaryList s={op.body.summary} />} />
     );
   }
 
-  if (off) {
-    return (
-      <Alert tone="warn">
-        {SWITCHED_OFF_MESSAGE} Jansetu turns it on for your {org} when it is ready. Your other tools work as usual.
-      </Alert>
-    );
-  }
-
   if (ended) {
-    return <NotBooked words={ended} againLabel="Book another consultation" onAgain={resetAll} listPath={booker.paths.list} listLabel="See booked consultations" />;
+    return <NotBooked words={ended} againLabel={t('bookConsultation.bookAnotherConsultation')} onAgain={resetAll} listPath={booker.paths.list} listLabel={t('bookConsultation.seeBookedConsultations')} />;
   }
 
   if (cardDue) {
     const due = cardDue;
     return (
       <CardDueSection bookingRef={due.ref} summary={<SummaryList s={due.summary} />} newAccount={due.newAccount} listPath={booker.paths.list}
-        listLabel="See booked consultations" held={cardHeld}>
+        listLabel={t('bookConsultation.seeBookedConsultations')} held={cardHeld}>
         <CardPaymentPanel key={due.bookingId} source={consultationCardSource(api, due.bookingId, due.requestKey, booker)} order={due.order}
           amountMinor={due.summary.priceMinor} perform={perform} busy={busy}
           autoOpen={due.autoOpen} onHeld={setCardHeld}
@@ -334,22 +325,31 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
     const byCard = done.paidBy === 'card';
     return (
       <section className="ws-section" aria-labelledby="done-h">
-        <h2 id="done-h">{done.replayed ? 'Already booked' : 'Booked'}</h2>
+        <h2 id="done-h">{done.replayed ? t('common.alreadyBooked') : 'Booked'}</h2>
         <Alert tone="ok">
-          {done.replayed ? 'This booking was already made. Nothing was booked or charged twice.'
-            : byCard ? 'The consultation is booked and paid by card or UPI.' : 'The consultation is booked and paid from your wallet.'}
-          {done.ref ? <> Booking reference: <strong>{done.ref}</strong>.</> : null}
+          {done.replayed ? t('common.thisBookingWasAlreadyMade')
+            : byCard ? t('bookConsultation.theConsultationIsBookedAnd') : t('bookConsultation.theConsultationIsBookedAnd2')}
+          {done.ref ? <>{t('common.bookingReference')}<strong>{done.ref}</strong>.</> : null}
         </Alert>
         {done.note && <Alert tone="warn">{done.note}</Alert>}
         <SummaryList s={done.summary} />
-        {done.paidMinor !== undefined && <p>{byCard ? 'Paid by card or UPI' : 'Paid from your wallet'}: <strong>{formatRupees(done.paidMinor / 100)}</strong>. Collect this from the patient.</p>}
-        <p><strong>How the patient joins:</strong> {joinWords(done.summary.mode, done.summary.joinOn, org)}</p>
-        {done.newAccount && <p className="ws-muted">This number was new to Jansetu. An account was made for it; the patient can sign in with this number later.</p>}
+        {done.paidMinor !== undefined && <p>{byCard ? t('common.paidByCardOrUpi') : t('common.paidFromYourWallet')}: <strong>{formatRupees(done.paidMinor / 100)}</strong>{t('common.collectThisFromThePatient')}</p>}
+        <p><strong>{t('bookConsultation.howThePatientJoins')}</strong> {joinWords(done.summary.mode, done.summary.joinOn, org)}</p>
+        {done.newAccount && <p className="ws-muted">{t('common.thisNumberWasNewTo')}</p>}
         <div className="ws-actions">
-          <Button onClick={resetAll}>Book another consultation</Button>
-          <Link to={booker.paths.list}>See booked consultations</Link>
+          <Button onClick={resetAll}>{t('bookConsultation.bookAnotherConsultation')}</Button>
+          <Link to={booker.paths.list}>{t('bookConsultation.seeBookedConsultations')}</Link>
         </div>
       </section>
+    );
+  }
+
+  // WQ24b re-check: after the booking states. A background doctor read answering 503 or a code-less 404 (a proxy during
+  // a deploy) reads as "switched off"; it never replaces a booking held for its card payment, or one already made.
+  if (off) {
+    return (
+      <Alert tone="warn">
+        {SWITCHED_OFF_MESSAGE}{t(`bookConsultation.turnsItOnFor.${org}`)}</Alert>
     );
   }
 
@@ -361,18 +361,18 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
       <PatientSection step={pt} busy={busy} frozen={frozenPatient} locked={!!review || busy} booker={org} consent={booker.consent.statement} />
       {patientDone && (
         <section className="ws-section" aria-labelledby="dr-h">
-          <h2 id="dr-h">2. Doctor and time</h2>
+          <h2 id="dr-h">{t('bookConsultation.n2DoctorAndTime')}</h2>
           <form className="rx-form" noValidate onSubmit={(e) => visitNext(e)}>
             <fieldset className="ws-frozen" disabled={!!review || busy}>
               {branches && (
-                branches.length === 0 ? <Alert>Your account has no branch to book from. Ask your lab’s owner to add you to a branch.</Alert>
+                branches.length === 0 ? <Alert>{t('bookConsultation.yourAccountHasNoBranch')}</Alert>
                   : branches.length > 1 && (
                     <div className="j-field">
-                      <label htmlFor="dr-branch">Branch the patient is at</label>
+                      <label htmlFor="dr-branch">{t('bookConsultation.branchThePatientIsAt')}</label>
                       <select id="dr-branch" value={chosenBranch ?? ''} aria-invalid={visitErrors.branch ? true : undefined}
                         aria-describedby={visitErrors.branch ? 'dr-branch-err' : undefined}
                         onChange={(e) => { setChosenBranch(e.target.value || null); setDoctorId(null); setSlotId(null); setMode(''); }}>
-                        <option value="">Choose…</option>
+                        <option value="">{t('common.choose3')}</option>
                         {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                       </select>
                       {visitErrors.branch && <span id="dr-branch-err" className="j-field__error" role="alert">{visitErrors.branch}</span>}
@@ -381,52 +381,52 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
               )}
               <div className="rx-form-row">
                 <div className="j-field">
-                  <label htmlFor="dr-spec">Speciality</label>
+                  <label htmlFor="dr-spec">{t('bookConsultation.speciality')}</label>
                   <select id="dr-spec" value={speciality} onChange={(e) => { setSpeciality(e.target.value); setDoctorId(null); setSlotId(null); }}>
-                    <option value="">All</option>
+                    <option value="">{t('common.all')}</option>
                     {specialities.map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
                 <div className="j-field">
-                  <label htmlFor="dr-mode">How</label>
+                  <label htmlFor="dr-mode">{t('common.how')}</label>
                   <select id="dr-mode" value={modeFilter} onChange={(e) => { setModeFilter(e.target.value as AssistedMode | ''); setSlotId(null); setMode(''); }}>
-                    <option value="">Any</option>
+                    <option value="">{t('bookConsultation.any')}</option>
                     {(Object.keys(ASSISTED_MODE_LABEL) as AssistedMode[]).map((m) => <option key={m} value={m}>{ASSISTED_MODE_LABEL[m]}</option>)}
                   </select>
                 </div>
-                <TextField label="From day" type="date" value={date} min={istToday()} hint={`Free times for ${SLOT_DAYS} days from this day.`}
+                <TextField label={t('common.fromDay')} type="date" value={date} min={istToday()} hint={t('common.freeTimesForDaysFrom', { SLOT_DAYS })}
                   onChange={(e) => { if (e.target.value) { setDate(e.target.value); setSlotId(null); } }} />
               </div>
 
-              {!branchReady ? <span className="ws-muted">Choose the branch first: doctors near it are shown first.</span>
-                : doctors.isPending ? <Loading label="Finding doctors…" />
+              {!branchReady ? <span className="ws-muted">{t('bookConsultation.chooseTheBranchFirstDoctors')}</span>
+                : doctors.isPending ? <Loading label={t('common.findingDoctors')} />
                 : doctors.isError ? <ErrorState message={booker.refusal(doctors.error).message} onRetry={() => void doctors.refetch()} />
-                : doctors.data.length === 0 ? <Empty title="No doctors found">Try another speciality, another way, or another day.</Empty>
+                : doctors.data.length === 0 ? <Empty title={t('bookConsultation.noDoctorsFound')}>{t('bookConsultation.tryAnotherSpecialityAnotherWay')}</Empty>
                 : (
-                  <ul className="stock-list" aria-label="Doctors, nearest first">
+                  <ul className="stock-list" aria-label={t('bookConsultation.doctorsNearestFirst')}>
                     {doctors.data.map((d) => (
                       <li key={d.doctorId} className="ws-section">
                         <div className="stock-head">
                           <h3>{d.name}</h3>
                           {d.specialization && <span>{d.specialization}</span>}
-                          {d.nearby === 'pincode' ? <Badge tone="ok">Near you</Badge> : d.nearby === 'city' ? <Badge>Same city</Badge> : null}
+                          {d.nearby === 'pincode' ? <Badge tone="ok">{t('common.nearYou')}</Badge> : d.nearby === 'city' ? <Badge>{t('common.sameCity')}</Badge> : null}
                           <strong>{d.feeMinor === 0 ? 'Free' : formatRupees(d.feeMinor / 100)}</strong>
                         </div>
                         <div className="ws-muted">
-                          {[d.experienceYears ? `${d.experienceYears} years` : null, d.languages.length ? `Speaks ${d.languages.join(', ')}` : null, d.city]
+                          {[d.experienceYears ? `${d.experienceYears} years` : null, d.languages.length ? t('bookConsultation.speaks', { value: d.languages.join(', ') }) : null, d.city]
                             .filter(Boolean).join(' · ')}
                         </div>
                         <div className="ws-actions">
                           <span>{nextWords(d, modeFilter)}</span>
-                          {doctorId === d.doctorId ? <Badge tone="ok">Chosen</Badge>
-                            : <Button variant="secondary" aria-label={`Choose ${d.name}`} onClick={() => chooseDoctor(d.doctorId)}>Choose</Button>}
+                          {doctorId === d.doctorId ? <Badge tone="ok">{t('common.chosen')}</Badge>
+                            : <Button variant="secondary" aria-label={t('common.choose4', { name: d.name })} onClick={() => chooseDoctor(d.doctorId)}>{t('common.choose2')}</Button>}
                         </div>
                         {doctorId === d.doctorId && (
                           <div className="ws-day">
-                            {slots.isPending ? <Loading label="Finding free times…" />
+                            {slots.isPending ? <Loading label={t('common.findingFreeTimes')} />
                               : slots.isError ? <ErrorState message={booker.refusal(slots.error).message} onRetry={() => void slots.refetch()} />
                               : slotDays.length === 0 ? (
-                                <span>No free times from {formatSlotDate(slots.data.from)} to {formatSlotDate(slots.data.to)}. Choose a later day or another doctor.</span>
+                                <span>{t('bookConsultation.noFreeTimesFrom')}{formatSlotDate(slots.data.from)}{t('common.to')}{formatSlotDate(slots.data.to)}{t('bookConsultation.chooseALaterDayOr')}</span>
                               ) : <SlotDays days={slotDays} chosen={slotId} onChoose={chooseSlot} />}
                           </div>
                         )}
@@ -440,7 +440,7 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
               {slot && (
                 <>
                   <fieldset className="ws-checks">
-                    <legend>How does the consultation happen?</legend>
+                    <legend>{t('common.howDoesTheConsultationHappen')}</legend>
                     {modes.map((m) => (
                       <label key={m} className="ws-check">
                         <input type="radio" name="mode" checked={mode === m} onChange={() => { setMode(m); if (m === 'in-person') setJoin(EMPTY_JOIN); }} />
@@ -455,7 +455,7 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
               )}
             </fieldset>
             {refused && !review && <Alert>{refusalText(refused)}</Alert>}
-            {!review && <div><Button type="submit">Next: check the price</Button></div>}
+            {!review && <div><Button type="submit">{t('common.nextCheckThePrice')}</Button></div>}
           </form>
         </section>
       )}
@@ -486,11 +486,11 @@ function ReviewAndPay({ wallet, org, review, busy, refused, method, cardOff, onM
   const s = review.summary;
   return (
     <section className="ws-section" aria-labelledby="pay-h">
-      <h2 id="pay-h">3. Check and pay</h2>
-      <div className="confirm" role="group" aria-label="Check and pay">
+      <h2 id="pay-h">{t('common.n3CheckAndPay')}</h2>
+      <div className="confirm" role="group" aria-label={t('common.checkAndPay')}>
         <SummaryList s={s} />
-        {s.couponCode && !s.couponChecked && <p className="ws-muted">Price before the coupon; the coupon is checked when you pay.</p>}
-        <p><strong>How the patient joins:</strong> {joinWords(s.mode, s.joinOn, org)}</p>
+        {s.couponCode && !s.couponChecked && <p className="ws-muted">{t('common.priceBeforeTheCouponThe')}</p>}
+        <p><strong>{t('bookConsultation.howThePatientJoins')}</strong> {joinWords(s.mode, s.joinOn, org)}</p>
         <PayChoice wallet={wallet} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy} method={method} cardOff={cardOff}
           onMethod={onMethod} onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
       </div>

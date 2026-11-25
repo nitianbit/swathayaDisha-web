@@ -17,6 +17,7 @@ import {
   appointmentsKey, formatYmd, MeetLink, NotADoctor, RefreshFailed, sortAppointments, useClinics, useDoctor, useMeetPoll, useTicker, useUpcomingAppointments,
   type DoctorContext,
 } from './doctor.tsx';
+import { t } from '../../i18n/doctor/index.ts';
 
 type MeetPoll = ReturnType<typeof useMeetPoll>;
 
@@ -35,19 +36,19 @@ function Appointments({ d }: { d: DoctorContext }) {
   const [day, setDay] = useState(() => istDateOf(new Date()));
   return (
     <>
-      <PageHeading title="Appointments">Your consultations, scheduled and instant. Times are India time.</PageHeading>
+      <PageHeading title={t('common.appointments')}>{t('appointments.yourConsultationsScheduledAndInstant')}</PageHeading>
       <div className="ws-search">
         <div className="j-field ws-filter">
-          <label htmlFor="appt-view">Show</label>
+          <label htmlFor="appt-view">{t('common.show')}</label>
           <select id="appt-view" value={view} onChange={(e) => setView(e.target.value as View)}>
-            <option value="today">Today</option>
-            <option value="upcoming">Next {UPCOMING_DAYS} days</option>
-            <option value="day">One day</option>
+            <option value="today">{t('appointments.today')}</option>
+            <option value="upcoming">{t('appointments.next')}{UPCOMING_DAYS}{t('appointments.days')}</option>
+            <option value="day">{t('appointments.oneDay')}</option>
           </select>
         </div>
-        {view === 'day' && <TextField label="Day" type="date" value={day} onChange={(e) => setDay(e.target.value)} />}
+        {view === 'day' && <TextField label={t('appointments.day')} type="date" value={day} onChange={(e) => setDay(e.target.value)} />}
       </div>
-      {view === 'day' ? (isRealDate(day) ? <DayList key={day} d={d} day={day} /> : <Empty title="Choose a day">Pick the day to show.</Empty>)
+      {view === 'day' ? (isRealDate(day) ? <DayList key={day} d={d} day={day} /> : <Empty title={t('appointments.chooseADay')}>{t('appointments.pickTheDayToShow')}</Empty>)
         : <UpcomingList key={view} d={d} days={view === 'today' ? 1 : UPCOMING_DAYS} />}
     </>
   );
@@ -57,13 +58,13 @@ function UpcomingList({ d, days }: { d: DoctorContext; days: number }) {
   // A just-accepted instant consultation's call link arrives after it: read again (bounded) while one is missing.
   const meet = useMeetPoll();
   const q = useUpcomingAppointments(d, days, meet.interval);
-  if (q.pending) return <Loading label="Loading appointments…" />;
+  if (q.pending) return <Loading label={t('common.loadingAppointments')} />;
   if (q.error) return <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />;
   return (
     <>
       {q.refreshError && <RefreshFailed error={q.refreshError} readAt={q.readAt} onRetry={q.refetch} />}
       <AppointmentTable d={d} items={q.items} meet={meet} refresh={q.refetch} readAt={q.readAt} reading={q.fetching}
-        empty={days === 1 ? 'No appointments today.' : `No appointments in the next ${days} days.`} />
+        empty={days === 1 ? t('appointments.noAppointmentsToday') : t('appointments.noAppointmentsInTheNext', { days })} />
     </>
   );
 }
@@ -71,13 +72,13 @@ function UpcomingList({ d, days }: { d: DoctorContext; days: number }) {
 function DayList({ d, day }: { d: DoctorContext; day: string }) {
   const meet = useMeetPoll();
   const q = useQuery({ queryKey: [...appointmentsKey(d), 'day', day], queryFn: () => d.api.appointmentsOn(day), refetchInterval: (query) => meet.interval(query.state.data) });
-  if (q.isPending) return <Loading label="Loading appointments…" />;
+  if (q.isPending) return <Loading label={t('common.loadingAppointments')} />;
   if (q.isError && q.data === undefined) return <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />;
   return (
     <>
       {q.isError && <RefreshFailed error={q.error} readAt={q.dataUpdatedAt} onRetry={q.refetch} />}
       <AppointmentTable d={d} items={sortAppointments(q.data ?? [])} meet={meet} refresh={q.refetch} readAt={q.dataUpdatedAt} reading={q.isFetching}
-        empty={`No appointments on ${formatDay(day)}.`} />
+        empty={t('appointments.noAppointmentsOn', { when: formatDay(day) })} />
     </>
   );
 }
@@ -98,7 +99,7 @@ function AppointmentTable({ d, items, empty, meet, refresh, readAt, reading }: {
   const move: MoveProps = {
     readAt, reading, busy: guard.busy, now, perform: guard.perform,
     reread: () => void queryClient.invalidateQueries({ queryKey: appointmentsKey(d) }),
-    onNotice: (t) => { setFailure(null); setNotice(t); }, onFailure: (t) => { setNotice(null); setFailure(t); },
+    onNotice: (text) => { setFailure(null); setNotice(text); }, onFailure: (text) => { setNotice(null); setFailure(text); },
   };
   // Q16d: a booking whose no-show time has come by its start is checked against its slot (the doctor's slots of that day):
   // in a session with several seats the no-show waits for the session's end. Until that read answers the no-show is not
@@ -118,14 +119,14 @@ function AppointmentTable({ d, items, empty, meet, refresh, readAt, reading }: {
   };
   // The notice of a move stays visible even when the moved booking left this list (it may have been the only one).
   const alerts = <>{notice && <Alert tone="ok">{notice}</Alert>}{failure && <Alert>{failure}</Alert>}</>;
-  if (items.length === 0) return <>{alerts}<Empty title="Nothing here">{empty}</Empty></>;
+  if (items.length === 0) return <>{alerts}<Empty title={t('appointments.nothingHere')}>{empty}</Empty></>;
   return (
     <>
       {alerts}
       <div className="ws-table-wrap">
-        <table className="j-table" aria-label="Appointments">
+        <table className="j-table" aria-label={t('common.appointments')}>
           <thead>
-            <tr><th scope="col">When</th><th scope="col">Kind</th><th scope="col">Type</th><th scope="col">Concern</th><th scope="col">Status</th><th scope="col">Payment</th><th scope="col">Actions</th></tr>
+            <tr><th scope={'col'}>{t('appointments.when')}</th><th scope={'col'}>{t('common.kind')}</th><th scope={'col'}>{t('common.type')}</th><th scope={'col'}>{t('appointments.concern')}</th><th scope={'col'}>{t('appointments.status')}</th><th scope={'col'}>{t('appointments.payment')}</th><th scope={'col'}>{t('appointments.actions')}</th></tr>
           </thead>
           <tbody>
             {items.map((b) => (
@@ -143,7 +144,7 @@ function AppointmentTable({ d, items, empty, meet, refresh, readAt, reading }: {
 
 interface MoveProps {
   readAt: number; reading: boolean; busy: boolean; now: Date; perform: <T>(run: () => Promise<T>) => Promise<T>;
-  reread: () => void; onNotice: (t: string) => void; onFailure: (t: string) => void;
+  reread: () => void; onNotice: (text: string) => void; onFailure: (text: string) => void;
 }
 
 function Row({ d, b, actions, link, onChanged, onRefused, move }: {
@@ -174,7 +175,7 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
   return (
     <tr>
       <td>{label}</td>
-      <td>{b.bookingKind === 'instant' ? 'Instant' : clinic ? 'At a clinic' : 'Booked'}{b.dependentId ? ' · family member' : ''}</td>
+      <td>{b.bookingKind === 'instant' ? 'Instant' : clinic ? t('appointments.atAClinic') : 'Booked'}{b.dependentId ? ' · family member' : ''}</td>
       <td>
         {b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode : '—'}
         {link && <div>{link}</div>}
@@ -182,49 +183,49 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
       <td>{b.primaryConcern || '—'}</td>
       <td>
         <Badge tone={statusTone(b.status)}>{APPOINTMENT_STATUS_LABEL[b.status] ?? b.status}</Badge>{b.cancellationReason ? <div className="ws-muted">{b.cancellationReason}</div> : null}
-        {movedFrom && <div className="ws-muted">Moved after a no-show{movedFrom.fromDate ? ` (missed ${formatYmd(movedFrom.fromDate)}${movedFrom.fromTime ? `, ${movedFrom.fromTime}` : ''})` : ''}. A second no-show is final.</div>}
+        {movedFrom && <div className="ws-muted">{t('appointments.movedAfterANoShow')}{movedFrom.fromDate ? ` (missed ${formatYmd(movedFrom.fromDate)}${movedFrom.fromTime ? `, ${movedFrom.fromTime}` : ''})` : ''}{t('appointments.aSecondNoShowIs')}</div>}
       </td>
       <td>
-        {b.paymentStatus === 'paid' ? `Paid${typeof b.price === 'number' ? ` · ${formatRupees(b.price)}` : ''}` : b.paymentStatus === 'refunded' ? 'Refunded' : b.settlementSystem === 'clinic' ? 'At the clinic' : 'Not paid'}
-        {b.status === 'no_show' && <div className="ws-muted">No earning: you are paid only for a consultation that takes place. The patient is not refunded.</div>}
+        {b.paymentStatus === 'paid' ? t('appointments.paid', { value: typeof b.price === 'number' ? ` · ${formatRupees(b.price)}` : '' }) : b.paymentStatus === 'refunded' ? 'Refunded' : b.settlementSystem === 'clinic' ? t('appointments.atTheClinic') : t('appointments.notPaid')}
+        {b.status === 'no_show' && <div className="ws-muted">{t('appointments.noEarningYouArePaid')}</div>}
       </td>
       <td>
-        {noShowMove === 'clinic' && <p className="ws-muted">The clinic can move this appointment: it was booked at its front desk.</p>}
+        {noShowMove === 'clinic' && <p className="ws-muted">{t('appointments.theClinicCanMoveThis')}</p>}
         {showMove && (
-          <NoShowMove slot={moveSlot} who="The patient" missed={label} state={noShowMove === 'used' ? 'used' : 'offer'} status={b.status}
+          <NoShowMove slot={moveSlot} who={t('appointments.thePatient')} missed={label} state={noShowMove === 'used' ? 'used' : 'offer'} status={b.status}
             readAt={move.readAt} reading={move.reading} disabled={move.busy || move.reading} version={b.updatedAt}
-            consequence={<>The patient is told the new time. You earn for it only once it is completed.</>}
+            consequence={<>{t('appointments.thePatientIsToldThe')}</>}
             picker={(choose) => <DoctorSlotPicker d={d} b={b} now={move.now} onChoose={choose} />}
-            send={(t: NoShowTarget, requestKey) => move.perform(() => d.api.rescheduleNoShow(b._id, t.slotId, requestKey, typeof t.version === 'string' ? t.version : undefined))}
+            send={(target: NoShowTarget, requestKey) => move.perform(() => d.api.rescheduleNoShow(b._id, target.slotId, requestKey, typeof target.version === 'string' ? target.version : undefined))}
             reread={move.reread} onNotice={move.onNotice} onFailure={move.onFailure}
             onSlotRefused={() => void queryClient.invalidateQueries({ queryKey: [...d.key, 'slots'] })} />
         )}
         {actions.length === 0 ? (!showMove && noShowMove !== 'clinic' && !labLink && <span className="ws-muted">—</span>) : (
           <div className="ws-actions">
             {actions.includes('confirm') && (
-              <ConfirmAction label="Confirm" confirmLabel={`Confirm ${label}`}
-                consequence={<>Confirm the appointment on {label}? The patient is told it is confirmed.</>}
-                onConfirm={() => run('confirmed', `${label} is confirmed.`)} />
+              <ConfirmAction label={t('appointments.confirm')} confirmLabel={t('appointments.confirm2', { label })}
+                consequence={<>{t('appointments.confirmTheAppointmentOn')}{label}{t('appointments.thePatientIsToldIt')}</>}
+                onConfirm={() => run('confirmed', t('appointments.isConfirmed', { label }))} />
             )}
             {actions.includes('complete') && (
-              <ConfirmAction label="Mark completed" confirmLabel={`Complete ${label}`}
-                consequence={<>Mark the consultation on {label} as completed? This cannot be changed later; your earning for it is recorded.</>}
-                onConfirm={() => run('completed', `${label} is completed.`)} />
+              <ConfirmAction label={t('appointments.markCompleted')} confirmLabel={t('appointments.complete', { label })}
+                consequence={<>{t('appointments.markTheConsultationOn')}{label}{t('appointments.asCompletedThisCannotBe')}</>}
+                onConfirm={() => run('completed', t('appointments.isCompleted', { label }))} />
             )}
             {actions.includes('no_show') && (
-              <ConfirmAction label="Patient did not come" confirmLabel={`Mark ${label} as no-show`} danger
-                consequence={<>Mark {label} as a no-show? The patient is not refunded and you are not paid for it (you earn only for a consultation that takes place). You may move it once to a new time afterwards.</>}
-                onConfirm={() => run('no_show', `${label} is marked as a no-show.`)} />
+              <ConfirmAction label={t('appointments.patientDidNotCome')} confirmLabel={t('appointments.markAsNoShow', { label })} danger
+                consequence={<>{t('appointments.mark')}{label}{t('appointments.asANoShowThe')}</>}
+                onConfirm={() => run('no_show', t('appointments.isMarkedAsANo', { label }))} />
             )}
             {actions.includes('cancel') && (
-              <ConfirmAction label="Cancel" confirmLabel={`Cancel ${label}`} danger reason reasonLabel="Reason (the patient sees it)"
-                consequence={<>Cancel the appointment on {label}? {b.paymentStatus === 'paid' ? 'The patient gets their full payment back in their Jansetu wallet. ' : ''}This cannot be undone.</>}
-                onConfirm={(reason) => run('cancelled', `${label} is cancelled${b.paymentStatus === 'paid' ? ' and the patient refunded in full' : ''}.`, reason)} />
+              <ConfirmAction label={t('common.cancel')} confirmLabel={t('appointments.cancel2', { label })} danger reason reasonLabel={t('appointments.reasonThePatientSeesIt')}
+                consequence={<>{t('appointments.cancelTheAppointmentOn')}{label}? {b.paymentStatus === 'paid' ? t('appointments.thePatientGetsTheirFull') : ''}{t('appointments.thisCannotBeUndone')}</>}
+                onConfirm={(reason) => run('cancelled', t('appointments.isCancelled', { label, value: b.paymentStatus === 'paid' ? ' and the patient refunded in full' : '' }), reason)} />
             )}
           </div>
         )}
         {labLink && (
-          <div><Link to={`/doctor/lab-book/from/${b._id}`} aria-label={`Book lab test for this patient (${label})`}>Book lab test for this patient</Link></div>
+          <div><Link to={`/doctor/lab-book/from/${b._id}`} aria-label={t('appointments.bookLabTestForThis', { label })}>{t('appointments.bookLabTestForThis2')}</Link></div>
         )}
       </td>
     </tr>
@@ -245,7 +246,7 @@ function placeOf(s: Pick<DoctorSlot, 'branchId'>, inPerson: boolean, branches: R
  * take the booking's consultation type and are at its place (`noShowSlotFits`); each names its place, and so does the
  * confirmation.
  */
-function DoctorSlotPicker({ d, b, now, onChoose }: { d: DoctorContext; b: DoctorAppointment; now: Date; onChoose: (t: NoShowTarget | null) => void }) {
+function DoctorSlotPicker({ d, b, now, onChoose }: { d: DoctorContext; b: DoctorAppointment; now: Date; onChoose: (target: NoShowTarget | null) => void }) {
   const [day, setDay] = useState(() => istDateOf(now));
   const [slotId, setSlotId] = useState('');
   const ok = isRealDate(day);
@@ -258,25 +259,23 @@ function DoctorSlotPicker({ d, b, now, onChoose }: { d: DoctorContext; b: Doctor
   const mode = b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode : null;
   return (
     <>
-      <p className="ws-muted">
-        Times {mode ? `for ${mode.toLowerCase()} consultations ` : ''}at {inPerson ? (b.clinicVisit?.branchId ? branches.get(String(b.clinicVisit.branchId).toLowerCase()) ?? 'the same clinic' : 'your own place') : 'no clinic (online)'}, as booked.
-      </p>
-      <TextField label="New day" type="date" value={day} min={istDateOf(now)} error={ok ? undefined : 'Enter a real date.'}
+      <p className="ws-muted">{t('appointments.times')}{mode ? `for ${mode.toLowerCase()} consultations ` : ''}{t('appointments.at')}{inPerson ? (b.clinicVisit?.branchId ? branches.get(String(b.clinicVisit.branchId).toLowerCase()) ?? 'the same clinic' : 'your own place') : 'no clinic (online)'}{t('appointments.asBooked')}</p>
+      <TextField label={t('appointments.newDay')} type="date" value={day} min={istDateOf(now)} error={ok ? undefined : t('appointments.enterARealDate')}
         onChange={(e) => { setDay(e.target.value); setSlotId(''); onChoose(null); }} />
       {!ok ? null
-        : slots.isPending ? <Loading label="Loading your slots…" />
+        : slots.isPending ? <Loading label={t('appointments.loadingYourSlots')} />
         : slots.isError ? <ErrorState message={messageOf(slots.error)} onRetry={() => void slots.refetch()} />
-        : choices.length === 0 ? <p className="ws-muted">No open slot for this consultation that day. Choose another day, or add hours on your schedule.</p>
+        : choices.length === 0 ? <p className="ws-muted">{t('appointments.noOpenSlotForThis')}</p>
         : (
           <div className="j-field">
-            <label htmlFor={`noshow-slot-${b._id}`}>New time</label>
+            <label htmlFor={`noshow-slot-${b._id}`}>{t('appointments.newTime')}</label>
             <select id={`noshow-slot-${b._id}`} value={slotId} onChange={(e) => {
               setSlotId(e.target.value);
               const s = choices.find((x) => x._id === e.target.value);
               const iso = s ? fromYmd(s.date) : null;
               onChoose(s ? { slotId: s._id, label: `${iso ? formatDay(iso) : s.date}, ${s.startTime} (${where(s)})` } : null);
             }}>
-              <option value="">Choose a time</option>
+              <option value="">{t('appointments.chooseATime')}</option>
               {choices.map((s) => <option key={s._id} value={s._id}>{s.startTime}–{s.endTime} · {where(s)}</option>)}
             </select>
           </div>

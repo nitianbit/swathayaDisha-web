@@ -2407,6 +2407,36 @@ Nothing visible changes: English is byte-identical and the language list stays h
 - Seen, not changed: customer `e2e/native-session.spec.ts:178` and `e2e/pharmacy.spec.ts:370` fail on unchanged stage
   bac568e too (after a sign-in and a reload the app shows the sign-in screen or stays on "Signing you in…").
 
+## WQ45 UI translation, rounds 6e, 6f and 6i: the pharmacy and doctor workspace screens (2026-11-25, branch `wq45/i18n-pharmacy-doctor`)
+
+Base: `wq45a/merge-24b-27` 3233a59 (origin/stage 25a860c with WQ27, and WQ24 + WQ24b merged), then the WQ24b re-check fixes.
+Only `apps/workspace/src/screens/pharmacy/**`, `apps/workspace/src/screens/doctor/**` and their catalogues changed.
+
+- **Two area catalogues** (docs/I18N_PLAN.md §3.2): `apps/workspace/src/i18n/pharmacy` (`workspace-pharmacy`, 1,162 keys: the
+  pharmacy operations of 6e, the assisted booking and wallet of 6f, and the booking pieces every booker shares: `patientStep`,
+  `walletPay`, `cardBooking`, `ownedCancel`, `unconfirmedBooking`, `bookingFields`, `recommendedTests`, `labBooker`) and
+  `apps/workspace/src/i18n/doctor` (`workspace-doctor`, 401 keys, 6i). Keys are `<screen>.<words>`; words used by more than
+  one screen of an area are `common.*` there (133 and 18; WQ42's shared keys were not available, so these are area-local).
+- **English byte for byte**: the move was made with a TypeScript codemod on the literal scan's own rules (JSX text as React
+  renders it, attribute and string values as written, templates with `{placeholders}` for their values, a value that is not
+  text passed through `String()` as the template did). No assertion changed.
+- **Booker wording as keyed variants**, never an English word passed in: "By your pharmacy|lab", "On this pharmacy’s|lab’s
+  device", "The doctor calls this pharmacy|lab", "Your pharmacy’s|lab’s|doctor’s Jansetu wallet pays…", "…turns it on for your
+  pharmacy|lab…", "…not shown to pharmacies|labs", "Only used the first time your pharmacy|lab books…".
+- **No words at module load** (§3.4.1): 19 module-level labels and sentences became functions called at render
+  (`STATUS_FILTERS()`, `FORWARD_LABEL()`, `NOT_OPENED()` …). Local bindings named `t` were renamed (`timer`, `text`, …).
+- **Allowlist**: the 49 pharmacy and doctor files left it (the literal scan passes).
+
+Left (for the next rounds):
+- Three module-level words stay constants because screens outside this round read them: `REFUND_STATUS_LABEL` (admin
+  refunds), `UNPAID_CHECK_AGAIN` and `CHECK_LABEL` (the lab wallet); they become functions with those screens' rounds.
+- Sentences around an inline value or element are still split into pieces (`Collect ` + amount + ` from the patient`);
+  joining them with `t.rich` is a separate pass, so translators get whole sentences.
+- Words built from fragments passed in as props (`what="booking"`, `noun="copy"`, `when` "… at …") and a few lower-case
+  fragments the scan does not flag stay as they were; the shared words from `@jansetu/api` (refusals, `joinWords`, the
+  consent statements) are WQ42's.
+- No translations (the IndicTrans2 pipeline) and no pseudo walk yet (§4.1 item 4).
+
 ## Follow-ups
 
 
@@ -2440,6 +2470,7 @@ Nothing visible changes: English is byte-identical and the language list stays h
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ45 rounds 6e, 6f, 6i (pharmacy and doctor screens) on wq45a 3233a59 + the WQ24b re-check fixes | typecheck clean; Vitest 506/507 (the literal scan and the catalogue check pass with the 49 files off the allowlist; the one failure, `components/NoShowMove.test.tsx` WQ11b, is a 5 s timeout under load that fails the same way on origin/stage and passed in the wq45a run); Playwright workspace on a temporary config, port 5566 (5556 was held by another agent; `reuseExistingServer: false`, deleted): 1011/1052 with the machine at load 64, then the 41 failures (all 30 s timeouts: page.reload, "Signing you in…") 41/41 with `--last-failed --workers=2`; no assertion changed; `VITE_API_SAME_ORIGIN=true npm run build --workspace apps/workspace` built. |
 | 2026-11-25 | WQ27 doctor pays a lab test by card or UPI (phase 3c web, on 292b22d) + WQ25 review items | Against r29 88e152ed (§25.16.4; mocked API). typecheck clean; Vitest 484/484 (doctorLab.test.ts: the card create is the same body with razorpay; a doctor's 403 at verify or reconcile has its own words while the pharmacy's 403 keeps CARD_BLOCKED_WORDS; the card switch is the shared card words); Playwright workspace 1007 passed of 1008 (+16 = 8 journeys x 2: pay by card from a consultation, Checkout closed then Pay now after asking the server, another device's authorized payment gives no second Checkout, cancel to the card, cancel to the wallet (not withdrawable, said before and after), card switched off falls back to the wallet, a lost cancel found as forfeited from the view's payment, the doctor lab switch off from a consultation shown at once; WQ25 journeys updated for r29: the card offered with the wallet as default, "Waiting for payment" in the filter, the doctor's collect words, no family-list loading text). The one failure is the known load-timing check in stock-supply.spec.ts:1277 (as in WQ17c and WQ18b), 6/6 alone. Temporary config on port 5514, `reuseExistingServer: false`, deleted; release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ25 doctor books a lab test (phase 3b web, on 13333e9) | Against r26 + r26b on stage 6a8574e9 (§25.15; mocked API). typecheck clean; Vitest 483/483 (+5 in doctorLab.test.ts: the reads, list, by-key, abandon, cancel and accept under /specialists/me/assisted with the pharmacy's paths unchanged; the lookup and the recommended-tests code with the phone in the body only; a create from a consultation with no phone and a walk-in by phone; a bad consultation id, two sources, no name, the card and a bad key refused before any request; the doctor's words (unverified, consultation not found, window closed, wallet only) with the lab and pharmacy words unchanged and the code field hidden for an unverified doctor; the appointment read keeps the booking only and `labBookableFrom`); Playwright workspace 992/992 (+20 = 10 journeys x 2: book from a consultation, a walk-in with the nav order, the treating window closed, low balance then Add money on Wallet, a lost answer found by key after a reload, cancel with the refund to the doctor wallet, accept a new time, open a released report, an unverified doctor on both pages, another doctor's booking not found; doctor-tools' nav count now 9) on a temporary config (port 5512, `reuseExistingServer: false`, deleted). A targeted run of the shared-piece specs earlier had 1 load-timing failure in pharmacy-extras.spec.ts:825 (admin wallet, untouched), 6/6 alone and green in the full run. Release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ24b card refunds name their payer; WQ24 review must-fix (gated on data) and follow-ups, on 33439af | Against r21 (mocked API). typecheck clean; Vitest 491/491 (+4 in `wq24b.test.ts`: `payerWord`, `payerNameOf`, the payer's cause and agreement words with the pharmacy's unchanged, the reschedule refusal in the lab's words; `wq24.test.ts`: a missing permission on the lab's payment routes said as such); Playwright on temporary port 5512 (`reuseExistingServer: false`, config deleted): lab-consult, lab-desk, assisted-booking, card-booking, lab-wallet, admin* and partner-workspace 376/376, and partner-labs, lab-booking, consult-now and pharmacy-extras 184/184; +12 = 6 journeys x 2 (the two failed-refetch journeys fail on 33439af: the held card booking and the booking page's payment panel were unmounted); `VITE_API_SAME_ORIGIN=true npm run build --workspace apps/workspace` built. |

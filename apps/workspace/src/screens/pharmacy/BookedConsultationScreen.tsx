@@ -20,6 +20,7 @@ import { CardAwareCancel } from './ownedCancel.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 import { pharmacyConsultBooker, type ConsultBooker } from './consultBooker.ts';
 import { RefreshFailed } from '../doctor/doctor.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ12: one consultation this pharmacy booked (`GET /pharmacy-bookings/:id`): join, cancel, the dispensing copy, an order.
@@ -35,8 +36,8 @@ export function BookedConsultationScreen() {
   const { api } = useSession();
   return (
     <>
-      <Link to="/pharmacy/consultations" className="ws-back"><ArrowLeft size={16} aria-hidden="true" /> Booked consultations</Link>
-      <PageHeading title="Consultation" />
+      <Link to="/pharmacy/consultations" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('bookedConsultation.bookedConsultations')}</Link>
+      <PageHeading title={t('bookedConsultation.consultation')} />
       <BookedConsultationDetail key={`${pharmacyId}:${bookingId}`} booker={pharmacyConsultBooker(api, pharmacyId)} bookingId={bookingId} />
     </>
   );
@@ -69,10 +70,10 @@ export function BookedConsultationDetail({ booker, bookingId }: { booker: Consul
   };
 
   if (!valid || (q.isError && q.error instanceof ApiError && q.error.status === 404 && q.error.code === 'BOOKING_NOT_FOUND')) {
-    return <Empty title="Consultation not found"><Link to={booker.paths.list}>See all booked consultations</Link></Empty>;
+    return <Empty title={t('bookedConsultation.consultationNotFound')}><Link to={booker.paths.list}>{t('bookedConsultation.seeAllBookedConsultations')}</Link></Empty>;
   }
   // WQ24b: gated on the data: a failed read again (on focus, after a UPI app) keeps the page and its payment panel, with a note.
-  if (!q.data) return q.isError ? <ErrorState message={booker.refusal(q.error).message} onRetry={() => void q.refetch()} /> : <Loading label="Loading the consultation…" />;
+  if (!q.data) return q.isError ? <ErrorState message={booker.refusal(q.error).message} onRetry={() => void q.refetch()} /> : <Loading label={t('common.loadingTheConsultation')} />;
   const b = q.data;
   const assistedRow = isAssistedBooking(b);
   // r21 F6: a lab has no typed-name edit.
@@ -90,30 +91,30 @@ export function BookedConsultationDetail({ booker, bookingId }: { booker: Consul
     <>
       {q.isError && <RefreshFailed error={q.error} readAt={q.dataUpdatedAt} onRetry={() => q.refetch()} />}
       <section className="ws-section" aria-labelledby="bk-h">
-        <h2 id="bk-h">Booking</h2>
+        <h2 id="bk-h">{t('common.booking')}</h2>
         <dl className="ws-dl">
-          {b.assisted?.shortRef && <><dt>Reference</dt><dd>{b.assisted.shortRef}</dd></>}
-          <dt>Status</dt><dd>{statusWords(b)}<BookingBadges b={b} /></dd>
-          <dt>Patient</dt>
+          {b.assisted?.shortRef && <><dt>{t('common.reference')}</dt><dd>{b.assisted.shortRef}</dd></>}
+          <dt>{t('common.status')}</dt><dd>{statusWords(b)}<BookingBadges b={b} /></dd>
+          <dt>{t('common.patient2')}</dt>
           <dd>
             {b.patientName ?? '—'}
-            {assistedRow && b.dependentId && <span className="ws-muted"> (a family member on the phone owner’s account: only the phone’s owner can change this name, in their Jansetu app)</span>}
+            {assistedRow && b.dependentId && <span className="ws-muted">{t('bookedConsultation.aFamilyMemberOnThe')}</span>}
           </dd>
-          <dt>Doctor</dt><dd>{b.doctorName ?? '—'}</dd>
-          <dt>When</dt><dd>{formatSlotDate(b.bookingDate)}{b.bookingTime ? ` at ${b.bookingTime}` : ''}</dd>
-          <dt>How</dt><dd>{modeWords(b.consultationMode)}</dd>
-          {assistedRow && b.status !== 'cancelled' && <><dt>How the patient joins</dt><dd>{joinWords(String(b.consultationMode ?? ''), b.assisted?.join?.on, org)}</dd></>}
+          <dt>{t('common.doctor2')}</dt><dd>{b.doctorName ?? '—'}</dd>
+          <dt>{t('common.when')}</dt><dd>{formatSlotDate(b.bookingDate)}{b.bookingTime ? ` at ${b.bookingTime}` : ''}</dd>
+          <dt>{t('common.how')}</dt><dd>{modeWords(b.consultationMode)}</dd>
+          {assistedRow && b.status !== 'cancelled' && <><dt>{t('bookedConsultation.howThePatientJoins')}</dt><dd>{joinWords(String(b.consultationMode ?? ''), b.assisted?.join?.on, org)}</dd></>}
           {/* WQ16c: "paid" only when the server says the money was taken (captured, refunded or forfeited). */}
           {assistedRow && typeof b.price === 'number' && (waiting
-            ? <><dt>Price</dt><dd>{formatRupees(b.price)} (not paid yet)</dd></>
-            : !bookingWasPaid(b) ? <><dt>Price</dt><dd>{formatRupees(b.price)} (not paid)</dd></>
-            : <><dt>{paidBy === 'card' ? 'Paid by card or UPI' : paidBy === 'wallet' ? 'Paid from your wallet' : 'Amount paid'}</dt><dd>{formatRupees(b.price)}</dd></>)}
-          {b.assisted?.preferredLanguage && <><dt>Language</dt><dd>{languageWords(b.assisted.preferredLanguage)}</dd></>}
-          {b.primaryConcern && <><dt>Problem</dt><dd>{b.primaryConcern}</dd></>}
-          {b.status === 'cancelled' && <><dt>Cancelled</dt><dd>{b.cancellationCause === 'patient' ? 'By the patient' : b.cancellationCause === 'booker' ? `By your ${org}` : b.cancellationCause === 'doctor' ? 'By the doctor' : b.cancellationCause === 'admin' ? 'By Jansetu' : b.cancellationCause === 'payment_timeout' ? 'Payment was not completed in time' : '—'}{b.cancellationReason ? `: ${b.cancellationReason}` : ''}</dd></>}
+            ? <><dt>{t('bookedConsultation.price')}</dt><dd>{formatRupees(b.price)}{t('bookedConsultation.notPaidYet')}</dd></>
+            : !bookingWasPaid(b) ? <><dt>{t('bookedConsultation.price')}</dt><dd>{formatRupees(b.price)}{t('bookedConsultation.notPaid')}</dd></>
+            : <><dt>{paidBy === 'card' ? t('common.paidByCardOrUpi') : paidBy === 'wallet' ? t('common.paidFromYourWallet') : t('bookedConsultation.amountPaid')}</dt><dd>{formatRupees(b.price)}</dd></>)}
+          {b.assisted?.preferredLanguage && <><dt>{t('bookedConsultation.language')}</dt><dd>{languageWords(b.assisted.preferredLanguage)}</dd></>}
+          {b.primaryConcern && <><dt>{t('bookedConsultation.problem')}</dt><dd>{b.primaryConcern}</dd></>}
+          {b.status === 'cancelled' && <><dt>{t('common.cancelled')}</dt><dd>{b.cancellationCause === 'patient' ? t('common.byThePatient') : b.cancellationCause === 'booker' ? t(`bookedConsultation.byYour.${org}`) : b.cancellationCause === 'doctor' ? t('bookedConsultation.byTheDoctor') : b.cancellationCause === 'admin' ? t('common.byJansetu') : b.cancellationCause === 'payment_timeout' ? t('bookedConsultation.paymentWasNotCompletedIn') : '—'}{b.cancellationReason ? `: ${b.cancellationReason}` : ''}</dd></>}
         </dl>
         {b.assisted?.disputed?.state === 'open' && (
-          <Alert tone="warn">The account holder told Jansetu this booking is not theirs. Jansetu is looking into it.</Alert>
+          <Alert tone="warn">{t('common.theAccountHolderToldJansetu')}</Alert>
         )}
         <JoinCall b={b} />
       </section>
@@ -121,17 +122,16 @@ export function BookedConsultationDetail({ booker, bookingId }: { booker: Consul
       {payNote && <Alert tone={payNote.tone}>{payNote.text}</Alert>}
       {waiting && !cancelNote && (
         <section className="ws-section" aria-labelledby="pay-h">
-          <h2 id="pay-h">Payment</h2>
+          <h2 id="pay-h">{t('common.payment')}</h2>
           {cardKey || recordId ? (
             <CardPaymentPanel source={consultationCardSource(api, b._id, cardKey, booker)} paymentTransactionId={recordId} order={orderFromBooking(b)} payBy={payBy} amountMinor={typeof b.price === 'number' ? Math.round(b.price * 100) : undefined}
               perform={guard.perform} busy={guard.busy}
-              onPaid={(_b, note) => { setPayNote({ tone: 'ok', text: `Paid. The consultation is booked. The patient and the doctor are told.${note ? ` ${note}` : ''}` }); changed(); void q.refetch(); }}
+              onPaid={(_b, note) => { setPayNote({ tone: 'ok', text: t('bookedConsultation.paidTheConsultationIsBooked', { value: note ? ` ${note}` : '' }) }); changed(); void q.refetch(); }}
               onEnded={(words) => { cards.forget(b._id); setPayNote({ tone: 'error', text: words }); changed(); void q.refetch(); }} />
           ) : (
             <Alert tone="warn">
-              <strong>Waiting for payment.</strong> {payByWords(payBy)}
-              {' '}It can be paid only in the browser tab where it was booked (the payment is kept there, not in this tab). If it is not paid, book again when the time is released.
-            </Alert>
+              <strong>{t('common.waitingForPayment')}</strong> {payByWords(payBy)}
+              {' '}{t('bookedConsultation.itCanBePaidOnly')}</Alert>
           )}
         </section>
       )}
@@ -171,9 +171,9 @@ function CancelBooking({ booker, booking, guard, onChanged, onDone, paidBy, wait
 }) {
   const assisted = booker.api;
   return (
-    <CardAwareCancel<PendingCancel, BookedConsultation> slot={`assisted-cancel:${booker.id}:${booking._id}`} label="Cancel this consultation"
-      what="consultation" when={`${formatSlotDate(booking.bookingDate)} at ${booking.bookingTime}`} introLead="You can cancel any time before the consultation starts."
-      amount={typeof booking.price === 'number' ? formatRupees(booking.price) : 'The amount'} told="The patient and the doctor are told."
+    <CardAwareCancel<PendingCancel, BookedConsultation> slot={`assisted-cancel:${booker.id}:${booking._id}`} label={t('bookedConsultation.cancelThisConsultation')}
+      what={t('bookedConsultation.consultation2')} when={`${formatSlotDate(booking.bookingDate)} at ${booking.bookingTime}`} introLead={t('bookedConsultation.youCanCancelAnyTime')}
+      amount={typeof booking.price === 'number' ? formatRupees(booking.price) : t('common.theAmount')} told={t('bookedConsultation.thePatientAndTheDoctor')}
       paidBy={paidBy} waiting={waiting} captured={captured} version={booking.updatedAt} perform={guard.perform} busy={guard.busy}
       makeBody={(reason, refundTo) => ({ bookingId: booking._id, ...(reason ? { reason } : {}), ...(booking.updatedAt ? { expectedUpdatedAt: booking.updatedAt } : {}),
         label: booking.doctorName ?? '', ...(refundTo ? { refundTo } : {}) })}
@@ -183,12 +183,12 @@ function CancelBooking({ booker, booking, guard, onChanged, onDone, paidBy, wait
       onChanged={onChanged}
       isCancelled={async () => { const now = await assisted.booking(booking._id); return now.status === 'cancelled' ? now : null; }}
       // WQ16c: a restored cancellation's choice is not kept here, so no destination is named.
-      checkedWords={(body, restored) => (waiting ? `Cancelled. It was not paid, so nothing is refunded. ${LATE_PAYMENT_BACK}`
-        : restored && paidBy === 'card' ? 'Cancelled. The amount goes back the way chosen.'
-        : body?.refundTo === 'wallet' ? 'Cancelled. The amount goes back to your Jansetu wallet. See it under Wallet.'
-        : paidBy === 'card' ? 'Cancelled. The amount goes back to the card or UPI it was paid with.'
-        : paidBy === 'wallet' ? 'Cancelled. The amount is back in your Jansetu wallet.'
-        : 'Cancelled. The amount goes back the way it was paid: to your Jansetu wallet, or to the card or UPI.')}
+      checkedWords={(body, restored) => (waiting ? t('common.cancelledItWasNotPaid', { LATE_PAYMENT_BACK })
+        : restored && paidBy === 'card' ? t('common.cancelledTheAmountGoesBack')
+        : body?.refundTo === 'wallet' ? t('common.cancelledTheAmountGoesBack2')
+        : paidBy === 'card' ? t('common.cancelledTheAmountGoesBack3')
+        : paidBy === 'wallet' ? t('common.cancelledTheAmountIsBack')
+        : t('bookedConsultation.cancelledTheAmountGoesBack4'))}
       onDone={onDone} />
   );
 }
@@ -202,11 +202,11 @@ function Prescription({ pharmacyId, org, booking, onRetry }: { pharmacyId: strin
   if (!p) {
     return (
       <section className="ws-section" aria-labelledby="rx-h">
-        <h2 id="rx-h">Prescription</h2>
+        <h2 id="rx-h">{t('common.prescription')}</h2>
         <p className="ws-muted">
           {booking.status === 'completed'
-            ? 'No prescription to show. The doctor may not have written one, or it is more than 90 days old.'
-            : 'The doctor writes the prescription during or after the consultation. It shows here when it is ready.'}
+            ? t('bookedConsultation.noPrescriptionToShowThe')
+            : t('bookedConsultation.theDoctorWritesThePrescription')}
         </p>
       </section>
     );
@@ -215,16 +215,15 @@ function Prescription({ pharmacyId, org, booking, onRetry }: { pharmacyId: strin
   const medicines = p.medicines ?? [];
   return (
     <section className="ws-section" aria-labelledby="rx-h">
-      <h2 id="rx-h">Prescription (dispensing copy)</h2>
-      <p className="ws-muted">
-        Medicines, advice and tests only: the diagnosis is not shown to {org === 'lab' ? 'labs' : 'pharmacies'}.
-        {p.prescribedBySpecialistName ? ` Written by ${p.prescribedBySpecialistName}` : ''}{p.prescribedAt ? ` on ${formatDateTime(p.prescribedAt)}` : ''}.
+      <h2 id="rx-h">{t('bookedConsultation.prescriptionDispensingCopy')}</h2>
+      <p className="ws-muted">{t(`bookedConsultation.diagnosisNotShown.${org}`)}
+        {p.prescribedBySpecialistName ? t('bookedConsultation.writtenBy', { prescribedBySpecialistName: p.prescribedBySpecialistName }) : ''}{p.prescribedAt ? ` on ${formatDateTime(p.prescribedAt)}` : ''}.
       </p>
       {medicines.length > 0 ? (
         <div className="ws-table-wrap">
           <table className="j-table">
-            <caption className="j-sr-only">Prescribed medicines</caption>
-            <thead><tr><th scope="col">Medicine</th><th scope="col">Dose</th><th scope="col">How often</th><th scope="col">How long</th><th scope="col">Instructions</th></tr></thead>
+            <caption className="j-sr-only">{t('bookedConsultation.prescribedMedicines')}</caption>
+            <thead><tr><th scope={'col'}>{t('common.medicine')}</th><th scope={'col'}>{t('bookedConsultation.dose')}</th><th scope={'col'}>{t('bookedConsultation.howOften')}</th><th scope={'col'}>{t('bookedConsultation.howLong')}</th><th scope={'col'}>{t('bookedConsultation.instructions')}</th></tr></thead>
             <tbody>
               {medicines.map((m, i) => (
                 <tr key={i}><td>{m.name}</td><td>{m.dosage ?? '—'}</td><td>{m.frequency ?? '—'}</td><td>{m.duration ?? '—'}</td><td>{m.instructions ?? '—'}</td></tr>
@@ -232,23 +231,23 @@ function Prescription({ pharmacyId, org, booking, onRetry }: { pharmacyId: strin
             </tbody>
           </table>
         </div>
-      ) : <p>No medicines prescribed.</p>}
-      {p.advice && <p><strong>Advice:</strong> {p.advice}</p>}
-      {(p.testsAdvised ?? []).length > 0 && <p><strong>Tests advised:</strong> {(p.testsAdvised ?? []).join(', ')}</p>}
+      ) : <p>{t('bookedConsultation.noMedicinesPrescribed')}</p>}
+      {p.advice && <p><strong>{t('bookedConsultation.advice')}</strong> {p.advice}</p>}
+      {(p.testsAdvised ?? []).length > 0 && <p><strong>{t('bookedConsultation.testsAdvised')}</strong> {(p.testsAdvised ?? []).join(', ')}</p>}
       {/* WQ21 (r16): the code the patient shows to book these tests (here, at Book lab test). */}
-      {p.recommendationCode && <p><strong>Recommended tests code:</strong> {formatRecommendationCode(p.recommendationCode)}</p>}
+      {p.recommendationCode && <p><strong>{t('bookedConsultation.recommendedTestsCode')}</strong> {formatRecommendationCode(p.recommendationCode)}</p>}
       <div className="ws-actions">
         {p.fileUrls[0] ? (
-          <Button variant="secondary" busy={opening !== null} onClick={() => void open(p.fileUrls[0]!)}><FileText size={16} aria-hidden="true" /> Open the prescription copy</Button>
+          <Button variant="secondary" busy={opening !== null} onClick={() => void open(p.fileUrls[0]!)}><FileText size={16} aria-hidden="true" />{t('bookedConsultation.openThePrescriptionCopy')}</Button>
         ) : p.copyPending ? (
           <>
-            <span className="ws-muted">The printable copy is being made. Try again in a minute.</span>
-            <Button variant="secondary" onClick={onRetry}>Check again</Button>
+            <span className="ws-muted">{t('bookedConsultation.thePrintableCopyIsBeing')}</span>
+            <Button variant="secondary" onClick={onRetry}>{t('bookedConsultation.checkAgain')}</Button>
           </>
         ) : null}
       </div>
-      {fileError && <Alert>Could not open the copy: {fileError}</Alert>}
-      <DocumentPreview preview={preview} title="Prescription copy" noun="copy" fileName="prescription-copy" />
+      {fileError && <Alert>{t('bookedConsultation.couldNotOpenTheCopy')}{fileError}</Alert>}
+      <DocumentPreview preview={preview} title={t('bookedConsultation.prescriptionCopy')} noun={t('bookedConsultation.copy')} fileName={t('bookedConsultation.prescriptionCopy2')} />
       {org === 'pharmacy' && medicines.length > 0 && <RxOrder pharmacyId={pharmacyId} booking={booking} medicines={medicines} />}
     </section>
   );
@@ -308,10 +307,10 @@ function RxOrder({ pharmacyId, booking, medicines }: { pharmacyId: string; booki
     const r = await perform(() => send(p, (b) => assisted.orderFromPrescription(b.request)));
     if (r.kind === 'stale') return;
     if (r.kind === 'ok') {
-      finished(r.value.order._id, r.value.replayed ? 'This order was already made. Nothing was ordered twice.' : 'Order made.');
+      finished(r.value.order._id, r.value.replayed ? t('bookedConsultation.thisOrderWasAlreadyMade') : t('bookedConsultation.orderMade'));
       return;
     }
-    if (r.kind === 'unknown' && wasAbandoned(r.error)) { settle(p.requestKey); setReview(null); setRefused('This order was given up earlier, so it was not made. Make it again.'); return; }
+    if (r.kind === 'unknown' && wasAbandoned(r.error)) { settle(p.requestKey); setReview(null); setRefused(t('bookedConsultation.thisOrderWasGivenUp')); return; }
     if (r.kind === 'refused') { setReview(null); setRefused(assistedRefusal(r.error).message); }
   }
 
@@ -320,11 +319,11 @@ function RxOrder({ pharmacyId, booking, medicines }: { pharmacyId: string; booki
     setResendError(null);
     try {
       const r = await perform(() => keys.abandon('pharmacy_rx_order', p.requestKey));
-      if (r.state === 'used' && r.record?._id) { settle(p.requestKey); finished(r.record._id, 'The order was made. Nothing was ordered twice.'); return; }
+      if (r.state === 'used' && r.record?._id) { settle(p.requestKey); finished(r.record._id, t('bookedConsultation.theOrderWasMadeNothing')); return; }
       // Only `abandoned` means given up; any other answer leaves it unknown (the panel stays).
-      if (r.state !== 'abandoned') { setResendError('It could not be given up yet. Check whether it was recorded, then try again.'); return; }
+      if (r.state !== 'abandoned') { setResendError(t('common.itCouldNotBeGiven')); return; }
       settle(p.requestKey);
-      setRefused('Given up: that order was not made and can never be made now. You can make the order again.');
+      setRefused(t('bookedConsultation.givenUpThatOrderWas'));
     } catch (err) {
       setResendError(assistedRefusal(err).message);
     } finally {
@@ -333,7 +332,7 @@ function RxOrder({ pharmacyId, booking, medicines }: { pharmacyId: string; booki
   }
 
   if (done) {
-    return <Alert tone="ok">{done.text} <Link to={`/pharmacy/orders/${done.orderId}`}>Open the order</Link>. The patient pays at your counter.</Alert>;
+    return <Alert tone="ok">{done.text} <Link to={`/pharmacy/orders/${done.orderId}`}>{t('bookedConsultation.openTheOrder')}</Link>{t('bookedConsultation.thePatientPaysAtYour')}</Alert>;
   }
 
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
@@ -341,22 +340,22 @@ function RxOrder({ pharmacyId, booking, medicines }: { pharmacyId: string; booki
     return (
       <>
         {resendError && <Alert>{resendError}</Alert>}
-        <CheckPanel label="Unconfirmed medicine order"
+        <CheckPanel label={t('bookedConsultation.unconfirmedMedicineOrder')}
           onCheck={async () => {
             const r = await keys.lookup('pharmacy_rx_order', op.requestKey);
-            if (r.state === 'used' && r.record?._id) { settle(op.requestKey); finished(r.record._id, 'The order was made. Nothing was ordered twice.'); return null; }
-            if (r.state === 'abandoned') { settle(op.requestKey); setRefused('That order was given up, so it was not made. You can make it again.'); return null; }
-            return 'Not made so far. It may still be on its way. Sending the same order again is safe: it is never made twice.';
+            if (r.state === 'used' && r.record?._id) { settle(op.requestKey); finished(r.record._id, t('bookedConsultation.theOrderWasMadeNothing')); return null; }
+            if (r.state === 'abandoned') { settle(op.requestKey); setRefused(t('bookedConsultation.thatOrderWasGivenUp')); return null; }
+            return t('bookedConsultation.notMadeSoFarIt');
           }}
           resend={restored ? undefined : {
-            label: 'Send the same request again', busy: busy && !givingUp,
+            label: t('common.sendTheSameRequestAgain'), busy: busy && !givingUp,
             onClick: () => { setResendError(null); void sendOrder(op).catch((err: unknown) => setResendError(assistedRefusal(err).message)); },
           }}
-          giveUp={{ label: 'Give this up', busy: givingUp, onClick: () => void giveUp(op) }}>
+          giveUp={{ label: t('common.giveThisUp'), busy: givingUp, onClick: () => void giveUp(op) }}>
           <Alert tone="warn">
             {restored
-              ? 'A medicine order made earlier on this device was not confirmed. Its details are not kept here. Check it, or give it up.'
-              : `The outcome of this request is not known yet${op.error ? ` (${op.error})` : ''}. The order may already be made. Sending the same request again is safe: it is never made twice.`}
+              ? t('bookedConsultation.aMedicineOrderMadeEarlier')
+              : t('bookedConsultation.theOutcomeOfThisRequest', { value: op.error ? ` (${op.error})` : '' })}
           </Alert>
           {!restored && op.body && <ul className="ws-list">{op.body.words.map((w) => <li key={w}>{w}</li>)}</ul>}
         </CheckPanel>
@@ -367,7 +366,7 @@ function RxOrder({ pharmacyId, booking, medicines }: { pharmacyId: string; booki
   if (!open) {
     return (
       <div className="ws-actions">
-        <Button onClick={() => setOpen(true)}>Make a medicine order from this prescription</Button>
+        <Button onClick={() => setOpen(true)}>{t('bookedConsultation.makeAMedicineOrderFrom')}</Button>
         {refused && <Alert>{refused}</Alert>}
       </div>
     );
@@ -375,29 +374,29 @@ function RxOrder({ pharmacyId, booking, medicines }: { pharmacyId: string; booki
 
   return (
     <form className="rx-form ws-section" noValidate onSubmit={check} aria-labelledby="rxo-h">
-      <h3 id="rxo-h">Medicine order from this prescription</h3>
-      <p className="ws-muted">For each prescribed medicine, choose the one you will give and how many. Leave out any you do not have. The order is for pickup at your counter, paid at the counter.</p>
+      <h3 id="rxo-h">{t('bookedConsultation.medicineOrderFromThisPrescription')}</h3>
+      <p className="ws-muted">{t('bookedConsultation.forEachPrescribedMedicineChoose')}</p>
       <fieldset className="ws-frozen" disabled={!!review || busy}>
         {medicines.map((m, i) => (
           <RxLine key={i} pharmacyId={pharmacyId} prescribed={m} line={lines[i]!} onChange={(l) => setLine(i, l)} />
         ))}
-        <TextField label="Note for the order (optional)" value={notes} maxLength={1000} onChange={(e) => setNotes(e.target.value)} />
+        <TextField label={t('bookedConsultation.noteForTheOrderOptional')} value={notes} maxLength={1000} onChange={(e) => setNotes(e.target.value)} />
       </fieldset>
       {problem && <Alert>{problem}</Alert>}
-      {refused && <Alert>Not made: {refused}</Alert>}
+      {refused && <Alert>{t('bookedConsultation.notMade')}{refused}</Alert>}
       {!review ? (
         <div className="ws-actions">
-          <Button type="submit">Check the order</Button>
-          <Button variant="ghost" onClick={() => setOpen(false)}>Close</Button>
+          <Button type="submit">{t('bookedConsultation.checkTheOrder')}</Button>
+          <Button variant="ghost" onClick={() => setOpen(false)}>{t('common.close')}</Button>
         </div>
       ) : (
-        <div className="confirm" role="group" aria-label="Make this order">
-          <div className="confirm-text">Make an order for:</div>
+        <div className="confirm" role="group" aria-label={t('bookedConsultation.makeThisOrder')}>
+          <div className="confirm-text">{t('bookedConsultation.makeAnOrderFor')}</div>
           <ul className="ws-list">{review.words.map((w) => <li key={w}>{w}</li>)}</ul>
-          <span className="ws-muted">Prices come from your stock. The order appears under Orders.</span>
+          <span className="ws-muted">{t('bookedConsultation.pricesComeFromYourStock')}</span>
           <div className="confirm-actions">
-            <Button busy={busy} onClick={() => { const { requestKey, ...pending } = review; void sendOrder(startOp(requestKey, pending)).catch((err: unknown) => setRefused(assistedRefusal(err).message)); }}>Make the order</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>Back</Button>
+            <Button busy={busy} onClick={() => { const { requestKey, ...pending } = review; void sendOrder(startOp(requestKey, pending)).catch((err: unknown) => setRefused(assistedRefusal(err).message)); }}>{t('bookedConsultation.makeTheOrder')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('common.back')}</Button>
           </div>
         </div>
       )}
@@ -421,26 +420,26 @@ function RxLine({ pharmacyId, prescribed, line, onChange }: { pharmacyId: string
       {line.medicine ? (
         <div className="ws-actions">
           <strong>{medicineName(line.medicine)}</strong>
-          <TextField label="Units" inputMode="numeric" value={line.qty} onChange={(e) => onChange({ qty: e.target.value.replace(/\D/g, '') })} />
-          <Button variant="ghost" onClick={() => onChange({ medicine: null, qty: '' })}>Change</Button>
+          <TextField label={t('common.units')} inputMode="numeric" value={line.qty} onChange={(e) => onChange({ qty: e.target.value.replace(/\D/g, '') })} />
+          <Button variant="ghost" onClick={() => onChange({ medicine: null, qty: '' })}>{t('common.change')}</Button>
         </div>
       ) : (
         <>
           <div className="ws-search">
-            <TextField label={`Find the medicine for ${prescribed.name}`} value={text} onChange={(e) => setText(e.target.value)}
+            <TextField label={t('bookedConsultation.findTheMedicineFor', { name: prescribed.name })} value={text} onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (text.trim()) setSearch(text.trim()); } }} />
-            <Button variant="secondary" onClick={() => { if (text.trim()) setSearch(text.trim()); }}>Search</Button>
+            <Button variant="secondary" onClick={() => { if (text.trim()) setSearch(text.trim()); }}>{t('common.search')}</Button>
           </div>
-          {search === null ? <span className="ws-muted">Not added yet.</span>
-            : q.isPending ? <Loading label="Searching medicines…" />
+          {search === null ? <span className="ws-muted">{t('bookedConsultation.notAddedYet')}</span>
+            : q.isPending ? <Loading label={t('common.searchingMedicines')} />
             : q.isError ? <ErrorState message={assistedRefusal(q.error).message} onRetry={() => void q.refetch()} />
-            : q.data.items.length === 0 ? <span className="ws-muted">No medicine matches “{search}”. Try another name, or leave it out.</span>
+            : q.data.items.length === 0 ? <span className="ws-muted">{t('bookedConsultation.noMedicineMatches')}{search}{t('bookedConsultation.tryAnotherNameOrLeave')}</span>
             : (
-              <ul className="ws-list" aria-label={`Medicines found for ${prescribed.name}`}>
+              <ul className="ws-list" aria-label={t('bookedConsultation.medicinesFoundFor', { name: prescribed.name })}>
                 {q.data.items.map((m) => (
                   <li key={m._id} className="ws-actions">
                     <span>{medicineName(m)}{m.dosageForm ? ` · ${m.dosageForm}` : ''}</span>
-                    <Button variant="secondary" aria-label={`Choose ${medicineName(m)}`} onClick={() => onChange({ medicine: m, qty: line.qty || '1' })}>Choose</Button>
+                    <Button variant="secondary" aria-label={t('common.choose', { value: medicineName(m) })} onClick={() => onChange({ medicine: m, qty: line.qty || '1' })}>{t('common.choose2')}</Button>
                   </li>
                 ))}
               </ul>
@@ -455,5 +454,5 @@ function RxLine({ pharmacyId, prescribed, line, onChange }: { pharmacyId: string
 export function JoinCall({ b }: { b: Pick<BookedConsultation, 'virtualMeeting'> }) {
   const joinUrl = b.virtualMeeting?.joinUrl && /^https:\/\//.test(b.virtualMeeting.joinUrl) ? b.virtualMeeting.joinUrl : null;
   if (!joinUrl) return null;
-  return <p><a className="j-btn j-btn--primary" href={joinUrl} target="_blank" rel="noopener noreferrer">Join call</a> Open it on this device with the patient next to you.</p>;
+  return <p><a className="j-btn j-btn--primary" href={joinUrl} target="_blank" rel="noopener noreferrer">{t('bookedConsultation.joinCall')}</a>{t('bookedConsultation.openItOnThisDevice')}</p>;
 }

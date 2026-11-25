@@ -1,5 +1,6 @@
 import { canonicalPhone, MAX_CONCERN, PATIENT_LANGUAGES, type BookerKind, type JoinOn, type LabAddress } from '@jansetu/api';
 import { TextArea, TextField } from '@jansetu/ui';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ19: form pieces every assisted booking shares (moved out of Book consultation and Book lab test so the lab front desk
@@ -10,10 +11,10 @@ import { TextArea, TextField } from '@jansetu/ui';
 export function LanguageSelect({ id, value, error, onChange }: { id: string; value: string; error?: string; onChange: (code: string) => void }) {
   return (
     <div className="j-field">
-      <label htmlFor={id}>Language the patient speaks</label>
+      <label htmlFor={id}>{t('bookingFields.languageThePatientSpeaks')}</label>
       <select id={id} value={value} aria-invalid={error ? true : undefined} aria-describedby={error ? `${id}-err` : undefined}
         onChange={(e) => onChange(e.target.value)}>
-        <option value="">Choose…</option>
+        <option value="">{t('common.choose3')}</option>
         {PATIENT_LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
       </select>
       {error && <span id={`${id}-err`} className="j-field__error" role="alert">{error}</span>}
@@ -40,11 +41,11 @@ export function AddressFields({ value, errors, onChange }: { value: AddressDraft
   );
   return (
     <fieldset className="ws-checks">
-      <legend>Address for the home collection</legend>
-      {field('line1', 'House and street')}
-      {field('line2', 'Area (optional)')}
+      <legend>{t('bookingFields.addressForTheHomeCollection')}</legend>
+      {field('line1', t('bookingFields.houseAndStreet'))}
+      {field('line2', t('bookingFields.areaOptional'))}
       <div className="rx-form-row">{field('city', 'City')}{field('pincode', 'Pincode')}</div>
-      <div className="rx-form-row">{field('state', 'State (optional)')}{field('landmark', 'Landmark (optional)')}</div>
+      <div className="rx-form-row">{field('state', t('bookingFields.stateOptional'))}{field('landmark', t('bookingFields.landmarkOptional'))}</div>
     </fieldset>
   );
 }
@@ -58,8 +59,8 @@ export const EMPTY_JOIN: JoinDraft = { on: '', phone: '' };
 export function joinProblems(mode: string, j: JoinDraft): Record<string, string> {
   if (mode !== 'video' && mode !== 'call') return {};
   const e: Record<string, string> = {};
-  if (!j.on) e.joinOn = 'Choose where the patient joins.';
-  if (mode === 'call' && j.on === 'patient_phone' && j.phone.trim() && !canonicalPhone(j.phone)) e.joinPhone = 'Enter a valid 10-digit mobile number, or leave it empty.';
+  if (!j.on) e.joinOn = t('bookingFields.chooseWhereThePatientJoins');
+  if (mode === 'call' && j.on === 'patient_phone' && j.phone.trim() && !canonicalPhone(j.phone)) e.joinPhone = t('bookingFields.enterAValid10Digit');
   return e;
 }
 /** The `join` sent: the number to call only for a phone call on the patient's own phone (empty: the patient's number). */
@@ -76,20 +77,18 @@ export function JoinFields({ mode, value, errors, onChange, org = 'pharmacy' }: 
   return (
     <>
       <fieldset className="ws-checks">
-        <legend>Where does the patient join?</legend>
+        <legend>{t('bookingFields.whereDoesThePatientJoin')}</legend>
         <label className="ws-check">
           <input type="radio" name="join" checked={value.on === 'partner_device'} onChange={() => onChange({ ...value, on: 'partner_device' })} />
-          {mode === 'call' ? `The doctor calls this ${org} (the patient stays with you)` : `On this ${org}’s device`}
+          {mode === 'call' ? t(`bookingFields.doctorCallsThis.${org}`) : t(`bookingFields.onThisDevice.${org}`)}
         </label>
         <label className="ws-check">
-          <input type="radio" name="join" checked={value.on === 'patient_phone'} onChange={() => onChange({ ...value, on: 'patient_phone' })} />
-          On the patient’s own phone
-        </label>
+          <input type="radio" name="join" checked={value.on === 'patient_phone'} onChange={() => onChange({ ...value, on: 'patient_phone' })} />{t('bookingFields.onThePatientSOwn')}</label>
         {errors.joinOn && <span className="j-field__error" role="alert">{errors.joinOn}</span>}
       </fieldset>
       {mode === 'call' && value.on === 'patient_phone' && (
-        <TextField label="Number the doctor should call (optional)" inputMode="tel" autoComplete="off" value={value.phone} error={errors.joinPhone}
-          hint="Leave empty to use the patient’s mobile number above." onChange={(e) => onChange({ ...value, phone: e.target.value })} />
+        <TextField label={t('bookingFields.numberTheDoctorShouldCall')} inputMode="tel" autoComplete="off" value={value.phone} error={errors.joinPhone}
+          hint={t('bookingFields.leaveEmptyToUseThe')} onChange={(e) => onChange({ ...value, phone: e.target.value })} />
       )}
     </>
   );
@@ -100,10 +99,10 @@ export const EMPTY_EXTRAS: ConsultExtrasDraft = { language: '', coupon: '', conc
 /** The extras' problems (`language`, `coupon`, `concern`) and the coupon as sent (upper case, or none). */
 export function consultExtrasProblems(x: ConsultExtrasDraft): Record<string, string> {
   const e: Record<string, string> = {};
-  if (!x.language) e.language = 'Choose the language the patient speaks.';
-  if (x.concern.trim().length > MAX_CONCERN) e.concern = `Use at most ${MAX_CONCERN} characters.`;
+  if (!x.language) e.language = t('common.chooseTheLanguageThePatient');
+  if (x.concern.trim().length > MAX_CONCERN) e.concern = t('bookingFields.useAtMostCharacters', { MAX_CONCERN });
   const code = x.coupon.trim().toUpperCase();
-  if (code && !/^[A-Z0-9_-]{2,50}$/.test(code)) e.coupon = 'Check the coupon code (letters and numbers only).';
+  if (code && !/^[A-Z0-9_-]{2,50}$/.test(code)) e.coupon = t('common.checkTheCouponCodeLetters');
   return e;
 }
 export const couponOf = (x: ConsultExtrasDraft) => x.coupon.trim().toUpperCase();
@@ -114,11 +113,11 @@ export function ConsultExtras({ value, errors, onChange }: { value: ConsultExtra
     <>
       <div className="rx-form-row">
         <LanguageSelect id="pt-lang" value={value.language} error={errors.language} onChange={(language) => onChange({ ...value, language })} />
-        <TextField label="Coupon code (optional)" value={value.coupon} error={errors.coupon} maxLength={50}
-          hint="Only if the patient has one." onChange={(e) => onChange({ ...value, coupon: e.target.value })} />
+        <TextField label={t('common.couponCodeOptional')} value={value.coupon} error={errors.coupon} maxLength={50}
+          hint={t('common.onlyIfThePatientHas')} onChange={(e) => onChange({ ...value, coupon: e.target.value })} />
       </div>
-      <TextArea label="What is the problem? (optional)" autoComplete="off" value={value.concern} maxLength={MAX_CONCERN} error={errors.concern}
-        hint="A few words for the doctor, for example “fever for 3 days”." onChange={(e) => onChange({ ...value, concern: e.target.value })} />
+      <TextArea label={t('bookingFields.whatIsTheProblemOptional')} autoComplete="off" value={value.concern} maxLength={MAX_CONCERN} error={errors.concern}
+        hint={t('bookingFields.aFewWordsForThe')} onChange={(e) => onChange({ ...value, concern: e.target.value })} />
     </>
   );
 }

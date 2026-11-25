@@ -6,6 +6,7 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { PHARMACY_PROFILE_KEY } from './RxReviewScreen.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /** P9: the pharmacy's registered pharmacist, recorded on every prescription decision (one-button approval). */
 export function SettingsScreen() {
@@ -26,8 +27,8 @@ export function SettingsScreen() {
   async function save(e: FormEvent) {
     e.preventDefault();
     const errs: Record<string, string> = {};
-    if (name.trim().length < 2) errs.name = 'Enter the pharmacist’s full name.';
-    if (!REGISTRATION_NUMBER_PATTERN.test(registration.trim())) errs.registration = 'Enter the pharmacist registration number.';
+    if (name.trim().length < 2) errs.name = t('settings.enterThePharmacistSFull');
+    if (!REGISTRATION_NUMBER_PATTERN.test(registration.trim())) errs.registration = t('settings.enterThePharmacistRegistrationNumber');
     setErrors(errs); setSaved(false); setError(null);
     if (Object.keys(errs).length) return;
     setBusy(true);
@@ -44,19 +45,19 @@ export function SettingsScreen() {
 
   return (
     <>
-      <PageHeading title="Settings">Who approves prescriptions for this pharmacy.</PageHeading>
+      <PageHeading title={t('settings.settings')}>{t('settings.whoApprovesPrescriptionsForThis')}</PageHeading>
       {profile.isPending ? <Loading /> : profile.isError ? <ErrorState message={messageOf(profile.error)} onRetry={() => void profile.refetch()} /> : (
         <section className="ws-section" aria-labelledby="pharmacist-h">
-          <h2 id="pharmacist-h">Pharmacist</h2>
-          <p className="ws-muted">Every prescription approval or rejection records this pharmacist.</p>
+          <h2 id="pharmacist-h">{t('common.pharmacist')}</h2>
+          <p className="ws-muted">{t('settings.everyPrescriptionApprovalOrRejection')}</p>
           <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
             <div className="rx-form-row">
-              <TextField label="Pharmacist name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} error={errors.name} maxLength={120} />
-              <TextField label="Registration number" value={registration} onChange={(e) => setRegistration(e.target.value)} error={errors.registration} maxLength={60} />
+              <TextField label={t('settings.pharmacistName')} autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} error={errors.name} maxLength={120} />
+              <TextField label={t('settings.registrationNumber')} value={registration} onChange={(e) => setRegistration(e.target.value)} error={errors.registration} maxLength={60} />
             </div>
-            {saved && <Alert tone="ok">Saved.</Alert>}
+            {saved && <Alert tone="ok">{t('settings.saved')}</Alert>}
             {error && <Alert>{error}</Alert>}
-            <Button type="submit" busy={busy}>Save</Button>
+            <Button type="submit" busy={busy}>{t('settings.save')}</Button>
           </form>
         </section>
       )}

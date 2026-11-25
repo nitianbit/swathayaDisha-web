@@ -5,6 +5,7 @@ import { Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 const PAGE_SIZE = 20;
 
@@ -26,27 +27,25 @@ export function RxQueueScreen() {
 
   return (
     <>
-      <PageHeading title="Prescription review">
-        Orders that need a pharmacist to check the prescription before they can be packed.
-      </PageHeading>
-      {q.isPending ? <Loading label="Loading prescriptions…" />
+      <PageHeading title={t('rxQueue.prescriptionReview')}>{t('rxQueue.ordersThatNeedAPharmacist')}</PageHeading>
+      {q.isPending ? <Loading label={t('rxQueue.loadingPrescriptions')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : q.data.items.length === 0 ? (
-          <Empty title="No prescriptions waiting">New prescription orders will appear here.</Empty>
+          <Empty title={t('rxQueue.noPrescriptionsWaiting')}>{t('rxQueue.newPrescriptionOrdersWillAppear')}</Empty>
         ) : (
           <>
-            <p className="ws-count" aria-live="polite">{q.data.total} waiting</p>
+            <p className="ws-count" aria-live="polite">{q.data.total}{t('rxQueue.waiting')}</p>
             <div className="ws-table-wrap">
               <table className="j-table">
                 <thead>
                   <tr>
-                    <th scope="col">Order</th>
-                    <th scope="col">Placed</th>
-                    <th scope="col">Customer</th>
-                    <th scope="col">Items</th>
-                    <th scope="col">Total</th>
-                    <th scope="col">Payment</th>
-                    <th scope="col">Documents</th>
+                    <th scope={'col'}>{t('common.order3')}</th>
+                    <th scope={'col'}>{t('common.placed2')}</th>
+                    <th scope={'col'}>{t('common.customer')}</th>
+                    <th scope={'col'}>{t('rxQueue.items')}</th>
+                    <th scope={'col'}>{t('common.total')}</th>
+                    <th scope={'col'}>{t('common.payment')}</th>
+                    <th scope={'col'}>{t('rxQueue.documents')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -65,15 +64,11 @@ export function RxQueueScreen() {
               </table>
             </div>
             {q.data.totalPages > 1 && (
-              <nav className="ws-pager" aria-label="Pages">
-                <Button variant="secondary" disabled={page <= 1} onClick={() => setParams({ page: String(page - 1) })}>
-                  Previous
-                </Button>
-                <span>Page {page} of {q.data.totalPages}</span>
+              <nav className="ws-pager" aria-label={t('common.pages')}>
+                <Button variant="secondary" disabled={page <= 1} onClick={() => setParams({ page: String(page - 1) })}>{t('common.previous')}</Button>
+                <span>{t('common.page')}{page}{t('common.of')}{q.data.totalPages}</span>
                 <Button variant="secondary" disabled={page >= q.data.totalPages}
-                  onClick={() => setParams({ page: String(page + 1) })}>
-                  Next
-                </Button>
+                  onClick={() => setParams({ page: String(page + 1) })}>{t('common.next')}</Button>
               </nav>
             )}
           </>

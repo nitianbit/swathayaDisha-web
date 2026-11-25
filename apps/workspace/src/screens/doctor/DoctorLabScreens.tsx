@@ -9,6 +9,7 @@ import { BookLabTest } from '../pharmacy/BookLabTestScreen.tsx';
 import { LabDetail, LabList } from '../pharmacy/BookedLabTestsScreen.tsx';
 import { doctorLabBooker } from '../pharmacy/labBooker.ts';
 import { usePayerWallet } from '../pharmacy/WalletScreen.tsx';
+import { t } from '../../i18n/doctor/index.ts';
 
 /**
  * WQ25: a doctor books a lab test for a patient (assisted booking round 3b, backend r26, design §25.15) on the pharmacy's
@@ -22,12 +23,10 @@ export function DoctorBookLabTestScreen() {
   const { fromBookingId } = useParams();
   return (
     <>
-      <PageHeading title="Book lab test">
-        Book a lab test for your patient. Jansetu takes the price from your wallet; you collect it from the patient.
-      </PageHeading>
+      <PageHeading title={t('doctorLab.bookLabTest')}>{t('doctorLab.bookALabTestFor')}</PageHeading>
       <VerifiedOnly doctorId={doctor.id}>
         {fromBookingId !== undefined && !OBJECT_ID_PATTERN.test(fromBookingId) ? (
-          <Empty title="Consultation not found"><Link to="/doctor/lab-book">Book for a patient by mobile number</Link></Empty>
+          <Empty title={t('doctorLab.consultationNotFound')}><Link to="/doctor/lab-book">{t('doctorLab.bookForAPatientBy')}</Link></Empty>
         ) : (
           <BookLabTest key={`${doctor.id}:${fromBookingId ?? ''}`} booker={doctorLabBooker(api, doctor.id)} fromBookingId={fromBookingId} />
         )}
@@ -43,7 +42,7 @@ export function DoctorBookLabTestScreen() {
  */
 function VerifiedOnly({ doctorId, children }: { doctorId: string; children: ReactNode }) {
   const wallet = usePayerWallet({ kind: 'doctor', id: doctorId });
-  if (wallet.isPending) return <Loading label="Loading…" />;
+  if (wallet.isPending) return <Loading label={t('doctorLab.loading')} />;
   if (wallet.isError && wallet.data === undefined && isDoctorWalletClosed(wallet.error)) return <Alert tone="warn">{DOCTOR_LAB_CLOSED_MESSAGE}</Alert>;
   return <>{children}</>;
 }
@@ -53,9 +52,7 @@ export function DoctorLabTestsScreen() {
   const { api } = useSession();
   return (
     <>
-      <PageHeading title="Lab tests booked">
-        Lab tests you booked for patients, newest first. Open one to see its time, cancel it or read its report.
-        {' '}<Link to="/doctor/lab-book">Book a new one</Link>.
+      <PageHeading title={t('doctorLab.labTestsBooked')}>{t('doctorLab.labTestsYouBookedFor')}{' '}<Link to="/doctor/lab-book">{t('doctorLab.bookANewOne')}</Link>.
       </PageHeading>
       <LabList key={doctor.id} booker={doctorLabBooker(api, doctor.id)} />
     </>
@@ -69,8 +66,8 @@ export function DoctorLabTestScreen() {
   const { api } = useSession();
   return (
     <>
-      <Link to="/doctor/lab-tests" className="ws-back"><ArrowLeft size={16} aria-hidden="true" /> Lab tests booked</Link>
-      <PageHeading title="Lab test" />
+      <Link to="/doctor/lab-tests" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('doctorLab.labTestsBooked2')}</Link>
+      <PageHeading title={t('doctorLab.labTest')} />
       <LabDetail key={`${doctor.id}:${bookingId}`} booker={doctorLabBooker(api, doctor.id)} bookingId={bookingId} />
     </>
   );

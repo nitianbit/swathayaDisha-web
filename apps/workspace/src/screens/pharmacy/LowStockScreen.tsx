@@ -5,6 +5,7 @@ import { Button, Empty, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 const PAGE_SIZE = 50;
 
@@ -21,17 +22,17 @@ export function LowStockScreen() {
 
   return (
     <>
-      <PageHeading title="Low stock">Medicines whose sellable stock is at or below the reorder level. Expired and held batches do not count.</PageHeading>
-      {q.isPending ? <Loading label="Loading low stock…" />
+      <PageHeading title={t('lowStock.lowStock')}>{t('lowStock.medicinesWhoseSellableStockIs')}</PageHeading>
+      {q.isPending ? <Loading label={t('lowStock.loadingLowStock')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : q.data.items.length === 0 ? <Empty title="Nothing is low">Every medicine is above its reorder level.</Empty>
+        : q.data.items.length === 0 ? <Empty title={t('lowStock.nothingIsLow')}>{t('lowStock.everyMedicineIsAboveIts')}</Empty>
         : (
           <>
-            <p className="ws-count">{q.data.total} medicines to reorder</p>
+            <p className="ws-count">{q.data.total}{t('lowStock.medicinesToReorder')}</p>
             <div className="ws-table-wrap">
               <table className="j-table">
                 <thead>
-                  <tr><th scope="col">Medicine</th><th scope="col">Sellable</th><th scope="col">Reorder at</th><th scope="col">Refills due in 14 days</th></tr>
+                  <tr><th scope={'col'}>{t('common.medicine')}</th><th scope={'col'}>{t('lowStock.sellable')}</th><th scope={'col'}>{t('lowStock.reorderAt')}</th><th scope={'col'}>{t('lowStock.refillsDueIn14Days')}</th></tr>
                 </thead>
                 <tbody>
                   {q.data.items.map((item) => {
@@ -50,10 +51,10 @@ export function LowStockScreen() {
               </table>
             </div>
             {q.data.totalPages > 1 && (
-              <nav className="ws-pager" aria-label="Pages">
-                <Button variant="secondary" disabled={page <= 1} onClick={() => setParams({ page: String(page - 1) })}>Previous</Button>
-                <span>Page {page} of {q.data.totalPages}</span>
-                <Button variant="secondary" disabled={page >= q.data.totalPages} onClick={() => setParams({ page: String(page + 1) })}>Next</Button>
+              <nav className="ws-pager" aria-label={t('common.pages')}>
+                <Button variant="secondary" disabled={page <= 1} onClick={() => setParams({ page: String(page - 1) })}>{t('common.previous')}</Button>
+                <span>{t('common.page')}{page}{t('common.of')}{q.data.totalPages}</span>
+                <Button variant="secondary" disabled={page >= q.data.totalPages} onClick={() => setParams({ page: String(page + 1) })}>{t('common.next')}</Button>
               </nav>
             )}
           </>

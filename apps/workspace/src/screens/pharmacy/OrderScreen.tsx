@@ -16,11 +16,12 @@ import {
   blockedReason, DELIVERY_EXCEPTION_LABEL, FORWARD_LABEL, ORDER_STATUS_LABEL, orderLabel,
   PAYMENT_STATUS_LABEL, REFUND_STATUS_LABEL, TERMINAL,
 } from './orderLabels.ts';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 export function OrderScreen() {
   const { orderId = '' } = useParams();
   if (!/^[0-9a-fA-F]{24}$/.test(orderId)) {
-    return <Empty title="Order not found"><Link to="/pharmacy/orders">Back to orders</Link></Empty>;
+    return <Empty title={t('common.orderNotFound')}><Link to="/pharmacy/orders">{t('order.backToOrders')}</Link></Empty>;
   }
   return <OrderLoader key={orderId} orderId={orderId} />;
 }
@@ -30,8 +31,8 @@ function OrderLoader({ orderId }: { orderId: string }) {
   const q = useQuery({ queryKey: ['pharmacy-orders', 'detail', orderId], queryFn: () => pharmacyOrdersApi(api).get(orderId) });
   return (
     <>
-      <Link to="/pharmacy/orders" className="ws-back"><ArrowLeft size={16} aria-hidden="true" /> Orders</Link>
-      {q.isPending ? <Loading label="Loading order…" />
+      <Link to="/pharmacy/orders" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('order.orders')}</Link>
+      {q.isPending ? <Loading label={t('common.loadingOrder')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : <OrderView order={q.data} />}
     </>
@@ -55,9 +56,9 @@ function OrderView({ order }: { order: PharmacyOrder }) {
     }
   };
 
-  const forward = ORDER_TRANSITIONS[order.status].filter((s) => FORWARD_LABEL[s]);
+  const forward = ORDER_TRANSITIONS[order.status].filter((s) => FORWARD_LABEL()[s]);
   const exceptions = (Object.keys(DELIVERY_EXCEPTION_FROM) as DeliveryExceptionType[])
-    .filter((t) => DELIVERY_EXCEPTION_FROM[t].includes(order.status));
+    .filter((ex) => DELIVERY_EXCEPTION_FROM[ex].includes(order.status));
   const canMarkPaid = (order.paymentMode === 'in_store_payment' || order.paymentMode === 'cash_on_delivery')
     && order.paymentStatus !== 'paid' && !terminal && order.status !== 'pending_cancel';
   const unpaid = !order.paymentStatus || order.paymentStatus === 'pending' || order.paymentStatus === 'failed';
@@ -68,29 +69,27 @@ function OrderView({ order }: { order: PharmacyOrder }) {
 
   return (
     <>
-      <PageHeading title={`Order ${orderLabel(order)}`}>
-        Placed {formatDateTime(order.createdAt)} · {formatRupees(order.grandTotal)} ·{' '}
+      <PageHeading title={t('common.order2', { value: orderLabel(order) })}>{t('common.placed')}{formatDateTime(order.createdAt)} · {formatRupees(order.grandTotal)} ·{' '}
         <Badge>{ORDER_STATUS_LABEL[order.status] ?? order.status}</Badge>{' '}
         <Badge tone={order.paymentStatus === 'paid' ? 'ok' : undefined}>
           {PAYMENT_STATUS_LABEL[order.paymentStatus ?? 'pending'] ?? order.paymentStatus}
         </Badge>
-        {order.refill && <> <Badge tone="warn">Refill</Badge></>}
+        {order.refill && <> <Badge tone="warn">{t('order.refill')}</Badge></>}
       </PageHeading>
 
-      {!seller && <Alert tone="warn">Your pharmacy is the buyer on this order; the selling pharmacy manages it.</Alert>}
+      {!seller && <Alert tone="warn">{t('order.yourPharmacyIsTheBuyer')}</Alert>}
 
       {order.prescriptionStatus === 'pending' && seller && (
-        <Alert tone="warn">
-          The prescription has not been reviewed yet.{' '}
-          <Link to={`/pharmacy/prescriptions/${order._id}`}>Review the prescription</Link>
+        <Alert tone="warn">{t('order.thePrescriptionHasNotBeen')}{' '}
+          <Link to={`/pharmacy/prescriptions/${order._id}`}>{t('order.reviewThePrescription')}</Link>
         </Alert>
       )}
 
       <section className="ws-section" aria-labelledby="items-h">
-        <h2 id="items-h">Medicines</h2>
+        <h2 id="items-h">{t('common.medicines')}</h2>
         <div className="ws-table-wrap">
           <table className="j-table">
-            <thead><tr><th scope="col">Medicine</th><th scope="col">Quantity</th><th scope="col">Batches</th><th scope="col">Amount</th></tr></thead>
+            <thead><tr><th scope={'col'}>{t('common.medicine')}</th><th scope={'col'}>{t('common.quantity')}</th><th scope={'col'}>{t('order.batches')}</th><th scope={'col'}>{t('order.amount')}</th></tr></thead>
             <tbody>
               {order.items.map((it, i) => (
                 <tr key={`${it.medicineId}-${i}`}>
@@ -105,9 +104,9 @@ function OrderView({ order }: { order: PharmacyOrder }) {
           </table>
         </div>
         <dl className="ws-dl">
-          <dt>Delivery</dt><dd>{order.deliveryMode === 'delivery' ? `Delivery${order.deliveryAddress ? ` to ${order.deliveryAddress}` : ''}` : 'Pickup at the pharmacy'}</dd>
-          <dt>Payment method</dt><dd>{order.paymentMode ? order.paymentMode.replace(/_/g, ' ') : '—'}</dd>
-          {order.refill && <><dt>Refill payment due</dt><dd>{formatDateTime(order.refill.paymentDueBy)}</dd></>}
+          <dt>{t('order.delivery')}</dt><dd>{order.deliveryMode === 'delivery' ? t('order.delivery2', { value: order.deliveryAddress ? ` to ${order.deliveryAddress}` : '' }) : t('order.pickupAtThePharmacy')}</dd>
+          <dt>{t('order.paymentMethod')}</dt><dd>{order.paymentMode ? order.paymentMode.replace(/_/g, ' ') : '—'}</dd>
+          {order.refill && <><dt>{t('order.refillPaymentDue')}</dt><dd>{formatDateTime(order.refill.paymentDueBy)}</dd></>}
         </dl>
       </section>
 
@@ -123,69 +122,66 @@ function OrderView({ order }: { order: PharmacyOrder }) {
 
       {seller && !terminal && (
         <section className="ws-section" aria-labelledby="next-h">
-          <h2 id="next-h">Next step</h2>
+          <h2 id="next-h">{t('order.nextStep')}</h2>
           <div className="ws-actions">
             {forward.map((target) => {
               const blocked = blockedReason(order, target);
               return (
                 <div key={target} className="ws-action">
-                  <ConfirmAction label={FORWARD_LABEL[target]!} confirmLabel={`Yes, ${FORWARD_LABEL[target]!.toLowerCase()}`}
-                    disabled={blocked !== null} reason="optional" reasonLabel="Note"
-                    consequence={target === 'completed' ? 'The order is closed and the stock is taken out of inventory.'
-                      : `The order moves to “${ORDER_STATUS_LABEL[target]}”. The customer is notified.`}
+                  <ConfirmAction label={FORWARD_LABEL()[target]!} confirmLabel={t('order.yes', { value: FORWARD_LABEL()[target]!.toLowerCase() })}
+                    disabled={blocked !== null} reason={'optional'} reasonLabel={t('common.note')}
+                    consequence={target === 'completed' ? t('order.theOrderIsClosedAnd')
+                      : t('order.theOrderMovesToThe', { value: ORDER_STATUS_LABEL[target] })}
                     onConfirm={(note) => act(() => orders.updateStatus(order._id, target, note || undefined))} />
                   {blocked && <span className="ws-muted">{blocked}</span>}
                 </div>
               );
             })}
             {canMarkPaid && (
-              <ConfirmAction label="Record payment" confirmLabel="Yes, payment received"
-                consequence={`Record that ${formatRupees(order.grandTotal)} was received ${order.paymentMode === 'cash_on_delivery' ? 'on delivery' : 'at the counter'}.`}
-                reason="optional" reasonLabel="Note"
+              <ConfirmAction label={t('order.recordPayment')} confirmLabel={t('order.yesPaymentReceived')}
+                consequence={t('order.recordThatWasReceived', { amount: formatRupees(order.grandTotal), value: order.paymentMode === 'cash_on_delivery' ? 'on delivery' : 'at the counter' })}
+                reason={'optional'} reasonLabel={t('common.note')}
                 onConfirm={(note) => act(() => orders.markPaid(order._id, note ? { notes: note } : {}))} />
             )}
             {canRequestCancel && (
-              <ConfirmAction label="Cancel order" confirmLabel={unpaid ? 'Yes, cancel it' : 'Yes, request cancellation'} danger reason
+              <ConfirmAction label={t('common.cancelOrder')} confirmLabel={unpaid ? t('common.yesCancelIt') : t('order.yesRequestCancellation')} danger reason
                 consequence={unpaid
-                  ? 'The order is cancelled now and its stock goes back to inventory. No payment is involved.'
-                  : 'The order holds a payment, so it waits for a decision (it cannot move meanwhile). Approving it cancels the order, returns its stock and refunds the customer.'}
+                  ? t('order.theOrderIsCancelledNow')
+                  : t('order.theOrderHoldsAPayment')}
                 onConfirm={(reason) => act(() => orders.requestCancel(order._id, reason))} />
             )}
             {forward.length === 0 && exceptions.length === 0 && !canMarkPaid && !canRequestCancel && cancelBlock !== 'payment' && (
-              <span className="ws-muted">Nothing to do from “{ORDER_STATUS_LABEL[order.status]}” here.</span>
+              <span className="ws-muted">{t('order.nothingToDoFrom')}{ORDER_STATUS_LABEL[order.status]}{t('order.here')}</span>
             )}
           </div>
 
           {exceptions.length > 0 && (
             <>
-              <h3>Delivery problem</h3>
+              <h3>{t('order.deliveryProblem')}</h3>
               <div className="ws-actions">
-                {exceptions.map((t) => (
-                  <ConfirmAction key={t} label={DELIVERY_EXCEPTION_LABEL[t]} confirmLabel={`Record: ${DELIVERY_EXCEPTION_LABEL[t].toLowerCase()}`}
-                    danger={t === 'not_collected' || t === 'refused_at_door'} reason={t !== 'retry_delivery'}
-                    consequence={EXCEPTION_CONSEQUENCE[t]}
-                    onConfirm={(reason) => act(() => orders.deliveryException(order._id, t, reason || undefined))} />
+                {exceptions.map((ex) => (
+                  <ConfirmAction key={ex} label={DELIVERY_EXCEPTION_LABEL()[ex]} confirmLabel={t('order.record', { value: DELIVERY_EXCEPTION_LABEL()[ex].toLowerCase() })}
+                    danger={ex === 'not_collected' || ex === 'refused_at_door'} reason={ex !== 'retry_delivery'}
+                    consequence={EXCEPTION_CONSEQUENCE()[ex]}
+                    onConfirm={(reason) => act(() => orders.deliveryException(order._id, ex, reason || undefined))} />
                 ))}
               </div>
             </>
           )}
 
           {cancelBlock === 'payment' && (
-            <Alert tone="warn">
-              This order cannot be cancelled: its payment shows as {PAYMENT_STATUS_LABEL[order.paymentStatus ?? 'pending']?.toLowerCase()}.
-              Ask the Jansetu team to close it.
-            </Alert>
+            <Alert tone="warn">{t('order.thisOrderCannotBeCancelled')}{PAYMENT_STATUS_LABEL[order.paymentStatus ?? 'pending']?.toLowerCase()}{t('order.askTheJansetuTeamTo')}</Alert>
           )}
         </section>
       )}
 
       {order.deliveryExceptions && order.deliveryExceptions.length > 0 && (
         <section className="ws-section" aria-labelledby="history-h">
-          <h2 id="history-h">Delivery history</h2>
+          <h2 id="history-h">{t('order.deliveryHistory')}</h2>
           <ul className="ws-list">
             {order.deliveryExceptions.map((e, i) => (
               <li key={i}>
-                <strong>{DELIVERY_EXCEPTION_LABEL[e.type]}</strong> · {formatDateTime(e.at)} ·{' '}
+                <strong>{DELIVERY_EXCEPTION_LABEL()[e.type]}</strong> · {formatDateTime(e.at)} ·{' '}
                 {ORDER_STATUS_LABEL[e.fromStatus]} → {ORDER_STATUS_LABEL[e.toStatus]}
                 {e.reason && <> · “{e.reason}”</>}
               </li>
@@ -201,29 +197,29 @@ function OrderView({ order }: { order: PharmacyOrder }) {
   );
 }
 
-const EXCEPTION_CONSEQUENCE: Record<DeliveryExceptionType, string> = {
-  delivery_failed: 'The order is marked “Delivery failed”. You can then retry, switch to pickup or record a refusal.',
-  retry_delivery: 'The order goes out for delivery again.',
-  switch_to_pickup: 'The customer will collect the order at the pharmacy instead.',
-  not_collected: 'The order is cancelled, its stock is released and, if it was paid, the customer is refunded.',
-  refused_at_door: 'The order is cancelled, its stock is released and, if it was paid, the customer is refunded.',
-};
+const EXCEPTION_CONSEQUENCE = (): Record<DeliveryExceptionType, string> => ({
+  delivery_failed: t('order.theOrderIsMarkedDelivery'),
+  retry_delivery: t('order.theOrderGoesOutFor'),
+  switch_to_pickup: t('order.theCustomerWillCollectThe'),
+  not_collected: t('order.theOrderIsCancelledIts'),
+  refused_at_door: t('order.theOrderIsCancelledIts'),
+});
 
 function RefundPanel({ order, seller, onRetry }: { order: PharmacyOrder; seller: boolean; onRetry: () => Promise<unknown> }) {
   const r = order.prescriptionRefund!;
   const tone = r.status === 'wallet_credited' || r.status === 'source_refunded' ? 'ok' : r.status === 'manual_review' ? 'error' : 'warn';
   return (
     <section className="ws-section" aria-labelledby="refund-h">
-      <h2 id="refund-h">Refund</h2>
+      <h2 id="refund-h">{t('order.refund')}</h2>
       <Alert tone={tone}>{REFUND_STATUS_LABEL[r.status] ?? r.status}</Alert>
       <dl className="ws-dl">
-        <dt>Amount</dt><dd>{formatRupees(r.walletAmount)}</dd>
-        {r.walletCreditedAt && <><dt>Credited</dt><dd>{formatDateTime(r.walletCreditedAt)}</dd></>}
-        {r.lastError && <><dt>Last problem</dt><dd>{r.lastError}</dd></>}
+        <dt>{t('order.amount')}</dt><dd>{formatRupees(r.walletAmount)}</dd>
+        {r.walletCreditedAt && <><dt>{t('order.credited')}</dt><dd>{formatDateTime(r.walletCreditedAt)}</dd></>}
+        {r.lastError && <><dt>{t('order.lastProblem')}</dt><dd>{r.lastError}</dd></>}
       </dl>
       {seller && r.status === 'wallet_pending' && (
-        <ConfirmAction label="Retry refund" confirmLabel="Retry now"
-          consequence="Try again to credit the refund to the customer’s wallet." onConfirm={onRetry} />
+        <ConfirmAction label={t('order.retryRefund')} confirmLabel={t('order.retryNow')}
+          consequence={t('order.tryAgainToCreditThe')} onConfirm={onRetry} />
       )}
     </section>
   );
