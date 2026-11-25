@@ -234,7 +234,7 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
           <div className="confirm" role="group" aria-label="Check and pay">
             <SummaryList s={review.summary} />
             {review.summary.couponCode && !review.summary.couponChecked && <p className="ws-muted">Price before the coupon; the coupon is checked when you pay.</p>}
-            <WalletPay pharmacyId={pharmacyId} priceMinor={review.summary.priceMinor} couponCode={review.summary.couponCode} refused={refused} busy={busy}
+            <WalletPay payer={{ kind: 'pharmacy', id: pharmacyId }} priceMinor={review.summary.priceMinor} couponCode={review.summary.couponCode} refused={refused} busy={busy}
               payLabel={(amount) => `Pay ${amount} from wallet and request`}
               onPay={() => void create.pay()} onBack={() => { setReview(null); setRefused(null); }} onNewPrice={useNewQuote} />
           </div>

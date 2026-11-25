@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import {
-  movementLabel, pharmacyWalletApi, signedPaiseOf, walletBalancePaise, walletState, type Page, type PharmacyWallet, type WalletMovement,
+  doctorWalletApi, movementLabel, pharmacyWalletApi, signedPaiseOf, walletBalancePaise, walletState, type Page, type PharmacyWallet, type WalletMovement,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
@@ -24,8 +24,18 @@ export function WalletScreen() {
 }
 
 export function useWallet(pharmacyId: string) {
+  return usePayerWallet({ kind: 'pharmacy', id: pharmacyId });
+}
+
+/** WQ25: whose wallet pays a booking: the pharmacy's (`/pharmacy-wallet`) or a doctor's own (`/specialists/me/assisted/wallet`, WQ23). */
+export interface WalletPayer { kind: 'pharmacy' | 'doctor'; id: string }
+/** The payer's balance, under the query key its Wallet page reads. */
+export function usePayerWallet(payer: WalletPayer) {
   const { api } = useSession();
-  return useQuery({ queryKey: ['pharmacy-wallet', pharmacyId, 'balance'], queryFn: () => pharmacyWalletApi(api).wallet() });
+  return useQuery({
+    queryKey: [payer.kind === 'doctor' ? 'doctor-wallet' : 'pharmacy-wallet', payer.id, 'balance'],
+    queryFn: (): Promise<PharmacyWallet | null> => (payer.kind === 'doctor' ? doctorWalletApi(api).wallet() : pharmacyWalletApi(api).wallet()),
+  });
 }
 
 /** The words for a wallet that cannot pay (on hold, owing, switched off), or null. */

@@ -30,9 +30,11 @@ export function useRecommendedTicks(items: readonly { itemId: string; name: stri
   };
 }
 
-export function RecommendedTests({ load, phone, perform, disabled, ticks }: {
+export function RecommendedTests({ load, phone, perform, disabled, ticks, label = 'Have a test code from the doctor? (optional)' }: {
   load: (code: string, phone: string) => Promise<TestRecommendation>; phone: string; perform: Perform; disabled: boolean;
   ticks: ReturnType<typeof useRecommendedTicks>;
+  /** WQ25: the field's words (a doctor's own booking: no "from the doctor"). */
+  label?: string;
 }) {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -56,7 +58,7 @@ export function RecommendedTests({ load, phone, perform, disabled, ticks }: {
   const { rec, unmatched } = ticks;
   return (
     <form className="ws-search" noValidate onSubmit={(e) => void submit(e)} aria-label="Recommended tests">
-      <TextField label="Have a test code from the doctor? (optional)" autoComplete="off" value={text} error={error} disabled={disabled} maxLength={20}
+      <TextField label={label} autoComplete="off" value={text} error={error} disabled={disabled} maxLength={20}
         hint={rec ? `Recommended tests: ${rec.items.map((i) => i.name).join(', ')}.` : 'It is on the prescription, for example ABCD-EFGH.'}
         onChange={(e) => setText(e.target.value)} />
       <Button type="submit" variant="secondary" busy={loading} disabled={disabled}>Load tests</Button>

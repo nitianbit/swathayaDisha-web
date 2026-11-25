@@ -2148,6 +2148,52 @@ device is not listed (the server's sweep credits it).
   owner page; `adminLabWalletApi`, `adminDoctorWalletApi`, `labWalletRefusal` and `doctorWalletRefusal` removed (tests use
   `adminOwnerWalletApi(c, kind)` and `ownerWalletRefusal(err, kind)`); the admin routes take `ownerId`.
 
+## WQ25 doctor: book a lab test for a patient, paid from the doctor wallet (phase 3b web) (2026-11-25, branch `wq25/doctor-book-lab-test`)
+
+Backend: r26 (`m0/r26-phase3b` + r26b, design ASSISTED_BOOKING_DESIGN.md §25.15; on stage 6a8574e9). Web base: `wq/stage-next-2`
+13333e9. Behind `ASSISTED_LAB_BOOKING_ENABLED_DOCTOR` (off: the lookup, the lab reads and new bookings answer 503, said as
+"Booking lab tests for patients is not switched on yet. Jansetu turns it on for you when it is ready."; the list, cancel,
+accept and reports keep working). The pharmacy's screens, words and specs are unchanged.
+
+- **Doctor › Book lab test** (`/doctor/lab-book`, nav after Wallet): the pharmacy's Book lab test with the doctor as the booker.
+  A walk-in: the masked lookup (`POST /specialists/me/assisted/patients/lookup`, the phone in the body only) in the shared
+  patient step (no "booked here before" family list, as at the lab desk). **From a consultation**
+  (`/doctor/lab-book/from/:bookingId`, an id only in the address): Appointments › "Book lab test for this patient" on a
+  consultation whose treating window can be open (not cancelled, a no-show or an unpaid pending booking; from 10 minutes
+  before the start; `labBookableFrom`; the server decides). The consultation is read (`GET /specialists/me/appointments/:id`,
+  the booking only: the patient summary is dropped) to say which one; the doctor types the patient's name (`typedName`, never
+  pre-filled with the account name: names rule) and ticks the agreement; the body has `fromBookingId` + `typedName` and no
+  phone (nothing counted). Then the same lab, branch, tests, time, address, language and coupon, and the recommended-tests
+  code for walk-ins (it needs the number; the doctor's own r16b route; hidden for a doctor not verified). The wallet only (no "How do you pay?"); low balance:
+  "Add money" links to Doctor › Wallet (WQ23). 409 `TREATING_WINDOW_CLOSED` and 404 `BOOKING_NOT_FOUND`: said plainly, with
+  "Book for the patient by their mobile number instead" (the step links to the walk-in). Consent `web-doctor-lab-v1` (the
+  doctor books; it sees the released report for 90 days).
+- **Doctor › Lab tests booked** (`/doctor/lab-tests`, `/doctor/lab-tests/:id`): the pharmacy's list and booking: no "Waiting
+  for payment" (wallet only), "Cancelled: By you", cancel up to 1 hour before with the refund to the doctor wallet (the
+  answer's `refundedMinor`), accept a new time, released reports through `/file/fetch`; another doctor's booking: "Lab test
+  not found" (404 `LAB_BOOKING_NOT_FOUND`).
+- **Unverified doctor** (403 `SPECIALIST_NOT_VERIFIED` on every r26 route): Book lab test reads the doctor wallet first (the pay
+  step reads it anyway) and Lab tests booked its list; either shows only "Booking lab tests for your patients opens once
+  Jansetu has verified your account and it is active." A later failed read never hides an unconfirmed booking.
+- **Names**: the lists and the booking show the server's `patientName` (typed or masked); once the create (or the by-key
+  check) answers, the doctor's summary shows it too (for a family member's consultation, the family member's own name).
+- **Shared, not copied** (owner): `labBooker.ts` `LabBooker` (routes, lookup, words, query keys, memory slots, paths;
+  `pharmacyLabBooker` is WQ17's exactly, `doctorLabBooker`); `BookLabTest`, `LabList` and `LabDetail` take a booker;
+  `assistedLab.ts` `labRoutes(c, kind)` builds both bookers' reads, by-key, abandon, cancel and accept (`pharmacyLabApi`,
+  `doctorLabApi` with the doctor's lookup and its one-source create body `doctorLabBody`; `doctorLabRefusal`);
+  `WalletPay` takes a `WalletPayer` (`usePayerWallet` in `WalletScreen.tsx`, now also Doctor › Wallet's read); `patientStep.tsx`
+  gains the consultation step and the lookup's `refusal`; `RecommendedTests` a `label`. Money safety as WQ17: one owned
+  PendingOp per doctor (`assisted-lab-book:doctor:<id>`), stored before sending, settled only while live and `stillCurrent`;
+  a request key with by-key check and give-up after a reload (only the key is kept).
+
+API gaps (none blocking): (1) the doctor booker view has no `payment` block (r26 F4), so a cancel found after a lost answer
+cannot tell a refund from a forfeit: it says "back in your wallet" only when the doctor cancelled it; (2) the appointment
+read sends the whole patient summary (name, phone, email…) though only the booking is needed; (3) the appointment rows carry
+no treating-window times, so the link is offered by the client rule above and the server's 409 is said in words.
+
+Seen, not changed: the pharmacy's Book lab test attests the consultation's consent statement (`web-pharmacy-v2`, "books this
+consultation", the prescription for 90 days); a lab-test statement would be a new version.
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -2255,6 +2301,7 @@ API gaps (none blocking):
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ25 doctor books a lab test (phase 3b web, on 13333e9) | Against r26 + r26b on stage 6a8574e9 (§25.15; mocked API). typecheck clean; Vitest 483/483 (+5 in doctorLab.test.ts: the reads, list, by-key, abandon, cancel and accept under /specialists/me/assisted with the pharmacy's paths unchanged; the lookup and the recommended-tests code with the phone in the body only; a create from a consultation with no phone and a walk-in by phone; a bad consultation id, two sources, no name, the card and a bad key refused before any request; the doctor's words (unverified, consultation not found, window closed, wallet only) with the lab and pharmacy words unchanged and the code field hidden for an unverified doctor; the appointment read keeps the booking only and `labBookableFrom`); Playwright workspace 992/992 (+20 = 10 journeys x 2: book from a consultation, a walk-in with the nav order, the treating window closed, low balance then Add money on Wallet, a lost answer found by key after a reload, cancel with the refund to the doctor wallet, accept a new time, open a released report, an unverified doctor on both pages, another doctor's booking not found; doctor-tools' nav count now 9) on a temporary config (port 5512, `reuseExistingServer: false`, deleted). A targeted run of the shared-piece specs earlier had 1 load-timing failure in pharmacy-extras.spec.ts:825 (admin wallet, untouched), 6/6 alone and green in the full run. Release build with VITE_API_SAME_ORIGIN=true. |
 
 
 | 2026-11-25 | WQ23b review follow-ups (on 0b14df3) | typecheck clean; Vitest 443/443 (doctorWallet.test.ts and labWallet.test.ts on `adminOwnerWalletApi(c, kind)` and `ownerWalletRefusal(err, kind)`; wq15.test.ts: the close words and the missing-reason words name the owner); Playwright doctor-wallet + lab-wallet + pharmacy-extras + admin + admin-doctors 130/130 (doctor-wallet +4 = 2 journeys x 2: a failed wallet read after a top-up keeps Add money, its answer and the history; a doctor whose wallet closed after a reload still checks this device's top-up and is told it was added; extended: the admin's balance shows a doctor's card money) on a temporary config (port 5496, deleted); release build with VITE_API_SAME_ORIGIN=true. |

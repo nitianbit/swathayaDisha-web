@@ -34,6 +34,7 @@ import { LabDeskScreen } from './screens/partner/LabDeskScreen.tsx';
 import { LabWalletScreen } from './screens/partner/LabWalletScreen.tsx';
 import { DoctorWalletAdminScreen, LabWalletAdminScreen } from './screens/admin/LabWalletAdminScreen.tsx';
 import { DoctorWalletScreen } from './screens/doctor/DoctorWalletScreen.tsx';
+import { DoctorBookLabTestScreen, DoctorLabTestScreen, DoctorLabTestsScreen } from './screens/doctor/DoctorLabScreens.tsx';
 import { SlotsScreen } from './screens/partner/SlotsScreen.tsx';
 import { ClinicDoctorsScreen } from './screens/partner/ClinicDoctorsScreen.tsx';
 import { DeskScreen } from './screens/partner/DeskScreen.tsx';
@@ -133,6 +134,18 @@ export const PAGES: readonly WorkspacePage[] = [
     path: '/doctor/wallet', roles: ['specialist'], element: <DoctorWalletScreen />,
     nav: { label: 'Wallet', icon: Banknote, section: 'Doctor' },
   },
+  // WQ25 (r26): a doctor books lab tests for its patients (`/specialists/me/assisted/labs*`, `…/lab-bookings*`), paid from
+  // the wallet: from one of its consultations (`/from/:fromBookingId`, linked from Appointments) or for a walk-in by phone.
+  {
+    path: '/doctor/lab-book', roles: ['specialist'], element: <DoctorBookLabTestScreen />,
+    nav: { label: 'Book lab test', icon: TestTube, section: 'Doctor' },
+  },
+  { path: '/doctor/lab-book/from/:fromBookingId', roles: ['specialist'], element: <DoctorBookLabTestScreen /> },
+  {
+    path: '/doctor/lab-tests', roles: ['specialist'], element: <DoctorLabTestsScreen />,
+    nav: { label: 'Lab tests booked', icon: TestTubes, section: 'Doctor' },
+  },
+  { path: '/doctor/lab-tests/:bookingId', roles: ['specialist'], element: <DoctorLabTestScreen /> },
   // WQ12: assisted booking for walk-in patients (`/pharmacy-assisted`, `/pharmacy-bookings`) and the wallet (`/pharmacy-wallet`).
   {
     path: '/pharmacy/book', roles: ['pharmacy'], element: <BookConsultationScreen />,
