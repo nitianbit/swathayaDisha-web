@@ -2301,6 +2301,27 @@ API gaps (none blocking):
   booking is one row for all its lines). The pharmacy referral statement has no CSV route.
 - The admin settlement list filters `ownerKind` by `partner | doctor` only, and shows a `*_referral` account's kind as its code
   (seen, not changed: phase 4e/4f).
+### WQ26b referral follow-ups on r33's API (2026-11-25, branch `wq26b/referral-followups`)
+
+Backend: r33 (`m0/r33-referral-gaps` 335e36c2, ASSISTED_BOOKING_DESIGN.md §26.16; local, under review). Web base: stage 25a860c.
+
+- **The switch from the server**: the admin page's "Referral cuts are switched off; rules are saved but not applied." and the
+  rates note read `switches.cutsEnabled` (beside the rule lists), also when no rule is set; nothing is inferred from
+  `effective` (`referralCutsOn` removed). A server that does not send `switches` shows no note.
+- **Statement rows from fields**: `shortRef`, `category` and `lines` (r33) instead of parsing `description`; a lab booking
+  stays one row (`Lab tests and packages` when its cut lines differ) with its lines under it ("Lab test ₹300.00: cut ₹15.00").
+- **CSV**: "Download CSV (all entries)" on the referral statement, the finance screens' `CsvDownload` (now exported), read
+  with the token into memory (`…/referral/statement.csv`, saved as `pharmacy-referral-statement.csv` /
+  `lab-referral-statement.csv`).
+- **Lab › Referral earnings** (`/partner/referral`, side bar, labs only, `finance.view` with partner-wide scope, as the
+  backend's `assertPartnerFinanceReader`): the pharmacy's page through one component with the booker kind
+  (`screens/finance/ReferralEarningsScreen.tsx`; `referralReadsApi(c, { kind: 'pharmacy' } | { kind: 'lab', scope })`); a lab
+  shows its consultation rate only (labs book consultations). `screens/pharmacy/ReferralEarningsScreen.tsx` is gone.
+- **i18n**: the page's words come from a new catalogue `apps/workspace/src/i18n/referral` (`t()`; keys as WQ45 named them,
+  `referralEarnings.*`); the page is not on the allowlist. `literals.test.ts` treats `scope` as technical (as WQ44 does). For
+  the integrator: WQ45 extracted the old pharmacy file into `i18n/pharmacy` (`referralEarnings.*`); with WQ26b that file is
+  deleted and those keys are unused.
+
 ## WQ24 lab › Book consultation: a lab books a doctor consultation for a walk-in patient (phase 2e) (2026-11-25, branch `wq24/lab-book-consultation`)
 
 Backend: r21 + r21b (stage `6a8574e9`, design ASSISTED_BOOKING_DESIGN.md §24.16–§24.17; mocked API). Web base: `wq/stage-next-2`
@@ -2380,27 +2401,6 @@ On WQ24 33439af. Against r21 (§24.17.3 "Admin": card refund rows add `payerKind
   words, and the admin queue with a lab-paid and a doctor-paid refund.
 - Seen, not changed: "Open the booking" in the queue links every row to the admin consultation page, also a lab-test booking's
   (`bookingKind`).
-
-### WQ26b referral follow-ups on r33's API (2026-11-25, branch `wq26b/referral-followups`)
-
-Backend: r33 (`m0/r33-referral-gaps` 335e36c2, ASSISTED_BOOKING_DESIGN.md §26.16; local, under review). Web base: stage 25a860c.
-
-- **The switch from the server**: the admin page's "Referral cuts are switched off; rules are saved but not applied." and the
-  rates note read `switches.cutsEnabled` (beside the rule lists), also when no rule is set; nothing is inferred from
-  `effective` (`referralCutsOn` removed). A server that does not send `switches` shows no note.
-- **Statement rows from fields**: `shortRef`, `category` and `lines` (r33) instead of parsing `description`; a lab booking
-  stays one row (`Lab tests and packages` when its cut lines differ) with its lines under it ("Lab test ₹300.00: cut ₹15.00").
-- **CSV**: "Download CSV (all entries)" on the referral statement, the finance screens' `CsvDownload` (now exported), read
-  with the token into memory (`…/referral/statement.csv`, saved as `pharmacy-referral-statement.csv` /
-  `lab-referral-statement.csv`).
-- **Lab › Referral earnings** (`/partner/referral`, side bar, labs only, `finance.view` with partner-wide scope, as the
-  backend's `assertPartnerFinanceReader`): the pharmacy's page through one component with the booker kind
-  (`screens/finance/ReferralEarningsScreen.tsx`; `referralReadsApi(c, { kind: 'pharmacy' } | { kind: 'lab', scope })`); a lab
-  shows its consultation rate only (labs book consultations). `screens/pharmacy/ReferralEarningsScreen.tsx` is gone.
-- **i18n**: the page's words come from a new catalogue `apps/workspace/src/i18n/referral` (`t()`; keys as WQ45 named them,
-  `referralEarnings.*`); the page is not on the allowlist. `literals.test.ts` treats `scope` as technical (as WQ44 does). For
-  the integrator: WQ45 extracted the old pharmacy file into `i18n/pharmacy` (`referralEarnings.*`); with WQ26b that file is
-  deleted and those keys are unused.
 
 ## Follow-ups
 
