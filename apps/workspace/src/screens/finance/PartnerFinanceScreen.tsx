@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { hasGlobalScope, holdsAny, partnerFinanceApi } from '@jansetu/api';
+import { isFinanceReader, partnerFinanceApi } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { useSession } from '../../session.tsx';
@@ -21,7 +21,7 @@ export function PartnerFinanceScreen() {
   const ctx = usePartnerScope();
   if (!ctx) return <NoSuchPartner />;
   // The route declaration already hides this page from anyone else; this repeats the backend's rule for the screen.
-  if (!holdsAny(ctx.actor, ['finance.view']) || !hasGlobalScope(ctx.actor)) return <NoSuchPartner />;
+  if (!isFinanceReader(ctx.actor)) return <NoSuchPartner />;
   // One subtree per partner: an open form, a download or a late answer never carries over to another partner.
   return <PartnerFinance key={scopeIdentity(ctx)} ctx={ctx} />;
 }

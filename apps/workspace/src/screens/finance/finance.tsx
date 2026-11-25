@@ -134,10 +134,8 @@ export function StatementSection({ queryKey, load, csv, csvPrefix, emptyText }: 
   csvPrefix: string;
   emptyText: string;
 }) {
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const bad = (from && !isRealDate(from)) || (to && !isRealDate(to)) ? 'Enter real dates.' : from && to && from > to ? 'The period ends before it starts.' : null;
-  const period: PeriodQuery | null = bad ? null : { ...(from ? { from } : {}), ...(to ? { to } : {}) };
+  const statementPeriod = useStatementPeriod();
+  const { period, filtered } = statementPeriod;
   const list = useInfiniteQuery({
     queryKey: [...queryKey, 'statement', period],
     queryFn: ({ pageParam }) => load({ ...period, limit: STATEMENT_PAGE, before: pageParam }),
@@ -151,16 +149,11 @@ export function StatementSection({ queryKey, load, csv, csvPrefix, emptyText }: 
     for (const p of list.data?.pages ?? []) for (const l of p.lines) if (!seen.has(l._id)) { seen.add(l._id); out.push(l); }
     return out;
   }, [list.data]);
-  const filtered = !!(from || to);
 
   return (
     <section className="ws-section" aria-labelledby="fin-st-h">
       <h2 id="fin-st-h">Statement</h2>
-      <div className="ws-search" role="group" aria-label="Statement period">
-        <TextField label="From (India date)" type="date" value={from} onChange={(e) => setFrom(e.target.value)} error={bad} />
-        <TextField label="To (India date)" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        {period && <CsvDownload key={JSON.stringify(period)} period={period} csv={csv} csvPrefix={csvPrefix} />}
-      </div>
+      <StatementPeriodFields p={statementPeriod} csv={csv} csvPrefix={csvPrefix} />
       <p className="ws-muted">Newest first. “Balance after” is the whole account’s balance right after each entry, whatever the period shown.</p>
       {!period ? null
         : list.isPending ? <Loading label="Loading the statement…" />
@@ -198,6 +191,33 @@ export function StatementSection({ queryKey, load, csv, csvPrefix, emptyText }: 
           </>
         )}
     </section>
+  );
+}
+
+/**
+ * A statement's India-date period (WQ26c: shared by the finance statements and the referral statements): the typed dates,
+ * whether they are real, and the period they make (null while they are not).
+ */
+export function useStatementPeriod() {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const bad = (from && !isRealDate(from)) || (to && !isRealDate(to)) ? 'Enter real dates.' : from && to && from > to ? 'The period ends before it starts.' : null;
+  const period: PeriodQuery | null = bad ? null : { ...(from ? { from } : {}), ...(to ? { to } : {}) };
+  return { from, to, setFrom, setTo, bad, period, filtered: !!(from || to) };
+}
+
+/** The period's fields and the CSV of that period (a new download for each period; the server's refusal is shown). */
+export function StatementPeriodFields({ p, csv, csvPrefix }: {
+  p: ReturnType<typeof useStatementPeriod>;
+  csv: (q: PeriodQuery, signal?: AbortSignal) => Promise<Blob>;
+  csvPrefix: string;
+}) {
+  return (
+    <div className="ws-search" role="group" aria-label="Statement period">
+      <TextField label="From (India date)" type="date" value={p.from} onChange={(e) => p.setFrom(e.target.value)} error={p.bad} />
+      <TextField label="To (India date)" type="date" value={p.to} onChange={(e) => p.setTo(e.target.value)} />
+      {p.period && <CsvDownload key={JSON.stringify(p.period)} period={p.period} csv={csv} csvPrefix={csvPrefix} />}
+    </div>
   );
 }
 

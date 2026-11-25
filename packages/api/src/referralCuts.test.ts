@@ -1,6 +1,6 @@
 import { ApiError, createApiClient } from './client.ts';
 import {
-  basisPointsToInput, CAP_PROBLEM, FIXED_PROBLEM, PERCENT_PROBLEM, percentToBasisPoints, pharmacyReferralApi, referralCutsOn, referralDraftOf, referralRowOf,
+  basisPointsToInput, CAP_PROBLEM, FIXED_PROBLEM, PERCENT_PROBLEM, percentToBasisPoints, referralDraftOf, referralReadsApi, referralRowOf,
   referralRuleBody, referralRuleRefusal, referralRuleRefusedBeforeWriting, referralRulesAdminApi, referralRuleText, referralTermsOf, referralTermsText,
   ruleTerms, sameRuleTerms, type ReferralRule, type ReferralStatementLine,
 } from './referralCuts.ts';
@@ -93,14 +93,7 @@ describe('WQ26 referral cuts: the percent and the money typed', () => {
   });
 });
 
-describe('WQ26 referral cuts: the switch, refusals and statement rows', () => {
-  it('the master switch shows only through an active rule: one that does not cut now means it is off', () => {
-    expect(referralCutsOn([rule({ effective: false })])).toBe(false);
-    expect(referralCutsOn([rule({ effective: true }), rule({ category: 'lab_test', effective: true })])).toBe(true);
-    expect(referralCutsOn([rule({ isActive: false, effective: false })])).toBeNull();
-    expect(referralCutsOn([])).toBeNull();
-  });
-
+describe('WQ26 referral cuts: refusals and statement rows', () => {
   it('refusals in words; the tools switch and the index check settle a sole first attempt', () => {
     expect(referralRuleRefusal(new ApiError(409, 'This rule was changed meanwhile; reload it and try again', 'RECORD_CHANGED'))).toBe('This cut was changed by someone else meanwhile, so nothing was saved.');
     expect(referralRuleRefusal(new ApiError(400, 'A percent rule needs percentBasisPoints from 1 to 5000 (0.01% to 50%)', 'VALIDATION_ERROR'))).toContain('0.01% to 50%');
@@ -110,27 +103,31 @@ describe('WQ26 referral cuts: the switch, refusals and statement rows', () => {
     expect(referralRuleRefusedBeforeWriting(new ApiError(500, 'x', 'INDEXES_OUTDATED'))).toBe(false);
   });
 
-  it('a statement row: the short ref from the server’s words, the category from the source, the base and the cut; no patient name', () => {
+  it('WQ26b (r33): a statement row from shortRef, category and lines (never the description); the base only on earnings', () => {
     const line = (o: Partial<ReferralStatementLine>): ReferralStatementLine => ({
       _id: 'l1', at: '2026-11-25T06:00:00.000Z', kind: 'earning', source: 'referral_consultation', sourceId: 'b1'.repeat(12),
-      description: 'Referral · consultation · 2026-11-24 · Ref ABCD2345', amountMinor: 5000, balanceAfterMinor: 5000, grossMinor: 50000, commissionMinor: 0, ...o,
+      description: 'Referral · consultation · 2026-11-24 · Ref WRONG999', amountMinor: 5000, balanceAfterMinor: 5000, grossMinor: 50000, commissionMinor: 0,
+      shortRef: 'ABCD2345', category: 'consultation', ...o,
     });
-    expect(referralRowOf(line({}))).toEqual({ _id: 'l1', at: '2026-11-25T06:00:00.000Z', ref: 'ABCD2345', category: 'Consultation', baseMinor: 50000, cutMinor: 5000 });
-    expect(referralRowOf(line({ description: 'Referral · instant consultation · 2026-11-24 · Ref QRST6789' }))).toMatchObject({ ref: 'QRST6789', category: 'Instant consultation' });
-    expect(referralRowOf(line({ source: 'referral_lab_booking', description: 'Referral · lab booking · 2026-11-23 · Ref LMNO2222', grossMinor: 104500, amountMinor: 5500 })))
-      .toMatchObject({ ref: 'LMNO2222', category: 'Lab booking', baseMinor: 104500, cutMinor: 5500 });
-    // A fallback description (booking not found) has no ref; a payout has no base.
-    expect(referralRowOf(line({ description: 'Referral · consultation' })).ref).toBeNull();
-    expect(referralRowOf(line({ kind: 'payout', source: 'payout', description: 'Payout · 2026-12-01 · UPI x@y', amountMinor: -5000, grossMinor: undefined })))
-      .toMatchObject({ ref: null, category: 'Payout', baseMinor: null, cutMinor: -5000 });
+    expect(referralRowOf(line({}))).toEqual({ _id: 'l1', at: '2026-11-25T06:00:00.000Z', kind: 'earning', ref: 'ABCD2345', category: 'consultation', lines: [],
+      baseMinor: 50000, cutMinor: 5000 });
+    const lines = [{ category: 'lab_test' as const, baseMinor: 30000, cutMinor: 1500 }, { category: 'lab_package' as const, baseMinor: 80000, cutMinor: 4000 }];
+    expect(referralRowOf(line({ source: 'referral_lab_booking', shortRef: 'LMNO2222', category: 'mixed', lines, grossMinor: 120000, amountMinor: 5500 })))
+      .toMatchObject({ ref: 'LMNO2222', category: 'mixed', lines, baseMinor: 120000, cutMinor: 5500 });
+    // An older server (no fields): no ref, no category; a payout has no base.
+    expect(referralRowOf(line({ shortRef: undefined, category: undefined }))).toMatchObject({ ref: null, category: null });
+    expect(referralRowOf(line({ kind: 'payout', source: 'payout', shortRef: undefined, category: undefined, amountMinor: -5000, grossMinor: undefined })))
+      .toMatchObject({ kind: 'payout', ref: null, category: null, baseMinor: null, cutMinor: -5000 });
   });
 });
 
 describe('WQ26 referral cuts: routes', () => {
   it('admin: the list, the version-fenced PUT and the history, ids and kinds checked before any request', async () => {
-    const { client, calls } = recorder((url, method) => ({ success: true, data: method === 'PUT' ? rule() : url.endsWith('/events') ? [{ version: 1 }] : [rule()] }));
+    const { client, calls } = recorder((url, method) => (method === 'PUT' ? { success: true, data: rule() } : url.endsWith('/events') ? { success: true, data: [{ version: 1 }] }
+      : { success: true, data: [rule()], switches: { cutsEnabled: false, payoutsEnabled: false } }));
     const api = referralRulesAdminApi(client);
-    expect(await api.list('pharmacy', PH)).toHaveLength(1);
+    // r33: the switches beside the list.
+    expect(await api.list('pharmacy', PH)).toEqual({ rules: [rule()], switches: { cutsEnabled: false, payoutsEnabled: false } });
     await api.put('lab', LAB, 'lab_package', { basis: 'fixed', percentBasisPoints: null, fixedMinor: 4000, capMinor: null, isActive: true }, 2, 'Agreed rate');
     expect(await api.events('pharmacy', PH, 'consultation')).toEqual([{ version: 1 }]);
     expect(() => api.list('pharmacy', 'nope')).toThrow('Invalid pharmacy id');
@@ -143,23 +140,37 @@ describe('WQ26 referral cuts: routes', () => {
     ]);
   });
 
-  it('pharmacy: rates, totals and the statement in cursor pages (`before`, `pagination.nextCursor`)', async () => {
-    const { client, calls } = recorder((url) => (url.startsWith('/pharmacy-assisted/referral/statement')
+  it('pharmacy and lab: rates with the switches, totals, the statement in cursor pages and its CSV, on each booker’s base', async () => {
+    const { client, calls } = recorder((url) => (url.includes('/referral/statement?') || url.endsWith('/referral/statement')
       ? { success: true, data: [{ _id: 'l1' }], pagination: { nextCursor: CURSOR } }
-      : { success: true, data: url.endsWith('referral-rules') ? [] : { earnedMinor: 100, paidMinor: 0, dueMinor: 100, payoutsEnabled: false } }));
-    const api = pharmacyReferralApi(client);
-    expect(await api.rules()).toEqual([]);
-    expect(await api.summary()).toEqual({ earnedMinor: 100, paidMinor: 0, dueMinor: 100, payoutsEnabled: false });
-    const page = await api.statement();
-    expect(page.nextCursor).toBe(CURSOR);
-    await api.statement(CURSOR, 20);
-    expect(() => api.statement('not-a-cursor')).toThrow('Invalid statement cursor');
-    expect(() => api.statement(undefined, 201)).toThrow('Invalid limit');
+      : url.endsWith('referral-rules') ? { success: true, data: [], ...(url.startsWith('/pharmacy') ? { switches: { cutsEnabled: true, payoutsEnabled: false } } : {}) }
+        : { success: true, data: { earnedMinor: 100, paidMinor: 0, dueMinor: 100, cutsEnabled: true, payoutsEnabled: false } }));
+    const pharmacy = referralReadsApi(client, { kind: 'pharmacy' });
+    expect(await pharmacy.rules()).toEqual({ rules: [], switches: { cutsEnabled: true, payoutsEnabled: false } });
+    expect(await pharmacy.summary()).toEqual({ earnedMinor: 100, paidMinor: 0, dueMinor: 100, cutsEnabled: true, payoutsEnabled: false });
+    expect((await pharmacy.statement()).nextCursor).toBe(CURSOR);
+    await pharmacy.statement(CURSOR, 20, { from: '2026-11-01', to: '2026-11-30' });
+    expect(() => pharmacy.statement(undefined, 50, { from: '2026-02-30' })).toThrow('Invalid from date');
+    await pharmacy.statementCsv({ from: '2026-11-01', to: '2026-11-30' });
+    expect(() => pharmacy.statement('not-a-cursor')).toThrow('Invalid statement cursor');
+    expect(() => pharmacy.statement(undefined, 201)).toThrow('Invalid limit');
+    expect(() => pharmacy.statementCsv({ from: '2026-12-01', to: '2026-11-01' })).toThrow('The period ends before it starts');
+    const lab = referralReadsApi(client, { kind: 'lab', scope: { kind: 'member' } });
+    // A server that does not report the switches: null (no note).
+    expect(await lab.rules()).toEqual({ rules: [], switches: null });
+    await lab.summary();
+    await lab.statementCsv();
+    await referralReadsApi(client, { kind: 'lab', scope: { kind: 'admin', partnerId: LAB } }).statement();
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       'GET /pharmacy-assisted/referral-rules',
       'GET /pharmacy-assisted/referral',
       'GET /pharmacy-assisted/referral/statement?limit=50',
-      `GET /pharmacy-assisted/referral/statement?before=${CURSOR}&limit=20`,
+      `GET /pharmacy-assisted/referral/statement?from=2026-11-01&to=2026-11-30&before=${CURSOR}&limit=20`,
+      'GET /pharmacy-assisted/referral/statement.csv?from=2026-11-01&to=2026-11-30',
+      'GET /partner-workspace/assisted/referral-rules',
+      'GET /partner-workspace/assisted/referral',
+      'GET /partner-workspace/assisted/referral/statement.csv',
+      `GET /partner-workspace/admin/${LAB}/workspace/assisted/referral/statement?limit=50`,
     ]);
   });
 });
