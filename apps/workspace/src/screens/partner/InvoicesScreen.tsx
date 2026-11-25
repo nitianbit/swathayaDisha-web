@@ -8,6 +8,7 @@ import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextF
 import { messageOf } from '../../errors.ts';
 import { money } from './billing.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
+import { t } from '../../i18n/partner/index.ts';
 
 const PAGE = 50;
 const STATES = INVOICE_STATES;
@@ -34,8 +35,8 @@ export function billFilter(f: { state: string; branchId: string; from: string; t
   { query: InvoiceQuery; error: string | null } {
   const from = f.from.trim();
   const to = f.to.trim();
-  if ((from && !ISO_DATE_PATTERN.test(from)) || (to && !ISO_DATE_PATTERN.test(to))) return { query: {}, error: 'Choose valid dates.' };
-  if (from && to && from > to) return { query: {}, error: 'The “from” date is after the “to” date.' };
+  if ((from && !ISO_DATE_PATTERN.test(from)) || (to && !ISO_DATE_PATTERN.test(to))) return { query: {}, error: t('invoices.badDates') };
+  if (from && to && from > to) return { query: {}, error: t('invoices.fromAfterTo') };
   const q = f.q.trim().slice(0, MAX_SEARCH);
   return {
     query: {
@@ -76,50 +77,54 @@ function Invoices({ ctx }: { ctx: ScopeContext }) {
 
   return (
     <>
-      <PartnerPageHeading ctx={ctx} title="Bills" partnerName={partner.data?.name}>
-        Bills issued at the counter, newest first.{readOnly ? ' You can view bills and their PDFs.' : ''}
+      <PartnerPageHeading ctx={ctx} title={t('invoices.title')} partnerName={partner.data?.name}>
+        {readOnly ? t('invoices.introReadOnly') : t('invoices.intro')}
       </PartnerPageHeading>
-      {canCreate && <div><Link className="j-btn j-btn--primary" to={`${ctx.link('invoices')}/new`}>New bill</Link></div>}
+      {canCreate && <div><Link className="j-btn j-btn--primary" to={`${ctx.link('invoices')}/new`}>{t('invoices.new')}</Link></div>}
       {appointmentId && (
         <div className="ws-actions" role="status">
-          <span>Showing the bills of clinic appointment …{appointmentId.slice(-6)}.</span>
-          <Button variant="secondary" onClick={() => setAppointmentId(undefined)}>Show all bills</Button>
+          <span>{t('invoices.forAppointment', { tail: appointmentId.slice(-6) })}</span>
+          <Button variant="secondary" onClick={() => setAppointmentId(undefined)}>{t('invoices.showAll')}</Button>
         </div>
       )}
-      <form className="ws-search" role="search" aria-label="Find bills" onSubmit={applySearch}>
-        <TextField label="Bill number, customer name or phone" type="search" maxLength={MAX_SEARCH} value={search} onChange={(e) => setSearch(e.target.value)} />
-        <Button type="submit" variant="secondary">Search</Button>
+      <form className="ws-search" role="search" aria-label={t('invoices.find')} onSubmit={applySearch}>
+        <TextField label={t('invoices.searchLabel')} type="search" maxLength={MAX_SEARCH} value={search} onChange={(e) => setSearch(e.target.value)} />
+        <Button type="submit" variant="secondary">{t('invoices.search')}</Button>
       </form>
       <div className="ws-search">
         <div className="j-field ws-filter">
-          <label htmlFor="inv-state">Status</label>
+          <label htmlFor="inv-state">{t('invoices.status')}</label>
           <select id="inv-state" value={f.state} onChange={(e) => setF((x) => ({ ...x, state: e.target.value }))}>
-            <option value="">All</option>
+            <option value="">{t('invoices.allStates')}</option>
             {STATES.map((s) => <option key={s} value={s}>{INVOICE_STATE_LABEL[s]}</option>)}
           </select>
         </div>
         <div className="j-field ws-filter">
-          <label htmlFor="inv-branch">Branch</label>
+          <label htmlFor="inv-branch">{t('invoices.branch')}</label>
           <select id="inv-branch" value={f.branchId} onChange={(e) => setF((x) => ({ ...x, branchId: e.target.value }))}>
-            <option value="">All your branches</option>
+            <option value="">{t('invoices.allBranches')}</option>
             {(branches.data ?? []).map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
           </select>
         </div>
-        <TextField label="Issued from" type="date" value={f.from} onChange={(e) => setF((x) => ({ ...x, from: e.target.value }))} />
-        <TextField label="Issued to" type="date" value={f.to} onChange={(e) => setF((x) => ({ ...x, to: e.target.value }))} />
+        <TextField label={t('invoices.issuedFrom')} type="date" value={f.from} onChange={(e) => setF((x) => ({ ...x, from: e.target.value }))} />
+        <TextField label={t('invoices.issuedTo')} type="date" value={f.to} onChange={(e) => setF((x) => ({ ...x, to: e.target.value }))} />
       </div>
       {error ? <Alert>{error}</Alert>
-        : list.isPending ? <Loading label="Loading bills…" />
+        : list.isPending ? <Loading label={t('invoices.loading')} />
         : list.isError && !list.data ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
-        : rows.length === 0 ? <Empty title="No bills">{filtered ? 'No bill matches these filters.' : canCreate ? 'Bills you issue appear here.' : null}</Empty>
+        : rows.length === 0 ? <Empty title={t('invoices.none.title')}>{filtered ? t('invoices.none.filtered') : canCreate ? t('invoices.none.canCreate') : null}</Empty>
         : (
           <>
-            {total !== undefined && <p className="ws-count">{total === 1 ? '1 bill' : `${total} bills`}{filtered ? ' match' : ''} · showing {rows.length}</p>}
+            {total !== undefined && <p className="ws-count">{t(filtered ? 'invoices.countMatch' : 'invoices.count', { count: total, shown: rows.length })}</p>}
             <div className="ws-table-wrap">
               <table className="j-table">
-                <caption className="j-sr-only">Bills</caption>
+                <caption className="j-sr-only">{t('invoices.caption')}</caption>
                 <thead>
-                  <tr><th scope="col">Bill</th><th scope="col">Issued</th><th scope="col">Customer</th><th scope="col">Branch</th><th scope="col">Type</th><th scope="col">Total</th><th scope="col">Status</th></tr>
+                  <tr>
+                    <th scope="col">{t('invoices.col.bill')}</th><th scope="col">{t('invoices.col.issued')}</th><th scope="col">{t('invoices.col.customer')}</th>
+                    <th scope="col">{t('invoices.col.branch')}</th><th scope="col">{t('invoices.col.type')}</th><th scope="col">{t('invoices.col.total')}</th>
+                    <th scope="col">{t('invoices.col.status')}</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {rows.map((inv) => (
@@ -127,20 +132,20 @@ function Invoices({ ctx }: { ctx: ScopeContext }) {
                       <td><Link to={`${ctx.link('invoices')}/${inv._id}`}>{inv.serial}</Link></td>
                       <td>{formatDateTime(inv.issuedAt)}</td>
                       <td>{inv.customer?.name}</td>
-                      <td>{names.get(inv.branchId) ?? `Branch …${inv.branchId.slice(-6)}`}</td>
+                      <td>{names.get(inv.branchId) ?? t('common.branchById', { tail: inv.branchId.slice(-6) })}</td>
                       <td>{DOCUMENT_KIND_LABEL[inv.documentKind] ?? inv.documentKind}</td>
                       <td>{money(inv.totals?.totalMinor)}</td>
                       <td>
                         <Badge tone={stateTone(inv.lifecycleState)}>{INVOICE_STATE_LABEL[inv.lifecycleState] ?? inv.lifecycleState}</Badge>
-                        {inv.lifecycleState === 'partly_paid' && <div className="ws-muted">{money(dueOf(inv))} due</div>}
+                        {inv.lifecycleState === 'partly_paid' && <div className="ws-muted">{t('invoices.due', { amount: money(dueOf(inv)) })}</div>}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            {list.isFetchNextPageError && <ErrorState message={`Could not load older bills: ${messageOf(list.error)}`} onRetry={() => void list.fetchNextPage()} />}
-            {list.hasNextPage && <div><Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>Show older bills</Button></div>}
+            {list.isFetchNextPageError && <ErrorState message={t('invoices.olderFailed', { reason: messageOf(list.error) })} onRetry={() => void list.fetchNextPage()} />}
+            {list.hasNextPage && <div><Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>{t('invoices.showOlder')}</Button></div>}
           </>
         )}
     </>

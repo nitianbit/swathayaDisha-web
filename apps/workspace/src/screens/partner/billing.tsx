@@ -1,23 +1,28 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
-import {
-  holdsAny, paiseToRupees, type CatalogueItemKind, type PartnerKind, type VisitMode,
-} from '@jansetu/api';
-import { formatRupees } from '@jansetu/ui';
+import { holdsAny, type CatalogueItemKind, type PartnerKind, type VisitMode } from '@jansetu/api';
+import { formatPaise, formatRupees } from '@jansetu/i18n';
+import { t, type PartnerKey } from '../../i18n/partner/index.ts';
 import { newRequestKey } from '../../requests.ts';
 import type { SessionMemory } from '../../session.tsx';
 import { scopeIdentity, type ScopeContext } from './scope.tsx';
 
 /** Backend amounts are integer paise; this is the only way the workspace shows them. */
 export const money = (minor: number | undefined | null) =>
-  (minor === undefined || minor === null ? formatRupees(minor) : formatRupees(paiseToRupees(minor)));
+  (minor === undefined || minor === null ? formatRupees(minor) : formatPaise(minor));
 
 /** Q10 item kinds (labs: test/package; clinics: consultation/procedure/package/other). */
-export const ITEM_KIND_LABEL: Record<CatalogueItemKind, string> = {
-  test: 'Test', package: 'Package', consultation: 'Consultation', procedure: 'Procedure', other: 'Other',
-};
+const ITEM_KIND_KEY = {
+  test: 'billing.kind.test', package: 'billing.kind.package', consultation: 'billing.kind.consultation',
+  procedure: 'billing.kind.procedure', other: 'billing.kind.other',
+} as const satisfies Record<CatalogueItemKind, PartnerKey>;
+/** An item kind in words; a kind this app does not know shows as sent. */
+export const itemKindLabel = (kind: string): string =>
+  (Object.hasOwn(ITEM_KIND_KEY, kind) ? t(ITEM_KIND_KEY[kind as CatalogueItemKind]) : kind);
 /** Labs only (clinic items have no visit modes). */
-export const VISIT_MODE_LABEL: Record<VisitMode, string> = { home: 'Home collection', lab: 'At the lab' };
+const VISIT_MODE_KEY = { home: 'billing.visit.home', lab: 'billing.visit.lab' } as const satisfies Record<VisitMode, PartnerKey>;
+export const visitModeLabel = (mode: string): string =>
+  (Object.hasOwn(VISIT_MODE_KEY, mode) ? t(VISIT_MODE_KEY[mode as VisitMode]) : mode);
 
 /** Catalogue readers (`GET /catalogue`): `catalogue.manage` or `invoices.create`; r12: also `bookings.manage` (the lab desk). */
 export const canReadCatalogue = (ctx: ScopeContext) => holdsAny(ctx.actor, ['catalogue.manage', 'invoices.create', 'bookings.manage']);
@@ -75,19 +80,10 @@ export function takeHandover(stored: BillHandover | undefined, routeState: unkno
 }
 
 /** Q14 / r12 refusals of a bill for an appointment or a lab booking (`BILL_LINKS`), in words staff can act on. */
-export const BILL_LINK_REFUSAL: Record<string, string> = {
-  LAB_BOOKING_ALREADY_BILLED: 'This lab booking already has a bill. Open it from the booking; cancel it first to issue a new one.',
-  LAB_BOOKING_BRANCH_MISMATCH: 'A bill for a lab booking is issued by the branch where the booking is.',
-  LAB_BOOKING_CANCELLED: 'This lab booking was cancelled, so it cannot be billed.',
-  LAB_BOOKING_NOT_FOUND: 'This lab booking was not found (or is not at one of your branches, or was not booked at the front desk).',
-  LAB_BOOKING_CUSTOMER_MISMATCH: 'A bill for a lab booking is made out to its account holder: enter the mobile number it was booked with.',
-  APPOINTMENT_ALREADY_BILLED: 'This appointment already has a bill. Open it from the front desk; cancel it first to issue a new one.',
-  APPOINTMENT_BRANCH_MISMATCH: 'A bill for an appointment is issued by the branch where the appointment takes place.',
-  APPOINTMENT_DOCTOR_MISMATCH: 'The bill names a different doctor than the appointment.',
-  APPOINTMENT_CANCELLED: 'This appointment was cancelled, so it cannot be billed.',
-  APPOINTMENT_NOT_FOUND: 'This appointment was not found at this clinic (or not at one of your branches).',
-  APPOINTMENT_CUSTOMER_MISMATCH: 'A bill for an appointment is made out to the appointment’s account holder (the mobile it was booked with).',
-};
+export function billLinkRefusal(code: string | undefined): string | undefined {
+  const key = `billing.refusal.${code}`;
+  return code && t.has(key) ? t(key) : undefined;
+}
 
 /** Who may open bills (the bills list): any of these permissions. */
 export const BILL_READERS = ['invoices.create', 'invoices.cancel', 'payments.record', 'finance.view'] as const;
@@ -96,7 +92,7 @@ export const BILL_READERS = ['invoices.create', 'invoices.cancel', 'payments.rec
  * Q14 / r12: the new-bill form for this record, prefilled with its patient, branch (and doctor) and the record (handed over
  * in session memory only, never in the URL), or the bills list for other bill readers.
  */
-export function BillLink({ ctx, memory, prefill, label = 'Make a bill for this visit' }: { ctx: ScopeContext; memory: SessionMemory; prefill: BillPrefill; label?: string }) {
+export function BillLink({ ctx, memory, prefill, label }: { ctx: ScopeContext; memory: SessionMemory; prefill: BillPrefill; label?: string }) {
   const navigate = useNavigate();
   if (holdsAny(ctx.actor, ['invoices.create'])) {
     const to = `${ctx.link('invoices')}/new`;
@@ -109,9 +105,9 @@ export function BillLink({ ctx, memory, prefill, label = 'Make a bill for this v
         const token = newRequestKey();
         memory.set(billPrefillSlot(scopeIdentity(ctx)), { token, prefill } satisfies BillHandover);
         navigate(to, { state: { prefillToken: token } });
-      }}>{label}</Link>
+      }}>{label ?? t('billing.makeBill')}</Link>
     );
   }
-  if (holdsAny(ctx.actor, BILL_READERS)) return <Link to={ctx.link('invoices')}>Bills</Link>;
+  if (holdsAny(ctx.actor, BILL_READERS)) return <Link to={ctx.link('invoices')}>{t('billing.bills')}</Link>;
   return null;
 }

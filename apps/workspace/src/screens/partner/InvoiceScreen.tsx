@@ -17,15 +17,14 @@ import { money, useClinicDoctors } from './billing.tsx';
 import { stateTone } from './InvoicesScreen.tsx';
 import { useSession } from '../../session.tsx';
 import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
+import { t } from '../../i18n/partner/index.ts';
 
 const MODE_LABEL = Object.fromEntries(PAYMENT_MODES.map((m) => [m.value, m.label])) as Record<InvoicePaymentMode, string>;
 /** Q14 refusals of a payment, in words a cashier can act on (the server's message is the fallback). */
-const PAY_REFUSAL: Record<string, string> = {
-  LIFECYCLE_VERSION_CONFLICT: 'The bill changed while you were recording this (another payment or a cancellation), so nothing was recorded. Check what is due now and try again.',
-  AMOUNT_EXCEEDS_DUE: 'That is more than is still due on this bill (it changed meanwhile), so nothing was recorded. Check what is due now.',
-  PART_PAYMENTS_NOT_ALLOWED: 'This partner takes full payment only, so nothing was recorded. Record everything that is due.',
-};
-const payRefusal = (err: unknown) => (err instanceof ApiError && err.code && PAY_REFUSAL[err.code]) || messageOf(err);
+function payRefusal(err: unknown): string {
+  const key = err instanceof ApiError && err.code ? `invoice.payRefusal.${err.code}` : '';
+  return t.has(key) ? t(key) : messageOf(err);
+}
 /** Q14 review: 503 INVOICE_INDEXES_OUTDATED: this payment's insert was refused (its message is shown as the server gives it). */
 const isIndexesOutdated = (err: unknown) => err instanceof ApiError && err.status === 503 && err.code === 'INVOICE_INDEXES_OUTDATED';
 /** 409s the server answers only after finding no payment under this key, for a request that can never pass as it is. */
@@ -46,8 +45,9 @@ export function paymentRefusedForGood(err: unknown): boolean {
   if ([400, 422].includes(err.status)) return true;
   return err.status === 409 && !!err.code && REFUSED_409.has(err.code);
 }
-/** Shown when the bill moved on while a payment or a cancellation was being reviewed. */
-export const BILL_CHANGED = 'This bill changed — check the amounts again.';
+/** What a new bill's page says it did (route state: words are made on this page, in the language showing). */
+export interface IssuedNotice { serial: string; earlier: boolean; linked: boolean }
+const isIssuedNotice = (x: unknown): x is IssuedNotice => !!x && typeof (x as IssuedNotice).serial === 'string';
 /** What the payment form produces; the key and the version it was decided on are added when it is sent. */
 type PaymentDraft = { note?: string } & ({ splits: PaymentSplit[] } | { mode: InvoicePaymentMode });
 
@@ -56,12 +56,24 @@ export function paymentText(e: Pick<InvoiceEvent, 'mode' | 'reference' | 'splits
   const parts: PaymentSplit[] = e.splits?.length ? e.splits : e.mode ? [{ mode: e.mode, amountMinor: e.amountMinor ?? 0, reference: e.reference }] : [];
   if (parts.length <= 1) {
     const p = parts[0];
-    return `Paid by ${p ? MODE_LABEL[p.mode] ?? p.mode : 'an unrecorded method'}${p?.reference ? ` · reference ${p.reference}` : ''}${e.amountMinor ? ` · ${money(e.amountMinor)}` : ''}`;
+    return [
+      t('invoice.paidBy', { method: p ? MODE_LABEL[p.mode] ?? p.mode : t('invoice.unrecordedMethod') }),
+      ...(p?.reference ? [t('invoice.reference', { ref: p.reference })] : []),
+      ...(e.amountMinor ? [money(e.amountMinor)] : []),
+    ].join(' · ');
   }
-  const list = parts.map((p) => `${MODE_LABEL[p.mode] ?? p.mode} ${money(p.amountMinor)}${p.reference ? ` (reference ${p.reference})` : ''}`).join(' + ');
-  return `Paid by ${list} · ${money(e.amountMinor ?? parts.reduce((n, p) => n + p.amountMinor, 0))} in all`;
+  const list = parts.map((p) => splitText(MODE_LABEL[p.mode] ?? p.mode, p)).join(' + ');
+  return t('invoice.paidByAll', { methods: list, total: money(e.amountMinor ?? parts.reduce((n, p) => n + p.amountMinor, 0)) });
 }
-const GENDER_LABEL: Record<string, string> = { male: 'Male', female: 'Female', other: 'Other' };
+/** One method of a split payment: "Cash ₹500.00", "UPI ₹508.00 (reference U9)". */
+const splitText = (method: string, p: { amountMinor: number; reference?: string }) => (p.reference
+  ? t('invoice.splitRef', { method, amount: money(p.amountMinor), ref: p.reference })
+  : t('invoice.split', { method, amount: money(p.amountMinor) }));
+/** A gender as given on the bill (the new-bill form's words). */
+const genderLabel = (g: string) => {
+  const key = `newInvoice.gender.${g}`;
+  return g !== 'none' && t.has(key) ? t(key) : g;
+};
 
 /** One bill: what was issued (immutable), its payment and cancellation, its PDF; pay and cancel by permission. */
 export function InvoiceScreen() {
@@ -91,7 +103,10 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
   const queryClient = useQueryClient();
   const { memory } = useSession();
   const location = useLocation();
-  const issuedNotice = (location.state as { issued?: string } | null)?.issued;
+  const issued = (location.state as { issued?: unknown } | null)?.issued;
+  const issuedNotice = isIssuedNotice(issued)
+    ? [t(issued.earlier ? 'invoice.issuedEarlier' : 'invoice.issuedNotice', { serial: issued.serial }), ...(issued.linked ? [t('invoice.issuedLinked')] : [])].join(' ')
+    : undefined;
   const partner = useWorkspacePartner(ctx);
   const branches = useBranches(ctx);
   const doctors = useClinicDoctors(ctx, partner.data?.kind);
@@ -133,8 +148,8 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
     if (outcome === 'unknown') return;
     if (!owns(payOp)) return;
     storePay(undefined);
-    if (outcome === 'recorded') { setFailure(null); setNotice(payOp.restored ? 'The bill shows a payment.' : 'Payment recorded.'); }
-    else { setNotice(null); setFailure(`Payment not recorded: ${outcome.refused}`); }
+    if (outcome === 'recorded') { setFailure(null); setNotice(payOp.restored ? t('invoice.shownPayment') : t('invoice.paymentRecorded')); }
+    else { setNotice(null); setFailure(t('invoice.paymentNotRecorded', { reason: outcome.refused })); }
   }, [q.data, payOp, freshRead, inFlight]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Sends exactly `op` (a new payment, or the stored one unchanged), recorded as an attempt before the request. */
@@ -150,14 +165,14 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
       if (!owns(attempt)) return; // a newer attempt or another page owns the record: it settles it
       storePay(undefined);
       // Q12: `replayed` (inside data) = this payment had already been recorded; the answer is its receipt.
-      setNotice(r.replayed ? 'Payment recorded. It had already been recorded: nothing was recorded twice.' : 'Payment recorded.');
+      setNotice(r.replayed ? t('invoice.paymentReplayed') : t('invoice.paymentRecorded'));
       void reload().catch(() => undefined);
     } catch (err) {
       if (!owns(attempt)) return;
       const next = paymentRefusedForGood(err) ? null : afterFailure(attempt, err, messageOf(err));
       storePay(next ?? undefined);
       // Refused outright (e.g. "This bill is paid": someone else recorded another payment): the server's message.
-      if (!next) setFailure(`Payment not recorded: ${payRefusal(err)}`);
+      if (!next) setFailure(t('invoice.paymentNotRecorded', { reason: payRefusal(err) }));
       void reload().catch(() => undefined);
     } finally {
       if (live.current) setInFlight(null);
@@ -176,7 +191,7 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
     void reload();
   };
 
-  const branchName = inv ? branches.data?.find((b) => b._id === inv.branchId)?.name ?? `Branch …${inv.branchId.slice(-6)}` : '';
+  const branchName = inv ? branches.data?.find((b) => b._id === inv.branchId)?.name ?? t('common.branchById', { tail: inv.branchId.slice(-6) }) : '';
   const doctor = inv?.doctorId ? doctors.data?.find((d) => d.doctorId === inv.doctorId) : undefined;
   const canPay = holdsAny(ctx.actor, ['payments.record']);
   const canCancel = holdsAny(ctx.actor, ['invoices.cancel']);
@@ -185,10 +200,12 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
 
   return (
     <>
-      <Link className="ws-back" to={ctx.link('invoices')}><ArrowLeft size={16} aria-hidden="true" /> Back to bills</Link>
-      <PageHeading title={inv ? `Bill ${inv.serial}` : 'Bill'}>
-        {ctx.adminHome ? <>Managing {partner.data?.name ?? 'this partner'} with owner authority. </> : null}
-        {inv ? <>{DOCUMENT_KIND_LABEL[inv.documentKind]} · issued {formatDateTime(inv.issuedAt)} · {branchName}</> : null}
+      <Link className="ws-back" to={ctx.link('invoices')}><ArrowLeft size={16} aria-hidden="true" /> {t('invoice.backToBills')}</Link>
+      <PageHeading title={inv ? t('invoice.title', { serial: inv.serial }) : t('invoice.titleUnknown')}>
+        {ctx.adminHome
+          ? <>{partner.data?.name === undefined ? t('scope.managingThis') : t('scope.managing', { name: partner.data.name })} </>
+          : null}
+        {inv ? t('invoice.issuedLine', { kind: DOCUMENT_KIND_LABEL[inv.documentKind], date: formatDateTime(inv.issuedAt), branch: branchName }) : null}
       </PageHeading>
       {issuedNotice && !notice && <Alert tone="ok">{issuedNotice}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
@@ -200,31 +217,31 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
           onForget={() => { if (owns(payOp)) storePay(undefined); }} />
       )}
       {q.isError && q.data && (
-        <ErrorState message={`Could not refresh the bill: ${messageOf(q.error)}`} onRetry={() => void q.refetch()} />
+        <ErrorState message={t('invoice.refreshFailed', { reason: messageOf(q.error) })} onRetry={() => void q.refetch()} />
       )}
-      {q.isPending ? <Loading label="Loading the bill…" />
+      {q.isPending ? <Loading label={t('invoice.loading')} />
         : q.isError && !q.data ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : inv && (
           <>
             <section className="ws-section" aria-labelledby="inv-state-h">
-              <h2 id="inv-state-h">Status</h2>
+              <h2 id="inv-state-h">{t('invoice.status')}</h2>
               {failure && <Alert>{failure}</Alert>}
               <div><Badge tone={stateTone(inv.lifecycleState)}>{INVOICE_STATE_LABEL[inv.lifecycleState] ?? inv.lifecycleState}</Badge></div>
               {inv.lifecycleState !== 'cancelled' && (
-                <dl className="ws-dl" aria-label="Paid and due">
-                  <dt>Paid</dt><dd>{money(paidOf(inv))} of {money(inv.totals.totalMinor)}</dd>
-                  <dt>Due</dt><dd>{money(dueOf(inv))}</dd>
+                <dl className="ws-dl" aria-label={t('invoice.paidAndDue')}>
+                  <dt>{t('invoice.paid')}</dt><dd>{t('invoice.paidOf', { paid: money(paidOf(inv)), total: money(inv.totals.totalMinor) })}</dd>
+                  <dt>{t('invoice.due')}</dt><dd>{money(dueOf(inv))}</dd>
                 </dl>
               )}
-              {inv.lifecycleState === 'cancelled' && paidOf(inv) > 0 && <p className="ws-muted">{money(paidOf(inv))} had been paid and was returned to the customer.</p>}
-              {events.length === 0 ? <p className="ws-muted">No payment has been recorded.</p> : (
-                <ul className="ws-list" aria-label="Payment and cancellation">
+              {inv.lifecycleState === 'cancelled' && paidOf(inv) > 0 && <p className="ws-muted">{t('invoice.returned', { amount: money(paidOf(inv)) })}</p>}
+              {events.length === 0 ? <p className="ws-muted">{t('invoice.noPayment')}</p> : (
+                <ul className="ws-list" aria-label={t('invoice.events')}>
                   {events.map((e) => (
                     <li key={e.version}>
                       {e.kind === 'payment'
                         ? <>{paymentText(e)}{e.note ? ` · “${e.note}”` : ''}</>
-                        : <>Cancelled: “{e.reason}”{e.refund ? <> · money returned by {MODE_LABEL[e.refund.mode] ?? e.refund.mode}{e.refund.reference ? ` · reference ${e.refund.reference}` : ''}{e.refund.note ? ` · “${e.refund.note}”` : ''}{e.refund.amountMinor ? ` · ${money(e.refund.amountMinor)} returned` : ''}</> : null}</>}
-                      {' '}· {formatDateTime(e.at)}{e.byKind === 'admin' ? ' · by a Jansetu admin' : ''}
+                        : cancellationText(e)}
+                      {' '}· {formatDateTime(e.at)}{e.byKind === 'admin' ? ` · ${t('invoice.event.byAdmin')}` : ''}
                     </li>
                   ))}
                 </ul>
@@ -241,38 +258,38 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
                 )}
                 {inv.lifecycleState !== 'cancelled' && canCancel && (
                   <CancelForm ctx={ctx} invoice={inv} locked={inFlight === 'pay' || !!payOp} onBusy={(b) => setInFlight(b ? 'cancel' : null)}
-                    onDone={(r) => { changed(r); setFailure(null); setNotice(`Bill ${inv.serial} was cancelled.`); }}
+                    onDone={(r) => { changed(r); setFailure(null); setNotice(t('invoice.cancelledNotice', { serial: inv.serial })); }}
                     onRefused={reload} />
                 )}
               </div>
-              {!canPay && !canCancel && <p className="ws-muted">You can view this bill; recording payments and cancelling need other permissions.</p>}
+              {!canPay && !canCancel && <p className="ws-muted">{t('invoice.viewOnly')}</p>}
             </section>
 
             <PdfPanel ctx={ctx} invoice={inv} />
 
             <section className="ws-section" aria-labelledby="inv-parties-h">
-              <h2 id="inv-parties-h">Supplier and customer</h2>
+              <h2 id="inv-parties-h">{t('invoice.parties')}</h2>
               <div className="rx-form-row">
-                <dl className="ws-dl" aria-label="Supplier">
-                  <dt>Supplier</dt><dd>{inv.supplier.name}{inv.supplier.legalName ? ` (${inv.supplier.legalName})` : ''}</dd>
-                  <dt>Address</dt><dd>{inv.supplier.address}</dd>
-                  {inv.supplier.gstin && <><dt>GSTIN</dt><dd>{inv.supplier.gstin}</dd></>}
-                  {inv.supplier.pan && <><dt>PAN</dt><dd>{inv.supplier.pan}</dd></>}
-                  <dt>State code</dt><dd>{inv.supplier.placeOfSupply}</dd>
+                <dl className="ws-dl" aria-label={t('invoice.supplier')}>
+                  <dt>{t('invoice.supplier')}</dt><dd>{inv.supplier.name}{inv.supplier.legalName ? ` (${inv.supplier.legalName})` : ''}</dd>
+                  <dt>{t('invoice.address')}</dt><dd>{inv.supplier.address}</dd>
+                  {inv.supplier.gstin && <><dt>{t('invoice.gstin')}</dt><dd>{inv.supplier.gstin}</dd></>}
+                  {inv.supplier.pan && <><dt>{t('invoice.pan')}</dt><dd>{inv.supplier.pan}</dd></>}
+                  <dt>{t('invoice.stateCode')}</dt><dd>{inv.supplier.placeOfSupply}</dd>
                 </dl>
-                <dl className="ws-dl" aria-label="Customer">
-                  <dt>Customer</dt><dd>{inv.customer.name}</dd>
-                  {inv.customer.phone && <><dt>Phone</dt><dd>{inv.customer.phone}</dd></>}
-                  {inv.customer.phone && <><dt>Jansetu account</dt><dd>{inv.customer.userId ? 'Linked: the bill is in the customer’s app under Bills' : 'Not linked'}</dd></>}
-                  {inv.customer.age !== undefined && <><dt>Age</dt><dd>{inv.customer.age}</dd></>}
-                  {inv.customer.gender && <><dt>Gender</dt><dd>{GENDER_LABEL[inv.customer.gender] ?? inv.customer.gender}</dd></>}
-                  {inv.customer.gstin && <><dt>GSTIN</dt><dd>{inv.customer.gstin}</dd></>}
-                  <dt>Place of supply</dt><dd>{inv.customer.placeOfSupply ?? inv.supplier.placeOfSupply}</dd>
-                  {inv.doctorId && <><dt>Doctor</dt><dd>{doctor?.name ?? `Doctor …${inv.doctorId.slice(-6)}`}</dd></>}
+                <dl className="ws-dl" aria-label={t('invoice.customer')}>
+                  <dt>{t('invoice.customer')}</dt><dd>{inv.customer.name}</dd>
+                  {inv.customer.phone && <><dt>{t('invoice.phone')}</dt><dd>{inv.customer.phone}</dd></>}
+                  {inv.customer.phone && <><dt>{t('invoice.account')}</dt><dd>{inv.customer.userId ? t('invoice.accountLinked') : t('invoice.accountNotLinked')}</dd></>}
+                  {inv.customer.age !== undefined && <><dt>{t('invoice.age')}</dt><dd>{inv.customer.age}</dd></>}
+                  {inv.customer.gender && <><dt>{t('invoice.gender')}</dt><dd>{genderLabel(inv.customer.gender)}</dd></>}
+                  {inv.customer.gstin && <><dt>{t('invoice.gstin')}</dt><dd>{inv.customer.gstin}</dd></>}
+                  <dt>{t('invoice.placeOfSupply')}</dt><dd>{inv.customer.placeOfSupply ?? inv.supplier.placeOfSupply}</dd>
+                  {inv.doctorId && <><dt>{t('invoice.doctor')}</dt><dd>{doctor?.name ?? t('invoice.doctorById', { tail: inv.doctorId.slice(-6) })}</dd></>}
                   {inv.appointmentId && (
-                    <><dt>Appointment</dt><dd>
-                      Clinic appointment …{inv.appointmentId.slice(-6)}
-                      {' · '}<Link to={ctx.link('invoices')} state={{ appointmentId: inv.appointmentId }}>All bills of this appointment</Link>
+                    <><dt>{t('invoice.appointment')}</dt><dd>
+                      {t('invoice.appointmentById', { tail: inv.appointmentId.slice(-6) })}
+                      {' · '}<Link to={ctx.link('invoices')} state={{ appointmentId: inv.appointmentId }}>{t('invoice.appointmentBills')}</Link>
                     </dd></>
                   )}
                 </dl>
@@ -280,12 +297,16 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
             </section>
 
             <section className="ws-section" aria-labelledby="inv-lines-h">
-              <h2 id="inv-lines-h">Items</h2>
+              <h2 id="inv-lines-h">{t('invoice.items')}</h2>
               <div className="ws-table-wrap">
                 <table className="j-table">
-                  <caption className="j-sr-only">Items on bill {inv.serial}</caption>
+                  <caption className="j-sr-only">{t('invoice.itemsCaption', { serial: inv.serial })}</caption>
                   <thead>
-                    <tr><th scope="col">Item</th><th scope="col">SAC/HSN</th><th scope="col">Qty</th><th scope="col">Unit price</th><th scope="col">Discount</th><th scope="col">Taxable value</th><th scope="col">GST</th></tr>
+                    <tr>
+                      <th scope="col">{t('invoice.col.item')}</th><th scope="col">{t('invoice.col.sac')}</th><th scope="col">{t('invoice.col.qty')}</th>
+                      <th scope="col">{t('invoice.col.unitPrice')}</th><th scope="col">{t('invoice.col.discount')}</th><th scope="col">{t('invoice.col.taxable')}</th>
+                      <th scope="col">{t('invoice.col.gst')}</th>
+                    </tr>
                   </thead>
                   <tbody>
                     {inv.items.map((l, i) => (
@@ -305,15 +326,29 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
   );
 }
 
-export function Totals({ totals, igst, label = 'Totals' }: { totals: Invoice['totals']; igst: boolean; label?: string }) {
+/** A cancellation in the bill's history: the reason, and how the money went back. */
+function cancellationText(e: InvoiceEvent): string {
+  const r = e.refund;
+  return [
+    t('invoice.event.cancelled', { reason: e.reason ?? '' }),
+    ...(r ? [
+      t('invoice.event.returnedBy', { method: MODE_LABEL[r.mode] ?? r.mode }),
+      ...(r.reference ? [t('invoice.reference', { ref: r.reference })] : []),
+      ...(r.note ? [`“${r.note}”`] : []),
+      ...(r.amountMinor ? [t('invoice.event.returnedAmount', { amount: money(r.amountMinor) })] : []),
+    ] : []),
+  ].join(' · ');
+}
+
+export function Totals({ totals, igst, label }: { totals: Invoice['totals']; igst: boolean; label?: string }) {
   return (
-    <dl className="ws-dl" aria-label={label}>
-      <dt>Subtotal</dt><dd>{money(totals.subtotalMinor)}</dd>
-      {totals.discountMinor > 0 && <><dt>Discount</dt><dd>− {money(totals.discountMinor)}</dd></>}
-      <dt>Taxable value</dt><dd>{money(totals.taxableMinor)}</dd>
-      {igst ? <><dt>IGST</dt><dd>{money(totals.igstMinor)}</dd></>
-        : <><dt>CGST</dt><dd>{money(totals.cgstMinor)}</dd><dt>SGST</dt><dd>{money(totals.sgstMinor)}</dd></>}
-      <dt><strong>Total</strong></dt><dd><strong>{money(totals.totalMinor)}</strong></dd>
+    <dl className="ws-dl" aria-label={label ?? t('invoice.totals')}>
+      <dt>{t('invoice.subtotal')}</dt><dd>{money(totals.subtotalMinor)}</dd>
+      {totals.discountMinor > 0 && <><dt>{t('invoice.discount')}</dt><dd>− {money(totals.discountMinor)}</dd></>}
+      <dt>{t('invoice.taxable')}</dt><dd>{money(totals.taxableMinor)}</dd>
+      {igst ? <><dt>{t('invoice.igst')}</dt><dd>{money(totals.igstMinor)}</dd></>
+        : <><dt>{t('invoice.cgst')}</dt><dd>{money(totals.cgstMinor)}</dd><dt>{t('invoice.sgst')}</dt><dd>{money(totals.sgstMinor)}</dd></>}
+      <dt><strong>{t('invoice.total')}</strong></dt><dd><strong>{money(totals.totalMinor)}</strong></dd>
     </dl>
   );
 }
@@ -332,11 +367,11 @@ type PayOp = PendingOp<PaymentInput>;
  */
 export function paymentOutcome(d: Detail, op: Pick<PayOp, 'requestKey' | 'body' | 'restored'>): 'recorded' | 'unknown' | { refused: string } {
   if (d.events.some((e) => e.kind === 'payment' && e.requestKey === op.requestKey)) return 'recorded';
-  if (d.invoice.lifecycleState === 'cancelled') return { refused: 'the bill was cancelled.' };
+  if (d.invoice.lifecycleState === 'cancelled') return { refused: t('invoice.outcome.cancelled') };
   const named = op.restored ? undefined : op.body?.expectedLifecycleVersion;
   if (named !== undefined && d.invoice.lifecycleVersion > named) {
     const other = d.events.find((e) => e.version === named + 1);
-    return { refused: other?.kind === 'payment' ? `another payment was recorded first (${paymentText(other)}).` : 'the bill changed before it arrived.' };
+    return { refused: other?.kind === 'payment' ? t('invoice.outcome.otherPayment', { payment: paymentText(other) }) : t('invoice.outcome.changed') };
   }
   return 'unknown';
 }
@@ -344,12 +379,17 @@ export function paymentOutcome(d: Detail, op: Pick<PayOp, 'requestKey' | 'body' 
 const splitsTotal = (splits: readonly PaymentSplit[]) => splits.reduce((n, x) => n + x.amountMinor, 0);
 /** "of ₹1,008.00 by UPI (reference UTR9)", or with several methods "of ₹1,008.00 (Cash ₹500.00 + UPI ₹508.00)". */
 function payWords(b: PaymentInput): string {
-  if (!b.splits) return ` of ${money(0)} by ${MODE_LABEL[b.mode]}`;
+  if (!b.splits) return t('invoice.what.single', { amount: money(0), method: MODE_LABEL[b.mode] });
   if (b.splits.length === 1) {
     const x = b.splits[0]!;
-    return ` of ${money(x.amountMinor)} by ${MODE_LABEL[x.mode]}${x.reference ? ` (reference ${x.reference})` : ''}`;
+    return x.reference
+      ? t('invoice.what.singleRef', { amount: money(x.amountMinor), method: MODE_LABEL[x.mode], ref: x.reference })
+      : t('invoice.what.single', { amount: money(x.amountMinor), method: MODE_LABEL[x.mode] });
   }
-  return ` of ${money(splitsTotal(b.splits))} (${b.splits.map((x) => `${MODE_LABEL[x.mode]} ${money(x.amountMinor)}${x.reference ? `, reference ${x.reference}` : ''}`).join(' + ')})`;
+  const splits = b.splits.map((x) => (x.reference
+    ? t('invoice.what.splitRef', { method: MODE_LABEL[x.mode], amount: money(x.amountMinor), ref: x.reference })
+    : t('invoice.what.split', { method: MODE_LABEL[x.mode], amount: money(x.amountMinor) }))).join(' + ');
+  return t('invoice.what.splits', { amount: money(splitsTotal(b.splits)), splits });
 }
 
 /**
@@ -364,16 +404,13 @@ function UnconfirmedPayment({ op, sending, billUnpaid, onResend, onCheck, onForg
 }) {
   if (op.restored) {
     return (
-      <div className="confirm" role="group" aria-label="Unconfirmed payment">
-        <Alert tone="warn">
-          A payment was sent from this device before the page was reloaded, and its answer never arrived. Its details are
-          not kept here. Check the bill: its receipt on the bill settles this.
-        </Alert>
+      <div className="confirm" role="group" aria-label={t('invoice.unconfirmed')}>
+        <Alert tone="warn">{t('invoice.unconfirmed.restored')}</Alert>
         <div className="confirm-actions">
-          <Button onClick={onCheck}>Check the bill</Button>
+          <Button onClick={onCheck}>{t('invoice.unconfirmed.check')}</Button>
           {billUnpaid && (
-            <ConfirmAction label="Record the payment again" confirmLabel="The bill is unpaid: record it again"
-              consequence="The bill shows no receipt of it. Recording a payment now is safe: every payment names the bill version it was decided on, so if the earlier one arrives later only one of them is recorded."
+            <ConfirmAction label={t('invoice.unconfirmed.recordAgain')} confirmLabel={t('invoice.unconfirmed.recordAgainConfirm')}
+              consequence={t('invoice.unconfirmed.recordAgainConsequence')}
               onConfirm={async () => onForget()} />
           )}
         </div>
@@ -382,20 +419,18 @@ function UnconfirmedPayment({ op, sending, billUnpaid, onResend, onCheck, onForg
   }
   const what = payWords(op.body);
   return (
-    <div className="confirm" role="group" aria-label="Unconfirmed payment">
+    <div className="confirm" role="group" aria-label={t('invoice.unconfirmed')}>
       <Alert tone="warn">
         {sending || (!op.uncertain && !op.error)
-          ? `A payment${what} is being sent and has not been answered yet. `
-          : `We could not confirm the payment${what} (${op.error ?? 'no answer'}). `}
-        Send the same payment again if needed: if it was recorded, the server answers with it; it is never recorded twice.
-        No other payment or cancellation can start until this is settled.
+          ? t('invoice.unconfirmed.sending', { what })
+          : t('invoice.unconfirmed.lost', { what, reason: op.error ?? t('invoice.unconfirmed.noAnswer') })}
       </Alert>
       <div className="confirm-actions">
-        <Button busy={sending} onClick={onResend}>Send the same payment again</Button>
-        <Button variant="secondary" disabled={sending} onClick={onCheck}>Check the bill</Button>
+        <Button busy={sending} onClick={onResend}>{t('invoice.unconfirmed.resend')}</Button>
+        <Button variant="secondary" disabled={sending} onClick={onCheck}>{t('invoice.unconfirmed.check')}</Button>
         {billUnpaid && !sending && (
-          <ConfirmAction label="Forget this payment" danger confirmLabel="Forget it: it was not recorded"
-            consequence={`The bill as read now shows no such payment, so it was not recorded so far. Forget it here and record a payment again only if the customer still has to pay. If the earlier one still arrives after another payment, it is refused (it names the bill version it was decided on), so the bill is never paid twice.`}
+          <ConfirmAction label={t('invoice.unconfirmed.forget')} danger confirmLabel={t('invoice.unconfirmed.forgetConfirm')}
+            consequence={t('invoice.unconfirmed.forgetConsequence')}
             onConfirm={async () => onForget()} />
         )}
       </div>
@@ -405,8 +440,8 @@ function UnconfirmedPayment({ op, sending, billUnpaid, onResend, onCheck, onForg
 
 type SplitDraft = { key: number; mode: InvoicePaymentMode; amount: string; reference: string };
 let splitSeq = 0;
-/** "", " (method 2)", … — each method's fields get their own label. */
-const nth = (i: number) => (i === 0 ? '' : ` (method ${i + 1})`);
+/** Each method's fields get their own label: "Amount (₹)", "Amount (₹) (method 2)", … */
+const nth = (i: number, first: string, later: (n: number) => string): string => (i === 0 ? first : later(i + 1));
 
 /**
  * Q14: one payment, in one or several methods (e.g. cash + UPI) whose amounts add up to it, then a confirmation: a
@@ -446,23 +481,23 @@ function ZeroBillPayment({ invoice, locked, busy, onRecord }: { invoice: Invoice
   if (!open) {
     return (
       <>
-        {guard.changed && <Alert tone="warn">{BILL_CHANGED}</Alert>}
-        <Button disabled={locked || busy} onClick={() => { guard.clear(); setOpen({ version: invoice.lifecycleVersion }); }}>Record payment</Button>
+        {guard.changed && <Alert tone="warn">{t('invoice.billChanged')}</Alert>}
+        <Button disabled={locked || busy} onClick={() => { guard.clear(); setOpen({ version: invoice.lifecycleVersion }); }}>{t('invoice.pay.record')}</Button>
       </>
     );
   }
   return (
-    <div className="confirm" role="group" aria-label="Record payment">
+    <div className="confirm" role="group" aria-label={t('invoice.pay.record')}>
       <div className="j-field">
-        <label htmlFor="pay-zero-mode">Paid by</label>
+        <label htmlFor="pay-zero-mode">{t('invoice.pay.paidBy')}</label>
         <select id="pay-zero-mode" value={mode} onChange={(e) => setMode(e.target.value as InvoicePaymentMode)}>
           {PAYMENT_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
       </div>
-      <div className="confirm-text">Bill {invoice.serial} is for {money(0)}. Mark it as paid? It will show Paid; this cannot be changed or removed.</div>
+      <div className="confirm-text">{t('invoice.pay.zero', { serial: invoice.serial, amount: money(0) })}</div>
       <div className="confirm-actions">
-        <Button busy={busy} disabled={locked} onClick={() => { const v = open.version; setOpen(null); void onRecord({ mode }, v); }}>Mark as paid</Button>
-        <Button variant="ghost" disabled={busy} onClick={() => setOpen(null)}>Back</Button>
+        <Button busy={busy} disabled={locked} onClick={() => { const v = open.version; setOpen(null); void onRecord({ mode }, v); }}>{t('invoice.pay.markPaid')}</Button>
+        <Button variant="ghost" disabled={busy} onClick={() => setOpen(null)}>{t('common.back')}</Button>
       </div>
     </div>
   );
@@ -483,7 +518,7 @@ function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }
   const [note, setNote] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  if (!open) return <Button disabled={locked || busy} onClick={() => { guard.clear(); setOpen(true); }}>Record payment</Button>;
+  if (!open) return <Button disabled={locked || busy} onClick={() => { guard.clear(); setOpen(true); }}>{t('invoice.pay.record')}</Button>;
 
   const splits = rows.map((r) => ({ mode: r.mode, amountMinor: rupeesToPaise(r.amount), reference: r.reference.trim() }));
   const total = splits.reduce((n, x) => n + (x.amountMinor ?? 0), 0);
@@ -494,10 +529,10 @@ function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }
     const errs: Record<string, string> = {};
     rows.forEach((r) => {
       const a = rupeesToPaise(r.amount);
-      if (a === null || a <= 0) errs[`amount${r.key}`] = r.amount.trim() ? 'Enter rupees, like 500 or 500.50.' : 'Enter the amount.';
-      if (r.reference.trim().length > MAX_REFERENCE) errs[`reference${r.key}`] = `Use at most ${MAX_REFERENCE} characters.`;
+      if (a === null || a <= 0) errs[`amount${r.key}`] = r.amount.trim() ? t('invoice.pay.enterRupees') : t('invoice.pay.enterAmount');
+      if (r.reference.trim().length > MAX_REFERENCE) errs[`reference${r.key}`] = t('common.maxChars', { max: MAX_REFERENCE });
     });
-    if (note.trim().length > MAX_NOTE) errs.note = `Use at most ${MAX_NOTE} characters.`;
+    if (note.trim().length > MAX_NOTE) errs.note = t('common.maxChars', { max: MAX_NOTE });
     const problem = Object.keys(errs).length ? null : paymentProblem(splits, due, allowPartPayments, money);
     if (problem) errs.total = problem;
     setErrors(errs);
@@ -515,54 +550,61 @@ function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }
   const shownTotal = shown.splits.reduce((n, x) => n + x.amountMinor, 0);
   const left = (reviewed?.due ?? due) - (reviewed ? shownTotal : total);
   return (
-    <form className="confirm" noValidate onSubmit={review} aria-label="Record payment">
-      {guard.changed && <Alert tone="warn">{BILL_CHANGED}</Alert>}
+    <form className="confirm" noValidate onSubmit={review} aria-label={t('invoice.pay.record')}>
+      {guard.changed && <Alert tone="warn">{t('invoice.billChanged')}</Alert>}
       {!confirming ? (
         <>
-          <p className="ws-muted">
-            {money(due)} is due. {allowPartPayments
-              ? 'Any amount up to that can be recorded; the rest stays due on the bill.'
-              : 'Only full payment is taken: the amounts must add up to all that is due.'} One payment may be split across methods (cash and UPI, for example).
-          </p>
+          <p className="ws-muted">{t(allowPartPayments ? 'invoice.pay.duePart' : 'invoice.pay.dueFull', { due: money(due) })}</p>
           {rows.map((r, i) => (
             <div key={r.key} className="rx-form-row">
               <div className="j-field">
-                <label htmlFor={`pay-mode-${r.key}`}>Paid by{nth(i)}</label>
+                <label htmlFor={`pay-mode-${r.key}`}>{nth(i, t('invoice.pay.paidBy'), (n) => t('invoice.pay.paidByN', { n }))}</label>
                 <select id={`pay-mode-${r.key}`} value={r.mode} onChange={(e) => set(r.key, { mode: e.target.value as InvoicePaymentMode })}>
                   {PAYMENT_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                 </select>
               </div>
-              <TextField label={`Amount (₹)${nth(i)}`} inputMode="decimal" value={r.amount} error={errors[`amount${r.key}`]} onChange={(e) => set(r.key, { amount: e.target.value })} />
-              <TextField label={`Reference (optional)${nth(i)}`} hint={i === 0 ? 'UPI or card reference, cheque number…' : undefined} value={r.reference} maxLength={MAX_REFERENCE}
+              <TextField label={nth(i, t('invoice.pay.amount'), (n) => t('invoice.pay.amountN', { n }))} inputMode="decimal" value={r.amount} error={errors[`amount${r.key}`]} onChange={(e) => set(r.key, { amount: e.target.value })} />
+              <TextField label={nth(i, t('invoice.pay.reference'), (n) => t('invoice.pay.referenceN', { n }))} hint={i === 0 ? t('invoice.pay.referenceHint') : undefined} value={r.reference} maxLength={MAX_REFERENCE}
                 error={errors[`reference${r.key}`]} onChange={(e) => set(r.key, { reference: e.target.value })} />
-              {i > 0 && <Button variant="ghost" aria-label={`Remove method ${i + 1}`} onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}>Remove</Button>}
+              {i > 0 && (
+                <Button variant="ghost" aria-label={t('invoice.pay.removeMethod', { n: i + 1 })} onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}>
+                  {t('invoice.pay.remove')}
+                </Button>
+              )}
             </div>
           ))}
-          <TextField label="Note (optional)" value={note} maxLength={MAX_NOTE} error={errors.note} onChange={(e) => setNote(e.target.value)} />
-          <p className="ws-muted" aria-live="polite">Payment: {money(total)}{left > 0 ? ` · ${money(left)} would stay due` : ''}</p>
+          <TextField label={t('invoice.pay.note')} value={note} maxLength={MAX_NOTE} error={errors.note} onChange={(e) => setNote(e.target.value)} />
+          <p className="ws-muted" aria-live="polite">
+            {left > 0 ? t('invoice.pay.totalLeft', { total: money(total), left: money(left) }) : t('invoice.pay.total', { total: money(total) })}
+          </p>
           {errors.total && <Alert>{errors.total}</Alert>}
           <div className="confirm-actions">
-            <Button type="submit">Continue</Button>
+            <Button type="submit">{t('common.continue')}</Button>
             {rows.length < MAX_PAYMENT_SPLITS && (
               <Button variant="secondary" onClick={() => setRows((rs) => [...rs, { key: ++splitSeq, mode: 'upi', amount: paiseToInput(Math.max(0, due - total)) || '', reference: '' }])}>
-                Add another method
+                {t('invoice.pay.addMethod')}
               </Button>
             )}
-            <Button variant="ghost" onClick={() => setOpen(false)}>Back</Button>
+            <Button variant="ghost" onClick={() => setOpen(false)}>{t('common.back')}</Button>
           </div>
         </>
       ) : (
         <>
           <div className="confirm-text">
             {one
-              ? <>Record {money(one.amountMinor)} as paid by {MODE_LABEL[one.mode]}{one.reference ? ` (reference ${one.reference})` : ''} for bill {invoice.serial}?</>
-              : <>Record {money(shownTotal)} as paid by {shown.splits.map((x) => `${MODE_LABEL[x.mode]} ${money(x.amountMinor)}${x.reference ? ` (reference ${x.reference})` : ''}`).join(' + ')} for bill {invoice.serial}?</>}
-            {left > 0 ? ` ${money(left)} stays due: the bill will show Partly paid.` : ' The bill will show Paid.'} A recorded payment cannot be changed or removed.
+              ? t('invoice.pay.confirm', {
+                amount: money(one.amountMinor), serial: invoice.serial,
+                methods: one.reference ? t('invoice.methodRef', { method: MODE_LABEL[one.mode], ref: one.reference }) : MODE_LABEL[one.mode],
+              })
+              : t('invoice.pay.confirm', {
+                amount: money(shownTotal), serial: invoice.serial, methods: shown.splits.map((x) => splitText(MODE_LABEL[x.mode], x)).join(' + '),
+              })}
+            {' '}{left > 0 ? t('invoice.pay.staysDue', { left: money(left) }) : t('invoice.pay.willBePaid')}
           </div>
-          {locked && <p className="ws-muted">A cancellation of this bill is being sent; wait for its answer.</p>}
+          {locked && <p className="ws-muted">{t('invoice.pay.cancelSending')}</p>}
           <div className="confirm-actions">
-            <Button busy={busy} disabled={locked} onClick={() => { const r = reviewed!; setReviewed(null); setOpen(false); void onRecord(r.body, r.version); }}>Record {money(shownTotal)} paid</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>Back</Button>
+            <Button busy={busy} disabled={locked} onClick={() => { const r = reviewed!; setReviewed(null); setOpen(false); void onRecord(r.body, r.version); }}>{t('invoice.pay.recordAmount', { amount: money(shownTotal) })}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{t('common.back')}</Button>
           </div>
         </>
       )}
@@ -596,18 +638,20 @@ function CancelForm({ ctx, invoice, locked, onBusy, onDone, onRefused }: {
   if (!open) {
     return (
       <>
-        {guard.changed && <Alert tone="warn">{BILL_CHANGED}</Alert>}
-        <Button variant="secondary" disabled={locked} onClick={() => { guard.clear(); setReviewed({ version: invoice.lifecycleVersion, paidMinor: paidOf(invoice) }); setOpen(true); }}>Cancel bill</Button>
+        {guard.changed && <Alert tone="warn">{t('invoice.billChanged')}</Alert>}
+        <Button variant="secondary" disabled={locked} onClick={() => { guard.clear(); setReviewed({ version: invoice.lifecycleVersion, paidMinor: paidOf(invoice) }); setOpen(true); }}>
+          {t('invoice.cancel.open')}
+        </Button>
       </>
     );
   }
 
   async function confirm() {
     const errs: Record<string, string> = {};
-    if (reason.trim().length < 3) errs.reason = 'Give a reason (at least 3 characters).';
-    else if (reason.trim().length > MAX_CANCEL_REASON) errs.reason = `Use at most ${MAX_CANCEL_REASON} characters.`;
-    if (paid && refundRef.trim().length > MAX_REFERENCE) errs.refundRef = `Use at most ${MAX_REFERENCE} characters.`;
-    if (paid && refundNote.trim().length > MAX_NOTE) errs.refundNote = `Use at most ${MAX_NOTE} characters.`;
+    if (reason.trim().length < 3) errs.reason = t('invoice.cancel.reasonShort');
+    else if (reason.trim().length > MAX_CANCEL_REASON) errs.reason = t('common.maxChars', { max: MAX_CANCEL_REASON });
+    if (paid && refundRef.trim().length > MAX_REFERENCE) errs.refundRef = t('common.maxChars', { max: MAX_REFERENCE });
+    if (paid && refundNote.trim().length > MAX_NOTE) errs.refundNote = t('common.maxChars', { max: MAX_NOTE });
     setErrors(errs);
     setError(null);
     if (Object.keys(errs).length) return;
@@ -622,7 +666,7 @@ function CancelForm({ ctx, invoice, locked, onBusy, onDone, onRefused }: {
     } catch (err) {
       // Q14 REFUND_AMOUNT_MISMATCH: a payment landed meanwhile; the bill is read again and the refund names the new amount.
       setError(err instanceof ApiError && err.code === 'REFUND_AMOUNT_MISMATCH'
-        ? `${messageOf(err)}. A payment was recorded meanwhile: the bill has been read again; check the amount to return and confirm again.`
+        ? t('invoice.cancel.refundMismatch', { reason: messageOf(err) })
         : messageOf(err));
       await onRefused(); // the bill as it is now (e.g. it was paid meanwhile: the money question appears)
     } finally {
@@ -632,30 +676,29 @@ function CancelForm({ ctx, invoice, locked, onBusy, onDone, onRefused }: {
   }
 
   return (
-    <div className="confirm" role="group" aria-label="Cancel bill">
+    <div className="confirm" role="group" aria-label={t('invoice.cancel.open')}>
       <div className="confirm-text">
-        Bill {invoice.serial} will be cancelled for good: it cannot be paid, edited or issued again, and its number is not reused.
-        Its PDF will show “Cancelled” with your reason.
-        {paid ? ` It was paid (${money(paidMinor)}): give the money back to the customer and record how it went back. The refund recorded is ${money(paidMinor)}, all that was paid.` : ''}
+        {t('invoice.cancel.text', { serial: invoice.serial })}
+        {paid ? <> {t('invoice.cancel.paid', { amount: money(paidMinor) })}</> : null}
       </div>
-      <TextArea label="Why is this bill cancelled?" value={reason} maxLength={MAX_CANCEL_REASON} error={errors.reason} onChange={(e) => setReason(e.target.value)} />
+      <TextArea label={t('invoice.cancel.reason')} value={reason} maxLength={MAX_CANCEL_REASON} error={errors.reason} onChange={(e) => setReason(e.target.value)} />
       {paid && (
         <div className="rx-form-row">
           <div className="j-field">
-            <label htmlFor="refund-mode">Money returned by</label>
+            <label htmlFor="refund-mode">{t('invoice.cancel.returnedBy')}</label>
             <select id="refund-mode" value={refundMode} onChange={(e) => setRefundMode(e.target.value as InvoicePaymentMode)}>
               {PAYMENT_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </div>
-          <TextField label="Refund reference (optional)" value={refundRef} maxLength={MAX_REFERENCE} error={errors.refundRef} onChange={(e) => setRefundRef(e.target.value)} />
-          <TextField label="Refund note (optional)" value={refundNote} maxLength={MAX_NOTE} error={errors.refundNote} onChange={(e) => setRefundNote(e.target.value)} />
+          <TextField label={t('invoice.cancel.refundRef')} value={refundRef} maxLength={MAX_REFERENCE} error={errors.refundRef} onChange={(e) => setRefundRef(e.target.value)} />
+          <TextField label={t('invoice.cancel.refundNote')} value={refundNote} maxLength={MAX_NOTE} error={errors.refundNote} onChange={(e) => setRefundNote(e.target.value)} />
         </div>
       )}
       {error && <Alert>{error}</Alert>}
-      {locked && <p className="ws-muted">A payment of this bill is being sent; wait for its answer.</p>}
+      {locked && <p className="ws-muted">{t('invoice.cancel.paySending')}</p>}
       <div className="confirm-actions">
-        <Button variant="danger" busy={busy} disabled={locked} onClick={() => void confirm()}>Cancel bill {invoice.serial}</Button>
-        <Button variant="ghost" disabled={busy} onClick={() => { setOpen(false); setError(null); setErrors({}); }}>Back</Button>
+        <Button variant="danger" busy={busy} disabled={locked} onClick={() => void confirm()}>{t('invoice.cancel.confirm', { serial: invoice.serial })}</Button>
+        <Button variant="ghost" disabled={busy} onClick={() => { setOpen(false); setError(null); setErrors({}); }}>{t('common.back')}</Button>
       </div>
     </div>
   );
@@ -684,7 +727,7 @@ function PdfPanel({ ctx, invoice }: { ctx: ScopeContext; invoice: Invoice }) {
       const blob = await ctx.billing.invoicePdf(invoice._id, version, ctrl.signal);
       const { kind } = await sniffDocument(blob);
       if (ctrl.signal.aborted) return;
-      if (kind !== 'pdf') { setError('The server did not return a PDF. Try again.'); return; }
+      if (kind !== 'pdf') { setError(t('invoice.pdf.notPdf')); return; }
       setPdf({ url: URL.createObjectURL(new Blob([blob], { type: 'application/pdf' })), version });
     } catch (err) {
       if (!ctrl.signal.aborted) setError(messageOf(err));
@@ -696,23 +739,23 @@ function PdfPanel({ ctx, invoice }: { ctx: ScopeContext; invoice: Invoice }) {
   const current = invoice.lifecycleVersion;
   return (
     <section className="ws-section" aria-labelledby="inv-pdf-h">
-      <h2 id="inv-pdf-h">PDF</h2>
+      <h2 id="inv-pdf-h">{t('invoice.pdf')}</h2>
       <div className="ws-actions">
         <Button variant="secondary" busy={loading === current} onClick={() => void open(current)}>
-          <FileText size={16} aria-hidden="true" /> {current > 0 ? 'Open PDF (current)' : 'Open PDF'}
+          <FileText size={16} aria-hidden="true" /> {current > 0 ? t('invoice.pdf.openCurrent') : t('invoice.pdf.open')}
         </Button>
         {current > 0 && (
           <Button variant="secondary" busy={loading === 0} onClick={() => void open(0)}>
-            <FileText size={16} aria-hidden="true" /> Open PDF as issued
+            <FileText size={16} aria-hidden="true" /> {t('invoice.pdf.openIssued')}
           </Button>
         )}
       </div>
-      {error && <Alert>Could not open the PDF: {error}</Alert>}
+      {error && <Alert>{t('invoice.pdf.failed', { reason: error })}</Alert>}
       {pdf && (
         <div className="rx-preview">
           <div className="rx-pdf">
-            <iframe src={pdf.url} title={`Bill ${invoice.serial} PDF`} />
-            <a href={pdf.url} download={invoicePdfName(invoice.serial, pdf.version)}>Save the PDF</a>
+            <iframe src={pdf.url} title={t('invoice.pdf.title', { serial: invoice.serial })} />
+            <a href={pdf.url} download={invoicePdfName(invoice.serial, pdf.version)}>{t('invoice.pdf.save')}</a>
           </div>
         </div>
       )}

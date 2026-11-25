@@ -15,8 +15,9 @@ import {
   afterFailure, beginAttempt, keyedLookup, newRequestKey, ownsKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp,
 } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
-import { ITEM_KIND_LABEL, money, useCatalogue, VISIT_MODE_LABEL } from './billing.tsx';
+import { itemKindLabel, money, useCatalogue, visitModeLabel } from './billing.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
+import { t, type PartnerKey } from '../../i18n/partner/index.ts';
 
 const MODES: VisitMode[] = ['home', 'lab'];
 
@@ -43,10 +44,14 @@ const LIMITS: Record<TextKey, number> = {
 };
 
 /** Words for a field in a stale-edit notice. */
-const FIELD_LABEL: Record<keyof Draft, string> = {
-  kind: 'type', name: 'name', code: 'code', description: 'description', preparation: 'preparation', sampleType: 'sample type',
-  includes: 'contents', price: 'price', mrp: 'MRP', gstRate: 'GST rate', sac: 'SAC', visitModes: 'places offered', tat: 'report time',
-};
+const FIELD_KEY = {
+  // i18n-ignore: keys of this catalogue, not words
+  kind: 'catalogue.field.kind', name: 'catalogue.field.name', code: 'catalogue.field.code', description: 'catalogue.field.description',
+  preparation: 'catalogue.field.preparation', sampleType: 'catalogue.field.sampleType', includes: 'catalogue.field.includes',
+  price: 'catalogue.field.price', mrp: 'catalogue.field.mrp', gstRate: 'catalogue.field.gstRate', sac: 'catalogue.field.sac',
+  visitModes: 'catalogue.field.visitModes', tat: 'catalogue.field.tat',
+} as const satisfies Record<keyof Draft, PartnerKey>;
+const fieldLabel = (k: keyof Draft) => t(FIELD_KEY[k]);
 
 /**
  * Checks a draft against `createCatalogueItemSchema` / `updateCatalogueItemSchema` and the service's rules (MRP, Q10
@@ -62,14 +67,14 @@ export function itemBody(s: DraftState<Draft>, rates: readonly GstRate[], kind: 
   const dirty = new Set<keyof Draft>(isEdit ? dirtyKeys(s) : (Object.keys(d) as (keyof Draft)[]));
   const errors: Record<string, string> = {};
   const full: Partial<NewCatalogueItem> = { kind: d.kind };
-  if (!isEdit && !ITEM_KINDS_FOR[kind].includes(d.kind)) errors.kind = 'Choose one of the types offered.';
+  if (!isEdit && !ITEM_KINDS_FOR[kind].includes(d.kind)) errors.kind = t('catalogue.error.kind');
   for (const k of Object.keys(LIMITS) as TextKey[]) {
     const v = d[k].trim();
     if (k === 'sampleType' && kind !== 'lab') continue;
-    if (v.length > LIMITS[k]) { errors[k] = `Use at most ${LIMITS[k]} characters.`; continue; }
+    if (v.length > LIMITS[k]) { errors[k] = t('common.maxChars', { max: LIMITS[k] }); continue; }
     if (!v) {
-      if (k === 'name') errors.name = 'Enter the name.';
-      else if (isEdit && was[k].trim()) errors[k] = 'This cannot be removed here. Enter a new value.';
+      if (k === 'name') errors.name = t('catalogue.error.name');
+      else if (isEdit && was[k].trim()) errors[k] = t('common.cannotRemove');
       continue;
     }
     full[k] = v;
@@ -78,35 +83,36 @@ export function itemBody(s: DraftState<Draft>, rates: readonly GstRate[], kind: 
   if (d.kind === 'package' || includes.length || (isEdit && was.includes.trim())) full.includes = includes;
 
   const price = rupeesToPaise(d.price);
-  if (price === null) errors.price = d.price.trim() ? 'Enter rupees, like 450 or 450.50.' : 'Enter the price.';
-  else if (price > MAX_PRICE_MINOR) errors.price = 'This price is above the largest the server accepts.';
+  if (price === null) errors.price = d.price.trim() ? t('catalogue.error.priceFormat') : t('catalogue.error.price');
+  else if (price > MAX_PRICE_MINOR) errors.price = t('catalogue.error.priceTooHigh');
   else full.priceMinor = price;
   if (d.mrp.trim()) {
     const mrp = rupeesToPaise(d.mrp);
-    if (mrp === null) errors.mrp = 'Enter rupees, like 500 or 500.50.';
-    else if (mrp > MAX_PRICE_MINOR) errors.mrp = 'This MRP is above the largest the server accepts.';
-    else if (price !== null && mrp < price) errors.mrp = 'MRP cannot be below the price.';
+    if (mrp === null) errors.mrp = t('catalogue.error.mrpFormat');
+    else if (mrp > MAX_PRICE_MINOR) errors.mrp = t('catalogue.error.mrpTooHigh');
+    else if (price !== null && mrp < price) errors.mrp = t('catalogue.error.mrpBelowPrice');
     else full.mrpMinor = mrp;
-  } else if (isEdit && was.mrp) errors.mrp = 'The MRP cannot be removed here. Enter a new value.';
+  } else if (isEdit && was.mrp) errors.mrp = t('catalogue.error.mrpRemoved');
 
   const rate = Number(d.gstRate) as GstRate;
-  if (!rates.includes(rate) && dirty.has('gstRate')) errors.gstRate = 'Choose one of the GST rates offered.';
+  if (!rates.includes(rate) && dirty.has('gstRate')) errors.gstRate = t('catalogue.error.gstRate');
   else full.gstRate = rate;
 
   if (usesVisitModes(kind)) {
-    if (d.visitModes.length === 0) errors.visitModes = 'Choose at least one.';
+    if (d.visitModes.length === 0) errors.visitModes = t('catalogue.error.visitModes');
     else full.visitModes = MODES.filter((m) => d.visitModes.includes(m));
     const tat = d.tat.trim();
     if (tat) {
-      if (!/^\d{1,5}$/.test(tat)) errors.tat = 'Enter whole hours, like 24.';
+      if (!/^\d{1,5}$/.test(tat)) errors.tat = t('catalogue.error.tat');
       else full.reportTatHours = Number(tat);
-    } else if (isEdit && was.tat) errors.tat = 'This cannot be removed here. Enter a new value.';
+    } else if (isEdit && was.tat) errors.tat = t('common.cannotRemove');
   }
 
   // Only the problems of fields this request will send (an untouched field is the server's own value).
   for (const k of Object.keys(errors) as (keyof Draft)[]) if (isEdit && !dirty.has(k)) delete errors[k];
   if (!isEdit) return { body: full as NewCatalogueItem, errors };
   const KEY: Partial<Record<keyof Draft, keyof NewCatalogueItem>> = {
+    // i18n-ignore: field names of the request body, not words
     name: 'name', code: 'code', description: 'description', preparation: 'preparation', sampleType: 'sampleType', sac: 'sac',
     includes: 'includes', price: 'priceMinor', mrp: 'mrpMinor', gstRate: 'gstRate', visitModes: 'visitModes', tat: 'reportTatHours',
   };
@@ -118,15 +124,15 @@ export function itemBody(s: DraftState<Draft>, rates: readonly GstRate[], kind: 
   // The MRP may not fall below the price: a changed price is checked against the saved MRP too (the server re-checks).
   const savedMrp = d.mrp.trim() ? rupeesToPaise(d.mrp) : null;
   if (body.priceMinor !== undefined && !dirty.has('mrp') && savedMrp !== null && savedMrp < body.priceMinor) {
-    errors.price = 'The price cannot be above the MRP. Change the MRP too.';
+    errors.price = t('catalogue.error.priceAboveMrp');
   }
   return { body, errors };
 }
 
 /** WQ11b: the words after a save that kept someone else's value for fields this person had also changed. */
 export const keptMessage = (fields: readonly string[]) => {
-  const list = fields.length > 1 ? `${fields.slice(0, -1).join(', ')} and ${fields.at(-1)}` : fields[0];
-  return `Saved, except the ${list}: someone else changed ${fields.length > 1 ? 'them' : 'it'} while you were editing, so the saved ${fields.length > 1 ? 'values are' : 'value is'} kept. Change ${fields.length > 1 ? 'them' : 'it'} again if still needed.`;
+  const list = fields.length > 1 ? t('common.listAnd', { rest: fields.slice(0, -1).join(', '), last: fields.at(-1)! }) : fields[0] ?? '';
+  return t('catalogue.kept', { count: fields.length, fields: list });
 };
 
 /** A new item sent and not yet confirmed (Q10: exactly once per `requestKey`). Session memory + body-less reload marker. */
@@ -139,8 +145,8 @@ const SEARCH_DELAY_MS = 300;
 function useDebounced<T>(value: T, ms: number): T {
   const [settled, setSettled] = useState(value);
   useEffect(() => {
-    const t = setTimeout(() => setSettled(value), ms);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(timer);
   }, [value, ms]);
   return settled;
 }
@@ -225,7 +231,7 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
     resolveStored(memory, slot, requestKey);
     setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
     setEditing((e) => (e === 'new' ? null : e));
-    setNotice(earlier ? `${it.name} had already been added.` : `${it.name} was added.`);
+    setNotice(earlier ? t('catalogue.alreadyAdded', { name: it.name }) : t('catalogue.added', { name: it.name }));
   };
   /** Given up on the server (abandon, or a resend refused REQUEST_ABANDONED): ends `op` only while this page owns it. */
   const givenUp = (op: PendingItem, text: string) => {
@@ -248,7 +254,7 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
       if (!stillCurrent(memory.get<PendingItem>(slot), attempt)) return;
       // Q12: the key was given up (e.g. from another tab after a reload): no item was or can ever be made with it.
       if (wasAbandoned(err)) {
-        givenUp(attempt, 'This item was given up earlier, so it was never added and never will be. Add it again if it is still needed.');
+        givenUp(attempt, t('catalogue.givenUpEarlier'));
         return;
       }
       const next = afterFailure(attempt, err, messageOf(err));
@@ -265,8 +271,8 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
 
   return (
     <>
-      <PartnerPageHeading ctx={ctx} title={kind === 'clinic' ? 'Services and prices' : 'Tests and prices'} partnerName={p?.name}>
-        What customers can book and what appears on bills. Price changes apply at once.
+      <PartnerPageHeading ctx={ctx} title={kind === 'clinic' ? t('catalogue.title.clinic') : t('catalogue.title.lab')} partnerName={p?.name}>
+        {t('catalogue.intro')}
       </PartnerPageHeading>
       {notice && <Alert tone="ok">{notice}</Alert>}
       {warning && <Alert tone="warn">{warning}</Alert>}
@@ -274,11 +280,11 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
       {gaveUp && !pending && <Alert tone="ok">{gaveUp}</Alert>}
       {p && !chargesGst(p) && (
         <p className="ws-muted">
-          {p.name} cannot charge GST ({TAX_REGIME_LABEL[p.taxRegime]}{p.taxRegime !== 'unregistered' && !p.gstin ? ', no GSTIN' : ''}): items carry 0% GST.
+          {t(p.taxRegime !== 'unregistered' && !p.gstin ? 'catalogue.noGstNoGstin' : 'catalogue.noGst', { name: p.name, regime: TAX_REGIME_LABEL[p.taxRegime] })}
         </p>
       )}
       {showPending ? (
-        <PendingOpPanel key={pending.attempts} label="Unconfirmed item" op={pending} busy={createBusy} onResend={() => void sendCreate(pending)}
+        <PendingOpPanel key={pending.attempts} label={t('catalogue.unconfirmed')} op={pending} busy={createBusy} onResend={() => void sendCreate(pending)}
           // Q12: exact lookup by key (`GET /catalogue/by-key/:key`); "not found" only means "not added so far".
           fetchPage={keyedLookup(pending.requestKey, () => ctx.billing.catalogueItemByKey(pending.requestKey))}
           onFound={(it) => created(it, pending, true)}
@@ -287,13 +293,13 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
             const r = await ctx.billing.abandonCatalogueKey(pending.requestKey);
             return { state: r.state, record: r.item ? { ...r.item, requestKey: pending.requestKey } : undefined };
           }}
-          abandonWhenNotFound abandonLabel="Give up this item"
-          onDiscard={() => givenUp(pending, 'The earlier item was given up: it can never be added. You can add it again now.')}
-          summary={pending.restored ? null : <div>New item: {pending.body.name} at {money(pending.body.priceMinor)}.</div>} />
+          abandonWhenNotFound abandonLabel={t('catalogue.giveUp')}
+          onDiscard={() => givenUp(pending, t('catalogue.gaveUp'))}
+          summary={pending.restored ? null : <div>{t('catalogue.pendingSummary', { name: pending.body.name, price: money(pending.body.priceMinor) })}</div>} />
       ) : canManage && editing === null && (
-        <div><Button onClick={() => { setEditing('new'); setNotice(null); setCreateRefused(null); setGaveUp(null); }}>Add an item</Button></div>
+        <div><Button onClick={() => { setEditing('new'); setNotice(null); setCreateRefused(null); setGaveUp(null); }}>{t('catalogue.addItem')}</Button></div>
       )}
-      {!canManage && <p className="ws-muted">You can see the catalogue to make bills; someone with “Manage tests and services” changes it.</p>}
+      {!canManage && <p className="ws-muted">{t('catalogue.readOnly')}</p>}
       {p && ((editing === 'new' && !showPending) || target) && (
         <ItemForm key={editing} ctx={ctx} partner={p} item={target} onCancel={() => setEditing(null)}
           createBusy={createBusy} createRefused={createRefused}
@@ -303,91 +309,95 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
           }}
           onSaved={async (it, kept) => {
             setEditing(null);
-            if (kept.length) { setNotice(null); setWarning(keptMessage(kept)); } else { setWarning(null); setNotice(`${it.name} was saved.`); }
+            if (kept.length) { setNotice(null); setWarning(keptMessage(kept)); } else { setWarning(null); setNotice(t('catalogue.saved', { name: it.name })); }
             await refresh();
           }} />
       )}
       <div className="ws-search">
         <div className="j-field ws-filter">
-          <label htmlFor="cat-kind">Type</label>
+          <label htmlFor="cat-kind">{t('catalogue.type')}</label>
           <select id="cat-kind" value={kindFilter} onChange={(e) => setKindFilter(e.target.value as '' | CatalogueItemKind)}>
-            <option value="">All</option>
-            {ITEM_KINDS_FOR[kind].map((k) => <option key={k} value={k}>{ITEM_KIND_LABEL[k]}</option>)}
+            <option value="">{t('catalogue.allTypes')}</option>
+            {ITEM_KINDS_FOR[kind].map((k) => <option key={k} value={k}>{itemKindLabel(k)}</option>)}
           </select>
         </div>
         <div className="j-field ws-filter">
-          <label htmlFor="cat-status">Status</label>
+          <label htmlFor="cat-status">{t('catalogue.status')}</label>
           <select id="cat-status" value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)}>
-            <option value="active">All active items</option>
-            <option value="offered">Offered</option>
-            <option value="disabled">Disabled by Jansetu</option>
-            {canManage && <option value="inactive">Deactivated</option>}
+            <option value="active">{t('catalogue.status.active')}</option>
+            <option value="offered">{t('catalogue.status.offered')}</option>
+            <option value="disabled">{t('catalogue.status.disabled')}</option>
+            {canManage && <option value="inactive">{t('catalogue.status.inactive')}</option>}
           </select>
         </div>
-        <TextField label="Search by name or code" type="search" value={search} maxLength={MAX_CATALOGUE_SEARCH}
-          onChange={(e) => setSearch(e.target.value)} hint={searching ? 'Searching…' : undefined} />
+        <TextField label={t('catalogue.search')} type="search" value={search} maxLength={MAX_CATALOGUE_SEARCH}
+          onChange={(e) => setSearch(e.target.value)} hint={searching ? t('catalogue.searching') : undefined} />
       </div>
-      {items.isPending || partner.isPending ? <Loading label="Loading the catalogue…" />
+      {items.isPending || partner.isPending ? <Loading label={t('catalogue.loading')} />
         : items.isError ? <ErrorState message={messageOf(items.error)} onRetry={() => void items.refetch()} />
         : partner.isError ? <ErrorState message={messageOf(partner.error)} onRetry={() => void partner.refetch()} />
-        : items.data.length === 0 && !q ? <Empty title="No items yet">{canManage ? 'Add the first item to start billing and taking bookings.' : null}</Empty>
-        : items.data.length === 0 ? <Empty title="No matching items">Nothing is called or coded “{q}”. Change the search to see more.</Empty>
-        : shown.length === 0 ? <Empty title="No matching items">Change the filters to see more.</Empty>
+        : items.data.length === 0 && !q ? <Empty title={t('catalogue.none.title')}>{canManage ? t('catalogue.none.body') : null}</Empty>
+        : items.data.length === 0 ? <Empty title={t('catalogue.noMatch.title')}>{t('catalogue.noMatch.search', { q })}</Empty>
+        : shown.length === 0 ? <Empty title={t('catalogue.noMatch.title')}>{t('catalogue.noMatch.filters')}</Empty>
         : (
           <div className="ws-table-wrap">
             <table className="j-table">
-              <caption className="j-sr-only">Catalogue items</caption>
+              <caption className="j-sr-only">{t('catalogue.caption')}</caption>
               <thead>
                 <tr>
-                  <th scope="col">Name</th><th scope="col">Type</th><th scope="col">Price</th><th scope="col">GST</th>
-                  {kind === 'lab' && <><th scope="col">Where</th><th scope="col">Report in</th></>}<th scope="col">Status</th>
-                  {(canManage || isAdmin) && <th scope="col">Actions</th>}
+                  <th scope="col">{t('catalogue.col.name')}</th><th scope="col">{t('catalogue.col.type')}</th>
+                  <th scope="col">{t('catalogue.col.price')}</th><th scope="col">{t('catalogue.col.gst')}</th>
+                  {kind === 'lab' && <><th scope="col">{t('catalogue.col.where')}</th><th scope="col">{t('catalogue.col.reportIn')}</th></>}
+                  <th scope="col">{t('catalogue.col.status')}</th>
+                  {(canManage || isAdmin) && <th scope="col">{t('catalogue.col.actions')}</th>}
                 </tr>
               </thead>
               <tbody>
                 {shown.map((i) => (
                   <tr key={i._id}>
                     <td>{i.name}{i.code ? <span className="ws-muted"> · {i.code}</span> : null}</td>
-                    <td>{ITEM_KIND_LABEL[i.kind] ?? i.kind}</td>
-                    <td>{money(i.priceMinor)}{i.mrpMinor !== undefined && i.mrpMinor !== i.priceMinor ? <span className="ws-muted"> (MRP {money(i.mrpMinor)})</span> : null}</td>
-                    <td>{i.gstRate}%{p && i.gstRate > 0 && !chargesGst(p) ? <> <Badge tone="warn">Cannot be billed</Badge></> : null}</td>
+                    <td>{itemKindLabel(i.kind)}</td>
+                    <td>{money(i.priceMinor)}{i.mrpMinor !== undefined && i.mrpMinor !== i.priceMinor ? <span className="ws-muted"> {t('catalogue.mrpOf', { mrp: money(i.mrpMinor) })}</span> : null}</td>
+                    <td>{i.gstRate}%{p && i.gstRate > 0 && !chargesGst(p) ? <> <Badge tone="warn">{t('catalogue.cannotBeBilled')}</Badge></> : null}</td>
                     {kind === 'lab' && <>
-                      <td>{(i.visitModes ?? []).map((m) => VISIT_MODE_LABEL[m] ?? m).join(', ') || '—'}</td>
-                      <td>{i.reportTatHours !== undefined ? `${i.reportTatHours} h` : '—'}</td>
+                      <td>{(i.visitModes ?? []).map(visitModeLabel).join(', ') || '—'}</td>
+                      <td>{i.reportTatHours !== undefined ? t('catalogue.hours', { n: i.reportTatHours }) : '—'}</td>
                     </>}
                     <td>
-                      {!i.isActive ? <Badge>Deactivated</Badge> : null}{!i.isActive && i.adminDisabled ? ' ' : null}
-                      {i.adminDisabled ? <Badge tone="danger">Disabled by Jansetu</Badge> : i.isActive ? <Badge tone="ok">Offered</Badge> : null}
+                      {!i.isActive ? <Badge>{t('catalogue.badge.deactivated')}</Badge> : null}{!i.isActive && i.adminDisabled ? ' ' : null}
+                      {i.adminDisabled ? <Badge tone="danger">{t('catalogue.badge.disabled')}</Badge> : i.isActive ? <Badge tone="ok">{t('catalogue.badge.offered')}</Badge> : null}
                     </td>
                     {(canManage || isAdmin) && (
                       <td>
                         <div className="ws-actions">
-                          {canManage && i.isActive && <Button variant="secondary" aria-label={`Edit ${i.name}`} onClick={() => { setEditing(i._id); setNotice(null); }}>Edit</Button>}
+                          {canManage && i.isActive && <Button variant="secondary" aria-label={t('catalogue.editName', { name: i.name })} onClick={() => { setEditing(i._id); setNotice(null); }}>
+                              {t('catalogue.edit')}
+                            </Button>}
                           {canManage && i.isActive && (
-                            <ConfirmAction label="Deactivate" danger confirmLabel={`Deactivate ${i.name}`} disabled={rowBusy !== null}
-                              consequence={`${i.name} is taken off the catalogue: customers can no longer book it and it cannot be put on new bills. Bills already issued keep it. It can be reactivated later (Status: Deactivated).`}
+                            <ConfirmAction label={t('catalogue.deactivate')} danger confirmLabel={t('catalogue.deactivateName', { name: i.name })} disabled={rowBusy !== null}
+                              consequence={t('catalogue.deactivate.consequence', { name: i.name })}
                               onConfirm={async () => {
-                                try { await ctx.billing.deactivateCatalogueItem(i._id); setNotice(`${i.name} was deactivated.`); } finally { await refresh(); }
+                                try { await ctx.billing.deactivateCatalogueItem(i._id); setNotice(t('catalogue.deactivated', { name: i.name })); } finally { await refresh(); }
                               }} />
                           )}
                           {canManage && !i.isActive && (
-                            <Button variant="secondary" aria-label={`Reactivate ${i.name}`} busy={rowBusy === `${i._id}:reactivate`}
+                            <Button variant="secondary" aria-label={t('catalogue.reactivateName', { name: i.name })} busy={rowBusy === `${i._id}:reactivate`}
                               disabled={rowBusy !== null} onClick={() => void rowStep(`${i._id}:reactivate`, async () => {
-                                try { await ctx.billing.reactivateCatalogueItem(i._id); if (mounted.current) setNotice(`${i.name} is active again.`); }
-                                catch (err) { if (mounted.current) setFailure(`${i.name} was not reactivated: ${messageOf(err)}`); } finally { await refresh(); }
-                              })}>Reactivate</Button>
+                                try { await ctx.billing.reactivateCatalogueItem(i._id); if (mounted.current) setNotice(t('catalogue.reactivated', { name: i.name })); }
+                                catch (err) { if (mounted.current) setFailure(t('catalogue.notReactivated', { name: i.name, reason: messageOf(err) })); } finally { await refresh(); }
+                              })}>{t('catalogue.reactivate')}</Button>
                           )}
                           {isAdmin && (i.adminDisabled ? (
-                            <Button variant="secondary" aria-label={`Enable ${i.name}`} busy={rowBusy === `${i._id}:enable`}
+                            <Button variant="secondary" aria-label={t('catalogue.enableName', { name: i.name })} busy={rowBusy === `${i._id}:enable`}
                               disabled={rowBusy !== null} onClick={() => void rowStep(`${i._id}:enable`, async () => {
-                                try { await catalogueAdminApi(api).enable(i._id); if (mounted.current) setNotice(`${i.name} is offered again.`); }
-                                catch (err) { if (mounted.current) setFailure(`${i.name} was not enabled: ${messageOf(err)}`); } finally { await refresh(); }
-                              })}>Enable</Button>
+                                try { await catalogueAdminApi(api).enable(i._id); if (mounted.current) setNotice(t('catalogue.enabled', { name: i.name })); }
+                                catch (err) { if (mounted.current) setFailure(t('catalogue.notEnabled', { name: i.name, reason: messageOf(err) })); } finally { await refresh(); }
+                              })}>{t('catalogue.enable')}</Button>
                           ) : (
-                            <ConfirmAction label="Disable" danger confirmLabel={`Disable ${i.name}`} disabled={rowBusy !== null}
-                              consequence={`${i.name} stays in the partner’s list marked “Disabled by Jansetu”: customers cannot book it and it cannot be billed until a Jansetu admin enables it again. The partner cannot undo this.`}
+                            <ConfirmAction label={t('catalogue.disable')} danger confirmLabel={t('catalogue.disableName', { name: i.name })} disabled={rowBusy !== null}
+                              consequence={t('catalogue.disable.consequence', { name: i.name })}
                               onConfirm={async () => {
-                                try { await catalogueAdminApi(api).disable(i._id); setNotice(`${i.name} was disabled.`); } finally { await refresh(); }
+                                try { await catalogueAdminApi(api).disable(i._id); setNotice(t('catalogue.disabled', { name: i.name })); } finally { await refresh(); }
                               }} />
                           ))}
                         </div>
@@ -441,7 +451,7 @@ function ItemForm({ ctx, partner, item, onCancel, onSaved, onCreate, createBusy,
     const c = rebaseTo(JSON.parse(serverValue) as Draft);
     baseUpdatedAt.current = serverUpdatedAt;
     for (const k of c) kept.current.add(k);
-    if (c.length) setStale(staleMessage(c.map((k) => FIELD_LABEL[k])));
+    if (c.length) setStale(staleMessage(c.map(fieldLabel)));
   }, [serverValue, serverUpdatedAt, rebaseTo]);
 
   async function submit(e: FormEvent) {
@@ -451,22 +461,22 @@ function ItemForm({ ctx, partner, item, onCancel, onSaved, onCreate, createBusy,
     setErrors(first.errors);
     if (Object.keys(first.errors).length) return;
     if (!item) { onCreate(first.body as NewCatalogueItem); return; }
-    if (Object.keys(first.body).length === 0) { setNotice('Nothing has changed.'); return; }
+    if (Object.keys(first.body).length === 0) { setNotice(t('common.nothingChanged')); return; }
     setBusy(true);
     try {
       // Checked against what is saved now: nothing someone else changed meanwhile is overwritten unseen.
       const fresh = await ctx.billing.catalogueItem(item._id);
-      if (fresh.isActive === false) { setStale(`${fresh.name} was deactivated meanwhile.`); return; }
+      if (fresh.isActive === false) { setStale(t('catalogue.deactivatedMeanwhile', { name: fresh.name })); return; }
       const conflicts = rebaseTo(draftOf(fresh, kind));
       baseUpdatedAt.current = fresh.updatedAt;
-      if (conflicts.length) { setStale(staleMessage(conflicts.map((k) => FIELD_LABEL[k]))); return; }
+      if (conflicts.length) { setStale(staleMessage(conflicts.map(fieldLabel))); return; }
       const { body, errors: errs } = itemBody(draft.current(), allowed, kind, true);
       setErrors(errs);
       if (Object.keys(errs).length) return;
-      if (Object.keys(body).length === 0) { setNotice('Nothing has changed.'); return; }
+      if (Object.keys(body).length === 0) { setNotice(t('common.nothingChanged')); return; }
       // Q10: the server refuses (409 CATALOGUE_ITEM_CHANGED) if the item moved after the version this edit is based on.
       const saved = await ctx.billing.updateCatalogueItem(item._id, { ...body, ...(baseUpdatedAt.current ? { expectedUpdatedAt: baseUpdatedAt.current } : {}) });
-      await onSaved(saved, [...kept.current].map((k) => FIELD_LABEL[k]));
+      await onSaved(saved, [...kept.current].map(fieldLabel));
     } catch (err) {
       if (err instanceof ApiError && err.code === 'CATALOGUE_ITEM_CHANGED') {
         // WQ11b: nothing was saved. Read the item as saved now and show it: a field changed here AND there is flagged.
@@ -475,10 +485,9 @@ function ItemForm({ ctx, partner, item, onCancel, onSaved, onCreate, createBusy,
           const c = rebaseTo(draftOf(now, kind));
           baseUpdatedAt.current = now.updatedAt;
           for (const k of c) kept.current.add(k);
-          setStale(c.length ? staleMessage(c.map((k) => FIELD_LABEL[k]))
-            : 'Someone else changed this item while you were saving, so nothing was saved. The form now shows what is saved; check it and save again.');
+          setStale(c.length ? staleMessage(c.map(fieldLabel)) : t('catalogue.changedWhileSaving'));
         } catch (readErr) {
-          setError(`Nothing was saved: ${err.message} The item could not be read again (${messageOf(readErr)}).`);
+          setError(t('catalogue.notSavedUnread', { reason: err.message, readError: messageOf(readErr) }));
         }
       } else setError(messageOf(err));
     } finally {
@@ -490,72 +499,72 @@ function ItemForm({ ctx, partner, item, onCancel, onSaved, onCreate, createBusy,
   const kinds = ITEM_KINDS_FOR[kind];
   return (
     <section className="ws-section" aria-labelledby="item-form-h">
-      <h2 id="item-form-h">{item ? `Edit ${item.name}` : 'Add an item'}</h2>
+      <h2 id="item-form-h">{item ? t('catalogue.editName', { name: item.name }) : t('catalogue.form.add')}</h2>
       <form className="rx-form" noValidate onSubmit={(e) => void submit(e)}>
         {!item && (
           <fieldset className="ws-checks" aria-describedby={errors.kind ? 'item-kind-error' : undefined}>
-            <legend>Type</legend>
+            <legend>{t('catalogue.type')}</legend>
             {kinds.map((k) => (
               <label key={k} className="ws-check">
-                <input type="radio" name="item-kind" checked={d.kind === k} onChange={() => setField('kind', k)} /> {ITEM_KIND_LABEL[k]}
+                <input type="radio" name="item-kind" checked={d.kind === k} onChange={() => setField('kind', k)} /> {itemKindLabel(k)}
               </label>
             ))}
             {errors.kind && <span id="item-kind-error" className="j-field__error">{errors.kind}</span>}
           </fieldset>
         )}
         <div className="rx-form-row">
-          <TextField label="Name" {...text('name')} />
-          <TextField label="Code (optional)" {...text('code')} />
+          <TextField label={t('catalogue.form.name')} {...text('name')} />
+          <TextField label={t('catalogue.form.code')} {...text('code')} />
         </div>
         <div className="rx-form-row">
-          <TextField label="Price (₹)" inputMode="decimal" value={d.price} error={errors.price} onChange={(e) => setField('price', e.target.value)} />
-          <TextField label="MRP (₹, optional)" inputMode="decimal" value={d.mrp} error={errors.mrp} hint="Not below the price."
+          <TextField label={t('catalogue.form.price')} inputMode="decimal" value={d.price} error={errors.price} onChange={(e) => setField('price', e.target.value)} />
+          <TextField label={t('catalogue.form.mrp')} inputMode="decimal" value={d.mrp} error={errors.mrp} hint={t('catalogue.form.mrpHint')}
             onChange={(e) => setField('mrp', e.target.value)} />
           <div className="j-field">
-            <label htmlFor="item-gst">GST rate</label>
+            <label htmlFor="item-gst">{t('catalogue.form.gstRate')}</label>
             <select id="item-gst" value={d.gstRate} aria-describedby="item-gst-hint" aria-invalid={errors.gstRate ? true : undefined}
               onChange={(e) => setField('gstRate', e.target.value)}>
-              {rateOptions.map((r) => <option key={r} value={r}>{r}%{allowed.includes(r) ? '' : ' (cannot be billed)'}</option>)}
+              {rateOptions.map((r) => <option key={r} value={r}>{allowed.includes(r) ? `${r}%` : t('catalogue.form.rateNotBillable', { rate: r })}</option>)}
             </select>
             <span id="item-gst-hint" className="j-field__hint">
-              {chargesGst(partner) ? 'The rate charged on bills.' : `${partner.name} is not registered for regular GST, so only 0% can be billed.`}
+              {chargesGst(partner) ? t('catalogue.form.gstHint') : t('catalogue.form.gstHintNoGst', { name: partner.name })}
             </span>
             {errors.gstRate && <span className="j-field__error">{errors.gstRate}</span>}
           </div>
-          <TextField label="SAC (optional)" {...text('sac')} />
+          <TextField label={t('catalogue.form.sac')} {...text('sac')} />
         </div>
         {usesVisitModes(kind) && (
           <>
             <fieldset className="ws-checks" aria-describedby={errors.visitModes ? 'item-modes-error' : undefined}>
-              <legend>Where it is offered</legend>
+              <legend>{t('catalogue.form.where')}</legend>
               {MODES.map((m) => (
                 <label key={m} className="ws-check">
                   <input type="checkbox" checked={d.visitModes.includes(m)}
                     onChange={(e) => { kept.current.delete('visitModes'); draft.update((x) => ({ ...x, visitModes: e.target.checked ? MODES.filter((y) => y === m || x.visitModes.includes(y)) : x.visitModes.filter((y) => y !== m) })); }} />
-                  {VISIT_MODE_LABEL[m]}
+                  {visitModeLabel(m)}
                 </label>
               ))}
               {errors.visitModes && <span id="item-modes-error" className="j-field__error">{errors.visitModes}</span>}
             </fieldset>
             <div className="rx-form-row">
-              <TextField label="Sample type (optional)" {...text('sampleType')} />
-              <TextField label="Report within (hours, optional)" inputMode="numeric" value={d.tat} error={errors.tat}
+              <TextField label={t('catalogue.form.sampleType')} {...text('sampleType')} />
+              <TextField label={t('catalogue.form.tat')} inputMode="numeric" value={d.tat} error={errors.tat}
                 onChange={(e) => setField('tat', e.target.value.replace(/\D/g, ''))} />
             </div>
           </>
         )}
-        <TextArea label="Description (optional)" {...text('description')} />
-        <TextArea label="Preparation (optional)" hint="For example: fasting for 10 hours." {...text('preparation')} />
+        <TextArea label={t('catalogue.form.description')} {...text('description')} />
+        <TextArea label={t('catalogue.form.preparation')} hint={t('catalogue.form.preparationHint')} {...text('preparation')} />
         {(d.kind === 'package' || d.includes.trim()) && (
-          <TextArea label="Includes (one per line)" value={d.includes} onChange={(e) => setField('includes', e.target.value)} />
+          <TextArea label={t('catalogue.form.includes')} value={d.includes} onChange={(e) => setField('includes', e.target.value)} />
         )}
         {notice && <Alert tone="ok">{notice}</Alert>}
         {stale && <Alert tone="warn">{stale}</Alert>}
         {error && <Alert>{error}</Alert>}
-        {!item && createRefused && <Alert>Not added: {createRefused}</Alert>}
+        {!item && createRefused && <Alert>{t('catalogue.form.notAdded', { reason: createRefused })}</Alert>}
         <div className="ws-actions">
-          <Button type="submit" busy={busy || (!item && createBusy)}>{item ? 'Save item' : 'Add item'}</Button>
-          <Button variant="ghost" disabled={busy || (!item && createBusy)} onClick={onCancel}>Cancel</Button>
+          <Button type="submit" busy={busy || (!item && createBusy)}>{item ? t('catalogue.form.save') : t('catalogue.form.addItem')}</Button>
+          <Button variant="ghost" disabled={busy || (!item && createBusy)} onClick={onCancel}>{t('common.cancel')}</Button>
         </div>
       </form>
     </section>

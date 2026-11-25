@@ -4,7 +4,7 @@ import {
   ApiError, clinicBranchesFor, doctorAdminApi, DOCTOR_INVITE_STATE_LABEL, DOCTOR_INVITE_STATES, holdsAny, LINK_REFUSAL, linkProblems,
   MAX_DIRECTORY_SEARCH, type DirectoryDoctor, type DoctorInvite, type DoctorInviteState, type Page,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, Parts, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { messageOf } from '../../errors.ts';
@@ -15,6 +15,7 @@ import { ClinicOnly, clinicLink, useClinicApi, useDoctorList, type ClinicApi } f
 import {
   branchLabel, NoSuchPartner, PartnerPageHeading, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext,
 } from './scope.tsx';
+import { t } from '../../i18n/partner/index.ts';
 
 /**
  * The clinic's consulting doctors. Q14 (owner, 18 Nov 2026): clinics no longer invite doctors — the Jansetu team links a
@@ -34,9 +35,8 @@ function ClinicDoctors({ ctx }: { ctx: ScopeContext }) {
   const manage = holdsAny(ctx.actor, ['staff.manage']);
   return (
     <>
-      <PartnerPageHeading ctx={ctx} title="Doctors" partnerName={partner.data?.name}>
-        Doctors are linked to this clinic by the Jansetu team after checking. A linked doctor can be booked at the{' '}
-        <a href={`#${clinicLink(ctx, 'desk')}`}>front desk</a>.
+      <PartnerPageHeading ctx={ctx} title={t('clinicDoctors.title')} partnerName={partner.data?.name}>
+        <Parts of={t.rich('clinicDoctors.intro', { desk: <a href={`#${clinicLink(ctx, 'desk')}`}>{t('clinicDoctors.frontDesk')}</a> })} />
       </PartnerPageHeading>
       <ClinicOnly ctx={ctx}>
         <DoctorList ctx={ctx} clinic={clinic} />
@@ -64,12 +64,12 @@ function DoctorList({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
       const r = await clinic.unlinkDoctor(doctorId).catch((err: unknown) => {
         // Q16b N1: a doctor's own practice keeps its doctor; an owner never unlinks themselves.
         if (err instanceof ApiError && err.status === 409 && err.code === 'DOCTOR_IS_OWNER') {
-          throw new ApiError(409, `${name} was not removed: ${err.message.includes('own practice') ? `this clinic is ${name}’s own practice, so its doctor stays.` : 'another owner or the Jansetu team removes an owner’s own doctor link.'}`, 'DOCTOR_IS_OWNER');
+          throw new ApiError(409, t(err.message.includes('own practice') ? 'clinicDoctors.notRemoved.ownPractice' : 'clinicDoctors.notRemoved.ownerLink', { name }), 'DOCTOR_IS_OWNER');
         }
         throw err;
       });
       if (mounted.current) {
-        setNotice(r.membershipEnded ? `${name} no longer consults here.` : `${name} no longer consults here; their staff access is kept.`);
+        setNotice(r.membershipEnded ? t('clinicDoctors.removed', { name }) : t('clinicDoctors.removedKeepsStaff', { name }));
       }
     } finally {
       // Removed or refused (e.g. removed meanwhile): the list shows the server's state either way.
@@ -78,43 +78,49 @@ function DoctorList({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
   });
   return (
     <section className="ws-section" aria-labelledby="cd-list-h">
-      <h2 id="cd-list-h">Consulting doctors</h2>
+      <h2 id="cd-list-h">{t('clinicDoctors.list')}</h2>
       {notice && <Alert tone="ok">{notice}</Alert>}
-      {doctors.isPending ? <Loading label="Loading doctors…" />
+      {doctors.isPending ? <Loading label={t('clinicDoctors.loading')} />
         : doctors.isError ? <ErrorState message={messageOf(doctors.error)} onRetry={() => void doctors.refetch()} />
         : rows.length === 0 ? (
-          <Empty title="No doctors yet">
-            {ctx.scope.kind === 'admin' ? 'Add a verified doctor below.' : 'No doctor consults here yet. Ask the Jansetu team to link your doctors after checking them.'}
+          <Empty title={t('clinicDoctors.none.title')}>
+            {ctx.scope.kind === 'admin' ? t('clinicDoctors.none.admin') : t('clinicDoctors.none.member')}
           </Empty>
         ) : (
           <div className="ws-table-wrap">
             <table className="j-table">
-              <caption className="j-sr-only">Doctors consulting at this clinic</caption>
-              <thead><tr><th scope="col">Doctor</th><th scope="col">Speciality</th><th scope="col">Consults at</th><th scope="col">Fee</th><th scope="col">Status</th>{canRemove && <th scope="col">Action</th>}</tr></thead>
+              <caption className="j-sr-only">{t('clinicDoctors.caption')}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">{t('clinicDoctors.col.doctor')}</th><th scope="col">{t('clinicDoctors.col.speciality')}</th>
+                  <th scope="col">{t('clinicDoctors.col.consultsAt')}</th><th scope="col">{t('clinicDoctors.col.fee')}</th>
+                  <th scope="col">{t('clinicDoctors.col.status')}</th>{canRemove && <th scope="col">{t('clinicDoctors.col.action')}</th>}
+                </tr>
+              </thead>
               <tbody>
                 {rows.map((d) => (
                   <tr key={d.memberId}>
-                    <td>{d.name}{d.role === 'owner' ? ' (owner)' : ''}</td>
+                    <td>{d.role === 'owner' ? t('clinicDoctors.owner', { name: d.name }) : d.name}</td>
                     <td>{d.specialization || '—'}</td>
                     <td>{branchLabel(names, d.branchIds)}</td>
                     <td>{d.consultationFee ? formatRupees(d.consultationFee) : '—'}</td>
                     <td>
-                      {d.active ? <Badge tone="ok">Can be booked</Badge> : (
-                        <><Badge tone="warn">Not bookable</Badge> <span className="ws-muted">Their Jansetu doctor account is inactive or not verified.</span></>
+                      {d.active ? <Badge tone="ok">{t('clinicDoctors.bookable')}</Badge> : (
+                        <><Badge tone="warn">{t('clinicDoctors.notBookable')}</Badge> <span className="ws-muted">{t('clinicDoctors.inactive')}</span></>
                       )}
                     </td>
                     {canRemove && (
                       <td>
                         {d.role === 'owner' && ctx.actor.memberId === d.memberId ? (
-                          <span className="ws-muted">Your own doctor link: another owner or the Jansetu team removes it.</span>
+                          <span className="ws-muted">{t('clinicDoctors.ownLink')}</span>
                         ) : d.role === 'owner' ? (
                           // Q16b N1: another owner (or an admin) ends an owner's doctor link; they stay an owner.
-                          <ConfirmAction label={`Remove ${d.name} as a doctor`} danger confirmLabel="Remove the doctor link"
-                            consequence={<>{d.name} stays an owner of this clinic; only their doctor link here ends. New bookings with them here stop at once and their in-clinic slots here close. Appointments already booked are kept. Only the Jansetu team can link them again.</>}
+                          <ConfirmAction label={t('clinicDoctors.removeAsDoctor', { name: d.name })} danger confirmLabel={t('clinicDoctors.removeLink')}
+                            consequence={t('clinicDoctors.removeLink.consequence', { name: d.name })}
                             onConfirm={() => remove(d.doctorId, d.name)} />
                         ) : (
-                          <ConfirmAction label={`Remove ${d.name}`} danger confirmLabel="Remove from this clinic"
-                            consequence={<>Remove {d.name} from this clinic? New bookings with them here stop at once and their in-clinic slots here close. Appointments already booked are kept. Only the Jansetu team can link them again.</>}
+                          <ConfirmAction label={t('clinicDoctors.remove', { name: d.name })} danger confirmLabel={t('clinicDoctors.removeFromClinic')}
+                            consequence={t('clinicDoctors.remove.consequence', { name: d.name })}
                             onConfirm={() => remove(d.doctorId, d.name)} />
                         )}
                       </td>
@@ -125,7 +131,7 @@ function DoctorList({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
             </table>
           </div>
         )}
-      <p className="ws-muted">A doctor also stops consulting here by leaving the clinic in their own app.</p>
+      <p className="ws-muted">{t('clinicDoctors.leaveInApp')}</p>
     </section>
   );
 }
@@ -151,11 +157,14 @@ function Invitations({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) 
 
   async function revoke(inv: DoctorInvite) {
     // One revoke per invitation at a time, even from a confirmation that was already open.
-    if (revoking.current.has(inv._id)) throw new ApiError(409, 'This invitation is already being revoked.', 'STEP_IN_FLIGHT');
+    if (revoking.current.has(inv._id)) throw new ApiError(409, t('clinicDoctors.revoking'), 'STEP_IN_FLIGHT');
     revoking.current.add(inv._id);
     try {
       await clinic.revokeInvite(inv._id);
-      if (mounted.current) setNotice(`The invitation to ${doctorName(inv) ?? 'the doctor'} was revoked. They can no longer accept it.`);
+      if (mounted.current) {
+        const name = doctorName(inv);
+        setNotice(name === undefined ? t('clinicDoctors.revokedUnnamed') : t('clinicDoctors.revoked', { name }));
+      }
     } finally {
       revoking.current.delete(inv._id);
       // Revoked or refused (e.g. already accepted meanwhile): the list shows the server's current state either way.
@@ -167,35 +176,40 @@ function Invitations({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) 
   return (
     <>
       <section className="ws-section" aria-labelledby="cd-inv-h">
-        <h2 id="cd-inv-h">Earlier invitations</h2>
-        <p className="ws-muted">Clinics no longer invite doctors, and doctors can no longer accept these. Revoke a waiting one to tidy up.</p>
+        <h2 id="cd-inv-h">{t('clinicDoctors.invites')}</h2>
+        <p className="ws-muted">{t('clinicDoctors.invitesIntro')}</p>
         {notice && <Alert tone="ok">{notice}</Alert>}
         <div className="ws-search">
           <div className="j-field ws-filter">
-            <label htmlFor="cd-state">Show</label>
+            <label htmlFor="cd-state">{t('clinicDoctors.show')}</label>
             <select id="cd-state" value={state} onChange={(e) => { setState(e.target.value as '' | DoctorInviteState); setNotice(null); }}>
               {DOCTOR_INVITE_STATES.map((s) => <option key={s} value={s}>{DOCTOR_INVITE_STATE_LABEL[s]}</option>)}
-              <option value="">All invitations</option>
+              <option value="">{t('clinicDoctors.allInvites')}</option>
             </select>
           </div>
         </div>
-        {invites.isPending ? <Loading label="Loading invitations…" />
+        {invites.isPending ? <Loading label={t('clinicDoctors.loadingInvites')} />
           : invites.isError ? <ErrorState message={messageOf(invites.error)} onRetry={() => void invites.refetch()} />
-          : rows.length === 0 ? <Empty title="No invitations">{state === 'pending' ? 'No invitation is waiting for a doctor’s answer.' : 'None to show.'}</Empty>
+          : rows.length === 0 ? <Empty title={t('clinicDoctors.noInvites.title')}>{state === 'pending' ? t('clinicDoctors.noInvites.pending') : t('clinicDoctors.noInvites.other')}</Empty>
           : (
             <>
-              {rows.length >= 200 && <p className="ws-count">The newest 200 invitations.</p>}
+              {rows.length >= 200 && <p className="ws-count">{t('clinicDoctors.newest200')}</p>}
               <div className="ws-table-wrap">
                 <table className="j-table">
-                  <caption className="j-sr-only">Invitations to doctors</caption>
-                  <thead><tr><th scope="col">Doctor</th><th scope="col">Branches</th><th scope="col">Sent</th><th scope="col">State</th><th scope="col">Action</th></tr></thead>
+                  <caption className="j-sr-only">{t('clinicDoctors.invitesCaption')}</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">{t('clinicDoctors.col.doctor')}</th><th scope="col">{t('clinicDoctors.col.branches')}</th>
+                      <th scope="col">{t('clinicDoctors.col.sent')}</th><th scope="col">{t('clinicDoctors.col.state')}</th><th scope="col">{t('clinicDoctors.col.action')}</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {rows.map((inv) => {
                       const d = doctorOf(inv);
-                      const who = d.name ?? `Doctor …${inv.doctorId.slice(-6)}`;
+                      const who = d.name ?? t('clinicDoctors.doctorById', { tail: inv.doctorId.slice(-6) });
                       return (
                         <tr key={inv._id}>
-                          <td>{who}{d.specialization ? <div className="ws-muted">{d.specialization}</div> : !d.name ? <div className="ws-muted">No name on record</div> : null}</td>
+                          <td>{who}{d.specialization ? <div className="ws-muted">{d.specialization}</div> : !d.name ? <div className="ws-muted">{t('clinicDoctors.noName')}</div> : null}</td>
                           <td>{branchLabel(branchNames, inv.branchIds)}</td>
                           <td>{formatDateTime(inv.createdAt)}</td>
                           <td>
@@ -204,8 +218,8 @@ function Invitations({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) 
                           </td>
                           <td>
                             {inv.state === 'pending' ? (
-                              <ConfirmAction label={`Revoke invitation to ${who}`} danger confirmLabel="Revoke invitation"
-                                consequence={<>Revoke the invitation to {who}? They can no longer accept it. Clinics no longer invite doctors: to have them consult here, ask the Jansetu team to link them.</>}
+                              <ConfirmAction label={t('clinicDoctors.revokeTo', { name: who })} danger confirmLabel={t('clinicDoctors.revoke')}
+                                consequence={t('clinicDoctors.revoke.consequence', { name: who })}
                                 onConfirm={() => revoke(inv)} />
                             ) : '—'}
                           </td>
@@ -279,14 +293,14 @@ function AddDoctor({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
       end(attempt);
       reset();
       const who = r.doctor?.name ?? attempt.body.name;
-      setNotice(r.replayed ? `${who} had already been linked: nothing was done twice.`
-        : `${who} now consults here (${attempt.body.branchText}). They have been told; their in-clinic hours here can be booked at the front desk.`);
+      setNotice(r.replayed ? t('clinicDoctors.link.replayed', { name: who })
+        : t('clinicDoctors.link.done', { name: who, branches: attempt.body.branchText }));
     } catch (err) {
       void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'clinic-doctors'] });
       if (!owns(attempt)) return;
       const next = afterFailure(attempt, err, linkRefusal(err));
       if (live.current) store(next ?? undefined); else if (next) memory.set(slot, next); else memory.delete(slot);
-      if (!next) { setFailure(`Not linked: ${linkRefusal(err)}`); setConfirming(false); }
+      if (!next) { setFailure(t('clinicDoctors.link.notLinked', { reason: linkRefusal(err) })); setConfirming(false); }
     } finally {
       if (live.current) setSending(false);
     }
@@ -304,55 +318,60 @@ function AddDoctor({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
     e.preventDefault();
     const branchIds = all ? [] : picked;
     const errs: Record<string, string> = { ...linkProblems({ doctorId: chosen?._id ?? '', branchIds }, offered) as Record<string, string> };
-    if (!all && picked.length === 0) errs.branchIds = 'Choose at least one branch, or every branch.';
-    if (chosen && doctors.data?.some((d) => d.doctorId === chosen._id)) errs.doctorId = `${chosen.name} already consults here.`;
+    if (!all && picked.length === 0) errs.branchIds = t('clinicDoctors.link.chooseBranch');
+    if (chosen && doctors.data?.some((d) => d.doctorId === chosen._id)) errs.doctorId = t('clinicDoctors.link.already', { name: chosen.name });
     setErrors(errs);
     if (!Object.keys(errs).length) setConfirming(true);
   }
 
   const names = new Map(offered.map((b) => [b._id, b.name]));
-  const branchText = all ? 'every branch that takes in-clinic consultations' : picked.map((b) => names.get(b) ?? b).join(', ');
+  const branchText = all ? t('clinicDoctors.link.everyBranch') : picked.map((b) => names.get(b) ?? b).join(', ');
   const results = found.data?.items ?? [];
 
   return (
     <section className="ws-section" aria-labelledby="cd-add-h">
-      <h2 id="cd-add-h">Add doctor</h2>
-      <p className="ws-muted">For the Jansetu team: link a verified doctor after checking them. There is no acceptance step; the doctor is told.</p>
+      <h2 id="cd-add-h">{t('clinicDoctors.add')}</h2>
+      <p className="ws-muted">{t('clinicDoctors.add.intro')}</p>
       {notice && <Alert tone="ok">{notice}</Alert>}
       {op && !(sending && op.attempts === 1 && !op.uncertain) ? (
-        <PendingOpPanel key={op.attempts} label="Unconfirmed doctor link" op={op} busy={sending} onResend={() => void send(op)}
+        <PendingOpPanel key={op.attempts} label={t('clinicDoctors.link.unconfirmed')} op={op} busy={sending} onResend={() => void send(op)}
           fetchPage={lookIn(op)}
-          onFound={() => { if (!owns(op)) return; end(op); reset(); setNotice(`${op.body?.name ?? 'The doctor'} consults here now. Nothing more to do.`); }}
-          forget={{ label: 'Forget it', confirmLabel: 'Forget the earlier link',
-            consequence: 'If the earlier link still arrives, the doctor is linked. Linking the same doctor again is refused (they already consult here), so nothing is done twice.',
+          onFound={() => { if (!owns(op)) return; end(op); reset(); setNotice(op.body?.name === undefined ? t('clinicDoctors.link.foundUnnamed') : t('clinicDoctors.link.found', { name: op.body.name })); }}
+          forget={{ label: t('clinicDoctors.link.forget'), confirmLabel: t('clinicDoctors.link.forgetConfirm'),
+            consequence: t('clinicDoctors.link.forgetConsequence'),
             onForget: () => { if (owns(op)) end(op); } }}
-          summary={op.restored || !op.body ? null : <div>{op.body.name} at {op.body.branchText}.</div>} />
-      ) : branches.isPending ? <Loading label="Loading branches…" />
+          summary={op.restored || !op.body ? null : <div>{t('clinicDoctors.link.summary', { name: op.body.name, branches: op.body.branchText })}</div>} />
+      ) : branches.isPending ? <Loading label={t('common.loadingBranches')} />
         : branches.isError ? <ErrorState message={messageOf(branches.error)} onRetry={() => void branches.refetch()} />
-        : offered.length === 0 ? <Empty title="No branch for consultations">A doctor consults at a branch that takes in-clinic consultations. Turn that on for a branch under Branches first.</Empty>
+        : offered.length === 0 ? <Empty title={t('clinicDoctors.noBranch.title')}>{t('clinicDoctors.noBranch.body')}</Empty>
         : !chosen ? (
           <>
-            <form className="ws-search" role="search" aria-label="Find a doctor" onSubmit={(e) => { e.preventDefault(); const t = text.trim(); if (t) setSearch(t.slice(0, MAX_DIRECTORY_SEARCH)); }}>
-              <TextField label="Doctor’s full name or speciality" type="search" maxLength={MAX_DIRECTORY_SEARCH} value={text} onChange={(e) => setText(e.target.value)}
-                hint="Search by the doctor’s full name or speciality (whole words). Check the mobile number shown before choosing." />
-              <Button type="submit" variant="secondary" disabled={!text.trim()}>Search</Button>
+            <form className="ws-search" role="search" aria-label={t('clinicDoctors.find')} onSubmit={(e) => { e.preventDefault(); const q = text.trim(); if (q) setSearch(q.slice(0, MAX_DIRECTORY_SEARCH)); }}>
+              <TextField label={t('clinicDoctors.search')} type="search" maxLength={MAX_DIRECTORY_SEARCH} value={text} onChange={(e) => setText(e.target.value)}
+                hint={t('clinicDoctors.searchHint')} />
+              <Button type="submit" variant="secondary" disabled={!text.trim()}>{t('clinicDoctors.searchButton')}</Button>
             </form>
-            {search === null ? <p className="ws-muted">Only active, verified doctors are found.</p>
-              : found.isPending ? <Loading label="Searching doctors…" />
+            {search === null ? <p className="ws-muted">{t('clinicDoctors.onlyVerified')}</p>
+              : found.isPending ? <Loading label={t('clinicDoctors.searching')} />
               : found.isError ? <ErrorState message={messageOf(found.error)} onRetry={() => void found.refetch()} />
-              : results.length === 0 ? <Empty title="No doctor found">No active, verified doctor matches “{search}”.</Empty>
+              : results.length === 0 ? <Empty title={t('clinicDoctors.notFound.title')}>{t('clinicDoctors.notFound.body', { q: search })}</Empty>
               : (
                 <div className="ws-table-wrap">
                   <table className="j-table">
-                    <caption className="j-sr-only">Verified doctors matching {search}</caption>
-                    <thead><tr><th scope="col">Doctor</th><th scope="col">Speciality</th><th scope="col">Mobile</th><th scope="col">Choose</th></tr></thead>
+                    <caption className="j-sr-only">{t('clinicDoctors.resultsCaption', { q: search })}</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">{t('clinicDoctors.col.doctor')}</th><th scope="col">{t('clinicDoctors.col.speciality')}</th>
+                        <th scope="col">{t('clinicDoctors.col.mobile')}</th><th scope="col">{t('clinicDoctors.col.choose')}</th>
+                      </tr>
+                    </thead>
                     <tbody>
                       {results.map((d) => (
                         <tr key={d._id}>
                           <td>{d.name}{d.city ? <div className="ws-muted">{d.city}</div> : null}</td>
                           <td>{d.specialization || '—'}</td>
                           <td>{d.phone || '—'}</td>
-                          <td><Button variant="secondary" aria-label={`Choose ${d.name}`} onClick={() => { setChosen(d); setFailure(null); }}>Choose</Button></td>
+                          <td><Button variant="secondary" aria-label={t('clinicDoctors.chooseName', { name: d.name })} onClick={() => { setChosen(d); setFailure(null); }}>{t('clinicDoctors.choose')}</Button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -361,12 +380,12 @@ function AddDoctor({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
               )}
           </>
         ) : (
-          <form className="rx-form" noValidate onSubmit={review} aria-label="Add doctor">
+          <form className="rx-form" noValidate onSubmit={review} aria-label={t('clinicDoctors.add')}>
             <p><strong>{chosen.name}</strong>{chosen.specialization ? ` · ${chosen.specialization}` : ''}{chosen.phone ? ` · ${chosen.phone}` : ''}</p>
             {!confirming ? (
               <fieldset className="ws-checks" aria-describedby={errors.branchIds ? 'cd-link-branches-error' : undefined}>
-                <legend>Consults at</legend>
-                <label className="ws-check"><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> Every branch, including ones added later</label>
+                <legend>{t('clinicDoctors.consultsAt')}</legend>
+                <label className="ws-check"><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> {t('clinicDoctors.everyBranch')}</label>
                 {!all && offered.map((b) => (
                   <label key={b._id} className="ws-check">
                     <input type="checkbox" checked={picked.includes(b._id)} onChange={(e) => setPicked((c) => (e.target.checked ? [...c, b._id] : c.filter((x) => x !== b._id)))} /> {b.name}
@@ -376,19 +395,18 @@ function AddDoctor({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
               </fieldset>
             ) : (
               <div className="confirm-text">
-                Link {chosen.name} to this clinic at {branchText}? They consult here at once (there is no acceptance step) and are told; the front desk
-                can book their in-clinic hours here. Only the owner or the Jansetu team can remove them later.
+                {t('clinicDoctors.link.confirm', { name: chosen.name, branches: branchText })}
               </div>
             )}
             {errors.doctorId && <Alert>{errors.doctorId}</Alert>}
             {failure && <Alert>{failure}</Alert>}
             <div className="confirm-actions">
-              {!confirming ? <Button type="submit">Continue</Button> : (
+              {!confirming ? <Button type="submit">{t('common.continue')}</Button> : (
                 <Button busy={sending} onClick={() => void send(startOp(newRequestKey(), { doctorId: chosen._id, name: chosen.name, branchIds: all ? [] : [...picked], branchText }))}>
-                  Link {chosen.name}
+                  {t('clinicDoctors.link.button', { name: chosen.name })}
                 </Button>
               )}
-              <Button variant="ghost" disabled={sending} onClick={() => (confirming ? setConfirming(false) : reset())}>Back</Button>
+              <Button variant="ghost" disabled={sending} onClick={() => (confirming ? setConfirming(false) : reset())}>{t('common.back')}</Button>
             </div>
           </form>
         )}

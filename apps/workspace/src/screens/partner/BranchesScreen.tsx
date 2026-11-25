@@ -10,10 +10,12 @@ import { dirtyKeys, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDr
 import { messageOf } from '../../errors.ts';
 import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
+import { t, type PartnerKey } from '../../i18n/partner/index.ts';
 
-const SERVICE_LABEL: Record<keyof BranchServices, string> = {
-  homeCollection: 'Home sample collection', inLab: 'Walk-in at the lab', inClinic: 'Consultations at the clinic',
-};
+const SERVICE_KEY = {
+  homeCollection: 'branches.service.homeCollection', inLab: 'branches.service.inLab', inClinic: 'branches.service.inClinic',
+} as const satisfies Record<keyof BranchServices, PartnerKey>;
+const SERVICES = Object.keys(SERVICE_KEY) as (keyof BranchServices)[];
 /** Services offered for each kind; the others are kept as they are. */
 const SERVICES_FOR: Record<PartnerKind, (keyof BranchServices)[]> = { lab: ['homeCollection', 'inLab'], clinic: ['inClinic'] };
 
@@ -25,10 +27,11 @@ export interface Draft {
   services: BranchServices;
 }
 const ADDRESS_KEYS = ['line1', 'line2', 'city', 'state', 'stateCode', 'pincode'] as const;
-const DRAFT_LABEL: Record<keyof Draft, string> = {
-  name: 'name', phone: 'phone', line1: 'address', line2: 'address', city: 'city', state: 'state', stateCode: 'state code',
-  pincode: 'PIN code', days: 'opening hours', holidays: 'holidays', services: 'services',
-};
+const DRAFT_KEY = {
+  name: 'branches.field.name', phone: 'branches.field.phone', line1: 'branches.field.address', line2: 'branches.field.address',
+  city: 'branches.field.city', state: 'branches.field.state', stateCode: 'branches.field.stateCode', pincode: 'branches.field.pincode',
+  days: 'branches.field.days', holidays: 'branches.field.holidays', services: 'branches.field.services',
+} as const satisfies Record<keyof Draft, PartnerKey>;
 
 export function draftOf(b?: Branch): Draft {
   const days = Object.fromEntries(WEEKDAYS.map(({ value }) => {
@@ -54,30 +57,30 @@ export function branchBody(s: DraftState<Draft>, isNew: boolean): { body: Partia
   const dirty = new Set<keyof Draft>(isNew ? (Object.keys(d) as (keyof Draft)[]) : dirtyKeys(s));
   const addressDirty = ADDRESS_KEYS.some((k) => dirty.has(k));
   const errors: Record<string, string> = {};
-  const t = (x: string) => x.trim();
+  const trim = (x: string) => x.trim();
   if (dirty.has('name')) {
-    if (!t(d.name)) errors.name = 'Enter the branch name.';
-    else if (t(d.name).length > MAX_NAME) errors.name = `Use at most ${MAX_NAME} characters.`;
+    if (!trim(d.name)) errors.name = t('branches.error.name');
+    else if (trim(d.name).length > MAX_NAME) errors.name = t('common.maxChars', { max: MAX_NAME });
   }
-  if (dirty.has('phone') && !PARTNER_PHONE_PATTERN.test(d.phone)) errors.phone = 'Enter the 10-digit phone number.';
-  if (addressDirty) for (const k of ['line1', 'city', 'state', 'stateCode', 'pincode'] as const) if (!t(d[k])) errors[k] = 'Required.';
+  if (dirty.has('phone') && !PARTNER_PHONE_PATTERN.test(d.phone)) errors.phone = t('branches.error.phone');
+  if (addressDirty) for (const k of ['line1', 'city', 'state', 'stateCode', 'pincode'] as const) if (!trim(d[k])) errors[k] = t('branches.error.required');
   // WQ11b: bills compare it with the GSTIN's first two digits (`assertRegistrationCovers`), so only a GST state code works.
-  if (addressDirty && t(d.stateCode) && !GST_STATE_CODE_PATTERN.test(t(d.stateCode))) errors.stateCode = 'Enter the 2-digit GST state code, e.g. 29 for Karnataka.';
+  if (addressDirty && trim(d.stateCode) && !GST_STATE_CODE_PATTERN.test(trim(d.stateCode))) errors.stateCode = t('branches.error.stateCode');
   const hours: WeeklyHours = {};
   if (dirty.has('days')) {
     for (const { value, label } of WEEKDAYS) {
       const day = d.days[value];
       if (!day.open) continue;
-      if (!HHMM_PATTERN.test(day.from) || !HHMM_PATTERN.test(day.to)) errors[`day-${value}`] = `Enter opening and closing times for ${label}.`;
+      if (!HHMM_PATTERN.test(day.from) || !HHMM_PATTERN.test(day.to)) errors[`day-${value}`] = t('branches.error.hours', { day: label });
       else hours[value] = { open: day.from, close: day.to };
     }
   }
-  if (dirty.has('holidays') && d.holidays.length > MAX_HOLIDAYS) errors.holidays = `At most ${MAX_HOLIDAYS} holidays.`;
+  if (dirty.has('holidays') && d.holidays.length > MAX_HOLIDAYS) errors.holidays = t('branches.error.maxHolidays', { max: MAX_HOLIDAYS });
   const body: Partial<BranchInput> = {
-    ...(dirty.has('name') ? { name: t(d.name) } : {}),
+    ...(dirty.has('name') ? { name: trim(d.name) } : {}),
     ...(dirty.has('phone') ? { phone: d.phone } : {}),
-    ...(addressDirty ? { address: { line1: t(d.line1), ...(t(d.line2) ? { line2: t(d.line2) } : {}), city: t(d.city), state: t(d.state),
-      stateCode: t(d.stateCode), pincode: t(d.pincode) } } : {}),
+    ...(addressDirty ? { address: { line1: trim(d.line1), ...(trim(d.line2) ? { line2: trim(d.line2) } : {}), city: trim(d.city), state: trim(d.state),
+      stateCode: trim(d.stateCode), pincode: trim(d.pincode) } } : {}),
     ...(dirty.has('days') ? { hours } : {}),
     ...(dirty.has('holidays') ? { holidays: d.holidays } : {}),
     ...(dirty.has('services') ? { services: d.services } : {}),
@@ -85,8 +88,8 @@ export function branchBody(s: DraftState<Draft>, isNew: boolean): { body: Partia
   return { body, errors };
 }
 
-const conflictLabels = (keys: (keyof Draft)[]) => [...new Set(keys.map((k) => DRAFT_LABEL[k]))];
-const listWords = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}` : xs[0] ?? '');
+const conflictLabels = (keys: (keyof Draft)[]) => [...new Set(keys.map((k) => t(DRAFT_KEY[k])))];
+const listWords = (xs: string[]) => (xs.length > 1 ? t('common.listAnd', { rest: xs.slice(0, -1).join(', '), last: xs.at(-1)! }) : xs[0] ?? '');
 /** The same branch name as typed (the server trims it; people may differ in case or spacing). */
 const sameName = (a: string, b: string) => a.trim().replace(/\s+/g, ' ').toLowerCase() === b.trim().replace(/\s+/g, ' ').toLowerCase();
 
@@ -114,11 +117,12 @@ function Branches({ ctx }: { ctx: ScopeContext }) {
   const [notice, setNoticeState] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
   const setNotice = (text: string | null) => setNoticeState(text ? { tone: 'ok', text } : null);
   /** WQ11b: a save closes only the form that made it (a late answer never closes another one, or drops what was typed there). */
-  const savedFrom = (form: string | 'new', s: Saved, verb: string) => {
+  const savedFrom = (form: string | 'new', s: Saved, done: 'branches.added' | 'branches.saved') => {
     setEditing((e) => (e === form ? null : e));
+    const name = s.branch.name;
     setNoticeState(s.dropped.length
-      ? { tone: 'warn', text: `${s.branch.name} was saved, except the ${listWords(s.dropped)}: someone else changed ${s.dropped.length > 1 ? 'them' : 'it'} while you were editing, so the saved ${s.dropped.length > 1 ? 'values are' : 'value is'} kept. Change ${s.dropped.length > 1 ? 'them' : 'it'} again if still needed.` }
-      : { tone: 'ok', text: s.found ? `${s.branch.name} was added (its answer was lost; it is in the list now).` : `${s.branch.name} was ${verb}.` });
+      ? { tone: 'warn', text: t('branches.savedExcept', { count: s.dropped.length, name, fields: listWords(s.dropped) }) }
+      : { tone: 'ok', text: s.found ? t('branches.foundAfterLoss', { name }) : t(done, { name }) });
   };
   const canCreate = hasGlobalScope(ctx.actor);
   const refresh = () => queryClient.invalidateQueries({ queryKey: [...ctx.key, 'branches'] });
@@ -129,44 +133,53 @@ function Branches({ ctx }: { ctx: ScopeContext }) {
 
   return (
     <>
-      <PartnerPageHeading ctx={ctx} title="Branches" partnerName={partner.data?.name}>Where customers are served, and when.</PartnerPageHeading>
+      <PartnerPageHeading ctx={ctx} title={t('branches.title')} partnerName={partner.data?.name}>{t('branches.intro')}</PartnerPageHeading>
       {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
       {editing === null && (canCreate
-        ? <div><Button onClick={() => { setEditing('new'); setNotice(null); }}>Add a branch</Button></div>
-        : <p className="ws-muted">You manage only the branches given to you; an owner adds new branches.</p>)}
+        ? <div><Button onClick={() => { setEditing('new'); setNotice(null); }}>{t('branches.add')}</Button></div>
+        : <p className="ws-muted">{t('branches.onlyYours')}</p>)}
       {editing === 'new' && (
         <BranchForm key="new" ctx={ctx} kind={kind} onCancel={() => setEditing(null)}
-          onSaved={async (s) => { savedFrom('new', s, 'added'); await refresh(); }} />
+          onSaved={async (s) => { savedFrom('new', s, 'branches.added'); await refresh(); }} />
       )}
       {target && (
         <BranchForm key={target._id} ctx={ctx} branch={target} kind={kind} onCancel={() => setEditing(null)}
-          onSaved={async (s) => { savedFrom(target._id, s, 'saved'); await refresh(); }} />
+          onSaved={async (s) => { savedFrom(target._id, s, 'branches.saved'); await refresh(); }} />
       )}
-      {branches.isPending ? <Loading label="Loading branches…" />
+      {branches.isPending ? <Loading label={t('common.loadingBranches')} />
         : branches.isError ? <ErrorState message={messageOf(branches.error)} onRetry={() => void branches.refetch()} />
-        : open.length === 0 && closed.length === 0 ? <Empty title="No branches yet">{canCreate ? 'Add the first branch to start taking bookings.' : null}</Empty>
+        : open.length === 0 && closed.length === 0 ? <Empty title={t('branches.none.title')}>{canCreate ? t('branches.none.body') : null}</Empty>
         : (
           <>
-            {open.length === 0 ? <Empty title="No open branches" /> : (
+            {open.length === 0 ? <Empty title={t('branches.noneOpen')} /> : (
               <div className="ws-table-wrap">
                 <table className="j-table">
-                  <caption className="j-sr-only">Open branches</caption>
-                  <thead><tr><th scope="col">Branch</th><th scope="col">Address</th><th scope="col">Phone</th><th scope="col">Services</th><th scope="col">Open</th><th scope="col">Actions</th></tr></thead>
+                  <caption className="j-sr-only">{t('branches.caption')}</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">{t('branches.col.branch')}</th><th scope="col">{t('branches.col.address')}</th><th scope="col">{t('branches.col.phone')}</th>
+                      <th scope="col">{t('branches.col.services')}</th><th scope="col">{t('branches.col.open')}</th><th scope="col">{t('branches.col.actions')}</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {open.map((b) => (
                       <tr key={b._id}>
                         <td>{b.name}</td>
                         <td>{[b.address?.line1, b.address?.line2, b.address?.city, b.address?.pincode].filter(Boolean).join(', ')}</td>
                         <td>{b.phone}</td>
-                        <td>{(Object.keys(SERVICE_LABEL) as (keyof BranchServices)[]).filter((k) => b.services?.[k]).map((k) => SERVICE_LABEL[k]).join(', ') || 'None'}</td>
-                        <td>{WEEKDAYS.filter((d) => b.hours?.[d.value]).map((d) => `${d.label.slice(0, 3)} ${b.hours![d.value]!.open}–${b.hours![d.value]!.close}`).join(', ') || 'No hours set'}</td>
+                        <td>{SERVICES.filter((k) => b.services?.[k]).map((k) => t(SERVICE_KEY[k])).join(', ') || t('branches.noServices')}</td>
+                        <td>
+                          {WEEKDAYS.filter((d) => b.hours?.[d.value])
+                            .map((d) => t('branches.dayHours', { day: d.label.slice(0, 3), open: b.hours![d.value]!.open, close: b.hours![d.value]!.close }))
+                            .join(', ') || t('branches.noHours')}
+                        </td>
                         <td>
                           <div className="ws-actions">
-                            <Button variant="secondary" onClick={() => { setEditing(b._id); setNotice(null); }}>Edit</Button>
-                            <ConfirmAction label="Deactivate" danger confirmLabel={`Deactivate ${b.name}`}
-                              consequence={`${b.name} stops taking bookings and its open slots close.${reopen ? ' It can be reopened later.' : ' Only an owner or all-branch manager can reopen it.'}`}
+                            <Button variant="secondary" onClick={() => { setEditing(b._id); setNotice(null); }}>{t('branches.edit')}</Button>
+                            <ConfirmAction label={t('branches.deactivate')} danger confirmLabel={t('branches.deactivateName', { name: b.name })}
+                              consequence={t(reopen ? 'branches.deactivate.reopenable' : 'branches.deactivate.ownerReopens', { name: b.name })}
                               onConfirm={async () => {
-                                try { await ctx.api.deactivateBranch(b._id); setNotice(`${b.name} was deactivated.`); } finally { await refresh(); }
+                                try { await ctx.api.deactivateBranch(b._id); setNotice(t('branches.deactivated', { name: b.name })); } finally { await refresh(); }
                               }} />
                           </div>
                         </td>
@@ -178,15 +191,15 @@ function Branches({ ctx }: { ctx: ScopeContext }) {
             )}
             {closed.length > 0 && (
               <section className="ws-section" aria-labelledby="closed-h">
-                <h2 id="closed-h">Closed branches</h2>
+                <h2 id="closed-h">{t('branches.closed')}</h2>
                 <ul className="ws-list">
                   {closed.map((b) => (
                     <li key={b._id} className="ws-actions">
                       <span>{b.name}{b.address?.city ? ` · ${b.address.city}` : ''}</span>
-                      <ConfirmAction label="Reopen" confirmLabel={`Reopen ${b.name}`}
-                        consequence={`${b.name} opens again with its saved hours and services, and takes bookings again.`}
+                      <ConfirmAction label={t('branches.reopen')} confirmLabel={t('branches.reopenName', { name: b.name })}
+                        consequence={t('branches.reopen.consequence', { name: b.name })}
                         onConfirm={async () => {
-                          try { await ctx.api.reactivateBranch(b._id); setNotice(`${b.name} was reopened.`); } finally { await refresh(); }
+                          try { await ctx.api.reactivateBranch(b._id); setNotice(t('branches.reopened', { name: b.name })); } finally { await refresh(); }
                         }} />
                     </li>
                   ))}
@@ -226,7 +239,7 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
   const [lost, setLost] = useState<{ body: BranchInput; requestKey: string; before: string[] } | null>(null);
   /** WQ11b: fields reset because someone else changed them meanwhile; never reported as saved unless typed again. */
   const dropped = useRef(new Set<keyof Draft>());
-  const services = kind ? SERVICES_FOR[kind] : (Object.keys(SERVICE_LABEL) as (keyof BranchServices)[]);
+  const services = kind ? SERVICES_FOR[kind] : SERVICES;
   // Editing: a refreshed branch moves untouched fields along; a field changed here AND there is flagged for review.
   const serverValue = branch ? JSON.stringify(draftOf(branch)) : null;
   useEffect(() => {
@@ -257,8 +270,8 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
       } catch { /* still unknown: said below */ }
       if (live.current) {
         setError(resend && definitelyNotRecorded(err)
-          ? `Not sent again: ${messageOf(err)} ${body.name} is not in the branch list yet, but the first request may still arrive, so the form stays as it was sent.`
-          : `Not confirmed: ${messageOf(err)} ${body.name} is not in the branch list yet, but the request may still arrive.`);
+          ? t('branches.notSentAgain', { reason: messageOf(err), name: body.name })
+          : t('branches.notConfirmed', { reason: messageOf(err), name: body.name }));
       }
     }
   }
@@ -284,7 +297,7 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
     const first = branchBody(draft.current(), !branch);
     setErrors(first.errors);
     if (Object.keys(first.errors).length) return;
-    if (branch && Object.keys(first.body).length === 0) { setNotice('Nothing has changed.'); return; }
+    if (branch && Object.keys(first.body).length === 0) { setNotice(t('common.nothingChanged')); return; }
     if (!branch) {
       await once(async () => {
         // The branches there are now, so that after a lost answer only a branch made since can be taken as this one.
@@ -304,9 +317,9 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
       const conflicts = rebaseTo(draftOf(fresh));
       for (const k of conflicts) dropped.current.add(k);
       if (conflicts.length) { setStale(staleMessage(conflictLabels(conflicts))); return; }
-      if (fresh.isActive === false) { setStale(`${fresh.name} was closed meanwhile.`); return; }
+      if (fresh.isActive === false) { setStale(t('branches.closedMeanwhile', { name: fresh.name })); return; }
       const { body } = branchBody(draft.current(), false);
-      if (Object.keys(body).length === 0) { setNotice('Nothing has changed.'); return; }
+      if (Object.keys(body).length === 0) { setNotice(t('common.nothingChanged')); return; }
       const notSent = conflictLabels(stillDropped());
       let saved: Branch;
       try {
@@ -329,7 +342,7 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
   }
 
   function addHoliday() {
-    if (!ISO_DATE_PATTERN.test(holiday) || Number.isNaN(new Date(`${holiday}T00:00:00Z`).getTime())) { setHolidayError('Choose a date.'); return; }
+    if (!ISO_DATE_PATTERN.test(holiday) || Number.isNaN(new Date(`${holiday}T00:00:00Z`).getTime())) { setHolidayError(t('branches.chooseDate')); return; }
     setHolidayError(null);
     draft.update((x) => ({ ...x, holidays: [...new Set([...x.holidays, holiday])].sort() }));
     setHoliday('');
@@ -337,35 +350,35 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
 
   return (
     <section className="ws-section" aria-labelledby="branch-form-h">
-      <h2 id="branch-form-h">{branch ? `Edit ${branch.name}` : 'Add a branch'}</h2>
+      <h2 id="branch-form-h">{branch ? t('branches.editName', { name: branch.name }) : t('branches.add')}</h2>
       <form className="rx-form" noValidate onSubmit={(e) => void submit(e)}>
         <fieldset className="ws-frozen" disabled={busy || !!lost}>
         <div className="rx-form-row">
-          <TextField label="Branch name" maxLength={MAX_NAME} {...field('name')} />
-          <TextField label="Phone" inputMode="numeric" maxLength={10} value={d.phone} error={errors.phone}
+          <TextField label={t('branches.name')} maxLength={MAX_NAME} {...field('name')} />
+          <TextField label={t('branches.phone')} inputMode="numeric" maxLength={10} value={d.phone} error={errors.phone}
             onChange={(e) => draft.set('phone', e.target.value.replace(/\D/g, ''))} />
         </div>
         <div className="rx-form-row">
-          <TextField label="Address line 1" autoComplete="address-line1" {...field('line1')} />
-          <TextField label="Address line 2 (optional)" autoComplete="address-line2" {...field('line2')} />
+          <TextField label={t('branches.line1')} autoComplete="address-line1" {...field('line1')} />
+          <TextField label={t('branches.line2')} autoComplete="address-line2" {...field('line2')} />
         </div>
         <div className="rx-form-row">
-          <TextField label="City" autoComplete="address-level2" {...field('city')} />
-          <TextField label="State" autoComplete="address-level1" {...field('state')} />
-          <TextField label="State code" hint="GST state code, e.g. 29" {...field('stateCode')} />
-          <TextField label="PIN code" inputMode="numeric" autoComplete="postal-code" {...field('pincode')} />
+          <TextField label={t('branches.city')} autoComplete="address-level2" {...field('city')} />
+          <TextField label={t('branches.state')} autoComplete="address-level1" {...field('state')} />
+          <TextField label={t('branches.stateCode')} hint={t('branches.stateCodeHint')} {...field('stateCode')} />
+          <TextField label={t('branches.pincode')} inputMode="numeric" autoComplete="postal-code" {...field('pincode')} />
         </div>
         <fieldset className="ws-checks">
-          <legend>Services</legend>
+          <legend>{t('branches.services')}</legend>
           {services.map((k) => (
             <label key={k} className="ws-check">
               <input type="checkbox" checked={d.services[k]} onChange={(e) => draft.set('services', { ...d.services, [k]: e.target.checked })} />
-              {SERVICE_LABEL[k]}
+              {t(SERVICE_KEY[k])}
             </label>
           ))}
         </fieldset>
         <fieldset className="ws-checks">
-          <legend>Opening hours</legend>
+          <legend>{t('branches.hours')}</legend>
           {WEEKDAYS.map(({ value, label }) => {
             const day = d.days[value];
             const set = (p: Partial<Draft['days'][Weekday]>) => draft.update((x) => ({ ...x, days: { ...x.days, [value]: { ...x.days[value], ...p } } }));
@@ -374,28 +387,28 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
                 <label className="ws-check"><input type="checkbox" checked={day.open} onChange={(e) => set({ open: e.target.checked })} /> {label}</label>
                 {day.open ? (
                   <>
-                    <TextField label={`${label} opens`} type="time" value={day.from} onChange={(e) => set({ from: e.target.value })} />
-                    <TextField label={`${label} closes`} type="time" value={day.to} onChange={(e) => set({ to: e.target.value })}
+                    <TextField label={t('branches.opens', { day: label })} type="time" value={day.from} onChange={(e) => set({ from: e.target.value })} />
+                    <TextField label={t('branches.closes', { day: label })} type="time" value={day.to} onChange={(e) => set({ to: e.target.value })}
                       error={errors[`day-${value}`]} />
                   </>
-                ) : <span className="ws-muted">Closed</span>}
+                ) : <span className="ws-muted">{t('branches.dayClosed')}</span>}
               </div>
             );
           })}
         </fieldset>
         <fieldset className="ws-checks">
-          <legend>Holidays</legend>
+          <legend>{t('branches.holidays')}</legend>
           <div className="ws-search">
-            <TextField label="Holiday date" type="date" value={holiday} onChange={(e) => setHoliday(e.target.value)} error={holidayError ?? errors.holidays} />
-            <Button variant="secondary" onClick={addHoliday}>Add holiday</Button>
+            <TextField label={t('branches.holidayDate')} type="date" value={holiday} onChange={(e) => setHoliday(e.target.value)} error={holidayError ?? errors.holidays} />
+            <Button variant="secondary" onClick={addHoliday}>{t('branches.addHoliday')}</Button>
           </div>
-          {d.holidays.length === 0 ? <p className="ws-muted">No holidays.</p> : (
+          {d.holidays.length === 0 ? <p className="ws-muted">{t('branches.noHolidays')}</p> : (
             <ul className="ws-list">
               {d.holidays.map((h) => (
                 <li key={h}>
                   {h}{' '}
-                  <Button variant="ghost" aria-label={`Remove holiday ${h}`}
-                    onClick={() => draft.update((x) => ({ ...x, holidays: x.holidays.filter((y) => y !== h) }))}>Remove</Button>
+                  <Button variant="ghost" aria-label={t('branches.removeHoliday', { date: h })}
+                    onClick={() => draft.update((x) => ({ ...x, holidays: x.holidays.filter((y) => y !== h) }))}>{t('branches.remove')}</Button>
                 </li>
               ))}
             </ul>
@@ -406,22 +419,21 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
         {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}
         {lost ? (
-          <div className="confirm" role="group" aria-label="Unconfirmed branch">
+          <div className="confirm" role="group" aria-label={t('branches.unconfirmed')}>
             <div className="confirm-text">
-              We could not confirm whether {lost.body.name} was added. Sending it again is safe: it is the same request, so it never
-              adds a second branch. The form stays locked until it is settled.
+              {t('branches.lost', { name: lost.body.name })}
             </div>
             <div className="confirm-actions">
-              <Button busy={busy} onClick={() => { setError(null); void once(() => create(lost.body, lost.requestKey, lost.before, true)); }}>Send again</Button>
-              <ConfirmAction label="Start again" danger disabled={busy} confirmLabel="Unlock the form"
-                consequence={`Change the form and add it as a new request. If the first ${lost.body.name} still arrives, there will be two branches of that name; deactivate one of them.`}
+              <Button busy={busy} onClick={() => { setError(null); void once(() => create(lost.body, lost.requestKey, lost.before, true)); }}>{t('branches.sendAgain')}</Button>
+              <ConfirmAction label={t('branches.startAgain')} danger disabled={busy} confirmLabel={t('branches.unlock')}
+                consequence={t('branches.startAgain.consequence', { name: lost.body.name })}
                 onConfirm={async () => { setLost(null); setError(null); }} />
             </div>
           </div>
         ) : (
           <div className="ws-actions">
-            <Button type="submit" busy={busy}>{branch ? 'Save branch' : 'Add branch'}</Button>
-            <Button variant="ghost" disabled={busy} onClick={onCancel}>Cancel</Button>
+            <Button type="submit" busy={busy}>{branch ? t('branches.save') : t('branches.addBranch')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('common.cancel')}</Button>
           </div>
         )}
       </form>
