@@ -2322,6 +2322,18 @@ Backend: r33 (`m0/r33-referral-gaps` 335e36c2, ASSISTED_BOOKING_DESIGN.md §26.1
   the integrator: WQ45 extracted the old pharmacy file into `i18n/pharmacy` (`referralEarnings.*`); with WQ26b that file is
   deleted and those keys are unused.
 
+### WQ26c review fixes (Opus review of 5475091, 2026-11-25, branch `wq26c/referral-fixes`)
+
+- **A failed read again keeps what was read**: the earnings, rates and statement sections render their data whenever they
+  have it; only without data do they show the error (with Try again) or the loading line.
+- **The CSV of a period**: the referral statement has the finance statements' period fields (`useStatementPeriod` /
+  `StatementPeriodFields`, now shared with `StatementSection`), so above 5,000 entries (the server's `EXPORT_TOO_LARGE`, said
+  in its words) a shorter period can be exported; the list follows the same period (from its first page).
+- **Lines**: a lab booking also lists its one cut line when that line is not the whole booking.
+- **Words**: a category the page does not know is shown as sent (`t.has`); the pharmacy's categories are
+  `REFERRAL_CATEGORIES`; the finance-reader rule is one helper (`isFinanceReader`) for the finance page and the lab's
+  referral earnings; `ReferralSummary.cutsEnabled` (unused) is gone.
+
 ## WQ24 lab › Book consultation: a lab books a doctor consultation for a walk-in patient (phase 2e) (2026-11-25, branch `wq24/lab-book-consultation`)
 
 Backend: r21 + r21b (stage `6a8574e9`, design ASSISTED_BOOKING_DESIGN.md §24.16–§24.17; mocked API). Web base: `wq/stage-next-2`
@@ -2622,3 +2634,4 @@ sign-in and a reload the page showed "Signing you in…" or the sign-in screen. 
 | 2026-11-25 | WQ40 i18next + react-i18next engine (branch `wq40/react-i18next` on stage bac568e) | typecheck clean; Vitest 495/495 (+2: values inserted as written with no escaping, nesting or second pass; only words shaped like their English are used; the 6a i18n, switcher and scope tests pass unchanged on the new engine); Playwright on temporary ports 5541/5542 (`reuseExistingServer: false`, configs deleted): workspace 1004/1004 (932 in the full run, which shared the machine with the customer suite; the 72 that timed out, nearly all right after a `page.reload()`, all passed when run again alone) and customer 266/270: the 4 failures are `native-session.spec.ts:178` and `pharmacy.spec.ts:370` on both devices, which fail the same way on unchanged stage bac568e (pre-existing, not WQ40); both builds with `VITE_API_SAME_ORIGIN=true` (no pseudo-language in either bundle; main chunk +56 kB, +18 kB gzip, for i18next and react-i18next). |
 | 2026-11-25 | WQ26b referral follow-ups on r33 (on stage 25a860c) | Against r33 335e36c2 (§26.16; mocked API). typecheck clean; Vitest 493/493 (referralCuts.test.ts on r33's shapes: `switches` beside the lists, rows from `shortRef` / `category` / `lines`, the pharmacy and lab bases incl. admin scope and the CSV period); Playwright workspace 1024/1024 on temporary port 5563 through `pw-slot.sh` with 2 workers (`reuseExistingServer: false`, config deleted; referral-cuts.spec.ts now 8 journeys x 2 devices: the switch note from `switches` with no rule set and after the switch changes, a lab booking's lines in the statement, the CSV download, a lab finance member's earnings page and CSV, a branch-limited lab member refused); release build with `VITE_API_SAME_ORIGIN=true`. |
 | 2026-11-25 | WQ46 customer sign-in then reload (branch `wq46/signin-reload` on stage 25a860c) | Tests only, no app change. typecheck clean; Vitest 494/494; Playwright customer 270/270 on temporary port 5561 through `pw-slot.sh` (`reuseExistingServer: false`, config deleted). The two journeys on unchanged stage: 8/8 at 1 worker, 4/12 at 5 workers (all 8 failures the 30 s timeout), 4/4 with 90 s, 4/4 in 8–12 s against the release build. |
+| 2026-11-25 | WQ26c referral review fixes (on 5475091) | typecheck clean; Vitest 506/506 (the referral statement with a period); Playwright `referral-cuts.spec.ts` + `finance.spec.ts` 54/54 through `pw-slot.sh` with 2 workers on temporary port 5563 (config deleted; +4 = 2 journeys x 2 devices: a lone cut line that is not the whole booking is listed, the whole-statement CSV refused with the server's words and a period exported with the list following it; a lab member without `finance.view` gets no page and reads nothing). |

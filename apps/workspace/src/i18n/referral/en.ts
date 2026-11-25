@@ -23,6 +23,9 @@ export default {
   'referralEarnings.loadingTheStatement': 'Loading the statement…',
   'referralEarnings.noReferralEarningsYet': 'No referral earnings yet',
   'referralEarnings.aCutIsListedHere': 'A cut is listed here when a booking you made is completed.',
+  /** The statement of a chosen period has no entries. */
+  'referralEarnings.noEntries': 'No entries',
+  'referralEarnings.nothingInThisPeriod': 'Nothing was recorded in this period.',
   /** Hidden caption of the statement table (screen readers). */
   'referralEarnings.referralStatementNewestFirst': 'Referral statement, newest first',
   'referralEarnings.dateIndiaTime': 'Date (India time)',

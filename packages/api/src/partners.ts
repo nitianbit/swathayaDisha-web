@@ -396,6 +396,12 @@ export function holdsAny(a: Pick<PartnerActorView, 'role' | 'permissions'>, anyO
   return a.role === 'owner' || anyOf.length === 0 || anyOf.some((p) => a.permissions.includes(p));
 }
 
+/**
+ * WQ26c: who reads a partner's money (the backend's `finance.view` guard plus `assertPartnerFinanceReader`): `finance.view`
+ * and partner-wide scope (finance covers every branch). The finance page and the lab's referral earnings use it.
+ */
+export const isFinanceReader = (a: Pick<PartnerActorView, 'role' | 'permissions' | 'branchIds'>) => holdsAny(a, ['finance.view']) && hasGlobalScope(a);
+
 /** Delegation ceiling: an owner may grant anything; staff only what they hold. */
 /** WQ20b: the wallet permissions are a lab's (r13); a clinic is never offered them. Unknown kind: none of them. */
 export const WALLET_PERMISSIONS: readonly PartnerPermission[] = ['wallet.view', 'wallet.manage'];

@@ -137,10 +137,8 @@ export function StatementSection({ queryKey, load, csv, csvPrefix, emptyText = t
   /** Under "No entries" when no period is chosen. */
   emptyText?: string;
 }) {
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const bad = (from && !isRealDate(from)) || (to && !isRealDate(to)) ? t('period.badDates') : from && to && from > to ? t('period.endsBeforeStart') : null;
-  const period: PeriodQuery | null = bad ? null : { ...(from ? { from } : {}), ...(to ? { to } : {}) };
+  const statementPeriod = useStatementPeriod();
+  const { period, filtered } = statementPeriod;
   const list = useInfiniteQuery({
     queryKey: [...queryKey, 'statement', period],
     queryFn: ({ pageParam }) => load({ ...period, limit: STATEMENT_PAGE, before: pageParam }),
@@ -154,16 +152,11 @@ export function StatementSection({ queryKey, load, csv, csvPrefix, emptyText = t
     for (const p of list.data?.pages ?? []) for (const l of p.lines) if (!seen.has(l._id)) { seen.add(l._id); out.push(l); }
     return out;
   }, [list.data]);
-  const filtered = !!(from || to);
 
   return (
     <section className="ws-section" aria-labelledby="fin-st-h">
       <h2 id="fin-st-h">{t('statement.title')}</h2>
-      <div className="ws-search" role="group" aria-label={t('statement.period')}>
-        <TextField label={t('statement.from')} type="date" value={from} onChange={(e) => setFrom(e.target.value)} error={bad} />
-        <TextField label={t('statement.to')} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        {period && <CsvDownload key={JSON.stringify(period)} period={period} csv={csv} csvPrefix={csvPrefix} />}
-      </div>
+      <StatementPeriodFields p={statementPeriod} csv={csv} csvPrefix={csvPrefix} />
       <p className="ws-muted">{t('statement.intro')}</p>
       {!period ? null
         : list.isPending ? <Loading label={t('statement.loading')} />
@@ -206,10 +199,37 @@ export function StatementSection({ queryKey, load, csv, csvPrefix, emptyText = t
 }
 
 /**
+ * A statement's India-date period (WQ26c: shared by the finance statements and the referral statements): the typed dates,
+ * whether they are real, and the period they make (null while they are not).
+ */
+export function useStatementPeriod() {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const bad = (from && !isRealDate(from)) || (to && !isRealDate(to)) ? t('period.badDates') : from && to && from > to ? t('period.endsBeforeStart') : null;
+  const period: PeriodQuery | null = bad ? null : { ...(from ? { from } : {}), ...(to ? { to } : {}) };
+  return { from, to, setFrom, setTo, bad, period, filtered: !!(from || to) };
+}
+
+/** The period's fields and the CSV of that period (a new download for each period; the server's refusal is shown). */
+export function StatementPeriodFields({ p, csv, csvPrefix }: {
+  p: ReturnType<typeof useStatementPeriod>;
+  csv: (q: PeriodQuery, signal?: AbortSignal) => Promise<Blob>;
+  csvPrefix: string;
+}) {
+  return (
+    <div className="ws-search" role="group" aria-label={t('statement.period')}>
+      <TextField label={t('statement.from')} type="date" value={p.from} onChange={(e) => p.setFrom(e.target.value)} error={p.bad} />
+      <TextField label={t('statement.to')} type="date" value={p.to} onChange={(e) => p.setTo(e.target.value)} />
+      {p.period && <CsvDownload key={JSON.stringify(p.period)} period={p.period} csv={csv} csvPrefix={csvPrefix} />}
+    </div>
+  );
+}
+
+/**
  * The statement CSV of one period, read with the session's token into an in-memory blob (never a link with a token).
  * Keyed by the period: changing it aborts a running download and drops the file of the old period.
  */
-export function CsvDownload({ period, csv, csvPrefix }: { period: PeriodQuery; csv: (q: PeriodQuery, signal?: AbortSignal) => Promise<Blob>; csvPrefix: string }) {
+function CsvDownload({ period, csv, csvPrefix }: { period: PeriodQuery; csv: (q: PeriodQuery, signal?: AbortSignal) => Promise<Blob>; csvPrefix: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [file, setFile] = useState<{ url: string; name: string } | null>(null);

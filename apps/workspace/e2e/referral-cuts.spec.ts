@@ -39,6 +39,8 @@ interface Backend {
   statement: Rec[];
   /** The lab's own referral statement (its consultations). */
   labStatement: Rec[];
+  /** WQ26c: the CSV of the whole statement is refused (more than 5,000 entries); a period is exported. */
+  csvTooLarge?: boolean;
   /** The signed-in lab member (`/auth/partner/*`). */
   me?: Rec;
 }
@@ -60,7 +62,10 @@ function statementLines(): Rec[] {
   // r33: one row for the lab booking, its cut lines listed (a third line of another kind was not cut).
   add('referral_lab_booking', 'Referral · lab booking · 2026-11-23 · Ref LMNO2222', 120000, 5500, { shortRef: 'LMNO2222', category: 'mixed',
     lines: [{ category: 'lab_test', baseMinor: 30000, cutMinor: 1500 }, { category: 'lab_package', baseMinor: 80000, cutMinor: 4000 }] });
-  for (let i = 2; i < 52; i++) {
+  // A lab booking with one cut line that is not the whole booking (its other line was not cut).
+  add('referral_lab_booking', 'Referral · lab booking · 2026-11-22 · Ref LABT0002', 40000, 3000, { shortRef: 'LABT0002', category: 'lab_test',
+    lines: [{ category: 'lab_test', baseMinor: 30000, cutMinor: 3000 }] });
+  for (let i = 3; i < 52; i++) {
     const ref = `CONS${String(i).padStart(4, '0')}`;
     add('referral_consultation', `Referral · consultation · 2026-11-20 · Ref ${ref}`, 30000, 3000, { shortRef: ref, category: 'consultation' });
   }
@@ -205,7 +210,12 @@ async function mockBackend(page: Page): Promise<Backend> {
         return ok(route, { earnedMinor: earned, paidMinor: 0, dueMinor: earned, ...switches() });
       }
       if (path === '/pharmacy-assisted/referral/statement') return statementOf(route, url, b.statement);
-      if (path === '/pharmacy-assisted/referral/statement.csv') return csvAnswer(route, 'x.csv', b.statement);
+      if (path === '/pharmacy-assisted/referral/statement.csv') {
+        if (b.csvTooLarge && !url.searchParams.get('from') && !url.searchParams.get('to')) {
+          return fail(route, 400, 'EXPORT_TOO_LARGE', 'More than 5000 entries in this period; export a shorter period');
+        }
+        return csvAnswer(route, 'x.csv', b.statement);
+      }
     }
     return fail(route, 404, 'NOT_FOUND', 'Not found');
   });
@@ -437,6 +447,35 @@ test('pharmacy: referral earnings (earned, paid, due), its rates and the stateme
   expect(await stored(page)).not.toMatch(/ABCD2345|CONS00/);
 });
 
+test('pharmacy statement: a lone cut line that is not the whole booking is listed; too many entries for one CSV, so a period is exported and read', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.csvTooLarge = true;
+  await signIn(page, 'Pharmacy');
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Referral earnings' }).click();
+  const statement = page.getByRole('region', { name: 'Statement' });
+  const rows = statement.getByRole('row');
+  await expect(rows.nth(3)).toContainText('LABT0002Lab test');
+  await expect(rows.nth(3).getByRole('listitem')).toHaveText(['Lab test ₹300.00: cut ₹30.00']);
+  await expect(rows.nth(3)).toContainText('₹400.00₹30.00');
+  // The whole statement is refused by the server, in its words; a period is exported instead.
+  await statement.getByRole('button', { name: 'Download CSV (all entries)' }).click();
+  await expect(statement.getByText('Could not download the statement: More than 5000 entries in this period; export a shorter period')).toBeVisible();
+  await statement.getByLabel('From (India date)').fill('2026-11-01');
+  await statement.getByLabel('To (India date)').fill('2026-11-30');
+  const download = page.waitForEvent('download');
+  await statement.getByRole('button', { name: 'Download CSV (from 1 Nov 2026 to 30 Nov 2026)' }).click();
+  expect((await download).suggestedFilename()).toBe('pharmacy-referral-statement-2026-11-01-to-2026-11-30.csv');
+  await expect(statement.getByText('Could not download the statement', { exact: false })).toHaveCount(0);
+  // The list follows the same period.
+  await expect.poll(() => backend.calls.filter((c) => c.path.startsWith('/pharmacy-assisted/referral/statement')).map((c) => c.path)).toEqual([
+    '/pharmacy-assisted/referral/statement?limit=50',
+    '/pharmacy-assisted/referral/statement.csv',
+    '/pharmacy-assisted/referral/statement?from=2026-11-01&limit=50',
+    '/pharmacy-assisted/referral/statement?from=2026-11-01&to=2026-11-30&limit=50',
+    '/pharmacy-assisted/referral/statement.csv?from=2026-11-01&to=2026-11-30',
+  ]);
+});
+
 test('a non-admin cannot reach or change the referral cuts', async ({ page }) => {
   const backend = await mockBackend(page);
   await signIn(page, 'Pharmacy');
@@ -479,12 +518,14 @@ test('lab: its referral earnings, rates (with the switch note), statement and CS
   expect(await stored(page)).not.toContain('LABC4444');
 });
 
-test('lab: a branch-limited finance member, or one without finance.view, has no referral earnings page and reads nothing', async ({ page }) => {
+for (const [who, me] of [['a branch-limited finance member', { branchIds: [BRANCH] }], ['a member without finance.view', { permissions: ['bookings.view'] }]] as const) {
+test(`lab: ${who} has no referral earnings page and reads nothing`, async ({ page }) => {
   const backend = await mockBackend(page);
-  backend.me = labMember({ branchIds: [BRANCH] });
+  backend.me = labMember({ ...me });
   await signIn(page, 'Lab or clinic staff');
   await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Referral earnings' })).toHaveCount(0);
   await page.goto('/#/partner/referral');
   await expect(page.getByText('This page does not exist or is not available to your account.')).toBeVisible();
   expect(backend.calls.some((c) => c.path.startsWith('/partner-workspace/assisted/referral'))).toBe(false);
 });
+}
