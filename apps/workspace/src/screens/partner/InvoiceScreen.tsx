@@ -13,7 +13,7 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { afterFailure, beginAttempt, newRequestKey, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { sniffDocument } from '../pharmacy/documents.ts';
-import { money, useClinicDoctors } from './billing.tsx';
+import { genderLabel, money, useClinicDoctors } from './billing.tsx';
 import { stateTone } from './InvoicesScreen.tsx';
 import { useSession } from '../../session.tsx';
 import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
@@ -69,11 +69,6 @@ export function paymentText(e: Pick<InvoiceEvent, 'mode' | 'reference' | 'splits
 const splitText = (method: string, p: { amountMinor: number; reference?: string }) => (p.reference
   ? t('invoice.splitRef', { method, amount: money(p.amountMinor), ref: p.reference })
   : t('invoice.split', { method, amount: money(p.amountMinor) }));
-/** A gender as given on the bill (the new-bill form's words). */
-const genderLabel = (g: string) => {
-  const key = `newInvoice.gender.${g}`;
-  return g !== 'none' && t.has(key) ? t(key) : g;
-};
 
 /** One bill: what was issued (immutable), its payment and cancellation, its PDF; pay and cancel by permission. */
 export function InvoiceScreen() {
@@ -203,7 +198,7 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
       <Link className="ws-back" to={ctx.link('invoices')}><ArrowLeft size={16} aria-hidden="true" /> {t('invoice.backToBills')}</Link>
       <PageHeading title={inv ? t('invoice.title', { serial: inv.serial }) : t('invoice.titleUnknown')}>
         {ctx.adminHome
-          ? <>{partner.data?.name === undefined ? t('scope.managingThis') : t('scope.managing', { name: partner.data.name })} </>
+          ? <>{partner.data?.name == null ? t('scope.managingThis') : t('scope.managing', { name: partner.data.name })} </>
           : null}
         {inv ? t('invoice.issuedLine', { kind: DOCUMENT_KIND_LABEL[inv.documentKind], date: formatDateTime(inv.issuedAt), branch: branchName }) : null}
       </PageHeading>

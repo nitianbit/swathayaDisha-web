@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  ALL_PARTNER_PERMISSIONS, ApiError, authApi, clearSignOutPending, CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, clearWebSignOutPending, createApiClient, isClinicDoctorNotVerified, isTransientSessionError, markSignOutPending,
+  ALL_PARTNER_PERMISSIONS, ApiError, authApi, clearSignOutPending, CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, clearWebSignOutPending, createApiClient, isClinicDoctorNotVerified, isTransientSessionError, markSignOutPending, networkWords,
   isIdListSlot, markWebSignOutPending, markerStore, nativeSecureStore, nativeSignOut, OBJECT_ID_PATTERN, PARTNER_KIND_LABEL, partnerSelectionOf, refreshTokenKey,
   rotateNative, isSignedOutAnswer, samePrincipal, sessionChannel, signOutState, webSignOutState, withSessionLock,
   type ApiClient, type NativeSignedIn, type OtpTarget, type PartnerKind, type PartnerPermission, type PartnerSelection, type PendingMarker,
@@ -44,7 +44,7 @@ export interface StaffUser {
 
 type SessionState =
   | { status: 'restoring' }
-  | { status: 'signed_out'; notice?: string }
+  | { status: 'signed_out'; notice?: SessionNotices }
   | { status: 'signed_in'; user: StaffUser };
 
 /**
@@ -69,7 +69,7 @@ interface SessionValue {
   verifyCode: (role: StaffRole, target: OtpTarget, otp: string) => Promise<PartnerSelection | null>;
   /** Q7: opens the chosen workspace with the one-use ticket from `verifyCode` (in the same session mode). */
   choosePartner: (ticket: string, partnerId: string) => Promise<void>;
-  signOut: (notice?: string) => void;
+  signOut: (notice?: SessionNotice) => void;
 }
 
 const SessionContext = createContext<SessionValue | null>(null);
@@ -116,16 +116,26 @@ function partnerSessionOf(member: Record<string, unknown>, partner: Record<strin
 /** Q16b: a lab or clinic sign-in in a build whose API is on another origin (no first-party cookie session there). */
 export let PARTNER_NEEDS_SAME_ORIGIN = '';
 
-/** WQ11a: said while a sign-out has not reached the server yet (this browser never resumes that session meanwhile). */
-export let SIGNED_OUT_HERE = '';
+/**
+ * Why the sign-in screen shows: codes, worded at render (docs/I18N_PLAN.md §3.4), in the order they happened. WQ11a:
+ * `signedOutHere` is said while a sign-out has not reached the server yet (this browser never resumes that session
+ * meanwhile); WQ15: `clinicRefused` is the refusal of a clinic member whose doctor is not verified.
+ */
+export type SessionNotice = 'ended' | 'someoneElse' | 'otherTab' | 'signedOutHere' | 'phoneNotCleared' | 'phoneNotSignedOut' | 'clinicRefused';
+export type SessionNotices = readonly SessionNotice[];
+/** The notices in words, one sentence after another. */
+export const noticeWords = (notice: SessionNotices): string =>
+  notice.map((n) => (n === 'clinicRefused' ? CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE : t(`session.${n}`))).join(' ');
 // Imported as strings (ES live bindings): read again in the new language on every switch.
 const readWords = () => {
   PARTNER_NEEDS_SAME_ORIGIN = t('session.partnerSameOrigin');
-  SIGNED_OUT_HERE = t('session.signedOutHere');
 };
 readWords();
 subscribeLanguage(readWords);
-const withNote = (notice: string | undefined, note: string) => (notice ? t('session.note', { notice, note }) : note);
+/** A notice added after the ones already shown. */
+const withNote = (notice: SessionNotices | undefined, note: SessionNotice): SessionNotices => [...(notice ?? []), note];
+/** The same notices in the same order (the sign-in screen shows the same words). */
+const sameNotice = (a: SessionNotices | undefined, b: SessionNotices | undefined) => (a ?? []).join(' ') === (b ?? []).join(' ');
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const isPending = (v: unknown): v is PendingMarker =>
@@ -172,7 +182,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
   const starting = useRef(true);
 
   /** Ends this tab's session locally: token, requests, queries and memory (reload markers stay, per person). */
-  const endLocally = useCallback((notice?: string) => {
+  const endLocally = useCallback((notice?: SessionNotices) => {
     generation.current += 1;
     token.current = null;
     principal.current = null;
@@ -212,8 +222,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     void (async () => {
       let clean = await attempt();
       if (clean || cleanup.current !== mine) { if (cleanup.current === mine) cleanup.current = null; return; }
-      setState((s) => (s.status === 'signed_out' ? { status: 'signed_out', notice: withNote(s.notice, marked
-        ? t('session.phoneNotCleared') : t('session.phoneNotSignedOut')) } : s));
+      setState((s) => (s.status === 'signed_out' ? { status: 'signed_out', notice: withNote(s.notice, marked ? 'phoneNotCleared' : 'phoneNotSignedOut') } : s));
       // Not recorded durably either: keep trying while the app is open (stops when a new sign-in replaces it).
       while (!clean && !marked && cleanup.current === mine) {
         await pause(5000);
@@ -230,7 +239,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
    * answers, the sign-in screen says so and no start resumes the session (`restore` finishes the logout first). Stops
    * when the server answered, another tab finished it, or a new sign-in replaced the session.
    */
-  const finishWebSignOut = useCallback((tabToken: string | null, marked: boolean, notice?: string) => {
+  const finishWebSignOut = useCallback((tabToken: string | null, marked: boolean, notice?: SessionNotices) => {
     const mine = {};
     cleanup.current = mine;
     const attempt = async (): Promise<boolean> => withSessionLock(APP, async () => {
@@ -243,18 +252,18 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       clearWebSignOutPending(APP);
       return true;
     }).catch(() => false);
-    const noted = withNote(notice, SIGNED_OUT_HERE);
+    const noted = withNote(notice, 'signedOutHere');
     void (async () => {
       let clean = await attempt();
       if (!clean && cleanup.current === mine) {
-        setState((s) => (s.status === 'signed_out' && s.notice === notice ? { status: 'signed_out', notice: noted } : s));
+        setState((s) => (s.status === 'signed_out' && sameNotice(s.notice, notice) ? { status: 'signed_out', notice: noted } : s));
       }
       for (let wait = 1000; !clean && cleanup.current === mine; wait = Math.min(wait * 2, 30_000)) {
         await pause(wait);
         clean = await attempt();
       }
       if (cleanup.current === mine) cleanup.current = null;
-      if (clean) setState((s) => (s.status === 'signed_out' && s.notice === noted ? { status: 'signed_out', ...(notice ? { notice } : {}) } : s));
+      if (clean) setState((s) => (s.status === 'signed_out' && sameNotice(s.notice, noted) ? { status: 'signed_out', ...(notice ? { notice } : {}) } : s));
     })();
   }, []);
 
@@ -263,7 +272,8 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
    * refresh may hold the lock right now and the app may close before the clean-up runs): until it is cleaned up, no
    * start resumes the session.
    */
-  const signOut = useCallback((notice?: string) => {
+  const signOut = useCallback((said?: SessionNotice) => {
+    const notice: SessionNotices | undefined = said ? [said] : undefined;
     const tabToken = token.current; // the family this tab was using ends too, not only the cookie's
     const marked = secure ? markSignOutPending(NATIVE_APP) : cookieMode ? markWebSignOutPending(APP) : true;
     endLocally(notice);
@@ -300,16 +310,16 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       r = await rotate();
     } catch (err) {
       if (gen !== generation.current) return null;
-      if (!isTransientSessionError(err)) { endLocally(t('session.ended')); return null; }
+      if (!isTransientSessionError(err)) { endLocally(['ended']); return null; }
       setReconnecting(true);
       clearTimeout(retry.current.timer);
       const n = retry.current.n + 1;
       retry.current = { n, timer: setTimeout(() => { if (gen === generation.current) void renewRef.current(null).catch(() => undefined); }, Math.min(60, 2 ** n) * 1000) };
-      throw err instanceof ApiError ? err : new ApiError(0, t('session.network'), 'NETWORK');
+      throw err instanceof ApiError ? err : new ApiError(0, networkWords(), 'NETWORK');
     }
     if (gen !== generation.current) return null;
     if (!samePrincipal(r.principal, principal.current)) {
-      endLocally(t('session.someoneElse'));
+      endLocally(['someoneElse']);
       return null;
     }
     token.current = r.token;
@@ -331,12 +341,12 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     ...(mode !== 'memory' ? { renew: (sent: string) => renewRef.current(sent) } : {}),
     // Only a 401 for the token in use now ends the session; a late answer for an older token changes nothing.
     onUnauthorized: (sent) => {
-      if (sent === token.current) signOut(t('session.ended'));
+      if (sent === token.current) signOut('ended');
     },
     // WQ15 (r9): a clinic member whose doctor account is not verified or not active is refused on every partner call.
     // The session ends like a 401 (signed out on the server too, so a reload does not resume it), with the reason.
     onForbidden: (sent, err) => {
-      if (sent === token.current && isClinicDoctorNotVerified(err)) signOut(CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE);
+      if (sent === token.current && isClinicDoctorNotVerified(err)) signOut('clinicRefused');
     },
   }), [baseUrl, signOut]);
 
@@ -431,8 +441,8 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
           return;
         }
         // WQ15: the clinic refusal is never a silent sign-out (the forbidden hook normally ends the session first, with it).
-        const why = unfinished ? SIGNED_OUT_HERE : isClinicDoctorNotVerified(err) ? CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE : undefined;
-        setState((s) => (s.status === 'restoring' ? { status: 'signed_out', ...(why ? { notice: why } : {}) } : s));
+        const why: SessionNotice | undefined = unfinished ? 'signedOutHere' : isClinicDoctorNotVerified(err) ? 'clinicRefused' : undefined;
+        setState((s) => (s.status === 'restoring' ? { status: 'signed_out', ...(why ? { notice: [why] } : {}) } : s));
       }
       if (unfinished) finishWebSignOut(null, true);
     }
@@ -461,13 +471,13 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
 
   useEffect(() => channel?.listen((m) => {
     if (m.type === 'signed-out') {
-      if (principal.current) endLocally(t('session.otherTab'));
+      if (principal.current) endLocally(['otherTab']);
       return;
     }
     // WQ11a: another tab signed in, so the browser's session is new: a clean-up still retrying here must not end it.
     if (!secure) cleanup.current = null;
     if (principal.current && !samePrincipal(principal.current, m)) {
-      endLocally(t('session.someoneElse'));
+      endLocally(['someoneElse']);
     } else if (!principal.current) {
       void restore();
     }

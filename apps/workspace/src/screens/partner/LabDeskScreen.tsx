@@ -196,7 +196,6 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
     return (
       <UnconfirmedBooking op={op}
-        // i18n-ignore: the shared pharmacy component words `what` (its own round, 6f)
         kind="booking" charged={false} busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => desk.byKey(op.requestKey)}
         onUsed={(r) => { settle(op.requestKey); setReview(null); setDone({ booking: r.booking, summary: op.body?.summary, bill: op.body?.bill, replayed: true }); create.refresh(); return null; }}
         onAbandoned={() => create.abandonedByCheck(op.requestKey)}

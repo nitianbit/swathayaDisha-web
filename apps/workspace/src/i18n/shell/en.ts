@@ -69,11 +69,8 @@ export default {
   'shell.role.pharmacy': 'Pharmacy',
   'shell.role.specialist': 'Doctor',
   'app.notFound.title': 'Page not found',
-  'app.notFound.body': 'This page does not exist or is not available to your account.',
   /** While a saved sign-in is resumed. */
   'app.signingIn': 'Signing you in…',
-  /** Phone app only, at start-up. */
-  'app.secureStorage': 'The app could not open this phone\'s secure storage, which keeps you signed in safely.',
 
   // ── Home ──
   'home.welcome': 'Welcome, {name}',
@@ -110,10 +107,6 @@ export default {
   'login.open': 'Open workspace',
   'login.startAgain': 'Start again',
   'login.expired': 'This sign-in has expired. Request a new code to continue.',
-  /** {target} is the masked number, e.g. ••••••3210. */
-  'login.sent.phone': 'We sent a 6-digit code to your phone {target}.',
-  /** {target} is the masked email. */
-  'login.sent.email': 'We sent a 6-digit code to your email {target}.',
   'login.code': '6-digit code',
   'login.code.missing': 'Enter the 6-digit code.',
   'login.verify': 'Verify and sign in',
@@ -123,7 +116,6 @@ export default {
 
   // ── Session notices (shown on the sign-in screen) ──
   'session.ended': 'Your session has ended. Please sign in again.',
-  'session.network': 'Could not reach the server. Check your connection and try again.',
   'session.someoneElse': 'Someone else signed in to the workspace in this browser. Please sign in again.',
   'session.otherTab': 'You signed out in another tab.',
   'session.notStaff': 'This account cannot use the staff workspace.',
@@ -135,8 +127,6 @@ export default {
   'session.signedOutHere': 'You are signed out on this device. The server has not confirmed it yet: the workspace keeps trying, and nobody is signed back in here until it does.',
   'session.phoneNotCleared': 'This phone could not clear its saved sign-in yet; it will be cleared when the app next opens.',
   'session.phoneNotSignedOut': 'This phone could not finish signing out yet. Keep the app open for a moment while it tries again.',
-  /** Two notices one after the other. */
-  'session.note': '{notice} {note}',
 
   // ── Errors and edits ──
   /** After the server's own sentence (its full stop removed). */

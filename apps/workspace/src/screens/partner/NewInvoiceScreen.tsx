@@ -256,8 +256,8 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
     <>
       <Link className="ws-back" to={ctx.link('invoices')}><ArrowLeft size={16} aria-hidden="true" /> {t('newInvoice.backToBills')}</Link>
       <PageHeading title={t('newInvoice.title')}>
-        {ctx.adminHome ? <>{p?.name === undefined ? t('scope.managingThis') : t('scope.managing', { name: p.name })} </> : null}
-        {p?.name === undefined ? t('newInvoice.seriesUnnamed') : t('newInvoice.series', { name: p.name })}
+        {ctx.adminHome ? <>{p?.name == null ? t('scope.managingThis') : t('scope.managing', { name: p.name })} </> : null}
+        {p?.name == null ? t('newInvoice.seriesUnnamed') : t('newInvoice.series', { name: p.name })}
       </PageHeading>
       {pending && !(busy && pending.attempts === 1 && !pending.uncertain) ? (
         <PendingOpPanel key={pending.attempts} label={t('newInvoice.unconfirmed')} op={pending} busy={busy} onResend={() => void send(pending)}

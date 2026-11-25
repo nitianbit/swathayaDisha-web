@@ -1,3 +1,2 @@
 # Files that still hold English written into the code (docs/I18N_PLAN.md §4.1). Each extraction round removes
 # its files once their words come from a catalogue; the list is empty after round 6j. Started in 6a: 159 files; 166 with the stage-next (push 1) files; 169 with push 2 (Consult now, doctor wallet); 171 with WQ25 (doctor lab booking); 174 with WQ26 (referral cuts); 175 with WQ24 (lab consultation screens) and WQ27. WQ45: 126 after the pharmacy and doctor screens (6e, 6f, 6i). WQ47 integration: 52 with the customer (WQ41), admin (WQ43) and partner (WQ44) rounds as well. 1 with the shared words (WQ42).
-apps/workspace/src/screens/partner/LabConsultScreens.tsx

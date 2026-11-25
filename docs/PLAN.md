@@ -2591,6 +2591,42 @@ Left (for the next rounds):
   consent statements) are WQ42's.
 - No translations (the IndicTrans2 pipeline) and no pseudo walk yet (§4.1 item 4).
 
+
+## WQ49 UI translation fixes before a second language (2026-11-25, branch `wq49/i18n-fixes` on stage 53e523e)
+
+The review items of the integrated i18n review. English is unchanged except the named changes below.
+
+- **Whole sentences:** the 230 pharmacy and doctor values that were pieces glued to a value ('Page ' + n + ' of ' + m)
+  became 162 sentences with `{placeholders}` (a TypeScript codemod over the JSX); counts are plurals (`one`/`other`),
+  optional parts are separate sentences. `catalogues.test.ts` refuses a value that starts or ends with a space.
+- **The literal scan** also finds words shown as they are: a JSX child, a branch of a choice inside one, a word
+  attribute's value, a value given to a catalogue word. `i18n-ignore` needs a reason and covers only its own line (after
+  code) or the next one. What it found is now catalogue words; the allowlist is empty (`LabConsultScreens.tsx` extracted).
+- **No words fixed at load or kept in state:** `UNPAID_CHECK_AGAIN`, `CHECK_LABEL`, `REFUND_STATUS_LABEL` and the weekday
+  maps are read at render; the workspace session notices are codes (`SessionNotices`, as the customer's), so the sign-in
+  screen no longer compares sentences; the doctor's presence keeps word functions, not words.
+- **One copy:** `networkWords()` ("Could not reach the server…") for both sessions; one `genderLabel` for the partner
+  screens; `shared()` for the page-not-found, secure-storage, code-sent and empty-wallet-history sentences;
+  `useOneAtATime` takes a code (`busy.what.*`); `UnconfirmedBooking` takes a kind with whole sentences.
+- Short weekday names come from `Intl` (`weekday: 'short'`), never cut from the long name; `money()` shows "—" for an
+  invalid amount again (not ₹NaN); `x == null` where `??` became `=== undefined`; both `main.tsx` start the app even if
+  the language start fails.
+
+Named changes (English or behaviour):
+- "Card money (withdrawals coming later)" → "Card money": withdrawals exist since WQ29 (e2e `lab-wallet.spec.ts:217`,
+  `doctor-wallet.spec.ts:158,246` updated to the new words).
+- "Issued in this’s own series" (a bill of a partner without a name) → "Issued in this partner’s own series".
+- d5ccd0e (WQ24b re-check, recorded here): Book consultation checks the switched-off notice after the booking states,
+  so a held card booking or a made booking stays on screen when a background doctor read answers 503; "Book another
+  consultation" then forgets that read (WQ47 4f28c39).
+- Kept on purpose (d5ccd0e, `assistedCard.ts` `outcomeOfError`): the card-payment permission words ("Ask your lab’s
+  owner") show only for a lab member's 403 `INSUFFICIENT_PERMISSIONS`. That code is the partner workspace's member
+  permission (r21); a pharmacy or a doctor has no members, so its 403 on the payment routes is the account's state and
+  keeps the account words (`wq24.test.ts` asserts both).
+
+Left: sentences still holding a computed phrase as a placeholder (`{state}`, `{rows}`, `{mode}`) where a full split would
+multiply variants; the api's own repeated sentences across its area catalogues ("Give a reason (at least {min}
+characters).", "Enter whole minutes from {min} to {max}.").
 ## WQ46 customer sign-in then reload: two Playwright journeys over their time (2026-11-25, branch `wq46/signin-reload`)
 
 `native-session.spec.ts:178` and `pharmacy.spec.ts:370` failed in full customer runs (desktop and phone): after a

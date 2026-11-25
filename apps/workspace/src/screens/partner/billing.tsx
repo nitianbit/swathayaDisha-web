@@ -8,8 +8,9 @@ import type { SessionMemory } from '../../session.tsx';
 import { scopeIdentity, type ScopeContext } from './scope.tsx';
 
 /** Backend amounts are integer paise; this is the only way the workspace shows them. */
+/** Paise as money; "—" when missing or not a number (never ₹NaN). */
 export const money = (minor: number | undefined | null) =>
-  (minor === undefined || minor === null ? formatRupees(minor) : formatPaise(minor));
+  (typeof minor === 'number' && Number.isFinite(minor) ? formatPaise(minor) : formatRupees(null));
 
 /** Q10 item kinds (labs: test/package; clinics: consultation/procedure/package/other). */
 const ITEM_KIND_KEY = {
@@ -17,6 +18,11 @@ const ITEM_KIND_KEY = {
   procedure: 'billing.kind.procedure', other: 'billing.kind.other',
 } as const satisfies Record<CatalogueItemKind, PartnerKey>;
 /** An item kind in words; a kind this app does not know shows as sent. */
+/** A gender as given on a bill or at a booking (the new-bill form's words); an unknown value as sent. */
+export const genderLabel = (g: string): string => {
+  const key = `newInvoice.gender.${g}`;
+  return g !== 'none' && t.has(key) ? t(key) : g;
+};
 export const itemKindLabel = (kind: string): string =>
   (Object.hasOwn(ITEM_KIND_KEY, kind) ? t(ITEM_KIND_KEY[kind as CatalogueItemKind]) : kind);
 /** Labs only (clinic items have no visit modes). */

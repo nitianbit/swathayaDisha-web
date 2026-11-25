@@ -196,13 +196,13 @@ export function referralRuleBody(terms: ReferralTerms, expectedVersion: number, 
   const whole = (n: number | null, min: number, max = Number.MAX_SAFE_INTEGER) => n !== null && Number.isSafeInteger(n) && n >= min && n <= max;
   // i18n-ignore: programming errors (referralTermsOf checks the fields first), not shown
   if (x.basis === 'percent' && !whole(x.percentBasisPoints, REFERRAL_PERCENT_MIN_BP, REFERRAL_PERCENT_MAX_BP)) throw new Error('Invalid percent');
-  // i18n-ignore: as above
+  // i18n-ignore: a programming error (referralTermsOf checks the fields first), not shown
   if (x.basis === 'fixed' && !whole(x.fixedMinor, REFERRAL_FIXED_MIN_MINOR)) throw new Error('Invalid fixed amount');
-  // i18n-ignore: as above
+  // i18n-ignore: a programming error (referralTermsOf checks the fields first), not shown
   if (x.capMinor !== null && !whole(x.capMinor, 1)) throw new Error('Invalid cap');
-  // i18n-ignore: as above
+  // i18n-ignore: a programming error (referralTermsOf checks the fields first), not shown
   if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) throw new Error('Invalid version');
-  // i18n-ignore: as above
+  // i18n-ignore: a programming error (referralTermsOf checks the fields first), not shown
   if (r.length < 1 || r.length > MAX_REFERRAL_REASON) throw new Error('Invalid reason');
   return {
     basis: x.basis,

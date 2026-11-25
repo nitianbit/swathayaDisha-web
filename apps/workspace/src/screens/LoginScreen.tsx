@@ -1,19 +1,20 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import {
-  ApiError, CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, EMAIL_NOT_REGISTERED_MESSAGE, EMAIL_NOT_REGISTERED_STAFF_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, PARTNER_KIND_LABEL, parseLoginIdentifier,
+  ApiError, EMAIL_NOT_REGISTERED_MESSAGE, EMAIL_NOT_REGISTERED_STAFF_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, PARTNER_KIND_LABEL, parseLoginIdentifier,
   targetKey, targetKind, type OtpTarget, type PartnerSelection,
 } from '@jansetu/api';
-import { Alert, Button, LanguageSwitcher, Parts, TextField, useCooldowns } from '@jansetu/ui';
+import { Alert, Button, LanguageSwitcher, Parts, shared, TextField, useCooldowns } from '@jansetu/ui';
 import { t } from '../i18n/shell/index.ts';
 import { BRAND } from '../Shell.tsx';
 import { messageOf } from '../errors.ts';
-import { useSession, type StaffRole } from '../session.tsx';
+import { noticeWords, useSession, type SessionNotices, type StaffRole } from '../session.tsx';
 
 const RESEND_SECONDS = 30;
 /** The sign-in roles, in this order; each one's words are `login.role.<role>`. */
 const ROLES: readonly StaffRole[] = ['pharmacy', 'partner', 'specialist', 'admin'];
 
-export function LoginScreen({ notice }: { notice?: string }) {
+export function LoginScreen({ notice: codes }: { notice?: SessionNotices }) {
+  const notice = codes?.length ? noticeWords(codes) : undefined;
   const { requestCode, verifyCode, choosePartner } = useSession();
   const [role, setRole] = useState<StaffRole>('pharmacy');
   // WQ9: a mobile number or an email, as typed. Kept in memory only (never stored, logged or put in a URL).
@@ -145,7 +146,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
         {/* WQ15: a refusal that also ended the session is said once (as the notice). */}
         {error && error !== notice && <Alert>{error}</Alert>}
         {/* WQ15: after the clinic refusal ended the session, the way to another workspace: a lab or clinic sign-in. */}
-        {step === 'identify' && notice === CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE && role !== 'partner' && (
+        {step === 'identify' && codes?.length === 1 && codes[0] === 'clinicRefused' && role !== 'partner' && (
           <div className="login-actions">
             <Button variant="secondary" onClick={() => { setRole('partner'); setError(null); focusOn('identifier'); }}>{t('login.chooseAnother')}</Button>
           </div>
@@ -201,7 +202,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
           </form>
         ) : (
           <form onSubmit={verify} className="login-form" noValidate>
-            {target && <p id={sentId}><Parts of={t.rich(targetKind(target) === 'email' ? 'login.sent.email' : 'login.sent.phone', { target: <strong>{maskTarget(target)}</strong> })} /></p>}
+            {target && <p id={sentId}><Parts of={shared.rich(targetKind(target) === 'email' ? 'code.sentEmail' : 'code.sentPhone', { target: <strong>{maskTarget(target)}</strong> })} /></p>}
             <TextField ref={codeRef} label={t('login.code')} inputMode="numeric" autoComplete="one-time-code" maxLength={6}
               aria-describedby={target ? sentId : undefined}
               value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} error={fieldError} />

@@ -2,7 +2,8 @@ import { Fragment, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import { holdsAny, LAB_CONSENT_STATEMENT, LAB_CONSENT_STATEMENT_VERSION, LAB_PAYER, labAssistedApi, labBookerRefusal } from '@jansetu/api';
-import { ErrorState, Loading } from '@jansetu/ui';
+import { ErrorState, Loading, Parts } from '@jansetu/ui';
+import { t } from '../../i18n/partner/index.ts';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
@@ -63,8 +64,8 @@ function LabBook({ ctx }: { ctx: ScopeContext }) {
   const partner = useWorkspacePartner(ctx);
   return (
     <>
-      <PartnerPageHeading ctx={ctx} title="Book consultation" partnerName={partner.data?.name}>
-        Book a doctor for a patient at your lab. You pay Jansetu from the lab’s wallet, or by card or UPI; you collect the fee from the patient.
+      <PartnerPageHeading ctx={ctx} title={t('labConsult.book.title')} partnerName={partner.data?.name}>
+        {t('labConsult.book.intro')}
       </PartnerPageHeading>
       <LabOnly ctx={ctx}><LabBookFlow ctx={ctx} /></LabOnly>
     </>
@@ -75,7 +76,7 @@ function LabBookFlow({ ctx }: { ctx: ScopeContext }) {
   const { booker, branches } = useLabBooker(ctx);
   // The branch is chosen from the member's branches, so they are read first. WQ24b: gated on the data, so a failed read
   // again never unmounts a booking (or its payment) under way.
-  if (!branches.data) return branches.isError ? <ErrorState message={messageOf(branches.error)} onRetry={() => void branches.refetch()} /> : <Loading label="Loading your branches…" />;
+  if (!branches.data) return branches.isError ? <ErrorState message={messageOf(branches.error)} onRetry={() => void branches.refetch()} /> : <Loading label={t('labConsult.loadingBranches')} />;
   return <BookConsultation booker={booker} />;
 }
 
@@ -87,9 +88,8 @@ function LabBooked({ ctx }: { ctx: ScopeContext }) {
   const partner = useWorkspacePartner(ctx);
   return (
     <>
-      <PartnerPageHeading ctx={ctx} title="Booked consultations" partnerName={partner.data?.name}>
-        Consultations your lab booked for patients, newest first. Open one to cancel it, join the call or see the prescription.
-        {' '}<Link to={BOOK}>Book a new one</Link>.
+      <PartnerPageHeading ctx={ctx} title={t('labConsult.booked.title')} partnerName={partner.data?.name}>
+        <Parts of={t.rich('labConsult.booked.intro', { link: <Link to={BOOK}>{t('labConsult.booked.bookNew')}</Link> })} />
       </PartnerPageHeading>
       <LabOnly ctx={ctx}><LabBookedList ctx={ctx} /></LabOnly>
     </>
@@ -106,8 +106,8 @@ export function LabBookedConsultationScreen() {
     <MemberOnly>
       {(ctx) => (
         <>
-          <Link to={LIST} className="ws-back"><ArrowLeft size={16} aria-hidden="true" /> Booked consultations</Link>
-          <PageHeading title="Consultation" />
+          <Link to={LIST} className="ws-back"><ArrowLeft size={16} aria-hidden="true" /> {t('labConsult.booked.title')}</Link>
+          <PageHeading title={t('labConsult.detail.title')} />
           <LabOnly ctx={ctx}><LabDetail key={bookingId} ctx={ctx} bookingId={bookingId} /></LabOnly>
         </>
       )}

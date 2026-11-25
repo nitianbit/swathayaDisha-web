@@ -27,7 +27,7 @@ const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim(
 // N2: in the phone app the app starts only once the secure store is ready (a retry screen otherwise).
 // Phase 6: the language (and its words) before the first render; English unless this app offers another.
 const root = createRoot(document.getElementById('root')!);
-void startLanguage('customer').then(() => startApp(
+void startLanguage('customer').catch(() => undefined).then(() => startApp(
   () => root.render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
@@ -39,7 +39,7 @@ void startLanguage('customer').then(() => startApp(
   ),
   (retry) => root.render(
     <main className="login" role="alert">
-      <p>{t('app.secureStoreFailed')}</p>
+      <p>{shared('device.secureStorage')}</p>
       <button type="button" onClick={retry}>{shared('action.tryAgain')}</button>
     </main>,
   ),

@@ -60,6 +60,16 @@ export default {
   /** Shown instead of the start-up screen while the first sign-in check gets no answer. */
   'state.reconnectingStart': 'Reconnecting… We could not reach the server to resume your sign-in. We keep trying.',
 
+  /** A page that does not exist, or that this account may not open. */
+  'page.notFound': 'This page does not exist or is not available to your account.',
+  /** The phone app could not open the phone's secure storage at start. */
+  'device.secureStorage': 'The app could not open this phone\'s secure storage, which keeps you signed in safely.',
+  /** On the code step of a sign-in; {target} is the masked phone number or email, in bold. */
+  'code.sentPhone': 'We sent a 6-digit code to your phone {target}.',
+  'code.sentEmail': 'We sent a 6-digit code to your email {target}.',
+  /** Under a wallet's history while it is empty. */
+  'wallet.historyEmpty': 'Top-ups and bookings paid from the wallet are listed here.',
+
   /** Column or field name. */
   'field.status': 'Status',
   'field.amount': 'Amount',

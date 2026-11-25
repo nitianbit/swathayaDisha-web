@@ -17,7 +17,7 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
-import { BILL_READERS, BillLink, money } from './billing.tsx';
+import { BILL_READERS, BillLink, genderLabel, money } from './billing.tsx';
 import { OwnedCancel } from '../pharmacy/ownedCancel.tsx';
 import {
   formatDay, LabOnly, LabPayment, labStatusTone, ReportPreview, slotLabel, useNow, useReportViewer, ViewFileButton,
@@ -35,11 +35,6 @@ const LIFECYCLE: readonly LabLifecycleKey[] = [
 const cancelReason = (reason: string) => {
   const key = `labBooking.cancelReason.${reason}`;
   return t.has(key) ? t(key) : reason;
-};
-/** A gender as given at booking (the new-bill form's words). */
-const genderLabel = (g: string) => {
-  const key = `newInvoice.gender.${g}`;
-  return g !== 'none' && t.has(key) ? t(key) : g;
 };
 
 /**
@@ -138,7 +133,7 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
   return (
     <>
       <PageHeading title={t('labBooking.title', { name: b.patient.name })}>
-        {ctx.adminHome ? <>{partnerName === undefined ? t('scope.managingThis') : t('scope.managing', { name: partnerName })} </> : null}
+        {ctx.adminHome ? <>{partnerName == null ? t('scope.managingThis') : t('scope.managing', { name: partnerName })} </> : null}
         {slotLabel(b.slot)} · {LAB_VISIT_MODE_LABEL[b.visitMode]} · {branchName}
       </PageHeading>
       {notice && <Alert tone="ok">{notice}</Alert>}

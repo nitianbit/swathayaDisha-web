@@ -71,7 +71,7 @@ export function LabOnly({ ctx, children }: { ctx: ScopeContext; children: ReactN
     const name = partner.data.name;
     return (
       <Empty title={t('labs.onlyLabs.title')}>
-        {name === undefined ? t('labs.onlyLabs.bodyUnnamed') : t('labs.onlyLabs.body', { name })}
+        {name == null ? t('labs.onlyLabs.bodyUnnamed') : t('labs.onlyLabs.body', { name })}
       </Empty>
     );
   }

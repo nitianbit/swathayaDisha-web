@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiError, doctorToolsApi, HEARTBEAT_MS, instantRefusal, type Presence, type PresenceInput } from '@jansetu/api';
+import { useLanguage } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
@@ -73,7 +74,8 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
   const [live, setLive] = useState(false);
   const [online, setOnline] = useState<boolean | null>(null);
   const [lastBeatAt, setLastBeatAt] = useState<number | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  // Words made when shown (the provider outlives a language switch): a function, not the sentence.
+  const [problemWords, setProblem] = useState<(() => string) | null>(null);
   const [busy, setBusy] = useState(false);
   /** Bumped by every change and read: an answer for an older state is ignored. */
   const generation = useRef(0);
@@ -161,7 +163,8 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
     if (started.current) return;
     started.current = true;
     if (memory.get(PENDING_SLOT)) {
-      setUnconfirmed({ message: t('presence.aChangeSentBeforeThis') });
+      // A getter: the words are read when shown, so a language switch (this provider stays mounted) shows the new ones.
+      setUnconfirmed({ get message() { return t('presence.aChangeSentBeforeThis'); } });
     }
     void refresh()
       .catch((err: unknown) => { if (!aborted(err)) setLoadError(messageOf(err)); })
@@ -231,11 +234,11 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
           generation.current += 1;
           setLive(false);
           setOnline(false);
-          setProblem(instantRefusal(err) ?? messageOf(err));
+          setProblem(() => () => instantRefusal(err) ?? messageOf(err));
           void refresh().catch(() => undefined);
           return true;
         }
-        setProblem(t('presence.theLastHeartbeatDidNot', { value: messageOf(err) }));
+        setProblem(() => () => t('presence.theLastHeartbeatDidNot', { value: messageOf(err) }));
       } finally {
         beatInFlight.current = false;
       }
@@ -266,6 +269,8 @@ export function DoctorPresenceProvider({ children }: { children: ReactNode }) {
   }, [beating, doctor, refresh]);
 
   const confirmedOn = beating && unconfirmed === null && !busy;
+  useLanguage(); // the problem's words are made again in a new language
+  const problem = problemWords ? problemWords() : null;
   const value = useMemo(() => ({ presence, shown, loading, loadError, unconfirmed, live, confirmedOn, online, lastBeatAt, problem, busy, set, refresh }),
     [presence, shown, loading, loadError, unconfirmed, live, confirmedOn, online, lastBeatAt, problem, busy, set, refresh]);
   return <PresenceContext.Provider value={value}>{children}</PresenceContext.Provider>;

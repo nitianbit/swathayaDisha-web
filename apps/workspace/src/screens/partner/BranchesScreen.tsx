@@ -4,6 +4,7 @@ import {
   canReopenBranches, GST_STATE_CODE_PATTERN, hasGlobalScope, HHMM_PATTERN, ISO_DATE_PATTERN, MAX_HOLIDAYS, MAX_NAME, PARTNER_PHONE_PATTERN, tooLongWords, WEEKDAYS,
   type Branch, type BranchInput, type BranchServices, type PartnerKind, type Weekday, type WeeklyHours,
 } from '@jansetu/api';
+import { formatDateWith } from '@jansetu/i18n';
 import { Alert, Button, Empty, ErrorState, Loading, shared, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { dirtyKeys, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft, type DraftState } from '../../draft.ts';
@@ -11,6 +12,10 @@ import { messageOf } from '../../errors.ts';
 import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 import { t, type PartnerKey } from '../../i18n/partner/index.ts';
+
+/** A weekday's short name in the current language ("Mon"), from Intl: never cut from the long name. */
+const WEEK_ORDER = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
+const shortWeekday = (d: (typeof WEEK_ORDER)[number]) => formatDateWith(Date.UTC(2024, 0, 1 + WEEK_ORDER.indexOf(d)), { weekday: 'short', timeZone: 'UTC' });
 
 const SERVICE_KEY = {
   homeCollection: 'branches.service.homeCollection', inLab: 'branches.service.inLab', inClinic: 'branches.service.inClinic',
@@ -170,7 +175,7 @@ function Branches({ ctx }: { ctx: ScopeContext }) {
                         <td>{SERVICES.filter((k) => b.services?.[k]).map((k) => t(SERVICE_KEY[k])).join(', ') || t('branches.noServices')}</td>
                         <td>
                           {WEEKDAYS.filter((d) => b.hours?.[d.value])
-                            .map((d) => t('branches.dayHours', { day: d.label.slice(0, 3), open: b.hours![d.value]!.open, close: b.hours![d.value]!.close }))
+                            .map((d) => t('branches.dayHours', { day: shortWeekday(d.value), open: b.hours![d.value]!.open, close: b.hours![d.value]!.close }))
                             .join(', ') || t('branches.noHours')}
                         </td>
                         <td>

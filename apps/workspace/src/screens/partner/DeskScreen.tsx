@@ -461,7 +461,7 @@ const patientName = (r: Pick<ClinicAppointment, 'patient'>) => r.patient?.name |
 /** Q14: who is being seen, when it is a family member: "Mother of Kiran Shah". */
 const familyLine = (r: Pick<ClinicAppointment, 'patient'>) =>
   (!r.patient?.relationship ? ''
-    : r.patient.accountName === undefined ? t('desk.familyLineHolder', { relation: r.patient.relationship })
+    : r.patient.accountName == null ? t('desk.familyLineHolder', { relation: r.patient.relationship })
     : t('desk.familyLine', { relation: r.patient.relationship, name: r.patient.accountName }));
 /** The family member named in a desk booking request, if any. */
 const familyOf = (body: DeskPendingBody) => (body.request.patient && 'name' in body.request.patient ? body.request.patient.name : undefined);
@@ -908,8 +908,8 @@ function Reschedule({ ctx, clinic, appt, doctors, branches, now, disabled, perfo
 
 /** A free slot: "09:00–09:30 (2 free)". */
 const slotOption = (s: DeskSlot) => t('desk.slotOption', { start: clock(s.startTime), end: clock(s.endTime), free: s.seatsLeft });
-const noPlaces = (a: ClinicAppointment) => (a.doctorName === undefined ? t('desk.move.noPlacesUnnamed') : t('desk.move.noPlaces', { doctor: a.doctorName }));
-const noSlot = (a: ClinicAppointment) => (a.doctorName === undefined ? t('desk.move.noSlotUnnamed') : t('desk.move.noSlot', { doctor: a.doctorName }));
+const noPlaces = (a: ClinicAppointment) => (a.doctorName == null ? t('desk.move.noPlacesUnnamed') : t('desk.move.noPlaces', { doctor: a.doctorName }));
+const noSlot = (a: ClinicAppointment) => (a.doctorName == null ? t('desk.move.noSlotUnnamed') : t('desk.move.noSlot', { doctor: a.doctorName }));
 
 /** Q14: a free slot of the same doctor at a branch of this clinic in scope (any day), for the one move of a desk no-show. */
 function DeskSlotPicker({ ctx, clinic, appt, doctors, branches, now, onChoose }: {

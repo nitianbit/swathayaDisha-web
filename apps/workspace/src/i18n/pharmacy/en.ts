@@ -940,7 +940,7 @@ export default {
   'wallet.loadingYourWallet': 'Loading your wallet…',
   'wallet.moneyInYourWallet': 'Money in your wallet',
   'wallet.owedToJansetu': 'Owed to Jansetu',
-  'wallet.cardMoneyWithdrawalsComingLater': 'Card money (withdrawals coming later)',
+  'wallet.cardMoney': 'Card money',
   'wallet.walletHistory': 'Wallet history',
   'wallet.loadingWalletHistory': 'Loading wallet history…',
   'wallet.noMoneyInOrOut': 'No money in or out yet',

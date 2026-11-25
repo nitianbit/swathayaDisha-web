@@ -5,7 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 import {
   ADMIN_ACTOR, OBJECT_ID_PATTERN, partnerBillingApi, partnerLabsApi, partnerWorkspaceApi, type PartnerActorView, type PartnerScope,
 } from '@jansetu/api';
-import { Empty } from '@jansetu/ui';
+import { Empty, shared } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { t } from '../../i18n/partner/index.ts';
 import { useSession, useStaff } from '../../session.tsx';
@@ -83,7 +83,7 @@ export const branchLabel = (names: Map<string, string>, ids: readonly string[]) 
 export const scopeIdentity = (ctx: ScopeContext) => ctx.key.join(':');
 
 export function NoSuchPartner() {
-  return <Empty title={t('scope.notFound.title')}>{t('scope.notFound.body')}</Empty>;
+  return <Empty title={t('scope.notFound.title')}>{shared('page.notFound')}</Empty>;
 }
 
 /** Page heading; for admins it names the partner being managed and links back to its admin page. */
@@ -93,12 +93,12 @@ export function PartnerPageHeading({ ctx, title, partnerName, children }:
     <>
       {ctx.adminHome && (
         <Link className="ws-back" to={ctx.adminHome}>
-          <ArrowLeft size={16} aria-hidden="true" /> {partnerName === undefined ? t('scope.backToPartner') : t('scope.backTo', { name: partnerName })}
+          <ArrowLeft size={16} aria-hidden="true" /> {partnerName == null ? t('scope.backToPartner') : t('scope.backTo', { name: partnerName })}
         </Link>
       )}
       <PageHeading title={title}>
         {ctx.adminHome
-          ? <>{partnerName === undefined ? t('scope.managingThis') : t('scope.managing', { name: partnerName })} {children}</>
+          ? <>{partnerName == null ? t('scope.managingThis') : t('scope.managing', { name: partnerName })} {children}</>
           : children}
       </PageHeading>
     </>

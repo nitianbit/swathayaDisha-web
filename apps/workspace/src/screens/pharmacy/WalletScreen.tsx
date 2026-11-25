@@ -104,7 +104,7 @@ export function WalletBalance({ wallet, cardMoney = false }: { wallet: UseQueryR
               {Number(wallet.data?.receivableMinor ?? 0) > 0 && (
                 <div className="fin-card"><dt>{t('wallet.owedToJansetu')}</dt><dd>{formatRupees(Number(wallet.data?.receivableMinor) / 100)}</dd></div>
               )}
-              {cardMoney && <div className="fin-card"><dt>{t('wallet.cardMoneyWithdrawalsComingLater')}</dt><dd>{formatRupees(Number(wallet.data?.withdrawableMinor ?? 0) / 100)}</dd></div>}
+              {cardMoney && <div className="fin-card"><dt>{t('wallet.cardMoney')}</dt><dd>{formatRupees(Number(wallet.data?.withdrawableMinor ?? 0) / 100)}</dd></div>}
             </dl>
             {hold && <Alert tone="warn">{hold}</Alert>}
           </>

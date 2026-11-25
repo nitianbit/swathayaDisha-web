@@ -623,7 +623,7 @@ export default {
   'adminWallet.moneyIn': 'Money in the wallet',
   'adminWallet.owed': 'Owed to Jansetu',
   /** Money paid in by card; it cannot be withdrawn yet. */
-  'adminWallet.cardMoney': 'Card money (withdrawals coming later)',
+  'adminWallet.cardMoney': 'Card money',
   'adminWallet.owing': 'The wallet owes {amount} to Jansetu after a disputed card payment. It cannot pay for bookings. Money added clears this first.',
   'adminWallet.onHold': 'The wallet is on hold, so it cannot pay for bookings. Money can still be added.',
   /** {reason}: the reason an admin typed when putting the wallet on hold. */

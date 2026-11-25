@@ -39,7 +39,7 @@ export function ClinicOnly({ ctx, children }: { ctx: ScopeContext; children: Rea
     const name = partner.data?.name;
     return (
       <Empty title={t('clinic.onlyClinics.title')}>
-        {name === undefined ? t('clinic.onlyClinics.bodyUnnamed') : t('clinic.onlyClinics.body', { name })}
+        {name == null ? t('clinic.onlyClinics.bodyUnnamed') : t('clinic.onlyClinics.body', { name })}
       </Empty>
     );
   }

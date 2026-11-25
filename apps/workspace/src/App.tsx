@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { createHashRouter, Outlet, RouterProvider, useLocation } from 'react-router';
-import { Empty, LanguageScope, Loading } from '@jansetu/ui';
+import { Empty, LanguageScope, Loading, shared } from '@jansetu/ui';
 import { Shell } from './Shell.tsx';
 import { pagesFor } from './modules.tsx';
 import { t } from './i18n/shell/index.ts';
@@ -24,7 +24,7 @@ function routerFor(user: StaffUser) {
     element: <Shell><FocusOnNavigate /><Outlet /></Shell>,
     children: [
       ...pagesFor(user).map((p) => ({ path: p.path, element: p.element })),
-      { path: '*', element: <Empty title={t('app.notFound.title')}>{t('app.notFound.body')}</Empty> },
+      { path: '*', element: <Empty title={t('app.notFound.title')}>{shared('page.notFound')}</Empty> },
     ],
   }]);
 }

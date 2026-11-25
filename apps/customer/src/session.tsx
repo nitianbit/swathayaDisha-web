@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  ApiError, authApi, clearSignOutPending, clearWebSignOutPending, createApiClient, isTransientSessionError, markSignOutPending, markWebSignOutPending,
+  ApiError, authApi, clearSignOutPending, clearWebSignOutPending, createApiClient, isTransientSessionError, networkWords, markSignOutPending, markWebSignOutPending,
   markerStore, nativeSecureStore, nativeSignOut, refreshTokenKey, rotateNative, isSignedOutAnswer, samePrincipal, sessionChannel, signOutState, webSignOutState,
   withSessionLock,
   type ApiClient, type OtpTarget, type PendingMarker, type Principal,
@@ -232,7 +232,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       clearTimeout(retry.current.timer);
       const n = retry.current.n + 1;
       retry.current = { n, timer: setTimeout(() => { if (gen === generation.current) void renewRef.current(null).catch(() => undefined); }, Math.min(60, 2 ** n) * 1000) };
-      throw err instanceof ApiError ? err : new ApiError(0, t('session.error.network'), 'NETWORK');
+      throw err instanceof ApiError ? err : new ApiError(0, networkWords(), 'NETWORK');
     }
     if (gen !== generation.current) return null;
     if (!samePrincipal(r.principal, principal.current)) {

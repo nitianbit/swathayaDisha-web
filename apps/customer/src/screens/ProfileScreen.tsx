@@ -203,7 +203,7 @@ function EmailSection({ profile }: { profile: CustomerProfile }) {
         </form>
       ) : (
         <form className="stack" noValidate onSubmit={(e) => void verify(e)}>
-          <p><Parts of={t.rich('code.sentEmail', { target: <strong>{maskTarget({ email: sentTo })}</strong> })} /></p>
+          <p><Parts of={shared.rich('code.sentEmail', { target: <strong>{maskTarget({ email: sentTo })}</strong> })} /></p>
           <TextField ref={codeRef} label={t('common.sixDigitCode')} inputMode="numeric" autoComplete="one-time-code" maxLength={6}
             value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} error={fieldError} />
           <Button type="submit" busy={busy}>{t('profile.verifyEmail')}</Button>

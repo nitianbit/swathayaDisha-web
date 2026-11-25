@@ -31,7 +31,7 @@ export function useDoctor(): DoctorContext | null {
 }
 
 export function NotADoctor() {
-  return <Empty title={t('doctor.pageNotFound')}>{t('doctor.thisPageDoesNotExist')}</Empty>;
+  return <Empty title={t('doctor.pageNotFound')}>{shared('page.notFound')}</Empty>;
 }
 
 export const useDoctorProfile = (d: DoctorContext) => useQuery({ queryKey: [...d.key, 'profile'], queryFn: () => d.api.profile() });

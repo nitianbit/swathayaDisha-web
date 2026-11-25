@@ -20,7 +20,6 @@ export default {
 
   // ── scope.tsx: every partner page ──
   'scope.notFound.title': 'Page not found',
-  'scope.notFound.body': 'This page does not exist or is not available to your account.',
   /** Link above the page title, for platform admins managing a partner. */
   'scope.backTo': 'Back to {name}',
   'scope.backToPartner': 'Back to the partner',
@@ -82,7 +81,6 @@ export default {
   'labWallet.title': 'Wallet',
   'labWallet.intro': 'Your lab’s Jansetu wallet. Add money by card or UPI; it pays for bookings your lab makes for patients.',
   'labWallet.addMoney': 'Add money',
-  'labWallet.historyEmpty': 'Top-ups and bookings paid from the wallet are listed here.',
   /** Screen-reader name of the pager under the wallet history. */
   'labWallet.historyPages': 'Wallet history pages',
   'labWallet.topups': 'Top-ups',
@@ -726,7 +724,7 @@ export default {
   'newInvoice.backToBills': 'Back to bills',
   'newInvoice.title': 'New bill',
   'newInvoice.series': 'Issued in {name}’s own series. The server works out the final amounts.',
-  'newInvoice.seriesUnnamed': 'Issued in this’s own series. The server works out the final amounts.',
+  'newInvoice.seriesUnnamed': 'Issued in this partner’s own series. The server works out the final amounts.',
   'newInvoice.unconfirmed': 'Unconfirmed bill',
   'newInvoice.giveUp': 'Give up this bill',
   'newInvoice.noBranch.title': 'No branch to bill from',
@@ -1562,4 +1560,13 @@ export default {
   'staff.registration.remove': 'Remove registration',
   'staff.registration.removeName': 'Remove the registration of {name}',
   'staff.registration.remove.consequence': '{name} can no longer release reports until a registration is added again. Reports already released keep the registration they were released under.',
+  // WQ24: a lab books a doctor consultation for a walk-in patient.
+  'labConsult.book.title': 'Book consultation',
+  'labConsult.book.intro': 'Book a doctor for a patient at your lab. You pay Jansetu from the lab’s wallet, or by card or UPI; you collect the fee from the patient.',
+  'labConsult.loadingBranches': 'Loading your branches…',
+  'labConsult.booked.title': 'Booked consultations',
+  /** {link} is the link "Book a new one". */
+  'labConsult.booked.intro': 'Consultations your lab booked for patients, newest first. Open one to cancel it, join the call or see the prescription. {link}.',
+  'labConsult.booked.bookNew': 'Book a new one',
+  'labConsult.detail.title': 'Consultation',
 } as const;

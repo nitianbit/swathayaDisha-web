@@ -64,13 +64,13 @@ function ReferralCuts({ kind, bookerId, scopeKey }: { kind: ReferralBookerKind; 
   });
   const name = booker.data?.name;
   const back = kind === 'pharmacy' ? `/admin/pharmacies/${bookerId}` : `/admin/partners/${bookerId}`;
-  const backLabel = name !== undefined ? t('referralCuts.backTo', { name })
+  const backLabel = name != null ? t('referralCuts.backTo', { name })
     : kind === 'pharmacy' ? t('referralCuts.backToPharmacy') : t('referralCuts.backToLab');
   return (
     <>
       <Link className="ws-back" to={back}><ArrowLeft size={16} aria-hidden="true" /> {backLabel}</Link>
       <PageHeading title={name ? t('referralCuts.titleFor', { name }) : t('referralCuts.title')}>
-        {name !== undefined ? t('referralCuts.intro', { name }) : t('referralCuts.introNoName')}
+        {name != null ? t('referralCuts.intro', { name }) : t('referralCuts.introNoName')}
       </PageHeading>
       {booker.isPending ? <Loading label={shared('state.loading')} />
         : booker.isError ? <ErrorState message={messageOf(booker.error)} onRetry={() => void booker.refetch()} />

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { DOCTOR_WALLET_CLOSED_MESSAGE, doctorWalletApi, doctorWithdrawalsApi, isDoctorWalletClosed } from '@jansetu/api';
-import { Alert } from '@jansetu/ui';
+import { Alert, shared } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 import { CursorPager, useCursorPages } from '../pharmacy/cursorList.tsx';
@@ -50,7 +50,7 @@ function Wallet({ doctorId }: { doctorId: string }) {
           {/* WQ29 (r32): withdrawals to the bank (switched off on the server until allowed). */}
           <WithdrawSection source={{ owner: `doctor:${doctorId}`, walletKey: key, api: doctorWithdrawalsApi(api), canAct: true,
             destination: { link: '/doctor/earnings', page: 'earnings' } }} />
-          <WalletHistory q={entries} empty={t('doctorWallet.topUpsAndBookingsPaid')} first={history.page === 1}
+          <WalletHistory q={entries} empty={shared('wallet.historyEmpty')} first={history.page === 1}
             pager={<CursorPager pages={history} nextCursor={entries.data?.nextCursor} label={t('doctorWallet.walletHistoryPages')} />} />
         </>
       ) : (

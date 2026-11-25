@@ -214,7 +214,7 @@ test('a lab tops up its wallet by Razorpay: one keyed order, the proof verified,
   await nav(page).getByRole('link', { name: 'Wallet', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Wallet', level: 1 })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Balance' })).toContainText('₹0.00');
-  await expect(page.getByRole('region', { name: 'Balance' })).toContainText('Card money (withdrawals coming later)');
+  await expect(page.getByRole('region', { name: 'Balance' })).toContainText('Card money');
   await page.getByLabel('Amount to add (₹)').fill('50001');
   await page.getByRole('button', { name: 'Top up' }).click();
   await expect(page.getByText('The largest top-up at one time is ₹50,000.00.')).toBeVisible();

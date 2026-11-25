@@ -163,7 +163,7 @@ function Invitations({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) 
       await clinic.revokeInvite(inv._id);
       if (mounted.current) {
         const name = doctorName(inv);
-        setNotice(name === undefined ? t('clinicDoctors.revokedUnnamed') : t('clinicDoctors.revoked', { name }));
+        setNotice(name == null ? t('clinicDoctors.revokedUnnamed') : t('clinicDoctors.revoked', { name }));
       }
     } finally {
       revoking.current.delete(inv._id);
@@ -336,7 +336,7 @@ function AddDoctor({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
       {op && !(sending && op.attempts === 1 && !op.uncertain) ? (
         <PendingOpPanel key={op.attempts} label={t('clinicDoctors.link.unconfirmed')} op={op} busy={sending} onResend={() => void send(op)}
           fetchPage={lookIn(op)}
-          onFound={() => { if (!owns(op)) return; end(op); reset(); setNotice(op.body?.name === undefined ? t('clinicDoctors.link.foundUnnamed') : t('clinicDoctors.link.found', { name: op.body.name })); }}
+          onFound={() => { if (!owns(op)) return; end(op); reset(); setNotice(op.body?.name == null ? t('clinicDoctors.link.foundUnnamed') : t('clinicDoctors.link.found', { name: op.body.name })); }}
           forget={{ label: t('clinicDoctors.link.forget'), confirmLabel: t('clinicDoctors.link.forgetConfirm'),
             consequence: t('clinicDoctors.link.forgetConsequence'),
             onForget: () => { if (owns(op)) end(op); } }}

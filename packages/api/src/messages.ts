@@ -3,6 +3,8 @@ import { t } from './i18n/index.ts';
 
 /** "Use at most {max} characters." under a field: the same words on every form. */
 export const tooLongWords = (max: number): string => t('field.tooLong', { max });
+/** "Could not reach the server. Check your connection and try again.": one sentence for every app. */
+export const networkWords = (): string => t('errors.NETWORK');
 
 /**
  * One sentence a person can act on, for both apps (docs/I18N_PLAN.md §6). An area's own refusal words come first, in

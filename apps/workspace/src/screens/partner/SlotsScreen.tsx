@@ -14,7 +14,8 @@ import { formatDay, LabOnly, modesOf, slotLabel, useNow, useScopedBranches } fro
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 import { t, type PartnerKey } from '../../i18n/partner/index.ts';
 
-const DAY_LABEL = Object.fromEntries(WEEKDAYS.map((d) => [d.value, d.label])) as Record<Weekday, string>;
+/** A weekday in words, read at render (the list's labels follow the language). */
+const dayLabel = (d: Weekday) => WEEKDAYS.find((x) => x.value === d)?.label ?? d;
 /** A schedule named inside other sentences ("Weekly template: home collection at Main Road"). */
 const WHERE_KEY = { home: 'slots.where.home', lab: 'slots.where.lab' } as const satisfies Record<VisitMode, PartnerKey>;
 
@@ -323,7 +324,7 @@ function ManualSlotForm({ ctx, branch, mode, defaultDate, onClose, onAdded }: {
 type TemplateDraft = { slotMinutes: string; capacity: string } & Record<Weekday, SlotWindow[]>;
 /** A template field named in a "changed by someone else" notice. */
 const draftLabel = (k: keyof TemplateDraft) => (k === 'slotMinutes' ? t('slots.field.slotMinutes')
-  : k === 'capacity' ? t('slots.field.capacity') : t('slots.field.dayTimes', { day: DAY_LABEL[k] }));
+  : k === 'capacity' ? t('slots.field.capacity') : t('slots.field.dayTimes', { day: dayLabel(k) }));
 
 const toDraft = (x: SlotTemplateInput): TemplateDraft => ({
   slotMinutes: String(x.slotMinutes), capacity: String(x.capacity),
@@ -490,18 +491,18 @@ function TemplateForm({ ctx, branch, mode, where, saved, reread, templateKey, on
       </div>
       {TEMPLATE_WEEKDAYS.map((day) => (
         <fieldset key={day} className="ws-line" aria-describedby={errors[day] ? `tpl-${day}-err` : undefined}>
-          <legend>{tpl[day].length === 0 ? t('slots.template.dayNone', { day: DAY_LABEL[day] }) : t('slots.template.dayCount', { day: DAY_LABEL[day], count: counts[day] })}</legend>
+          <legend>{tpl[day].length === 0 ? t('slots.template.dayNone', { day: dayLabel(day) }) : t('slots.template.dayCount', { day: dayLabel(day), count: counts[day] })}</legend>
           {tpl[day].map((w, i) => (
             <div key={i} className="ws-window">
-              <TextField label={t('slots.template.windowFrom', { day: DAY_LABEL[day], n: i + 1 })} type="time" value={w.start} disabled={confirming} onChange={(e) => setWindow(day, i, 'start', e.target.value)} />
-              <TextField label={t('slots.template.windowTo', { day: DAY_LABEL[day], n: i + 1 })} type="time" value={w.end} disabled={confirming} onChange={(e) => setWindow(day, i, 'end', e.target.value)} />
-              <Button variant="ghost" disabled={confirming} aria-label={t('slots.template.removeWindow', { day: DAY_LABEL[day], n: i + 1 })}
+              <TextField label={t('slots.template.windowFrom', { day: dayLabel(day), n: i + 1 })} type="time" value={w.start} disabled={confirming} onChange={(e) => setWindow(day, i, 'start', e.target.value)} />
+              <TextField label={t('slots.template.windowTo', { day: dayLabel(day), n: i + 1 })} type="time" value={w.end} disabled={confirming} onChange={(e) => setWindow(day, i, 'end', e.target.value)} />
+              <Button variant="ghost" disabled={confirming} aria-label={t('slots.template.removeWindow', { day: dayLabel(day), n: i + 1 })}
                 onClick={() => d.update((x) => ({ ...x, [day]: x[day].filter((_, j) => j !== i) }))}>{shared('action.remove')}</Button>
             </div>
           ))}
           {errors[day] && <span id={`tpl-${day}-err`} className="j-field__error">{errors[day]}</span>}
           <div>
-            <Button variant="secondary" disabled={confirming || tpl[day].length >= MAX_WINDOWS_PER_DAY} aria-label={t('slots.template.addWindowOn', { day: DAY_LABEL[day] })}
+            <Button variant="secondary" disabled={confirming || tpl[day].length >= MAX_WINDOWS_PER_DAY} aria-label={t('slots.template.addWindowOn', { day: dayLabel(day) })}
               onClick={() => d.update((x) => ({ ...x, [day]: [...x[day], { start: '', end: '' }] }))}>{t('slots.template.addWindow')}</Button>
           </div>
         </fieldset>
@@ -520,8 +521,8 @@ function TemplateForm({ ctx, branch, mode, where, saved, reread, templateKey, on
             <ul className="ws-list">
               {TEMPLATE_WEEKDAYS.map((day) => (
                 <li key={day}>
-                  {tpl[day].length === 0 ? t('slots.template.dayNone', { day: DAY_LABEL[day] })
-                    : t('slots.template.dayWindows', { day: DAY_LABEL[day], windows: tpl[day].map((w) => `${w.start}–${w.end}`).join(', '), count: counts[day] })}
+                  {tpl[day].length === 0 ? t('slots.template.dayNone', { day: dayLabel(day) })
+                    : t('slots.template.dayWindows', { day: dayLabel(day), windows: tpl[day].map((w) => `${w.start}–${w.end}`).join(', '), count: counts[day] })}
                 </li>
               ))}
             </ul>

@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import {
   ApiError, EMAIL_NOT_REGISTERED_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, parseLoginIdentifier, targetKey, targetKind, type OtpTarget,
 } from '@jansetu/api';
-import { Alert, Button, LanguageSwitcher, Parts, TextField, useCooldowns } from '@jansetu/ui';
+import { Alert, Button, LanguageSwitcher, Parts, shared, TextField, useCooldowns } from '@jansetu/ui';
 import { messageOf } from '../common.tsx';
 import { t } from '../i18n/index.ts';
 import { useSession, type SessionNotices } from '../session.tsx';
@@ -98,7 +98,7 @@ export function LoginScreen({ notice }: { notice?: SessionNotices }) {
           </form>
         ) : (
           <form onSubmit={verify} className="stack" noValidate>
-            {target && <p id={sentId}><Parts of={t.rich(targetKind(target) === 'phone' ? 'code.sentPhone' : 'code.sentEmail', { target: <strong>{maskTarget(target)}</strong> })} /></p>}
+            {target && <p id={sentId}><Parts of={shared.rich(targetKind(target) === 'phone' ? 'code.sentPhone' : 'code.sentEmail', { target: <strong>{maskTarget(target)}</strong> })} /></p>}
             <TextField ref={codeRef} label={t('common.sixDigitCode')} inputMode="numeric" autoComplete="one-time-code" maxLength={6}
               aria-describedby={target ? sentId : undefined}
               value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} error={fieldError} />

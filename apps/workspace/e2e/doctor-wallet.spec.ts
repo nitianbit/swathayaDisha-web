@@ -155,7 +155,7 @@ test('a doctor tops up the wallet by Razorpay: one keyed order, the proof to /pa
   await signIn(page);
   await nav(page).getByRole('link', { name: 'Wallet', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Wallet', level: 1 })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Balance' })).toContainText('Card money (withdrawals coming later)');
+  await expect(page.getByRole('region', { name: 'Balance' })).toContainText('Card money');
   await page.getByLabel('Amount to add (₹)').fill('300');
   await page.getByRole('button', { name: 'Top up' }).click();
   await expect(page.getByText('₹300.00 was added to your wallet.')).toBeVisible();
@@ -243,7 +243,7 @@ test('admin: the doctor’s wallet from the doctor page; money added once after 
   await page.goto(`/#/admin/doctors/${DOC}`);
   await page.getByRole('link', { name: 'Wallet', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Wallet: Dr Asha Mehta' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Balance' })).toContainText('Card money (withdrawals coming later)');
+  await expect(page.getByRole('region', { name: 'Balance' })).toContainText('Card money');
   const add = page.getByRole('form', { name: 'Add money to the wallet' });
   await expect(add).toContainText('or the doctor could be paid twice');
   await add.getByLabel('Amount to add (₹)').fill('1000');

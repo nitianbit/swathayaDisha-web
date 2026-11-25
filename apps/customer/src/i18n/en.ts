@@ -80,7 +80,6 @@ export default {
   'app.notFound.title': 'Page not found',
   'app.notFound.body': 'This page does not exist.',
   'app.signingIn': 'Signing you in…',
-  'app.secureStoreFailed': 'The app could not open this phone\'s secure storage, which keeps you signed in safely.',
 
   /** Shown on the sign-in screen; several can show together, one after another. */
   'session.notice.signedOutHere': 'You are signed out on this device. The server has not confirmed it yet: this app keeps trying, and nobody is signed back in here until it does.',
@@ -90,7 +89,6 @@ export default {
   'session.notice.someoneElse': 'Someone else signed in on this browser. Please sign in again.',
   'session.notice.otherTab': 'You signed out in another tab.',
   'session.notice.everywhere': 'You have been signed out on all your devices.',
-  'session.error.network': 'Could not reach the server. Check your connection and try again.',
   'session.error.notCustomer': 'This account cannot use the customer app.',
   'session.error.secureStore': 'This phone could not save your sign-in. Please try again.',
   'session.error.noSession': 'Sign-in did not return a session. Please try again.',
@@ -104,10 +102,6 @@ export default {
   'code.send': 'Send code',
   /** {seconds} is a number. */
   'code.sendIn': 'Send code in {seconds}s',
-  /** {target} is the masked phone number, e.g. ******1234. */
-  'code.sentPhone': 'We sent a 6-digit code to your phone {target}.',
-  /** {target} is the masked email address. */
-  'code.sentEmail': 'We sent a 6-digit code to your email {target}.',
   'login.verify': 'Verify and sign in',
   'login.change': 'Change number or email',
 
