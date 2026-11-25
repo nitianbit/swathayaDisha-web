@@ -37,8 +37,8 @@ export interface PharmacyFinance {
 export type FinanceStatementKind = 'wallet' | 'referral';
 
 const statementQuery = (before: string | undefined, limit: number, q: PeriodQuery) => {
-  if (before !== undefined && !STATEMENT_CURSOR_PATTERN.test(before)) throw new Error('Invalid statement cursor'); // i18n-ignore
-  if (!Number.isInteger(limit) || limit < 1 || limit > STATEMENT_PAGE_MAX) throw new Error('Invalid limit'); // i18n-ignore
+  if (before !== undefined && !STATEMENT_CURSOR_PATTERN.test(before)) throw new Error('Invalid statement cursor'); // i18n-ignore: a programming error, not shown
+  if (!Number.isInteger(limit) || limit < 1 || limit > STATEMENT_PAGE_MAX) throw new Error('Invalid limit'); // i18n-ignore: a programming error, not shown
   return { ...period(q), before, limit };
 };
 
@@ -88,7 +88,7 @@ export interface SetOffAnswer { setoff: SetOff; wallet: { receivableMinor: numbe
 export type SetOffByKey = { state: 'used'; setoff: SetOff } | { state: 'abandoned' } | { state: 'unknown' };
 
 const kindOf = (k: WalletKind) => {
-  if (!WALLET_KINDS.includes(k)) throw new Error('Invalid wallet kind'); // i18n-ignore
+  if (!WALLET_KINDS.includes(k)) throw new Error('Invalid wallet kind'); // i18n-ignore: a programming error, not shown
   return k;
 };
 
@@ -99,7 +99,7 @@ export function adminWalletFinanceApi(c: ApiClient) {
   return {
     /** Newest first, at most 200 (no cursor). */
     disputes: (q: { state?: DisputeState; walletKind?: WalletKind; limit?: number } = {}) => {
-      if (q.limit !== undefined && (!Number.isInteger(q.limit) || q.limit < 1 || q.limit > 200)) throw new Error('Invalid limit'); // i18n-ignore
+      if (q.limit !== undefined && (!Number.isInteger(q.limit) || q.limit < 1 || q.limit > 200)) throw new Error('Invalid limit'); // i18n-ignore: a programming error, not shown
       return c.get<WalletDispute[]>('/admin/wallet-disputes', { query: { state: q.state, walletKind: q.walletKind ? kindOf(q.walletKind) : undefined, limit: q.limit } });
     },
     topupsWithoutLot: (kind: WalletKind, id: string) => c.get<TopupWithoutLot[]>(`${wallet(kind, id)}/topups-without-lot`),
@@ -109,7 +109,7 @@ export function adminWalletFinanceApi(c: ApiClient) {
      * REQUEST_ABANDONED; 404 WALLET_NOT_FOUND (no wallet or no referral account).
      */
     setOff: (kind: WalletKind, id: string, body: { amountMinor: number; requestKey: string }) => {
-      if (!Number.isSafeInteger(body.amountMinor) || body.amountMinor < 1) throw new Error('Invalid amount'); // i18n-ignore
+      if (!Number.isSafeInteger(body.amountMinor) || body.amountMinor < 1) throw new Error('Invalid amount'); // i18n-ignore: a programming error, not shown
       return c.post<SetOffAnswer>(setoff(kind, id), { body: { amountMinor: body.amountMinor, requestKey: keyOf(body.requestKey) } });
     },
     setOffByKey: (kind: WalletKind, id: string, key: string) => c.get<SetOffByKey>(`${setoff(kind, id)}/by-key/${keyOf(key)}`),

@@ -52,7 +52,8 @@ const looksLikeCode = (s: string) => /^[A-Z0-9_]+$/.test(s) || /^[a-z0-9]+([_-][
  * a value given to a catalogue word (`t('k', { where: 'below' })`).
  */
 function shownAsIs(node: ts.StringLiteral | ts.NoSubstitutionTemplateLiteral, sf: ts.SourceFile): boolean {
-  if (!/[A-Za-z]{2,}/.test(node.text) || looksLikeCode(node.text)) return false;
+  // A route or path (`'/partner/referral'`) is not words either.
+  if (!/[A-Za-z]{2,}/.test(node.text) || looksLikeCode(node.text) || /^[/#]/.test(node.text)) return false;
   let child: ts.Node = node;
   let p = node.parent;
   const logical = (b: ts.BinaryExpression) => [ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken]
