@@ -8,6 +8,7 @@ import {
 import { Alert, Button, ErrorState, formatRupees, Loading } from '@jansetu/ui';
 import { pharmacyTopupSource, TopUpForm, type TopupSource } from './topup.tsx';
 import { walletHoldWords, walletKeyOf, type WalletPayer } from './WalletScreen.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ17: paying an assisted booking from the pharmacy's Jansetu wallet (WQ12, moved here unchanged from Book consultation
@@ -46,7 +47,7 @@ const counterWords = (owner: PayWallet['owner']) => (owner === 'doctor' ? '' : '
 
 /** Plain refusal words, adjusted when a coupon explains the new price. */
 export function refusalText(r: Refusal, coupon?: string): string {
-  if (r.kind === 'price' && coupon && r.priceMinor !== undefined) return `With the coupon ${coupon}, the price is ${formatRupees(r.priceMinor / 100)}. Check it with the patient, then pay.`;
+  if (r.kind === 'price' && coupon && r.priceMinor !== undefined) return t('walletPay.withTheCouponThePrice', { coupon, amount: formatRupees(r.priceMinor / 100) });
   return r.message;
 }
 
@@ -57,7 +58,7 @@ export function RefusalAlert({ refused, couponCode, onNewPrice }: { refused: Ref
     <Alert>
       {refusalText(refused, couponCode)}
       {refused.kind === 'price' && refused.priceMinor !== undefined && (
-        <> <Button variant="secondary" onClick={() => onNewPrice(refused.priceMinor!)}>Use the new price ({formatRupees(refused.priceMinor / 100)})</Button></>
+        <> <Button variant="secondary" onClick={() => onNewPrice(refused.priceMinor!)}>{t('walletPay.useTheNewPrice')}{formatRupees(refused.priceMinor / 100)})</Button></>
       )}
     </Alert>
   );
@@ -80,29 +81,28 @@ export function WalletPay({ wallet: w, priceMinor, couponCode, refused, busy, on
   const where = counterWords(w.owner);
   return (
     <>
-      {!w.read ? <p className="ws-muted">Your {w.owner}’s Jansetu wallet pays for this booking. Your account cannot see its balance.</p>
-        : wallet.isPending ? <Loading label="Reading your wallet…" />
+      {!w.read ? <p className="ws-muted">{t(`walletPay.cannotSeeBalance.${w.owner}`)}</p>
+        : wallet.isPending ? <Loading label={t('walletPay.readingYourWallet')} />
         : wallet.isError ? <ErrorState message={assistedRefusal(wallet.error).message} onRetry={() => void wallet.refetch()} />
         : (
-          <p>
-            Money in your wallet: <strong>{formatRupees(balance / 100)}</strong>
-            {!hold && !short ? <> · After this booking: {formatRupees((balance - priceMinor) / 100)}</> : null}
+          <p>{t('walletPay.moneyInYourWallet')}<strong>{formatRupees(balance / 100)}</strong>
+            {!hold && !short ? <>{t('walletPay.afterThisBooking')}{formatRupees((balance - priceMinor) / 100)}</> : null}
           </p>
         )}
       {hold && <Alert tone="warn">{hold}</Alert>}
       <RefusalAlert refused={refused} couponCode={couponCode} onNewPrice={onNewPrice} />
       {needTopUp && !hold && (
         <Alert tone="warn">
-          {short ? `Your wallet needs ${formatRupees((priceMinor - balance) / 100)} more for this booking.` : 'Your wallet needs more money for this booking.'}
+          {short ? t('walletPay.yourWalletNeedsMoreFor', { amount: formatRupees((priceMinor - balance) / 100) }) : t('walletPay.yourWalletNeedsMoreMoney')}
           {w.topup ? (
             <>
-              {' '}<Button variant="secondary" onClick={() => setShowTopUp(true)}>Top up now</Button>{' '}
-              {w.page && <>or open the <Link to={w.page}>Wallet</Link> page (this booking is not kept if you leave).</>}
+              {' '}<Button variant="secondary" onClick={() => setShowTopUp(true)}>{t('walletPay.topUpNow')}</Button>{' '}
+              {w.page && <>{t('walletPay.orOpenThe')}<Link to={w.page}>{t('common.wallet')}</Link>{t('walletPay.pageThisBookingIsNot')}</>}
             </>
           ) : w.owner === 'doctor' && w.page ? (
             // WQ25: a doctor adds money on its own Wallet page (WQ23).
-            <>{' '}<Link to={w.page}>Add money</Link> on your Wallet page, then book again (this booking is not kept if you leave).</>
-          ) : ' Ask someone who can add money to the wallet, then pay again.'}
+            <>{' '}<Link to={w.page}>{t('common.addMoney')}</Link>{t('walletPay.onYourWalletPageThen')}</>
+          ) : t('walletPay.askSomeoneWhoCanAdd')}
         </Alert>
       )}
       {showTopUp && w.topup && (
@@ -110,12 +110,12 @@ export function WalletPay({ wallet: w, priceMinor, couponCode, refused, busy, on
         <TopUpForm pharmacyId={w.topup.owner} source={w.topup} suggested={Math.max(1, (priceMinor - balance) / 100)}
           {...(w.read ? { onCredited: () => void wallet.refetch() } : {})} />
       )}
-      <span className="ws-muted">Collect {formatRupees(priceMinor / 100)} from the patient{where}. If the booking is cancelled, the money comes back to your wallet.</span>
+      <span className="ws-muted">{t('walletPay.collect')}{formatRupees(priceMinor / 100)}{t('walletPay.fromThePatient')}{where}{t('walletPay.ifTheBookingIsCancelled')}</span>
       <div className="confirm-actions">
         <Button busy={busy} disabled={!!hold || short || (refused?.kind === 'price')} onClick={onPay}>
-          {payLabel ? payLabel(formatRupees(priceMinor / 100)) : `Pay ${formatRupees(priceMinor / 100)} from wallet`}
+          {payLabel ? payLabel(formatRupees(priceMinor / 100)) : t('walletPay.payFromWallet', { amount: formatRupees(priceMinor / 100) })}
         </Button>
-        <Button variant="ghost" disabled={busy} onClick={onBack}>Back</Button>
+        <Button variant="ghost" disabled={busy} onClick={onBack}>{t('common.back')}</Button>
       </div>
     </>
   );
@@ -138,28 +138,21 @@ export function PayChoice({ wallet, priceMinor, couponCode, refused, busy, metho
     <>
       {offerCard && (
         <fieldset className="ws-checks" disabled={busy}>
-          <legend>How do you pay?</legend>
+          <legend>{t('walletPay.howDoYouPay')}</legend>
           <label className="ws-check">
-            <input type="radio" name="pay-method" checked={!byCard} onChange={() => onMethod('wallet')} />
-            Pay from wallet
-          </label>
+            <input type="radio" name="pay-method" checked={!byCard} onChange={() => onMethod('wallet')} />{t('walletPay.payFromWallet2')}</label>
           <label className="ws-check">
-            <input type="radio" name="pay-method" checked={byCard} disabled={!!cardOff} aria-describedby={cardOff ? 'card-off' : undefined} onChange={() => onMethod('razorpay')} />
-            Pay by card or UPI
-          </label>
+            <input type="radio" name="pay-method" checked={byCard} disabled={!!cardOff} aria-describedby={cardOff ? 'card-off' : undefined} onChange={() => onMethod('razorpay')} />{t('walletPay.payByCardOrUpi')}</label>
           {cardOff && <span id="card-off" className="j-field__hint">{cardOff}</span>}
         </fieldset>
       )}
       {byCard ? (
         <>
           <RefusalAlert refused={refused} couponCode={couponCode} onNewPrice={onNewPrice} />
-          <span className="ws-muted">
-            Collect {formatRupees(priceMinor / 100)} from the patient{counterWords(wallet.owner)}. You pay it on the Razorpay page next. The time is held for 30
-            minutes while you pay. If the booking is cancelled later, the money goes back to the card or UPI, or to your wallet if you choose.
-          </span>
+          <span className="ws-muted">{t('walletPay.collect')}{formatRupees(priceMinor / 100)}{t('walletPay.fromThePatient')}{counterWords(wallet.owner)}{t('walletPay.youPayItOnThe')}</span>
           <div className="confirm-actions">
-            <Button busy={busy} disabled={refused?.kind === 'price'} onClick={onPay}>Pay {formatRupees(priceMinor / 100)} by card or UPI</Button>
-            <Button variant="ghost" disabled={busy} onClick={onBack}>Back</Button>
+            <Button busy={busy} disabled={refused?.kind === 'price'} onClick={onPay}>{t('walletPay.pay')}{formatRupees(priceMinor / 100)}{t('walletPay.byCardOrUpi')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={onBack}>{t('common.back')}</Button>
           </div>
         </>
       ) : (

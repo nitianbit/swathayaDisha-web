@@ -5,6 +5,7 @@ import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import type { Perform } from '../finance/finance.tsx';
 import { CheckPanel, useOwnedOp } from './ownedOp.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ17: the booker's cancel of an assisted booking (WQ12, moved here from Booked consultations so that a booked lab test
@@ -53,23 +54,23 @@ export function OwnedCancel<B, R, V extends object>({ slot, label, intro, extra,
     const restored = !!op.restored || !op.body;
     return (
       <section className="ws-section" aria-labelledby="cancel-h">
-        <h2 id="cancel-h">Cancel</h2>
+        <h2 id="cancel-h">{t('common.cancel')}</h2>
         {resendError && <Alert>{resendError}</Alert>}
-        <CheckPanel label="Unconfirmed cancellation"
+        <CheckPanel label={t('ownedCancel.unconfirmedCancellation')}
           onCheck={async () => {
             const found = await isCancelled();
             if (found !== null) { settle(op.requestKey); onDone(checkedWords(restored ? undefined : op.body, restored, found)); onChanged?.(); return null; }
-            return 'Not cancelled so far. It may still be on its way. Sending the same cancellation again is safe: the money is never refunded twice.';
+            return t('ownedCancel.notCancelledSoFarIt');
           }}
           resend={restored ? undefined : {
-            label: 'Send the same request again', busy,
+            label: t('common.sendTheSameRequestAgain'), busy,
             onClick: () => { setResendError(null); void sendCancel(op).catch((err: unknown) => setResendError(err instanceof Error ? err.message : String(err))); },
           }}
-          forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget: () => settle(op.requestKey), consequence: forgetConsequence }}>
+          forget={{ label: t('common.forgetIt'), confirmLabel: t('common.yesForgetIt'), onForget: () => settle(op.requestKey), consequence: forgetConsequence }}>
           <Alert tone="warn">
             {restored
-              ? 'A cancellation made earlier on this device was not confirmed. Check whether the booking was cancelled.'
-              : `The outcome of this request is not known yet${op.error ? ` (${op.error})` : ''}. The booking may already be cancelled. Sending the same request again is safe.`}
+              ? t('ownedCancel.aCancellationMadeEarlierOn')
+              : t('ownedCancel.theOutcomeOfThisRequest', { value: op.error ? ` (${op.error})` : '' })}
           </Alert>
         </CheckPanel>
       </section>
@@ -78,10 +79,10 @@ export function OwnedCancel<B, R, V extends object>({ slot, label, intro, extra,
 
   return (
     <section className="ws-section" aria-labelledby="cancel-h">
-      <h2 id="cancel-h">Cancel</h2>
+      <h2 id="cancel-h">{t('common.cancel')}</h2>
       <p className="ws-muted">{intro}</p>
       {extra}
-      <ConfirmAction label={label} danger confirmLabel="Yes, cancel it" reason="optional" reasonLabel="Why? (optional)"
+      <ConfirmAction label={label} danger confirmLabel={t('common.yesCancelIt')} reason={'optional'} reasonLabel={t('ownedCancel.whyOptional')}
         maxReason={MAX_BOOKER_CANCEL_REASON} version={version} consequence={consequence}
         onConfirm={async (reason) => { await sendCancel(startOp(newRequestKey(), makeBody(reason.trim()))); }} />
     </section>
@@ -131,29 +132,24 @@ export function CardAwareCancel<B, V extends object>({ slot, label, what, when, 
     <OwnedCancel<B, Pick<CancelAnswer, 'refundedMinor' | 'alreadyCancelled' | 'refund'>, V> slot={slot} label={label} perform={perform} busy={busy} version={version}
       intro={<>
         {introLead}{' '}
-        {waiting ? `It is not paid yet, so nothing is refunded; the time is released. ${LATE_PAYMENT_BACK}`
-          : choose ? 'The full amount goes back to the card or UPI it was paid with, or to your Jansetu wallet if you choose.'
-          : paidBy === 'wallet' ? 'The full amount goes back to your Jansetu wallet.'
-          : 'The full amount goes back the way it was paid: to your Jansetu wallet, or to the card or UPI.'}
+        {waiting ? t('ownedCancel.itIsNotPaidYet', { LATE_PAYMENT_BACK })
+          : choose ? t('ownedCancel.theFullAmountGoesBack')
+          : paidBy === 'wallet' ? t('ownedCancel.theFullAmountGoesBack2')
+          : t('ownedCancel.theFullAmountGoesBack3')}
       </>}
       extra={choose && (
         <fieldset className="ws-checks" disabled={busy}>
-          <legend>Where does the money go back?</legend>
+          <legend>{t('ownedCancel.whereDoesTheMoneyGo')}</legend>
           <label className="ws-check">
-            <input type="radio" name="refund-to" checked={refundTo === 'card'} onChange={() => setRefundTo('card')} />
-            Refund to card (default): to the card or UPI it was paid with, usually in 5 to 7 working days
-          </label>
+            <input type="radio" name="refund-to" checked={refundTo === 'card'} onChange={() => setRefundTo('card')} />{t('ownedCancel.refundToCardDefaultTo')}</label>
           <label className="ws-check">
-            <input type="radio" name="refund-to" checked={refundTo === 'wallet'} onChange={() => setRefundTo('wallet')} />
-            Refund to wallet: at once, to your Jansetu wallet (it pays for bookings; it cannot be withdrawn)
-          </label>
+            <input type="radio" name="refund-to" checked={refundTo === 'wallet'} onChange={() => setRefundTo('wallet')} />{t('ownedCancel.refundToWalletAtOnce')}</label>
         </fieldset>
       )}
-      consequence={`The ${what} on ${when} is cancelled. ${
-        waiting ? `It was not paid, so nothing is refunded. The time is released. ${LATE_PAYMENT_BACK}`
+      consequence={t('ownedCancel.theOnIsCancelled', { what, when, value: waiting ? t('ownedCancel.itWasNotPaidSo', { LATE_PAYMENT_BACK })
           : choose ? `${amount} goes back to ${refundTo === 'wallet' ? 'your Jansetu wallet' : 'the card or UPI it was paid with'}; give the patient their money back. ${told}`
           : paidBy === 'wallet' ? `${amount} goes back to your wallet; give the patient their money back. ${told}`
-          : `${amount} goes back the way it was paid (your wallet, or the card or UPI); give the patient their money back. ${told}`}`}
+          : `${amount} goes back the way it was paid (your wallet, or the card or UPI); give the patient their money back. ${told}` })}
       makeBody={(reason) => makeBody(reason, choose ? refundTo : undefined)}
       send={send}
       doneWords={(a) => cancelWords(a, told)}
@@ -161,7 +157,7 @@ export function CardAwareCancel<B, V extends object>({ slot, label, what, when, 
       onChanged={onChanged}
       isCancelled={isCancelled}
       checkedWords={checkedWords}
-      forgetConsequence="If the earlier cancellation still arrives, the booking is cancelled and the money goes back the way it was paid. You can cancel again from here."
+      forgetConsequence={t('ownedCancel.ifTheEarlierCancellationStill')}
       onDone={onDone} />
   );
 }

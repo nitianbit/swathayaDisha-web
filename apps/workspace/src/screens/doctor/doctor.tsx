@@ -8,6 +8,7 @@ import { Button, Empty, formatRupees } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { useSession, useStaff, type StaffUser } from '../../session.tsx';
 import { formatDay } from '../partner/labs.tsx';
+import { t } from '../../i18n/doctor/index.ts';
 
 /**
  * Everything a doctor page needs: the API, a query-key prefix and a subtree identity bound to the signed-in doctor.
@@ -30,7 +31,7 @@ export function useDoctor(): DoctorContext | null {
 }
 
 export function NotADoctor() {
-  return <Empty title="Page not found">This page does not exist or is not available to your account.</Empty>;
+  return <Empty title={t('doctor.pageNotFound')}>{t('doctor.thisPageDoesNotExist')}</Empty>;
 }
 
 export const useDoctorProfile = (d: DoctorContext) => useQuery({ queryKey: [...d.key, 'profile'], queryFn: () => d.api.profile() });
@@ -50,8 +51,8 @@ export const modesLabel = (modes: readonly ConsultMode[]) => modes.map((m) => CO
 export function useTicker(ms: number): Date {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), ms);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setNow(new Date()), ms);
+    return () => clearInterval(timer);
   }, [ms]);
   return now;
 }
@@ -84,8 +85,8 @@ export function useMeetPoll() {
     return poll ? MEET_POLL_MS : false;
   }, []);
   const gaveUp = useCallback((id: string, now: Date) => {
-    const t = since.current.get(id);
-    return t !== undefined && now.getTime() - t >= MEET_POLL_FOR_MS;
+    const at = since.current.get(id);
+    return at !== undefined && now.getTime() - at >= MEET_POLL_FOR_MS;
   }, []);
   const restart = useCallback((id: string) => { since.current.delete(id); }, []);
   return { interval, gaveUp, restart };
@@ -96,17 +97,17 @@ export function MeetLink({ b, onRefresh, gaveUp = false }: { b: DoctorAppointmen
   const [busy, setBusy] = useState(false);
   const state = meetingLinkState(b);
   if (state === 'none') return null;
-  if (state === 'ready') return <a href={b.virtualMeeting!.joinUrl} target="_blank" rel="noreferrer noopener">Join the call</a>;
+  if (state === 'ready') return <a href={b.virtualMeeting!.joinUrl} target="_blank" rel="noreferrer noopener">{t('doctor.joinTheCall')}</a>;
   const refresh = onRefresh && (
-    <Button variant="secondary" busy={busy} onClick={() => { setBusy(true); void onRefresh().finally(() => setBusy(false)); }}>Refresh</Button>
+    <Button variant="secondary" busy={busy} onClick={() => { setBusy(true); void onRefresh().finally(() => setBusy(false)); }}>{t('doctor.refresh')}</Button>
   );
   return (
     <div className="doc-meet">
       <span role="status">
         {state === 'failed'
-          ? `The call link could not be made${b.virtualMeeting?.error ? ` (${b.virtualMeeting.error})` : ''}. Contact Jansetu support, or reach the patient another way.`
-          : gaveUp ? 'The call link has not arrived yet. Refresh to check again.'
-          : 'The call link is being prepared…'}
+          ? t('doctor.theCallLinkCouldNot', { value: b.virtualMeeting?.error ? ` (${b.virtualMeeting.error})` : '' })
+          : gaveUp ? t('doctor.theCallLinkHasNot')
+          : t('doctor.theCallLinkIsBeing')}
       </span>
       {refresh}
     </div>
@@ -149,9 +150,8 @@ const clock = formatClock;
  */
 export function RefreshFailed({ error, readAt, onRetry }: { error: unknown; readAt: number; onRetry: () => unknown }) {
   return (
-    <p className="ws-muted" role="status">
-      Could not refresh just now ({messageOf(error)}).{readAt > 0 ? ` Showing what was read at ${clock(readAt)}.` : ''}{' '}
-      <Button variant="ghost" onClick={() => void onRetry()}>Try again</Button>
+    <p className="ws-muted" role="status">{t('doctor.couldNotRefreshJustNow')}{messageOf(error)}).{readAt > 0 ? t('doctor.showingWhatWasReadAt', { when: clock(readAt) }) : ''}{' '}
+      <Button variant="ghost" onClick={() => void onRetry()}>{t('doctor.tryAgain')}</Button>
     </p>
   );
 }

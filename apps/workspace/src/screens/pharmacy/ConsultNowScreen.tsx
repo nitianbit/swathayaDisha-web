@@ -20,6 +20,7 @@ import { usePharmacyId } from './ownedOp.tsx';
 import { PatientSection, usePatientStep } from './patientStep.tsx';
 import { UnconfirmedBooking } from './unconfirmedBooking.tsx';
 import { pharmacyPayWallet, WalletPay } from './walletPay.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ22: "Consult now" (assisted booking round 3e, backend r17, design §25.12): a pharmacy connects a patient at its
@@ -33,9 +34,7 @@ export function PharmacyConsultNowScreen() {
   const pharmacyId = usePharmacyId();
   return (
     <>
-      <PageHeading title="Consult now">
-        Connect a patient at your counter with a doctor who is online now. Jansetu takes the fee from your wallet; you collect it from the patient.
-      </PageHeading>
+      <PageHeading title={t('consultNow.consultNow')}>{t('consultNow.connectAPatientAtYour')}</PageHeading>
       <Consult key={pharmacyId} pharmacyId={pharmacyId} />
     </>
   );
@@ -49,10 +48,10 @@ const activeSlot = (pharmacyId: string) => `assisted-instant-active:${pharmacyId
 function SummaryList({ s }: { s: Summary }) {
   return (
     <ul className="ws-list">
-      <li>Patient: <strong>{s.patient}</strong></li>
-      <li>Doctor: <strong>{s.doctor}</strong>, {s.speciality}</li>
-      <li>How: <strong>{INSTANT_MODE_LABEL[s.mode]}</strong></li>
-      <li>Price: <strong>{formatRupees(s.priceMinor / 100)}</strong>{s.couponCode ? ` (coupon ${s.couponCode})` : ''}</li>
+      <li>{t('common.patient')}<strong>{s.patient}</strong></li>
+      <li>{t('common.doctor')}<strong>{s.doctor}</strong>, {s.speciality}</li>
+      <li>{t('common.how2')}<strong>{INSTANT_MODE_LABEL[s.mode]}</strong></li>
+      <li>{t('common.price')}<strong>{formatRupees(s.priceMinor / 100)}</strong>{s.couponCode ? ` (coupon ${s.couponCode})` : ''}</li>
     </ul>
   );
 }
@@ -72,7 +71,7 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
   const create = useAssistedCreate<PendingInstant, InstantBookerReceipt, InstantBookerByKey>({
     slot: `assisted-instant:${pharmacyId}`, perform, book: (request) => instant.request(request), abandon: (key) => instant.abandon(key),
     refusal: instantBookerRefusal, walletKey: ['pharmacy-wallet', pharmacyId], refreshKeys: [['pharmacy-bookings', pharmacyId], ['assisted-instant', pharmacyId]],
-    onReceipt: (r) => { setActive(r.request._id); if (r.newAccount) setNotice('This number was new to Jansetu. An account was made for it.'); },
+    onReceipt: (r) => { setActive(r.request._id); if (r.newAccount) setNotice(t('consultNow.thisNumberWasNewTo')); },
     onUsed: (r, p) => { settle(p.requestKey); setReview(null); setActive(r.request._id); create.refresh(); return null; },
     onOff: () => setOff(true),
     onNotice: setNotice,
@@ -117,7 +116,7 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
     e.preventDefault();
     setRefused(null);
     const errs: Record<string, string> = { ...joinProblems(mode, join), ...consultExtrasProblems(extras) };
-    if (!speciality) errs.speciality = 'Choose what the patient needs.';
+    if (!speciality) errs.speciality = t('consultNow.chooseWhatThePatientNeeds');
     setErrors(errs);
     if (Object.keys(errs).length || !lookup) return;
     const doctor = doctors.data?.find((d) => d.doctorId === doctorId);
@@ -136,7 +135,7 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
         ...(extras.concern.trim() ? { primaryConcern: extras.concern.trim() } : {}), paymentMethod: 'wallet',
       };
       setNewQuote(null);
-      setReview({ requestKey, request, summary: { patient: patientLabel(), speciality, mode, doctor: doctor?.name ?? 'Any available doctor',
+      setReview({ requestKey, request, summary: { patient: patientLabel(), speciality, mode, doctor: doctor?.name ?? t('consultNow.anyAvailableDoctor'),
         priceMinor: q.quotedAmountMinor, ...(code ? { couponCode: code } : {}) } });
     } catch (err) {
       const why = instantBookerRefusal(err);
@@ -159,7 +158,7 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
 
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
     return (
-      <UnconfirmedBooking op={op} what="request" busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => instant.byKey(op.requestKey)}
+      <UnconfirmedBooking op={op} what={t('consultNow.request')} busy={busy} givingUp={givingUp} resendError={resendError} byKey={() => instant.byKey(op.requestKey)}
         onUsed={(r) => { settle(op.requestKey); setReview(null); setActive(r.request._id); create.refresh(); return null; }}
         onAbandoned={() => create.abandonedByCheck(op.requestKey)}
         onResend={() => { setResendError(null); void create.send(op).catch((err: unknown) => setResendError(instantBookerRefusal(err).message)); }}
@@ -167,7 +166,7 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
         summary={op.body && <SummaryList s={op.body.summary} />} />
     );
   }
-  if (off) return <Alert tone="warn">{INSTANT_SWITCHED_OFF_MESSAGE} Jansetu turns it on for your pharmacy when it is ready. Book consultation works as usual.</Alert>;
+  if (off) return <Alert tone="warn">{INSTANT_SWITCHED_OFF_MESSAGE}{t('consultNow.jansetuTurnsItOnFor')}</Alert>;
   if (activeId) return <Waiting pharmacyId={pharmacyId} requestId={activeId} onAnother={resetAll} />;
 
   const frozen = !!review || busy;
@@ -175,47 +174,46 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
     <>
       {notice && <Alert tone="ok">{notice}</Alert>}
       <OpenRequests pharmacyId={pharmacyId} onOpen={setActive} />
-      <PatientSection step={pt} busy={busy} frozen={patientDone || frozen} locked={frozen} nextLabel="Next: choose the doctor" />
+      <PatientSection step={pt} busy={busy} frozen={patientDone || frozen} locked={frozen} nextLabel={t('common.nextChooseTheDoctor')} />
       {patientDone && (
         <section className="ws-section" aria-labelledby="cn-h">
-          <h2 id="cn-h">2. Doctor</h2>
-          <form className="rx-form" noValidate onSubmit={(e) => void next(e)} aria-label="Doctor">
+          <h2 id="cn-h">{t('consultNow.n2Doctor')}</h2>
+          <form className="rx-form" noValidate onSubmit={(e) => void next(e)} aria-label={t('common.doctor2')}>
             <fieldset className="ws-frozen" disabled={frozen}>
               <fieldset className="ws-checks">
-                <legend>How does the consultation happen?</legend>
+                <legend>{t('common.howDoesTheConsultationHappen')}</legend>
                 {INSTANT_DESK_MODES.map((m) => (
                   <label key={m} className="ws-check">
                     <input type="radio" name="cn-mode" checked={mode === m} onChange={() => { setMode(m); setSpeciality(''); setDoctorId(''); setJoin(EMPTY_JOIN); }} /> {INSTANT_MODE_LABEL[m]}
                   </label>
                 ))}
               </fieldset>
-              {specialities.isPending ? <Loading label="Finding doctors online…" />
+              {specialities.isPending ? <Loading label={t('consultNow.findingDoctorsOnline')} />
                 : specialities.isError ? <ErrorState message={instantBookerRefusal(specialities.error).message} onRetry={() => void specialities.refetch()} />
-                : online.length === 0 ? <Alert tone="warn">No doctor is online for {INSTANT_MODE_LABEL[mode].toLowerCase()}s now. Try again in a few minutes, or <Link to="/pharmacy/book">book a time</Link>.</Alert>
+                : online.length === 0 ? <Alert tone="warn">{t('consultNow.noDoctorIsOnlineFor')}{INSTANT_MODE_LABEL[mode].toLowerCase()}{t('consultNow.sNowTryAgainIn')}<Link to="/pharmacy/book">{t('consultNow.bookATime')}</Link>.</Alert>
                 : (
                   <div className="j-field">
-                    <label htmlFor="cn-speciality">What does the patient need?</label>
+                    <label htmlFor="cn-speciality">{t('consultNow.whatDoesThePatientNeed')}</label>
                     <select id="cn-speciality" value={speciality} aria-invalid={errors.speciality ? true : undefined}
                       aria-describedby={errors.speciality ? 'cn-speciality-err' : undefined} onChange={(e) => { setSpeciality(e.target.value); setDoctorId(''); }}>
-                      <option value="">Choose…</option>
-                      {online.map((x) => <option key={x.specialization} value={x.specialization}>{x.specialization} ({x.onlineNow} online)</option>)}
+                      <option value="">{t('common.choose3')}</option>
+                      {online.map((x) => <option key={x.specialization} value={x.specialization}>{x.specialization} ({x.onlineNow}{t('consultNow.online')}</option>)}
                     </select>
                     {errors.speciality && <span id="cn-speciality-err" className="j-field__error" role="alert">{errors.speciality}</span>}
                   </div>
                 )}
               {speciality && (
                 <fieldset className="ws-checks">
-                  <legend>Doctor</legend>
+                  <legend>{t('common.doctor2')}</legend>
                   <label className="ws-check">
-                    <input type="radio" name="cn-doctor" checked={doctorId === ''} onChange={() => setDoctorId('')} /> Any available doctor (the first to accept)
-                  </label>
-                  {doctors.isPending ? <Loading label="Finding doctors…" />
+                    <input type="radio" name="cn-doctor" checked={doctorId === ''} onChange={() => setDoctorId('')} />{t('consultNow.anyAvailableDoctorTheFirst')}</label>
+                  {doctors.isPending ? <Loading label={t('common.findingDoctors')} />
                     : doctors.isError ? <ErrorState message={instantBookerRefusal(doctors.error).message} onRetry={() => void doctors.refetch()} />
                     : doctors.data.map((d) => (
                       <label key={d.doctorId} className="ws-check">
                         <input type="radio" name="cn-doctor" checked={doctorId === d.doctorId} onChange={() => setDoctorId(d.doctorId)} />
                         {d.name} · {formatRupees(d.instantFeeMinor / 100)}
-                        {d.nearby === 'pincode' ? <> <Badge tone="ok">Near you</Badge></> : d.nearby === 'city' ? <> <Badge>Same city</Badge></> : null}
+                        {d.nearby === 'pincode' ? <> <Badge tone="ok">{t('common.nearYou')}</Badge></> : d.nearby === 'city' ? <> <Badge>{t('common.sameCity')}</Badge></> : null}
                       </label>
                     ))}
                 </fieldset>
@@ -224,18 +222,18 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
               <ConsultExtras value={extras} errors={errors} onChange={setExtras} />
             </fieldset>
             {refused && !review && <Alert>{refused.message}</Alert>}
-            {!review && <div><Button type="submit" busy={quoting}>Next: check the price</Button></div>}
+            {!review && <div><Button type="submit" busy={quoting}>{t('common.nextCheckThePrice')}</Button></div>}
           </form>
         </section>
       )}
       {review && (
         <section className="ws-section" aria-labelledby="cn-pay-h">
-          <h2 id="cn-pay-h">3. Check and pay</h2>
-          <div className="confirm" role="group" aria-label="Check and pay">
+          <h2 id="cn-pay-h">{t('common.n3CheckAndPay')}</h2>
+          <div className="confirm" role="group" aria-label={t('common.checkAndPay')}>
             <SummaryList s={review.summary} />
-            {review.summary.couponCode && !review.summary.couponChecked && <p className="ws-muted">Price before the coupon; the coupon is checked when you pay.</p>}
+            {review.summary.couponCode && !review.summary.couponChecked && <p className="ws-muted">{t('common.priceBeforeTheCouponThe')}</p>}
             <WalletPay wallet={pharmacyPayWallet(api, pharmacyId)} priceMinor={review.summary.priceMinor} couponCode={review.summary.couponCode} refused={refused} busy={busy}
-              payLabel={(amount) => `Pay ${amount} from wallet and request`}
+              payLabel={(amount) => t('consultNow.payFromWalletAndRequest', { amount })}
               onPay={() => void create.pay()} onBack={() => { setReview(null); setRefused(null); }} onNewPrice={useNewQuote} />
           </div>
         </section>
@@ -259,16 +257,16 @@ function OpenRequests({ pharmacyId, onOpen }: { pharmacyId: string; onOpen: (id:
   if (!list.data || (list.data.items.length === 0 && pages.page === 1)) return null;
   return (
     <section className="ws-section" aria-labelledby="open-h">
-      <h2 id="open-h">Waiting for a doctor</h2>
-      <ul className="ws-list" aria-label="Requests waiting for a doctor">
+      <h2 id="open-h">{t('consultNow.waitingForADoctor')}</h2>
+      <ul className="ws-list" aria-label={t('consultNow.requestsWaitingForADoctor')}>
         {list.data.items.map((r) => (
           <li key={r._id} className="ws-actions">
-            <span>{r.patientName ?? 'A patient'} · {r.specialization} · {INSTANT_MODE_LABEL[r.mode] ?? r.mode}{r.money ? ` · ${formatRupees(r.money.paidMinor / 100)}` : ''}</span>
-            <Button variant="secondary" aria-label={`Open the request for ${r.patientName ?? 'the patient'}`} onClick={() => onOpen(r._id)}>Open</Button>
+            <span>{r.patientName ?? t('consultNow.aPatient')} · {r.specialization} · {INSTANT_MODE_LABEL[r.mode] ?? r.mode}{r.money ? ` · ${formatRupees(r.money.paidMinor / 100)}` : ''}</span>
+            <Button variant="secondary" aria-label={t('consultNow.openTheRequestFor', { value: r.patientName ?? 'the patient' })} onClick={() => onOpen(r._id)}>{t('common.open')}</Button>
           </li>
         ))}
       </ul>
-      <CursorPager pages={pages} nextCursor={list.data.nextCursor} label="Waiting request pages" />
+      <CursorPager pages={pages} nextCursor={list.data.nextCursor} label={t('consultNow.waitingRequestPages')} />
     </section>
   );
 }
@@ -285,7 +283,7 @@ function Waiting({ pharmacyId, requestId, onAnother }: { pharmacyId: string; req
   const instant = pharmacyInstantApi(api);
   const key = ['assisted-instant', pharmacyId, 'request', requestId];
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   const q = useQuery({ queryKey: key, queryFn: () => instant.one(requestId), refetchInterval: (query) => (query.state.data?.status === 'offered' ? INSTANT_POLL_MS : false) });
   const v = q.data;
   // WQ22c L1: activity ONLY while an offer is open (a doctor may still accept). Once the offer ran out nothing is sent, so
@@ -296,8 +294,8 @@ function Waiting({ pharmacyId, requestId, onAnother }: { pharmacyId: string; req
     if (!offerOpen) return;
     const tell = () => { void instant.activity(requestId).catch(() => undefined); };
     tell();
-    const t = setInterval(tell, INSTANT_ACTIVITY_MS);
-    return () => clearInterval(t);
+    const timer = setInterval(tell, INSTANT_ACTIVITY_MS);
+    return () => clearInterval(timer);
   }, [offerOpen, requestId]); // eslint-disable-line react-hooks/exhaustive-deps
   const booking = useQuery({
     queryKey: ['pharmacy-bookings', pharmacyId, 'one', v?.bookingId],
@@ -315,7 +313,7 @@ function Waiting({ pharmacyId, requestId, onAnother }: { pharmacyId: string; req
       setOutcome({ tone: 'ok', text: done(await run()) });
     } catch (err) {
       const why = instantBookerRefusal(err);
-      setOutcome({ tone: definitelyNotRecorded(err) ? 'error' : 'warn', text: definitelyNotRecorded(err) ? why.message : `Not confirmed: ${why.message} It is shown as it is now.` });
+      setOutcome({ tone: definitelyNotRecorded(err) ? 'error' : 'warn', text: definitelyNotRecorded(err) ? why.message : t('consultNow.notConfirmedItIsShown', { message: why.message }) });
     } finally {
       await settleRead();
       void queryClient.invalidateQueries({ queryKey: ['assisted-instant', pharmacyId, 'open'] });
@@ -323,43 +321,41 @@ function Waiting({ pharmacyId, requestId, onAnother }: { pharmacyId: string; req
     }
   });
 
-  if (q.isPending) return <Loading label="Reading the request…" />;
+  if (q.isPending) return <Loading label={t('consultNow.readingTheRequest')} />;
   if (q.isError || !v) return <ErrorState message={instantBookerRefusal(q.error).message} onRetry={() => void q.refetch()} />;
   const stage = instantStage(v, now);
-  const paid = v.money ? formatRupees(v.money.paidMinor / 100) : 'The amount';
+  const paid = v.money ? formatRupees(v.money.paidMinor / 100) : t('common.theAmount');
   const refundStep = (
-    <ConfirmAction key="refund" label="Cancel and refund" danger confirmLabel="Yes, cancel and refund" disabled={busy} version={v.statusVersion}
-      consequence={`The request is cancelled before any doctor accepts. ${paid} goes back to your wallet; give the patient their money back.`}
+    <ConfirmAction key="refund" label={t('consultNow.cancelAndRefund')} danger confirmLabel={t('consultNow.yesCancelAndRefund')} disabled={busy} version={v.statusVersion}
+      consequence={t('consultNow.theRequestIsCancelledBefore', { paid })}
       onConfirm={() => command(() => instant.refund(v._id, v.statusVersion),
         // WQ22c L2: what the server says it refunded.
-        (a) => `Cancelled. ${formatRupees(a.refundedMinor / 100)} is back in your wallet; give the patient their money back.`)} />
+        (a) => t('consultNow.cancelledIsBackInYour', { amount: formatRupees(a.refundedMinor / 100) }))} />
   );
   const sameTarget: InstantTarget = v.target.kind === 'specific' && v.target.doctorId ? { kind: 'specific', doctorId: v.target.doctorId } : { kind: 'any' };
   return (
     <section className="ws-section" aria-labelledby="wait-h">
-      <h2 id="wait-h">{stage === 'accepted' ? 'A doctor accepted' : stage === 'refunded' ? 'Cancelled and refunded' : 'Waiting for a doctor'}</h2>
+      <h2 id="wait-h">{stage === 'accepted' ? t('consultNow.aDoctorAccepted') : stage === 'refunded' ? t('consultNow.cancelledAndRefunded') : t('consultNow.waitingForADoctor')}</h2>
       {outcome && <Alert tone={outcome.tone}>{outcome.text}</Alert>}
       <ul className="ws-list">
-        <li>Patient: <strong>{v.patientName ?? 'The patient'}</strong></li>
-        <li>{v.specialization} · {INSTANT_MODE_LABEL[v.mode] ?? v.mode}{v.assisted?.shortRef ? <> · Ref <strong>{v.assisted.shortRef}</strong></> : null}</li>
-        {v.money && <li>Paid from your wallet: <strong>{paid}</strong></li>}
+        <li>{t('common.patient')}<strong>{v.patientName ?? t('common.thePatient')}</strong></li>
+        <li>{v.specialization} · {INSTANT_MODE_LABEL[v.mode] ?? v.mode}{v.assisted?.shortRef ? <>{t('consultNow.ref')}<strong>{v.assisted.shortRef}</strong></> : null}</li>
+        {v.money && <li>{t('consultNow.paidFromYourWallet')}<strong>{paid}</strong></li>}
       </ul>
       {stage === 'waiting' && (
         <>
-          <p>Offered to {v.offeredCount ?? 'the'} {v.offeredCount === 1 ? 'doctor' : 'doctors'} online. <strong>{offerCountdown(v.offerExpiresAt ?? undefined, now)}</strong> left for a doctor to accept.</p>
-          <p className="ws-muted">Keep this screen open: the money comes back to your wallet 30 minutes after you leave it, unless a doctor accepts.</p>
+          <p>{t('consultNow.offeredTo')}{v.offeredCount ?? 'the'} {v.offeredCount === 1 ? 'doctor' : 'doctors'}{t('consultNow.online2')}<strong>{offerCountdown(v.offerExpiresAt ?? undefined, now)}</strong>{t('consultNow.leftForADoctorTo')}</p>
+          <p className="ws-muted">{t('consultNow.keepThisScreenOpenThe')}</p>
           <div className="ws-actions">{refundStep}</div>
         </>
       )}
       {stage === 'expired' && (
         <>
-          <Alert tone="warn">No doctor accepted this time. Ask again, or cancel and get the money back.</Alert>
+          <Alert tone="warn">{t('consultNow.noDoctorAcceptedThisTime')}</Alert>
           <div className="ws-actions">
-            <Button busy={busy} onClick={() => void command(() => instant.reoffer(v._id, sameTarget, v.statusVersion), () => 'Asked again. Waiting for a doctor.').catch(() => undefined)}>Ask again</Button>
+            <Button busy={busy} onClick={() => void command(() => instant.reoffer(v._id, sameTarget, v.statusVersion), () => t('consultNow.askedAgainWaitingForA')).catch(() => undefined)}>{t('consultNow.askAgain')}</Button>
             {v.target.kind === 'specific' && (
-              <Button variant="secondary" disabled={busy} onClick={() => void command(() => instant.reoffer(v._id, { kind: 'any' }, v.statusVersion), () => 'Asked any available doctor. Waiting for a doctor.').catch(() => undefined)}>
-                Ask any available doctor
-              </Button>
+              <Button variant="secondary" disabled={busy} onClick={() => void command(() => instant.reoffer(v._id, { kind: 'any' }, v.statusVersion), () => t('consultNow.askedAnyAvailableDoctorWaiting')).catch(() => undefined)}>{t('consultNow.askAnyAvailableDoctor')}</Button>
             )}
             {refundStep}
           </div>
@@ -367,13 +363,13 @@ function Waiting({ pharmacyId, requestId, onAnother }: { pharmacyId: string; req
       )}
       {stage === 'accepted' && (
         <>
-          <Alert tone="ok">{v.acceptedDoctorName ?? 'The doctor'} accepted. {v.money && v.money.returnedMinor > 0 ? `${formatRupees(v.money.returnedMinor / 100)} of the price came back to your wallet (this doctor’s fee is lower).` : ''}</Alert>
+          <Alert tone="ok">{v.acceptedDoctorName ?? t('common.theDoctor')}{t('consultNow.accepted')}{v.money && v.money.returnedMinor > 0 ? t('consultNow.ofThePriceCameBack', { amount: formatRupees(v.money.returnedMinor / 100) }) : ''}</Alert>
           {booking.data && <JoinCall b={booking.data} />}
-          {v.bookingId && <p><Link to={`/pharmacy/consultations/${v.bookingId}`}>Open the booking</Link></p>}
+          {v.bookingId && <p><Link to={`/pharmacy/consultations/${v.bookingId}`}>{t('consultNow.openTheBooking')}</Link></p>}
         </>
       )}
-      {stage === 'refunded' && <p>{v.money ? `${formatRupees(v.money.refundedMinor / 100)} is back in your wallet.` : 'The money is back in your wallet.'} Give the patient their money back.</p>}
-      {(stage === 'accepted' || stage === 'refunded') && <div><Button variant="secondary" onClick={onAnother}>Start another</Button></div>}
+      {stage === 'refunded' && <p>{v.money ? t('consultNow.isBackInYourWallet', { amount: formatRupees(v.money.refundedMinor / 100) }) : t('consultNow.theMoneyIsBackIn')}{t('consultNow.giveThePatientTheirMoney')}</p>}
+      {(stage === 'accepted' || stage === 'refunded') && <div><Button variant="secondary" onClick={onAnother}>{t('consultNow.startAnother')}</Button></div>}
     </section>
   );
 }

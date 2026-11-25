@@ -9,6 +9,7 @@ import { newRequestKey, startOp } from '../../requests.ts';
 import { useOwnedOp } from './ownedOp.tsx';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ12: wallet top-ups by Razorpay, the customer app's checkout pattern (`apps/customer/src/payments.ts`): the server
@@ -33,8 +34,8 @@ function loadCheckout(): Promise<RazorpayCtor> {
     const s = document.createElement('script');
     s.src = CHECKOUT_SRC;
     s.async = true;
-    s.onload = () => (window.Razorpay ? resolve(window.Razorpay) : reject(new Error('The payment page did not load.')));
-    s.onerror = () => { loading = null; reject(new Error('Could not open the payment page. Check your connection and try again.')); };
+    s.onload = () => (window.Razorpay ? resolve(window.Razorpay) : reject(new Error(t('topup.thePaymentPageDidNot'))));
+    s.onerror = () => { loading = null; reject(new Error(t('topup.couldNotOpenThePayment'))); };
     document.head.appendChild(s);
   });
   return loading;
@@ -145,10 +146,10 @@ async function payTopup(source: TopupSource, order: TopupOrder): Promise<TopupOu
   let result: CheckoutResult;
   try {
     result = await openCheckout({ razorpayKeyId: order.razorpayKeyId, razorpayOrderId: order.razorpayOrderId, amountMinor: Math.round(order.amount * 100),
-      currency: order.currency, description: 'Jansetu wallet top-up' });
+      currency: order.currency, description: t('topup.jansetuWalletTopUp') });
   } catch {
     // The Checkout script did not load, so the payment page never opened: nothing can have been paid on it.
-    return { kind: 'closed', message: NOT_OPENED };
+    return { kind: 'closed', message: NOT_OPENED() };
   }
   if (result.kind === 'paid') {
     try {
@@ -161,10 +162,10 @@ async function payTopup(source: TopupSource, order: TopupOrder): Promise<TopupOu
   return checkTopup(source, order.paymentTransactionId);
 }
 
-export const NOT_OPENED = 'The payment page didn’t open. No money was taken.';
-export const UNPAID_CHECK_AGAIN = 'Not paid yet. If you paid, wait a minute and check again.';
-export const UNPAID_WORDS = `${UNPAID_CHECK_AGAIN} If you did not pay, you can remove it from this list.`;
-export const CHECK_LABEL = 'Check my top-up';
+export const NOT_OPENED = () => (t('topup.thePaymentPageDidnT'));
+export const UNPAID_CHECK_AGAIN = t('topup.notPaidYetIfYou');
+export const UNPAID_WORDS = () => (t('topup.ifYouDidNotPay', { UNPAID_CHECK_AGAIN }));
+export const CHECK_LABEL = t('topup.checkMyTopUp');
 const pendingSlot = (pharmacyId: string) => `wallet-topups:${pharmacyId}`;
 const infoSlot = (pharmacyId: string) => `wallet-topup-info:${pharmacyId}`;
 type TopupInfo = Record<string, { amount: number; at: number }>;
@@ -189,10 +190,10 @@ export function usePendingTopups(pharmacyId: string) {
 export const MIN_TOPUP = 1;
 export const MAX_TOPUP = 200_000;
 export function topupProblem(text: string, max = MAX_TOPUP): string | null {
-  if (!/^\d{1,6}(\.\d{1,2})?$/.test(text.trim())) return 'Enter the amount in rupees, for example 500.';
+  if (!/^\d{1,6}(\.\d{1,2})?$/.test(text.trim())) return t('topup.enterTheAmountInRupees');
   const n = Number(text.trim());
-  if (n < MIN_TOPUP) return `The smallest top-up is ${formatRupees(MIN_TOPUP)}.`;
-  if (n > max) return `The largest top-up at one time is ${formatRupees(max)}.`;
+  if (n < MIN_TOPUP) return t('topup.theSmallestTopUpIs', { amount: formatRupees(MIN_TOPUP) });
+  if (n > max) return t('topup.theLargestTopUpAt', { amount: formatRupees(max) });
   return null;
 }
 
@@ -235,8 +236,8 @@ export function TopUpForm({ pharmacyId, source: given, suggested, onCredited }: 
           if (r.kind !== 'ok') {
             if (live.current) {
               setNote({ tone: 'error', text: r.kind === 'refused'
-                ? `Could not start the top-up: ${source.refusal(r.error).message} No money was taken.`
-                : `Could not start the top-up: ${source.refusal(r.error).message} No money was taken. “Top up” asks for the same ${formatRupees(rupees)} again (never a second order).` });
+                ? t('topup.couldNotStartTheTop', { message: source.refusal(r.error).message })
+                : t('topup.couldNotStartTheTop2', { message: source.refusal(r.error).message, amount: formatRupees(rupees) }) });
             }
             return;
           }
@@ -245,7 +246,7 @@ export function TopUpForm({ pharmacyId, source: given, suggested, onCredited }: 
           try {
             order = await source.start(rupees, newRequestKey());
           } catch (err) {
-            if (live.current) setNote({ tone: 'error', text: `Could not start the top-up: ${source.refusal(err).message} No money was taken.` });
+            if (live.current) setNote({ tone: 'error', text: t('topup.couldNotStartTheTop', { message: source.refusal(err).message }) });
             return;
           }
         }
@@ -257,13 +258,13 @@ export function TopUpForm({ pharmacyId, source: given, suggested, onCredited }: 
         if (!live.current) return;
         if (outcome.kind === 'credited') {
           setAmount('');
-          setNote({ tone: 'ok', text: `${formatRupees(rupees)} was added to your wallet.` });
+          setNote({ tone: 'ok', text: t('topup.wasAddedToYourWallet', { amount: formatRupees(rupees) }) });
           onCredited?.();
-        } else if (outcome.kind === 'closed') setNote({ tone: outcome.message === NOT_OPENED ? 'warn' : 'error', text: outcome.message });
+        } else if (outcome.kind === 'closed') setNote({ tone: outcome.message === NOT_OPENED() ? 'warn' : 'error', text: outcome.message });
         else if (outcome.kind === 'unpaid') {
-          setNote({ tone: 'warn', text: `The payment was not completed, so no money was added. If you did pay, tap “${CHECK_LABEL}” ${source.rememberOnDevice ? 'below' : 'next to it under Top-ups'} in a minute.` });
+          setNote({ tone: 'warn', text: t('topup.thePaymentWasNotCompleted', { CHECK_LABEL, value: source.rememberOnDevice ? 'below' : 'next to it under Top-ups' }) });
         } else {
-          setNote({ tone: 'warn', text: `We could not confirm the top-up yet (${outcome.message}) If you paid, your money is safe: tap “${CHECK_LABEL}” ${source.rememberOnDevice ? 'below' : 'next to it under Top-ups'} in a minute.` });
+          setNote({ tone: 'warn', text: t('topup.weCouldNotConfirmThe', { message: outcome.message, CHECK_LABEL, value: source.rememberOnDevice ? 'below' : 'next to it under Top-ups' }) });
         }
       });
     } catch (err) {
@@ -272,13 +273,13 @@ export function TopUpForm({ pharmacyId, source: given, suggested, onCredited }: 
   }
 
   return (
-    <form className="rx-form" noValidate onSubmit={(e) => void start(e)} aria-label="Top up the wallet">
+    <form className="rx-form" noValidate onSubmit={(e) => void start(e)} aria-label={t('topup.topUpTheWallet')}>
       <div className="ws-search">
-        <TextField label="Amount to add (₹)" inputMode="decimal" value={unconfirmed ? String(unconfirmed.body.rupees) : amount} error={error} disabled={busy || !!unconfirmed}
-          hint="Paid by card or UPI on the Razorpay page." onChange={(e) => setAmount(e.target.value)} />
-        <Button type="submit" busy={busy}>Top up</Button>
+        <TextField label={t('topup.amountToAdd')} inputMode="decimal" value={unconfirmed ? String(unconfirmed.body.rupees) : amount} error={error} disabled={busy || !!unconfirmed}
+          hint={t('topup.paidByCardOrUpi')} onChange={(e) => setAmount(e.target.value)} />
+        <Button type="submit" busy={busy}>{t('topup.topUp')}</Button>
         {unconfirmed && !busy && (
-          <Button variant="ghost" onClick={() => started.settle(unconfirmed.requestKey)}>Use another amount</Button>
+          <Button variant="ghost" onClick={() => started.settle(unconfirmed.requestKey)}>{t('topup.useAnotherAmount')}</Button>
         )}
       </div>
       {note && <Alert tone={note.tone}>{note.text}</Alert>}
@@ -305,10 +306,10 @@ export function useTopupCheck(source: TopupSource, unpaidWords: string, onSettle
         const outcome = await checkTopup(source, id);
         void queryClient.invalidateQueries({ queryKey: source.queryKey });
         if (outcome.kind === 'credited' || outcome.kind === 'closed') onSettled?.(id);
-        setNotes((n) => ({ ...n, [id]: outcome.kind === 'credited' ? { tone: 'ok', text: `${amountRupees ? formatRupees(amountRupees) : 'The top-up'} was added to your wallet.` }
+        setNotes((n) => ({ ...n, [id]: outcome.kind === 'credited' ? { tone: 'ok', text: t('topup.wasAddedToYourWallet2', { value: amountRupees ? formatRupees(amountRupees) : t('topup.theTopUp') }) }
           : outcome.kind === 'closed' ? { tone: 'error', text: outcome.message }
           : outcome.kind === 'unpaid' ? { tone: 'warn', text: unpaidWords }
-          : { tone: 'warn', text: `Could not check just now: ${outcome.message}` } }));
+          : { tone: 'warn', text: t('topup.couldNotCheckJustNow', { message: outcome.message }) } }));
       });
     } catch (err) {
       setNotes((n) => ({ ...n, [id]: { tone: 'error', text: source.refusal(err).message } }));
@@ -327,27 +328,25 @@ export function DeviceTopups({ source }: { source: TopupSource }) {
 
 /** Top-ups started on this device and not confirmed yet, each with "Check my top-up". */
 function PendingTopups({ source, pending }: { source: TopupSource; pending: ReturnType<typeof usePendingTopups> }) {
-  const { busy, checking, notes, check, drop } = useTopupCheck(source, UNPAID_WORDS, (id) => pending.remove(id));
+  const { busy, checking, notes, check, drop } = useTopupCheck(source, UNPAID_WORDS(), (id) => pending.remove(id));
   if (pending.ids.length === 0 && Object.keys(notes).length === 0) return null;
 
   const done = Object.keys(notes).filter((id) => !pending.ids.includes(id));
   return (
     <section aria-labelledby="pending-topups-h">
-      <h3 id="pending-topups-h">Top-ups not confirmed yet</h3>
+      <h3 id="pending-topups-h">{t('topup.topUpsNotConfirmedYet')}</h3>
       <ul className="ws-list">
         {pending.ids.map((id) => {
           const info = pending.info(id);
           return (
             <li key={id} className="ws-actions">
-              <span>{info ? `${formatRupees(info.amount)}, started ${formatDateTime(new Date(info.at).toISOString())}` : 'A top-up started earlier on this device'}</span>
+              <span>{info ? `${formatRupees(info.amount)}, started ${formatDateTime(new Date(info.at).toISOString())}` : t('topup.aTopUpStartedEarlier')}</span>
               <Button variant="secondary" busy={checking === id} disabled={busy && checking !== id} onClick={() => void check(id, info?.amount)}>{CHECK_LABEL}</Button>
               {notes[id] && <Alert tone={notes[id].tone}>{notes[id].text}</Alert>}
-              {notes[id]?.text === UNPAID_WORDS && (
+              {notes[id]?.text === UNPAID_WORDS() && (
                 // Not paid when checked: it may be dropped from this device. A payment captured later is still found and
                 // credited by Jansetu's own payment check (the recovery sweep), so nothing is lost by removing it here.
-                <Button variant="ghost" disabled={busy} onClick={() => { pending.remove(id); drop(id); }}>
-                  Remove from this list
-                </Button>
+                <Button variant="ghost" disabled={busy} onClick={() => { pending.remove(id); drop(id); }}>{t('topup.removeFromThisList')}</Button>
               )}
             </li>
           );

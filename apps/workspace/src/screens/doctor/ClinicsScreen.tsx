@@ -11,6 +11,7 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { afterFailure, beginAttempt, keyedLookup, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { NotADoctor, useClinics, useDoctor, useDoctorProfile, type DoctorContext } from './doctor.tsx';
+import { t } from '../../i18n/doctor/index.ts';
 
 /** Clinics the doctor consults at, invitations, and the doctor's own solo practice (Q6). */
 export function ClinicsScreen() {
@@ -26,11 +27,8 @@ function Clinics({ d }: { d: DoctorContext }) {
   const clinics = useClinics(d);
   return (
     <>
-      <PageHeading title="Clinics">
-        Clinics you consult at. The Jansetu team links you to a clinic after checking; you can then put in-person hours at its branches on your
-        schedule and its front desk can book patients into them. You can also create a clinic of your own.
-      </PageHeading>
-      {clinics.isPending ? <Loading label="Loading your clinics…" />
+      <PageHeading title={t('clinics.clinics')}>{t('clinics.clinicsYouConsultAtThe')}</PageHeading>
+      {clinics.isPending ? <Loading label={t('clinics.loadingYourClinics')} />
         : clinics.isError ? <ErrorState message={messageOf(clinics.error)} onRetry={() => void clinics.refetch()} />
         : <ClinicLists d={d} data={clinics.data} />}
       <Practice d={d} />
@@ -55,20 +53,20 @@ function ClinicLists({ d, data }: { d: DoctorContext; data: MyClinics }) {
       {/* Q14: invitations can no longer be accepted (409 INVITE_NO_LONGER_VALID); they can still be dismissed (declined). */}
       {data.invites.length > 0 && (
         <section className="ws-section" aria-labelledby="inv-h">
-          <h2 id="inv-h">Invitations</h2>
-          <p className="ws-muted">Clinics no longer invite doctors: the Jansetu team links doctors to clinics after checking. These invitations can no longer be accepted.</p>
-          <ul className="stock-list" aria-label="Invitations">
+          <h2 id="inv-h">{t('clinics.invitations')}</h2>
+          <p className="ws-muted">{t('clinics.clinicsNoLongerInviteDoctors')}</p>
+          <ul className="stock-list" aria-label={t('clinics.invitations')}>
             {data.invites.map((i) => {
-              const name = i.clinic ?? 'A clinic';
+              const name = i.clinic ?? t('clinics.aClinic');
               return (
-                <li key={i.inviteId} className="doc-offer" aria-label={`Invitation from ${name}`}>
-                  <div className="stock-head"><strong>{name}</strong><Badge tone="warn">No longer valid</Badge></div>
-                  <span>Branches: {i.branches.length ? branchesText(i.branches) : 'all its in-clinic branches'}{i.createdAt ? ` · invited ${formatDateTime(i.createdAt)}` : ''}</span>
-                  <span className="ws-muted">To consult at {name}, ask the Jansetu team to link you.</span>
+                <li key={i.inviteId} className="doc-offer" aria-label={t('clinics.invitationFrom', { name })}>
+                  <div className="stock-head"><strong>{name}</strong><Badge tone="warn">{t('clinics.noLongerValid')}</Badge></div>
+                  <span>{t('clinics.branches')}{i.branches.length ? branchesText(i.branches) : 'all its in-clinic branches'}{i.createdAt ? ` · invited ${formatDateTime(i.createdAt)}` : ''}</span>
+                  <span className="ws-muted">{t('clinics.toConsultAt')}{name}{t('clinics.askTheJansetuTeamTo')}</span>
                   <div className="ws-actions">
-                    <ConfirmAction label="Dismiss" confirmLabel={`Dismiss the invitation from ${name}`}
-                      consequence={<>Dismiss the invitation from {name}? It is closed as declined.</>}
-                      onConfirm={() => step(() => d.api.declineInvite(i.inviteId), `The invitation from ${name} was dismissed.`)} />
+                    <ConfirmAction label={t('clinics.dismiss')} confirmLabel={t('clinics.dismissTheInvitationFrom', { name })}
+                      consequence={<>{t('clinics.dismissTheInvitationFrom2')}{name}{t('clinics.itIsClosedAsDeclined')}</>}
+                      onConfirm={() => step(() => d.api.declineInvite(i.inviteId), t('clinics.theInvitationFromWasDismissed', { name }))} />
                   </div>
                 </li>
               );
@@ -77,27 +75,26 @@ function ClinicLists({ d, data }: { d: DoctorContext; data: MyClinics }) {
         </section>
       )}
       <section className="ws-section" aria-labelledby="mem-h">
-        <h2 id="mem-h">Clinics you consult at</h2>
-        {data.clinics.length === 0 ? <Empty title="No clinics yet">Ask the Jansetu team to link you to a clinic, or create your own clinic below.</Empty> : (
-          <ul className="stock-list" aria-label="Clinics you consult at">
+        <h2 id="mem-h">{t('clinics.clinicsYouConsultAt')}</h2>
+        {data.clinics.length === 0 ? <Empty title={t('clinics.noClinicsYet')}>{t('clinics.askTheJansetuTeamTo2')}</Empty> : (
+          <ul className="stock-list" aria-label={t('clinics.clinicsYouConsultAt')}>
             {data.clinics.map((c) => {
               const name = c.name ?? 'Clinic';
               return (
                 <li key={c.partnerId} className="doc-offer" aria-label={name}>
                   <div className="stock-head">
                     <strong>{name}</strong>
-                    {c.solo && <Badge>Your practice</Badge>}
-                    {c.verified ? <Badge tone="ok">Verified</Badge> : <Badge tone="warn">Waiting for verification</Badge>}
+                    {c.solo && <Badge>{t('clinics.yourPractice')}</Badge>}
+                    {c.verified ? <Badge tone="ok">{t('common.verified')}</Badge> : <Badge tone="warn">{t('common.waitingForVerification')}</Badge>}
                     <Badge>{c.role === 'owner' ? 'Owner' : 'Doctor'}</Badge>
                   </div>
-                  <span>Branches: {branchesText(c.branches)}</span>
-                  {!c.verified && <span className="ws-muted">Patients cannot book you here until Jansetu verifies it.</span>}
-                  {c.role === 'owner' ? <span className="ws-muted">As its owner you cannot leave it here.</span> : (
+                  <span>{t('clinics.branches')}{branchesText(c.branches)}</span>
+                  {!c.verified && <span className="ws-muted">{t('clinics.patientsCannotBookYouHere')}</span>}
+                  {c.role === 'owner' ? <span className="ws-muted">{t('clinics.asItsOwnerYouCannot')}</span> : (
                     <div className="ws-actions">
-                      <ConfirmAction label="Leave" confirmLabel={`Leave ${name}`} danger
-                        consequence={<>Stop consulting at {name}? New bookings there stop at once and your in-person hours there no longer make slots.
-                          Appointments already booked are kept.</>}
-                        onConfirm={() => step(() => d.api.leaveClinic(c.partnerId), `You no longer consult at ${name}.`)} />
+                      <ConfirmAction label={t('clinics.leave')} confirmLabel={t('clinics.leave2', { name })} danger
+                        consequence={<>{t('clinics.stopConsultingAt')}{name}{t('clinics.newBookingsThereStopAt')}</>}
+                        onConfirm={() => step(() => d.api.leaveClinic(c.partnerId), t('clinics.youNoLongerConsultAt', { name }))} />
                     </div>
                   )}
                 </li>
@@ -124,18 +121,15 @@ function Practice({ d }: { d: DoctorContext }) {
   const [settled, setSettled] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   return (
     <section className="ws-section" aria-labelledby="practice-h">
-      <h2 id="practice-h">Your own clinic</h2>
-      <p className="ws-muted">
-        Create a clinic of your own with its first branch: you are its owner and consult at every branch of it (also ones added later). It starts
-        pending: Jansetu verifies it before patients can book you there. Other doctors join it only when the Jansetu team links them.
-      </p>
+      <h2 id="practice-h">{t('clinics.yourOwnClinic')}</h2>
+      <p className="ws-muted">{t('clinics.createAClinicOfYour')}</p>
       {settled && <Alert tone={settled.tone === 'ok' ? 'ok' : undefined}>{settled.text}</Alert>}
-      {q.isPending || profile.isPending ? <Loading label="Loading your clinic…" />
+      {q.isPending || profile.isPending ? <Loading label={t('clinics.loadingYourClinic')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : profile.isError ? <ErrorState message={messageOf(profile.error)} onRetry={() => void profile.refetch()} />
         : q.data && !pendingCreate ? <PracticeView practice={q.data} phone={profile.data.phone} />
         : !q.data && !pendingCreate && doctorStanding(profile.data) !== 'active'
-          ? <Alert tone="warn">Only active, verified doctors can create a clinic. Once Jansetu has verified your doctor account, you can create it here.</Alert>
+          ? <Alert tone="warn">{t('clinics.onlyActiveVerifiedDoctorsCan')}</Alert>
         : <ClinicForm d={d} onSettled={setSettled} />}
     </section>
   );
@@ -146,14 +140,12 @@ function PracticeView({ practice, phone }: { practice: SoloPractice; phone?: str
   return (
     <>
       <dl className="ws-dl">
-        <dt>Name</dt><dd>{practice.partner.name}</dd>
-        <dt>Verification</dt><dd><Badge tone={state === 'verified' ? 'ok' : 'warn'}>{VERIFICATION_LABEL[state] ?? state}</Badge></dd>
-        <dt>Branch</dt><dd>{practice.branches.map((b) => `${b.name}${b.address?.city ? `, ${b.address.city}` : ''}`).join('; ') || '—'}</dd>
+        <dt>{t('clinics.name')}</dt><dd>{practice.partner.name}</dd>
+        <dt>{t('common.verification')}</dt><dd><Badge tone={state === 'verified' ? 'ok' : 'warn'}>{VERIFICATION_LABEL[state] ?? state}</Badge></dd>
+        <dt>{t('clinics.branch')}</dt><dd>{practice.branches.map((b) => `${b.name}${b.address?.city ? `, ${b.address.city}` : ''}`).join('; ') || '—'}</dd>
       </dl>
-      {state !== 'verified' && <Alert tone="warn">Jansetu has not verified your clinic yet. Until then, in-person hours there cannot be added or booked.</Alert>}
-      <p>
-        Your clinic’s workspace (bills, front desk, staff): sign out, then sign in as “Lab or clinic staff” with your mobile number
-        {phone ? ` ${phone}` : ''} and choose {practice.partner.name}.
+      {state !== 'verified' && <Alert tone="warn">{t('clinics.jansetuHasNotVerifiedYour')}</Alert>}
+      <p>{t('clinics.yourClinicSWorkspaceBills')}{phone ? ` ${phone}` : ''}{t('clinics.andChoose')}{practice.partner.name}.
       </p>
     </>
   );
@@ -224,13 +216,13 @@ function ClinicForm({ d, onSettled }: { d: DoctorContext; onSettled: (s: { tone:
     onSettled(null);
     try {
       const r = await d.api.createMyClinic(attempt.body, attempt.requestKey);
-      made(attempt, r.replayed || !r.created ? `Your clinic “${r.partner.name}” had already been created: nothing was made twice.` : `Your clinic “${r.partner.name}” was created. Jansetu verifies it next.`);
+      made(attempt, r.replayed || !r.created ? t('clinics.yourClinicHadAlreadyBeen', { name: r.partner.name }) : t('clinics.yourClinicWasCreatedJansetu', { name: r.partner.name }));
     } catch (err) {
       reread();
       if (!owns(attempt)) return;
       if (err instanceof ApiError && err.code === 'DOCTOR_CLINIC_EXISTS') {
         store(undefined);
-        onSettled({ tone: 'error', text: 'You already have a clinic, so no new one was made. Ask the Jansetu team if you need another.' });
+        onSettled({ tone: 'error', text: t('clinics.youAlreadyHaveAClinic') });
         return;
       }
       const next = afterFailure(attempt, err, messageOf(err));
@@ -243,47 +235,44 @@ function ClinicForm({ d, onSettled }: { d: DoctorContext; onSettled: (s: { tone:
 
   if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
     return (
-      <PendingOpPanel<DoctorClinicInput, DoctorClinicFound & { requestKey: string }> key={op.attempts} label="Unconfirmed clinic" op={op} busy={busy} onResend={() => void send(op)}
+      <PendingOpPanel<DoctorClinicInput, DoctorClinicFound & { requestKey: string }> key={op.attempts} label={t('clinics.unconfirmedClinic')} op={op} busy={busy} onResend={() => void send(op)}
         fetchPage={keyedLookup(op.requestKey, () => d.api.myClinicByKey(op.requestKey), ['CLINIC_NOT_FOUND'])}
-        onFound={(c) => made(op, `Your clinic “${c.partner.name}” had already been created: nothing was made twice.`)}
-        forget={{ label: 'Forget it and start again', confirmLabel: 'Forget the earlier request',
-          consequence: 'If the earlier request still arrives, your clinic is created; a new request is then refused because you can have only one, so nothing is made twice.',
+        onFound={(c) => made(op, t('clinics.yourClinicHadAlreadyBeen', { name: c.partner.name }))}
+        forget={{ label: t('clinics.forgetItAndStartAgain'), confirmLabel: t('clinics.forgetTheEarlierRequest'),
+          consequence: t('clinics.ifTheEarlierRequestStill'),
           onForget: () => { if (owns(op)) { store(undefined); reread(); onSettled(null); } } }}
-        summary={op.restored ? null : <div>Clinic “{op.body.name.trim()}” with its branch {op.body.branch.name.trim()} in {op.body.branch.address.city.trim()}.</div>} />
+        summary={op.restored ? null : <div>{t('clinics.clinic')}{op.body.name.trim()}{t('clinics.withItsBranch')}{op.body.branch.name.trim()}{t('clinics.in')}{op.body.branch.address.city.trim()}.</div>} />
     );
   }
   return (
-    <form className="rx-form" noValidate onSubmit={review} aria-label="Create my clinic">
+    <form className="rx-form" noValidate onSubmit={review} aria-label={t('clinics.createMyClinic')}>
       <div className="rx-form-row">
-        <TextField {...field('name', 'Clinic name')} />
-        <TextField {...field('legalName', 'Legal name (optional)')} />
-        <TextField {...field('prefix', 'Bill number prefix', { hint: '1 to 6 letters or digits, e.g. DRK' })} />
+        <TextField {...field('name', t('clinics.clinicName'))} />
+        <TextField {...field('legalName', t('clinics.legalNameOptional'))} />
+        <TextField {...field('prefix', t('clinics.billNumberPrefix'), { hint: t('clinics.n1To6LettersOr') })} />
         <TextField {...field('gstin', 'GSTIN (optional)')} />
         <TextField {...field('pan', 'PAN (optional)')} />
-        <TextField {...field('email', 'Contact email (optional)', { inputMode: 'email' })} />
+        <TextField {...field('email', t('clinics.contactEmailOptional'), { inputMode: 'email' })} />
       </div>
       <div className="rx-form-row">
-        <TextField {...field('branchName', 'Branch name')} />
-        <TextField {...field('branchPhone', 'Branch phone', { inputMode: 'numeric' })} />
+        <TextField {...field('branchName', t('clinics.branchName'))} />
+        <TextField {...field('branchPhone', t('clinics.branchPhone'), { inputMode: 'numeric' })} />
         <TextField {...field('line1', 'Address')} />
-        <TextField {...field('line2', 'Address line 2 (optional)')} />
+        <TextField {...field('line2', t('clinics.addressLine2Optional'))} />
         <TextField {...field('city', 'City')} />
         <TextField {...field('state', 'State')} />
-        <TextField {...field('stateCode', 'State code', { hint: 'GST state code, e.g. 29' })} />
+        <TextField {...field('stateCode', t('clinics.stateCode'), { hint: t('clinics.gstStateCodeEG') })} />
         <TextField {...field('pincode', 'PIN code', { inputMode: 'numeric' })} />
       </div>
       {failure && <Alert>{failure}</Alert>}
       {!confirming ? (
-        <div className="confirm-actions"><Button type="submit">Review</Button></div>
+        <div className="confirm-actions"><Button type="submit">{t('common.review')}</Button></div>
       ) : (
-        <div className="confirm" role="group" aria-label="Create my clinic">
-          <div className="confirm-text">
-            Create “{f.name.trim()}” with its first branch, {f.branchName.trim()} in {f.city.trim()}? You can create only one clinic. It starts pending:
-            Jansetu verifies it (and its tax details) before patients can book you there. You are its owner and consult at every branch of it.
-          </div>
+        <div className="confirm" role="group" aria-label={t('clinics.createMyClinic')}>
+          <div className="confirm-text">{t('clinics.create')}{f.name.trim()}{t('clinics.withItsFirstBranch')}{f.branchName.trim()}{t('clinics.in')}{f.city.trim()}{t('clinics.youCanCreateOnlyOne')}</div>
           <div className="confirm-actions">
-            <Button busy={busy} onClick={() => void send(startOp(newRequestKey(), inputOf(f)))}>Create my clinic</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>Back</Button>
+            <Button busy={busy} onClick={() => void send(startOp(newRequestKey(), inputOf(f)))}>{t('clinics.createMyClinic')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{t('common.back')}</Button>
           </div>
         </div>
       )}

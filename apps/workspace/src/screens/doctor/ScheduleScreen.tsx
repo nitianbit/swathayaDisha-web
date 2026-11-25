@@ -13,10 +13,11 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded } from '../../requests.ts';
 import { formatDay } from '../partner/labs.tsx';
 import { NotADoctor, useClinics, useDoctor, type DoctorContext } from './doctor.tsx';
+import { t } from '../../i18n/doctor/index.ts';
 
 const DAY_LABEL = Object.fromEntries(WEEKDAYS.map((d) => [d.value, d.label])) as Record<Weekday, string>;
 const expansionText = (x: ScheduleExpansion) =>
-  `Next ${DOCTOR_ROLLING_DAYS} days: ${x.inserted} slots added, ${x.updated} changed, ${x.closed} closed, ${x.reopened} reopened.`;
+  t('schedule.nextDaysSlotsAddedChanged', { DOCTOR_ROLLING_DAYS, inserted: x.inserted, updated: x.updated, closed: x.closed, reopened: x.reopened });
 
 /** The doctor's weekly template (modes per window, in-person windows at a clinic branch) and leave days (Q4a). */
 export function ScheduleScreen() {
@@ -34,24 +35,22 @@ function Schedule({ d }: { d: DoctorContext }) {
   const [notice, setNotice] = useState<string | null>(null);
   return (
     <>
-      <PageHeading title="Schedule">
-        Your weekly hours and leave days. Patients book slots made from them for the next {DOCTOR_ROLLING_DAYS} days. Times are India time.
-      </PageHeading>
+      <PageHeading title={t('schedule.schedule')}>{t('schedule.yourWeeklyHoursAndLeave')}{DOCTOR_ROLLING_DAYS}{t('schedule.daysTimesAreIndiaTime')}</PageHeading>
       {notice && <Alert tone="ok">{notice}</Alert>}
-      {schedule.isPending || clinics.isPending ? <Loading label="Loading your schedule…" />
+      {schedule.isPending || clinics.isPending ? <Loading label={t('schedule.loadingYourSchedule')} />
         : schedule.isError ? <ErrorState message={messageOf(schedule.error)} onRetry={() => void schedule.refetch()} />
         : clinics.isError ? <ErrorState message={messageOf(clinics.error)} onRetry={() => void clinics.refetch()} />
         : (
           <>
             <section className="ws-section" aria-labelledby="week-h">
-              <h2 id="week-h">Weekly hours</h2>
+              <h2 id="week-h">{t('schedule.weeklyHours')}</h2>
               {editing
                 ? <TemplateForm d={d} saved={schedule.data} clinics={clinics.data} onClose={() => setEditing(false)}
                     onSaved={(m) => { setEditing(false); setNotice(m); }} />
                 : (
                   <>
                     <WeekSummary schedule={schedule.data} clinics={clinics.data} />
-                    <div className="ws-actions"><Button onClick={() => { setEditing(true); setNotice(null); }}>Change weekly hours</Button></div>
+                    <div className="ws-actions"><Button onClick={() => { setEditing(true); setNotice(null); }}>{t('schedule.changeWeeklyHours')}</Button></div>
                   </>
                 )}
             </section>
@@ -73,12 +72,12 @@ function placeName(w: Pick<ScheduleWindow, 'branchId'>, clinics: MyClinics): str
 
 function WeekSummary({ schedule, clinics }: { schedule: DoctorSchedule | null; clinics: MyClinics }) {
   if (!schedule || SCHEDULE_WEEKDAYS.every((day) => !(schedule.days[day] ?? []).length)) {
-    return <p className="ws-muted">No weekly hours yet: patients cannot book you until you add some.</p>;
+    return <p className="ws-muted">{t('schedule.noWeeklyHoursYetPatients')}</p>;
   }
   return (
     <>
-      <p className="ws-muted">{schedule.slotMinutes}-minute slots{schedule.isActive === false ? ' · the template is switched off' : ''}.</p>
-      <ul className="ws-list" aria-label="Weekly hours">
+      <p className="ws-muted">{schedule.slotMinutes}{t('schedule.minuteSlots')}{schedule.isActive === false ? ' · the template is switched off' : ''}.</p>
+      <ul className="ws-list" aria-label={t('schedule.weeklyHours')}>
         {SCHEDULE_WEEKDAYS.map((day) => {
           const windows = schedule.days[day] ?? [];
           return (
@@ -101,9 +100,9 @@ const DRAFT_LABEL: Record<keyof TemplateDraft, string> = {
   ...Object.fromEntries(SCHEDULE_WEEKDAYS.map((d) => [d, `${DAY_LABEL[d]} hours`])) as Record<Weekday, string>,
 };
 const cleanWindow = (w: ScheduleWindow): ScheduleWindow => ({ start: w.start, end: w.end, modes: [...w.modes], ...(w.branchId ? { branchId: w.branchId } : {}) });
-const toDraft = (t: DoctorSchedule | null): TemplateDraft => ({
-  slotMinutes: String(t?.slotMinutes ?? 30),
-  ...Object.fromEntries(SCHEDULE_WEEKDAYS.map((d) => [d, (t?.days[d] ?? []).map(cleanWindow)])) as Record<Weekday, ScheduleWindow[]>,
+const toDraft = (schedule: DoctorSchedule | null): TemplateDraft => ({
+  slotMinutes: String(schedule?.slotMinutes ?? 30),
+  ...Object.fromEntries(SCHEDULE_WEEKDAYS.map((d) => [d, (schedule?.days[d] ?? []).map(cleanWindow)])) as Record<Weekday, ScheduleWindow[]>,
 });
 const fromDraft = (d: TemplateDraft): ScheduleInput => ({
   slotMinutes: /^\d{1,3}$/.test(d.slotMinutes.trim()) ? Number(d.slotMinutes.trim()) : NaN,
@@ -132,8 +131,8 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
     if (c.length) { setStale(staleMessage(c.map((k) => DRAFT_LABEL[k]))); setConfirming(false); }
   }, [serverValue, rebaseTo]);
 
-  const t = draft.draft;
-  const body = fromDraft(t);
+  const tpl = draft.draft;
+  const body = fromDraft(tpl);
 
   function check(): boolean {
     const p = scheduleProblems(fromDraft(draft.current().draft), allowed);
@@ -160,12 +159,12 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
       // Q13: the write names the version it is based on; a change landing after this read is refused (409 SCHEDULE_CHANGED).
       const r = await d.api.saveSchedule(fromDraft(draft.current().draft), fresh ? fresh.updatedAt ?? null : null);
       queryClient.setQueryData(scheduleKey(d), r.template);
-      onSaved(`Weekly hours saved. ${expansionText(r.expansion)}`);
+      onSaved(t('schedule.weeklyHoursSaved', { value: expansionText(r.expansion) }));
     } catch (err) {
       // A refusal (also SCHEDULE_CHANGED: the hours are read again below and a day changed on both sides is reset) saved
       // nothing. After a lost answer the hours are read again too: if they were saved, the form already shows them.
-      setFailure(definitelyNotRecorded(err) ? `Not saved: ${messageOf(err)}`
-        : `${messageOf(err)} It may have been saved: your hours are read again; check them before saving again.`);
+      setFailure(definitelyNotRecorded(err) ? t('common.notSaved', { value: messageOf(err) })
+        : t('schedule.itMayHaveBeenSaved', { value: messageOf(err) }));
       setConfirming(false);
     } finally {
       setBusy(false);
@@ -181,29 +180,25 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
     edit(day, i, (w) => (branchId ? { start: w.start, end: w.end, modes: ['in-person'], branchId } : { start: w.start, end: w.end, modes: w.modes }));
 
   return (
-    <form className="rx-form" noValidate onSubmit={review} aria-label="Weekly hours">
-      <p className="ws-muted">
-        Each window is cut into whole slots. Choose how patients may consult in it. An in-person window can be at a clinic you consult at
-        (in person only); without a clinic it is at your own place. Saving replaces all your weekly hours.
-      </p>
+    <form className="rx-form" noValidate onSubmit={review} aria-label={t('schedule.weeklyHours')}>
+      <p className="ws-muted">{t('schedule.eachWindowIsCutInto')}</p>
       {places.length === 0 && (
-        <p className="ws-muted">You do not consult at a verified clinic yet, so in-person windows cannot be at a clinic. See Clinics.</p>
+        <p className="ws-muted">{t('schedule.youDoNotConsultAt')}</p>
       )}
       {unverified.length > 0 && (
-        <p className="ws-muted">
-          Not offered until Jansetu verifies {unverified.length === 1 ? 'it' : 'them'}: {unverified.map((c) => c.name ?? 'a clinic').join(', ')}.
+        <p className="ws-muted">{t('schedule.notOfferedUntilJansetuVerifies')}{unverified.length === 1 ? 'it' : 'them'}: {unverified.map((c) => c.name ?? 'a clinic').join(', ')}.
         </p>
       )}
       <div className="rx-form-row">
-        <TextField label="Slot length (minutes)" inputMode="numeric" value={t.slotMinutes} error={errors.slotMinutes} disabled={confirming}
+        <TextField label={t('schedule.slotLengthMinutes')} inputMode="numeric" value={tpl.slotMinutes} error={errors.slotMinutes} disabled={confirming}
           hint={`${SCHEDULE_MINUTES_MIN} to ${SCHEDULE_MINUTES_MAX}`} onChange={(e) => draft.set('slotMinutes', e.target.value)} />
       </div>
       {SCHEDULE_WEEKDAYS.map((day) => {
         const count = scheduleSlotCount(body, day);
         return (
           <fieldset key={day} className="ws-line" aria-describedby={errors[day] ? `sch-${day}-err` : undefined}>
-            <legend>{DAY_LABEL[day]}: {t[day].length === 0 ? 'off' : `${count} ${count === 1 ? 'slot' : 'slots'}`}</legend>
-            {t[day].map((w, i) => {
+            <legend>{DAY_LABEL[day]}: {tpl[day].length === 0 ? 'off' : `${count} ${count === 1 ? 'slot' : 'slots'}`}</legend>
+            {tpl[day].map((w, i) => {
               const name = `${DAY_LABEL[day]} window ${i + 1}`;
               const known = !w.branchId || places.some((p) => p.branchId === w.branchId);
               return (
@@ -211,19 +206,19 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
                   <div className="ws-window">
                     <TextField label={`${name} from`} type="time" value={w.start} disabled={confirming} onChange={(e) => edit(day, i, (x) => ({ ...x, start: e.target.value }))} />
                     <TextField label={`${name} to`} type="time" value={w.end} disabled={confirming} onChange={(e) => edit(day, i, (x) => ({ ...x, end: e.target.value }))} />
-                    <Button variant="ghost" disabled={confirming} aria-label={`Remove ${name}`}
-                      onClick={() => draft.update((x) => ({ ...x, [day]: x[day].filter((_, j) => j !== i) }))}>Remove</Button>
+                    <Button variant="ghost" disabled={confirming} aria-label={t('schedule.remove', { name })}
+                      onClick={() => draft.update((x) => ({ ...x, [day]: x[day].filter((_, j) => j !== i) }))}>{t('schedule.remove2')}</Button>
                   </div>
                   <div className="j-field ws-filter">
-                    <label htmlFor={`place-${day}-${i}`}>{name} place</label>
+                    <label htmlFor={`place-${day}-${i}`}>{name}{t('schedule.place')}</label>
                     <select id={`place-${day}-${i}`} value={w.branchId ?? ''} disabled={confirming} onChange={(e) => setPlace(day, i, e.target.value)}>
-                      <option value="">Online, or your own place</option>
-                      {places.map((p) => <option key={p.branchId} value={p.branchId}>Clinic: {p.label}</option>)}
-                      {!known && <option value={w.branchId}>A clinic branch you no longer consult at</option>}
+                      <option value="">{t('schedule.onlineOrYourOwnPlace')}</option>
+                      {places.map((p) => <option key={p.branchId} value={p.branchId}>{t('schedule.clinic')}{p.label}</option>)}
+                      {!known && <option value={w.branchId}>{t('schedule.aClinicBranchYouNo')}</option>}
                     </select>
                   </div>
                   <fieldset className="ws-checks doc-modes">
-                    <legend>{name} consultation types</legend>
+                    <legend>{name}{t('schedule.consultationTypes')}</legend>
                     {CONSULT_MODES.map((m) => (
                       <label key={m} className="ws-check">
                         <input type="checkbox" checked={w.modes.includes(m)} disabled={confirming || !!w.branchId}
@@ -231,15 +226,15 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
                         {CONSULT_MODE_LABEL[m]}
                       </label>
                     ))}
-                    {w.branchId && <span className="ws-muted">Clinic windows are in person only.</span>}
+                    {w.branchId && <span className="ws-muted">{t('schedule.clinicWindowsAreInPerson')}</span>}
                   </fieldset>
                 </div>
               );
             })}
             {errors[day] && <span id={`sch-${day}-err`} className="j-field__error">{errors[day]}</span>}
             <div>
-              <Button variant="secondary" disabled={confirming || t[day].length >= SCHEDULE_WINDOWS_MAX} aria-label={`Add a window on ${DAY_LABEL[day]}`}
-                onClick={() => draft.update((x) => ({ ...x, [day]: [...x[day], { start: '', end: '', modes: ['video'] }] }))}>Add a window</Button>
+              <Button variant="secondary" disabled={confirming || tpl[day].length >= SCHEDULE_WINDOWS_MAX} aria-label={t('schedule.addAWindowOn', { value: DAY_LABEL[day] })}
+                onClick={() => draft.update((x) => ({ ...x, [day]: [...x[day], { start: '', end: '', modes: ['video'] }] }))}>{t('schedule.addAWindow')}</Button>
             </div>
           </fieldset>
         );
@@ -248,25 +243,20 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
       {failure && <Alert>{failure}</Alert>}
       {!confirming ? (
         <div className="confirm-actions">
-          <Button type="submit">Review the weekly hours</Button>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="submit">{t('schedule.reviewTheWeeklyHours')}</Button>
+          <Button variant="ghost" onClick={onClose}>{t('common.cancel')}</Button>
         </div>
       ) : (
-        <div className="confirm" role="group" aria-label="Save the weekly hours">
-          <div className="confirm-text">
-            Replace your weekly hours: {body.slotMinutes}-minute slots.
-            <ul className="ws-list">
+        <div className="confirm" role="group" aria-label={t('schedule.saveTheWeeklyHours')}>
+          <div className="confirm-text">{t('schedule.replaceYourWeeklyHours')}{body.slotMinutes}{t('schedule.minuteSlots2')}<ul className="ws-list">
               {SCHEDULE_WEEKDAYS.map((day) => (
-                <li key={day}>{DAY_LABEL[day]}: {t[day].length === 0 ? 'off'
-                  : t[day].map((w) => `${w.start}–${w.end} (${w.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')}${placeName(w, clinics)})`).join('; ')}</li>
+                <li key={day}>{DAY_LABEL[day]}: {tpl[day].length === 0 ? 'off'
+                  : tpl[day].map((w) => `${w.start}–${w.end} (${w.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')}${placeName(w, clinics)})`).join('; ')}</li>
               ))}
-            </ul>
-            Over the next {DOCTOR_ROLLING_DAYS} days, missing slots are added, unbooked slots follow the new hours, and slots no longer in your hours
-            close for new bookings. Appointments already booked are kept. Leave days stay closed.
-          </div>
+            </ul>{t('schedule.overTheNext')}{DOCTOR_ROLLING_DAYS}{t('schedule.daysMissingSlotsAreAdded')}</div>
           <div className="confirm-actions">
-            <Button busy={busy} onClick={() => void save()}>Save the weekly hours</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>Back</Button>
+            <Button busy={busy} onClick={() => void save()}>{t('schedule.saveTheWeeklyHours')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{t('common.back')}</Button>
           </div>
         </div>
       )}
@@ -299,9 +289,9 @@ function LeaveDays({ d, schedule }: { d: DoctorContext; schedule: DoctorSchedule
     e.preventDefault();
     setFailure(null);
     setNotice(null);
-    if (!isRealDate(date)) { setFieldError('Choose a date.'); return; }
-    if (date < today) { setFieldError('Choose today or a later date.'); return; }
-    if (upcoming.includes(date)) { setFieldError('This is already a leave day.'); return; }
+    if (!isRealDate(date)) { setFieldError(t('schedule.chooseADate')); return; }
+    if (date < today) { setFieldError(t('schedule.chooseTodayOrALater')); return; }
+    if (upcoming.includes(date)) { setFieldError(t('schedule.thisIsAlreadyALeave')); return; }
     setFieldError(null);
     setReviewing(date);
   }
@@ -313,10 +303,10 @@ function LeaveDays({ d, schedule }: { d: DoctorContext; schedule: DoctorSchedule
       const r = await d.api.addLeave(day);
       setReviewing(null);
       setDate('');
-      done(`${formatDay(day)} is a leave day. ${r.expansion.closed} open ${r.expansion.closed === 1 ? 'slot' : 'slots'} closed.`, r.template);
+      done(t('schedule.isALeaveDayOpen', { when: formatDay(day), closed: r.expansion.closed, value: r.expansion.closed === 1 ? 'slot' : 'slots' }), r.template);
     } catch (err) {
       // Marking the same day again changes nothing on the server, so trying again is safe.
-      setFailure(definitelyNotRecorded(err) ? messageOf(err) : `${messageOf(err)} It may have been recorded; trying again is safe.`);
+      setFailure(definitelyNotRecorded(err) ? messageOf(err) : t('schedule.itMayHaveBeenRecorded', { value: messageOf(err) }));
       void queryClient.invalidateQueries({ queryKey: scheduleKey(d) });
     } finally {
       setBusy(false);
@@ -325,21 +315,21 @@ function LeaveDays({ d, schedule }: { d: DoctorContext; schedule: DoctorSchedule
 
   return (
     <section className="ws-section" aria-labelledby="leave-h">
-      <h2 id="leave-h">Leave days</h2>
-      <p className="ws-muted">On a leave day nobody can book you. Appointments already booked that day stay: cancel them on Appointments if you will not see those patients.</p>
+      <h2 id="leave-h">{t('schedule.leaveDays')}</h2>
+      <p className="ws-muted">{t('schedule.onALeaveDayNobody')}</p>
       {notice && <Alert tone="ok">{notice}</Alert>}
-      {upcoming.length === 0 ? <p className="ws-muted">No leave days ahead.</p> : (
-        <ul className="ws-list" aria-label="Upcoming leave days">
+      {upcoming.length === 0 ? <p className="ws-muted">{t('schedule.noLeaveDaysAhead')}</p> : (
+        <ul className="ws-list" aria-label={t('schedule.upcomingLeaveDays')}>
           {upcoming.map((day) => (
             <li key={day} className="ws-actions">
               <span>{formatDay(day)}</span>
-              <ConfirmAction label="Remove" confirmLabel={`Remove leave on ${formatDay(day)}`}
-                consequence={<>Remove the leave on {formatDay(day)}? Slots of your weekly hours that day open for booking again.</>}
+              <ConfirmAction label={t('schedule.remove2')} confirmLabel={t('schedule.removeLeaveOn', { when: formatDay(day) })}
+                consequence={<>{t('schedule.removeTheLeaveOn')}{formatDay(day)}{t('schedule.slotsOfYourWeeklyHours')}</>}
                 onConfirm={async () => {
                   setNotice(null);
                   try {
                     const r = await d.api.removeLeave(day);
-                    done(`Leave on ${formatDay(day)} removed. ${r.expansion.reopened} ${r.expansion.reopened === 1 ? 'slot' : 'slots'} reopened.`, r.template);
+                    done(t('schedule.leaveOnRemovedReopened', { when: formatDay(day), reopened: r.expansion.reopened, value: r.expansion.reopened === 1 ? 'slot' : 'slots' }), r.template);
                   } finally {
                     void queryClient.invalidateQueries({ queryKey: scheduleKey(d) });
                   }
@@ -348,22 +338,20 @@ function LeaveDays({ d, schedule }: { d: DoctorContext; schedule: DoctorSchedule
           ))}
         </ul>
       )}
-      {past > 0 && <p className="ws-muted">{past} earlier leave {past === 1 ? 'day' : 'days'} not shown.</p>}
+      {past > 0 && <p className="ws-muted">{past}{t('schedule.earlierLeave')}{past === 1 ? 'day' : 'days'}{t('schedule.notShown')}</p>}
       {reviewing ? (
-        <div className="confirm" role="group" aria-label="Add a leave day">
-          <div className="confirm-text">
-            Take leave on {formatDay(reviewing)}? Nobody can book you that day. Appointments already booked that day are kept.
-          </div>
+        <div className="confirm" role="group" aria-label={t('schedule.addALeaveDay')}>
+          <div className="confirm-text">{t('schedule.takeLeaveOn')}{formatDay(reviewing)}{t('schedule.nobodyCanBookYouThat')}</div>
           {failure && <Alert>{failure}</Alert>}
           <div className="confirm-actions">
-            <Button busy={busy} onClick={() => void add(reviewing)}>Take leave on {formatDay(reviewing)}</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => { setReviewing(null); setFailure(null); }}>Back</Button>
+            <Button busy={busy} onClick={() => void add(reviewing)}>{t('schedule.takeLeaveOn')}{formatDay(reviewing)}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => { setReviewing(null); setFailure(null); }}>{t('common.back')}</Button>
           </div>
         </div>
       ) : (
-        <form className="ws-search" noValidate onSubmit={review} aria-label="Add a leave day">
-          <TextField label="Leave date" type="date" min={today} value={date} error={fieldError} onChange={(e) => setDate(e.target.value)} />
-          <Button type="submit" variant="secondary">Add a leave day</Button>
+        <form className="ws-search" noValidate onSubmit={review} aria-label={t('schedule.addALeaveDay')}>
+          <TextField label={t('schedule.leaveDate')} type="date" min={today} value={date} error={fieldError} onChange={(e) => setDate(e.target.value)} />
+          <Button type="submit" variant="secondary">{t('schedule.addALeaveDay')}</Button>
         </form>
       )}
     </section>

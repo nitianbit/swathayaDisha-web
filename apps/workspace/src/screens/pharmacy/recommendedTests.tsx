@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { cleanRecommendationCode, matchRecommended, recommendationRefusal, recommendationsOff, type TestRecommendation } from '@jansetu/api';
 import { Button, TextField } from '@jansetu/ui';
 import type { Perform } from '../finance/finance.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ21 (r16 phase 3d, §25.12.4): "Have a test code from the doctor?": the recommended test names, loaded by the code on the
@@ -30,7 +31,7 @@ export function useRecommendedTicks(items: readonly { itemId: string; name: stri
   };
 }
 
-export function RecommendedTests({ load, phone, perform, disabled, ticks, label = 'Have a test code from the doctor? (optional)' }: {
+export function RecommendedTests({ load, phone, perform, disabled, ticks, label = t('recommendedTests.haveATestCodeFrom') }: {
   load: (code: string, phone: string) => Promise<TestRecommendation>; phone: string; perform: Perform; disabled: boolean;
   ticks: ReturnType<typeof useRecommendedTicks>;
   /** WQ25: the field's words (a doctor's own booking: no "from the doctor"). */
@@ -43,7 +44,7 @@ export function RecommendedTests({ load, phone, perform, disabled, ticks, label 
   async function submit(e: FormEvent) {
     e.preventDefault();
     const code = cleanRecommendationCode(text);
-    if (!code) { setError('This code is not valid. Check it on the prescription.'); return; }
+    if (!code) { setError(t('recommendedTests.thisCodeIsNotValid')); return; }
     setError(null);
     setLoading(true);
     try {
@@ -57,11 +58,11 @@ export function RecommendedTests({ load, phone, perform, disabled, ticks, label 
   }
   const { rec, unmatched } = ticks;
   return (
-    <form className="ws-search" noValidate onSubmit={(e) => void submit(e)} aria-label="Recommended tests">
+    <form className="ws-search" noValidate onSubmit={(e) => void submit(e)} aria-label={t('recommendedTests.recommendedTests')}>
       <TextField label={label} autoComplete="off" value={text} error={error} disabled={disabled} maxLength={20}
-        hint={rec ? `Recommended tests: ${rec.items.map((i) => i.name).join(', ')}.` : 'It is on the prescription, for example ABCD-EFGH.'}
+        hint={rec ? t('recommendedTests.recommendedTests2', { value: rec.items.map((i) => i.name).join(', ') }) : t('recommendedTests.itIsOnThePrescription')}
         onChange={(e) => setText(e.target.value)} />
-      <Button type="submit" variant="secondary" busy={loading} disabled={disabled}>Load tests</Button>
+      <Button type="submit" variant="secondary" busy={loading} disabled={disabled}>{t('recommendedTests.loadTests')}</Button>
       {unmatched && unmatched.length > 0 && <span className="ws-muted">{unmatched.map((n) => `${n}: not in this lab's list`).join('. ')}.</span>}
     </form>
   );

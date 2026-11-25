@@ -17,6 +17,7 @@ import { CardAwareCancel } from './ownedCancel.tsx';
 import { CardPaymentPanel } from './cardBooking.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 import { pharmacyLabBooker, type LabBooker } from './labBooker.ts';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ17: lab tests this pharmacy booked for walk-in patients (assisted booking phase 2a, backend r11 §24.11):
@@ -30,20 +31,18 @@ export function BookedLabTestsScreen() {
   const { api } = useSession();
   return (
     <>
-      <PageHeading title="Booked lab tests">
-        Lab tests your pharmacy booked for patients, newest first. Open one to see its time, cancel it or read its report.
-        {' '}<Link to="/pharmacy/lab-book">Book a new one</Link>.
+      <PageHeading title={t('common.bookedLabTests')}>{t('bookedLabTests.labTestsYourPharmacyBooked')}{' '}<Link to="/pharmacy/lab-book">{t('common.bookANewOne')}</Link>.
       </PageHeading>
       <LabList key={pharmacyId} booker={pharmacyLabBooker(api, pharmacyId)} />
     </>
   );
 }
 
-const STATUS_FILTERS: { value: LabBookingListStatus | ''; label: string }[] = [
-  { value: '', label: 'All' }, { value: 'pending_payment', label: 'Waiting for payment' }, { value: 'confirmed', label: 'Confirmed' }, { value: 'sample_collected', label: 'Sample collected' },
-  { value: 'visited', label: 'Visited' }, { value: 'processing', label: 'Processing' }, { value: 'report_ready', label: 'Report released' }, { value: 'completed', label: 'Completed' },
-  { value: 'cancelled', label: 'Cancelled' }, { value: 'no_show', label: 'No-show' },
-];
+const STATUS_FILTERS = (): { value: LabBookingListStatus | ''; label: string }[] => ([
+  { value: '', label: t('common.all') }, { value: 'pending_payment', label: t('common.waitingForPayment2') }, { value: 'confirmed', label: t('bookedLabTests.confirmed') }, { value: 'sample_collected', label: t('bookedLabTests.sampleCollected') },
+  { value: 'visited', label: t('bookedLabTests.visited') }, { value: 'processing', label: t('bookedLabTests.processing') }, { value: 'report_ready', label: t('bookedLabTests.reportReleased') }, { value: 'completed', label: t('bookedLabTests.completed') },
+  { value: 'cancelled', label: t('common.cancelled') }, { value: 'no_show', label: t('bookedLabTests.noShow') },
+]);
 const PAGE_SIZE = 20;
 const ymd8 = (d: string | undefined) => (d ?? '').replace(/-/g, '');
 const when = (b: Pick<LabBookingView, 'slot'>) => `${formatSlotDate(ymd8(b.slot?.date))}${b.slot?.startTime ? `, ${b.slot.startTime}` : ''}`;
@@ -51,10 +50,10 @@ const when = (b: Pick<LabBookingView, 'slot'>) => `${formatSlotDate(ymd8(b.slot?
 function LabBadges({ b }: { b: LabBookingView }) {
   return (
     <>
-      {b.reschedule?.pending && <> <Badge tone="warn">New time proposed</Badge></>}
-      {b.status === 'cancelled' && b.cancellation?.byKind === 'customer' && <> <Badge tone="warn">Cancelled by patient</Badge></>}
-      {b.assisted?.disputed?.state === 'open' && <> <Badge tone="danger">Patient says this is not theirs</Badge></>}
-      {(b.report?.releases?.length ?? 0) > 0 && <> <Badge tone="ok">Report</Badge></>}
+      {b.reschedule?.pending && <> <Badge tone="warn">{t('bookedLabTests.newTimeProposed')}</Badge></>}
+      {b.status === 'cancelled' && b.cancellation?.byKind === 'customer' && <> <Badge tone="warn">{t('common.cancelledByPatient')}</Badge></>}
+      {b.assisted?.disputed?.state === 'open' && <> <Badge tone="danger">{t('common.patientSaysThisIsNot')}</Badge></>}
+      {(b.report?.releases?.length ?? 0) > 0 && <> <Badge tone="ok">{t('bookedLabTests.report')}</Badge></>}
     </>
   );
 }
@@ -72,22 +71,22 @@ export function LabList({ booker }: { booker: LabBooker }) {
   if (q.isError && booker.closed?.(q.error)) return <Alert tone="warn">{booker.closedMessage}</Alert>;
   return (
     <section className="ws-section" aria-labelledby="lab-list-h">
-      <h2 id="lab-list-h" className="j-sr-only">Booked lab tests</h2>
-      <StatusFilter id="lab-status" value={status} options={STATUS_FILTERS} onChange={(v) => { setStatus(v); pages.reset(); }} />
-      {q.isPending ? <Loading label="Loading booked lab tests…" />
+      <h2 id="lab-list-h" className="j-sr-only">{t('common.bookedLabTests')}</h2>
+      <StatusFilter id="lab-status" value={status} options={STATUS_FILTERS()} onChange={(v) => { setStatus(v); pages.reset(); }} />
+      {q.isPending ? <Loading label={t('bookedLabTests.loadingBookedLabTests')} />
         : q.isError ? (isSwitchedOff(q.error) ? <Alert tone="warn">{LAB_SWITCHED_OFF_MESSAGE}</Alert>
           : <ErrorState message={booker.refusal(q.error).message} onRetry={() => void q.refetch()} />)
         : q.data.items.length === 0 ? (
-          <Empty title={status ? 'No lab tests with this status' : 'No lab tests booked yet'}>
-            <Link to={booker.paths.book}>Book a lab test</Link>{booker.words.emptyFor}
+          <Empty title={status ? t('bookedLabTests.noLabTestsWithThis') : t('bookedLabTests.noLabTestsBookedYet')}>
+            <Link to={booker.paths.book}>{t('bookedLabTests.bookALabTest')}</Link>{booker.words.emptyFor}
           </Empty>
         ) : (
           <>
             <div className="ws-table-wrap">
               <table className="j-table">
-                <caption className="j-sr-only">Booked lab tests, newest first</caption>
+                <caption className="j-sr-only">{t('bookedLabTests.bookedLabTestsNewestFirst')}</caption>
                 <thead>
-                  <tr><th scope="col">When</th><th scope="col">Patient</th><th scope="col">Lab</th><th scope="col">Tests</th><th scope="col">Status</th><th scope="col"><span className="j-sr-only">Open</span></th></tr>
+                  <tr><th scope={'col'}>{t('common.when')}</th><th scope={'col'}>{t('common.patient2')}</th><th scope={'col'}>{t('bookedLabTests.lab')}</th><th scope={'col'}>{t('common.tests')}</th><th scope={'col'}>{t('common.status')}</th><th scope={'col'}><span className="j-sr-only">{t('common.open')}</span></th></tr>
                 </thead>
                 <tbody>
                   {q.data.items.map((b) => (
@@ -100,15 +99,15 @@ export function LabList({ booker }: { booker: LabBooker }) {
                       <td>
                         {/* WQ21 L2: a card booking waiting for its payment, as in Booked consultations. */}
                         {b.status === 'pending_payment'
-                          ? <Link to={`${booker.paths.list}/${b._id}`} aria-label={`Pay now for the lab test of ${b.patientName ?? 'the patient'} at ${b.lab?.name ?? 'the lab'}`}>Pay now</Link>
-                          : <Link to={`${booker.paths.list}/${b._id}`} aria-label={`Open the lab test of ${b.patientName ?? 'the patient'} at ${b.lab?.name ?? 'the lab'}`}>Open</Link>}
+                          ? <Link to={`${booker.paths.list}/${b._id}`} aria-label={t('bookedLabTests.payNowForTheLab', { value: b.patientName ?? 'the patient', value2: b.lab?.name ?? 'the lab' })}>{t('common.payNow')}</Link>
+                          : <Link to={`${booker.paths.list}/${b._id}`} aria-label={t('bookedLabTests.openTheLabTestOf', { value: b.patientName ?? 'the patient', value2: b.lab?.name ?? 'the lab' })}>{t('common.open')}</Link>}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <CursorPager pages={pages} nextCursor={q.data.nextCursor} label="Booked lab test pages" />
+            <CursorPager pages={pages} nextCursor={q.data.nextCursor} label={t('bookedLabTests.bookedLabTestPages')} />
           </>
         )}
     </section>
@@ -122,16 +121,16 @@ export function BookedLabTestScreen() {
   const { api } = useSession();
   return (
     <>
-      <Link to="/pharmacy/lab-tests" className="ws-back"><ArrowLeft size={16} aria-hidden="true" /> Booked lab tests</Link>
-      <PageHeading title="Lab test" />
+      <Link to="/pharmacy/lab-tests" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('bookedLabTests.bookedLabTests2')}</Link>
+      <PageHeading title={t('bookedLabTests.labTest')} />
       <LabDetail key={`${pharmacyId}:${bookingId}`} booker={pharmacyLabBooker(api, pharmacyId)} bookingId={bookingId} />
     </>
   );
 }
 
-const CANCELLED_BY: Readonly<Record<string, string>> = {
-  customer: 'By the patient', partner: 'By the lab', admin: 'By Jansetu',
-};
+const CANCELLED_BY = (): Readonly<Record<string, string>> => ({
+  customer: t('common.byThePatient'), partner: t('bookedLabTests.byTheLab'), admin: t('common.byJansetu'),
+});
 
 /** One booking of one booker: its details, a new time to accept, cancel and the released report. */
 export function LabDetail({ booker, bookingId }: { booker: LabBooker; bookingId: string }) {
@@ -153,10 +152,10 @@ export function LabDetail({ booker, bookingId }: { booker: LabBooker; bookingId:
   };
 
   if (!valid || (q.isError && q.error instanceof ApiError && q.error.status === 404 && q.error.code === 'LAB_BOOKING_NOT_FOUND')) {
-    return <Empty title="Lab test not found"><Link to={booker.paths.list}>See all booked lab tests</Link></Empty>;
+    return <Empty title={t('bookedLabTests.labTestNotFound')}><Link to={booker.paths.list}>{t('bookedLabTests.seeAllBookedLabTests')}</Link></Empty>;
   }
   if (q.isError && booker.closed?.(q.error)) return <Alert tone="warn">{booker.closedMessage}</Alert>;
-  if (q.isPending) return <Loading label="Loading the lab test…" />;
+  if (q.isPending) return <Loading label={t('bookedLabTests.loadingTheLabTest')} />;
   if (q.isError) return <ErrorState message={booker.refusal(q.error).message} onRetry={() => void q.refetch()} />;
   const b = q.data;
   const r = b.reschedule?.pending ? b.reschedule : null;
@@ -164,21 +163,21 @@ export function LabDetail({ booker, bookingId }: { booker: LabBooker; bookingId:
   return (
     <>
       <section className="ws-section" aria-labelledby="lab-bk-h">
-        <h2 id="lab-bk-h">Booking</h2>
+        <h2 id="lab-bk-h">{t('common.booking')}</h2>
         <dl className="ws-dl">
-          {b.assisted?.shortRef && <><dt>Reference</dt><dd>{b.assisted.shortRef}</dd></>}
-          <dt>Status</dt><dd>{labStatusLabel(b.status)}<LabBadges b={b} /></dd>
-          <dt>Patient</dt><dd>{b.patientName ?? '—'}</dd>
-          <dt>Lab</dt><dd>{b.lab?.name ?? '—'}{b.branch?.name ? `, ${b.branch.name}` : ''}{b.branch?.phone ? ` (${b.branch.phone})` : ''}</dd>
-          <dt>Visit</dt><dd>{b.visitMode === 'home' || b.visitMode === 'lab' ? LAB_VISIT_MODE_LABEL[b.visitMode] : '—'}</dd>
-          {b.visitMode === 'home' && b.address && <><dt>Address</dt><dd>{[b.address.line1, b.address.line2, b.address.city, b.address.pincode].filter(Boolean).join(', ')}</dd></>}
-          {b.visitMode === 'lab' && b.branch?.address && <><dt>Lab address</dt><dd>{b.branch.address}</dd></>}
-          <dt>When</dt><dd>{formatSlotDate(ymd8(b.slot?.date))}{b.slot?.startTime ? ` at ${b.slot.startTime}` : ''}{b.slot?.endTime ? `–${b.slot.endTime}` : ''}</dd>
-          <dt>Tests</dt><dd>{(b.items ?? []).map((i) => i.name).join(', ') || '—'}</dd>
-          {b.collector?.name && <><dt>Sample collector</dt><dd>{b.collector.name}</dd></>}
-          {b.status === 'cancelled' && b.cancellation && <><dt>Cancelled</dt><dd>{(b.cancellation.byKind === 'booker' ? booker.words.byBooker : CANCELLED_BY[b.cancellation.byKind ?? '']) ?? '—'}{b.cancellation.at ? ` on ${formatDateTime(b.cancellation.at)}` : ''}</dd></>}
+          {b.assisted?.shortRef && <><dt>{t('common.reference')}</dt><dd>{b.assisted.shortRef}</dd></>}
+          <dt>{t('common.status')}</dt><dd>{labStatusLabel(b.status)}<LabBadges b={b} /></dd>
+          <dt>{t('common.patient2')}</dt><dd>{b.patientName ?? '—'}</dd>
+          <dt>{t('bookedLabTests.lab')}</dt><dd>{b.lab?.name ?? '—'}{b.branch?.name ? `, ${b.branch.name}` : ''}{b.branch?.phone ? ` (${b.branch.phone})` : ''}</dd>
+          <dt>{t('bookedLabTests.visit')}</dt><dd>{b.visitMode === 'home' || b.visitMode === 'lab' ? LAB_VISIT_MODE_LABEL[b.visitMode] : '—'}</dd>
+          {b.visitMode === 'home' && b.address && <><dt>{t('common.address')}</dt><dd>{[b.address.line1, b.address.line2, b.address.city, b.address.pincode].filter(Boolean).join(', ')}</dd></>}
+          {b.visitMode === 'lab' && b.branch?.address && <><dt>{t('bookedLabTests.labAddress')}</dt><dd>{b.branch.address}</dd></>}
+          <dt>{t('common.when')}</dt><dd>{formatSlotDate(ymd8(b.slot?.date))}{b.slot?.startTime ? ` at ${b.slot.startTime}` : ''}{b.slot?.endTime ? `–${b.slot.endTime}` : ''}</dd>
+          <dt>{t('common.tests')}</dt><dd>{(b.items ?? []).map((i) => i.name).join(', ') || '—'}</dd>
+          {b.collector?.name && <><dt>{t('bookedLabTests.sampleCollector')}</dt><dd>{b.collector.name}</dd></>}
+          {b.status === 'cancelled' && b.cancellation && <><dt>{t('common.cancelled')}</dt><dd>{(b.cancellation.byKind === 'booker' ? booker.words.byBooker : CANCELLED_BY()[b.cancellation.byKind ?? '']) ?? '—'}{b.cancellation.at ? ` on ${formatDateTime(b.cancellation.at)}` : ''}</dd></>}
         </dl>
-        {b.assisted?.disputed?.state === 'open' && <Alert tone="warn">The account holder told Jansetu this booking is not theirs. Jansetu is looking into it.</Alert>}
+        {b.assisted?.disputed?.state === 'open' && <Alert tone="warn">{t('common.theAccountHolderToldJansetu')}</Alert>}
       </section>
 
       {note && <Alert tone="ok">{note}</Alert>}
@@ -186,10 +185,10 @@ export function LabDetail({ booker, bookingId }: { booker: LabBooker; bookingId:
       {/* WQ17c: a card booking waiting for its payment: the consultation's panel, on the lab's reads (any device, r14). */}
       {b.status === 'pending_payment' && !note && (
         <section className="ws-section" aria-labelledby="lab-pay-h">
-          <h2 id="lab-pay-h">Payment</h2>
+          <h2 id="lab-pay-h">{t('common.payment')}</h2>
           <CardPaymentPanel source={booker.cardSource(api, b._id, null)} order={orderFromBooking(b)} payBy={b.payment?.payBy ?? undefined}
             paymentTransactionId={b.payment?.paymentTransactionId ?? null} perform={guard.perform} busy={guard.busy}
-            onPaid={(_b, n) => { setNote(`Paid. The lab test is booked. The patient is told.${n ? ` ${n}` : ''}`); changed(); void q.refetch(); }}
+            onPaid={(_b, n) => { setNote(t('bookedLabTests.paidTheLabTestIs', { value: n ? ` ${n}` : '' })); changed(); void q.refetch(); }}
             onEnded={(w) => { setNote(w); changed(); void q.refetch(); }} />
         </section>
       )}
@@ -202,8 +201,8 @@ export function LabDetail({ booker, bookingId }: { booker: LabBooker; bookingId:
         <CancelLab booker={booker} booking={b} perform={guard.perform} busy={guard.busy} onDone={(w) => { setNote(w); changed(); void q.refetch(); }} />
       ) : b.status === 'confirmed' ? (
         <section className="ws-section" aria-labelledby="lab-cancel-h">
-          <h2 id="lab-cancel-h">Cancel</h2>
-          <p className="ws-muted">Lab tests can be cancelled up to 1 hour before the time. It is too late to cancel this one here.</p>
+          <h2 id="lab-cancel-h">{t('common.cancel')}</h2>
+          <p className="ws-muted">{t('bookedLabTests.labTestsCanBeCancelled')}</p>
         </section>
       ) : null)}
 
@@ -232,43 +231,39 @@ function AcceptNewTime({ booker, booking, version, perform, busy, onDone, onRefu
     setError(null);
     const res = await perform(() => send(p, (b) => booker.routes.acceptReschedule(b.bookingId, b.version)));
     if (res.kind === 'stale') return;
-    if (res.kind === 'ok') { onDone(`New time accepted: ${newTime}. The patient is told.`); return; }
+    if (res.kind === 'ok') { onDone(t('bookedLabTests.newTimeAcceptedThePatient', { newTime })); return; }
     if (res.kind === 'refused') onRefused(booker.refusal(res.error).message);
   }
 
   if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
     return (
       <section className="ws-section" aria-labelledby="lab-new-h">
-        <h2 id="lab-new-h">New time from the lab</h2>
-        <CheckPanel label="Unconfirmed acceptance"
+        <h2 id="lab-new-h">{t('bookedLabTests.newTimeFromTheLab')}</h2>
+        <CheckPanel label={t('bookedLabTests.unconfirmedAcceptance')}
           onCheck={async () => {
             const now = await booker.routes.booking(booking._id);
             // WQ17b L1: accepted only when the booking is still confirmed and the very proposal sent is no longer waiting.
             if (op.body && now.status === 'confirmed' && now.reschedule && !now.reschedule.pending && now.reschedule.version === op.body.version) {
-              settle(op.requestKey); onDone('The new time is accepted.'); return null;
+              settle(op.requestKey); onDone(t('bookedLabTests.theNewTimeIsAccepted')); return null;
             }
-            return op.body ? 'Not accepted so far. It may still be on its way. Sending it again is safe.'
-              : 'Its details are not kept on this device after a reload. Look at the booking: if no new time is waiting, it was answered.';
+            return op.body ? t('bookedLabTests.notAcceptedSoFarIt')
+              : t('bookedLabTests.itsDetailsAreNotKept');
           }}
-          resend={op.restored || !op.body ? undefined : { label: 'Send the same request again', busy, onClick: () => void accept(op).catch((e: unknown) => setError(booker.refusal(e).message)) }}
-          forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget: () => settle(op.requestKey), consequence: 'If the earlier acceptance still arrives, the new time is accepted.' }}>
-          <Alert tone="warn">The outcome of accepting the new time is not known yet{op.error ? ` (${op.error})` : ''}.</Alert>
+          resend={op.restored || !op.body ? undefined : { label: t('common.sendTheSameRequestAgain'), busy, onClick: () => void accept(op).catch((e: unknown) => setError(booker.refusal(e).message)) }}
+          forget={{ label: t('common.forgetIt'), confirmLabel: t('common.yesForgetIt'), onForget: () => settle(op.requestKey), consequence: t('bookedLabTests.ifTheEarlierAcceptanceStill') }}>
+          <Alert tone="warn">{t('bookedLabTests.theOutcomeOfAcceptingThe')}{op.error ? ` (${op.error})` : ''}.</Alert>
         </CheckPanel>
       </section>
     );
   }
   return (
     <section className="ws-section" aria-labelledby="lab-new-h">
-      <h2 id="lab-new-h">New time from the lab</h2>
-      <Alert tone="warn">
-        The lab proposed a new time: <strong>{newTime}</strong>{oldTime ? ` (it was ${oldTime})` : ''}.{r.reason ? ` Reason: ${r.reason}.` : ''}
-        {' '}Ask the patient, then accept it, or cancel the booking (the money comes back to your wallet).
-      </Alert>
+      <h2 id="lab-new-h">{t('bookedLabTests.newTimeFromTheLab')}</h2>
+      <Alert tone="warn">{t('bookedLabTests.theLabProposedANew')}<strong>{newTime}</strong>{oldTime ? ` (it was ${oldTime})` : ''}.{r.reason ? t('bookedLabTests.reason', { reason: r.reason }) : ''}
+        {' '}{t('bookedLabTests.askThePatientThenAccept')}</Alert>
       {error && <Alert>{error}</Alert>}
       <div className="ws-actions">
-        <Button busy={busy} onClick={() => void accept(startOp(newRequestKey(), { bookingId: booking._id, version })).catch((e: unknown) => setError(booker.refusal(e).message))}>
-          Accept new time
-        </Button>
+        <Button busy={busy} onClick={() => void accept(startOp(newRequestKey(), { bookingId: booking._id, version })).catch((e: unknown) => setError(booker.refusal(e).message))}>{t('bookedLabTests.acceptNewTime')}</Button>
       </div>
     </section>
   );
@@ -289,10 +284,10 @@ function CancelLab({ booker, booking, perform, busy, onDone }: {
   const waiting = booking.status === 'pending_payment';
   const paidBy = bookingPaidBy(booking);
   return (
-    <CardAwareCancel<PendingCancel, LabBookingView> slot={booker.slot('cancel', booking._id)} label="Cancel this lab test"
-      what="lab test" when={`${formatSlotDate(ymd8(booking.slot?.date))} at ${booking.slot?.startTime ?? '—'}`}
-      introLead={waiting ? 'You can cancel it at any time.' : booking.reschedule?.pending ? 'While the new time is not answered you can cancel at any time.' : 'You can cancel up to 1 hour before the time.'}
-      amount="The amount" told="The patient is told." paidBy={paidBy} waiting={waiting} captured={!booking.payment || booking.payment.state === 'captured'}
+    <CardAwareCancel<PendingCancel, LabBookingView> slot={booker.slot('cancel', booking._id)} label={t('bookedLabTests.cancelThisLabTest')}
+      what={t('bookedLabTests.labTest2')} when={`${formatSlotDate(ymd8(booking.slot?.date))} at ${booking.slot?.startTime ?? '—'}`}
+      introLead={waiting ? t('bookedLabTests.youCanCancelItAt') : booking.reschedule?.pending ? t('bookedLabTests.whileTheNewTimeIs') : t('bookedLabTests.youCanCancelUpTo')}
+      amount={t('common.theAmount')} told={t('bookedLabTests.thePatientIsTold')} paidBy={paidBy} waiting={waiting} captured={!booking.payment || booking.payment.state === 'captured'}
       version={booking.statusVersion} perform={perform} busy={busy}
       makeBody={(reason, refundTo) => ({ bookingId: booking._id, ...(reason ? { reason } : {}), ...(typeof booking.statusVersion === 'number' ? { expectedVersion: booking.statusVersion } : {}),
         ...(refundTo ? { refundTo } : {}) })}
@@ -304,13 +299,13 @@ function CancelLab({ booker, booking, perform, busy, onDone }: {
       checkedWords={(body, restored, now) => {
         // WQ27: a doctor's view carries `payment` too (r29 G1), so its found cancel says refund or forfeit the same way.
         const state = now.payment?.state;
-        if (state === 'not_paid') return `Cancelled. It was not paid, so nothing is refunded. ${LATE_PAYMENT_BACK}`;
-        if (state === 'forfeited') return 'Cancelled. Nothing was refunded.';
-        if (state !== 'refunded') return 'Cancelled.';
-        if (now.payment?.method !== 'razorpay') return 'Cancelled. The amount is back in your Jansetu wallet.';
-        return restored ? 'Cancelled. The amount goes back the way chosen.'
-          : body?.refundTo === 'wallet' ? 'Cancelled. The amount goes back to your Jansetu wallet. See it under Wallet.'
-          : 'Cancelled. The amount goes back to the card or UPI it was paid with.';
+        if (state === 'not_paid') return t('common.cancelledItWasNotPaid', { LATE_PAYMENT_BACK });
+        if (state === 'forfeited') return t('bookedLabTests.cancelledNothingWasRefunded');
+        if (state !== 'refunded') return t('bookedLabTests.cancelled');
+        if (now.payment?.method !== 'razorpay') return t('common.cancelledTheAmountIsBack');
+        return restored ? t('common.cancelledTheAmountGoesBack')
+          : body?.refundTo === 'wallet' ? t('common.cancelledTheAmountGoesBack2')
+          : t('common.cancelledTheAmountGoesBack3');
       }}
       onDone={onDone} />
   );
@@ -323,23 +318,23 @@ function Reports({ booking }: { booking: LabBookingView }) {
   const { open, opening, error, preview } = useDocumentViewer();
   return (
     <section className="ws-section" aria-labelledby="lab-rep-h">
-      <h2 id="lab-rep-h">Report</h2>
+      <h2 id="lab-rep-h">{t('bookedLabTests.report')}</h2>
       {releases.length === 0 ? (
-        <p className="ws-muted">The report shows here once the lab releases it, for 90 days from then.</p>
+        <p className="ws-muted">{t('bookedLabTests.theReportShowsHereOnce')}</p>
       ) : (
         <ul className="ws-list">
           {releases.map((r, i) => (
             <li key={`${r.file}:${i}`} className="ws-actions">
-              <span>Released {r.releasedAt ? formatDateTime(r.releasedAt) : ''}{r.signer?.name ? `, signed by ${r.signer.name}` : ''}</span>
+              <span>{t('bookedLabTests.released')}{r.releasedAt ? formatDateTime(r.releasedAt) : ''}{r.signer?.name ? `, signed by ${r.signer.name}` : ''}</span>
               <Button variant="secondary" busy={opening === r.file} onClick={() => void open(r.file)}>
-                <FileText size={16} aria-hidden="true" /> Open the report{releases.length > 1 ? ` ${i + 1}` : ''}
+                <FileText size={16} aria-hidden="true" />{t('bookedLabTests.openTheReport')}{releases.length > 1 ? ` ${i + 1}` : ''}
               </Button>
             </li>
           ))}
         </ul>
       )}
-      {error && <Alert>Could not open the report: {error}</Alert>}
-      <DocumentPreview preview={preview} title="Lab report" noun="report" fileName="lab-report" />
+      {error && <Alert>{t('bookedLabTests.couldNotOpenTheReport')}{error}</Alert>}
+      <DocumentPreview preview={preview} title={t('bookedLabTests.labReport')} noun={t('bookedLabTests.report2')} fileName={t('bookedLabTests.labReport2')} />
     </section>
   );
 }

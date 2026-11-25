@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { allSuppliers, type PharmacySupplier } from '@jansetu/api';
 import { TextField } from '@jansetu/ui';
 import { useSession } from '../../session.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ11c: every active supplier of the pharmacy, all pages (`allSuppliers`, 50 a page, bounded): Add stock, Import and
@@ -17,7 +18,7 @@ export function useActiveSuppliers(pharmacyId: string) {
 const FIND_FROM = 12;
 
 /** A supplier select over the active suppliers, with a name filter when the list is long. The chosen one always stays listed. */
-export function SupplierSelect({ id, label, suppliers, value, onChange, error, hint, noneLabel = 'Choose…', disabled }: {
+export function SupplierSelect({ id, label, suppliers, value, onChange, error, hint, noneLabel = t('common.choose3'), disabled }: {
   id: string;
   label: string;
   suppliers: readonly PharmacySupplier[];
@@ -35,7 +36,7 @@ export function SupplierSelect({ id, label, suppliers, value, onChange, error, h
   return (
     <>
       {suppliers.length > FIND_FROM && (
-        <TextField label={`Find the supplier (${suppliers.length})`} value={find} disabled={disabled} placeholder="Part of the name"
+        <TextField label={t('supplierPicker.findTheSupplier', { length: suppliers.length })} value={find} disabled={disabled} placeholder={t('supplierPicker.partOfTheName')}
           onChange={(e) => setFind(e.target.value)} />
       )}
       <div className="j-field">
@@ -46,7 +47,7 @@ export function SupplierSelect({ id, label, suppliers, value, onChange, error, h
           {shown.map((s) => <option key={s.supplierId} value={s.supplierId}>{s.displayName}</option>)}
         </select>
         {hint && <span id={`${id}-hint`} className="j-field__hint">{hint}</span>}
-        {needle && shown.length === 0 && <span className="j-field__hint">No supplier name contains “{find.trim()}”.</span>}
+        {needle && shown.length === 0 && <span className="j-field__hint">{t('supplierPicker.noSupplierNameContains')}{find.trim()}”.</span>}
         {error && <span id={`${id}-error`} className="j-field__error">{error}</span>}
       </div>
     </>

@@ -7,12 +7,13 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { BatchActions } from './BatchActions.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 const PAGE_SIZE = 20;
 
-export const BATCH_STATUS_LABEL: Record<Batch['status'], string> = {
-  active: 'On sale', depleted: 'Sold out', expired: 'Expired', recalled: 'Recalled', quarantined: 'Quarantined',
-};
+export const BATCH_STATUS_LABEL = (): Record<Batch['status'], string> => ({
+  active: t('stock.onSale'), depleted: t('stock.soldOut'), expired: 'Expired', recalled: 'Recalled', quarantined: 'Quarantined',
+});
 const batchTone = (s: Batch['status']) => (s === 'active' ? 'ok' : s === 'depleted' ? undefined : 'danger');
 
 /** Find a medicine in this pharmacy's stock and act on its batches (P3/P3b). */
@@ -32,21 +33,19 @@ export function StockScreen() {
 
   return (
     <>
-      <PageHeading title="Stock">Find a medicine to see its batches, quarantine or release them, return them to a supplier or recall them.</PageHeading>
+      <PageHeading title={t('stock.stock')}>{t('stock.findAMedicineToSee')}</PageHeading>
       <div className="ws-actions">
-        <Link className="j-btn j-btn--primary" to="/pharmacy/stock/add">Add stock</Link>
-        <Link className="j-btn j-btn--secondary" to="/pharmacy/stock/import">Import stock from a file</Link>
+        <Link className="j-btn j-btn--primary" to="/pharmacy/stock/add">{t('common.addStock')}</Link>
+        <Link className="j-btn j-btn--secondary" to="/pharmacy/stock/import">{t('common.importStockFromAFile')}</Link>
       </div>
       <form className="ws-search" role="search" onSubmit={(e: FormEvent) => { e.preventDefault(); setParams(text.trim() ? { q: text.trim() } : {}); }}>
-        <TextField label="Medicine" value={text} onChange={(e) => setText(e.target.value)} placeholder="Name, brand or generic name" />
-        <Button type="submit">Search</Button>
+        <TextField label={t('common.medicine')} value={text} onChange={(e) => setText(e.target.value)} placeholder={t('common.nameBrandOrGenericName')} />
+        <Button type="submit">{t('common.search')}</Button>
       </form>
-      {q.isPending ? <Loading label="Loading stock…" />
+      {q.isPending ? <Loading label={t('stock.loadingStock')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : q.data.items.length === 0 ? (
-          <Empty title={search ? `Nothing in stock matches “${search}”` : 'No stock yet'}>
-            Add stock for one batch, or import a file of everything you received.
-          </Empty>
+          <Empty title={search ? t('stock.nothingInStockMatches', { search }) : t('stock.noStockYet')}>{t('stock.addStockForOneBatch')}</Empty>
         )
         : (
           <>
@@ -54,12 +53,12 @@ export function StockScreen() {
               {q.data.items.map((item) => <StockItem key={item._id} item={item} onChanged={refresh} />)}
             </ul>
             {q.data.totalPages > 1 && (
-              <nav className="ws-pager" aria-label="Pages">
+              <nav className="ws-pager" aria-label={t('common.pages')}>
                 <Button variant="secondary" disabled={page <= 1}
-                  onClick={() => setParams({ ...(search ? { q: search } : {}), page: String(page - 1) })}>Previous</Button>
-                <span>Page {page} of {q.data.totalPages}</span>
+                  onClick={() => setParams({ ...(search ? { q: search } : {}), page: String(page - 1) })}>{t('common.previous')}</Button>
+                <span>{t('common.page')}{page}{t('common.of')}{q.data.totalPages}</span>
                 <Button variant="secondary" disabled={page >= q.data.totalPages}
-                  onClick={() => setParams({ ...(search ? { q: search } : {}), page: String(page + 1) })}>Next</Button>
+                  onClick={() => setParams({ ...(search ? { q: search } : {}), page: String(page + 1) })}>{t('common.next')}</Button>
               </nav>
             )}
           </>
@@ -76,18 +75,18 @@ function StockItem({ item, onChanged }: { item: InventoryItem; onChanged: () => 
     <li className="ws-section stock-item">
       <div className="stock-head">
         <h2>{name}</h2>
-        <span>{sellable} sellable · {item.reservedQty} reserved{item.rackLocation ? ` · rack ${item.rackLocation}` : ''}</span>
-        {low && <Badge tone="warn">Low: reorder at {item.reorderThreshold}</Badge>}
+        <span>{sellable}{t('stock.sellable')}{item.reservedQty}{t('stock.reserved')}{item.rackLocation ? ` · rack ${item.rackLocation}` : ''}</span>
+        {low && <Badge tone="warn">{t('stock.lowReorderAt')}{item.reorderThreshold}</Badge>}
         {typeof item.medicineId === 'object' && /^[0-9a-fA-F]{24}$/.test(item.medicineId._id) && (
-          <Link to={`/pharmacy/stock/add?medicine=${item.medicineId._id}`} aria-label={`Add a batch of ${name}`}>Add a batch</Link>
+          <Link to={`/pharmacy/stock/add?medicine=${item.medicineId._id}`} aria-label={t('stock.addABatchOf', { name })}>{t('stock.addABatch')}</Link>
         )}
       </div>
-      {(item.batches ?? []).length === 0 ? <span className="ws-muted">No batches recorded for this medicine.</span> : (
+      {(item.batches ?? []).length === 0 ? <span className="ws-muted">{t('stock.noBatchesRecordedForThis')}</span> : (
         <div className="ws-table-wrap">
           <table className="j-table">
-            <caption className="j-sr-only">Batches of {name}</caption>
+            <caption className="j-sr-only">{t('stock.batchesOf')}{name}</caption>
             <thead>
-              <tr><th scope="col">Batch</th><th scope="col">Expiry</th><th scope="col">Unreserved</th><th scope="col">Reserved</th><th scope="col">Status</th><th scope="col">Actions</th></tr>
+              <tr><th scope={'col'}>{t('common.batch')}</th><th scope={'col'}>{t('common.expiry')}</th><th scope={'col'}>{t('common.unreserved')}</th><th scope={'col'}>{t('common.reserved')}</th><th scope={'col'}>{t('common.status')}</th><th scope={'col'}>{t('common.actions')}</th></tr>
             </thead>
             <tbody>
               {item.batches!.map((b) => (
@@ -97,9 +96,9 @@ function StockItem({ item, onChanged }: { item: InventoryItem; onChanged: () => 
                   <td>{b.availableQty}</td>
                   <td>{b.reservedQty}</td>
                   <td>
-                    <Badge tone={batchTone(b.status)}>{BATCH_STATUS_LABEL[b.status] ?? b.status}</Badge>
+                    <Badge tone={batchTone(b.status)}>{BATCH_STATUS_LABEL()[b.status] ?? b.status}</Badge>
                     {b.holdReason && <div className="ws-muted">“{b.holdReason}”</div>}
-                    {b.recallReference && <div className="ws-muted">Notice {b.recallReference}</div>}
+                    {b.recallReference && <div className="ws-muted">{t('stock.notice')}{b.recallReference}</div>}
                   </td>
                   <td><BatchActions itemId={item._id} batch={b} onChanged={onChanged} /></td>
                 </tr>

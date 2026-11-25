@@ -17,6 +17,7 @@ import { useOneAtATime } from '../finance/finance.tsx';
 import { CheckPanel, useDiscarded, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 import { SupplierSelect, useActiveSuppliers } from './SupplierPicker.tsx';
 import type { ImportArrival } from './ImportScreen.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 export const importTone = (s: ImportStatus) =>
   s === 'committed' ? 'ok' : s === 'failed' ? 'danger' : s === 'partially_committed' || s === 'committing' ? 'warn' : undefined;
@@ -29,10 +30,8 @@ export function ImportStockScreen() {
   const pharmacyId = usePharmacyId();
   return (
     <>
-      <Link to="/pharmacy/stock" className="ws-back"><ArrowLeft size={16} aria-hidden="true" /> Stock</Link>
-      <PageHeading title="Import stock from a file">
-        Upload a spreadsheet of the stock you received. It is checked first; nothing is added until you confirm.
-      </PageHeading>
+      <Link to="/pharmacy/stock" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('common.stock')}</Link>
+      <PageHeading title={t('common.importStockFromAFile')}>{t('importStock.uploadASpreadsheetOfThe')}</PageHeading>
       <ImportStock key={pharmacyId} pharmacyId={pharmacyId} />
     </>
   );
@@ -88,24 +87,19 @@ function Columns() {
   }
   return (
     <section className="ws-section" aria-labelledby="cols-h">
-      <h2 id="cols-h">1. Prepare the file</h2>
-      <p>
-        Use an Excel (.xlsx, .xls) or CSV file of up to 10 MB. Only the first sheet is read. The first row holds the column
-        names below, in capitals or small letters; other columns are ignored. One row per batch.
-      </p>
+      <h2 id="cols-h">{t('importStock.n1PrepareTheFile')}</h2>
+      <p>{t('importStock.useAnExcelXlsxXls')}</p>
       <Alert tone="warn">
-        <strong>Dates are read day first.</strong> Write expiry dates as {IMPORT_DATE_FORMAT}. 05-06-2027 is 5 June 2027, never 6 May.
-        A file that writes a date month first (12/31/2027) has that date and every date like 05/06/2027 refused.
-      </Alert>
+        <strong>{t('importStock.datesAreReadDayFirst')}</strong>{t('importStock.writeExpiryDatesAs')}{IMPORT_DATE_FORMAT}{t('importStock.n05062027Is5')}</Alert>
       <div className="ws-actions">
-        <Button variant="secondary" busy={busy} onClick={() => void template()}><Download size={16} aria-hidden="true" /> Download the template (with an example row)</Button>
-        {file && <a href={file.url} download={file.name}>Save the template again</a>}
+        <Button variant="secondary" busy={busy} onClick={() => void template()}><Download size={16} aria-hidden="true" />{t('importStock.downloadTheTemplateWithAn')}</Button>
+        {file && <a href={file.url} download={file.name}>{t('importStock.saveTheTemplateAgain')}</a>}
       </div>
-      <p className="ws-muted">The template has every column and one example row. Delete the example row and add your own before importing.</p>
+      <p className="ws-muted">{t('importStock.theTemplateHasEveryColumn')}</p>
       <div className="ws-table-wrap">
         <table className="j-table">
-          <caption className="j-sr-only">Columns of a stock file</caption>
-          <thead><tr><th scope="col">Column name</th><th scope="col">Needed</th><th scope="col">What to write</th></tr></thead>
+          <caption className="j-sr-only">{t('importStock.columnsOfAStockFile')}</caption>
+          <thead><tr><th scope={'col'}>{t('importStock.columnName')}</th><th scope={'col'}>{t('importStock.needed')}</th><th scope={'col'}>{t('importStock.whatToWrite')}</th></tr></thead>
           <tbody>
             {IMPORT_COLUMNS.map((c) => (
               <tr key={c.header}><td><code>{c.header}</code></td><td>{c.need}</td><td>{c.format}</td></tr>
@@ -113,20 +107,17 @@ function Columns() {
           </tbody>
         </table>
       </div>
-      <h3 id="expiry-h">Expiry date</h3>
-      <p>Write it in one of these ways:</p>
+      <h3 id="expiry-h">{t('common.expiryDate')}</h3>
+      <p>{t('importStock.writeItInOneOf')}</p>
       <ul className="ws-list" aria-labelledby="expiry-h">
         {IMPORT_EXPIRY_FORMS.map((f) => <li key={f}>{f}</li>)}
       </ul>
-      <p className="ws-muted">A row with an expiry in any other form is shown with a problem and is not added.</p>
-      <h3>Numbers and prices</h3>
+      <p className="ws-muted">{t('importStock.aRowWithAnExpiry')}</p>
+      <h3>{t('importStock.numbersAndPrices')}</h3>
       <p>{IMPORT_NUMBER_NOTE}</p>
-      <p>
-        A price cell left blank keeps the medicine’s current price. A price of 0 sets it to ₹0: the check shows every row that
-        would. A new medicine without a selling price is not on sale until you price it.
-      </p>
-      <h3>New medicines</h3>
-      <p>A medicine not in the list is added to it. It needs a prescription unless its row says “no” under <code>prescription required</code>.</p>
+      <p>{t('importStock.aPriceCellLeftBlank')}</p>
+      <h3>{t('importStock.newMedicines')}</h3>
+      <p>{t('importStock.aMedicineNotInThe')}<code>{t('importStock.prescriptionRequired')}</code>.</p>
     </section>
   );
 }
@@ -185,40 +176,36 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
 
   return (
     <section className="ws-section" aria-labelledby="upload-h">
-      <h2 id="upload-h">2. Upload and check</h2>
+      <h2 id="upload-h">{t('importStock.n2UploadAndCheck')}</h2>
       {op && !busy ? (
-        <CheckPanel label="Unconfirmed file check"
+        <CheckPanel label={t('importStock.unconfirmedFileCheck')}
           onCheck={async () => {
             setCandidate(null);
             void queryClient.invalidateQueries({ queryKey: ['pharmacy-inventory', pharmacyId, 'imports'] });
             // A marker restored after a reload keeps no file name: nothing is matched for it (the list below shows every import).
-            if (!op.body) return 'Its file name is not kept on this device. Look for it under Recent imports below, or upload the file again.';
+            if (!op.body) return t('importStock.itsFileNameIsNot');
             const recent = await stock.imports(1, 20);
             // Only an import of this file name started after this check was first sent (30 s allowed for clocks). It is
             // never opened on its own: an older or another upload of the same name could look the same.
             const since = op.firstAttemptAt - 30_000;
             const hit = recent.items.find((r) => r.fileName === op.body!.fileName && !!r.createdAt && Date.parse(r.createdAt) >= since);
-            if (!hit) return 'It is not in your imports yet. It may still be on its way, or it never arrived.';
+            if (!hit) return t('importStock.itIsNotInYour');
             setCandidate(hit);
             return null;
           }}
           forget={{
-            label: 'Forget it', confirmLabel: 'Forget it and upload again',
-            consequence: 'Checking a file adds nothing to stock, so uploading it again is safe. If the first check arrives later it stays in the list below, unconfirmed.',
+            label: t('common.forgetIt'), confirmLabel: t('importStock.forgetItAndUploadAgain'),
+            consequence: t('importStock.checkingAFileAddsNothing'),
             onForget: () => settle(op.requestKey),
           }}>
-          <Alert tone="warn">
-            The answer to the file check did not arrive{op.error ? ` (${op.error})` : ''}. Nothing was added to stock: a checked
-            file waits for you to confirm it.{op.body ? ` File: ${op.body.fileName}.` : ''}
+          <Alert tone="warn">{t('importStock.theAnswerToTheFile')}{op.error ? ` (${op.error})` : ''}{t('importStock.nothingWasAddedToStock')}{op.body ? t('importStock.file', { fileName: op.body.fileName }) : ''}
           </Alert>
           {candidate && (
-            <div className="confirm" role="group" aria-label="Is this the import?">
-              <div className="confirm-text">
-                An import of {candidate.fileName} started at {formatTime(candidate.createdAt)}. Is this it?
-              </div>
+            <div className="confirm" role="group" aria-label={t('importStock.isThisTheImport')}>
+              <div className="confirm-text">{t('importStock.anImportOf')}{candidate.fileName}{t('importStock.startedAt')}{formatTime(candidate.createdAt)}{t('importStock.isThisIt')}</div>
               <div className="confirm-actions">
-                <Button onClick={() => { settle(op.requestKey); open(candidate); }}>Open it</Button>
-                <Button variant="secondary" onClick={() => { setCandidate(null); settle(op.requestKey); }}>Upload again</Button>
+                <Button onClick={() => { settle(op.requestKey); open(candidate); }}>{t('importStock.openIt')}</Button>
+                <Button variant="secondary" onClick={() => { setCandidate(null); settle(op.requestKey); }}>{t('importStock.uploadAgain')}</Button>
               </div>
             </div>
           )}
@@ -226,7 +213,7 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
       ) : (
         <form className="rx-form" noValidate onSubmit={(e) => void submit(e)}>
           <fieldset className="ws-checks" disabled={busy}>
-            <legend>Which rows to add</legend>
+            <legend>{t('importStock.whichRowsToAdd')}</legend>
             {IMPORT_MODES.map((m) => (
               <label key={m.value} className="ws-check">
                 <input type="radio" name="import-mode" value={m.value} checked={mode === m.value} onChange={() => setMode(m.value)} />
@@ -235,23 +222,23 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
             ))}
           </fieldset>
           {suppliers.isError ? (
-            <Alert tone="warn">Your suppliers could not be read ({messageOf(suppliers.error)}). You can check the file without one.</Alert>
+            <Alert tone="warn">{t('common.yourSuppliersCouldNotBe')}{messageOf(suppliers.error)}{t('importStock.youCanCheckTheFile')}</Alert>
           ) : (
-            <SupplierSelect id="import-supplier" label="Supplier of this delivery (optional)" suppliers={suppliers.data ?? []} value={supplierId}
-              noneLabel={suppliers.isPending ? 'Loading suppliers…' : 'Not said'} disabled={busy} error={supplierError ?? undefined}
-              hint="Recorded with every row of the file that adds units. Shown in the stock history."
+            <SupplierSelect id="import-supplier" label={t('importStock.supplierOfThisDeliveryOptional')} suppliers={suppliers.data ?? []} value={supplierId}
+              noneLabel={suppliers.isPending ? t('common.loadingSuppliers') : t('common.notSaid')} disabled={busy} error={supplierError ?? undefined}
+              hint={t('importStock.recordedWithEveryRowOf')}
               onChange={(v) => { setSupplierId(v); setSupplierError(null); }} />
           )}
           <div className="j-field">
-            <label htmlFor="import-file">Stock file</label>
+            <label htmlFor="import-file">{t('importStock.stockFile')}</label>
             <input id="import-file" type="file" accept={IMPORT_ACCEPT} disabled={busy}
               aria-invalid={fileError ? true : undefined} aria-describedby={fileError ? 'import-file-error' : 'import-file-hint'}
               onChange={(e) => { setFile(e.target.files?.[0] ?? null); setFileError(null); setRefused(null); }} />
-            <span id="import-file-hint" className="j-field__hint">.xlsx, .xls or .csv, up to 10 MB.</span>
+            <span id="import-file-hint" className="j-field__hint">{t('importStock.xlsxXlsOrCsvUp')}</span>
             {fileError && <span id="import-file-error" className="j-field__error">{fileError}</span>}
           </div>
-          {refused && <Alert>The file was not checked: {refused}</Alert>}
-          <div><Button type="submit" busy={busy}>Check the file</Button></div>
+          {refused && <Alert>{t('importStock.theFileWasNotChecked')}{refused}</Alert>}
+          <div><Button type="submit" busy={busy}>{t('importStock.checkTheFile')}</Button></div>
         </form>
       )}
     </section>
@@ -274,17 +261,17 @@ function History({ pharmacyId }: { pharmacyId: string }) {
   });
   return (
     <section className="ws-section" aria-labelledby="history-h">
-      <h2 id="history-h">Recent imports</h2>
-      {q.isPending ? <Loading label="Loading imports…" />
+      <h2 id="history-h">{t('importStock.recentImports')}</h2>
+      {q.isPending ? <Loading label={t('importStock.loadingImports')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : q.data.items.length === 0 ? <Empty title="No imports yet">Files you upload are listed here.</Empty>
+        : q.data.items.length === 0 ? <Empty title={t('importStock.noImportsYet')}>{t('importStock.filesYouUploadAreListed')}</Empty>
         : (
           <>
             <div className="ws-table-wrap">
               <table className="j-table">
-                <caption className="j-sr-only">Stock files uploaded, newest first</caption>
+                <caption className="j-sr-only">{t('importStock.stockFilesUploadedNewestFirst')}</caption>
                 <thead>
-                  <tr><th scope="col">Uploaded</th><th scope="col">File</th><th scope="col">Status</th><th scope="col">Rows</th><th scope="col">Added</th></tr>
+                  <tr><th scope={'col'}>{t('importStock.uploaded')}</th><th scope={'col'}>{t('importStock.file2')}</th><th scope={'col'}>{t('common.status')}</th><th scope={'col'}>{t('common.rows')}</th><th scope={'col'}>{t('common.added')}</th></tr>
                 </thead>
                 <tbody>
                   {q.data.items.map((r) => (
@@ -292,9 +279,9 @@ function History({ pharmacyId }: { pharmacyId: string }) {
                       <td><Link to={`/pharmacy/stock/imports/${r._id}`}>{formatDateTime(r.createdAt)}</Link></td>
                       <td>{r.fileName}</td>
                       <td>{r.status === 'previewed' && discarded.ids.includes(r._id)
-                        ? <Badge>Discarded on this device</Badge>
+                        ? <Badge>{t('common.discardedOnThisDevice')}</Badge>
                         : <Badge tone={importTone(r.status)}>{IMPORT_STATUS_LABEL[r.status] ?? r.status}</Badge>}</td>
-                      <td>{r.totalRows} ({r.validRows} ready, {r.errorRows} with problems)</td>
+                      <td>{r.totalRows} ({r.validRows}{t('importStock.ready')}{r.errorRows}{t('importStock.withProblems')}</td>
                       <td>{r.committedRows ?? 0}</td>
                     </tr>
                   ))}
@@ -302,10 +289,10 @@ function History({ pharmacyId }: { pharmacyId: string }) {
               </table>
             </div>
             {q.data.totalPages > 1 && (
-              <nav className="ws-pager" aria-label="Pages">
-                <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
-                <span>Page {page} of {q.data.totalPages}</span>
-                <Button variant="secondary" disabled={page >= q.data.totalPages} onClick={() => setPage(page + 1)}>Next</Button>
+              <nav className="ws-pager" aria-label={t('common.pages')}>
+                <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>{t('common.previous')}</Button>
+                <span>{t('common.page')}{page}{t('common.of')}{q.data.totalPages}</span>
+                <Button variant="secondary" disabled={page >= q.data.totalPages} onClick={() => setPage(page + 1)}>{t('common.next')}</Button>
               </nav>
             )}
           </>

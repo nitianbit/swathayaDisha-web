@@ -17,6 +17,7 @@ import { useOneAtATime } from '../finance/finance.tsx';
 import { RefreshFailed, useTicker } from '../doctor/doctor.tsx';
 import { importTone } from './ImportStockScreen.tsx';
 import { CheckPanel, useDiscarded, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * The step being sent for this import: adding its ready rows, or trying its failed rows again. A retry keeps the
@@ -54,8 +55,8 @@ function settles(p: PendingOp<PendingStep>, r: InventoryImport): boolean {
 export function ImportScreen() {
   const { importId = '' } = useParams();
   const pharmacyId = usePharmacyId();
-  const back = <Link to="/pharmacy/stock/import" className="ws-back"><ArrowLeft size={16} aria-hidden="true" /> Import stock</Link>;
-  if (!/^[0-9a-fA-F]{24}$/.test(importId)) return <>{back}<Empty title="Import not found">Open it from the list of recent imports.</Empty></>;
+  const back = <Link to="/pharmacy/stock/import" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('import.importStock')}</Link>;
+  if (!/^[0-9a-fA-F]{24}$/.test(importId)) return <>{back}<Empty title={t('import.importNotFound')}>{t('import.openItFromTheList')}</Empty></>;
   return <>{back}<ImportLoader key={`${pharmacyId}:${importId}`} pharmacyId={pharmacyId} importId={importId} /></>;
 }
 
@@ -69,7 +70,7 @@ function ImportLoader({ pharmacyId, importId }: { pharmacyId: string; importId: 
     // While rows are being added, read again until it is done.
     refetchInterval: (query) => (query.state.data?.status === 'committing' ? 5_000 : false),
   });
-  if (q.isPending) return <Loading label="Loading import…" />;
+  if (q.isPending) return <Loading label={t('import.loadingImport')} />;
   if (q.isError && q.data === undefined) return <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />;
   // WQ11c re-review N5: a failed read again keeps the import on screen, with a quiet note. A read that failed is never
   // taken as the import as it is now (a check says it could not check).
@@ -113,7 +114,7 @@ function ImportView({ pharmacyId, record, reread }: {
     enabled: !!(record.supplierId && !record.supplier),
   });
   const fileSupplier = record.supplier?.displayName
-    ?? (record.supplierId ? suppliers.data?.find((x) => x.supplierId === String(record.supplierId).toLowerCase())?.displayName ?? 'A supplier' : null);
+    ?? (record.supplierId ? suppliers.data?.find((x) => x.supplierId === String(record.supplierId).toLowerCase())?.displayName ?? t('common.aSupplier') : null);
   const monthFirst = monthFirstRows(rows);
 
   const changed = (r: InventoryImport) => {
@@ -122,17 +123,17 @@ function ImportView({ pharmacyId, record, reread }: {
   };
   const outcome = (r: InventoryImport) => {
     const skipped = (r.previewRows ?? []).filter((x) => x.status === 'skipped').length;
-    const skip = skipped > 0 ? ` ${skipped} ${skipped === 1 ? 'row was' : 'rows were'} skipped by the rows you chose to add.` : '';
-    return r.status === 'committed' ? `Done: ${r.committedRows ?? 0} rows were added to stock.${skip}`
-      : r.status === 'partially_committed' ? `Partly done: ${r.committedRows ?? 0} rows were added; ${r.failedRows ?? 0} were not.${skip} See the rows below.`
-      : r.status === 'failed' ? 'No row was added. See the problems below.'
+    const skip = skipped > 0 ? t('import.skippedByTheRowsYou', { skipped, value: skipped === 1 ? 'row was' : 'rows were' }) : '';
+    return r.status === 'committed' ? t('import.doneRowsWereAddedTo', { value: r.committedRows ?? 0, skip })
+      : r.status === 'partially_committed' ? t('import.partlyDoneRowsWereAdded', { value: r.committedRows ?? 0, value2: r.failedRows ?? 0, skip })
+      : r.status === 'failed' ? t('import.noRowWasAddedSee')
       : null;
   };
 
   /** Settles the stored step from the import as the server has it now; answers what is still unknown. */
   async function checkStep(p: PendingOp<PendingStep>): Promise<string | null> {
     const fresh = await reread();
-    if (!fresh) return 'Could not read the import.';
+    if (!fresh) return t('import.couldNotReadTheImport');
     // A retry (also one restored after a reload, whose body is not kept) is settled only by an outcome written after it
     // was first sent, never by the outcome of an earlier commit or retry of the same import.
     if (settles(p, fresh)) {
@@ -141,24 +142,24 @@ function ImportView({ pharmacyId, record, reread }: {
       changed(fresh);
       return null;
     }
-    if (fresh.status === 'committing') return 'The rows are still being added. Check again in a moment.';
+    if (fresh.status === 'committing') return t('import.theRowsAreStillBeing');
     if (p.restored && (fresh.status === 'previewed' || importSettled(fresh.status))) {
       // Its details are not kept, so it cannot be resent. Doing it again is safe: an import is claimed once, a second
       // claim is refused, and a row already added is never added twice.
       settle(p.requestKey);
       setNotice(stepKind(p, fresh._id) === 'commit'
-        ? 'The earlier step has not started. Confirm again below if you still want these rows added; they are added only once.'
-        : 'The earlier try of the failed rows has not started. Try them again below if you still want; a row already added is never added twice.');
+        ? t('import.theEarlierStepHasNot')
+        : t('import.theEarlierTryOfThe'));
       return null;
     }
-    return 'It has not started yet. It may still be on its way. Sending it again is safe: each row is added only once.';
+    return t('import.itHasNotStartedYet');
   }
 
   // WQ11c: while a step is unconfirmed the import is read again every 5 seconds, and an outcome that settles it ends it.
   useEffect(() => {
     if (!op || busy) return undefined;
-    const t = setInterval(() => { void reread().catch(() => undefined); }, 5_000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => { void reread().catch(() => undefined); }, 5_000);
+    return () => clearInterval(timer);
   }, [op, busy]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!op || busy || !settles(op, record)) return;
@@ -186,45 +187,37 @@ function ImportView({ pharmacyId, record, reread }: {
   const named = (list: readonly ImportRow[]) => list.slice(0, 5).map((r) => `row ${r.rowIndex} (${r.medicineName || 'no name'})`).join(', ') + (list.length > 5 ? ` and ${list.length - 5} more` : '');
   return (
     <>
-      <PageHeading title={`Import of ${record.fileName}`}>
-        Uploaded {formatDateTime(record.createdAt)} · <Badge tone={importTone(record.status)}>{isDiscarded ? 'Discarded on this device' : IMPORT_STATUS_LABEL[record.status] ?? record.status}</Badge>
+      <PageHeading title={t('import.importOf', { fileName: record.fileName })}>{t('import.uploaded')}{formatDateTime(record.createdAt)} · <Badge tone={importTone(record.status)}>{isDiscarded ? t('common.discardedOnThisDevice') : IMPORT_STATUS_LABEL[record.status] ?? record.status}</Badge>
       </PageHeading>
       {notice && <Alert tone="ok">{notice}</Alert>}
       <section className="ws-section" aria-labelledby="sum-h">
-        <h2 id="sum-h">Summary</h2>
+        <h2 id="sum-h">{t('import.summary')}</h2>
         <dl className="ws-dl">
-          <dt>Rows</dt><dd>{record.totalRows}</dd>
-          <dt>Ready to add</dt><dd>{record.validRows}</dd>
-          <dt>With problems</dt><dd>{record.errorRows}</dd>
-          {(record.status !== 'previewed' && record.status !== 'pending') && <><dt>Added</dt><dd>{record.committedRows ?? 0}</dd></>}
-          {record.committedAt && <><dt>Finished</dt><dd>{formatDateTime(record.committedAt)}</dd></>}
-          <dt>Rows used</dt><dd>{mode ? `${mode.label} (${mode.hint})` : record.importMode}</dd>
-          {fileSupplier && <><dt>Supplier</dt><dd>{fileSupplier}</dd></>}
+          <dt>{t('common.rows')}</dt><dd>{record.totalRows}</dd>
+          <dt>{t('import.readyToAdd')}</dt><dd>{record.validRows}</dd>
+          <dt>{t('import.withProblems')}</dt><dd>{record.errorRows}</dd>
+          {(record.status !== 'previewed' && record.status !== 'pending') && <><dt>{t('common.added')}</dt><dd>{record.committedRows ?? 0}</dd></>}
+          {record.committedAt && <><dt>{t('import.finished')}</dt><dd>{formatDateTime(record.committedAt)}</dd></>}
+          <dt>{t('import.rowsUsed')}</dt><dd>{mode ? `${mode.label} (${mode.hint})` : record.importMode}</dd>
+          {fileSupplier && <><dt>{t('common.supplier')}</dt><dd>{fileSupplier}</dd></>}
         </dl>
         {arrival?.supplierAsked && !record.supplierId && record.status === 'previewed' && (
-          <Alert tone="warn">
-            You chose {arrival.supplierAsked} as the supplier of this file, but the server did not record a supplier for it: no
-            supplier is recorded for these rows.
-          </Alert>
+          <Alert tone="warn">{t('import.youChose')}{arrival.supplierAsked}{t('import.asTheSupplierOfThis')}</Alert>
         )}
         {monthFirst.length > 0 && (
-          <Alert tone="warn">
-            This file writes dates month first, so {monthFirst.length === 1 ? '1 row was' : `${monthFirst.length} rows were`} refused. Dates are read
-            day first: write them as {IMPORT_DATE_FORMAT} and upload the file again.
-          </Alert>
+          <Alert tone="warn">{t('import.thisFileWritesDatesMonth')}{monthFirst.length === 1 ? '1 row was' : `${monthFirst.length} rows were`}{t('import.refusedDatesAreReadDay')}{IMPORT_DATE_FORMAT}{t('import.andUploadTheFileAgain')}</Alert>
         )}
         {problemRows > 0 && <ProblemFile importId={record._id} fileName={record.fileName} />}
       </section>
 
       {op && !(busy && op.attempts === 1 && !op.uncertain) ? (
-        <CheckPanel label="Unconfirmed import step" onCheck={() => checkStep(op)}
-          resend={op.restored || !op.body ? undefined : { label: 'Send it again', busy, onClick: () => void run(op).catch(() => undefined) }}>
+        <CheckPanel label={t('import.unconfirmedImportStep')} onCheck={() => checkStep(op)}
+          resend={op.restored || !op.body ? undefined : { label: t('import.sendItAgain'), busy, onClick: () => void run(op).catch(() => undefined) }}>
           <Alert tone="warn">
             {op.restored
-              ? 'A step on this import started earlier on this device (before the page was reloaded, or before you signed out) was not confirmed.'
-              : `The answer did not arrive${op.error ? ` (${op.error})` : ''}. The rows may already be added.`}
-            {' '}Each row is added only once, so checking or sending again is safe. This page checks again on its own every few seconds.
-          </Alert>
+              ? t('import.aStepOnThisImport')
+              : t('import.theAnswerDidNotArrive', { value: op.error ? ` (${op.error})` : '' })}
+            {' '}{t('import.eachRowIsAddedOnly')}</Alert>
         </CheckPanel>
       ) : null}
       {op && !(busy && op.attempts === 1 && !op.uncertain) && stuck && (
@@ -236,71 +229,59 @@ function ImportView({ pharmacyId, record, reread }: {
         <>
           {record.status === 'previewed' && isDiscarded && (
             <section className="ws-section" aria-labelledby="go-h">
-              <h2 id="go-h">Add to stock</h2>
-              <Alert tone="warn">
-                You discarded this preview on this device: nothing from it was added. The server still keeps it as checked; it is
-                added only if someone confirms it.
-              </Alert>
-              <div><Button variant="secondary" onClick={() => discarded.restore(record._id)}>Use this preview after all</Button></div>
+              <h2 id="go-h">{t('import.addToStock')}</h2>
+              <Alert tone="warn">{t('import.youDiscardedThisPreviewOn')}</Alert>
+              <div><Button variant="secondary" onClick={() => discarded.restore(record._id)}>{t('import.useThisPreviewAfterAll')}</Button></div>
             </section>
           )}
           {record.status === 'previewed' && !isDiscarded && (
             <section className="ws-section" aria-labelledby="go-h">
-              <h2 id="go-h">Add to stock</h2>
+              <h2 id="go-h">{t('import.addToStock')}</h2>
               {twin && (
-                <Alert tone="warn">
-                  Another import of {record.fileName} was added {formatDateTime(twin.committedAt ?? twin.updatedAt)}{' '}
-                  (<Link to={`/pharmacy/stock/imports/${twin._id}`}>open it</Link>). Adding this one too adds the units again.
-                </Alert>
+                <Alert tone="warn">{t('import.anotherImportOf')}{record.fileName}{t('import.wasAdded')}{formatDateTime(twin.committedAt ?? twin.updatedAt)}{' '}
+                  (<Link to={`/pharmacy/stock/imports/${twin._id}`}>{t('import.openIt')}</Link>{t('import.addingThisOneTooAdds')}</Alert>
               )}
               {plan.zeroPrices.length > 0 && (
                 <Alert tone="warn">
-                  {rowsWord(plan.zeroPrices.length)} would set a price to ₹0: {named(plan.zeroPrices)}. If a cell should keep the
-                  current price, leave it blank in the file and upload it again.
-                </Alert>
+                  {rowsWord(plan.zeroPrices.length)}{t('import.wouldSetAPriceTo')}{named(plan.zeroPrices)}{t('import.ifACellShouldKeep')}</Alert>
               )}
               {plan.examples.length > 0 ? (
-                <Alert>
-                  Row {plan.examples.map((r) => r.rowIndex).join(', ')} is the template’s example row (“{TEMPLATE_EXAMPLE_MARK}”). Delete it
-                  from the file and upload the file again before adding anything.
-                </Alert>
+                <Alert>{t('import.row')}{plan.examples.map((r) => r.rowIndex).join(', ')}{t('import.isTheTemplateSExample')}{TEMPLATE_EXAMPLE_MARK}{t('import.deleteItFromTheFile')}</Alert>
               ) : importCommittable(record) && plan.rows > 0 ? (
-                <ConfirmAction label={`Add ${record.validRows} ready ${record.validRows === 1 ? 'row' : 'rows'} to stock…`} confirmLabel="Yes, add them"
+                <ConfirmAction label={t('import.addReadyToStock', { validRows: record.validRows, value: record.validRows === 1 ? 'row' : 'rows' })} confirmLabel={t('import.yesAddThem')}
                   consequence={<>
                     {record.importMode === 'create_only' && plan.mayBeSkipped > 0
-                      ? `Up to ${rowsWord(plan.rows)} (${plan.units} units) are added: ${plan.mayBeSkipped} of them are for medicines in the list, and any already in your stock are skipped.`
-                      : `${rowsWord(plan.rows)} (${plan.units} units) ${plan.rows === 1 ? 'is' : 'are'} added${record.importMode === 'update_only' ? ' if the medicine is in your stock (others are skipped)' : ''}.`}
-                    {plan.skippedNew > 0 && ` ${rowsWord(plan.skippedNew)} for medicines not in your stock ${plan.skippedNew === 1 ? 'is' : 'are'} skipped and not counted.`}
+                      ? t('import.upToUnitsAreAdded', { value: rowsWord(plan.rows), units: plan.units, mayBeSkipped: plan.mayBeSkipped })
+                      : t('import.unitsAdded', { value: rowsWord(plan.rows), units: plan.units, value2: plan.rows === 1 ? 'is' : 'are', value3: record.importMode === 'update_only' ? ' if the medicine is in your stock (others are skipped)' : '' })}
+                    {plan.skippedNew > 0 && t('import.forMedicinesNotInYour', { value: rowsWord(plan.skippedNew), value2: plan.skippedNew === 1 ? 'is' : 'are' })}
                     {plan.newMedicines > 0 && ` ${plan.newMedicines} ${plan.newMedicines === 1 ? 'medicine is' : 'medicines are'} not in the medicine list yet and will be added to it`}
-                    {plan.newMedicines > 0 && (plan.newNeedingPrescription > 0 ? ` (${plan.newNeedingPrescription} needing a prescription).` : ' (none needing a prescription).')}
-                    {plan.unpriced.length > 0 && ` ${rowsWord(plan.unpriced.length)} ${plan.unpriced.length === 1 ? 'leaves its medicine' : 'leave their medicines'} without a selling price: not on sale until priced (${named(plan.unpriced)}).`}
+                    {plan.newMedicines > 0 && (plan.newNeedingPrescription > 0 ? t('import.needingAPrescription', { newNeedingPrescription: plan.newNeedingPrescription }) : t('import.noneNeedingAPrescription'))}
+                    {plan.unpriced.length > 0 && t('import.withoutASellingPriceNot', { value: rowsWord(plan.unpriced.length), value2: plan.unpriced.length === 1 ? 'leaves its medicine' : 'leave their medicines', value3: named(plan.unpriced) })}
                     {plan.priceChanges.length > 0
-                      ? ` Prices change in ${rowsWord(plan.priceChanges.length)}: ${named(plan.priceChanges)}${plan.zeroPrices.length > 0 ? `, ${rowsWord(plan.zeroPrices.length)} to ₹0` : ''}. Blank price cells keep the current price.`
-                      : ' No price changes: every price cell is blank, so current prices stay.'}
-                    {' '}Stock with a selling price is on sale once added.
-                    {record.errorRows > 0 && ` ${record.errorRows} ${record.errorRows === 1 ? 'row with a problem is' : 'rows with problems are'} left out: fix them and import them in a new file.`}
-                    {' '}The workspace cannot undo this.
-                  </>}
+                      ? t('import.pricesChangeInBlankPrice', { value: rowsWord(plan.priceChanges.length), value2: named(plan.priceChanges), value3: plan.zeroPrices.length > 0 ? `, ${rowsWord(plan.zeroPrices.length)} to ₹0` : '' })
+                      : t('import.noPriceChangesEveryPrice')}
+                    {' '}{t('import.stockWithASellingPrice')}{record.errorRows > 0 && t('import.leftOutFixThemAnd', { errorRows: record.errorRows, value: record.errorRows === 1 ? 'row with a problem is' : 'rows with problems are' })}
+                    {' '}{t('import.theWorkspaceCannotUndoThis')}</>}
                   onConfirm={() => run(startOp(record._id, { kind: 'commit', importId: record._id }))} />
-              ) : importCommittable(record) ? <Alert tone="warn">Every ready row is for a medicine not in your stock, and you chose to add only medicines already in your stock: nothing would be added. Upload the file again with another choice.</Alert>
-                : <Alert tone="warn">No row is ready to add. Fix the file and upload it again.</Alert>}
+              ) : importCommittable(record) ? <Alert tone="warn">{t('import.everyReadyRowIsFor')}</Alert>
+                : <Alert tone="warn">{t('import.noRowIsReadyTo')}</Alert>}
               <div className="ws-action">
                 {/* N3: never while a confirmation is on its way or unconfirmed; under the page's one-at-a-time guard. */}
-                <ConfirmAction label="Discard this preview…" danger confirmLabel="Discard it" disabled={busy || !!op}
-                  consequence="Nothing from this file is added. The preview is hidden on this device; the server keeps it as checked, and it is added only if someone confirms it (there is no way to delete it on the server yet)."
+                <ConfirmAction label={t('import.discardThisPreview')} danger confirmLabel={t('import.discardIt')} disabled={busy || !!op}
+                  consequence={t('import.nothingFromThisFileIs')}
                   onConfirm={() => perform(async () => { discarded.discard(record._id); })} />
               </div>
             </section>
           )}
-          {record.status === 'committing' && !stuck && <Alert tone="warn">The rows are being added. This page updates on its own.</Alert>}
+          {record.status === 'committing' && !stuck && <Alert tone="warn">{t('import.theRowsAreBeingAdded')}</Alert>}
           {stuck && (
             <StuckRetry record={record} disabled={busy} onRetry={() => run(startOp(newRequestKey(), { kind: 'retry', importId: record._id, since: record.updatedAt ?? record.committedAt }))} />
           )}
           {importRetryable(record, now.getTime()) && !stuck && (
             <section className="ws-section" aria-labelledby="retry-h">
-              <h2 id="retry-h">Rows that failed</h2>
-              <ConfirmAction label="Try the failed rows again…" confirmLabel="Yes, try again"
-                consequence="Only rows that failed while being added are tried again; a row already added is never added twice. Rows with problems in the file are not tried: fix them in a new file."
+              <h2 id="retry-h">{t('import.rowsThatFailed')}</h2>
+              <ConfirmAction label={t('import.tryTheFailedRowsAgain')} confirmLabel={t('import.yesTryAgain')}
+                consequence={t('import.onlyRowsThatFailedWhile')}
                 onConfirm={() => run(startOp(newRequestKey(), { kind: 'retry', importId: record._id, since: record.updatedAt ?? record.committedAt }))} />
             </section>
           )}
@@ -316,13 +297,10 @@ function ImportView({ pharmacyId, record, reread }: {
 function StuckRetry({ record, disabled, onRetry }: { record: InventoryImport; disabled: boolean; onRetry: () => Promise<unknown> }) {
   return (
     <section className="ws-section" aria-labelledby="stuck-h">
-      <h2 id="stuck-h">Adding stopped</h2>
-      <Alert tone="warn">
-        Adding these rows started but has not finished since {formatDateTime(record.updatedAt)}. You can try again: rows
-        already added are never added twice.
-      </Alert>
-      <ConfirmAction label="Try again…" confirmLabel="Yes, try again" disabled={disabled}
-        consequence="The rows not added yet are added now. A row already added is never added twice. Rows with problems in the file are not tried."
+      <h2 id="stuck-h">{t('import.addingStopped')}</h2>
+      <Alert tone="warn">{t('import.addingTheseRowsStartedBut')}{formatDateTime(record.updatedAt)}{t('import.youCanTryAgainRows')}</Alert>
+      <ConfirmAction label={t('import.tryAgain')} confirmLabel={t('import.yesTryAgain')} disabled={disabled}
+        consequence={t('import.theRowsNotAddedYet')}
         onConfirm={onRetry} />
     </section>
   );
@@ -363,15 +341,14 @@ function ProblemFile({ importId, fileName }: { importId: string; fileName: strin
   return (
     <div className="ws-action">
       <Button variant="secondary" busy={busy} onClick={() => void download()}>
-        <Download size={16} aria-hidden="true" /> Download the rows with problems
-      </Button>
-      {file && <a href={file.url} download={file.name}>Save {file.name} again</a>}
-      {error && <Alert>Could not download the rows: {error}</Alert>}
+        <Download size={16} aria-hidden="true" />{t('import.downloadTheRowsWithProblems')}</Button>
+      {file && <a href={file.url} download={file.name}>{t('import.save')}{file.name}{t('import.again')}</a>}
+      {error && <Alert>{t('import.couldNotDownloadTheRows')}{error}</Alert>}
     </div>
   );
 }
 
-const MATCH_LABEL = { matched: 'In the list', not_found: 'New: will be added to the list', duplicate: 'Several medicines have this name' } as const;
+const MATCH_LABEL = () => ({ matched: t('import.inTheList'), not_found: t('import.newWillBeAddedTo'), duplicate: t('import.severalMedicinesHaveThisName') } as const);
 const rowTone = (s: ImportRow['status']) => (s === 'committed' || s === 'valid' ? 'ok' : s === 'skipped' ? undefined : 'danger');
 const STEP = 100;
 
@@ -383,15 +360,15 @@ const STEP = 100;
 function Price({ view, ready, mrp = false }: { view: ImportPriceView; ready: boolean; mrp?: boolean }) {
   if (!ready) return <>—</>;
   if (view.kind === 'set') return <>{formatRupees(view.value)}</>;
-  if (view.kind === 'kept') return <span className="ws-muted">Kept: {formatRupees(view.value)}</span>;
+  if (view.kind === 'kept') return <span className="ws-muted">{t('import.kept')}{formatRupees(view.value)}</span>;
   // Q16d: MRP is per batch; a new batch (`batchInStock` false) with a blank cell has none.
-  if (view.kind === 'none') return <span className="ws-muted">{mrp ? 'No MRP yet' : 'No price yet'}</span>;
-  return <span className="ws-muted">Current price kept</span>;
+  if (view.kind === 'none') return <span className="ws-muted">{mrp ? t('import.noMrpYet') : t('import.noPriceYet')}</span>;
+  return <span className="ws-muted">{t('import.currentPriceKept')}</span>;
 }
 
 function Rows({ rows }: { rows: ImportRow[] }) {
   const [shown, setShown] = useState(STEP);
-  if (rows.length === 0) return <Empty title="No rows">The file had no rows under its column names.</Empty>;
+  if (rows.length === 0) return <Empty title={t('import.noRows')}>{t('import.theFileHadNoRows')}</Empty>;
   // Problems first, then the rest in file order.
   const ordered = [...rows].sort((a, b) => Number(b.status === 'error' || b.status === 'failed') - Number(a.status === 'error' || a.status === 'failed') || a.rowIndex - b.rowIndex);
   const withSupplier = rows.some((r) => r.data?.supplierName || r.data?.supplierId);
@@ -400,17 +377,17 @@ function Rows({ rows }: { rows: ImportRow[] }) {
     && rows.some((r) => r.status !== 'error' && importPriceView(r, f.key).kind === 'set'));
   return (
     <section className="ws-section" aria-labelledby="rows-h">
-      <h2 id="rows-h">Rows</h2>
-      <p className="ws-muted">Prices are what each row will set. “Current price kept” means the cell was blank.</p>
+      <h2 id="rows-h">{t('common.rows')}</h2>
+      <p className="ws-muted">{t('import.pricesAreWhatEachRow')}</p>
       <div className="ws-table-wrap">
         <table className="j-table">
-          <caption className="j-sr-only">Rows of the file, problems first</caption>
+          <caption className="j-sr-only">{t('import.rowsOfTheFileProblems')}</caption>
           <thead>
             <tr>
-              <th scope="col">Row</th><th scope="col">Medicine</th><th scope="col">Medicine list</th><th scope="col">Prescription</th><th scope="col">Batch</th>
-              <th scope="col">Expiry</th><th scope="col">Units</th><th scope="col">MRP</th><th scope="col">Selling price</th>
-              {extra.map((f) => <th key={f.key} scope="col">{f.key === 'wholesalePrice' ? 'Wholesale price' : 'Purchase price'}</th>)}
-              {withSupplier && <th scope="col">Supplier</th>}<th scope="col">Result</th>
+              <th scope={'col'}>{t('import.row2')}</th><th scope={'col'}>{t('common.medicine')}</th><th scope={'col'}>{t('import.medicineList')}</th><th scope={'col'}>{t('common.prescription')}</th><th scope={'col'}>{t('common.batch')}</th>
+              <th scope={'col'}>{t('common.expiry')}</th><th scope={'col'}>{t('common.units')}</th><th scope={'col'}>{t('import.mrp')}</th><th scope={'col'}>{t('import.sellingPrice')}</th>
+              {extra.map((f) => <th key={f.key} scope={'col'}>{f.key === 'wholesalePrice' ? t('import.wholesalePrice') : t('import.purchasePrice')}</th>)}
+              {withSupplier && <th scope={'col'}>{t('common.supplier')}</th>}<th scope={'col'}>{t('import.result')}</th>
             </tr>
           </thead>
           <tbody>
@@ -424,22 +401,22 @@ function Rows({ rows }: { rows: ImportRow[] }) {
                   <td>{r.medicineName || '—'}</td>
                   <td>{r.data?.medicineMatchStatus ? (
                     r.data.medicineMatchStatus === 'matched' && r.data.matchedMedicineName && r.data.matchedMedicineName !== r.medicineName
-                      ? `In the list as ${r.data.matchedMedicineName}` : MATCH_LABEL[r.data.medicineMatchStatus]
+                      ? t('import.inTheListAs', { matchedMedicineName: r.data.matchedMedicineName }) : MATCH_LABEL()[r.data.medicineMatchStatus]
                   ) : '—'}</td>
-                  <td>{isNew ? (r.data?.prescriptionRequired === false ? 'Not needed' : 'Needs a prescription') : <span className="ws-muted">As in the list</span>}</td>
+                  <td>{isNew ? (r.data?.prescriptionRequired === false ? t('import.notNeeded') : t('import.needsAPrescription')) : <span className="ws-muted">{t('import.asInTheList')}</span>}</td>
                   <td>{r.data?.batchNumber || '—'}</td>
                   <td>{r.data?.expiryDate ? formatExpiry(r.data.expiryDate) : '—'}</td>
                   <td>{r.data?.quantityToAdd ?? '—'}</td>
                   <td><Price ready={ready} mrp view={importPriceView(r, 'mrp')} /></td>
                   <td>
                     <Price ready={ready} view={importPriceView(r, 'retailPrice')} />
-                    {ready && importLeavesUnpriced(r) && <div className="ws-muted">Not on sale until priced</div>}
+                    {ready && importLeavesUnpriced(r) && <div className="ws-muted">{t('import.notOnSaleUntilPriced')}</div>}
                   </td>
                   {extra.map((f) => <td key={f.key}><Price ready={ready} view={importPriceView(r, f.key)} /></td>)}
-                  {withSupplier && <td>{r.data?.supplierName ?? (r.data?.supplierId ? 'A supplier' : '—')}</td>}
+                  {withSupplier && <td>{r.data?.supplierName ?? (r.data?.supplierId ? t('common.aSupplier') : '—')}</td>}
                   <td>
                     <Badge tone={rowTone(r.status)}>{IMPORT_ROW_STATUS_LABEL[r.status] ?? r.status}</Badge>
-                    {zero.length > 0 && <div className="ws-warn-text">Sets the {zero.join(', ')} to ₹0</div>}
+                    {zero.length > 0 && <div className="ws-warn-text">{t('import.setsThe')}{zero.join(', ')}{t('import.to0')}</div>}
                     {r.errors?.length ? <div className="ws-muted">{r.errors.join('; ')}</div> : null}
                   </td>
                 </tr>
@@ -449,7 +426,7 @@ function Rows({ rows }: { rows: ImportRow[] }) {
         </table>
       </div>
       {ordered.length > shown && (
-        <div><Button variant="secondary" onClick={() => setShown(shown + STEP)}>Show {Math.min(STEP, ordered.length - shown)} more of {ordered.length - shown}</Button></div>
+        <div><Button variant="secondary" onClick={() => setShown(shown + STEP)}>{t('import.show')}{Math.min(STEP, ordered.length - shown)}{t('import.moreOf')}{ordered.length - shown}</Button></div>
       )}
     </section>
   );

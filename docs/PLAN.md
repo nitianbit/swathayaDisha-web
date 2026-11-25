@@ -2381,6 +2381,36 @@ On WQ24 33439af. Against r21 (§24.17.3 "Admin": card refund rows add `payerKind
 - Seen, not changed: "Open the booking" in the queue links every row to the admin consultation page, also a lab-test booking's
   (`bookingKind`).
 
+## WQ45 UI translation, rounds 6e, 6f and 6i: the pharmacy and doctor workspace screens (2026-11-25, branch `wq45/i18n-pharmacy-doctor`)
+
+Base: `wq45a/merge-24b-27` 3233a59 (origin/stage 25a860c with WQ27, and WQ24 + WQ24b merged), then the WQ24b re-check fixes.
+Only `apps/workspace/src/screens/pharmacy/**`, `apps/workspace/src/screens/doctor/**` and their catalogues changed.
+
+- **Two area catalogues** (docs/I18N_PLAN.md §3.2): `apps/workspace/src/i18n/pharmacy` (`workspace-pharmacy`, 1,162 keys: the
+  pharmacy operations of 6e, the assisted booking and wallet of 6f, and the booking pieces every booker shares: `patientStep`,
+  `walletPay`, `cardBooking`, `ownedCancel`, `unconfirmedBooking`, `bookingFields`, `recommendedTests`, `labBooker`) and
+  `apps/workspace/src/i18n/doctor` (`workspace-doctor`, 401 keys, 6i). Keys are `<screen>.<words>`; words used by more than
+  one screen of an area are `common.*` there (133 and 18; WQ42's shared keys were not available, so these are area-local).
+- **English byte for byte**: the move was made with a TypeScript codemod on the literal scan's own rules (JSX text as React
+  renders it, attribute and string values as written, templates with `{placeholders}` for their values, a value that is not
+  text passed through `String()` as the template did). No assertion changed.
+- **Booker wording as keyed variants**, never an English word passed in: "By your pharmacy|lab", "On this pharmacy’s|lab’s
+  device", "The doctor calls this pharmacy|lab", "Your pharmacy’s|lab’s|doctor’s Jansetu wallet pays…", "…turns it on for your
+  pharmacy|lab…", "…not shown to pharmacies|labs", "Only used the first time your pharmacy|lab books…".
+- **No words at module load** (§3.4.1): 19 module-level labels and sentences became functions called at render
+  (`STATUS_FILTERS()`, `FORWARD_LABEL()`, `NOT_OPENED()` …). Local bindings named `t` were renamed (`timer`, `text`, …).
+- **Allowlist**: the 49 pharmacy and doctor files left it (the literal scan passes).
+
+Left (for the next rounds):
+- Three module-level words stay constants because screens outside this round read them: `REFUND_STATUS_LABEL` (admin
+  refunds), `UNPAID_CHECK_AGAIN` and `CHECK_LABEL` (the lab wallet); they become functions with those screens' rounds.
+- Sentences around an inline value or element are still split into pieces (`Collect ` + amount + ` from the patient`);
+  joining them with `t.rich` is a separate pass, so translators get whole sentences.
+- Words built from fragments passed in as props (`what="booking"`, `noun="copy"`, `when` "… at …") and a few lower-case
+  fragments the scan does not flag stay as they were; the shared words from `@jansetu/api` (refusals, `joinWords`, the
+  consent statements) are WQ42's.
+- No translations (the IndicTrans2 pipeline) and no pseudo walk yet (§4.1 item 4).
+
 ## Follow-ups
 
 

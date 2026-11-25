@@ -6,6 +6,7 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 import { ORDER_STATUS_LABEL, orderLabel, PAYMENT_STATUS_LABEL } from './orderLabels.ts';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 const PAGE_SIZE = 20;
 const STATUSES = Object.keys(ORDER_STATUS_LABEL) as OrderStatus[];
@@ -38,31 +39,31 @@ export function OrdersScreen() {
 
   return (
     <>
-      <PageHeading title="Orders">Move orders along, record payments and handle delivery problems.</PageHeading>
+      <PageHeading title={t('orders.orders')}>{t('orders.moveOrdersAlongRecordPayments')}</PageHeading>
       <div className="j-field ws-filter">
-        <label htmlFor="status-filter">Status</label>
+        <label htmlFor="status-filter">{t('common.status')}</label>
         <select id="status-filter" value={status ?? ''} onChange={(e) => go({ status: e.target.value || '', page: 1 })}>
-          <option value="">All orders</option>
+          <option value="">{t('orders.allOrders')}</option>
           {STATUSES.map((s) => <option key={s} value={s}>{ORDER_STATUS_LABEL[s]}</option>)}
         </select>
       </div>
-      {q.isPending ? <Loading label="Loading orders…" />
+      {q.isPending ? <Loading label={t('orders.loadingOrders')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : q.data.items.length === 0 ? (
-          <Empty title={status ? `No ${ORDER_STATUS_LABEL[status].toLowerCase()} orders` : 'No orders yet'} />
+          <Empty title={status ? t('orders.noOrders', { value: ORDER_STATUS_LABEL[status].toLowerCase() }) : t('orders.noOrdersYet')} />
         ) : (
           <>
-            <p className="ws-count" aria-live="polite">{q.data.total} orders</p>
+            <p className="ws-count" aria-live="polite">{q.data.total}{t('orders.orders2')}</p>
             <div className="ws-table-wrap">
               <table className="j-table">
                 <thead>
                   <tr>
-                    <th scope="col">Order</th>
-                    <th scope="col">Placed</th>
-                    <th scope="col">Customer</th>
-                    <th scope="col">Status</th>
-                    <th scope="col">Payment</th>
-                    <th scope="col">Total</th>
+                    <th scope={'col'}>{t('common.order3')}</th>
+                    <th scope={'col'}>{t('common.placed2')}</th>
+                    <th scope={'col'}>{t('common.customer')}</th>
+                    <th scope={'col'}>{t('common.status')}</th>
+                    <th scope={'col'}>{t('common.payment')}</th>
+                    <th scope={'col'}>{t('common.total')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -70,7 +71,7 @@ export function OrdersScreen() {
                     <tr key={o._id}>
                       <td>
                         <Link to={`/pharmacy/orders/${o._id}`}>{orderLabel(o)}</Link>
-                        {refId(o.pharmacyId) !== staff.id && <> <Badge tone="warn">Buying</Badge></>}
+                        {refId(o.pharmacyId) !== staff.id && <> <Badge tone="warn">{t('orders.buying')}</Badge></>}
                       </td>
                       <td>{formatDateTime(o.createdAt)}</td>
                       <td>{customerName(o)}</td>
@@ -87,10 +88,10 @@ export function OrdersScreen() {
               </table>
             </div>
             {q.data.totalPages > 1 && (
-              <nav className="ws-pager" aria-label="Pages">
-                <Button variant="secondary" disabled={page <= 1} onClick={() => go({ page: page - 1 })}>Previous</Button>
-                <span>Page {page} of {q.data.totalPages}</span>
-                <Button variant="secondary" disabled={page >= q.data.totalPages} onClick={() => go({ page: page + 1 })}>Next</Button>
+              <nav className="ws-pager" aria-label={t('common.pages')}>
+                <Button variant="secondary" disabled={page <= 1} onClick={() => go({ page: page - 1 })}>{t('common.previous')}</Button>
+                <span>{t('common.page')}{page}{t('common.of')}{q.data.totalPages}</span>
+                <Button variant="secondary" disabled={page >= q.data.totalPages} onClick={() => go({ page: page + 1 })}>{t('common.next')}</Button>
               </nav>
             )}
           </>

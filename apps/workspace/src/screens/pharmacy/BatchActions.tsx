@@ -11,16 +11,17 @@ import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
 import { SupplierSelect, useActiveSuppliers } from './SupplierPicker.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 type Panel = null | 'release' | 'supplier' | 'recall' | 'trace';
 
-const RETURN_REASONS: { value: SupplierReturnReason; label: string }[] = [
-  { value: 'expired', label: 'Expired' },
-  { value: 'near_expiry', label: 'Near expiry' },
-  { value: 'damaged', label: 'Damaged' },
-  { value: 'recalled', label: 'Recalled' },
-  { value: 'other', label: 'Other' },
-];
+const RETURN_REASONS = (): { value: SupplierReturnReason; label: string }[] => ([
+  { value: 'expired', label: t('batchActions.expired') },
+  { value: 'near_expiry', label: t('batchActions.nearExpiry') },
+  { value: 'damaged', label: t('batchActions.damaged') },
+  { value: 'recalled', label: t('batchActions.recalled') },
+  { value: 'other', label: t('batchActions.other') },
+]);
 
 /** Quality actions for one batch, offered only in the states the backend accepts (batchQuality.ts). */
 export function BatchActions({ itemId, batch, onChanged }: { itemId: string; batch: Batch; onChanged: () => Promise<unknown> }) {
@@ -36,17 +37,17 @@ export function BatchActions({ itemId, batch, onChanged }: { itemId: string; bat
     <div className="batch-actions">
       <div className="ws-actions">
         {can('quarantine') && (
-          <ConfirmAction label="Quarantine" confirmLabel="Quarantine batch" danger reason reasonLabel="Why is it held?"
-            consequence={`Batch ${batch.batchNumber} can no longer be sold or reserved. Orders already holding its units are listed under Quality.`}
+          <ConfirmAction label={t('batchActions.quarantine')} confirmLabel={t('batchActions.quarantineBatch')} danger reason reasonLabel={t('batchActions.whyIsItHeld')}
+            consequence={t('batchActions.batchCanNoLongerBe', { batchNumber: batch.batchNumber })}
             onConfirm={async (reason) => { await inv.quarantine(itemId, batch._id, reason); await onChanged(); }} />
         )}
-        {can('release') && <Button variant="secondary" onClick={() => setPanel(panel === 'release' ? null : 'release')}>Release…</Button>}
+        {can('release') && <Button variant="secondary" onClick={() => setPanel(panel === 'release' ? null : 'release')}>{t('batchActions.release')}</Button>}
         {can('supplierReturn') && batch.availableQty > 0 && panel !== 'supplier' && (
-          <Button variant="secondary" onClick={() => { setNotice(null); setPanel('supplier'); }}>Return to supplier…</Button>
+          <Button variant="secondary" onClick={() => { setNotice(null); setPanel('supplier'); }}>{t('batchActions.returnToSupplier')}</Button>
         )}
-        {can('recall') && <Button variant="secondary" onClick={() => setPanel(panel === 'recall' ? null : 'recall')}>Recall…</Button>}
+        {can('recall') && <Button variant="secondary" onClick={() => setPanel(panel === 'recall' ? null : 'recall')}>{t('batchActions.recall')}</Button>}
         {batch.status === 'recalled' && (
-          <Button variant="secondary" onClick={() => setPanel(panel === 'trace' ? null : 'trace')}>Recall trace</Button>
+          <Button variant="secondary" onClick={() => setPanel(panel === 'trace' ? null : 'trace')}>{t('batchActions.recallTrace')}</Button>
         )}
       </div>
       {panel === 'release' && <ReleaseForm itemId={itemId} batch={batch} onDone={done} onCancel={() => setPanel(null)} />}
@@ -54,7 +55,7 @@ export function BatchActions({ itemId, batch, onChanged }: { itemId: string; bat
       {panel === 'supplier' && (
         <SupplierReturnForm itemId={itemId} batch={batch} onCancel={() => setPanel(null)}
           onDone={async (r) => {
-            setNotice(`${r.duplicate ? 'Already recorded' : 'Recorded'}: ${r.quantity} units of batch ${r.batchNumber} returned (${r.reason.replace(/_/g, ' ')}).`);
+            setNotice(t('batchActions.unitsOfBatchReturned', { value: r.duplicate ? t('batchActions.alreadyRecorded') : 'Recorded', quantity: r.quantity, batchNumber: r.batchNumber, value2: r.reason.replace(/_/g, ' ') }));
             await done();
           }} />
       )}
@@ -76,7 +77,7 @@ function FormShell({ name, title, children, onSubmit, busy, error, submitLabel, 
       {error && <Alert>{error}</Alert>}
       <div className="confirm-actions">
         <Button type="submit" variant={danger ? 'danger' : 'primary'} busy={busy}>{submitLabel}</Button>
-        <Button variant="ghost" disabled={busy} onClick={onCancel}>Back</Button>
+        <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('common.back')}</Button>
       </div>
     </form>
   );
@@ -92,7 +93,7 @@ function useSubmit() {
   return { busy, error, run };
 }
 
-const wholeNumber = (t: string) => (/^\d+$/.test(t.trim()) ? Number(t.trim()) : NaN);
+const wholeNumber = (text: string) => (/^\d+$/.test(text.trim()) ? Number(text.trim()) : NaN);
 
 function ReleaseForm({ itemId, batch, onDone, onCancel }: { itemId: string; batch: Batch; onDone: () => Promise<unknown>; onCancel: () => void }) {
   const { api } = useSession();
@@ -101,19 +102,19 @@ function ReleaseForm({ itemId, batch, onDone, onCancel }: { itemId: string; batc
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { busy, error, run } = useSubmit();
   return (
-    <FormShell name={`Release batch ${batch.batchNumber}`} title={`Release batch ${batch.batchNumber} back to sale. Units written off are removed from stock; reserved units stay with their orders.`}
-      submitLabel="Release batch" busy={busy} error={error} onCancel={onCancel}
+    <FormShell name={t('batchActions.releaseBatch', { batchNumber: batch.batchNumber })} title={t('batchActions.releaseBatchBackToSale', { batchNumber: batch.batchNumber })}
+      submitLabel={t('batchActions.releaseBatch2')} busy={busy} error={error} onCancel={onCancel}
       onSubmit={() => {
         const n = wholeNumber(writeOff);
         const e: Record<string, string> = {};
-        if (!Number.isInteger(n) || n < 0 || n > batch.availableQty) e.writeOff = `Enter a whole number from 0 to ${batch.availableQty}.`;
-        if (reason.trim().length < 3) e.reason = 'Give a reason (at least 3 characters).';
+        if (!Number.isInteger(n) || n < 0 || n > batch.availableQty) e.writeOff = t('batchActions.enterAWholeNumberFrom', { availableQty: batch.availableQty });
+        if (reason.trim().length < 3) e.reason = t('common.giveAReasonAtLeast');
         setErrors(e);
         if (Object.keys(e).length === 0) void run(async () => { await inventoryApi(api).release(itemId, batch._id, { writeOffQty: n, reason: reason.trim() }); await onDone(); });
       }}>
-      <TextField label="Units to write off" inputMode="numeric" value={writeOff} error={errors.writeOff}
-        hint={`${batch.availableQty} unreserved units in this batch.`} onChange={(e) => setWriteOff(e.target.value.replace(/\D/g, ''))} />
-      <TextArea label="Reason" value={reason} maxLength={500} error={errors.reason} onChange={(e) => setReason(e.target.value)} />
+      <TextField label={t('batchActions.unitsToWriteOff')} inputMode="numeric" value={writeOff} error={errors.writeOff}
+        hint={t('batchActions.unreservedUnitsInThisBatch', { availableQty: batch.availableQty })} onChange={(e) => setWriteOff(e.target.value.replace(/\D/g, ''))} />
+      <TextArea label={t('common.reason')} value={reason} maxLength={500} error={errors.reason} onChange={(e) => setReason(e.target.value)} />
     </FormShell>
   );
 }
@@ -177,7 +178,7 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
   if (pending) {
     const b = pending.body;
     return (
-      <PendingOpPanel key={pending.attempts} label={`Unconfirmed return of batch ${batch.batchNumber}`} op={pending} busy={busy}
+      <PendingOpPanel key={pending.attempts} label={t('batchActions.unconfirmedReturnOfBatch', { batchNumber: batch.batchNumber })} op={pending} busy={busy}
         onResend={() => void send(pending)}
         fetchPage={(page) => inventoryApi(api).supplierReturns({ page, limit: 100 })}
         onFound={(r) => { recorded(pending.requestKey); void onDone({ ...r, duplicate: true }); }}
@@ -190,29 +191,27 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
           const r = await requestKeysApi(api).abandon('supplier_return', pending.requestKey);
           return { state: r.state, record: r.record as unknown as SupplierReturn | undefined };
         }}
-        summary={pending.restored || !b ? null : <div>{b.quantity} units to {pending.supplierName} · {b.reason.replace(/_/g, ' ')}{b.notes ? ` · “${b.notes}”` : ''}</div>} />
+        summary={pending.restored || !b ? null : <div>{b.quantity}{t('batchActions.unitsTo')}{pending.supplierName} · {b.reason.replace(/_/g, ' ')}{b.notes ? ` · “${b.notes}”` : ''}</div>} />
     );
   }
 
-  if (suppliers.isPending) return <Loading label="Loading suppliers…" />;
+  if (suppliers.isPending) return <Loading label={t('common.loadingSuppliers')} />;
   if (suppliers.isError) return <Alert>{messageOf(suppliers.error)}</Alert>;
   const active = suppliers.data.filter((s) => s.state === 'active');
   if (active.length === 0) {
     return (
-      <Alert tone="warn">
-        Returns go to one of your active suppliers, and you have none yet. <Link to="/pharmacy/suppliers">Add a supplier</Link>, then come back to this batch.
-      </Alert>
+      <Alert tone="warn">{t('batchActions.returnsGoToOneOf')}<Link to="/pharmacy/suppliers">{t('common.addASupplier')}</Link>{t('batchActions.thenComeBackToThis')}</Alert>
     );
   }
 
   return (
-    <FormShell name={`Return batch ${batch.batchNumber}`} title={`Send unreserved units of batch ${batch.batchNumber} back to a supplier. They leave your stock.`}
-      submitLabel="Record supplier return" danger busy={busy} error={refused ? `Not recorded: ${refused}` : null} onCancel={onCancel}
+    <FormShell name={t('batchActions.returnBatch', { batchNumber: batch.batchNumber })} title={t('batchActions.sendUnreservedUnitsOfBatch', { batchNumber: batch.batchNumber })}
+      submitLabel={t('batchActions.recordSupplierReturn')} danger busy={busy} error={refused ? t('batchActions.notRecorded', { refused }) : null} onCancel={onCancel}
       onSubmit={() => {
         const n = wholeNumber(qty);
         const e: Record<string, string> = {};
-        if (!supplierId) e.supplier = 'Choose the supplier.';
-        if (!Number.isInteger(n) || n < 1 || n > batch.availableQty) e.qty = `Enter a whole number from 1 to ${batch.availableQty}.`;
+        if (!supplierId) e.supplier = t('batchActions.chooseTheSupplier');
+        if (!Number.isInteger(n) || n < 1 || n > batch.availableQty) e.qty = t('batchActions.enterAWholeNumberFrom2', { availableQty: batch.availableQty });
         setErrors(e);
         if (Object.keys(e).length === 0) {
           const requestKey = newRequestKey();
@@ -222,16 +221,16 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
           });
         }
       }}>
-      <SupplierSelect id={`sup-${batch._id}`} label="Supplier" suppliers={active} value={supplierId} onChange={setSupplierId} error={errors.supplier} />
-      <TextField label="Units" inputMode="numeric" value={qty} error={errors.qty} hint={`Up to ${batch.availableQty} unreserved units.`}
+      <SupplierSelect id={`sup-${batch._id}`} label={t('common.supplier')} suppliers={active} value={supplierId} onChange={setSupplierId} error={errors.supplier} />
+      <TextField label={t('common.units')} inputMode="numeric" value={qty} error={errors.qty} hint={t('batchActions.upToUnreservedUnits', { availableQty: batch.availableQty })}
         onChange={(e) => setQty(e.target.value.replace(/\D/g, ''))} />
       <div className="j-field">
-        <label htmlFor={`why-${batch._id}`}>Reason</label>
+        <label htmlFor={`why-${batch._id}`}>{t('common.reason')}</label>
         <select id={`why-${batch._id}`} value={reason} onChange={(e) => setReason(e.target.value as SupplierReturnReason)}>
-          {RETURN_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+          {RETURN_REASONS().map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
         </select>
       </div>
-      <TextArea label="Notes (optional)" value={notes} maxLength={500} onChange={(e) => setNotes(e.target.value)} />
+      <TextArea label={t('batchActions.notesOptional')} value={notes} maxLength={500} onChange={(e) => setNotes(e.target.value)} />
     </FormShell>
   );
 }
@@ -245,11 +244,11 @@ function RecallForm({ itemId, batch, onDone, onCancel }: { itemId: string; batch
   const { busy, error, run } = useSubmit();
   if (trace) return <TraceView trace={trace} justRecalled />;
   return (
-    <FormShell name={`Recall batch ${batch.batchNumber}`} title={`Recall batch ${batch.batchNumber}. This cannot be undone: the batch is never sold again, and you get the list of open orders and customers who received it.`}
-      submitLabel="Recall batch" danger busy={busy} error={error} onCancel={onCancel}
+    <FormShell name={t('batchActions.recallBatch', { batchNumber: batch.batchNumber })} title={t('batchActions.recallBatchThisCannotBe', { batchNumber: batch.batchNumber })}
+      submitLabel={t('batchActions.recallBatch2')} danger busy={busy} error={error} onCancel={onCancel}
       onSubmit={() => {
         const e: Record<string, string> = {};
-        if (reason.trim().length < 3) e.reason = 'Give a reason (at least 3 characters).';
+        if (reason.trim().length < 3) e.reason = t('common.giveAReasonAtLeast');
         setErrors(e);
         if (Object.keys(e).length === 0) {
           void run(async () => {
@@ -259,8 +258,8 @@ function RecallForm({ itemId, batch, onDone, onCancel }: { itemId: string; batch
           });
         }
       }}>
-      <TextArea label="Reason" value={reason} maxLength={500} error={errors.reason} onChange={(e) => setReason(e.target.value)} />
-      <TextField label="Notice reference (optional)" hint="The manufacturer’s or regulator’s recall notice number." value={reference}
+      <TextArea label={t('common.reason')} value={reason} maxLength={500} error={errors.reason} onChange={(e) => setReason(e.target.value)} />
+      <TextField label={t('batchActions.noticeReferenceOptional')} hint={t('batchActions.theManufacturerSOrRegulator')} value={reference}
         maxLength={200} onChange={(e) => setReference(e.target.value)} />
     </FormShell>
   );
@@ -269,34 +268,33 @@ function RecallForm({ itemId, batch, onDone, onCancel }: { itemId: string; batch
 function TraceLoader({ itemId, batchId }: { itemId: string; batchId: string }) {
   const { api } = useSession();
   const q = useQuery({ queryKey: ['pharmacy-inventory', 'recall-trace', itemId, batchId], queryFn: () => inventoryApi(api).recallTrace(itemId, batchId) });
-  if (q.isPending) return <Loading label="Loading recall trace…" />;
+  if (q.isPending) return <Loading label={t('batchActions.loadingRecallTrace')} />;
   if (q.isError) return <Alert>{messageOf(q.error)}</Alert>;
   return <TraceView trace={q.data} />;
 }
 
 function TraceView({ trace, justRecalled = false }: { trace: RecallTrace; justRecalled?: boolean }) {
   return (
-    <div className="confirm" role="region" aria-label={`Recall trace for batch ${trace.batch.batchNumber}`}>
-      {justRecalled && <Alert tone="ok">Batch {trace.batch.batchNumber} is recalled.</Alert>}
-      <div className="confirm-text">Open orders holding this batch ({trace.openOrders.length})</div>
-      {trace.openOrders.length === 0 ? <span className="ws-muted">None.</span> : (
+    <div className="confirm" role="region" aria-label={t('batchActions.recallTraceForBatch', { batchNumber: trace.batch.batchNumber })}>
+      {justRecalled && <Alert tone="ok">{t('batchActions.batch')}{trace.batch.batchNumber}{t('batchActions.isRecalled')}</Alert>}
+      <div className="confirm-text">{t('batchActions.openOrdersHoldingThisBatch')}{trace.openOrders.length})</div>
+      {trace.openOrders.length === 0 ? <span className="ws-muted">{t('batchActions.none')}</span> : (
         <ul className="ws-list">
           {trace.openOrders.map((o) => (
             <li key={o.orderId}>{o.orderNumber ?? o.orderId.slice(-8)} · {orderStatusLabel(o.status)} ·{' '}
-              {o.heldUnits.reduce((a, u) => a + u.quantity, 0)} units — swap or cancel it under Quality</li>
+              {o.heldUnits.reduce((a, u) => a + u.quantity, 0)}{t('batchActions.unitsSwapOrCancelIt')}</li>
           ))}
         </ul>
       )}
-      <div className="confirm-text">Customers who received it ({trace.dispensedTo.length}{trace.dispensedTruncated ? '+' : ''})</div>
-      {trace.dispensedTo.length === 0 ? <span className="ws-muted">None.</span> : (
+      <div className="confirm-text">{t('batchActions.customersWhoReceivedIt')}{trace.dispensedTo.length}{trace.dispensedTruncated ? '+' : ''})</div>
+      {trace.dispensedTo.length === 0 ? <span className="ws-muted">{t('batchActions.none')}</span> : (
         <ul className="ws-list">
           {trace.dispensedTo.map((d) => (
-            <li key={d.orderId}>Order {d.orderNumber ?? d.orderId.slice(-8)} · {d.quantity} units
-              {d.returnedQty ? ` (${d.returnedQty} returned)` : ''} · {formatDateTime(d.completedAt)}</li>
+            <li key={d.orderId}>{t('common.order')}{d.orderNumber ?? d.orderId.slice(-8)} · {d.quantity}{t('batchActions.units2')}{d.returnedQty ? ` (${d.returnedQty} returned)` : ''} · {formatDateTime(d.completedAt)}</li>
           ))}
         </ul>
       )}
-      {trace.dispensedTruncated && <Alert tone="warn">The list is cut at 1000 orders; ask an admin for the full list.</Alert>}
+      {trace.dispensedTruncated && <Alert tone="warn">{t('batchActions.theListIsCutAt')}</Alert>}
     </div>
   );
 }

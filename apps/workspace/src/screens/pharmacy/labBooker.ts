@@ -5,6 +5,7 @@ import {
 } from '@jansetu/api';
 import type { WalletPayer } from './WalletScreen.tsx';
 import { doctorLabCardSource, labCardSource, type CardBookingSource } from './cardBooking.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ25: who books a lab test for a patient, for the one Book lab test and Booked lab tests screens (WQ17, generalised, not
@@ -50,13 +51,13 @@ export function pharmacyLabBooker(api: ApiClient, pharmacyId: string): LabBooker
   const labs = pharmacyLabApi(api);
   return {
     kind: 'pharmacy', id: pharmacyId,
-    routes: { ...labs, book: (r) => { if (!('phone' in r)) throw new Error('A pharmacy books by phone'); return labs.book(r); } },
+    routes: { ...labs, book: (r) => { if (!('phone' in r)) throw new Error(t('labBooker.aPharmacyBooksByPhone')); return labs.book(r); } },
     loadRecommendation: pharmacyRecommendationsApi(api).load, refusal: labRefusal,
     consent: { statement: CONSENT_STATEMENT, version: CONSENT_STATEMENT_VERSION }, payer: { kind: 'pharmacy', id: pharmacyId }, cardSource: labCardSource,
     slot: (what, bookingId) => `assisted-lab-${what}:${pharmacyId}${bookingId ? `:${bookingId}` : ''}`,
     listKey: ['pharmacy-lab-bookings', pharmacyId], labsKey: ['assisted-labs', pharmacyId], walletKey: ['pharmacy-wallet', pharmacyId],
     paths: { book: '/pharmacy/lab-book', list: '/pharmacy/lab-tests' },
-    words: { offFor: 'for your pharmacy', byBooker: 'By your pharmacy', emptyFor: ' for a patient at your counter.' },
+    words: { offFor: 'for your pharmacy', byBooker: t('labBooker.byYourPharmacy'), emptyFor: t('common.forAPatientAtYour') },
   };
 }
 
@@ -70,6 +71,6 @@ export function doctorLabBooker(api: ApiClient, doctorId: string): LabBooker {
     slot: (what, bookingId) => `assisted-lab-${what}:doctor:${doctorId}${bookingId ? `:${bookingId}` : ''}`,
     listKey: ['doctor-lab-bookings', doctorId], labsKey: ['doctor-assisted-labs', doctorId], walletKey: ['doctor-wallet', doctorId],
     paths: { book: '/doctor/lab-book', list: '/doctor/lab-tests' },
-    words: { offFor: 'for you', byBooker: 'By you', emptyFor: ' for a patient.', recommendationLabel: 'Have a recommended-tests code? (optional)' },
+    words: { offFor: 'for you', byBooker: t('labBooker.byYou'), emptyFor: t('labBooker.forAPatient'), recommendationLabel: t('labBooker.haveARecommendedTestsCode') },
   };
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { assistedRefusal, pharmacyAssistedApi } from '@jansetu/api';
 import { useSession } from '../../session.tsx';
 import { sniffDocument } from './documents.ts';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ17: a stored file read with the pharmacy token (`/file/fetch`) and shown in the page: the prescription's dispensing
@@ -49,10 +50,10 @@ export function DocumentPreview({ preview, title, noun, fileName }: {
         {preview.kind === 'pdf' ? (
           <div className="rx-pdf">
             <iframe src={preview.url} title={title} />
-            <a href={preview.url} target="_blank" rel="noopener">Open the {noun} in a new tab (to print)</a>
+            <a href={preview.url} target="_blank" rel="noopener">{t('documentViewer.openThe')}{noun}{t('documentViewer.inANewTabTo')}</a>
           </div>
         ) : preview.kind === 'image' ? <img src={preview.url} alt={title} />
-          : <a href={preview.url} download={fileName}>Download the {noun}</a>}
+          : <a href={preview.url} download={fileName}>{t('documentViewer.downloadThe')}{noun}</a>}
       </div>
     </div>
   );

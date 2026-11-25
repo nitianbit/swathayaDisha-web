@@ -9,6 +9,7 @@ import { useSession } from '../../session.tsx';
 import { Signed } from '../finance/finance.tsx';
 import { CursorPager, useCursorPages } from './cursorList.tsx';
 import { usePharmacyId } from './ownedOp.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ26 (phase 4b): what the pharmacy's referral cuts earned (`GET /pharmacy-assisted/referral`), its rates
@@ -19,9 +20,7 @@ export function ReferralEarningsScreen() {
   const pharmacyId = usePharmacyId();
   return (
     <>
-      <PageHeading title="Referral earnings">
-        What your pharmacy earns for the consultations and lab tests it books for patients. It comes out of the doctor’s or the lab’s earning, not from the patient.
-      </PageHeading>
+      <PageHeading title={t('referralEarnings.referralEarnings')}>{t('referralEarnings.whatYourPharmacyEarnsFor')}</PageHeading>
       <ReferralEarnings key={pharmacyId} pharmacyId={pharmacyId} />
     </>
   );
@@ -39,24 +38,24 @@ function ReferralEarnings({ pharmacyId }: { pharmacyId: string }) {
   return (
     <>
       <section className="ws-section" aria-labelledby="ref-sum-h">
-        <h2 id="ref-sum-h">Earnings</h2>
-        {summary.isPending ? <Loading label="Loading your referral earnings…" />
+        <h2 id="ref-sum-h">{t('referralEarnings.earnings')}</h2>
+        {summary.isPending ? <Loading label={t('referralEarnings.loadingYourReferralEarnings')} />
           : summary.isError || !s ? <ErrorState message={messageOf(summary.error)} onRetry={() => void summary.refetch()} />
           : (
             <>
-              <dl className="fin-cards" aria-label="Referral earnings">
-                <div className="fin-card fin-card--main"><dt>Due to you</dt><dd><Signed minor={s.dueMinor} /></dd></div>
-                <div className="fin-card"><dt>Earned</dt><dd>{formatPaise(s.earnedMinor)}</dd></div>
-                <div className="fin-card"><dt>Paid to you</dt><dd>{formatPaise(s.paidMinor)}</dd></div>
+              <dl className="fin-cards" aria-label={t('referralEarnings.referralEarnings')}>
+                <div className="fin-card fin-card--main"><dt>{t('referralEarnings.dueToYou')}</dt><dd><Signed minor={s.dueMinor} /></dd></div>
+                <div className="fin-card"><dt>{t('referralEarnings.earned')}</dt><dd>{formatPaise(s.earnedMinor)}</dd></div>
+                <div className="fin-card"><dt>{t('referralEarnings.paidToYou')}</dt><dd>{formatPaise(s.paidMinor)}</dd></div>
               </dl>
-              {!s.payoutsEnabled && <p>Payouts start once Jansetu switches them on.</p>}
+              {!s.payoutsEnabled && <p>{t('referralEarnings.payoutsStartOnceJansetuSwitches')}</p>}
             </>
           )}
       </section>
 
       <section className="ws-section" aria-labelledby="ref-rates-h">
-        <h2 id="ref-rates-h">Your rates</h2>
-        {rules.isPending ? <Loading label="Loading your rates…" />
+        <h2 id="ref-rates-h">{t('referralEarnings.yourRates')}</h2>
+        {rules.isPending ? <Loading label={t('referralEarnings.loadingYourRates')} />
           : rules.isError ? <ErrorState message={messageOf(rules.error)} onRetry={() => void rules.refetch()} />
           : (
             <>
@@ -67,26 +66,26 @@ function ReferralEarnings({ pharmacyId }: { pharmacyId: string }) {
                   </Fragment>
                 ))}
               </dl>
-              {referralCutsOn(rules.data) === false && <p className="ws-muted">Jansetu has not switched referral cuts on yet, so new bookings earn no cut for now.</p>}
-              <p className="ws-muted">Jansetu sets these rates. A booking keeps the rate it was made with; the cut is earned when it is completed.</p>
+              {referralCutsOn(rules.data) === false && <p className="ws-muted">{t('referralEarnings.jansetuHasNotSwitchedReferral')}</p>}
+              <p className="ws-muted">{t('referralEarnings.jansetuSetsTheseRatesA')}</p>
             </>
           )}
       </section>
 
       <section className="ws-section" aria-labelledby="ref-st-h">
-        <h2 id="ref-st-h">Statement</h2>
-        {statement.isPending ? <Loading label="Loading the statement…" />
+        <h2 id="ref-st-h">{t('referralEarnings.statement')}</h2>
+        {statement.isPending ? <Loading label={t('referralEarnings.loadingTheStatement')} />
           : statement.isError ? <ErrorState message={messageOf(statement.error)} onRetry={() => void statement.refetch()} />
-          : statement.data.items.length === 0 && pages.page === 1 ? <Empty title="No referral earnings yet">A cut is listed here when a booking you made is completed.</Empty>
+          : statement.data.items.length === 0 && pages.page === 1 ? <Empty title={t('referralEarnings.noReferralEarningsYet')}>{t('referralEarnings.aCutIsListedHere')}</Empty>
           : (
             <>
               <div className="ws-table-wrap">
                 <table className="j-table">
-                  <caption className="j-sr-only">Referral statement, newest first</caption>
+                  <caption className="j-sr-only">{t('referralEarnings.referralStatementNewestFirst')}</caption>
                   <thead>
                     <tr>
-                      <th scope="col">Date (India time)</th><th scope="col">Ref</th><th scope="col">Category</th>
-                      <th scope="col" className="fin-amount">Base</th><th scope="col" className="fin-amount">Cut</th>
+                      <th scope={'col'}>{t('referralEarnings.dateIndiaTime')}</th><th scope={'col'}>{t('referralEarnings.ref')}</th><th scope={'col'}>{t('referralEarnings.category')}</th>
+                      <th scope={'col'} className="fin-amount">{t('referralEarnings.base')}</th><th scope={'col'} className="fin-amount">{t('referralEarnings.cut')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -102,7 +101,7 @@ function ReferralEarnings({ pharmacyId }: { pharmacyId: string }) {
                   </tbody>
                 </table>
               </div>
-              <CursorPager pages={pages} nextCursor={statement.data.nextCursor} label="Statement pages" />
+              <CursorPager pages={pages} nextCursor={statement.data.nextCursor} label={t('referralEarnings.statementPages')} />
             </>
           )}
       </section>

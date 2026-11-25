@@ -11,6 +11,7 @@ import { useSession } from '../../session.tsx';
 import { CursorPager, StatusFilter, useCursorPages } from './cursorList.tsx';
 import { usePharmacyId } from './ownedOp.tsx';
 import { pharmacyConsultBooker, type ConsultBooker } from './consultBooker.ts';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ12: consultations this pharmacy booked (`GET /pharmacy-bookings`, newest first, cursor-paged; phase 0 + 1a).
@@ -21,19 +22,17 @@ export function BookedConsultationsScreen() {
   const { api } = useSession();
   return (
     <>
-      <PageHeading title="Booked consultations">
-        Consultations your pharmacy booked for patients, newest first. Open one to cancel it, join the call or see the prescription.
-        {' '}<Link to="/pharmacy/book">Book a new one</Link>.
+      <PageHeading title={t('common.bookedConsultations')}>{t('bookedConsultations.consultationsYourPharmacyBookedFor')}{' '}<Link to="/pharmacy/book">{t('common.bookANewOne')}</Link>.
       </PageHeading>
       <BookedConsultationsList key={pharmacyId} booker={pharmacyConsultBooker(api, pharmacyId)} />
     </>
   );
 }
 
-const STATUS_FILTERS: { value: AssistedBookingStatus | ''; label: string }[] = [
-  { value: '', label: 'All' }, { value: 'confirmed', label: 'Booked' }, { value: 'completed', label: 'Done' },
-  { value: 'cancelled', label: 'Cancelled' }, { value: 'no_show', label: 'Patient did not come' }, { value: 'pending', label: 'Waiting' },
-];
+const STATUS_FILTERS = (): { value: AssistedBookingStatus | ''; label: string }[] => ([
+  { value: '', label: t('common.all') }, { value: 'confirmed', label: t('bookedConsultations.booked') }, { value: 'completed', label: t('bookedConsultations.done') },
+  { value: 'cancelled', label: t('common.cancelled') }, { value: 'no_show', label: t('bookedConsultations.patientDidNotCome') }, { value: 'pending', label: t('bookedConsultations.waiting') },
+]);
 const PAGE_SIZE = 20;
 
 export const modeWords = (m: string | undefined) => (m && m in ASSISTED_MODE_LABEL ? ASSISTED_MODE_LABEL[m as AssistedMode] : m ?? '—');
@@ -41,15 +40,15 @@ export const modeWords = (m: string | undefined) => (m && m in ASSISTED_MODE_LAB
 /** WQ16: an assisted booking held for its card or UPI payment (a wallet booking is never pending). */
 export const waitingForCard = (b: BookedConsultation) => isAssistedBooking(b) && awaitingCardPayment(b);
 /** The status in words; "Waiting for payment" for a card booking not paid yet. */
-export const statusWords = (b: BookedConsultation) => (waitingForCard(b) ? 'Waiting for payment' : bookingStatusLabel(b.status));
+export const statusWords = (b: BookedConsultation) => (waitingForCard(b) ? t('common.waitingForPayment2') : bookingStatusLabel(b.status));
 
 /** Badges next to the status: cancelled by the patient, reported as "not mine", a prescription to read. */
 export function BookingBadges({ b }: { b: BookedConsultation }) {
   return (
     <>
-      {b.status === 'cancelled' && b.cancellationCause === 'patient' && <> <Badge tone="warn">Cancelled by patient</Badge></>}
-      {b.assisted?.disputed?.state === 'open' && <> <Badge tone="danger">Patient says this is not theirs</Badge></>}
-      {b.prescription && <> <Badge tone="ok">Prescription</Badge></>}
+      {b.status === 'cancelled' && b.cancellationCause === 'patient' && <> <Badge tone="warn">{t('common.cancelledByPatient')}</Badge></>}
+      {b.assisted?.disputed?.state === 'open' && <> <Badge tone="danger">{t('common.patientSaysThisIsNot')}</Badge></>}
+      {b.prescription && <> <Badge tone="ok">{t('common.prescription')}</Badge></>}
     </>
   );
 }
@@ -66,22 +65,21 @@ export function BookedConsultationsList({ booker }: { booker: ConsultBooker }) {
 
   return (
     <section className="ws-section" aria-labelledby="list-h">
-      <h2 id="list-h" className="j-sr-only">Booked consultations</h2>
-      <StatusFilter id="bk-status" value={status} options={STATUS_FILTERS} onChange={(v) => { setStatus(v); pages.reset(); }} />
-      {q.isPending ? <Loading label="Loading booked consultations…" />
+      <h2 id="list-h" className="j-sr-only">{t('common.bookedConsultations')}</h2>
+      <StatusFilter id="bk-status" value={status} options={STATUS_FILTERS()} onChange={(v) => { setStatus(v); pages.reset(); }} />
+      {q.isPending ? <Loading label={t('bookedConsultations.loadingBookedConsultations')} />
         : q.isError ? (isSwitchedOff(q.error) ? <Alert tone="warn">{SWITCHED_OFF_MESSAGE}</Alert>
           : <ErrorState message={booker.refusal(q.error).message} onRetry={() => void q.refetch()} />)
         : q.data.items.length === 0 ? (
-          <Empty title={status ? 'No consultations with this status' : 'No consultations booked yet'}>
-            <Link to={booker.paths.book}>Book a consultation</Link> for a patient at your counter.
-          </Empty>
+          <Empty title={status ? t('bookedConsultations.noConsultationsWithThisStatus') : t('bookedConsultations.noConsultationsBookedYet')}>
+            <Link to={booker.paths.book}>{t('bookedConsultations.bookAConsultation')}</Link>{t('common.forAPatientAtYour')}</Empty>
         ) : (
           <>
             <div className="ws-table-wrap">
               <table className="j-table">
-                <caption className="j-sr-only">Booked consultations, newest first</caption>
+                <caption className="j-sr-only">{t('bookedConsultations.bookedConsultationsNewestFirst')}</caption>
                 <thead>
-                  <tr><th scope="col">When</th><th scope="col">Patient</th><th scope="col">Doctor</th><th scope="col">How</th><th scope="col">Status</th><th scope="col"><span className="j-sr-only">Open</span></th></tr>
+                  <tr><th scope={'col'}>{t('common.when')}</th><th scope={'col'}>{t('common.patient2')}</th><th scope={'col'}>{t('common.doctor2')}</th><th scope={'col'}>{t('common.how')}</th><th scope={'col'}>{t('common.status')}</th><th scope={'col'}><span className="j-sr-only">{t('common.open')}</span></th></tr>
                 </thead>
                 <tbody>
                   {q.data.items.map((b) => (
@@ -93,15 +91,15 @@ export function BookedConsultationsList({ booker }: { booker: ConsultBooker }) {
                       <td>{statusWords(b)}<BookingBadges b={b} /></td>
                       <td>
                         {waitingForCard(b)
-                          ? <Link to={`${list}/${b._id}`} aria-label={`Pay now for the consultation of ${b.patientName ?? 'the patient'} with ${b.doctorName ?? 'the doctor'}`}>Pay now</Link>
-                          : <Link to={`${list}/${b._id}`} aria-label={`Open the consultation of ${b.patientName ?? 'the patient'} with ${b.doctorName ?? 'the doctor'}`}>Open</Link>}
+                          ? <Link to={`${list}/${b._id}`} aria-label={t('bookedConsultations.payNowForTheConsultation', { value: b.patientName ?? 'the patient', value2: b.doctorName ?? 'the doctor' })}>{t('common.payNow')}</Link>
+                          : <Link to={`${list}/${b._id}`} aria-label={t('bookedConsultations.openTheConsultationOfWith', { value: b.patientName ?? 'the patient', value2: b.doctorName ?? 'the doctor' })}>{t('common.open')}</Link>}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <CursorPager pages={pages} nextCursor={q.data.nextCursor} label="Booked consultation pages" />
+            <CursorPager pages={pages} nextCursor={q.data.nextCursor} label={t('bookedConsultations.bookedConsultationPages')} />
           </>
         )}
     </section>

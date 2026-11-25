@@ -18,6 +18,7 @@ import {
 } from './doctor.tsx';
 
 import { useDoctorPresence } from './presence.tsx';
+import { t } from '../../i18n/doctor/index.ts';
 
 /** Today's consultations (one cache entry shared by the accept outcome and the running list). */
 const todayKey = (d: DoctorContext, today: string) => [...appointmentsKey(d), 'day', today];
@@ -37,11 +38,9 @@ function ConsultNow({ d }: { d: DoctorContext }) {
   const standing = profile.data ? doctorStanding(profile.data) : null;
   return (
     <>
-      <PageHeading title="Consult now">
-        Take instant consultations: patients who pay now are offered to doctors of their speciality who are available. The first doctor to accept gets it.
-      </PageHeading>
-      {standing === 'inactive' && <Alert>Your doctor account is not active, so you cannot take instant consultations. Contact Jansetu.</Alert>}
-      {standing === 'unverified' && <Alert tone="warn">Your profile is waiting for verification by Jansetu. You can take instant consultations once it is verified.</Alert>}
+      <PageHeading title={t('common.consultNow')}>{t('consultNow.takeInstantConsultationsPatientsWho')}</PageHeading>
+      {standing === 'inactive' && <Alert>{t('consultNow.yourDoctorAccountIsNot')}</Alert>}
+      {standing === 'unverified' && <Alert tone="warn">{t('consultNow.yourProfileIsWaitingFor')}</Alert>}
       <Availability profile={profile.data} />
       <Offers d={d} />
       <Running d={d} />
@@ -74,7 +73,7 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
     setNotice(null);
     const minor = feeText.trim() === '' ? undefined : rupeesToPaise(feeText);
     const input = { available, modes, ...(minor !== undefined && minor !== null ? { instantFeeMinor: minor } : {}) };
-    const problems = { ...presenceProblems(input), ...(minor === null ? { fee: 'Enter the fee in rupees, e.g. 500 or 499.50.' } : {}) };
+    const problems = { ...presenceProblems(input), ...(minor === null ? { fee: t('consultNow.enterTheFeeInRupees') } : {}) };
     setErrors(available ? problems : {});
     if (available && Object.keys(problems).length) return;
     try {
@@ -83,19 +82,19 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
       const r = await p.set(available ? input : { available: false, modes, ...(keepFee !== undefined ? { instantFeeMinor: keepFee } : {}) });
       setFee(null);
       setModes(null);
-      setNotice(r.available ? `You are available now for ${termsText(r)}.` : 'You are not available now. No new offers come to you.');
+      setNotice(r.available ? t('consultNow.youAreAvailableNowFor', { value: termsText(r) }) : t('consultNow.youAreNotAvailableNow'));
     } catch (err) {
       if (err instanceof ApiError && err.code === 'PRESENCE_CHANGED') {
         setFee(null);
         setModes(null);
         setFailure(p.unconfirmed
-          ? 'Not confirmed: the server’s terms changed meanwhile (your earlier change, or another device, got there first). What it has now is shown above: confirm those terms, or change them.'
-          : 'Not changed: your availability was changed meanwhile (on another device, or by an earlier request of this page that arrived late). What the server has now is shown above; make your change again if it is still needed.');
+          ? t('consultNow.notConfirmedTheServerS')
+          : t('consultNow.notChangedYourAvailabilityWas'));
       } else if (definitelyNotRecorded(err)) {
         // A refusal changed nothing; a lost answer is shown by the "not confirmed" notice (the terms are unknown).
         setFailure(available
-          ? `Not changed: ${messageOf(err)}`
-          : `Not switched off: ${messageOf(err)} This page has stopped its heartbeat, so you stop being offered consultations within two minutes.`);
+          ? t('consultNow.notChanged', { value: messageOf(err) })
+          : t('consultNow.notSwitchedOffThisPage', { value: messageOf(err) }));
       }
     }
   }
@@ -107,11 +106,11 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
       const r = await p.refresh();
       setFee(null);
       setModes(null);
-      setNotice(`The server has: ${r.available ? `available for ${termsText(r)}` : 'not available'} (version ${r.presenceVersion}).${p.unconfirmed
-        ? ' Confirm these terms (or change them) to go on: your earlier change may still arrive, so nothing can be accepted until the server confirms.'
-        : ''}`);
+      setNotice(t('consultNow.theServerHasVersion', { value: r.available ? `available for ${termsText(r)}` : 'not available', presenceVersion: r.presenceVersion, value2: p.unconfirmed
+        ? t('consultNow.confirmTheseTermsOrChange')
+        : '' }));
     } catch (err) {
-      setFailure(`Could not read your availability: ${messageOf(err)}`);
+      setFailure(t('consultNow.couldNotReadYourAvailability', { value: messageOf(err) }));
     }
   }
 
@@ -119,45 +118,39 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
   const doubt = p.unconfirmed;
   /** What the form's one submit does (its primary button and Enter alike): confirm the shown terms while uncertain, else go on. */
   const primaryAvailable = doubt && p.shown ? p.shown.available : true;
-  if (p.loading) return <section className="ws-section" aria-labelledby="avail-h"><h2 id="avail-h">Available now</h2><Loading label="Reading your availability…" /></section>;
+  if (p.loading) return <section className="ws-section" aria-labelledby="avail-h"><h2 id="avail-h">{t('common.availableNow')}</h2><Loading label={t('consultNow.readingYourAvailability')} /></section>;
   return (
     <section className="ws-section" aria-labelledby="avail-h">
-      <h2 id="avail-h">Available now</h2>
+      <h2 id="avail-h">{t('common.availableNow')}</h2>
       {pr ? (
         <p>
-          {on && p.live ? <Badge tone="ok">On</Badge> : on ? <Badge tone="warn">On, not checked in</Badge> : <Badge>Off</Badge>}{' '}
-          {on ? termsText(pr) : 'You are not taking instant consultations.'}
+          {on && p.live ? <Badge tone="ok">{t('common.on')}</Badge> : on ? <Badge tone="warn">{t('common.onNotCheckedIn')}</Badge> : <Badge>{t('common.off')}</Badge>}{' '}
+          {on ? termsText(pr) : t('consultNow.youAreNotTakingInstant')}
         </p>
       ) : doubt ? (
         <p>
-          <Badge tone="warn">Not confirmed</Badge>{' '}
-          {p.shown ? `The server last showed: ${p.shown.available ? `available for ${termsText(p.shown)}` : 'not available'} (version ${p.shown.presenceVersion}), not yet confirmed.`
-            : 'Your availability and fee are not known here.'}
+          <Badge tone="warn">{t('common.notConfirmed')}</Badge>{' '}
+          {p.shown ? t('consultNow.theServerLastShowedVersion', { value: p.shown.available ? `available for ${termsText(p.shown)}` : 'not available', presenceVersion: p.shown.presenceVersion })
+            : t('consultNow.yourAvailabilityAndFeeAre')}
         </p>
       ) : null}
-      {!pr && !doubt && p.loadError && <ErrorState message={`Could not read your availability: ${p.loadError}`} onRetry={() => void check()} />}
+      {!pr && !doubt && p.loadError && <ErrorState message={t('consultNow.couldNotReadYourAvailability2', { loadError: p.loadError })} onRetry={() => void check()} />}
       {doubt && (
         <Alert tone="warn">
-          {sent ? <>Your last change ({sent.available
+          {sent ? <>{t('consultNow.yourLastChange')}{sent.available
             ? `available for ${sent.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')}${sent.instantFeeMinor !== undefined ? ` at ${rupeesOf(sent.instantFeeMinor)}` : ''}`
-            : 'not available'}) was sent, but no answer came ({doubt.message}).</> : <>Your availability is not confirmed: {doubt.message}.</>}
-          {' '}It may still be applied later, so this page does not know your fee and has stopped checking in. Check what the server has, then
-          confirm those terms (or change them): only an answer to that confirms them. Offers cannot be accepted until then.
-        </Alert>
+            : 'not available'}{t('consultNow.wasSentButNoAnswer')}{doubt.message}).</> : <>{t('consultNow.yourAvailabilityIsNotConfirmed')}{doubt.message}.</>}
+          {' '}{t('consultNow.itMayStillBeApplied')}</Alert>
       )}
       {on && !p.live && (
-        <p className="ws-muted">Switched on, but no workspace page has checked in for two minutes, so you are not being offered consultations. Go available now to start again.</p>
+        <p className="ws-muted">{t('consultNow.switchedOnButNoWorkspace')}</p>
       )}
       {on && p.live && (
-        <p className="ws-muted">
-          Keep a workspace page open and visible: it tells the server you are here every minute. When the page is hidden or closed you stop
-          being offered consultations two minutes later.
-          {p.lastBeatAt ? ` Last check-in ${formatDateTime(new Date(p.lastBeatAt).toISOString())}${now.getTime() - p.lastBeatAt > 120_000 ? ' (more than two minutes ago)' : ''}.` : ''}
+        <p className="ws-muted">{t('consultNow.keepAWorkspacePageOpen')}{p.lastBeatAt ? t('consultNow.lastCheckIn', { when: formatDateTime(new Date(p.lastBeatAt).toISOString()), value: now.getTime() - p.lastBeatAt > 120_000 ? ' (more than two minutes ago)' : '' }) : ''}
         </p>
       )}
       {on && p.live && p.online === false && (
-        <Alert tone="warn">
-          You are not being offered consultations right now: {pr?.busy ? `you are in a consultation${pr.busyUntil ? ` until ${formatDateTime(pr.busyUntil)}` : ''}` : 'you are in a consultation, or “available now” was switched off elsewhere'}.
+        <Alert tone="warn">{t('consultNow.youAreNotBeingOffered')}{pr?.busy ? `you are in a consultation${pr.busyUntil ? ` until ${formatDateTime(pr.busyUntil)}` : ''}` : 'you are in a consultation, or “available now” was switched off elsewhere'}.
         </Alert>
       )}
       {p.problem && <Alert tone="warn">{p.problem}</Alert>}
@@ -165,12 +158,12 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
       {failure && <Alert>{failure}</Alert>}
       {!pr && !(doubt && p.shown) ? (
         <div className="confirm-actions">
-          <Button busy={p.busy} onClick={() => void check()}>Check what the server has</Button>
+          <Button busy={p.busy} onClick={() => void check()}>{t('consultNow.checkWhatTheServerHas')}</Button>
         </div>
       ) : (
-        <form className="rx-form" noValidate onSubmit={(e) => void send(primaryAvailable, e)} aria-label="Available now">
+        <form className="rx-form" noValidate onSubmit={(e) => void send(primaryAvailable, e)} aria-label={t('common.availableNow')}>
           <fieldset className="ws-checks" aria-describedby={errors.modes ? 'avail-modes-err' : undefined}>
-            <legend>Consultation types you take now</legend>
+            <legend>{t('consultNow.consultationTypesYouTakeNow')}</legend>
             {INSTANT_MODES.map((m) => (
               <label key={m} className="ws-check">
                 <input type="checkbox" checked={modes.includes(m)} disabled={p.busy}
@@ -181,20 +174,20 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
             {errors.modes && <span id="avail-modes-err" className="j-field__error">{errors.modes}</span>}
           </fieldset>
           <div className="rx-form-row">
-            <TextField label="Your fee for an instant consultation (₹)" inputMode="decimal" value={feeText} error={errors.fee} disabled={p.busy}
-              hint="Offers come only from patients who paid at least this much." onChange={(e) => setFee(e.target.value)} />
+            <TextField label={t('consultNow.yourFeeForAnInstant')} inputMode="decimal" value={feeText} error={errors.fee} disabled={p.busy}
+              hint={t('consultNow.offersComeOnlyFromPatients')} onChange={(e) => setFee(e.target.value)} />
           </div>
           {doubt && p.shown ? (
             <div className="confirm-actions">
               {/* An ordered write against the version just read: acknowledged, no earlier change of this page can commit any more. */}
-              <Button type="submit" busy={p.busy}>Confirm these terms</Button>
-              {p.shown.available && <Button variant="secondary" disabled={p.busy} onClick={() => void send(false)}>Stop being available</Button>}
-              <Button variant="ghost" disabled={p.busy} onClick={() => void check()}>Check again</Button>
+              <Button type="submit" busy={p.busy}>{t('consultNow.confirmTheseTerms')}</Button>
+              {p.shown.available && <Button variant="secondary" disabled={p.busy} onClick={() => void send(false)}>{t('consultNow.stopBeingAvailable')}</Button>}
+              <Button variant="ghost" disabled={p.busy} onClick={() => void check()}>{t('consultNow.checkAgain')}</Button>
             </div>
           ) : (
             <div className="confirm-actions">
-              <Button type="submit" busy={p.busy}>{on && p.live ? 'Update' : 'Go available now'}</Button>
-              {on && <Button variant="secondary" disabled={p.busy} onClick={() => void send(false)}>Stop being available</Button>}
+              <Button type="submit" busy={p.busy}>{on && p.live ? 'Update' : t('consultNow.goAvailableNow')}</Button>
+              {on && <Button variant="secondary" disabled={p.busy} onClick={() => void send(false)}>{t('consultNow.stopBeingAvailable')}</Button>}
             </div>
           )}
         </form>
@@ -264,9 +257,9 @@ function Offers({ d }: { d: DoctorContext }) {
           if (found) setOutcome({ kind: 'accepted', offer, booking: found });
           else if (refusal) setOutcome({ kind: 'refused', offer, message: refusal });
           else setOutcome({ kind: 'unknown', offer, message: messageOf(err), checking: false,
-            checked: 'It is not among your appointments today. If the offer is still listed below you can accept again: if your earlier accept went through you get that consultation back, never a second one.' });
+            checked: t('consultNow.itIsNotAmongYour') });
         } catch (lookErr) {
-          if (current(n)) setOutcome({ kind: 'unknown', offer, message: messageOf(err), checking: false, checked: `Could not check your appointments: ${messageOf(lookErr)}` });
+          if (current(n)) setOutcome({ kind: 'unknown', offer, message: messageOf(err), checking: false, checked: t('consultNow.couldNotCheckYourAppointments', { value: messageOf(lookErr) }) });
         }
       }
     } finally {
@@ -286,62 +279,57 @@ function Offers({ d }: { d: DoctorContext }) {
   const list = offers.data ?? [];
   return (
     <section className="ws-section" aria-labelledby="offers-h">
-      <h2 id="offers-h">Offers for you</h2>
-      <p className="ws-muted">An offer stays open for 5 minutes. Accepting starts a {CONSULT_MINUTES}-minute consultation now.</p>
+      <h2 id="offers-h">{t('consultNow.offersForYou')}</h2>
+      <p className="ws-muted">{t('consultNow.anOfferStaysOpenFor')}{CONSULT_MINUTES}{t('consultNow.minuteConsultationNow')}</p>
       {outcome?.kind === 'accepted' && (
-        <Alert tone="ok">
-          You accepted the {offerLabel(outcome.offer).toLowerCase()} for {outcome.offer.patient.name}{outcome.replayed ? ' (your earlier accept had gone through)' : ''}. It is on your <Link to="/doctor/appointments">appointments</Link>.
+        <Alert tone="ok">{t('consultNow.youAcceptedThe')}{offerLabel(outcome.offer).toLowerCase()}{t('consultNow.for')}{outcome.offer.patient.name}{outcome.replayed ? ' (your earlier accept had gone through)' : ''}{t('consultNow.itIsOnYour')}<Link to="/doctor/appointments">{t('consultNow.appointments')}</Link>.
         </Alert>
       )}
       {acceptedBooking && <MeetLink b={acceptedBooking} onRefresh={() => day.refetch()} />}
-      {outcome?.kind === 'refused' && <Alert>Not accepted ({outcome.offer.patient.name}): {outcome.message}</Alert>}
+      {outcome?.kind === 'refused' && <Alert>{t('consultNow.notAccepted')}{outcome.offer.patient.name}): {outcome.message}</Alert>}
       {outcome?.kind === 'unknown' && (
-        <Alert tone="warn">
-          The answer to your accept for {outcome.offer.patient.name} did not arrive ({outcome.message}).{' '}
-          {outcome.checking ? 'Checking your appointments…' : outcome.checked}
+        <Alert tone="warn">{t('consultNow.theAnswerToYourAccept')}{outcome.offer.patient.name}{t('consultNow.didNotArrive')}{outcome.message}).{' '}
+          {outcome.checking ? t('consultNow.checkingYourAppointments') : outcome.checked}
         </Alert>
       )}
       {offers.isError && offers.data !== undefined && <RefreshFailed error={offers.error} readAt={offers.dataUpdatedAt} onRetry={offers.refetch} />}
-      {offers.isPending ? <Loading label="Loading offers…" />
+      {offers.isPending ? <Loading label={t('consultNow.loadingOffers')} />
         : offers.isError && offers.data === undefined ? <ErrorState message={messageOf(offers.error)} onRetry={() => void offers.refetch()} />
-        : list.length === 0 ? <Empty title="No offers right now">{presence.presence?.available ? 'New offers appear here on their own.' : 'Go available now to receive offers.'}</Empty>
+        : list.length === 0 ? <Empty title={t('consultNow.noOffersRightNow')}>{presence.presence?.available ? t('consultNow.newOffersAppearHereOn') : t('consultNow.goAvailableNowToReceive')}</Empty>
         : (
           <>
           {!canAccept && (
             <Alert tone="warn">
-              {presence.busy ? 'Your change to “Available now” is on its way: accept once the server has confirmed it.'
-                : 'To accept, switch “Available now” on above and wait until the server confirms your types and fee.'}
+              {presence.busy ? t('consultNow.yourChangeToAvailableNow')
+                : t('consultNow.toAcceptSwitchAvailableNow')}
             </Alert>
           )}
-          <ul className="stock-list" aria-label="Open offers">
+          <ul className="stock-list" aria-label={t('consultNow.openOffers')}>
             {list.map((o) => {
               const left = offerSecondsLeft(o, now);
               // Q13: the patient's paid quote caps the fee. Judged on the acknowledged fee (the one the accept will use).
               const myFee = canAccept && presence.presence ? presence.presence.instantFeeMinor : o.yourFeeMinor ?? null;
               const tooHigh = o.quotedAmountMinor !== undefined && myFee !== null ? myFee > o.quotedAmountMinor : o.feeWithinQuote === false;
               return (
-                <li key={`${o.requestId}:${o.generation}`} className="doc-offer" aria-label={`Offer for ${o.patient.name}`}>
+                <li key={`${o.requestId}:${o.generation}`} className="doc-offer" aria-label={t('consultNow.offerFor', { name: o.patient.name })}>
                   <div className="stock-head">
                     <strong>{offerLabel(o)}</strong>
-                    {left > 0 ? <Badge tone={left < 60 ? 'warn' : undefined}>Closes in {mmss(left)}</Badge> : <Badge tone="danger">Closed</Badge>}
+                    {left > 0 ? <Badge tone={left < 60 ? 'warn' : undefined}>{t('consultNow.closesIn')}{mmss(left)}</Badge> : <Badge tone="danger">{t('consultNow.closed')}</Badge>}
                   </div>
-                  <span>Patient: {patientLabel(o)}{o.quotedAmountMinor !== undefined ? ` · paid ${rupeesOf(o.quotedAmountMinor)}` : ''}</span>
-                  {tooHigh && <span className="ws-muted">Your fee{myFee !== null ? ` (${rupeesOf(myFee)})` : ''} is above what this patient paid, so you cannot take it. Lower your fee to take requests like this one.</span>}
+                  <span>{t('consultNow.patient')}{patientLabel(o)}{o.quotedAmountMinor !== undefined ? ` · paid ${rupeesOf(o.quotedAmountMinor)}` : ''}</span>
+                  {tooHigh && <span className="ws-muted">{t('consultNow.yourFee')}{myFee !== null ? ` (${rupeesOf(myFee)})` : ''}{t('consultNow.isAboveWhatThisPatient')}</span>}
                   {confirmFor === o.requestId ? (
-                    <div className="confirm" role="group" aria-label={`Accept the offer for ${o.patient.name}`}>
-                      <div className="confirm-text">
-                        Accept the {offerLabel(o).toLowerCase()} for {patientLabel(o)}? A {CONSULT_MINUTES}-minute consultation starts now and the patient is told you are joining.
-                        {' '}Your fee: {fee ?? 'not confirmed'}. It is refused if your fee is above what the patient paid.
-                      </div>
+                    <div className="confirm" role="group" aria-label={t('consultNow.acceptTheOfferFor', { name: o.patient.name })}>
+                      <div className="confirm-text">{t('consultNow.acceptThe')}{offerLabel(o).toLowerCase()}{t('consultNow.for')}{patientLabel(o)}? A {CONSULT_MINUTES}{t('consultNow.minuteConsultationStartsNowAnd')}{' '}{t('consultNow.yourFee2')}{fee ?? 'not confirmed'}{t('consultNow.itIsRefusedIfYour')}</div>
                       <div className="confirm-actions">
-                        <Button busy={sending === o.requestId} disabled={left === 0 || !canAccept || tooHigh || (sending !== null && sending !== o.requestId)} onClick={() => void accept(o)}>Accept and start</Button>
-                        <Button variant="ghost" disabled={sending === o.requestId} onClick={() => setConfirmFor(null)}>Back</Button>
+                        <Button busy={sending === o.requestId} disabled={left === 0 || !canAccept || tooHigh || (sending !== null && sending !== o.requestId)} onClick={() => void accept(o)}>{t('consultNow.acceptAndStart')}</Button>
+                        <Button variant="ghost" disabled={sending === o.requestId} onClick={() => setConfirmFor(null)}>{t('common.back')}</Button>
                       </div>
                     </div>
                   ) : (
                     <div className="ws-actions">
-                      <Button disabled={left === 0 || !canAccept || tooHigh || sending !== null} aria-label={`Accept the offer for ${o.patient.name}`}
-                        onClick={() => { setConfirmFor(o.requestId); setOutcome(null); }}>Accept…</Button>
+                      <Button disabled={left === 0 || !canAccept || tooHigh || sending !== null} aria-label={t('consultNow.acceptTheOfferFor', { name: o.patient.name })}
+                        onClick={() => { setConfirmFor(o.requestId); setOutcome(null); }}>{t('consultNow.accept')}</Button>
                     </div>
                   )}
                 </li>
@@ -364,20 +352,20 @@ function Running({ d }: { d: DoctorContext }) {
   const running = sortAppointments((q.data ?? []).filter((b) => b.bookingKind === 'instant' && b.status === 'confirmed'));
   return (
     <section className="ws-section" aria-labelledby="running-h">
-      <h2 id="running-h">Instant consultations today</h2>
+      <h2 id="running-h">{t('consultNow.instantConsultationsToday')}</h2>
       {q.isError && q.data !== undefined && <RefreshFailed error={q.error} readAt={q.dataUpdatedAt} onRetry={q.refetch} />}
-      {q.isPending ? <Loading label="Loading today’s consultations…" />
+      {q.isPending ? <Loading label={t('consultNow.loadingTodaySConsultations')} />
         : q.isError && q.data === undefined ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : running.length === 0 ? <Empty title="None running">Accepted instant consultations appear here so you can give them more time.</Empty>
+        : running.length === 0 ? <Empty title={t('consultNow.noneRunning')}>{t('consultNow.acceptedInstantConsultationsAppearHere')}</Empty>
         : (
-          <ul className="stock-list" aria-label="Running instant consultations">
+          <ul className="stock-list" aria-label={t('consultNow.runningInstantConsultations')}>
             {running.map((b) => (
               <RunningItem key={b._id} d={d} booking={b}
                 link={<MeetLink b={b} gaveUp={meet.gaveUp(b._id, now)} onRefresh={() => { meet.restart(b._id); return q.refetch(); }} />} />
             ))}
           </ul>
         )}
-      <p className="ws-muted">Mark a consultation completed (or cancel it with a full refund) on <Link to="/doctor/appointments">Appointments</Link>.</p>
+      <p className="ws-muted">{t('consultNow.markAConsultationCompletedOr')}<Link to="/doctor/appointments">{t('common.appointments')}</Link>.</p>
     </section>
   );
 }
@@ -430,24 +418,24 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
       if (done) {
         memory.delete(slot);
         sync();
-        say('ok', `Extended by ${done.minutes} minutes: your time is held until ${formatDateTime(done.endTime)}.`);
+        say('ok', t('consultNow.extendedByMinutesYourTime', { minutes: done.minutes, when: formatDateTime(done.endTime) }));
         return;
       }
       if (b.status !== 'confirmed' || !b.held?.isActive) {
         // The consultation is over: this extension can never be added any more.
         memory.delete(slot);
         sync();
-        say('warn', 'Not extended: the consultation is no longer held, so this extension can never be added.');
+        say('warn', t('consultNow.notExtendedTheConsultationIs'));
         return;
       }
       setNotFoundKey(current.requestKey);
       say('warn', `${cause ? `${cause} ` : ''}The extension is not recorded yet. ${current.restored
-        ? 'Its details were not kept after the reload, so it can only be checked again.'
-        : 'Send the same extension again: it is added once, never twice.'}`);
+        ? t('consultNow.itsDetailsWereNotKept')
+        : t('consultNow.sendTheSameExtensionAgain')}`);
     } catch (err) {
       if (!owns()) return;
       say('warn', `${cause ? `${cause} ` : ''}Could not check whether it was recorded (${messageOf(err)}). ${current.restored
-        ? 'Check again in a moment.' : 'Sending the same extension again is safe: it is added once.'}`);
+        ? t('consultNow.checkAgainInAMoment') : t('consultNow.sendingTheSameExtensionAgain')}`);
     } finally {
       if (alive.current) setChecking(false);
     }
@@ -467,7 +455,7 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
     if (base?.restored || (base && !base.body)) return; // only reconciliation
     if (!base) {
       const n = /^\d{1,2}$/.test(minutes.trim()) ? Number(minutes.trim()) : NaN;
-      if (!Number.isInteger(n) || n < 1 || n > EXTEND_MINUTES_MAX) { setFieldError(`Enter 1 to ${EXTEND_MINUTES_MAX} minutes.`); return; }
+      if (!Number.isInteger(n) || n < 1 || n > EXTEND_MINUTES_MAX) { setFieldError(t('consultNow.enter1ToMinutes', { EXTEND_MINUTES_MAX })); return; }
       base = startOp(newRequestKey(), { minutes: n });
     }
     const attempt = beginAttempt(base);
@@ -484,7 +472,7 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
       if (!alive.current || !stillCurrent(memory.get<PendingOp<ExtendBody>>(slot), attempt)) return;
       memory.delete(slot);
       sync();
-      say('ok', `Extended by ${attempt.body.minutes} minutes: your time is held until ${formatDateTime(r.extension?.endTime ?? r.endTime)}.`);
+      say('ok', t('consultNow.extendedByMinutesYourTime', { minutes: attempt.body.minutes, when: formatDateTime(r.extension?.endTime ?? r.endTime) }));
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return; // the session ended
       if (!alive.current || !stillCurrent(memory.get<PendingOp<ExtendBody>>(slot), attempt)) return;
@@ -492,11 +480,11 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
       const after = afterFailure(attempt, err, messageOf(err));
       if (after) memory.set(slot, after); else memory.delete(slot);
       sync();
-      if (!after) { say('error', `Not extended: ${refusal ?? messageOf(err)}`); return; }
+      if (!after) { say('error', t('consultNow.notExtended', { value: refusal ?? messageOf(err) })); return; }
       // A same-key resend refused outright: the key was not recorded when it arrived (a recorded key is answered again).
       // (A 401 says nothing about the request: the session ended.)
       if (definitelyNotRecorded(err) && !(err instanceof ApiError && err.status === 401)) setRefusedKey(attempt.requestKey);
-      await reconcile(refusal ? `Not extended this time: ${refusal}` : messageOf(err));
+      await reconcile(refusal ? t('consultNow.notExtendedThisTime', { refusal }) : messageOf(err));
     } finally {
       if (alive.current) setBusy(false);
     }
@@ -531,12 +519,12 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
         memory.delete(slot);
         sync();
         setRefusedKey(null);
-        say('ok', `Extended by ${done.minutes} minutes after all: your time is held until ${formatDateTime(done.endTime)}.`);
+        say('ok', t('consultNow.extendedByMinutesAfterAll', { minutes: done.minutes, when: formatDateTime(done.endTime) }));
         return;
       }
-      release(`Choose the minutes and extend again: this is a new extension. The one sent before may still have been added: check the consultation's end time${b.held?.endTime ? ` (held until ${formatDateTime(b.held.endTime)} now)` : ''} before extending.`);
+      release(t('consultNow.chooseTheMinutesAndExtend', { value: b.held?.endTime ? ` (held until ${formatDateTime(b.held.endTime)} now)` : '' }));
     } catch (err) {
-      say('warn', `Could not read the consultation again (${messageOf(err)}), so no new extension can be chosen yet. Try again in a moment.`);
+      say('warn', t('consultNow.couldNotReadTheConsultation', { value: messageOf(err) }));
     } finally {
       if (alive.current) setChecking(false);
     }
@@ -550,25 +538,23 @@ function RunningItem({ d, booking, link }: { d: DoctorContext; booking: DoctorAp
       <strong>{label}</strong>
       {link}
       {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
-      <form className="ws-search" noValidate onSubmit={(e) => void extend(e)} aria-label={`Extend the ${label.toLowerCase()}`}>
-        <TextField label="Extend by (minutes)" inputMode="numeric" value={op?.body ? String(op.body.minutes) : locked ? '' : minutes} error={fieldError} disabled={locked}
+      <form className="ws-search" noValidate onSubmit={(e) => void extend(e)} aria-label={t('consultNow.extendThe', { value: label.toLowerCase() })}>
+        <TextField label={t('consultNow.extendByMinutes')} inputMode="numeric" value={op?.body ? String(op.body.minutes) : locked ? '' : minutes} error={fieldError} disabled={locked}
           hint={`1 to ${EXTEND_MINUTES_MAX}; refused if it would run into your next booking`} onChange={(e) => setMinutes(e.target.value)} />
-        {!op ? <Button type="submit" variant="secondary" busy={busy}>Extend</Button> : (
+        {!op ? <Button type="submit" variant="secondary" busy={busy}>{t('consultNow.extend')}</Button> : (
           <>
-            {!op.restored && op.body && <Button type="submit" variant="secondary" busy={busy} disabled={checking}>Send the same extension again</Button>}
-            <Button variant="ghost" busy={checking} disabled={busy} onClick={() => void reconcile()}>Check whether it was recorded</Button>
+            {!op.restored && op.body && <Button type="submit" variant="secondary" busy={busy} disabled={checking}>{t('consultNow.sendTheSameExtensionAgain2')}</Button>}
+            <Button variant="ghost" busy={checking} disabled={busy} onClick={() => void reconcile()}>{t('consultNow.checkWhetherItWasRecorded')}</Button>
             {refused && !busy && !checking && (
-              <Button variant="secondary" onClick={() => void chooseAnother()}>
-                Choose another extension
-              </Button>
+              <Button variant="secondary" onClick={() => void chooseAnother()}>{t('consultNow.chooseAnotherExtension')}</Button>
             )}
           </>
         )}
       </form>
       {forgettable && (
-        <ConfirmAction label="Forget it" danger confirmLabel="Forget this extension"
-          consequence="The extension is not recorded so far. Forget it and the field is free again. If it still reaches the server, it is added then and your held time shows it, so check the time before extending again."
-          onConfirm={async () => release('Forgotten. Check the time held for you before extending again.')} />
+        <ConfirmAction label={t('consultNow.forgetIt')} danger confirmLabel={t('consultNow.forgetThisExtension')}
+          consequence={t('consultNow.theExtensionIsNotRecorded')}
+          onConfirm={async () => release(t('consultNow.forgottenCheckTheTimeHeld'))} />
       )}
     </li>
   );

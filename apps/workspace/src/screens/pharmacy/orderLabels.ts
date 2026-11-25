@@ -1,32 +1,33 @@
 import type { DeliveryExceptionType, OrderStatus, PharmacyOrder, PrescriptionRefundStatus } from '@jansetu/api';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 // The status words live in @jansetu/api so every screen (orders, prescription review, quality) uses the same ones.
 export { ORDER_STATUS_LABEL, PAYMENT_STATUS_LABEL } from '@jansetu/api';
 
 export const REFUND_STATUS_LABEL: Record<PrescriptionRefundStatus, string> = {
-  wallet_pending: 'Waiting to credit the wallet',
-  wallet_credited: 'Credited to the customer’s wallet',
-  source_processing: 'Being refunded to the original payment method',
-  source_refunded: 'Refunded to the original payment method',
-  manual_review: 'Needs manual review by finance',
+  wallet_pending: t('orderLabels.waitingToCreditTheWallet'),
+  wallet_credited: t('orderLabels.creditedToTheCustomerS'),
+  source_processing: t('orderLabels.beingRefundedToTheOriginal'),
+  source_refunded: t('orderLabels.refundedToTheOriginalPayment'),
+  manual_review: t('orderLabels.needsManualReviewByFinance'),
 };
 
-export const DELIVERY_EXCEPTION_LABEL: Record<DeliveryExceptionType, string> = {
-  delivery_failed: 'Delivery failed',
-  retry_delivery: 'Retry delivery',
-  switch_to_pickup: 'Switch to pickup',
-  not_collected: 'Not collected',
-  refused_at_door: 'Refused at the door',
-};
+export const DELIVERY_EXCEPTION_LABEL = (): Record<DeliveryExceptionType, string> => ({
+  delivery_failed: t('orderLabels.deliveryFailed'),
+  retry_delivery: t('orderLabels.retryDelivery'),
+  switch_to_pickup: t('orderLabels.switchToPickup'),
+  not_collected: t('orderLabels.notCollected'),
+  refused_at_door: t('orderLabels.refusedAtTheDoor'),
+});
 
 /** Forward moves shown as buttons, with the words staff use. */
-export const FORWARD_LABEL: Partial<Record<OrderStatus, string>> = {
-  accepted: 'Accept order',
-  packed: 'Mark packed',
-  ready_for_pickup: 'Ready for pickup',
-  out_for_delivery: 'Out for delivery',
-  completed: 'Mark completed',
-};
+export const FORWARD_LABEL = (): Partial<Record<OrderStatus, string>> => ({
+  accepted: t('orderLabels.acceptOrder'),
+  packed: t('orderLabels.markPacked'),
+  ready_for_pickup: t('orderLabels.readyForPickup'),
+  out_for_delivery: t('orderLabels.outForDelivery'),
+  completed: t('orderLabels.markCompleted'),
+});
 
 /** Money has (or may have) been taken. */
 export const holdsMoney = (o: PharmacyOrder) =>
@@ -45,14 +46,14 @@ const PRESCRIPTION_GATED: readonly OrderStatus[] = ['packed', 'ready_for_pickup'
 export function blockedReason(o: PharmacyOrder, target: OrderStatus): string | null {
   if (['packed', 'ready_for_pickup', 'out_for_delivery'].includes(target)
     && o.paymentMode !== 'cash_on_delivery' && o.paymentStatus !== 'paid') {
-    return 'Waiting for payment.';
+    return t('common.waitingForPayment');
   }
   if (o.refill && target === 'accepted' && o.paymentStatus !== 'paid') {
-    return 'A refill order is confirmed only after the customer pays.';
+    return t('orderLabels.aRefillOrderIsConfirmed');
   }
-  if (target === 'completed' && o.paymentStatus !== 'paid') return 'Record the payment first.';
+  if (target === 'completed' && o.paymentStatus !== 'paid') return t('orderLabels.recordThePaymentFirst');
   if (PRESCRIPTION_GATED.includes(target) && o.prescriptionStatus !== 'approved' && o.prescriptionStatus !== 'not_required') {
-    return 'The prescription must be approved first.';
+    return t('orderLabels.thePrescriptionMustBeApproved');
   }
   return null;
 }

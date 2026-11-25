@@ -4,6 +4,7 @@ import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { afterFailure, beginAttempt, resolveStored, stillCurrent, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ10a: the signed-in pharmacy's identity. Screens are keyed by it and put it in their query keys and memory slots,
@@ -101,7 +102,7 @@ export function CheckPanel({ label, children, onCheck, resend, giveUp, forget }:
       if (left) { setNote({ tone: 'warn', text: left }); setChecked(true); }
     } catch (err) {
       // WQ14 W3(b): a failed check hides "forget" again until a check succeeds.
-      if (live.current) { setNote({ tone: 'error', text: `Could not check: ${messageOf(err)}` }); unchecked(); }
+      if (live.current) { setNote({ tone: 'error', text: t('ownedOp.couldNotCheck', { value: messageOf(err) }) }); unchecked(); }
     } finally {
       if (live.current) setChecking(false);
     }
@@ -112,7 +113,7 @@ export function CheckPanel({ label, children, onCheck, resend, giveUp, forget }:
       {children}
       {note && <Alert tone={note.tone}>{note.text}</Alert>}
       <div className="confirm-actions">
-        <Button variant={resend ? 'secondary' : 'primary'} busy={checking} disabled={resend?.busy || giveUp?.busy} onClick={() => void check()}>Check whether it was recorded</Button>
+        <Button variant={resend ? 'secondary' : 'primary'} busy={checking} disabled={resend?.busy || giveUp?.busy} onClick={() => void check()}>{t('ownedOp.checkWhetherItWasRecorded')}</Button>
         {resend && <Button busy={resend.busy} disabled={checking || giveUp?.busy} onClick={resend.onClick}>{resend.label}</Button>}
         {giveUp && (
           <Button variant="secondary" busy={giveUp.busy} disabled={checking || resend?.busy} onClick={giveUp.onClick}>{giveUp.label}</Button>

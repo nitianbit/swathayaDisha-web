@@ -9,6 +9,7 @@ import { Alert, Button, formatRupees } from '@jansetu/ui';
 import { useSession } from '../../session.tsx';
 import type { Perform } from '../finance/finance.tsx';
 import { NOT_OPENED, openCheckout } from './topup.tsx';
+import { t } from '../../i18n/pharmacy/index.ts';
 
 /**
  * WQ16 (r10 phase 1b, §23.3): a walk-in consultation paid by card or UPI. The booking is held as pending payment with ONE
@@ -50,8 +51,8 @@ export function useCardChoice() {
   function refused(err: unknown) {
     setMethod('wallet');
     const code = err instanceof ApiError ? err.code : undefined;
-    if (code === 'PAYMENT_METHOD_UNAVAILABLE') setCardOff('Card payment is not switched on yet.');
-    else if (code === 'RAZORPAY_NOT_CONFIGURED') setCardOff('Card and UPI payments are not set up on this server yet.');
+    if (code === 'PAYMENT_METHOD_UNAVAILABLE') setCardOff(t('cardBooking.cardPaymentIsNotSwitched'));
+    else if (code === 'RAZORPAY_NOT_CONFIGURED') setCardOff(t('cardBooking.cardAndUpiPaymentsAre'));
   }
   /** The method sent for a price (the chosen way, unless it cannot pay this booking). */
   const methodFor = (priceMinor: number): AssistedPaymentMethod => (method === 'razorpay' && !cardOff && priceMinor > 0 ? 'razorpay' : 'wallet');
@@ -91,8 +92,8 @@ export function consultationCardSource(api: ApiClient, bookingId: string, reques
   const assisted = booker?.api ?? pharmacyAssistedApi(api);
   return {
     ...(booker ? { payer: booker.payer, refusal: booker.refusal } : {}),
-    kind: 'consultation', canReopen: !!requestKey, description: 'Doctor consultation for a patient',
-    toldOnPaid: 'The patient and the doctor are told once it is paid.', listName: 'Booked consultations',
+    kind: 'consultation', canReopen: !!requestKey, description: t('cardBooking.doctorConsultationForAPatient'),
+    toldOnPaid: t('cardBooking.thePatientAndTheDoctor'), listName: t('common.bookedConsultations'),
     read: async () => {
       if (requestKey) {
         const r = await assisted.byKey(requestKey);
@@ -106,18 +107,18 @@ export function consultationCardSource(api: ApiClient, bookingId: string, reques
 
 /** A lab test (r14): the order by the create's key, else from the booker view (any device). */
 export function labCardSource(api: ApiClient, bookingId: string, requestKey: string | null): CardBookingSource {
-  return labRoutesCardSource(pharmacyLabApi(api), 'Booked lab tests', bookingId, requestKey);
+  return labRoutesCardSource(pharmacyLabApi(api), t('common.bookedLabTests'), bookingId, requestKey);
 }
 
 /** WQ27 (r29 phase 3c, §25.16): a doctor's lab test, on the doctor's own lab routes (the same reads and shapes). */
 export function doctorLabCardSource(api: ApiClient, bookingId: string, requestKey: string | null): CardBookingSource {
-  return labRoutesCardSource(doctorLabApi(api), 'Lab tests booked', bookingId, requestKey);
+  return labRoutesCardSource(doctorLabApi(api), t('cardBooking.labTestsBooked'), bookingId, requestKey);
 }
 
 function labRoutesCardSource(labs: Pick<LabRoutes, 'byKey' | 'booking'>, listName: string, bookingId: string, requestKey: string | null): CardBookingSource {
   return {
-    kind: 'lab', canReopen: true, description: 'Lab test for a patient',
-    toldOnPaid: 'The patient is told once it is paid.', listName,
+    kind: 'lab', canReopen: true, description: t('cardBooking.labTestForAPatient'),
+    toldOnPaid: t('cardBooking.thePatientIsToldOnce'), listName,
     read: async () => {
       if (requestKey) {
         const r = await labs.byKey(requestKey);
@@ -133,7 +134,7 @@ function labRoutesCardSource(labs: Pick<LabRoutes, 'byKey' | 'booking'>, listNam
  * Opens Checkout on the booking's order (closing itself before the cut-off), then settles the attempt with the server.
  * Never throws. `reported`: Checkout said the payment went through.
  */
-export async function payCardOrder(api: ApiClient, order: OpenCardOrder, description = 'Doctor consultation for a patient', payer?: CardPayer):
+export async function payCardOrder(api: ApiClient, order: OpenCardOrder, description = t('cardBooking.doctorConsultationForAPatient'), payer?: CardPayer):
   Promise<{ step: CardStep; reported: boolean }> {
   const timeoutSeconds = checkoutSeconds(order.payBy);
   if (timeoutSeconds === 0) return { step: { kind: 'unpaid' }, reported: false };
@@ -152,9 +153,9 @@ export async function payCardOrder(api: ApiClient, order: OpenCardOrder, descrip
 }
 
 type Note = { tone: 'ok' | 'warn' | 'error'; text: string };
-export const DO_NOT_PAY_AGAIN = 'Razorpay reported the payment; it is being confirmed. Do not pay again. Tap “Check payment” in a minute.';
+export const DO_NOT_PAY_AGAIN = () => (t('cardBooking.razorpayReportedThePaymentIt'));
 const noOrderWords = (listName: string) =>
-  `The card payment for this booking could not be started. Tap “Check payment”, or cancel this booking under ${listName} and book again.`;
+  t('cardBooking.theCardPaymentForThis', { listName });
 
 /**
  * A card booking waiting for its payment: "Pay before HH:MM or the time is released", "Pay now" (the same order) and
@@ -195,9 +196,9 @@ export function CardPaymentPanel({ source, order: initial, amountMinor, payBy, p
   const due = order?.payBy || payBy;
   // "Pay now" closes 2 minutes before the pay-by time, also while the page stays open.
   useEffect(() => {
-    const t = due ? Date.parse(due) - PAY_NOW_MARGIN_MS - Date.now() : NaN;
-    if (!Number.isFinite(t) || t <= 0 || t > 2 ** 31 - 1) return;
-    const timer = setTimeout(() => setNow(Date.now()), t + 50);
+    const wait = due ? Date.parse(due) - PAY_NOW_MARGIN_MS - Date.now() : NaN;
+    if (!Number.isFinite(wait) || wait <= 0 || wait > 2 ** 31 - 1) return;
+    const timer = setTimeout(() => setNow(Date.now()), wait + 50);
     return () => clearTimeout(timer);
   }, [due]);
   const late = !payNowOpen(due, now);
@@ -224,17 +225,17 @@ export function CardPaymentPanel({ source, order: initial, amountMinor, payBy, p
       case 'refunded': onEnded(LATE_CAPTURE_WORDS); return;
       case 'failed': onEnded(step.message); return;
       case 'not_opened':
-        setNote({ tone: 'warn', text: `${NOT_OPENED} ${dueWords}${stillOpen && !held ? ' Tap “Pay now” to try again.' : ''}` }); return;
+        setNote({ tone: 'warn', text: `${NOT_OPENED()} ${dueWords}${stillOpen && !held ? t('cardBooking.tapPayNowToTry') : ''}` }); return;
       case 'unpaid':
-        if (step.inFlight || reported.current) { setHeld(true); setNote({ tone: 'warn', text: DO_NOT_PAY_AGAIN }); return; }
+        if (step.inFlight || reported.current) { setHeld(true); setNote({ tone: 'warn', text: DO_NOT_PAY_AGAIN() }); return; }
         setHeld(false);
-        setNote({ tone: 'warn', text: `Not paid yet. ${dueWords}${stillOpen ? ' Tap “Pay now” to pay.' : ''} If you did pay, wait a minute and tap “Check payment”.` });
+        setNote({ tone: 'warn', text: t('cardBooking.notPaidYetIfYou', { dueWords, value: stillOpen ? t('cardBooking.tapPayNowToPay') : '' }) });
         return;
       case 'blocked': if (reported.current) setHeld(true); setNote({ tone: 'error', text: step.message }); return;
       default:
         setHeld(true);
-        setNote({ tone: 'warn', text: reported.current ? DO_NOT_PAY_AGAIN
-          : `We could not confirm the payment yet (${step.message}) Do not pay again: if you paid, your money is safe. Tap “Check payment” in a minute.` });
+        setNote({ tone: 'warn', text: reported.current ? DO_NOT_PAY_AGAIN()
+          : t('cardBooking.weCouldNotConfirmThe', { message: step.message }) });
     }
   }
 
@@ -244,11 +245,11 @@ export function CardPaymentPanel({ source, order: initial, amountMinor, payBy, p
    */
   async function freshOrder(): Promise<OpenCardOrder | null> {
     const r = await source.read();
-    if (!r) { setNote({ tone: 'error', text: `This booking was not found on this device. Look for it under ${source.listName}.` }); return null; }
+    if (!r) { setNote({ tone: 'error', text: t('cardBooking.thisBookingWasNotFound', { listName: source.listName }) }); return null; }
     const state = cardBookingState(source.kind, r.booking);
     if (state === 'waiting' && r.order) { if (live.current) setOrder(r.order); return r.order; }
     if (state === 'paid') { onPaid(r.booking); return null; }
-    if (state === 'ended') { onEnded(`This booking can no longer be paid: it was cancelled, or its time was released because it was not paid in time. If money was taken, it goes back to the card or UPI.`); return null; }
+    if (state === 'ended') { onEnded(t('cardBooking.thisBookingCanNoLonger')); return null; }
     if (live.current) { setOrder(null); setNote({ tone: 'warn', text: noOrderWords(source.listName) }); }
     return null;
   }
@@ -259,7 +260,7 @@ export function CardPaymentPanel({ source, order: initial, amountMinor, payBy, p
         // The create's own order is used as answered; a reopen reads the order again first.
         const o = first && order ? order : await freshOrder();
         if (!o) return;
-        if (!payNowOpen(o.payBy || due)) { setNow(Date.now()); setNote({ tone: 'warn', text: 'It is too late to open the payment page now. If you paid, tap “Check payment”.' }); return; }
+        if (!payNowOpen(o.payBy || due)) { setNow(Date.now()); setNote({ tone: 'warn', text: t('cardBooking.itIsTooLateTo') }); return; }
         // card-last: a reopen asks the server first (also after the panel was shown again): an authorized payment at
         // Razorpay is on its way, so no second payment page; an unfinished (created) attempt opens it, keeping any warning.
         if (!first) {
@@ -296,30 +297,28 @@ export function CardPaymentPanel({ source, order: initial, amountMinor, payBy, p
 
   const price = order?.amountMinor ?? amountMinor;
   return (
-    <div className="confirm" role="group" aria-label="Waiting for payment">
+    <div className="confirm" role="group" aria-label={t('common.waitingForPayment2')}>
       <Alert tone="warn">
-        <strong>Waiting for payment.</strong> {payByWords(due)} The time is held for the patient until then. {source.toldOnPaid}
+        <strong>{t('common.waitingForPayment')}</strong> {payByWords(due)}{t('cardBooking.theTimeIsHeldFor')}{source.toldOnPaid}
       </Alert>
       {note && <Alert tone={note.tone}>{note.text}</Alert>}
       {!canPay && !held && (
-        <p className="ws-muted">
-          The payment page opens only in the browser tab where this booking was made (Razorpay’s order is kept there). If it was paid there, tap “Check payment”.
-        </p>
+        <p className="ws-muted">{t('cardBooking.thePaymentPageOpensOnly')}</p>
       )}
-      {canPay && late && !held && <p className="ws-muted">The time to pay is almost over, so the payment page is not opened again. If you paid, tap “Check payment”.</p>}
+      {canPay && late && !held && <p className="ws-muted">{t('cardBooking.theTimeToPayIs')}</p>}
       <div className="confirm-actions">
-        {payOffered && <Button busy={busy} onClick={() => void payNow()}>Pay now{price !== undefined ? ` ${formatRupees(price / 100)}` : ''}</Button>}
-        <Button variant={payOffered ? 'secondary' : 'primary'} disabled={busy} onClick={() => void check()}>Check payment</Button>
+        {payOffered && <Button busy={busy} onClick={() => void payNow()}>{t('common.payNow')}{price !== undefined ? ` ${formatRupees(price / 100)}` : ''}</Button>}
+        <Button variant={payOffered ? 'secondary' : 'primary'} disabled={busy} onClick={() => void check()}>{t('cardBooking.checkPayment')}</Button>
       </div>
     </div>
   );
 }
 
 /** WQ17c: the 502 at create (the booking is held, its order not made yet): the same request again makes it. */
-export const ORDER_FAILED_WORDS = 'The booking is held, but the card payment could not be started. Send the same request again to get the payment page: it is never booked twice.';
+export const ORDER_FAILED_WORDS = () => (t('cardBooking.theBookingIsHeldBut'));
 export const isOrderFailed = (err: unknown) => err instanceof ApiError && err.code === 'RAZORPAY_ORDER_CREATION_FAILED';
 /** A card booking that can no longer be paid (cancelled, or its time released unpaid). */
-export const NOT_PAYABLE_WORDS = 'This booking was not paid in time (or was cancelled), so its time was released and nothing is booked. Book again if the patient still wants it.';
+export const NOT_PAYABLE_WORDS = () => (t('cardBooking.thisBookingWasNotPaid'));
 
 /** WQ17c: a card booking held for its payment, after the create (WQ16, moved here from Book consultation). */
 export function CardDueSection({ bookingRef, summary, newAccount, listPath, listLabel, held, children }: {
@@ -327,14 +326,14 @@ export function CardDueSection({ bookingRef, summary, newAccount, listPath, list
 }) {
   return (
     <section className="ws-section" aria-labelledby="card-h">
-      <h2 id="card-h">Booking held: waiting for payment</h2>
-      <p>Pay by card or UPI on the Razorpay page.{bookingRef ? <> Booking reference: <strong>{bookingRef}</strong>.</> : null}</p>
+      <h2 id="card-h">{t('cardBooking.bookingHeldWaitingForPayment')}</h2>
+      <p>{t('cardBooking.payByCardOrUpi')}{bookingRef ? <>{t('common.bookingReference')}<strong>{bookingRef}</strong>.</> : null}</p>
       {summary}
       {children}
-      {newAccount && <p className="ws-muted">This number was new to Jansetu. An account was made for it; the patient can sign in with this number later.</p>}
+      {newAccount && <p className="ws-muted">{t('common.thisNumberWasNewTo')}</p>}
       <div className="ws-actions">
         <Link to={listPath}>{listLabel}</Link>
-        {!held && <span className="ws-muted">You can also pay it from there, on this device.</span>}
+        {!held && <span className="ws-muted">{t('cardBooking.youCanAlsoPayIt')}</span>}
       </div>
     </section>
   );
@@ -344,7 +343,7 @@ export function CardDueSection({ bookingRef, summary, newAccount, listPath, list
 export function NotBooked({ words, againLabel, onAgain, listPath, listLabel }: { words: string; againLabel: string; onAgain: () => void; listPath: string; listLabel: string }) {
   return (
     <section className="ws-section" aria-labelledby="ended-h">
-      <h2 id="ended-h">Not booked</h2>
+      <h2 id="ended-h">{t('cardBooking.notBooked')}</h2>
       <Alert>{words}</Alert>
       <div className="ws-actions">
         <Button onClick={onAgain}>{againLabel}</Button>
