@@ -188,7 +188,7 @@ export {
 export type { AdminTopupBody, AdminTopupSearch, CompensatedClose, UncreditedTopup } from './adminPharmacyWallet.ts';
 // WQ16: assisted booking phase 1b: a booking paid by card or UPI, its refund, and the admin card refund queue.
 export {
-  adminCardRefundsApi, agreementProblem, awaitingCardPayment, bookingPaymentApi, CARD_BLOCKED_WORDS, CARD_REFUND_CAUSE_LABEL, CARD_REFUND_STATE_LABEL, CARD_REFUND_STATES,
+  adminCardRefundsApi, agreementProblem, awaitingCardPayment, bookingPaymentApi, CARD_BLOCKED_WORDS, DOCTOR_CARD_BLOCKED_WORDS, CARD_REFUND_CAUSE_LABEL, CARD_REFUND_STATE_LABEL, CARD_REFUND_STATES,
   cancelWords, cardCheckProblem, cardRefundRowsOf, cardRefundWords, checkCardPayment, findMovedRefund, LATE_CAPTURE_WORDS, MAX_REFUND_AGREEMENT, moveRefundFinal,
   moveRefundRefusal, moveRefusedBeforeWriting, outcomeOfAnswer, outcomeOfError, payByClock, payByWords, settleCardPayment,
   bookingPaidBy, bookingPayBy, findMarkedFailed, markFailedFinal, markFailedRefusal, markFailedRefusedBeforeWriting, recheckWords,

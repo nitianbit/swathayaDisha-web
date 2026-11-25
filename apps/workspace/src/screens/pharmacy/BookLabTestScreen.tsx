@@ -16,9 +16,9 @@ import { SlotDays } from './slotDays.tsx';
 import { UnconfirmedBooking } from './unconfirmedBooking.tsx';
 import { AddressFields, EMPTY_ADDRESS, labAddressLine, labAddressOf, LanguageSelect } from './bookingFields.tsx';
 import { ConsultationPatientSection, PatientSection, useConsultationPatient, usePatientStep } from './patientStep.tsx';
-import { PayChoice, WalletPay } from './walletPay.tsx';
+import { PayChoice } from './walletPay.tsx';
 import { RecommendedTests, useRecommendedTicks } from './recommendedTests.tsx';
-import { CardDueSection, CardPaymentPanel, isOrderFailed, labCardSource, NOT_PAYABLE_WORDS, NotBooked, ORDER_FAILED_WORDS, useCardChoice } from './cardBooking.tsx';
+import { CardDueSection, CardPaymentPanel, isOrderFailed, NOT_PAYABLE_WORDS, NotBooked, ORDER_FAILED_WORDS, useCardChoice } from './cardBooking.tsx';
 import { pharmacyLabBooker, type LabBooker } from './labBooker.ts';
 
 /**
@@ -28,7 +28,7 @@ import { pharmacyLabBooker, type LabBooker } from './labBooker.ts';
  * the price check and one keyed create paid from the wallet (`POST /pharmacy-assisted/lab-bookings`). The phone and the
  * address stay in this page's state and in POST bodies: never in the address bar, storage or logs.
  * WQ25: the same screen for a doctor (`LabBooker`, backend r26): the patient of its own consultation (`fromBookingId`) or a
- * walk-in by phone, paid from the doctor wallet only.
+ * walk-in by phone, paid from the doctor wallet; WQ27 (r29) or by card or UPI.
  */
 export function BookLabTestScreen() {
   const pharmacyId = usePharmacyId();
@@ -164,7 +164,9 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
   const labs = useQuery({
     queryKey: [...booker.labsKey, mode],
     queryFn: () => labsApi.labs({ visitMode: mode, limit: 50 }),
-    enabled: patientDone && !off,
+    // Review (WQ25): from a consultation no lookup reaches the server first, so the labs are read at once: a switch that is
+    // off is said up front, as the walk-in's lookup says it.
+    enabled: (patientDone || fromConsultation) && !off,
   });
   const lab = labs.data?.find((l) => l.partnerId === partnerId) ?? null;
   const branches = useMemo(() => (lab ? branchesFor(lab, mode) : []), [lab, mode]);
@@ -267,7 +269,7 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
     return (
       <CardDueSection bookingRef={due.ref} summary={<SummaryList s={due.summary} />} newAccount={due.newAccount} listPath={booker.paths.list}
         listLabel="See booked lab tests" held={cardHeld}>
-        <CardPaymentPanel key={due.bookingId} source={labCardSource(api, due.bookingId, due.requestKey)} order={due.order} amountMinor={due.summary.priceMinor}
+        <CardPaymentPanel key={due.bookingId} source={booker.cardSource(api, due.bookingId, due.requestKey)} order={due.order} amountMinor={due.summary.priceMinor}
           perform={perform} busy={busy} autoOpen={due.autoOpen} onHeld={setCardHeld}
           onPaid={(_b, note) => { setCardDue(null); setDone({ summary: due.summary, ref: due.ref, paidMinor: due.order?.amountMinor ?? due.summary.priceMinor, replayed: false, newAccount: due.newAccount, paidBy: 'card', ...(note ? { note } : {}) }); create.refresh(); }}
           onEnded={(words) => { setCardDue(null); setEnded(words); create.refresh(); }} />
@@ -409,7 +411,7 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
       {review && (
         <ReviewAndPay booker={booker} review={review} busy={busy} refused={refused}
           method={choice.method} cardOff={choice.cardOff} onMethod={(m) => { choice.setMethod(m); if (refused?.kind === 'card') setRefused(null); }}
-          onPay={() => void create.pay((p) => ({ ...p, request: { ...p.request, paymentMethod: booker.card ? choice.methodFor(p.summary.priceMinor) : 'wallet' } }))}
+          onPay={() => void create.pay((p) => ({ ...p, request: { ...p.request, paymentMethod: choice.methodFor(p.summary.priceMinor) } }))}
           onBack={() => { setReview(null); setRefused(null); }} onNewPrice={create.payAtNewPrice} />
       )}
     </>
@@ -428,14 +430,8 @@ function ReviewAndPay({ booker, review, busy, refused, method, cardOff, onMethod
       <div className="confirm" role="group" aria-label="Check and pay">
         <SummaryList s={s} />
         {s.couponCode && !s.couponChecked && <p className="ws-muted">Price before the coupon; the coupon is checked when you pay.</p>}
-        {/* WQ25: a doctor pays from its wallet only (card is round 3c). */}
-        {booker.card ? (
-          <PayChoice pharmacyId={booker.id} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy} method={method} cardOff={cardOff}
-            onMethod={onMethod} onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
-        ) : (
-          <WalletPay payer={booker.payer} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy}
-            onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
-        )}
+        <PayChoice payer={booker.payer} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy} method={method} cardOff={cardOff}
+          onMethod={onMethod} onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
       </div>
     </section>
   );

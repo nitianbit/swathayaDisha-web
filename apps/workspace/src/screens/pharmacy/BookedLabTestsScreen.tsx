@@ -14,7 +14,7 @@ import { useOneAtATime, type Perform } from '../finance/finance.tsx';
 import { DocumentPreview, useDocumentViewer } from './documentViewer.tsx';
 import { CursorPager, StatusFilter, useCursorPages } from './cursorList.tsx';
 import { CardAwareCancel } from './ownedCancel.tsx';
-import { CardPaymentPanel, labCardSource } from './cardBooking.tsx';
+import { CardPaymentPanel } from './cardBooking.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 import { pharmacyLabBooker, type LabBooker } from './labBooker.ts';
 
@@ -23,7 +23,7 @@ import { pharmacyLabBooker, type LabBooker } from './labBooker.ts';
  * `GET /pharmacy-assisted/lab-bookings` (newest first, cursor-paged) and one booking (`…/lab-bookings/:id`): status, time,
  * tests, collector, the lab's proposed new time (accept it, or cancel with the refund to the wallet), cancel (up to 1 hour
  * before the time), and the released report files (`/file/fetch`, 90 days from the first release).
- * WQ25: the same list and booking for a doctor (`LabBooker`, backend r26): wallet only, so no payment panel.
+ * WQ25: the same list and booking for a doctor (`LabBooker`, backend r26); WQ27 (r29) with its card payments too.
  */
 export function BookedLabTestsScreen() {
   const pharmacyId = usePharmacyId();
@@ -70,12 +70,10 @@ export function LabList({ booker }: { booker: LabBooker }) {
   });
   // WQ25: a doctor not verified and active is told so, and nothing else (r26: every route needs an eligible doctor).
   if (q.isError && booker.closed?.(q.error)) return <Alert tone="warn">{booker.closedMessage}</Alert>;
-  // Card or UPI only for a pharmacy: a doctor's booking is never waiting for a payment.
-  const filters = booker.card ? STATUS_FILTERS : STATUS_FILTERS.filter((f) => f.value !== 'pending_payment');
   return (
     <section className="ws-section" aria-labelledby="lab-list-h">
       <h2 id="lab-list-h" className="j-sr-only">Booked lab tests</h2>
-      <StatusFilter id="lab-status" value={status} options={filters} onChange={(v) => { setStatus(v); pages.reset(); }} />
+      <StatusFilter id="lab-status" value={status} options={STATUS_FILTERS} onChange={(v) => { setStatus(v); pages.reset(); }} />
       {q.isPending ? <Loading label="Loading booked lab tests…" />
         : q.isError ? (isSwitchedOff(q.error) ? <Alert tone="warn">{LAB_SWITCHED_OFF_MESSAGE}</Alert>
           : <ErrorState message={booker.refusal(q.error).message} onRetry={() => void q.refetch()} />)
@@ -189,7 +187,7 @@ export function LabDetail({ booker, bookingId }: { booker: LabBooker; bookingId:
       {b.status === 'pending_payment' && !note && (
         <section className="ws-section" aria-labelledby="lab-pay-h">
           <h2 id="lab-pay-h">Payment</h2>
-          <CardPaymentPanel source={labCardSource(api, b._id, null)} order={orderFromBooking(b)} payBy={b.payment?.payBy ?? undefined}
+          <CardPaymentPanel source={booker.cardSource(api, b._id, null)} order={orderFromBooking(b)} payBy={b.payment?.payBy ?? undefined}
             paymentTransactionId={b.payment?.paymentTransactionId ?? null} perform={guard.perform} busy={guard.busy}
             onPaid={(_b, n) => { setNote(`Paid. The lab test is booked. The patient is told.${n ? ` ${n}` : ''}`); changed(); void q.refetch(); }}
             onEnded={(w) => { setNote(w); changed(); void q.refetch(); }} />
@@ -289,8 +287,7 @@ function CancelLab({ booker, booking, perform, busy, onDone }: {
 }) {
   const labs = booker.routes;
   const waiting = booking.status === 'pending_payment';
-  // WQ25: a doctor's booking is paid from its wallet (its view has no `payment` block, r26 F4).
-  const paidBy = booker.card ? bookingPaidBy(booking) : 'wallet';
+  const paidBy = bookingPaidBy(booking);
   return (
     <CardAwareCancel<PendingCancel, LabBookingView> slot={booker.slot('cancel', booking._id)} label="Cancel this lab test"
       what="lab test" when={`${formatSlotDate(ymd8(booking.slot?.date))} at ${booking.slot?.startTime ?? '—'}`}
@@ -305,8 +302,7 @@ function CancelLab({ booker, booking, perform, busy, onDone }: {
       isCancelled={async () => { const now = await labs.booking(booking._id); return now.status === 'cancelled' ? now : null; }}
       // WQ17b L3: the money words follow the server's `payment.state` (WQ17c: and how it was paid).
       checkedWords={(body, restored, now) => {
-        // WQ25: a doctor's cancel always refunds its wallet (r26 §25.5.6); found cancelled by someone else, it says only that.
-        if (!booker.card) return now.cancellation?.byKind === 'booker' ? 'Cancelled. The amount is back in your Jansetu wallet.' : 'Cancelled.';
+        // WQ27: a doctor's view carries `payment` too (r29 G1), so its found cancel says refund or forfeit the same way.
         const state = now.payment?.state;
         if (state === 'not_paid') return `Cancelled. It was not paid, so nothing is refunded. ${LATE_PAYMENT_BACK}`;
         if (state === 'forfeited') return 'Cancelled. Nothing was refunded.';

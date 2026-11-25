@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import {
-  ApiError, assistedRefusal, beforeCheckout, cardBookingState, checkCardPayment, checkoutSeconds, LATE_CAPTURE_WORDS, orderFromBooking, PAY_NOW_MARGIN_MS, payByWords, payNowOpen,
-  pharmacyAssistedApi, pharmacyLabApi, settleCardPayment, type ApiClient, type AssistedPaymentMethod, type CardBookingKind, type CardOutcome, type OpenCardOrder, type PendingMarker,
+  ApiError, assistedRefusal, beforeCheckout, cardBookingState, checkCardPayment, checkoutSeconds, doctorLabApi, LATE_CAPTURE_WORDS, orderFromBooking, PAY_NOW_MARGIN_MS, payByWords,
+  payNowOpen, pharmacyAssistedApi, pharmacyLabApi, settleCardPayment, type ApiClient, type AssistedPaymentMethod, type CardBookingKind, type CardOutcome, type LabRoutes,
+  type OpenCardOrder, type PendingMarker,
 } from '@jansetu/api';
 import { Alert, Button, formatRupees } from '@jansetu/ui';
 import { useSession } from '../../session.tsx';
@@ -96,10 +97,18 @@ export function consultationCardSource(api: ApiClient, bookingId: string, reques
 
 /** A lab test (r14): the order by the create's key, else from the booker view (any device). */
 export function labCardSource(api: ApiClient, bookingId: string, requestKey: string | null): CardBookingSource {
-  const labs = pharmacyLabApi(api);
+  return labRoutesCardSource(pharmacyLabApi(api), 'Booked lab tests', bookingId, requestKey);
+}
+
+/** WQ27 (r29 phase 3c, §25.16): a doctor's lab test, on the doctor's own lab routes (the same reads and shapes). */
+export function doctorLabCardSource(api: ApiClient, bookingId: string, requestKey: string | null): CardBookingSource {
+  return labRoutesCardSource(doctorLabApi(api), 'Lab tests booked', bookingId, requestKey);
+}
+
+function labRoutesCardSource(labs: Pick<LabRoutes, 'byKey' | 'booking'>, listName: string, bookingId: string, requestKey: string | null): CardBookingSource {
   return {
     kind: 'lab', canReopen: true, description: 'Lab test for a patient',
-    toldOnPaid: 'The patient is told once it is paid.', listName: 'Booked lab tests',
+    toldOnPaid: 'The patient is told once it is paid.', listName,
     read: async () => {
       if (requestKey) {
         const r = await labs.byKey(requestKey);

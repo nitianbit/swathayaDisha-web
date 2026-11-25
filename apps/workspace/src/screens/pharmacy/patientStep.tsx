@@ -3,8 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
   ApiError, ASSISTED_GENDERS, ASSISTED_RELATIONS, assistedRefusal, canonicalPhone, CONSULT_MODE_LABEL, CONSENT_STATEMENT, doctorToolsApi, EMPTY_PATIENT, familyBookedBefore,
-  formatSlotDate, istToday, isSwitchedOff, MAX_PERSON_NAME, patientProblems, pharmacyAssistedApi, type AssistedGender, type AssistedRelation, type PatientDraft,
-  type PatientLookup, type Refusal,
+  formatSlotDate, istToday, isSwitchedOff, MAX_PERSON_NAME, patientProblems, pharmacyAssistedApi, type AssistedGender, type AssistedRelation, type DoctorAppointment,
+  type PatientDraft, type PatientLookup, type Refusal,
 } from '@jansetu/api';
 import { Alert, Badge, Button, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
@@ -87,6 +87,8 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
     staleTime: 60_000,
   });
   const knownFamily = useMemo(() => (lookup && family.data ? familyBookedBefore(family.data, lookup.phone) : []), [lookup, family.data]);
+  // WQ27: only while that list is read (a booker with its own lookup never reads it: a disabled query stays "pending").
+  const familyLoading = !!lookup?.result.exists && !lookupPatient && family.isPending;
 
   function patientNext(e: FormEvent) {
     e.preventDefault();
@@ -106,7 +108,7 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
 
   return {
     phoneText, setPhoneText, phoneError, lookup, patient, setPatient, set, patientErrors, agreed, setAgreed, agreeError, setAgreeError,
-    patientDone, setPatientDone, family, knownFamily, find, changePhone, patientNext, patientLabel, reset,
+    patientDone, setPatientDone, family, knownFamily, familyLoading, find, changePhone, patientNext, patientLabel, reset,
   };
 }
 
@@ -121,7 +123,7 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = 'Next: 
 }) {
   const {
     phoneText, setPhoneText, phoneError, lookup, patient, setPatient, set, patientErrors, agreed, setAgreed, agreeError, setAgreeError,
-    patientDone, setPatientDone, family, knownFamily, find, changePhone, patientNext,
+    patientDone, setPatientDone, knownFamily, familyLoading, find, changePhone, patientNext,
   } = step;
   const frozenPatient = frozen;
   return (
@@ -171,7 +173,7 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = 'Next: 
               </label>
               {patientErrors.dependentId && <span id="who-err" className="j-field__error" role="alert">{patientErrors.dependentId}</span>}
             </fieldset>
-            {lookup.result.exists && family.isPending && <span className="ws-muted">Looking for family members you booked for before…</span>}
+            {familyLoading && <span className="ws-muted">Looking for family members you booked for before…</span>}
 
             {patient.who === 'self' && (
               <TextField label="Patient’s full name" autoComplete="off" value={patient.name} maxLength={MAX_PERSON_NAME} error={patientErrors.name}
@@ -248,7 +250,9 @@ export function useConsultationPatient({ doctorId, fromBookingId }: { doctorId: 
   const { api } = useSession();
   const consultation = useQuery({
     queryKey: ['doctor', doctorId, 'lab-source', fromBookingId],
-    queryFn: () => doctorToolsApi(api).appointment(fromBookingId!),
+    // Review (WQ25): only what the step says is kept; the rest of the booking (its prescription, the concern) is never
+    // cached. The pick is in the query itself: a `select` alone would leave the whole answer in the cache.
+    queryFn: async () => consultationWords(await doctorToolsApi(api).appointment(fromBookingId!)),
     enabled: !!fromBookingId,
     retry: (n, err) => !(err instanceof ApiError && err.status >= 400 && err.status < 500) && n < 2,
   });
@@ -273,6 +277,10 @@ export function useConsultationPatient({ doctorId, fromBookingId }: { doctorId: 
 
 export type ConsultationPatient = ReturnType<typeof useConsultationPatient>;
 
+/** The consultation as the step names it: its date, time, way and whether it is a family member's. */
+export const consultationWords = (b: DoctorAppointment) =>
+  ({ bookingDate: b.bookingDate, bookingTime: b.bookingTime, consultationMode: b.consultationMode, family: !!b.dependentId });
+
 /** Step 1 when booking from a consultation; `walkInPath` books by mobile number instead. */
 export function ConsultationPatientSection({ step, frozen, locked, consent, walkInPath }: {
   step: ConsultationPatient; frozen: boolean; locked: boolean; consent: string; walkInPath: string;
@@ -289,7 +297,7 @@ export function ConsultationPatientSection({ step, frozen, locked, consent, walk
         : (
           <p>
             From your consultation on <strong>{formatSlotDate(b?.bookingDate)}, {b?.bookingTime}</strong>
-            {b?.consultationMode ? ` (${CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode})` : ''}{b?.dependentId ? ', for a family member' : ''}.
+            {b?.consultationMode ? ` (${CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode})` : ''}{b?.family ? ', for a family member' : ''}.
           </p>
         )}
       <p className="ws-muted"><Link to={walkInPath}>Book for a patient by mobile number instead</Link></p>
@@ -297,7 +305,7 @@ export function ConsultationPatientSection({ step, frozen, locked, consent, walk
         <form className="rx-form" noValidate onSubmit={next}>
           <fieldset className="ws-frozen" disabled={frozen}>
             <TextField label="Patient’s full name" autoComplete="off" value={name} maxLength={MAX_PERSON_NAME} error={nameError}
-              hint={b?.dependentId ? 'Type the name the patient tells you. For a family member, Jansetu keeps the name on their profile.' : 'Type the name the patient tells you.'}
+              hint={b?.family ? 'Type the name the patient tells you. For a family member, Jansetu keeps the name on their profile.' : 'Type the name the patient tells you.'}
               onChange={(e) => setName(e.target.value)} />
             <label className="rx-ack">
               <input type="checkbox" checked={agreed} aria-describedby={agreeError ? 'agree-err' : 'agree-text'}

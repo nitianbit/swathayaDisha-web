@@ -74,6 +74,8 @@ export function outcomeOfAnswer(a: CardPaymentAnswer | ReconcileAnswer | null | 
 
 export const CARD_BLOCKED_WORDS =
   'Your pharmacy account is not active or not verified, so the payment cannot be checked here. If you paid, Jansetu checks it with Razorpay: the booking is confirmed, or the money goes back to the card or UPI.';
+export const DOCTOR_CARD_BLOCKED_WORDS =
+  'Your account is not verified and active, so the payment cannot be checked here. If you paid, Jansetu returns the money to the card or UPI, and the booking is not made.';
 export const DUPLICATE_WORDS = 'This booking was already paid with another payment. This payment is being refunded to the card or UPI.';
 const CARD_FAILED_WORDS = 'This payment failed, so the booking is not paid. If the time is released, book again.';
 
@@ -85,6 +87,8 @@ export function outcomeOfError(err: unknown): CardOutcome | null {
   if (err.code === 'DUPLICATE_PAYMENT_REFUNDED') return { kind: 'duplicate', message: DUPLICATE_WORDS };
   // r10b: a card dispute recorded on this payment: said as it is (never paid, never "not booked").
   if (err.code === 'PAYMENT_DISPUTED') return { kind: 'blocked', message: 'A card dispute was recorded on this booking payment. Please contact Jansetu support.' };
+  // WQ27 (r29 DR9): a doctor no longer verified and active; the server returns its capture to the card.
+  if (err.code === 'SPECIALIST_NOT_VERIFIED') return { kind: 'blocked', message: DOCTOR_CARD_BLOCKED_WORDS };
   if (err.status === 403) return { kind: 'blocked', message: CARD_BLOCKED_WORDS };
   return null;
 }

@@ -451,7 +451,7 @@ function ReviewAndPay({ pharmacyId, review, busy, refused, method, cardOff, onMe
         <SummaryList s={s} />
         {s.couponCode && !s.couponChecked && <p className="ws-muted">Price before the coupon; the coupon is checked when you pay.</p>}
         <p><strong>How the patient joins:</strong> {joinWords(s.mode, s.joinOn)}</p>
-        <PayChoice pharmacyId={pharmacyId} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy} method={method} cardOff={cardOff}
+        <PayChoice payer={{ kind: 'pharmacy', id: pharmacyId }} priceMinor={s.priceMinor} couponCode={s.couponCode} refused={refused} busy={busy} method={method} cardOff={cardOff}
           onMethod={onMethod} onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
       </div>
     </section>

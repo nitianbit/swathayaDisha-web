@@ -5,6 +5,7 @@ import {
   type LabCreateRequest,
 } from './assistedLab.ts';
 import { doctorToolsApi, labBookableFrom } from './doctorTools.ts';
+import { CARD_BLOCKED_WORDS, DOCTOR_CARD_BLOCKED_WORDS, outcomeOfError } from './assistedCard.ts';
 
 // WQ25 (backend r26 phase 3b, design §25.15): a verified doctor books a lab test for a patient, paid from the doctor wallet.
 
@@ -84,13 +85,12 @@ describe('WQ25 doctor lab booking (r26 /specialists/me/assisted)', () => {
     for (const x of calls) expect(x.url).not.toContain(PHONE);
   });
 
-  it('a bad consultation id, two sources, a missing name or the card are refused before any request', () => {
+  it('a bad consultation id, two sources, a missing name or a bad key are refused before any request', () => {
     const { c, calls } = client();
     const d = doctorLabApi(c);
     expect(() => d.book({ ...base, fromBookingId: 'nope', typedName: 'Rina' })).toThrow('Invalid consultation id');
     expect(() => d.book({ ...base, fromBookingId: CONSULT, typedName: '  ' })).toThrow('Invalid patient name');
     expect(() => d.book({ ...base, fromBookingId: CONSULT, typedName: 'Rina', phone: PHONE } as unknown as LabCreateRequest)).toThrow('One patient source only');
-    expect(() => d.book({ ...base, paymentMethod: 'razorpay', fromBookingId: CONSULT, typedName: 'Rina' })).toThrow('A doctor pays lab tests from the wallet');
     expect(() => d.book({ ...base, requestKey: 'x', fromBookingId: CONSULT, typedName: 'Rina' })).toThrow('Invalid request key');
     expect(() => d.booking('nope')).toThrow('Invalid booking id');
     expect(calls).toHaveLength(0);
@@ -100,7 +100,8 @@ describe('WQ25 doctor lab booking (r26 /specialists/me/assisted)', () => {
     expect(doctorLabRefusal(err(403, 'SPECIALIST_NOT_VERIFIED'))).toEqual({ kind: 'other', message: DOCTOR_LAB_CLOSED_MESSAGE });
     expect(doctorLabRefusal(err(404, 'BOOKING_NOT_FOUND'))).toMatchObject({ kind: 'patient', message: expect.stringContaining('not found among yours') });
     expect(doctorLabRefusal(err(409, 'TREATING_WINDOW_CLOSED'))).toMatchObject({ kind: 'patient', message: expect.stringContaining('by their mobile number instead') });
-    expect(doctorLabRefusal(err(400, 'PAYMENT_METHOD_UNAVAILABLE')).message).toBe('Lab tests you book are paid from your Jansetu wallet.');
+    // WQ27 (r29): the card is offered; its switch off is the shared card words (the way to pay falls back to the wallet).
+    expect(doctorLabRefusal(err(400, 'PAYMENT_METHOD_UNAVAILABLE'))).toEqual({ kind: 'card', message: 'Card payment is not switched on yet. Pay from your Jansetu wallet.' });
     expect(doctorLabRefusal(err(409, 'INSUFFICIENT_BALANCE')).kind).toBe('topup');
     expect(doctorLabRefusal(err(404, 'LAB_BOOKING_NOT_FOUND'))).toEqual(labRefusal(err(404, 'LAB_BOOKING_NOT_FOUND')));
     expect(doctorLabRefusal(err(503, 'ASSISTED_BOOKING_DISABLED'))).toEqual({ kind: 'off', message: LAB_SWITCHED_OFF_MESSAGE });
@@ -130,5 +131,15 @@ describe('WQ25 doctor lab booking (r26 /specialists/me/assisted)', () => {
     expect(at('09:00', { status: 'pending', paymentStatus: 'pending' })).toBe(false);
     expect(at('09:00', { status: 'pending', paymentStatus: 'paid' })).toBe(true);
     expect(at('23:00', { bookingKind: 'instant' })).toBe(true);
+  });
+
+  it('WQ27 (r29 §25.16.4): a card create is the same body with razorpay; a doctor refused at verify or reconcile is told in its own words', async () => {
+    const { c, calls } = client(() => json(201, { success: true, data: {} }));
+    await doctorLabApi(c).book({ ...base, paymentMethod: 'razorpay', fromBookingId: CONSULT, typedName: 'Rina Kumari' });
+    expect(calls.map((x) => `${x.method} ${x.url}`)).toEqual(['POST /api/v1/specialists/me/assisted/lab-bookings']);
+    expect(calls[0]!.body).toEqual({ ...base, paymentMethod: 'razorpay', fromBookingId: CONSULT, typedName: 'Rina Kumari' });
+    // DR9: the server returns the capture of a doctor no longer verified and active; never "paid", never the pharmacy's words.
+    expect(outcomeOfError(err(403, 'SPECIALIST_NOT_VERIFIED'))).toEqual({ kind: 'blocked', message: DOCTOR_CARD_BLOCKED_WORDS });
+    expect(outcomeOfError(err(403, 'PHARMACY_NOT_VERIFIED'))).toEqual({ kind: 'blocked', message: CARD_BLOCKED_WORDS });
   });
 });

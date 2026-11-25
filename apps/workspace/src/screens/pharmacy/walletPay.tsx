@@ -12,6 +12,9 @@ import { usePayerWallet, walletHoldWords, type WalletPayer } from './WalletScree
  * Wallet page.
  */
 
+/** Review (WQ25): where the booker collects: the pharmacy at its counter; a doctor from its patient (no counter). */
+const counterWords = (payer: WalletPayer) => (payer.kind === 'pharmacy' ? ' at your counter' : '');
+
 /** Plain refusal words, adjusted when a coupon explains the new price. */
 export function refusalText(r: Refusal, coupon?: string): string {
   if (r.kind === 'price' && coupon && r.priceMinor !== undefined) return `With the coupon ${coupon}, the price is ${formatRupees(r.priceMinor / 100)}. Check it with the patient, then pay.`;
@@ -43,6 +46,7 @@ export function WalletPay({ payer, priceMinor, couponCode, refused, busy, onPay,
   const short = wallet.data !== undefined && walletState(wallet.data) === 'ok' && balance < priceMinor;
   const [showTopUp, setShowTopUp] = useState(false);
   const needTopUp = short || refused?.kind === 'topup';
+  const where = counterWords(payer);
   return (
     <>
       {wallet.isPending ? <Loading label="Reading your wallet…" />
@@ -70,7 +74,7 @@ export function WalletPay({ payer, priceMinor, couponCode, refused, busy, onPay,
         </Alert>
       )}
       {showTopUp && payer.kind === 'pharmacy' && <TopUpForm pharmacyId={payer.id} suggested={Math.max(1, (priceMinor - balance) / 100)} onCredited={() => void wallet.refetch()} />}
-      <span className="ws-muted">Collect {formatRupees(priceMinor / 100)} from the patient at your counter. If the booking is cancelled, the money comes back to your wallet.</span>
+      <span className="ws-muted">Collect {formatRupees(priceMinor / 100)} from the patient{where}. If the booking is cancelled, the money comes back to your wallet.</span>
       <div className="confirm-actions">
         <Button busy={busy} disabled={!!hold || short || (refused?.kind === 'price')} onClick={onPay}>
           {payLabel ? payLabel(formatRupees(priceMinor / 100)) : `Pay ${formatRupees(priceMinor / 100)} from wallet`}
@@ -84,9 +88,10 @@ export function WalletPay({ payer, priceMinor, couponCode, refused, busy, onPay,
 /**
  * WQ17c: "How do you pay?" (WQ16, moved here from Book consultation so that Book lab test offers card or UPI the very same
  * way): the wallet (the default) or card or UPI, only when there is something to pay; a switched-off card is said next to it.
+ * WQ27: a doctor's lab test too (`payer`).
  */
-export function PayChoice({ pharmacyId, priceMinor, couponCode, refused, busy, method, cardOff, onMethod, onPay, onBack, onNewPrice }: {
-  pharmacyId: string; priceMinor: number; couponCode?: string; refused: Refusal | null; busy: boolean;
+export function PayChoice({ payer, priceMinor, couponCode, refused, busy, method, cardOff, onMethod, onPay, onBack, onNewPrice }: {
+  payer: WalletPayer; priceMinor: number; couponCode?: string; refused: Refusal | null; busy: boolean;
   method: AssistedPaymentMethod; cardOff: string | null; onMethod: (m: AssistedPaymentMethod) => void;
   onPay: () => void; onBack: () => void; onNewPrice: (priceMinor: number) => void;
 }) {
@@ -113,7 +118,7 @@ export function PayChoice({ pharmacyId, priceMinor, couponCode, refused, busy, m
         <>
           <RefusalAlert refused={refused} couponCode={couponCode} onNewPrice={onNewPrice} />
           <span className="ws-muted">
-            Collect {formatRupees(priceMinor / 100)} from the patient at your counter. You pay it on the Razorpay page next. The time is held for 30
+            Collect {formatRupees(priceMinor / 100)} from the patient{counterWords(payer)}. You pay it on the Razorpay page next. The time is held for 30
             minutes while you pay. If the booking is cancelled later, the money goes back to the card or UPI, or to your wallet if you choose.
           </span>
           <div className="confirm-actions">
@@ -122,7 +127,7 @@ export function PayChoice({ pharmacyId, priceMinor, couponCode, refused, busy, m
           </div>
         </>
       ) : (
-        <WalletPay payer={{ kind: 'pharmacy', id: pharmacyId }} priceMinor={priceMinor} couponCode={couponCode} refused={refused} busy={busy}
+        <WalletPay payer={payer} priceMinor={priceMinor} couponCode={couponCode} refused={refused} busy={busy}
           onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
       )}
     </>

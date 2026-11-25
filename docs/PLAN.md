@@ -2194,6 +2194,40 @@ no treating-window times, so the link is offered by the client rule above and th
 Seen, not changed: the pharmacy's Book lab test attests the consultation's consent statement (`web-pharmacy-v2`, "books this
 consultation", the prescription for 90 days); a lab-test statement would be a new version.
 
+## WQ27 doctor: pay a lab test by card or UPI (phase 3c web) (2026-11-25, branch `wq27/doctor-lab-card`)
+
+Backend: r29 (`m0/r29-phase3c` 88e152ed, design ASSISTED_BOOKING_DESIGN.md §25.16.4; local, under review). Web base: WQ25
+292b22d. A doctor's card booking needs `ASSISTED_CARD_PAYMENT_ENABLED` and both doctor switches; card off: 400
+`PAYMENT_METHOD_UNAVAILABLE`, said next to the choice ("Card payment is not switched on yet."), which falls back to the
+wallet. Pharmacy and lab card flows unchanged (their specs pass as they were).
+
+- **Book lab test (doctor)**: "How do you pay?" (wallet by default, or card or UPI) as for a pharmacy. A card create is the
+  same body with `paymentMethod: 'razorpay'` and the same key and owned request: Checkout at once on the create's order, the
+  proof to `/payments/verify` (the doctor's token), else `/payments/reconcile`; the held page with "Pay now" (asks the server
+  first: an `authorized` payment means no second Checkout) and "Check payment"; the 502 order failure, a late or duplicate
+  payment as for the pharmacy. A doctor no longer verified and active (403 `SPECIALIST_NOT_VERIFIED` on verify or reconcile,
+  r29 DR9) is told in its own words (`DOCTOR_CARD_BLOCKED_WORDS`: the money goes back to the card), never the pharmacy's.
+- **Lab tests booked (doctor)**: "Waiting for payment" in the filter and the list's "Pay now"; the payment panel on the
+  booking (any device: the view's open order); cancel a waiting card booking at any time (nothing refunded), a card-paid one
+  up to 1 hour before with "Refund to card (default)" or "Refund to wallet" (said before choosing: it pays for bookings and
+  cannot be withdrawn; `refundTo`), the answer's `refund` in words ("Refund to card: in progress", or back in the wallet and
+  not withdrawable).
+- **r29 G1 closes WQ25's gap 1**: the doctor view's `payment` (wallet rows too) now drives the refund choice and the words of a
+  cancel found after a lost answer (refunded, forfeited, not paid), exactly as the pharmacy's.
+- **Shared, not copied**: `cardBooking.tsx` `doctorLabCardSource` and `labCardSource` are one lab card source over a booker's
+  lab routes (`labRoutesCardSource`, the doctor's list named "Lab tests booked"); `LabBooker.cardSource` replaces WQ25's
+  `card` flag (both bookers pay by card now); `PayChoice` takes the `WalletPayer`; `doctorLabBody` no longer refuses the card
+  and `doctorLabRefusal` leaves the card's switch to the shared words.
+- **WQ25 review items folded in**: (1) the consultation read keeps only its date, time, way and the family-member flag, in
+  the query itself (a `select` alone would leave the whole booking, prescription included, in the cache); (2) from a
+  consultation the labs are read as the step opens, so a doctor lab switch that is off shows the standard notice at once,
+  as the walk-in's lookup does; (3) `pharmacyLabApi.book` posts to `LAB_BASE.pharmacy`; (4) "Collect ₹X from the patient"
+  reads "at your counter" for a pharmacy only. Also fixed: "Looking for family members you booked for before…" stayed on
+  screen for a booker with its own lookup (a doctor; the lab desk since WQ19), whose list is never read.
+
+API gaps: none blocking. `cardCheckProblem` says "This payment was not found for your pharmacy." for
+`PAYMENT_RECORD_NOT_FOUND`; a doctor reaches it only for another doctor's record (seen, not changed: pharmacy words).
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -2263,6 +2297,7 @@ Nothing visible changes: English stays byte-identical and no language list shows
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ27 doctor pays a lab test by card or UPI (phase 3c web, on 292b22d) + WQ25 review items | Against r29 88e152ed (§25.16.4; mocked API). typecheck clean; Vitest 484/484 (doctorLab.test.ts: the card create is the same body with razorpay; a doctor's 403 at verify or reconcile has its own words while the pharmacy's 403 keeps CARD_BLOCKED_WORDS; the card switch is the shared card words); Playwright workspace 1007 passed of 1008 (+16 = 8 journeys x 2: pay by card from a consultation, Checkout closed then Pay now after asking the server, another device's authorized payment gives no second Checkout, cancel to the card, cancel to the wallet (not withdrawable, said before and after), card switched off falls back to the wallet, a lost cancel found as forfeited from the view's payment, the doctor lab switch off from a consultation shown at once; WQ25 journeys updated for r29: the card offered with the wallet as default, "Waiting for payment" in the filter, the doctor's collect words, no family-list loading text). The one failure is the known load-timing check in stock-supply.spec.ts:1277 (as in WQ17c and WQ18b), 6/6 alone. Temporary config on port 5514, `reuseExistingServer: false`, deleted; release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ25 doctor books a lab test (phase 3b web, on 13333e9) | Against r26 + r26b on stage 6a8574e9 (§25.15; mocked API). typecheck clean; Vitest 483/483 (+5 in doctorLab.test.ts: the reads, list, by-key, abandon, cancel and accept under /specialists/me/assisted with the pharmacy's paths unchanged; the lookup and the recommended-tests code with the phone in the body only; a create from a consultation with no phone and a walk-in by phone; a bad consultation id, two sources, no name, the card and a bad key refused before any request; the doctor's words (unverified, consultation not found, window closed, wallet only) with the lab and pharmacy words unchanged and the code field hidden for an unverified doctor; the appointment read keeps the booking only and `labBookableFrom`); Playwright workspace 992/992 (+20 = 10 journeys x 2: book from a consultation, a walk-in with the nav order, the treating window closed, low balance then Add money on Wallet, a lost answer found by key after a reload, cancel with the refund to the doctor wallet, accept a new time, open a released report, an unverified doctor on both pages, another doctor's booking not found; doctor-tools' nav count now 9) on a temporary config (port 5512, `reuseExistingServer: false`, deleted). A targeted run of the shared-piece specs earlier had 1 load-timing failure in pharmacy-extras.spec.ts:825 (admin wallet, untouched), 6/6 alone and green in the full run. Release build with VITE_API_SAME_ORIGIN=true. |
 
 

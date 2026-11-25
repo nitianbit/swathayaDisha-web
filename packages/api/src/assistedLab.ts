@@ -10,8 +10,8 @@ import type { VisitMode } from './partnerInvoices.ts';
  * WQ17: assisted booking phase 2a, a pharmacy books a lab test for a walk-in patient, paid from its Jansetu wallet
  * (backend r11 `m0/r11-phase2a` f5f171c9, design ASSISTED_BOOKING_DESIGN.md §24.11; routes `/pharmacy-assisted/labs*`,
  * `/pharmacy-assisted/lab-bookings*`). Money in paise. The phone travels only in POST bodies.
- * WQ25: a verified doctor books the same way (backend r26 phase 3b, design §25.15; routes under `/specialists/me/assisted`,
- * the doctor wallet only): the same routes and shapes, by booker.
+ * WQ25: a verified doctor books the same way (backend r26 phase 3b, design §25.15; routes under `/specialists/me/assisted`):
+ * the same routes and shapes, by booker. WQ27 (r29 phase 3c, §25.16): a doctor pays by card or UPI too.
  */
 
 export interface AssistedLabBranch { branchId: string; name: string; address?: string; phone?: string; homeCollection: boolean; inLab: boolean }
@@ -130,13 +130,13 @@ export type LabRoutes = ReturnType<typeof labRoutes>;
 export function pharmacyLabApi(c: ApiClient) {
   return {
     ...labRoutes(c, 'pharmacy'),
-    book: (body: LabBookingRequest) => c.post<LabReceipt>('/pharmacy-assisted/lab-bookings', { body, timeoutMs: SLOW_WRITE_TIMEOUT_MS }),
+    book: (body: LabBookingRequest) => c.post<LabReceipt>(`${LAB_BASE.pharmacy}/lab-bookings`, { body, timeoutMs: SLOW_WRITE_TIMEOUT_MS }),
   };
 }
 
 /**
  * WQ25 (r26, §25.15): a verified, active doctor's lab bookings (403 `SPECIALIST_NOT_VERIFIED` otherwise, reads included).
- * The create takes exactly one patient source and the wallet (card is round 3c): both checked before sending.
+ * The create takes exactly one patient source, checked before sending; WQ27 (r29): the wallet or card / UPI.
  */
 export function doctorLabApi(c: ApiClient) {
   const base = LAB_BASE.doctor;
@@ -148,10 +148,9 @@ export function doctorLabApi(c: ApiClient) {
   };
 }
 
-/** The doctor's create body: one patient source (`fromBookingId` + `typedName`, or a phone), paid from the wallet. */
+/** The doctor's create body: one patient source (`fromBookingId` + `typedName`, or a phone). */
 export function doctorLabBody(body: LabCreateRequest): LabCreateRequest {
   keyOf(body.requestKey);
-  if (body.paymentMethod !== 'wallet') throw new Error('A doctor pays lab tests from the wallet');
   const b = body as Partial<ConsultationSource> & { phone?: string; patient?: unknown };
   if (b.fromBookingId !== undefined) {
     idOf(b.fromBookingId, 'consultation');
@@ -222,9 +221,8 @@ const DOCTOR_LAB_WORDS: Readonly<Record<string, Refusal>> = {
   // `fromBookingId`: another doctor's consultation, a missing one, an unpaid card booking or one reported "not mine".
   BOOKING_NOT_FOUND: { kind: 'patient', message: 'This consultation was not found among yours. Book for the patient by their mobile number instead.' },
   TREATING_WINDOW_CLOSED: { kind: 'patient', message: 'This consultation is not open for booking tests now (it is open while you treat the patient). Book for the patient by their mobile number instead.' },
-  PAYMENT_METHOD_UNAVAILABLE: { kind: 'other', message: 'Lab tests you book are paid from your Jansetu wallet.' },
 };
-/** The doctor's words first (its account, its consultation, its wallet only), then the lab and shared words. */
+/** The doctor's words first (its account, its consultation), then the lab and shared words (WQ27: the card's too). */
 export function doctorLabRefusal(err: unknown): Refusal {
   const known = err instanceof ApiError && err.code ? DOCTOR_LAB_WORDS[err.code] : undefined;
   return known ?? labRefusal(err);

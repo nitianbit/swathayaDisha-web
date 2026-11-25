@@ -4,7 +4,7 @@ import { expect, test, type Page, type Route } from '@playwright/test';
  * WQ25: a doctor books a lab test for a patient (assisted booking round 3b, backend r26, design §25.15) on the pharmacy's
  * Book lab test and Booked lab tests screens, paid from the doctor wallet: from one of its consultations or for a walk-in,
  * the treating window closed, low balance, a lost answer, cancel, a new time, the report, an unverified doctor and another
- * doctor's booking. Mocked API; amounts in paise.
+ * doctor's booking. WQ27 (r29 phase 3c, §25.16): or by card or UPI, on the pharmacy's card machinery. Mocked API; paise.
  */
 const DOC = 'd1'.repeat(12);
 const LAB = 'a1'.repeat(12);
@@ -18,9 +18,11 @@ const OTHER = 'e9'.repeat(12);
 const CONSULT = 'c7'.repeat(12);
 const LATER = 'c8'.repeat(12);
 const PHONE = '9876543210';
+const CARD_REC = 'c9'.repeat(12);
 const NOW = new Date('2026-11-25T04:30:00.000Z'); // 10:00 in India
 const TOMORROW = '2026-11-26';
 const STARTS = '2026-11-26T03:30:00.000Z'; // 09:00 in India
+const PAY_BY = '2026-11-25T04:55:00.000Z'; // a card booking is held for 25 more minutes
 
 type Json = Record<string, unknown>;
 const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -38,6 +40,15 @@ interface Backend {
   eligible: boolean;
   windowClosed: boolean;
   loseNextCreateAnswer: boolean;
+  /** WQ27 (r29): the card switch is off; the card payment record of BK; reconcile's gateway statuses; a cancel never answered. */
+  cardOff: boolean;
+  record: { status: 'none' | 'created' | 'paid'; captured: boolean };
+  gatewayStatuses: string[];
+  verifies: Json[];
+  reconciles: Json[];
+  dropNextCancel: boolean;
+  /** Review (WQ25): the doctor lab switch is off (503 on the lookup, the lab reads and new bookings). */
+  labsOff: boolean;
 }
 
 const labView = (o: Json = {}): Json => ({
@@ -46,6 +57,8 @@ const labView = (o: Json = {}): Json => ({
   items: [{ name: 'Complete blood count', kind: 'test', code: 'CBC' }], status: 'confirmed', statusVersion: 3, reschedule: null, collector: null, cancellation: null,
   lifecycle: {}, patientName: 'Rina Kumari', holder: { linkId: 'f2'.repeat(12), name: 'Rina Kumari', typedName: 'Rina Kumari' }, userId: 'f1'.repeat(12),
   assisted: { shortRef: 'L7QXM2PA', bookedBy: { name: 'Dr Asha Mehta' }, preferredLanguage: 'hi' },
+  // r29 G1: the doctor's view says how each booking is paid (wallet rows too).
+  payment: { method: 'wallet', state: 'captured', payBy: null },
   report: { releases: [] }, createdAt: '2026-11-25T04:00:00.000Z', updatedAt: '2026-11-25T04:00:00.000Z', ...o,
 });
 const appointment = (o: Json = {}): Json => ({
@@ -56,8 +69,30 @@ const appointment = (o: Json = {}): Json => ({
 async function mockBackend(page: Page, init: { bookings?: Json[]; walletPaise?: number } = {}): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
   const b: Backend = { calls: [], creates: [], cancels: [], accepts: [], keys: {}, bookings: init.bookings ?? [], walletPaise: init.walletPaise ?? 200_000,
-    eligible: true, windowClosed: false, loseNextCreateAnswer: false };
+    eligible: true, windowClosed: false, loseNextCreateAnswer: false, cardOff: false, record: { status: 'none', captured: false }, gatewayStatuses: [],
+    verifies: [], reconciles: [], dropNextCancel: false, labsOff: false };
   const profile = { _id: DOC, name: 'Dr Asha Mehta', specialization: 'Cardiology', phone: '9000000020', isActive: true, isVerified: true };
+  // r29: a card booking's one order (open while it waits), its capture applied once, as the pharmacy's (WQ17c).
+  const openOrder = (): Json | null => (b.record.status === 'created' && b.bookings.find((x) => x._id === BK)?.status === 'pending_payment'
+    ? { paymentRequired: true, paymentTransactionId: CARD_REC, razorpayOrderId: 'order_L1', razorpayKeyId: 'rzp_test', amount: 300, amountMinor: 30_000, currency: 'INR', payBy: PAY_BY }
+    : null);
+  const applyCapture = (): Json => {
+    const x = b.bookings.find((y) => y._id === BK)!;
+    if (b.record.status === 'created') { b.record.status = 'paid'; Object.assign(x, { status: 'confirmed', payment: { method: 'razorpay', state: 'captured', payBy: null, paymentTransactionId: CARD_REC } }); }
+    return { context: 'assisted_lab_booking', paymentRecord: { status: b.record.status, isProcessed: true }, entity: x };
+  };
+  await page.route('https://checkout.razorpay.com/v1/checkout.js', (route) => route.fulfill({
+    contentType: 'application/javascript',
+    body: `window.Razorpay = function (o) {
+      window.__rzOpened = (window.__rzOpened || 0) + 1;
+      window.__rzLast = { key: o.key, order_id: o.order_id, amount: o.amount };
+      this.on = function () {};
+      this.open = function () { setTimeout(function () {
+        if (window.__rzClose) o.modal.ondismiss();
+        else o.handler({ razorpay_payment_id: 'pay_L1', razorpay_order_id: o.order_id, razorpay_signature: 'sig_L1' });
+      }, 10); };
+    };`,
+  }));
   let live = false;
   await page.route('**/api/v1/**', async (route) => {
     const req = route.request();
@@ -81,6 +116,12 @@ async function mockBackend(page: Page, init: { bookings?: Json[]; walletPaise?: 
     }
     if (path === `/specialists/me/appointments/${CONSULT}`) return ok(route, { booking: appointment(), patient: { name: 'Account Holder', phone: PHONE } });
     if (path === '/file/fetch') return route.fulfill({ status: 200, contentType: 'application/octet-stream', body: '%PDF-1.4\n%%EOF\n' });
+    // r29: the doctor verifies and reconciles its own card record on the existing payment routes.
+    if (path === '/payments/verify') { b.verifies.push(body!); b.record.captured = true; return ok(route, applyCapture()); }
+    if (path === '/payments/reconcile') {
+      b.reconciles.push(body!);
+      return b.record.captured ? ok(route, { state: 'paid', ...applyCapture() }) : ok(route, { state: 'unpaid', gatewayStatuses: b.gatewayStatuses });
+    }
 
     const me = /^\/specialists\/me\/assisted(\/.*)$/.exec(path);
     if (!me) return refuse(route, 404, 'NOT_FOUND', `Not mocked: ${method} ${path}`);
@@ -89,6 +130,7 @@ async function mockBackend(page: Page, init: { bookings?: Json[]; walletPaise?: 
     if (!b.eligible) return refuse(route, 403, 'SPECIALIST_NOT_VERIFIED', 'Your doctor account must be verified and active before you can do this');
     if (sub === '/wallet') return ok(route, { balanceMinor: b.walletPaise, withdrawableMinor: 0, receivableMinor: 0, frozen: false, isActive: true, updatedAt: NOW.toISOString() });
     if (sub === '/wallet/entries') return ok(route, [], 200, { pagination: { nextCursor: null } });
+    if (b.labsOff && (sub === '/patients/lookup' || sub.startsWith('/labs'))) return refuse(route, 503, 'ASSISTED_BOOKING_DISABLED', 'Lab test booking for patients is not switched on yet');
     if (sub === '/patients/lookup') return ok(route, { exists: true, holderNameMasked: 'Rina K.' });
     if (sub === '/labs') {
       return ok(route, [{ partnerId: LAB, name: 'Sun Diagnostics', nearby: 'pincode', branches: [
@@ -106,11 +148,13 @@ async function mockBackend(page: Page, init: { bookings?: Json[]; walletPaise?: 
       b.creates.push(body!);
       const key = String(body!.requestKey);
       const hash = JSON.stringify({ ...body, requestKey: undefined });
+      const card = body!.paymentMethod === 'razorpay';
       const receipt = (replayed: boolean) => ({ booking: b.bookings.find((x) => x._id === BK),
-        funding: { method: 'wallet', amountMinor: body!.acceptedPriceMinor, state: 'captured', walletEntryId: 'w9' },
-        split: { listMinor: body!.acceptedPriceMinor, discountMinor: 0, couponCode: null }, newAccount: false, replayed });
+        funding: card ? { method: 'razorpay', amountMinor: body!.acceptedPriceMinor, state: 'pending', walletEntryId: null, paymentTransactionId: CARD_REC }
+          : { method: 'wallet', amountMinor: body!.acceptedPriceMinor, state: 'captured', walletEntryId: 'w9' },
+        split: { listMinor: body!.acceptedPriceMinor, discountMinor: 0, couponCode: null }, ...(card ? { payment: openOrder() } : {}), newAccount: false, replayed });
       if (b.keys[key]) return b.keys[key] === hash ? ok(route, receipt(true)) : refuse(route, 409, 'IDEMPOTENCY_KEY_REUSED');
-      if (body!.paymentMethod !== 'wallet') return refuse(route, 400, 'PAYMENT_METHOD_UNAVAILABLE', 'Lab tests you book are paid from your Jansetu wallet');
+      if (card && b.cardOff) return refuse(route, 400, 'PAYMENT_METHOD_UNAVAILABLE', 'Card payment is not switched on');
       if (body!.fromBookingId !== undefined) {
         if (body!.fromBookingId !== CONSULT) return refuse(route, 404, 'BOOKING_NOT_FOUND', 'Booking not found');
         if (b.windowClosed) return refuse(route, 409, 'TREATING_WINDOW_CLOSED', 'This consultation is no longer open for booking tests');
@@ -118,16 +162,29 @@ async function mockBackend(page: Page, init: { bookings?: Json[]; walletPaise?: 
       const ids = body!.itemIds as string[];
       const price = (ids.includes(T1) ? 30_000 : 0) + (ids.includes(T2) ? 20_000 : 0);
       if (body!.acceptedPriceMinor !== price) return refuse(route, 409, 'PRICE_CHANGED', 'The price changed', { details: { priceMinor: price } });
+      const typed = String(body!.typedName ?? (body!.patient as Json | undefined)?.name ?? '');
+      const named = { patientName: typed, holder: { linkId: 'f2'.repeat(12), name: typed, typedName: typed } };
+      if (card) {
+        // r29: held as pending payment with one order; no wallet money moves.
+        b.keys[key] = hash;
+        b.record = { status: 'created', captured: false };
+        b.bookings.unshift(labView({ ...named, status: 'pending_payment', payment: { method: 'razorpay', state: 'pending', payBy: PAY_BY, paymentTransactionId: CARD_REC,
+          razorpayOrderId: 'order_L1', razorpayKeyId: 'rzp_test', amountMinor: 30_000, currency: 'INR' } }));
+        return ok(route, receipt(false), 201);
+      }
       if (b.walletPaise < price) return refuse(route, 409, 'INSUFFICIENT_BALANCE', 'Insufficient wallet balance');
       b.walletPaise -= price;
       b.keys[key] = hash;
-      const typed = String(body!.typedName ?? (body!.patient as Json | undefined)?.name ?? '');
-      b.bookings.unshift(labView({ patientName: typed, holder: { linkId: 'f2'.repeat(12), name: typed, typedName: typed } }));
+      b.bookings.unshift(labView(named));
       if (b.loseNextCreateAnswer) { b.loseNextCreateAnswer = false; return route.abort('connectionreset'); }
       return ok(route, receipt(false), 201);
     }
     const byKey = /^\/lab-bookings\/by-key\/([A-Za-z0-9_-]+)(\/abandon)?$/.exec(sub);
-    if (byKey) return ok(route, b.keys[byKey[1]!] ? { state: 'used', booking: b.bookings.find((x) => x._id === BK) } : { state: 'unknown' });
+    if (byKey) {
+      const x = b.bookings.find((y) => y._id === BK);
+      const card = (x?.payment as Json | undefined)?.method === 'razorpay';
+      return ok(route, b.keys[byKey[1]!] ? { state: 'used', booking: x, ...(card ? { payment: openOrder() } : {}) } : { state: 'unknown' });
+    }
     if (sub === '/lab-bookings') return ok(route, b.bookings, 200, { pagination: { total: b.bookings.length, nextCursor: null } });
     const one = /^\/lab-bookings\/(\w{24})$/.exec(sub);
     if (one) {
@@ -137,8 +194,22 @@ async function mockBackend(page: Page, init: { bookings?: Json[]; walletPaise?: 
     const cancel = /^\/lab-bookings\/(\w{24})\/cancel$/.exec(sub);
     if (cancel) {
       b.cancels.push(body!);
+      if (b.dropNextCancel) { b.dropNextCancel = false; return route.abort('connectionreset'); }
       const x = b.bookings.find((y) => y._id === cancel[1])!;
+      const card = (x.payment as Json | undefined)?.method === 'razorpay';
+      const waiting = x.status === 'pending_payment';
       Object.assign(x, { status: 'cancelled', statusVersion: 4, cancellation: { byKind: 'booker', at: '2026-11-25T04:35:00.000Z' } });
+      if (card) {
+        // r29: to the card by default; `wallet` credits the doctor wallet at once (not withdrawable); nothing when unpaid.
+        if (waiting) { Object.assign(x, { payment: { ...(x.payment as Json), state: 'not_paid' } }); return ok(route, { booking: x, refundedMinor: 0, alreadyCancelled: false, refund: null }); }
+        const toWallet = body!.refundTo === 'wallet';
+        Object.assign(x, { payment: { ...(x.payment as Json), state: 'refunded' } });
+        if (toWallet) b.walletPaise += 30_000;
+        const refund = { refundId: 'f1'.repeat(12), bookingId: x._id, paymentRecordId: CARD_REC, amountMinor: 30_000, cause: 'booker', method: toWallet ? 'wallet' : 'card',
+          state: toWallet ? 'processed' : 'pending', lastError: null, attempts: toWallet ? 0 : 1, razorpayRefundId: null, processedAt: null, createdAt: STARTS, updatedAt: STARTS };
+        return ok(route, { booking: x, refundedMinor: toWallet ? 30_000 : 0, alreadyCancelled: false, refund });
+      }
+      Object.assign(x, { payment: { ...(x.payment as Json), state: 'refunded' } });
       b.walletPaise += 30_000;
       return ok(route, { booking: x, refundedMinor: 30_000, alreadyCancelled: false });
     }
@@ -183,6 +254,8 @@ async function walkIn(page: Page) {
   await page.getByLabel('Patient’s mobile number').fill(PHONE);
   await page.getByRole('button', { name: 'Find' }).click();
   await expect(page.getByText('Account holder: Rina K.')).toBeVisible();
+  // WQ27: the doctor has no "booked here before" list, so nothing says it is being read.
+  await expect(page.getByText('Looking for family members you booked for before…')).toHaveCount(0);
   await page.getByLabel('Patient’s full name').fill('Rina Kumari');
   await page.getByLabel('Patient agreed to this booking').check();
   await page.getByRole('button', { name: 'Next: choose the lab' }).click();
@@ -211,7 +284,9 @@ test('from a consultation: Appointments › Book lab test for this patient, the 
   await chooseAndReview(page);
   const pay = page.getByRole('group', { name: 'Check and pay' });
   await expect(pay.getByText('Money in your wallet: ₹2,000.00')).toBeVisible();
-  await expect(pay.getByText('How do you pay?')).toHaveCount(0); // the wallet only (card is round 3c)
+  await expect(pay.getByLabel('Pay from wallet')).toBeChecked(); // WQ27: card or UPI is offered too; the wallet is the default
+  // Review (WQ25): a doctor collects from its patient; "at your counter" is the pharmacy's.
+  await expect(pay.getByText('Collect ₹300.00 from the patient. If the booking is cancelled, the money comes back to your wallet.')).toBeVisible();
   await pay.getByRole('button', { name: 'Pay ₹300.00 from wallet' }).click();
   await expect(page.getByRole('heading', { name: 'Booked' })).toBeVisible();
   await expect(page.getByText('The lab test is booked and paid from your wallet.')).toBeVisible();
@@ -298,7 +373,7 @@ test('lab tests booked: list, open, cancel up to 1 hour before; the refund goes 
   await signIn(page);
   await nav(page).getByRole('link', { name: 'Lab tests booked', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Lab tests booked', level: 1 })).toBeVisible();
-  await expect(page.getByLabel('Status').locator('option', { hasText: 'Waiting for payment' })).toHaveCount(0); // never card-paid
+  await expect(page.getByLabel('Status').locator('option', { hasText: 'Waiting for payment' })).toHaveCount(1); // WQ27: card bookings wait
   const table = page.getByRole('table', { name: 'Booked lab tests, newest first' });
   await table.getByRole('link', { name: /Open the lab test of Rina Kumari/ }).click();
   await expect(page.getByText('L7QXM2PA')).toBeVisible();
@@ -361,4 +436,138 @@ test('another doctor’s booking (or none) is "not found"', async ({ page }) => 
   expect(b.calls.some((c) => c.path === `/specialists/me/assisted/lab-bookings/${OTHER}`)).toBe(true);
   await page.getByRole('link', { name: 'See all booked lab tests' }).click();
   await expect(page.getByRole('heading', { name: 'Lab tests booked', level: 1 })).toBeVisible();
+});
+
+test('review (WQ25): from a consultation with the doctor lab switch off, the standard notice shows at once, as for a walk-in', async ({ page }) => {
+  const b = await mockBackend(page);
+  b.labsOff = true;
+  const off = 'Booking lab tests for patients is not switched on yet. Jansetu turns it on for you when it is ready. Your other tools work as usual.';
+  await signIn(page);
+  await page.goto(`/#/doctor/lab-book/from/${CONSULT}`);
+  await expect(page.getByText(off)).toBeVisible();
+  await expect(page.getByLabel('Patient’s full name')).toHaveCount(0);
+  await page.goto('/#/doctor/lab-book');
+  await page.reload(); // a fresh page: the walk-in learns it from its lookup
+  await page.getByLabel('Patient’s mobile number').fill(PHONE);
+  await page.getByRole('button', { name: 'Find' }).click();
+  await expect(page.getByText(off)).toBeVisible();
+  expect(b.creates).toHaveLength(0);
+});
+
+// ── WQ27: a doctor pays a lab test by card or UPI (r29 phase 3c, §25.16.4), on the pharmacy's card machinery ──
+
+async function payByCard(page: Page) {
+  const pay = page.getByRole('group', { name: 'Check and pay' });
+  await pay.getByLabel('Pay by card or UPI').check();
+  await pay.getByRole('button', { name: 'Pay ₹300.00 by card or UPI' }).click();
+}
+const opened = (page: Page) => page.evaluate(() => (window as unknown as { __rzOpened?: number }).__rzOpened ?? 0);
+const closeCheckout = (page: Page, close: boolean) => page.evaluate((c) => { (window as unknown as { __rzClose: boolean }).__rzClose = c; }, close);
+const waiting = () => labView({ status: 'pending_payment', payment: { method: 'razorpay', state: 'pending', payBy: PAY_BY, paymentTransactionId: CARD_REC,
+  razorpayOrderId: 'order_L1', razorpayKeyId: 'rzp_test', amountMinor: 30_000, currency: 'INR' } });
+const cardPaid = () => labView({ payment: { method: 'razorpay', state: 'captured', payBy: null, paymentTransactionId: CARD_REC } });
+
+test('WQ27 card: from a consultation, the same body with razorpay; Checkout on the server’s order, verify; booked and paid, no wallet money', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await fromConsultation(page);
+  await chooseAndReview(page);
+  await payByCard(page);
+  await expect(page.getByText('The lab test is booked and paid by card or UPI.')).toBeVisible();
+  await expect(page.getByText('Paid by card or UPI: ₹300.00. Collect this from the patient.')).toBeVisible();
+  expect(b.creates).toHaveLength(1);
+  expect(b.creates[0]).toMatchObject({ paymentMethod: 'razorpay', fromBookingId: CONSULT, typedName: 'Rina Kumari', acceptedPriceMinor: 30_000 });
+  expect(await page.evaluate(() => (window as unknown as { __rzLast: unknown }).__rzLast)).toEqual({ key: 'rzp_test', order_id: 'order_L1', amount: 30_000 });
+  expect(b.verifies).toEqual([{ paymentTransactionId: CARD_REC, razorpayOrderId: 'order_L1', razorpayPaymentId: 'pay_L1', razorpaySignature: 'sig_L1' }]);
+  expect(b.walletPaise).toBe(200_000);
+  await nothingStored(page, b, 'Rina Kumari', PHONE);
+});
+
+test('WQ27 card: Checkout closed, the booking waits; Pay now reopens the same order after asking the server', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await closeCheckout(page, true);
+  await walkIn(page);
+  await chooseAndReview(page);
+  await payByCard(page);
+  await expect(page.getByRole('heading', { name: 'Booking held: waiting for payment' })).toBeVisible();
+  await expect(page.getByText(/^Not paid yet\./)).toBeVisible();
+  await closeCheckout(page, false);
+  await page.getByRole('button', { name: 'Pay now ₹300.00' }).click();
+  await expect(page.getByText('The lab test is booked and paid by card or UPI.')).toBeVisible();
+  expect(b.creates).toHaveLength(1);
+  expect(await opened(page)).toBe(2);
+  expect(b.reconciles.length).toBeGreaterThanOrEqual(2); // after the close, and before reopening
+});
+
+test('WQ27 card, another device: from the list’s Pay now; an authorized payment at Razorpay means no second Checkout', async ({ page }) => {
+  const b = await mockBackend(page, { bookings: [waiting()] });
+  b.record = { status: 'created', captured: false };
+  b.gatewayStatuses = ['authorized'];
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Lab tests booked', exact: true }).click();
+  const table = page.getByRole('table', { name: 'Booked lab tests, newest first' });
+  await expect(table.getByText('Waiting for payment')).toBeVisible();
+  await table.getByRole('link', { name: /Pay now for the lab test of Rina Kumari/ }).click();
+  await page.getByRole('button', { name: 'Pay now' }).click();
+  await expect(page.getByText('Razorpay reported the payment; it is being confirmed. Do not pay again. Tap “Check payment” in a minute.')).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Pay now/ })).toHaveCount(0);
+  expect(await opened(page)).toBe(0);
+  expect(b.reconciles).toEqual([{ paymentTransactionId: CARD_REC }]);
+});
+
+test('WQ27 card: cancel a card-paid lab test with the refund to the card (default)', async ({ page }) => {
+  const b = await mockBackend(page, { bookings: [cardPaid()] });
+  await signIn(page);
+  await page.goto(`/#/doctor/lab-tests/${BK}`);
+  await expect(page.getByLabel(/^Refund to card \(default\)/)).toBeChecked();
+  await page.getByRole('button', { name: 'Cancel this lab test' }).click();
+  await page.getByRole('button', { name: 'Yes, cancel it' }).click();
+  await expect(page.getByText('Cancelled. Refund of ₹300.00 to the card or UPI: in progress. It usually reaches the card in 5 to 7 working days. The patient is told.')).toBeVisible();
+  expect(b.cancels).toEqual([{ expectedVersion: 3, refundTo: 'card' }]);
+  expect(b.walletPaise).toBe(200_000);
+});
+
+test('WQ27 card: cancel to the wallet: said before choosing that it cannot be withdrawn, and again once credited', async ({ page }) => {
+  const b = await mockBackend(page, { bookings: [cardPaid()] });
+  await signIn(page);
+  await page.goto(`/#/doctor/lab-tests/${BK}`);
+  await expect(page.getByLabel(/^Refund to wallet: .*it cannot be withdrawn/)).toBeVisible();
+  await page.getByLabel(/^Refund to wallet/).check();
+  await page.getByRole('button', { name: 'Cancel this lab test' }).click();
+  await page.getByRole('button', { name: 'Yes, cancel it' }).click();
+  await expect(page.getByText('Cancelled. ₹300.00 is back in your Jansetu wallet. This money pays for bookings; it cannot be withdrawn. The patient is told.')).toBeVisible();
+  expect(b.cancels).toEqual([{ expectedVersion: 3, refundTo: 'wallet' }]);
+  expect(b.walletPaise).toBe(230_000);
+});
+
+test('WQ27 card switched off: said next to the choice, which falls back to the wallet; the wallet pays', async ({ page }) => {
+  const b = await mockBackend(page);
+  b.cardOff = true;
+  await signIn(page);
+  await walkIn(page);
+  await chooseAndReview(page);
+  await payByCard(page);
+  await expect(page.getByText('Card payment is not switched on yet. Pay from your Jansetu wallet.')).toBeVisible();
+  const pay = page.getByRole('group', { name: 'Check and pay' });
+  await expect(pay.getByLabel('Pay by card or UPI')).toBeDisabled();
+  await expect(pay.getByLabel('Pay from wallet')).toBeChecked();
+  await pay.getByRole('button', { name: 'Pay ₹300.00 from wallet' }).click();
+  await expect(page.getByText('The lab test is booked and paid from your wallet.')).toBeVisible();
+  expect(b.creates.map((c) => c.paymentMethod)).toEqual(['razorpay', 'wallet']);
+  expect(b.creates[1]!.requestKey).not.toBe(b.creates[0]!.requestKey);
+  expect(await opened(page)).toBe(0);
+});
+
+test('WQ27: a lost cancel, when found, says from the doctor view’s payment what was done with the money (refund or forfeit)', async ({ page }) => {
+  const b = await mockBackend(page, { bookings: [labView()] });
+  await signIn(page);
+  await page.goto(`/#/doctor/lab-tests/${BK}`);
+  b.dropNextCancel = true;
+  await page.getByRole('button', { name: 'Cancel this lab test' }).click();
+  await page.getByRole('button', { name: 'Yes, cancel it' }).click();
+  await expect(page.getByText(/The outcome of this request is not known yet/)).toBeVisible();
+  Object.assign(b.bookings[0]!, { status: 'cancelled', cancellation: { byKind: 'admin' }, payment: { method: 'wallet', state: 'forfeited', payBy: null } });
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText('Cancelled. Nothing was refunded.')).toBeVisible();
 });

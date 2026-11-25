@@ -4,12 +4,13 @@ import {
   type LabReceipt, type LabRoutes, type PatientLookup, type Refusal, type TestRecommendation,
 } from '@jansetu/api';
 import type { WalletPayer } from './WalletScreen.tsx';
+import { doctorLabCardSource, labCardSource, type CardBookingSource } from './cardBooking.tsx';
 
 /**
  * WQ25: who books a lab test for a patient, for the one Book lab test and Booked lab tests screens (WQ17, generalised, not
- * copied): a pharmacy (its counter; the wallet or card / UPI) or a verified, active doctor (backend r26 phase 3b, design
- * §25.15: the patient of its own consultation or a walk-in by phone; its own wallet only, card is round 3c). Only the routes,
- * keys, memory slots, paths and a few words differ; the pharmacy's are exactly WQ17's.
+ * copied): a pharmacy (its counter) or a verified, active doctor (backend r26 phase 3b, design §25.15: the patient of its
+ * own consultation or a walk-in by phone). Both pay from their wallet or by card / UPI (WQ27: a doctor from r29 phase 3c,
+ * §25.16). Only the routes, keys, memory slots, paths and a few words differ; the pharmacy's are exactly WQ17's.
  */
 export interface LabBooker {
   kind: LabBookerKind;
@@ -24,9 +25,9 @@ export interface LabBooker {
   closed?: (err: unknown) => boolean;
   closedMessage?: string;
   consent: { statement: string; version: string };
-  /** Card or UPI as well as the wallet (a pharmacy, r14). */
-  card: boolean;
   payer: WalletPayer;
+  /** Where a card booking of this booker is read again (WQ17c; WQ27 a doctor's). */
+  cardSource: (api: ApiClient, bookingId: string, requestKey: string | null) => CardBookingSource;
   /** This booker's memory slot for one owned request (`book`, or a booking's `accept` / `cancel`). */
   slot: (what: 'book' | 'accept' | 'cancel', bookingId?: string) => string;
   listKey: readonly unknown[];
@@ -51,7 +52,7 @@ export function pharmacyLabBooker(api: ApiClient, pharmacyId: string): LabBooker
     kind: 'pharmacy', id: pharmacyId,
     routes: { ...labs, book: (r) => { if (!('phone' in r)) throw new Error('A pharmacy books by phone'); return labs.book(r); } },
     loadRecommendation: pharmacyRecommendationsApi(api).load, refusal: labRefusal,
-    consent: { statement: CONSENT_STATEMENT, version: CONSENT_STATEMENT_VERSION }, card: true, payer: { kind: 'pharmacy', id: pharmacyId },
+    consent: { statement: CONSENT_STATEMENT, version: CONSENT_STATEMENT_VERSION }, payer: { kind: 'pharmacy', id: pharmacyId }, cardSource: labCardSource,
     slot: (what, bookingId) => `assisted-lab-${what}:${pharmacyId}${bookingId ? `:${bookingId}` : ''}`,
     listKey: ['pharmacy-lab-bookings', pharmacyId], labsKey: ['assisted-labs', pharmacyId], walletKey: ['pharmacy-wallet', pharmacyId],
     paths: { book: '/pharmacy/lab-book', list: '/pharmacy/lab-tests' },
@@ -64,7 +65,8 @@ export function doctorLabBooker(api: ApiClient, doctorId: string): LabBooker {
   return {
     kind: 'doctor', id: doctorId, routes: labs, lookup: labs.lookup, loadRecommendation: doctorRecommendationsApi(api).load, refusal: doctorLabRefusal,
     closed: isDoctorWalletClosed, closedMessage: DOCTOR_LAB_CLOSED_MESSAGE,
-    consent: { statement: DOCTOR_LAB_CONSENT_STATEMENT, version: DOCTOR_LAB_CONSENT_VERSION }, card: false, payer: { kind: 'doctor', id: doctorId },
+    consent: { statement: DOCTOR_LAB_CONSENT_STATEMENT, version: DOCTOR_LAB_CONSENT_VERSION }, payer: { kind: 'doctor', id: doctorId },
+    cardSource: doctorLabCardSource,
     slot: (what, bookingId) => `assisted-lab-${what}:doctor:${doctorId}${bookingId ? `:${bookingId}` : ''}`,
     listKey: ['doctor-lab-bookings', doctorId], labsKey: ['doctor-assisted-labs', doctorId], walletKey: ['doctor-wallet', doctorId],
     paths: { book: '/doctor/lab-book', list: '/doctor/lab-tests' },
