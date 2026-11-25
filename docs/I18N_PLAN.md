@@ -1,6 +1,7 @@
 # Phase 6 build specification: whole-app UI translation (i18n)
 
-Design only (WQ30, 2026-11-25). Nothing here is built. Base: web `stage` at `f089b46`. Backend references:
+Designed in WQ30 (2026-11-25, base web `stage` at `f089b46`); round 6a built in WQ31; the engine moved to i18next +
+react-i18next in WQ40 (owner decisions of 2026-11-25, §1 items 7–9). Backend references:
 `../SwasthaDisha/documentation/planning/implementation/ASSISTED_BOOKING_DESIGN.md` §5.2 (language fields), §11 (languages
 and UI translation) and §27 (phase 5 SMS, branch `m0/r23-phase5-spec`). Where this document and §11.2 differ for the web
 apps, this one wins (§3.1 says why).
@@ -14,7 +15,12 @@ apps, this one wins (§3.1 says why).
    `User.preferredLanguage`, filled by a booking when empty: backend `assisted/patient.ts:121`).
 4. Keep the UI easy and minimal. No duplicated code. No drop in code quality.
 5. No token, OTP or patient data in storage, URLs or logs. A language preference is not patient data.
-6. Native speakers check the translations.
+6. ~~Native speakers check the translations.~~ Replaced on 2026-11-25 by items 8 and 9.
+7. **Engine (2026-11-25):** the open-source `i18next` + `react-i18next`, not an in-house engine (§3.1).
+8. **Translations (2026-11-25):** machine only, made with IndicTrans2, kept as static JSON files in the repo. No human
+   checker.
+9. **Release gate (2026-11-25):** a language is released in an app once at least 95% of that app's words are
+   **present** (machine translations count). The old "95% checked" rule is dropped.
 
 ## 2. The code today
 
@@ -29,7 +35,7 @@ apps, this one wins (§3.1 says why).
 | Formatting: `formatRupees`, `formatDateTime` (`packages/ui/src/index.tsx:110`, `:115`) plus 13 more `Intl` calls fixed to `en-IN`/`en-GB`, two copies of `rupees(paise)` (`assisted.ts:507`, `assistedCard.ts:223`) and of the YYYYMMDD date (`assisted.ts:362`, `inventory.ts:139`); `formatYmd`, `formatDay`, `formatDate`, `formatAppointment`, three 24-hour clocks | api, ui, both apps | One `format` module (§3.5) |
 | Fonts: `system-ui … 'Noto Sans', 'Noto Sans Devanagari'`; nothing for Bengali or Odia; CSP `font-src 'self'` (no font CDN) | `tokens.css:30`; both `vite.config.ts` | Self-hosted fonts (§3.8) |
 | `.ws-nav-section` uses `text-transform: uppercase` and `letter-spacing` (spacing breaks Indic letter joining); `.j-badge` does not wrap | `apps/workspace/src/styles.css:21`; `tokens.css:96-105` | CSS fixes in 6a |
-| Consent: one English sentence, `statementVersion: 'web-pharmacy-v2'`, `statementLanguage: 'en'` sent with each booking | `assisted.ts:54-57`; `patientStep.tsx:206` | A checked text per language (§4, round 6f; Q2) |
+| Consent: one English sentence, `statementVersion: 'web-pharmacy-v2'`, `statementLanguage: 'en'` sent with each booking | `assisted.ts:54-57`; `patientStep.tsx:206` | A text per language (§4, round 6f; Q2) |
 | `PATIENT_LANGUAGES`: 19 codes with English names, for "Language the patient speaks" | `assisted.ts:41` | Names become catalogue words |
 | Backend: no `uiLanguage` yet (§5.2 planned it). Both apps read `GET /auth/profile` at sign-in, which returns the account document | backend `auth/controller/index.ts:189`; customer `session.tsx:258`, workspace `session.tsx:343` | One small backend round (6a-backend, §3.7) |
 | Tests: Vitest 422 (several assert English words from `packages/api`). Playwright workspace 448 tests and customer 132, each on 2 devices, with about 5,700 and 960 English text locators. Neither Playwright config sets `locale`, so the browser takes the machine's | `apps/*/e2e`, `apps/*/playwright.config.ts` | English stays the default and must stay byte-identical (§4.2) |
@@ -52,19 +58,33 @@ apps, this one wins (§3.1 says why).
 
 ## 3. Approach
 
-### 3.1 Library: none. A small typed catalogue in-house
+### 3.1 Library: i18next + react-i18next behind a typed `t` (owner decision 2026-11-25)
 
-§11.2 proposed `i18next` + `react-i18next` + `i18next-parser` + Tolgee/Weblate. We need only: typed keys, `{name}`
-placeholders, two plural forms, English fallback, lazy loading and `Intl`. That is about 150 lines on top of `Intl`,
-with stricter typing than i18next gives from JSON (a wrong key **or a wrong placeholder name** fails `npm run typecheck`).
-No runtime parser, no plugins, no new dependency, nothing to keep up to date. The call shape `t(key, params)` is the
-same as i18next's, so moving to it later would be mechanical.
+WQ30 planned no library and WQ31 built a small in-house engine. The owner chose the open-source `i18next` +
+`react-i18next` instead (§1 item 7); WQ40 moved the engine and kept everything screens touch:
+
+- **One i18next instance** (`packages/i18n/src/store.ts`, exported as `i18n`). Each catalogue is one namespace of flat
+  keys (`keySeparator` and `nsSeparator` off, so `wallet.title` is one key). Placeholders are `{name}` (i18next's
+  prefix and suffix set to `{` and `}`), inserted as written: no HTML escaping (React escapes), no nesting, no second
+  pass. Plurals are stored as `key_one` / `key_other` (i18next's suffixes, picked by `Intl.PluralRules`). Fallback is
+  English. i18next fetches nothing: `catalogue()` adds the English words, `setLanguage()` adds a language's JSON
+  (still one lazy chunk per catalogue and language) before switching.
+- **The typed `t(key, params)` stays the only call screens make.** Keys and `{placeholder}` names are still typed from
+  `en.ts` (a wrong one fails `npm run typecheck`), which i18next's own types would only give from JSON. So extraction
+  rounds running in parallel do not change when the engine does.
+- **React:** `@jansetu/ui` registers the instance with react-i18next (`setI18n`, so no provider is needed) and
+  `useLanguage()` is react-i18next's `useTranslation()`; `LanguageScope` and `LanguageSwitcher` are unchanged.
+- **Unchanged:** the catalogue files and layout, `jansetu.lang`, the format module, the pseudo-language (now generated
+  as an i18next language in development only), the catalogue check and the literal scan.
+- **Dependencies:** `i18next` (in `@jansetu/i18n`, which stays React-free so `@jansetu/api` can use it) and
+  `react-i18next` (in `@jansetu/ui`). No i18next plugins, parser or translation server.
 
 ### 3.2 Layout
 
 ```
-packages/i18n/                    NEW workspace package (@jansetu/i18n), no dependencies, no React
-  src/index.ts                    catalogue(), the language store, loading, fallback, plurals, placeholders
+packages/i18n/                    workspace package (@jansetu/i18n): i18next only, no React
+  src/index.ts                    catalogue(), the typed t, loading (fallback, plurals, placeholders: i18next)
+  src/store.ts                    the i18next instance and the current language
   src/format.ts                   money, numbers, dates and times (§3.5)
   src/languages.ts                code, own name, script, released per app (§3.7)
   src/digits.ts                   Indian-script digits → 0-9 (§3.5)
@@ -78,8 +98,8 @@ apps/customer/src/i18n/           the customer app
 apps/workspace/src/i18n/<area>/   shell, pharmacy, lab, clinic, partner, doctor, admin, finance
 ```
 
-Each catalogue folder holds `en.ts` (the English source, TypeScript), `hi.json`, `as.json`, `bn.json`, `or.json` (checked
-translations only) and `<lang>.source.json` (the English each translation was made from; read by the check and the
+Each catalogue folder holds `en.ts` (the English source, TypeScript), `hi.json`, `as.json`, `bn.json`, `or.json` (machine
+translations, §5) and `<lang>.source.json` (the English each translation was made from; read by the check and the
 scripts, never shipped). One catalogue per workspace area keeps rounds and translator batches apart and avoids merge
 conflicts. `@jansetu/ui` re-exports what screens need (`formatRupees`, `formatDateTime`, `useLanguage`,
 `LanguageScope`, `LanguageSwitcher`), so existing imports keep working.
@@ -112,7 +132,7 @@ t.has(`errors.${code}`);                                          // for codes f
   accepts exactly the forms `Intl.PluralRules` names for it.
 - **Placeholders:** values are inserted as written (a number is not regrouped), so English stays exactly as the old
   `${n}` wrote it; pass formatted text (`formatRupees`, a date) where the format matters.
-- **Fallback:** checked translation, else English. A key never shows. In development, a missing translation is noted
+- **Fallback:** translation, else English. A key never shows. In development, a missing translation is noted
   once in the console by **key only** (params may hold a patient's name: never printed).
 - **Loading:** English is bundled. Other languages load on choice (`import.meta.glob`: one hashed chunk per catalogue and
   language, cached; inside the phone apps the chunks are local files, so it works offline).
@@ -146,7 +166,7 @@ date) and `time(...)` (24-hour), all in India time as today.
 
 ### 3.6 Fallback
 
-Per string: checked translation → English. An app lists a language only once it is **released** for that app (§3.7),
+Per string: translation → English. An app lists a language only once it is **released** for that app (§3.7),
 so at most a few new strings show in English while their translation is on its way.
 
 ### 3.7 The switcher and where the choice is stored
@@ -220,7 +240,7 @@ Each round is one build and one independent review (Opus xhigh). Commits stay lo
 
 | Round | Content | Strings |
 |---|---|---|
-| **6a** (built, WQ31) | `packages/i18n` (core, format, pseudo, catalogue check, literal scan with its starting allowlist); `LanguageSwitcher` (shows nothing until a second language is released), `LanguageScope` and the start-up rules of §3.7 in both apps; Playwright `locale`; a start-up smoke spec per app. Moves the 15 `Intl` call sites to `format` | 2 |
+| **6a** (built, WQ31; engine moved to i18next + react-i18next in WQ40) | `packages/i18n` (core, format, pseudo, catalogue check, literal scan with its starting allowlist); `LanguageSwitcher` (shows nothing until a second language is released), `LanguageScope` and the start-up rules of §3.7 in both apps; Playwright `locale`; a start-up smoke spec per app. Moves the 15 `Intl` call sites to `format` | 2 |
 | **6a2** | Before the first hand-off (after 6c): the translator script (CSV export, import, prune, accept); before the first release: fonts and the Indic CSS (§3.8), typed Indian-script digits (§3.5), and the switcher's save to the account once 6a-backend exists | ~2 |
 | **6a-backend** | `uiLanguage` and `PUT /auth/profile/ui-language` (§3.7), with an integration test | — |
 | **6b** | Shared words: `packages/ui`, then every word in `packages/api` (labels, refusals, word helpers, plurals). One `messageOf` in `@jansetu/api` (§6) | ~620 |
@@ -232,10 +252,10 @@ Each round is one build and one independent review (Opus xhigh). Commits stay lo
 | **6h** | Clinic: front desk, clinic doctors; partner team: staff, branches, profile, audit | ~485 |
 | **6i** | Doctor: appointments, schedule, Consult now, clinics, earnings, presence | ~355 |
 | **6j** | Admin: every admin screen (Q4) | ~570 |
-| **6k** | Release, per app and per language, when its checked text arrives: import, `released: true`, smoke spec, 360 px check | — |
+| **6k** | Release, per app and per language, once its machine translations are 95% present: import, add it to `RELEASED`, smoke spec, 360 px check | — |
 
 **Order:**
-- 6a and 6a-backend can run side by side; then 6b → 6c. The customer batch (6b + 6c) goes to the translators right
+- 6a and 6a-backend can run side by side; then 6b → 6c. The customer batch (6b + 6c) goes to machine translation right
   away, so the customer app can be released first.
 - 6d next. Then 6e–6j: each changes only its own area catalogue and the api module files of its area. They can run
   side by side if the shared api catalogue is merged with care; one after another is simpler.
@@ -252,7 +272,7 @@ Each round is one build and one independent review (Opus xhigh). Commits stay lo
    assertion is named in the commit with its reason.
 4. **Pseudo pass.** The round's screens are walked in `pseudo` at 360 px (customer) or tablet width (workspace): no
    plain English, no clipped or overlapping text.
-5. **Hand-off.** The new keys are exported for the translators (§5.3).
+5. **Hand-off.** The new keys go in the next machine-translation run (§5.3).
 
 ### 4.2 How the tests keep passing
 
@@ -278,42 +298,25 @@ Each round is one build and one independent review (Opus xhigh). Commits stay lo
 
 ## 5. Translation workflow
 
-### 5.1 Who
+### 5.1 Who (owner decision 2026-11-25)
 
-- **Drafts:** machine-assisted, made by the team from an agreed glossary, or a professional translator if the owner
-  prefers (Q1).
-- **Checks:** one paid native speaker per language who works in health care (pharmacist, nurse, lab technician)
-  corrects every string, first in the spreadsheet, then on the stage app in that language.
-- **Second check:** consent, money and refund sentences get a second checker.
-- **SMS too:** the same people translate the phase 5 SMS texts (§27.11 Q5), so the words match.
+- **Machine only:** every translation is made with IndicTrans2 (`hi`, `as`, `bn`, `or`) and committed as static JSON
+  next to the catalogue's `en.ts`. There is no human checker and no second check.
+- **SMS:** the phase 5 SMS texts (§27.11 Q5) are made the same way, so the words match.
 
-### 5.2 Glossary first
+### 5.2 Glossary
 
-About 80 terms are agreed per language before any bulk work, so every screen uses the same words. Examples: wallet,
-top-up, refund, prescription, consultation, lab test, sample collection, booking, slot, coupon, UPI, OTP, "Jansetu" (kept
-in Latin letters unless the owner says otherwise).
+About 80 terms are fixed per language before the first bulk run, so every screen uses the same words, and applied to
+the machine output (examples: wallet, top-up, refund, prescription, consultation, lab test, sample collection,
+booking, slot, coupon, UPI, OTP; "Jansetu" stays in Latin letters). The run keeps `{placeholders}` exactly and writes
+no digits as words; the catalogue check refuses a text whose placeholders differ.
 
-The brief to translators:
-- polite address (आप, আপনি, আপুনি, ଆପଣ);
-- gender-neutral phrasing;
-- keep `{placeholders}` exactly;
-- buttons short;
-- no digits written in words.
+### 5.3 The files
 
-### 5.3 The file translators get
-
-`npm run i18n -- export hi` writes `hi.csv` (UTF-8 with BOM, so Excel and Google Sheets show the script). It holds only
-missing and stale strings. The CSV is made on demand and not committed.
-
-| key | where | note | english | translation | status | checker note |
-|---|---|---|---|---|---|---|
-| `workspace-pharmacy:wallet.collect` | `walletPay.tsx` | Under the price, before paying | Collect {amount} from the patient at your counter. | | draft / checked | |
-
-- **Columns:** `where` lists the files that use the key. `note` is the comment above the key in `en.ts`.
-- **Plurals:** one row per form (`stock.units#one`, `stock.units#other`).
-- **Import:** `npm run i18n -- import hi.csv` takes only rows marked `checked`. It refuses a row whose English changed
-  since export, whose placeholders differ, that is empty, or whose key no longer exists. It writes `hi.json` and
-  `hi.source.json`.
+The translator script (round 6a2) exports the missing and stale English per language, runs it through IndicTrans2 and
+imports the result into `<lang>.json`, writing the English each text was made from into `<lang>.source.json`. Plurals
+are one entry per form (`stock.units#one`, `stock.units#other`). Import refuses a text whose placeholders differ, that
+is empty, or whose key no longer exists. Nothing is marked "checked".
 
 ### 5.4 Keeping keys in sync (the check)
 
@@ -323,9 +326,10 @@ missing and stale strings. The CSV is made on demand and not committed.
 - an empty string;
 - a **stale** translation, whose `source.json` English differs from today's English: give the key a new name if the
   meaning changed, or run `npm run i18n -- accept <key>` if it did not;
-- a **released** language below **95%** of its app's strings (§11.1's rule).
+- a **released** language with less than **95%** of its app's strings **present** (machine translations count; owner
+  decision 2026-11-25, replacing "95% checked").
 
-It **reports** (does not fail) the missing strings per language and app. These go in the next hand-off.
+It **reports** (does not fail) the missing strings per language and app. These go in the next machine-translation run.
 
 A feature adds about 1–3% new strings, so one feature never trips the 95% gate. The gate trips only when translation
 falls behind, which is when work should pause for it. Missing keys in code cannot happen: they are type errors.
@@ -351,7 +355,7 @@ files keyed by a stored language (the booking's `preferredLanguage` or the accou
 | Statuses, kinds, movements, audit actions | Web label maps | Keys (6b and the area rounds) |
 | Stored English descriptions (e.g. customer wallet `description`) | Shown | Label from the row's codes (`transactionType`, `referenceType`); `description` only as a fallback |
 | PDFs: bills (`invoicePdf.ts`), prescription dispensing copy | English | English in phase 6 (Q3) |
-| SMS notices and the `/j/` page | Phase 5 templates per language (§27.5.5; `/j/` in English and Hindi, SM16) | Phase 5 owns them. The phase 6 translators write the `as`, `bn` and `or` texts |
+| SMS notices and the `/j/` page | Phase 5 templates per language (§27.5.5; `/j/` in English and Hindi, SM16) | Phase 5 owns them. The `as`, `bn` and `or` texts are machine-made like the UI (§5.1) |
 | Sign-in code SMS and emails | English | English in phase 6 |
 | Push and in-app notifications (server-built reminders) | Not on the web yet | When built: stored as `{ type, params }` and worded by the app; push text from a server template file per language, by `uiLanguage` |
 
@@ -359,12 +363,12 @@ files keyed by a stored language (the booking's `preferredLanguage` or the accou
 
 Until the owner answers §8, the recommended answers are built.
 
-1. **No i18next.** An in-house typed catalogue in a new internal package `@jansetu/i18n` replaces §11.2's i18next,
-   parser and Tolgee/Weblate. Same `t(key, params)` shape, so a later move is mechanical.
-2. **Files.** English source in TypeScript; translations in JSON; CSV for translators. No translation server unless
-   the checkers ask for one.
-3. **Release gate.** A language shows in an app's switcher once that app's strings are ≥95% checked. Missing strings
-   show English. The check fails when a released language falls below 95%.
+1. ~~No i18next.~~ **Decided 2026-11-25:** i18next + react-i18next behind the same typed `t(key, params)` (§3.1). No
+   parser plugin and no Tolgee/Weblate.
+2. **Files.** English source in TypeScript; translations in JSON, made by IndicTrans2. No translation server.
+3. **Release gate (decided 2026-11-25).** A language shows in an app's switcher once ≥95% of that app's strings are
+   present (machine translations count; no checking). Missing strings show English. The check fails when a released
+   language falls below 95%.
 4. **Which language applies:** §3.7. The sign-in screen's choice this visit wins and is saved. Then the account's
    `uiLanguage`. Then, for customers, the booking language (applied, not saved). Then the device's last language,
    then the browser language, then English.
@@ -394,7 +398,8 @@ Until the owner answers §8, the recommended answers are built.
 
 ## 8. Questions for the owner
 
-1. **Who drafts and who checks each language?**
+1. **Answered 2026-11-25: machine only (IndicTrans2), no checker.** The question was: who drafts and who checks each
+   language?
    Recommended:
    - We draft with machine help from an agreed glossary.
    - One paid native-speaker checker per language with a health-care background (for example a pharmacist from a
@@ -403,7 +408,7 @@ Until the owner answers §8, the recommended answers are built.
    - Please name the checkers.
 2. **In which language is the patient's consent shown and recorded at a partner booking?**
    Recommended:
-   - The patient's chosen language when a checked consent text exists for it (the five first-wave languages); else the
+   - The patient's chosen language when a consent text exists for it (the five first-wave languages); else the
      screen's language.
    - `statementLanguage` records the language shown.
    - Each translated consent is approved by the legal reviewer before use (GATE-DPDP).
@@ -414,7 +419,8 @@ Until the owner answers §8, the recommended answers are built.
    Recommended: build them the same way (round 6j, one code path), but order their translation last. Admins see English
    for any admin text not yet translated.
 5. **Release each language when it is ready, or all five together?**
-   Recommended: per app and per language as soon as it passes the 95% check. Customer app first, Hindi likely first.
+   Recommended: per app and per language as soon as it passes the 95% check (95% present, 2026-11-25). Customer app
+   first, Hindi likely first.
 
 ## 9. Effort
 
@@ -437,10 +443,6 @@ Build days are for one builder; each round then gets one independent review (abo
 | 6k | 0.5–1 day per app and language (up to 8) | Import, smoke spec, 360 px check, fixes |
 | **Total** | **≈ 29 build days + ≈ 6 review days, then 4–8 days of releases** | §13's "L + translation time" |
 
-**Translation time** (estimate):
-- About 28,000 English words per language, about 112,000 for the four.
-- Machine-assisted drafts take about a day per language.
-- A careful native check runs about 2,500 words a day: about 3–4 days per language for the customer batch (6b + 6c,
-  about 8,500 words) and 10–11 days for everything.
-- With one checker per language in parallel: about 3 weeks from the last hand-off.
-- Professional translation from scratch instead adds about 2 weeks.
+**Translation time** (machine only, 2026-11-25): about 28,000 English words per language, about 112,000 for the four.
+An IndicTrans2 run takes hours, not weeks, so a language can be released as soon as its app's extraction rounds are
+done and the run has made 95% of its words. (The WQ30 estimate of about 3 weeks of native checking no longer applies.)

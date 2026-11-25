@@ -82,6 +82,20 @@ describe('t', () => {
     expect(t('collect', { amount: '₹5.00', who: 'Asha' })).toMatch(/^⟦Çöļļéçţ ₹5\.00 ƒŕöɱ Asha\. ~+⟧$/);
   });
 
+  it('inserts values exactly as given: no escaping, no second pass, no nesting, zero kept', () => {
+    expect(t('collect', { amount: 0, who: '<b>Asha & {who}</b> $t(title)' })).toBe('Collect 0 from <b>Asha & {who}</b> $t(title).');
+  });
+
+  it('uses only words shaped like their English (a plain text for a plural shows English)', async () => {
+    const odd = catalogue('test-shape', { n: { one: '{count} day', other: '{count} days' }, s: 'Day' } as const, {
+      './hi.json': async () => ({ default: { n: '{count} दिन', s: { one: 'x', other: 'y' }, extra: 'z' } }),
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await setLanguage('hi')).toBe(true);
+    expect(odd('n', { count: 2 })).toBe('2 days');
+    expect(odd('s')).toBe('Day');
+  });
+
   it('rich: text and elements in order; has: for keys made from codes', () => {
     const strong = { element: 'strong' };
     expect(t.rich('collect', { amount: strong, who: 'Asha' })).toEqual(['Collect ', strong, ' from ', 'Asha', '.']);

@@ -26,7 +26,8 @@ apps/customer       (W3) customer app, browser + Capacitor
 - Tokens: memory only on the web; secure storage only on native. Never write a token, OTP or patient data to
   `localStorage`, `sessionStorage`, logs or URLs.
 - No mock data in shipped code. Browser tests mock `/api/**` inside the test.
-- Words a person reads come from a catalogue (`t`, docs/I18N_PLAN.md §3.4); money and dates from `@jansetu/i18n` formats.
+- Words a person reads come from a catalogue (`t`, docs/I18N_PLAN.md §3.4; how: `packages/i18n/README.md`); money and
+  dates from `@jansetu/i18n` formats.
   Files still holding English are listed in `packages/i18n/literals-allowlist.txt`; that list only shrinks.
 - Keep secrets, `.env` files, patient records and uploaded documents out of Git.
 

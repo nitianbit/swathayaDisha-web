@@ -7,6 +7,7 @@
     "./tokens.css": "./src/tokens.css"
   },
   "dependencies": {
-    "@jansetu/i18n": "*"
+    "@jansetu/i18n": "*",
+    "react-i18next": "18.0.3"
   }
 }

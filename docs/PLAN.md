@@ -2268,6 +2268,30 @@ API gaps (none blocking):
 - The admin settlement list filters `ownerKind` by `partner | doctor` only, and shows a `*_referral` account's kind as its code
   (seen, not changed: phase 4e/4f).
 
+## WQ40 UI translation engine: i18next + react-i18next (2026-11-25, branch `wq40/react-i18next`)
+
+Owner decisions of 2026-11-25, recorded in [I18N_PLAN.md](I18N_PLAN.md) §1 items 7–9 and §3.1: use the open-source
+`i18next` + `react-i18next` instead of WQ31's in-house engine; translations are machine-made only (IndicTrans2), static
+JSON files, no human checker; a language is released once 95% of its app's words are **present** (was "checked").
+Nothing visible changes: English is byte-identical and the language list stays hidden (English only in `RELEASED`).
+
+- **Engine** (`packages/i18n/src/store.ts`, `index.ts`): one i18next instance; each catalogue is a namespace of flat keys
+  (`keySeparator`/`nsSeparator` off); `{name}` placeholders inserted as written (no escaping, nesting or second pass);
+  plurals stored as `key_one`/`key_other`; English fallback per word; only words shaped like their English entry are
+  loaded. i18next fetches nothing: `catalogue()` adds English, `setLanguage()` loads each catalogue's `<lang>.json` chunk
+  (as before) and then switches. The pseudo-language is an i18next language generated from English in development only
+  (not in either release bundle). The missing-word note (development, key only) reads i18next's `usedLng`.
+- **Same API for every builder:** `catalogue(name, en, import.meta.glob(...))` → typed `t(key, params)`, `t.rich`, `t.has`;
+  `setLanguage`, `chooseLanguage`, `startLanguage`, `getLanguage`, `subscribeLanguage`, the format module, `jansetu.lang`,
+  `RELEASED`, `LanguageScope`, `LanguageSwitcher`, `Parts` are unchanged in shape. Code written against 6a needs no change.
+- **React** (`packages/ui/src/language.tsx`): the instance is registered with react-i18next (`setI18n`, no provider needed)
+  and `useLanguage()` is `useTranslation()` (no Suspense; it also renders again when words are added, so a catalogue
+  loaded late shows its words).
+- **Dependencies (owner-approved):** `i18next` 27.2.7 in `@jansetu/i18n` (still React-free, so `@jansetu/api` can use it)
+  and `react-i18next` 18.0.3 in `@jansetu/ui`, pinned. No other package.
+- **Gate:** `catalogues.test.ts` still fails on extra, misshapen, empty, misplaced or stale words; a released language needs
+  95% present (machine translations count). `packages/i18n/README.md` tells builders how to extract a string.
+
 ## Follow-ups
 
 

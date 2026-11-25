@@ -8,7 +8,7 @@ export type ProblemKind = 'extra' | 'shape' | 'plural' | 'empty' | 'placeholders
 export interface Problem { key: string; kind: ProblemKind }
 export interface CheckResult {
   problems: Problem[];
-  /** English keys, and how many have a usable translation. */
+  /** English keys, and how many have a usable translation (present, well formed and current: the release gate). */
   total: number;
   translated: number;
   missing: string[];

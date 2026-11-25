@@ -9,8 +9,9 @@ import { LANGUAGES, RELEASED, type AppName } from './languages.ts';
 
 /**
  * Every catalogue in the repo (docs/I18N_PLAN.md §5.4): no extra keys, the same placeholders, the language's plural
- * forms, no empty or stale translation, and each released language at least 95% translated in its app. Missing words
- * are reported, not failed: they show in English and go in the next hand-off.
+ * forms, no empty or stale translation, and each released language with at least 95% of its app's words present
+ * (machine translations count; nobody checks them by hand, owner decision 2026-11-25). Missing words are reported, not
+ * failed: they show in English and go in the next machine-translation run.
  */
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const SOURCES = ['packages/ui/src', 'packages/api/src', 'apps/customer/src', 'apps/workspace/src'];
@@ -38,7 +39,7 @@ describe('catalogues', () => {
     expect(dirs.map((d) => relative(ROOT, d))).toContain(join('packages', 'ui', 'src', 'i18n'));
   });
 
-  it('have no extra, misshapen, empty, stale or wrongly placed words, and released languages are 95% there', async () => {
+  it('have no extra, misshapen, empty, stale or wrongly placed words, and released languages are 95% present', async () => {
     const problems: string[] = [];
     const coverage = new Map<string, { total: number; translated: number }>();
     for (const dir of dirs) {
@@ -68,7 +69,7 @@ describe('catalogues', () => {
     for (const app of APPS) {
       for (const lang of RELEASED[app].filter((l) => l !== 'en')) {
         const c = coverage.get(`${app}:${lang}`) ?? { total: 1, translated: 0 };
-        if (c.translated < 0.95 * c.total) problems.push(`${app} ${lang}: released but only ${c.translated} of ${c.total} words translated`);
+        if (c.translated < 0.95 * c.total) problems.push(`${app} ${lang}: released but only ${c.translated} of ${c.total} words present`);
       }
     }
     expect(problems).toEqual([]);

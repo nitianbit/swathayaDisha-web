@@ -1,10 +1,14 @@
-import { Fragment, useId, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { chooseLanguage, getLanguage, isLang, languageName, offeredLanguages, subscribeLanguage, type UiLang } from '@jansetu/i18n';
+import { Fragment, useId, useState, type ReactNode } from 'react';
+import { setI18n, useTranslation } from 'react-i18next';
+import { chooseLanguage, i18n, isLang, languageName, offeredLanguages, type UiLang } from '@jansetu/i18n';
 import { t } from './i18n/index.ts';
 
-/** The current UI language; a component using it renders again when it changes. */
+// The app's one i18next instance for react-i18next's hooks, so no provider is needed (screens and tests render bare).
+setI18n(i18n);
+
+/** The current UI language; a component using it renders again when it changes (react-i18next). */
 export function useLanguage(): UiLang {
-  return useSyncExternalStore(subscribeLanguage, getLanguage);
+  return useTranslation().i18n.language as UiLang;
 }
 
 /**
