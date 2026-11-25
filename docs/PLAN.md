@@ -2264,6 +2264,44 @@ Nothing visible changes: English stays byte-identical and no language list shows
   (166). For the integrator: merging WQ22 adds its new files with English (`assistedInstant.ts`, and its `ConsultNowScreen.tsx`
   unless it is the doctor's, already listed) to the allowlist, and any `Intl` money call it adds goes to `formatPaise`.
 
+## WQ26 referral cuts: the admin's rules per partner, the pharmacy's referral earnings (phase 4a/4b web) (2026-11-25, branch `wq26/referral-cuts`)
+
+Backend: r24 on stage `6a8574e9` (ASSISTED_BOOKING_DESIGN.md §26.5, §26.6, §26.15; `src1/modules/referralCuts`). Web base:
+`wq/stage-next-2` 13333e9. Behind `REFERRAL_CUTS_ENABLED` (off by default: rules are saved, nothing is cut); the rule PUT needs
+`ASSISTED_ADMIN_TOOLS_ENABLED`; payouts stay off (`REFERRAL_PAYOUTS_ENABLED`, O1), so earnings show as due. Doctor cuts stay off:
+no screen sets them. Owner rules: the cut is paid TO the booking partner, per partner and per category, as a % of each line or a
+fixed amount per line, taken FROM the provider's earning; a percent is at most 50%, a fixed amount has no upper limit.
+
+- **Admin › Pharmacies › a pharmacy › Referral cuts** (`/admin/pharmacies/:pharmacyId/referral-cuts`) and **Admin › Labs and
+  clinics › a lab › Referral cuts** (`/admin/partners/:partnerId/referral-cuts`; a clinic is told cuts are for pharmacies and
+  labs): one row per category (consultation, lab test, lab package) with the rule as saved (Off / x% of each line with its
+  optional cap / ₹y a line), when it changed and its version, and Edit. The editor: Off, a percent of each line (0.01–50, two
+  decimals, optional cap ≥ ₹0.01) or a fixed amount per line (≥ ₹0.01, no upper limit, no cap); Off sends the saved terms with
+  `isActive: false`. Save opens `ConfirmAction` with the reason the history keeps, bound to the terms and the version it was
+  made from (`expectedVersion`, 0 = create). 409 RECORD_CHANGED: nothing saved, the rules are read again ("Saved now: …") and
+  the editor keeps what was typed on the new version. Sent with the owned PendingOp (`useOwnedOp` / `CheckPanel`): a lost answer
+  is checked by reading the rules (a newer version with the same terms is the change; the same version is not saved yet, and
+  sending it again is safe because the fence lets one attempt through). "Referral cuts are switched off; rules are saved but not
+  applied." shows while an active rule is not `effective`. History: the three categories' events, newest first, with the
+  reason and who.
+- **Pharmacy › Referral earnings** (`/pharmacy/referral`, in the side bar): Due / Earned / Paid to you
+  (`GET /pharmacy-assisted/referral`), "Payouts start once Jansetu switches them on." while `payoutsEnabled` is false, the rates
+  read only (`/referral-rules`), and the statement (date, short ref, category, base, cut; no patient names) in cursor pages
+  (`/referral/statement?before&limit`). Read only.
+- **Shared, not copied**: `ConfirmAction`, `useOwnedOp` / `CheckPanel`, `useOneAtATime`, `useCursorPages` / `CursorPager`,
+  `NoSuchRecord`, `useAdminScope`, the finance cards and `Signed`; money with `formatPaise`; rupees through `rupeesToPaise` /
+  `paiseToInput`. One new API module, `packages/api/src/referralCuts.ts` (`referralRulesAdminApi`, `pharmacyReferralApi`, the
+  draft → terms → body checks, the words, the statement row); its three new files are on the literals allowlist (172).
+
+API gaps (none blocking):
+- No answer carries the master switch: the screens read it from `effective` of an active rule, so with no active rule the page
+  cannot tell (nothing is cut either way).
+- Statement lines carry neither the short ref nor the category as fields (§26.6.2 lists them; r24 added `grossMinor` /
+  `commissionMinor`): the ref is read from the server's words ("… · Ref ABCD2345") and the category from `source` (a lab
+  booking is one row for all its lines). The pharmacy referral statement has no CSV route.
+- The admin settlement list filters `ownerKind` by `partner | doctor` only, and shows a `*_referral` account's kind as its code
+  (seen, not changed: phase 4e/4f).
+
 ## Follow-ups
 
 
@@ -2402,3 +2440,4 @@ Nothing visible changes: English stays byte-identical and no language list shows
 | 2026-11-16 | WC1 review round 2 | Codex WC1 re-review: 2 MEDIUM (older/left-page create success consumed a newer attempt's request; a coupon dropped by an automatic re-check auto-accepted the higher price). Fixed. typecheck clean; Vitest 89/89; Playwright customer 200/200 (new: out-of-order answers across remounts keep the newer attempt and complete it once; coupon dropped by re-check requires accepting the higher price, labs and Consult now); release build with VITE_API_BASE_URL=https://api.example.test. |
 | 2026-11-25 | WQ31 UI translation round 6a (foundation) | typecheck clean (now with `packages/i18n`); Vitest 449/449 (+27: placeholders, plurals, per-word English fallback, loading and the last switch winning, pseudo, start-up and choice storage, formats byte-identical to the old helpers in English with Latin digits elsewhere, the catalogue check, the literal scan, switcher/scope/parts); Playwright workspace 900/900 and customer 270/270 (+4 each: English by default with no language list and nothing stored; a kept language not offered is ignored), all on temporary ports 5476/5477 with `reuseExistingServer: false`, configs deleted; both builds with `VITE_API_SAME_ORIGIN=true` (no pseudo-language in either bundle). |
 | 2026-11-25 | WQ31 6a merged with `wq/stage-next` bd0df6c (branch `wq31/i18n-merged`) | typecheck clean; Vitest 471/471; Playwright workspace 942/942 on temporary port 5486 (`reuseExistingServer: false`, config deleted); both builds with `VITE_API_SAME_ORIGIN=true` (no pseudo-language in either bundle). Lab desk and lab wallet money through `formatPaise` (English unchanged); 7 new files allowlisted (166). |
+| 2026-11-25 | WQ26 referral cuts, phase 4a/4b web (on `wq/stage-next-2` 13333e9) | Against r24 on stage 6a8574e9 (§26.5, §26.6, §26.15; mocked API). typecheck clean; Vitest 488/488 (+10 in referralCuts.test.ts: percent typed → basis points 1–5000 without floating point, fixed ≥ ₹0.01 with no upper limit and no cap, the optional cap, Off keeps the saved terms inactive, the PUT body checked again, the words, the switch read from `effective`, refusals and the before-writing 503s, the statement row's short ref and category, the routes with ids, kinds and cursors checked first); Playwright workspace 984/984 on temporary port 5513 (`reuseExistingServer: false`, config deleted; +12 = 6 journeys x 2 devices in referral-cuts.spec.ts: a % rule set and confirmed with a reason, sent as a create and shown with its history; a fixed rule for a lab, then a lost answer checked by reading the rules; a version conflict (409 RECORD_CHANGED) read again and sent on the new version; the switch-off note and turning a cut off; the pharmacy's earnings, rates and statement pages with nothing kept on the device; a pharmacy cannot reach the admin page); release build with `VITE_API_SAME_ORIGIN=true`. |

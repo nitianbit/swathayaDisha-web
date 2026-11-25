@@ -8,6 +8,7 @@ import { Banknote, Landmark, Wallet } from 'lucide-react';
 import { CalendarSearch, Store } from 'lucide-react';
 import { CalendarPlus } from 'lucide-react';
 import { TestTube, TestTubes } from 'lucide-react';
+import { HandCoins } from 'lucide-react';
 import { hasGlobalScope, holdsAny, type PartnerKind, type PartnerPermission } from '@jansetu/api';
 import type { StaffRole, StaffUser } from './session.tsx';
 import { AdminLabBookingsScreen } from './screens/admin/AdminLabBookingsScreen.tsx';
@@ -22,6 +23,7 @@ import { PharmacyWalletScreen, PharmacyWalletsScreen } from './screens/admin/Pha
 import { NewPartnerScreen } from './screens/admin/NewPartnerScreen.tsx';
 import { PartnerScreen } from './screens/admin/PartnerScreen.tsx';
 import { PartnersScreen } from './screens/admin/PartnersScreen.tsx';
+import { LabReferralCutsScreen, PharmacyReferralCutsScreen } from './screens/admin/ReferralCutsScreen.tsx';
 import { AuditScreen } from './screens/partner/AuditScreen.tsx';
 import { CatalogueScreen } from './screens/partner/CatalogueScreen.tsx';
 import { InvoiceScreen } from './screens/partner/InvoiceScreen.tsx';
@@ -63,6 +65,7 @@ import { PharmacyConsultNowScreen } from './screens/pharmacy/ConsultNowScreen.ts
 import { BookedConsultationScreen } from './screens/pharmacy/BookedConsultationScreen.tsx';
 import { BookedConsultationsScreen } from './screens/pharmacy/BookedConsultationsScreen.tsx';
 import { WalletScreen } from './screens/pharmacy/WalletScreen.tsx';
+import { ReferralEarningsScreen } from './screens/pharmacy/ReferralEarningsScreen.tsx';
 import { Truck } from 'lucide-react';
 import { PartnerFinanceScreen } from './screens/finance/PartnerFinanceScreen.tsx';
 import { PayoutsQueueScreen } from './screens/finance/PayoutsQueueScreen.tsx';
@@ -171,6 +174,11 @@ export const PAGES: readonly WorkspacePage[] = [
   {
     path: '/pharmacy/wallet', roles: ['pharmacy'], element: <WalletScreen />,
     nav: { label: 'Wallet', icon: Wallet, section: 'Pharmacy' },
+  },
+  // WQ26 (phase 4b): what the pharmacy's referral cuts earned, read only (`/pharmacy-assisted/referral*`).
+  {
+    path: '/pharmacy/referral', roles: ['pharmacy'], element: <ReferralEarningsScreen />,
+    nav: { label: 'Referral earnings', icon: HandCoins, section: 'Pharmacy' },
   },
   {
     path: '/pharmacy/orders', roles: ['pharmacy'], element: <OrdersScreen />,
@@ -283,6 +291,8 @@ export const PAGES: readonly WorkspacePage[] = [
   // WQ20 (r13): a lab's wallet for admins (`/admin/labs/:partnerId/wallet*`).
   { path: '/admin/partners/:partnerId/wallet', roles: ['admin'], element: <LabWalletAdminScreen /> },
   { path: '/admin/partners/:partnerId/finance', roles: ['admin'], element: <PartnerFinanceScreen /> },
+  // WQ26 (phase 4a): a lab's referral cuts (`/admin/referral-rules`, admins only).
+  { path: '/admin/partners/:partnerId/referral-cuts', roles: ['admin'], element: <LabReferralCutsScreen /> },
   { path: '/admin/partners/:partnerId/desk', roles: ['admin'], element: <DeskScreen /> },
   { path: '/admin/partners/:partnerId/clinic-doctors', roles: ['admin'], element: <ClinicDoctorsScreen /> },
   {
@@ -296,6 +306,8 @@ export const PAGES: readonly WorkspacePage[] = [
   },
   { path: '/admin/pharmacies/new', roles: ['admin'], element: <NewPharmacyScreen /> },
   { path: '/admin/pharmacies/:pharmacyId', roles: ['admin'], element: <PharmacyScreen /> },
+  // WQ26 (phase 4a): a pharmacy's referral cuts (`/admin/referral-rules`, admins only).
+  { path: '/admin/pharmacies/:pharmacyId/referral-cuts', roles: ['admin'], element: <PharmacyReferralCutsScreen /> },
   // WQ13: a pharmacy's wallet and the admin's manual credit (`/pharmacy-wallet?pharmacyId=`, `POST /pharmacy-wallet/topup` + Idempotency-Key).
   {
     path: '/admin/pharmacy-wallets', roles: ['admin'], element: <PharmacyWalletsScreen />,
