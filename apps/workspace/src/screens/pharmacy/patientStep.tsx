@@ -1,10 +1,13 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router';
 import {
-  ASSISTED_GENDERS, ASSISTED_RELATIONS, assistedRefusal, canonicalPhone, CONSENT_STATEMENT, EMPTY_PATIENT, familyBookedBefore, istToday, isSwitchedOff,
-  MAX_PERSON_NAME, patientProblems, pharmacyAssistedApi, type AssistedGender, type AssistedRelation, type PatientDraft, type PatientLookup,
+  ApiError, ASSISTED_GENDERS, ASSISTED_RELATIONS, assistedRefusal, canonicalPhone, CONSULT_MODE_LABEL, CONSENT_STATEMENT, doctorToolsApi, EMPTY_PATIENT, familyBookedBefore,
+  formatSlotDate, istToday, isSwitchedOff, MAX_PERSON_NAME, patientProblems, pharmacyAssistedApi, type AssistedGender, type AssistedRelation, type PatientDraft,
+  type PatientLookup, type Refusal,
 } from '@jansetu/api';
-import { Alert, Badge, Button, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, ErrorState, Loading, TextField } from '@jansetu/ui';
+import { messageOf } from '../../errors.ts';
 import { useSession } from '../../session.tsx';
 import type { Perform } from '../finance/finance.tsx';
 
@@ -14,7 +17,7 @@ import type { Perform } from '../finance/finance.tsx';
  * who the patient is (the owner, a family member booked before, a new family member), the "patient agreed" tick. The
  * phone stays in this state and in POST bodies: never in the address, storage or logs.
  */
-export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onChangePhone, lookupPatient }: {
+export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onChangePhone, lookupPatient, refusal = assistedRefusal }: {
   /** The booker's identity (the pharmacy's id, or for the WQ19 lab desk the workspace's identity). */
   pharmacyId: string;
   perform: Perform;
@@ -23,6 +26,8 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
    * are not offered (only a pharmacy has that list): a family member is typed by name.
    */
   lookupPatient?: (phone: string) => Promise<PatientLookup>;
+  /** WQ25: the booker's words for a refused lookup (a doctor's account, r26). */
+  refusal?: (err: unknown) => Refusal;
   /** Before a lookup (clears the page's notice). */
   onFind?: () => void;
   /** The lookup answered that booking for patients is switched off. */
@@ -61,7 +66,7 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
       setPatientErrors({});
     } catch (err) {
       if (isSwitchedOff(err)) { onSwitchedOff(); return; }
-      setPhoneError(assistedRefusal(err).message);
+      setPhoneError(refusal(err).message);
     }
   }
 
@@ -109,10 +114,10 @@ export type PatientStep = ReturnType<typeof usePatientStep>;
 
 /**
  * Step 1 of an assisted booking. `frozen`: the step cannot change now; `locked`: "Change patient details" is off.
- * WQ19: `booker` names who books ("pharmacy" or "lab") and `consent` the statement the tick attests.
+ * WQ19: `booker` names who books ("pharmacy" or "lab"; WQ25 "doctor": you) and `consent` the statement the tick attests.
  */
 export function PatientSection({ step, busy, frozen, locked, nextLabel = 'Next: choose the doctor', booker = 'pharmacy', consent = CONSENT_STATEMENT }: {
-  step: PatientStep; busy: boolean; frozen: boolean; locked: boolean; nextLabel?: string; booker?: 'pharmacy' | 'lab'; consent?: string;
+  step: PatientStep; busy: boolean; frozen: boolean; locked: boolean; nextLabel?: string; booker?: 'pharmacy' | 'lab' | 'doctor'; consent?: string;
 }) {
   const {
     phoneText, setPhoneText, phoneError, lookup, patient, setPatient, set, patientErrors, agreed, setAgreed, agreeError, setAgreeError,
@@ -204,7 +209,8 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = 'Next: 
             )}
             {patient.who !== 'self' && (
               <TextField label="Phone owner’s name (optional)" autoComplete="off" value={patient.holderName} maxLength={MAX_PERSON_NAME} error={patientErrors.holderName}
-                hint={`Only used the first time your ${booker} books on this number.`} onChange={(e) => set('holderName', e.target.value)} />
+                hint={booker === 'doctor' ? 'Only used the first time you book on this number.' : `Only used the first time your ${booker} books on this number.`}
+                onChange={(e) => set('holderName', e.target.value)} />
             )}
 
             <label className="rx-ack">
@@ -227,5 +233,90 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = 'Next: 
       )}
     </section>
 
+  );
+}
+
+// ── WQ25: the patient of the doctor's own consultation (backend r26, design §25.5.3) ──
+
+/**
+ * A doctor books for the patient of one of its consultations (`fromBookingId` + `typedName`): no phone is named, so no
+ * lookup is counted. The consultation is read (`GET /specialists/me/appointments/:id`, the booking only) to say which one;
+ * the server decides whether it is still open (its treating window). The name is typed by the doctor (the names rule: the
+ * account name is never shown); for a family member's consultation the server keeps the family member's own name.
+ */
+export function useConsultationPatient({ doctorId, fromBookingId }: { doctorId: string; fromBookingId?: string }) {
+  const { api } = useSession();
+  const consultation = useQuery({
+    queryKey: ['doctor', doctorId, 'lab-source', fromBookingId],
+    queryFn: () => doctorToolsApi(api).appointment(fromBookingId!),
+    enabled: !!fromBookingId,
+    retry: (n, err) => !(err instanceof ApiError && err.status >= 400 && err.status < 500) && n < 2,
+  });
+  const [name, setName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [agreed, setAgreed] = useState(false);
+  const [agreeError, setAgreeError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const typedName = name.trim().replace(/\s+/g, ' ');
+
+  function next(e: FormEvent) {
+    e.preventDefault();
+    setNameError(!typedName ? 'Type the patient’s name.' : typedName.length > MAX_PERSON_NAME ? `Use at most ${MAX_PERSON_NAME} characters.` : null);
+    setAgreeError(agreed ? null : 'Ask the patient, then tick this box. Without it you cannot book.');
+    if (!typedName || typedName.length > MAX_PERSON_NAME || !agreed) return;
+    setDone(true);
+  }
+  function reset() { setName(''); setNameError(null); setAgreed(false); setAgreeError(null); setDone(false); }
+
+  return { fromBookingId, consultation, name, setName, nameError, agreed, setAgreed, agreeError, setAgreeError, done, setDone, typedName, next, reset };
+}
+
+export type ConsultationPatient = ReturnType<typeof useConsultationPatient>;
+
+/** Step 1 when booking from a consultation; `walkInPath` books by mobile number instead. */
+export function ConsultationPatientSection({ step, frozen, locked, consent, walkInPath }: {
+  step: ConsultationPatient; frozen: boolean; locked: boolean; consent: string; walkInPath: string;
+}) {
+  const { consultation: q, name, setName, nameError, agreed, setAgreed, agreeError, setAgreeError, done, setDone, next } = step;
+  const b = q.data;
+  const missing = q.isError && q.error instanceof ApiError && q.error.status === 404;
+  return (
+    <section className="ws-section" aria-labelledby="pt-h">
+      <h2 id="pt-h">1. Patient</h2>
+      {q.isPending ? <Loading label="Loading the consultation…" />
+        : missing ? <Alert>This consultation was not found among yours.</Alert>
+        : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
+        : (
+          <p>
+            From your consultation on <strong>{formatSlotDate(b?.bookingDate)}, {b?.bookingTime}</strong>
+            {b?.consultationMode ? ` (${CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode})` : ''}{b?.dependentId ? ', for a family member' : ''}.
+          </p>
+        )}
+      <p className="ws-muted"><Link to={walkInPath}>Book for a patient by mobile number instead</Link></p>
+      {!missing && (
+        <form className="rx-form" noValidate onSubmit={next}>
+          <fieldset className="ws-frozen" disabled={frozen}>
+            <TextField label="Patient’s full name" autoComplete="off" value={name} maxLength={MAX_PERSON_NAME} error={nameError}
+              hint={b?.dependentId ? 'Type the name the patient tells you. For a family member, Jansetu keeps the name on their profile.' : 'Type the name the patient tells you.'}
+              onChange={(e) => setName(e.target.value)} />
+            <label className="rx-ack">
+              <input type="checkbox" checked={agreed} aria-describedby={agreeError ? 'agree-err' : 'agree-text'}
+                onChange={(e) => { setAgreed(e.target.checked); if (e.target.checked) setAgreeError(null); }} />
+              Patient agreed to this booking
+            </label>
+            <span id="agree-text" className="j-field__hint">{consent}</span>
+            {agreeError && <span id="agree-err" className="j-field__error" role="alert">{agreeError}</span>}
+          </fieldset>
+          {done ? (
+            <div className="ws-actions">
+              <Badge tone="ok">Patient ready</Badge>
+              <Button variant="ghost" disabled={locked} onClick={() => setDone(false)}>Change patient details</Button>
+            </div>
+          ) : (
+            <div><Button type="submit">Next: choose the lab</Button></div>
+          )}
+        </form>
+      )}
+    </section>
   );
 }

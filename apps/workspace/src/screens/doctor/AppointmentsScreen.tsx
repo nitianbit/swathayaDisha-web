@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router';
 import {
   ApiError, APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentInstant, appointmentRefusal, CONSULT_MODE_LABEL, doctorNoShowMove, fromYmd, isRealDate, istDateOf,
-  movableSlot, NO_SHOW_GRACE_MS, noShowSlotFits, schedulableBranches, sessionEndOf, type AppointmentAction, type DoctorAppointment, type DoctorSlot,
+  labBookableFrom, movableSlot, NO_SHOW_GRACE_MS, noShowSlotFits, schedulableBranches, sessionEndOf, type AppointmentAction, type DoctorAppointment, type DoctorSlot,
 } from '@jansetu/api';
 import { Alert, Badge, Empty, ErrorState, Loading, TextField, formatRupees } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
@@ -168,6 +169,8 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
     }
   };
   const clinic = !!(b.clinicVisit || b.clinicDesk);
+  // WQ25: a lab test for the patient of this consultation (the server checks its treating window).
+  const labLink = labBookableFrom(b, move.now);
   return (
     <tr>
       <td>{label}</td>
@@ -196,7 +199,7 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
             reread={move.reread} onNotice={move.onNotice} onFailure={move.onFailure}
             onSlotRefused={() => void queryClient.invalidateQueries({ queryKey: [...d.key, 'slots'] })} />
         )}
-        {actions.length === 0 ? (!showMove && noShowMove !== 'clinic' && <span className="ws-muted">—</span>) : (
+        {actions.length === 0 ? (!showMove && noShowMove !== 'clinic' && !labLink && <span className="ws-muted">—</span>) : (
           <div className="ws-actions">
             {actions.includes('confirm') && (
               <ConfirmAction label="Confirm" confirmLabel={`Confirm ${label}`}
@@ -219,6 +222,9 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
                 onConfirm={(reason) => run('cancelled', `${label} is cancelled${b.paymentStatus === 'paid' ? ' and the patient refunded in full' : ''}.`, reason)} />
             )}
           </div>
+        )}
+        {labLink && (
+          <div><Link to={`/doctor/lab-book/from/${b._id}`} aria-label={`Book lab test for this patient (${label})`}>Book lab test for this patient</Link></div>
         )}
       </td>
     </tr>

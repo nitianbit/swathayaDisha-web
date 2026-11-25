@@ -424,6 +424,19 @@ export function sessionEndOf(b: Pick<DoctorAppointment, 'bookingKind' | 'slotId'
   return endAt && endAt.getTime() > at.getTime() ? endAt : new Date(at.getTime() + (Number(s.duration) > 0 ? Number(s.duration) : 30) * 60_000);
 }
 
+/**
+ * WQ25 (r26, the treating window §25.9.1): whether "Book lab test for this patient" is offered on a consultation. The server
+ * decides (409 TREATING_WINDOW_CLOSED); this only leaves the link off where the window cannot be open: cancelled, a no-show,
+ * an unpaid booking still pending, or a scheduled one more than 10 minutes before its start.
+ */
+export function labBookableFrom(b: Pick<DoctorAppointment, 'status' | 'paymentStatus' | 'bookingKind' | 'bookingDate' | 'bookingTime'>, now: Date): boolean {
+  if (b.status === 'cancelled' || b.status === 'no_show') return false;
+  if (b.status === 'pending' && b.paymentStatus !== 'paid') return false;
+  if (b.bookingKind === 'instant') return true;
+  const at = appointmentInstant(b.bookingDate, b.bookingTime)?.at;
+  return !at || at.getTime() - 10 * 60_000 <= now.getTime();
+}
+
 /** `sessionEnd`: the end of the booking's session when it is in one (`sessionEndOf`); its no-show waits for it. */
 export function appointmentActions(b: DoctorAppointment, now: Date, sessionEnd: Date | null = null): AppointmentAction[] {
   const paid = b.paymentStatus === 'paid';
@@ -744,6 +757,9 @@ export function doctorToolsApi(c: ApiClient) {
         body: { slotId: checkId(slotId, 'slot'), requestKey, ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}) },
       }).catch((err: unknown) => { throw noShowModeRefusal(err); });
     },
+    /** WQ25: one of the doctor's consultations (`{ booking, patient }`); only the booking is kept (no patient details in the cache). */
+    appointment: async (id: string): Promise<DoctorAppointment> =>
+      (await c.get<{ booking: DoctorAppointment }>(`${ME}/appointments/${checkId(id, 'appointment')}`)).booking,
     setAppointmentStatus: (id: string, status: 'confirmed' | 'completed' | 'cancelled' | 'no_show', reason?: string) =>
       c.patch<DoctorAppointment>(`${ME}/appointments/${checkId(id, 'appointment')}/status`, {
         body: { status, ...(reason && reason.trim() ? { reason: reason.trim().slice(0, 500) } : {}) },

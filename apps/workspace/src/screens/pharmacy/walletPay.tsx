@@ -3,12 +3,13 @@ import { Link } from 'react-router';
 import { assistedRefusal, walletBalancePaise, walletState, type AssistedPaymentMethod, type Refusal } from '@jansetu/api';
 import { Alert, Button, ErrorState, formatRupees, Loading } from '@jansetu/ui';
 import { TopUpForm } from './topup.tsx';
-import { useWallet, walletHoldWords } from './WalletScreen.tsx';
+import { usePayerWallet, walletHoldWords, type WalletPayer } from './WalletScreen.tsx';
 
 /**
  * WQ17: paying an assisted booking from the pharmacy's Jansetu wallet (WQ12, moved here unchanged from Book consultation
  * so that Book lab test pays the very same way): the balance, a hold, the refusal with "Use the new price", the top-up in
- * place, and the one primary action.
+ * place, and the one primary action. WQ25: a doctor pays the same way from its own wallet (r20), adding money on its
+ * Wallet page.
  */
 
 /** Plain refusal words, adjusted when a coupon explains the new price. */
@@ -30,13 +31,13 @@ export function RefusalAlert({ refused, couponCode, onNewPrice }: { refused: Ref
   );
 }
 
-export function WalletPay({ pharmacyId, priceMinor, couponCode, refused, busy, onPay, onBack, onNewPrice, payLabel }: {
-  pharmacyId: string; priceMinor: number; couponCode?: string; refused: Refusal | null; busy: boolean;
+export function WalletPay({ payer, priceMinor, couponCode, refused, busy, onPay, onBack, onNewPrice, payLabel }: {
+  payer: WalletPayer; priceMinor: number; couponCode?: string; refused: Refusal | null; busy: boolean;
   onPay: () => void; onBack: () => void; onNewPrice: (priceMinor: number) => void;
   /** WQ22: the pay button's words (default "Pay ₹X from wallet"). */
   payLabel?: (amount: string) => string;
 }) {
-  const wallet = useWallet(pharmacyId);
+  const wallet = usePayerWallet(payer);
   const balance = walletBalancePaise(wallet.data);
   const hold = walletHoldWords(wallet.data);
   const short = wallet.data !== undefined && walletState(wallet.data) === 'ok' && balance < priceMinor;
@@ -57,11 +58,18 @@ export function WalletPay({ pharmacyId, priceMinor, couponCode, refused, busy, o
       {needTopUp && !hold && (
         <Alert tone="warn">
           {short ? `Your wallet needs ${formatRupees((priceMinor - balance) / 100)} more for this booking.` : 'Your wallet needs more money for this booking.'}
-          {' '}<Button variant="secondary" onClick={() => setShowTopUp(true)}>Top up now</Button>{' '}
-          or open the <Link to="/pharmacy/wallet">Wallet</Link> page (this booking is not kept if you leave).
+          {payer.kind === 'pharmacy' ? (
+            <>
+              {' '}<Button variant="secondary" onClick={() => setShowTopUp(true)}>Top up now</Button>{' '}
+              or open the <Link to="/pharmacy/wallet">Wallet</Link> page (this booking is not kept if you leave).
+            </>
+          ) : (
+            // WQ25: a doctor adds money on its own Wallet page (WQ23).
+            <>{' '}<Link to="/doctor/wallet">Add money</Link> on your Wallet page, then book again (this booking is not kept if you leave).</>
+          )}
         </Alert>
       )}
-      {showTopUp && <TopUpForm pharmacyId={pharmacyId} suggested={Math.max(1, (priceMinor - balance) / 100)} onCredited={() => void wallet.refetch()} />}
+      {showTopUp && payer.kind === 'pharmacy' && <TopUpForm pharmacyId={payer.id} suggested={Math.max(1, (priceMinor - balance) / 100)} onCredited={() => void wallet.refetch()} />}
       <span className="ws-muted">Collect {formatRupees(priceMinor / 100)} from the patient at your counter. If the booking is cancelled, the money comes back to your wallet.</span>
       <div className="confirm-actions">
         <Button busy={busy} disabled={!!hold || short || (refused?.kind === 'price')} onClick={onPay}>
@@ -114,7 +122,7 @@ export function PayChoice({ pharmacyId, priceMinor, couponCode, refused, busy, m
           </div>
         </>
       ) : (
-        <WalletPay pharmacyId={pharmacyId} priceMinor={priceMinor} couponCode={couponCode} refused={refused} busy={busy}
+        <WalletPay payer={{ kind: 'pharmacy', id: pharmacyId }} priceMinor={priceMinor} couponCode={couponCode} refused={refused} busy={busy}
           onPay={onPay} onBack={onBack} onNewPrice={onNewPrice} />
       )}
     </>

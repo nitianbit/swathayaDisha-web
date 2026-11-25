@@ -134,7 +134,7 @@ export { isNoShowMoveUsed, isSlotRefusal, NO_SHOW_MOVE_REFUSAL, noShowMovedOnce 
 export type { NoShowHistory } from './noShows.ts';
 // WQ4 doctor tools: names shared with finance.ts are exported with a Doctor prefix.
 export {
-  APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentStart, CONSULT_MINUTES, CONSULT_MODE_LABEL, CONSULT_MODES, doctorAdminApi, doctorClinicProblems,
+  APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentStart, labBookableFrom, CONSULT_MINUTES, CONSULT_MODE_LABEL, CONSULT_MODES, doctorAdminApi, doctorClinicProblems,
   doctorNoShowMove, doctorStanding, doctorToolsApi, MAX_DIRECTORY_SEARCH, movableSlot, sessionEndOf, noShowModeRefusal, noShowSlotFits, NO_SHOW_GRACE_MS, APPOINTMENT_REFUSAL, appointmentRefusal,
   DOCTOR_ROLLING_DAYS, EXTEND_MINUTES_MAX, fromYmd, HEARTBEAT_MS, INSTANT_FEE_MAX_MINOR, INSTANT_MODES, INSTANT_REFUSAL, instantRefusal,
   FINANCE_PAGE, LEDGER_KIND_LABEL as DOCTOR_LEDGER_KIND_LABEL, meetingLinkState, OFFER_MS, offerSecondsLeft, payoutDetailsProblems as doctorPayoutDetailsProblems, periodProblem, presenceProblems, PRESENCE_TTL_MS, SCHEDULE_MINUTES_MAX,
@@ -205,10 +205,12 @@ export type {
 export {
   cleanRecommendationCode, formatRecommendationCode, recommendationLookup, matchRecommended, pharmacyRecommendationsApi, recommendationRefusal, recommendationsOff,
   branchesFor, canCancelLab, LAB_BOOKER_CANCEL_CUTOFF_MS, LAB_SWITCHED_OFF_MESSAGE, labRefusal, labStatusLabel, labTotalMinor, pharmacyLabApi,
+  // WQ25: a doctor books lab tests (r26 phase 3b) on the same routes, by booker.
+  doctorLabApi, doctorLabBody, doctorLabRefusal, doctorRecommendationsApi, DOCTOR_LAB_CLOSED_MESSAGE, DOCTOR_LAB_CONSENT_STATEMENT, DOCTOR_LAB_CONSENT_VERSION,
 } from './assistedLab.ts';
 export type {
   TestRecommendation, AssistedLab, AssistedLabBranch, AssistedLabItem, AssistedLabSlot, LabAddress as AssistedLabAddress, LabBookingListStatus, LabBookingRequest, LabBookingView, LabByKeyAnswer,
-  LabCancelAnswer, LabReceipt,
+  LabCancelAnswer, LabReceipt, ConsultationSource, LabBookerKind, LabCreateRequest, LabPatientSource, LabRoutes,
 } from './assistedLab.ts';
 // WQ18: admin doctors (verify with the S5 fence, unverify) and the S5c admin close and refund of a consultation.
 export {

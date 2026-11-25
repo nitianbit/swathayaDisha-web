@@ -1,7 +1,7 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import {
-  assistedRefusal, idOf, keyOf, SLOW_WRITE_TIMEOUT_MS, type AssistedCardPayment, type AssistedPatient, type AssistedPaymentMethod, type BookingPayment,
-  type CardRefund, type Refusal, type RefundTo,
+  assistedRefusal, idOf, keyOf, MAX_PERSON_NAME, SLOW_WRITE_TIMEOUT_MS, type AssistedCardPayment, type AssistedPatient, type AssistedPaymentMethod, type BookingPayment,
+  type CardRefund, type PatientLookup, type Refusal, type RefundTo,
 } from './assisted.ts';
 import { LAB_BOOKING_STATUS_LABEL, type LabBookingStatus } from './partnerLabs.ts';
 import type { VisitMode } from './partnerInvoices.ts';
@@ -10,6 +10,8 @@ import type { VisitMode } from './partnerInvoices.ts';
  * WQ17: assisted booking phase 2a, a pharmacy books a lab test for a walk-in patient, paid from its Jansetu wallet
  * (backend r11 `m0/r11-phase2a` f5f171c9, design ASSISTED_BOOKING_DESIGN.md §24.11; routes `/pharmacy-assisted/labs*`,
  * `/pharmacy-assisted/lab-bookings*`). Money in paise. The phone travels only in POST bodies.
+ * WQ25: a verified doctor books the same way (backend r26 phase 3b, design §25.15; routes under `/specialists/me/assisted`,
+ * the doctor wallet only): the same routes and shapes, by booker.
  */
 
 export interface AssistedLabBranch { branchId: string; name: string; address?: string; phone?: string; homeCollection: boolean; inLab: boolean }
@@ -60,9 +62,10 @@ export interface LabBookingView {
   collector?: { name: string } | null;
   cancellation?: { reason?: string; byKind?: string; at?: string } | null;
   lifecycle?: Record<string, unknown>;
-  /** The family member's name, else the holder as this pharmacy may see them (typed, else masked). */
+  /** The family member's name, else the holder as this booker may see them (typed, else masked). */
   patientName?: string | null;
-  holder?: { pharmacyCustomerId: string | null; name: string | null; typedName?: string | null };
+  /** A pharmacy's link is `pharmacyCustomerId`; a doctor's (r26) `linkId`. */
+  holder?: { pharmacyCustomerId?: string | null; linkId?: string | null; name: string | null; typedName?: string | null };
   userId?: string;
   assisted?: { shortRef?: string; bookedBy?: { name?: string }; preferredLanguage?: string; disputed?: { state: string } };
   payment?: BookingPayment;
@@ -87,29 +90,76 @@ export interface LabCancelAnswer { booking: LabBookingView; refundedMinor: numbe
 export type LabBookingListStatus = LabBookingStatus;
 
 
-export function pharmacyLabApi(c: ApiClient) {
+/** WQ25: who books a lab test for a patient: a pharmacy (2a) or a verified, active doctor (r26 3b). */
+export type LabBookerKind = 'pharmacy' | 'doctor';
+const LAB_BASE: Readonly<Record<LabBookerKind, string>> = { pharmacy: '/pharmacy-assisted', doctor: '/specialists/me/assisted' };
+
+/** WQ25 (r26 §25.5.3): the doctor's patient from its own consultation inside its treating window (no phone, no lookup counted). */
+export interface ConsultationSource { fromBookingId: string; typedName: string }
+/** The patient of a create: a walk-in by phone (both bookers), or (a doctor only) its own consultation. Exactly one. */
+export type LabPatientSource = { phone: string; patient: AssistedPatient; holderName?: string } | ConsultationSource;
+export type LabCreateRequest = Omit<LabBookingRequest, 'phone' | 'patient' | 'holderName'> & LabPatientSource;
+
+/** The reads, by-key, cancel and accept of either booker: the same routes under its own base. */
+function labRoutes(c: ApiClient, kind: LabBookerKind) {
+  const base = LAB_BASE[kind];
   return {
-    /** Labs near the pharmacy first (`nearby`: its pincode, then its city), each with its active branches. */
-    labs: (q: { visitMode?: VisitMode; limit?: number } = {}) => c.get<AssistedLab[]>('/pharmacy-assisted/labs', { query: { ...q } }),
+    /** Labs near the booker first (`nearby`: its pincode, then its city), each with its active branches. */
+    labs: (q: { visitMode?: VisitMode; limit?: number } = {}) => c.get<AssistedLab[]>(`${base}/labs`, { query: { ...q } }),
     catalogue: (partnerId: string, visitMode?: VisitMode) =>
-      c.get<AssistedLabItem[]>(`/pharmacy-assisted/labs/${idOf(partnerId, 'lab')}/catalogue`, { query: visitMode ? { visitMode } : {} }),
+      c.get<AssistedLabItem[]>(`${base}/labs/${idOf(partnerId, 'lab')}/catalogue`, { query: visitMode ? { visitMode } : {} }),
     /** Bookable times (at least 60 minutes ahead) for one branch and visit mode, `days` (1–14) from `from` (YYYY-MM-DD). */
     slots: (branchId: string, q: { visitMode: VisitMode; from?: string; days?: number }) =>
-      c.get<AssistedLabSlot[]>(`/pharmacy-assisted/labs/branches/${idOf(branchId, 'branch')}/slots`, { query: { ...q } }),
-    book: (body: LabBookingRequest) => c.post<LabReceipt>('/pharmacy-assisted/lab-bookings', { body, timeoutMs: SLOW_WRITE_TIMEOUT_MS }),
+      c.get<AssistedLabSlot[]>(`${base}/labs/branches/${idOf(branchId, 'branch')}/slots`, { query: { ...q } }),
     /** Newest first, cursor-paged (`pagination.nextCursor`), 1–50 a page; `from`/`to` filter the slot date. */
     bookings: (q: { status?: LabBookingListStatus; from?: string; to?: string; cursor?: string; limit?: number } = {}): Promise<Page<LabBookingView>> =>
-      c.page<LabBookingView>('/pharmacy-assisted/lab-bookings', { query: { ...q } }),
-    booking: (id: string) => c.get<LabBookingView>(`/pharmacy-assisted/lab-bookings/${idOf(id, 'booking')}`),
-    byKey: (key: string) => c.get<LabByKeyAnswer>(`/pharmacy-assisted/lab-bookings/by-key/${keyOf(key)}`),
-    abandon: (key: string) => c.post<LabByKeyAnswer>(`/pharmacy-assisted/lab-bookings/by-key/${keyOf(key)}/abandon`),
+      c.page<LabBookingView>(`${base}/lab-bookings`, { query: { ...q } }),
+    booking: (id: string) => c.get<LabBookingView>(`${base}/lab-bookings/${idOf(id, 'booking')}`),
+    byKey: (key: string) => c.get<LabByKeyAnswer>(`${base}/lab-bookings/by-key/${keyOf(key)}`),
+    abandon: (key: string) => c.post<LabByKeyAnswer>(`${base}/lab-bookings/by-key/${keyOf(key)}/abandon`),
     /** Before 1 hour to the slot, or any time while a new time from the lab is unanswered; the refund goes to the wallet. */
     cancel: (id: string, body: { reason?: string; expectedVersion?: number; refundTo?: RefundTo }) =>
-      c.post<LabCancelAnswer>(`/pharmacy-assisted/lab-bookings/${idOf(id, 'booking')}/cancel`, { body }),
+      c.post<LabCancelAnswer>(`${base}/lab-bookings/${idOf(id, 'booking')}/cancel`, { body }),
     /** `version`: the `reschedule.version` shown. */
     acceptReschedule: (id: string, version: number) =>
-      c.post<LabBookingView>(`/pharmacy-assisted/lab-bookings/${idOf(id, 'booking')}/accept-reschedule`, { body: { version } }),
+      c.post<LabBookingView>(`${base}/lab-bookings/${idOf(id, 'booking')}/accept-reschedule`, { body: { version } }),
   };
+}
+export type LabRoutes = ReturnType<typeof labRoutes>;
+
+export function pharmacyLabApi(c: ApiClient) {
+  return {
+    ...labRoutes(c, 'pharmacy'),
+    book: (body: LabBookingRequest) => c.post<LabReceipt>('/pharmacy-assisted/lab-bookings', { body, timeoutMs: SLOW_WRITE_TIMEOUT_MS }),
+  };
+}
+
+/**
+ * WQ25 (r26, §25.15): a verified, active doctor's lab bookings (403 `SPECIALIST_NOT_VERIFIED` otherwise, reads included).
+ * The create takes exactly one patient source and the wallet (card is round 3c): both checked before sending.
+ */
+export function doctorLabApi(c: ApiClient) {
+  const base = LAB_BASE.doctor;
+  return {
+    ...labRoutes(c, 'doctor'),
+    /** POST: the phone stays in the body. Answers the masked holder name only (counted, 120 an hour). */
+    lookup: (phone: string) => c.post<PatientLookup>(`${base}/patients/lookup`, { body: { phone } }),
+    book: (body: LabCreateRequest) => c.post<LabReceipt>(`${base}/lab-bookings`, { body: doctorLabBody(body), timeoutMs: SLOW_WRITE_TIMEOUT_MS }),
+  };
+}
+
+/** The doctor's create body: one patient source (`fromBookingId` + `typedName`, or a phone), paid from the wallet. */
+export function doctorLabBody(body: LabCreateRequest): LabCreateRequest {
+  keyOf(body.requestKey);
+  if (body.paymentMethod !== 'wallet') throw new Error('A doctor pays lab tests from the wallet');
+  const b = body as Partial<ConsultationSource> & { phone?: string; patient?: unknown };
+  if (b.fromBookingId !== undefined) {
+    idOf(b.fromBookingId, 'consultation');
+    const name = String(b.typedName ?? '').trim();
+    if (!name || name.length > MAX_PERSON_NAME) throw new Error('Invalid patient name');
+    if (b.phone !== undefined || b.patient !== undefined) throw new Error('One patient source only');
+  } else if (!b.phone || !b.patient) throw new Error('A patient is needed');
+  return body;
 }
 
 // ── Rules and words for the screens ──
@@ -158,6 +208,28 @@ export function labRefusal(err: unknown): Refusal {
   return known ?? shared;
 }
 
+// ── WQ25: a doctor books (backend r26 phase 3b, design §25.15) ──
+
+/** Every doctor route needs a verified, active doctor (403 `SPECIALIST_NOT_VERIFIED`): said plainly, nothing else shown. */
+export const DOCTOR_LAB_CLOSED_MESSAGE = 'Booking lab tests for your patients opens once Jansetu has verified your account and it is active.';
+/** The consent a doctor attests; the version names this exact sentence (a change of words is a new version). */
+export const DOCTOR_LAB_CONSENT_VERSION = 'web-doctor-lab-v1';
+export const DOCTOR_LAB_CONSENT_STATEMENT =
+  'The patient (or a family member with them) agreed that this doctor books these lab tests for them on Jansetu; that an account is made for their mobile number if it has none; that their name and mobile number are shared with Jansetu and the lab; and that this doctor can see the released report for 90 days.';
+
+const DOCTOR_LAB_WORDS: Readonly<Record<string, Refusal>> = {
+  SPECIALIST_NOT_VERIFIED: { kind: 'other', message: DOCTOR_LAB_CLOSED_MESSAGE },
+  // `fromBookingId`: another doctor's consultation, a missing one, an unpaid card booking or one reported "not mine".
+  BOOKING_NOT_FOUND: { kind: 'patient', message: 'This consultation was not found among yours. Book for the patient by their mobile number instead.' },
+  TREATING_WINDOW_CLOSED: { kind: 'patient', message: 'This consultation is not open for booking tests now (it is open while you treat the patient). Book for the patient by their mobile number instead.' },
+  PAYMENT_METHOD_UNAVAILABLE: { kind: 'other', message: 'Lab tests you book are paid from your Jansetu wallet.' },
+};
+/** The doctor's words first (its account, its consultation, its wallet only), then the lab and shared words. */
+export function doctorLabRefusal(err: unknown): Refusal {
+  const known = err instanceof ApiError && err.code ? DOCTOR_LAB_WORDS[err.code] : undefined;
+  return known ?? labRefusal(err);
+}
+
 // ── WQ21: the recommended-tests code (backend r16 phase 3d, design §25.12.4) ──
 
 /** `POST /pharmacy-assisted/recommendations/lookup {code, phone}` (r16b): the test names the doctor advised, and nothing else. */
@@ -185,6 +257,10 @@ export function recommendationLookup(c: ApiClient, path: string) {
 export function pharmacyRecommendationsApi(c: ApiClient) {
   return { load: recommendationLookup(c, '/pharmacy-assisted/recommendations/lookup') };
 }
+/** WQ25: the doctor's own route (r16b, a verified, active doctor). */
+export function doctorRecommendationsApi(c: ApiClient) {
+  return { load: recommendationLookup(c, `${LAB_BASE.doctor}/recommendations/lookup`) };
+}
 
 const sameName = (n: string) => n.trim().replace(/\s+/g, ' ').toLowerCase();
 /** The catalogue items named exactly as a recommended test (case and spaces aside), and the names this lab does not list. */
@@ -206,11 +282,12 @@ const REC_WORDS: Readonly<Record<string, string>> = {
 };
 /**
  * The field is hidden: the switch is off (503 `RECOMMENDATIONS_DISABLED`, or a server without the route), or (WQ21b, the lab
- * desk) this workspace may not load them (403 `LAB_PARTNER_REQUIRED`, `PARTNER_NOT_VERIFIED`).
+ * desk) this workspace may not load them (403 `LAB_PARTNER_REQUIRED`, `PARTNER_NOT_VERIFIED`; WQ25 a doctor not verified
+ * and active, `SPECIALIST_NOT_VERIFIED`).
  */
 export const recommendationsOff = (err: unknown) => err instanceof ApiError
   && (err.code === 'RECOMMENDATIONS_DISABLED' || ((err.status === 404 || err.status === 503) && !err.code)
-    || (err.status === 403 && (err.code === 'LAB_PARTNER_REQUIRED' || err.code === 'PARTNER_NOT_VERIFIED')));
+    || (err.status === 403 && (err.code === 'LAB_PARTNER_REQUIRED' || err.code === 'PARTNER_NOT_VERIFIED' || err.code === 'SPECIALIST_NOT_VERIFIED')));
 export function recommendationRefusal(err: unknown): string {
   if (err instanceof ApiError && err.code && REC_WORDS[err.code]) return REC_WORDS[err.code]!;
   return assistedRefusal(err).message;

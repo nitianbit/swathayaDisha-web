@@ -5,7 +5,7 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 import { CursorPager, useCursorPages } from '../pharmacy/cursorList.tsx';
 import { DeviceTopups, ownerTopupSource, TopUpForm } from '../pharmacy/topup.tsx';
-import { WalletBalance, WalletHistory } from '../pharmacy/WalletScreen.tsx';
+import { usePayerWallet, WalletBalance, WalletHistory } from '../pharmacy/WalletScreen.tsx';
 
 /**
  * WQ23: the doctor's own Jansetu wallet (assisted booking round 3a, backend r20, design §25.12), on the very pieces the
@@ -30,7 +30,7 @@ function Wallet({ doctorId }: { doctorId: string }) {
   const { api } = useSession();
   const w = doctorWalletApi(api);
   const key = ['doctor-wallet', doctorId];
-  const wallet = useQuery({ queryKey: [...key, 'balance'], queryFn: () => w.wallet() });
+  const wallet = usePayerWallet({ kind: 'doctor', id: doctorId });
   const history = useCursorPages();
   const entries = useQuery({ queryKey: [...key, 'entries', history.cursor], queryFn: () => w.entries(history.cursor || undefined), enabled: !!wallet.data });
   const source = ownerTopupSource(w, 'doctor', doctorId, key);
