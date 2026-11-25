@@ -110,7 +110,7 @@ export type {
 export {
   ACCOUNT_NUMBER_PATTERN, ACCOUNTS_PAGE_MAX, DETAILS_STATE_LABEL, IFSC_PATTERN, isStatementCsv, istToday, PAGE_CURSOR_PATTERN, PAGE_LIMIT_MAX,
   LEDGER_KIND_LABEL, MAX_ACCOUNT_NAME, MAX_ACCOUNT_SEARCH, MAX_BANK_NAME, MAX_FINANCE_MINOR, MAX_FINANCE_REASON, MAX_PAYOUT_NOTE,
-  MAX_PAYOUT_REFERENCE, MAX_UPI_ID, MIN_FINANCE_REASON, MIN_REFERENCE, OWNER_KIND_LABEL, partnerFinanceApi, PAYOUT_METHOD_LABEL, PAYOUT_METHODS,
+  MAX_PAYOUT_REFERENCE, MAX_UPI_ID, MIN_FINANCE_REASON, MIN_REFERENCE, OWNER_KIND_LABEL, partnerFinanceApi, pharmacyPayoutApi, PAYOUT_METHOD_LABEL, PAYOUT_METHODS,
   PAYOUT_STATE_LABEL, payoutDetailsProblems, payoutProblems, PAYOUTS_LIMIT_MAX, reasonProblem, settlementsApi, STATEMENT_CURSOR_PATTERN,
   STATEMENT_PAGE_MAX, statementCsvName, UPI_ID_PATTERN,
 } from './finance.ts';
@@ -234,7 +234,7 @@ export {
   asMovement, asPharmacyWallet, LAB_ADMIN_TOPUP_MAX_MINOR, LAB_TOPUP_MAX_MINOR, LAB_TOPUP_MIN_MINOR, LAB_TOPUP_STATE_LABEL,
   LAB_WALLET_SWITCHED_OFF_MESSAGE, labTopupCheckable, labWalletApi,
   // WQ23: the doctor's wallet (r20) on the same routes and shapes.
-  adminOwnerWalletApi, DOCTOR_WALLET_CLOSED_MESSAGE, DOCTOR_WALLET_SWITCHED_OFF_MESSAGE, doctorWalletApi, isDoctorWalletClosed, ownerWalletRefusal,
+  adminOwnerWalletApi, chargebackLot, DOCTOR_WALLET_CLOSED_MESSAGE, DOCTOR_WALLET_SWITCHED_OFF_MESSAGE, doctorWalletApi, isDoctorWalletClosed, ownerWalletRefusal,
 } from './labWallet.ts';
 export type {
   LabTopupOrder, LabTopupRow, LabTopupState, LabWalletEntry, LabWalletLot, LabWalletView, OwnWalletApi, WalletOwner, WalletOwnerKind,
@@ -256,3 +256,12 @@ export type {
   ReferralBasis, ReferralBookerKind, ReferralCategory, ReferralDraft, ReferralDraftErrors, ReferralMode, ReferralRow, ReferralRule, ReferralRuleEvent,
   ReferralRuleInput, ReferralStatementLine, ReferralSummary, ReferralTerms,
 } from './referralCuts.ts';
+// WQ29: wallet withdrawals to the bank (r32 round 4d, switched off on the server) and the admin's Recover.
+export {
+  adminWithdrawalsApi, doctorWithdrawalsApi, isPaidReference, labWithdrawalsApi, pharmacyWithdrawalsApi, walletRecoverApi, weeklyWait,
+  withdrawalAmountProblem, withdrawalErrorCode, withdrawalErrorDetails,
+} from './walletWithdrawals.ts';
+export type {
+  AdminWithdrawal, DestinationState, PaidBody, PaidMethod, RecoverAnswer, WalletAfter, Withdrawable, Withdrawal, WithdrawalAnswer, WithdrawalByKey,
+  WithdrawalsApi, WithdrawalState,
+} from './walletWithdrawals.ts';

@@ -313,6 +313,17 @@ function checkVersion(v: number | undefined, what: string): number | undefined {
 const detailsBody = (body: PayoutDetailsInput, expectedDetailsVersion?: number) =>
   ({ ...body, ...(checkVersion(expectedDetailsVersion, 'details') !== undefined ? { expectedDetailsVersion } : {}) });
 
+/**
+ * WQ29 (r32 round 4d): the pharmacy's withdrawal destination, on its home account (opened by the first save; the Q5 versioned
+ * rules: any change waits for an admin's verification). Answers the account as the partner's PUT does.
+ */
+export function pharmacyPayoutApi(c: ApiClient) {
+  return {
+    setPayoutDetails: (body: PayoutDetailsInput, expectedDetailsVersion?: number) =>
+      c.put<SettlementAccount>('/pharmacy-assisted/finance/payout-details', { body: detailsBody(body, expectedDetailsVersion) }),
+  };
+}
+
 /** The partner's own finance (member with `finance.view` and partner-wide scope, or an admin acting as owner). */
 export function partnerFinanceApi(c: ApiClient, scope: PartnerScope) {
   const base = () => `${partnerWorkspaceBase(scope)}/finance`;

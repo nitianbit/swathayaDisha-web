@@ -33,6 +33,8 @@ export interface LabTopupOrder {
 export interface LabWalletLot {
   _id: string; paymentRecordId: string; amountMinor: number; gatewayFeeMinor?: number; feeState?: string; disputeState?: string; closed?: boolean;
   remainingMinor: number; withdrawableAfter?: string | null; createdAt: string;
+  /** WQ29 (r32): when the admin's Recover took the money back. */
+  chargedBackAt?: string | null;
 }
 
 /** The lab wallet in the shape the wallet screens show. */
@@ -118,6 +120,13 @@ export type WalletOwnerKind = 'lab' | 'doctor';
 export type WalletOwner = 'pharmacy' | WalletOwnerKind;
 const ADMIN_WALLET_BASE: Record<WalletOwnerKind, string> = { lab: '/admin/labs', doctor: '/admin/doctors' };
 
+/**
+ * The admin's record of a lost card dispute on one top-up lot (`POST /admin/wallet-lots/:lotId/chargeback`): r32 flags it
+ * only, for every wallet (the pharmacy's too): the money stops being withdrawable; taking it back is Recover (WQ29).
+ */
+export const chargebackLot = (c: ApiClient, lotId: string, reason: string) =>
+  c.post<{ flagged?: boolean; replayed?: boolean; message?: string }>(`/admin/wallet-lots/${checkId(lotId, 'lot')}/chargeback`, { body: { reason: reason.trim() } });
+
 export function adminOwnerWalletApi(c: ApiClient, kind: WalletOwnerKind) {
   const base = (ownerId: string) => `${ADMIN_WALLET_BASE[kind]}/${checkId(ownerId, kind).toLowerCase()}/wallet`;
   return {
@@ -149,8 +158,7 @@ export function adminOwnerWalletApi(c: ApiClient, kind: WalletOwnerKind) {
      * The existing chargeback of one top-up lot (`POST /admin/wallet-lots/:lotId/chargeback`): a lab's is flag only (D1:
      * the lot is no longer withdrawable, nothing is taken). Repeating it answers the flag again (`replayed`).
      */
-    chargebackLot: (lotId: string, reason: string) =>
-      c.post<{ flagged?: boolean; replayed?: boolean; message?: string }>(`/admin/wallet-lots/${checkId(lotId, 'lot')}/chargeback`, { body: { reason: reason.trim() } }),
+    chargebackLot: (lotId: string, reason: string) => chargebackLot(c, lotId, reason),
   };
 }
 

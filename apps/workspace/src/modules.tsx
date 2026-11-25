@@ -70,6 +70,7 @@ import { ReferralEarningsScreen } from './screens/pharmacy/ReferralEarningsScree
 import { Truck } from 'lucide-react';
 import { PartnerFinanceScreen } from './screens/finance/PartnerFinanceScreen.tsx';
 import { PayoutsQueueScreen } from './screens/finance/PayoutsQueueScreen.tsx';
+import { WithdrawalsScreen } from './screens/admin/WithdrawalsScreen.tsx';
 import { SettlementAccountScreen } from './screens/finance/SettlementAccountScreen.tsx';
 import { SettlementsScreen } from './screens/finance/SettlementsScreen.tsx';
 import { AppointmentsScreen } from './screens/doctor/AppointmentsScreen.tsx';
@@ -359,6 +360,11 @@ export const PAGES: readonly WorkspacePage[] = [
   {
     path: '/admin/payouts', roles: ['admin'], element: <PayoutsQueueScreen />,
     nav: { label: 'Payouts', icon: Banknote, section: 'Admin' },
+  },
+  // WQ29 (r32): wallet withdrawals to the bank (`/admin/wallet-withdrawals`): mark paid with the bank's reference, reject, void.
+  {
+    path: '/admin/withdrawals', roles: ['admin'], element: <WithdrawalsScreen />,
+    nav: { label: 'Withdrawals', icon: Banknote, section: 'Admin' },
   },
 ];
 

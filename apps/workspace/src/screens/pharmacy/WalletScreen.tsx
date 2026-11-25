@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import {
-  doctorWalletApi, movementLabel, pharmacyWalletApi, signedPaiseOf, walletBalancePaise, walletState, type Page, type PharmacyWallet, type WalletMovement,
+  doctorWalletApi, movementLabel, pharmacyPayoutApi, pharmacyWalletApi, pharmacyWithdrawalsApi, signedPaiseOf, walletBalancePaise, walletState, type Page, type PharmacyWallet, type WalletMovement,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
@@ -9,6 +9,7 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { usePharmacyId } from './ownedOp.tsx';
 import { TopUpForm } from './topup.tsx';
+import { WithdrawSection } from './withdrawals.tsx';
 
 /** WQ12: the pharmacy's Jansetu wallet (`GET /pharmacy-wallet`, `/transactions`): balance, hold, history, top-ups. */
 export function WalletScreen() {
@@ -70,6 +71,10 @@ function Wallet({ pharmacyId }: { pharmacyId: string }) {
         <h2 id="top-h">Add money</h2>
         <TopUpForm pharmacyId={pharmacyId} />
       </section>
+
+      {/* WQ29 (r32): withdrawals to the bank (switched off on the server until allowed); the destination is added here. */}
+      <WithdrawSection source={{ owner: `pharmacy:${pharmacyId}`, walletKey: ['pharmacy-wallet', pharmacyId], api: pharmacyWithdrawalsApi(api), canAct: true,
+        destination: { save: (body, version) => pharmacyPayoutApi(api).setPayoutDetails(body, version) } }} />
 
       <WalletHistory q={movements} empty="Top-ups, booking payments and refunds are listed here." pager={movements.data && movements.data.totalPages > 1 && (
         <nav className="ws-pager" aria-label="Wallet history pages">

@@ -2228,6 +2228,45 @@ wallet. Pharmacy and lab card flows unchanged (their specs pass as they were).
 API gaps: none blocking. `cardCheckProblem` says "This payment was not found for your pharmacy." for
 `PAYMENT_RECORD_NOT_FOUND`; a doctor reaches it only for another doctor's record (seen, not changed: pharmacy words).
 
+## WQ29 wallet withdrawals to the bank, and Recover (phase 4d web) (2026-11-25, branch `wq29/withdrawals`)
+
+Backend: r32 (`m0/r32-phase4cd` 23c28687, design ASSISTED_BOOKING_DESIGN.md §26.16.4; local, under review). Web base:
+`origin/stage` 3233a59. Behind `WALLET_WITHDRAWALS_ENABLED` (off by default: the section says "Withdrawals to your bank
+are not open yet." and offers nothing; a new request answers 503 `WITHDRAWALS_DISABLED`, said in words).
+
+- **"Withdraw to bank"** on the pharmacy's, a lab's and a doctor's wallet page (one piece, `pharmacy/withdrawals.tsx`
+  `WithdrawSection` with a `WithdrawalSource`: routes, the wallet's query key, who may act, where the destination is set).
+  What is withdrawable now and what becomes so later (card money 7 days after it was paid); the ₹500 minimum and one
+  withdrawal a week (the next date said; no form until then); the destination (masked) or, when missing, the pharmacy's
+  payout-details form here (the shared `PayoutDetailsForm`, `PUT /pharmacy-assisted/finance/payout-details`), a link to
+  Finance (lab) or Earnings (doctor); unverified: said. An amount → its quote (`GET …/withdrawable?amountMinor`) with the
+  fee line before confirming ("Card fee on unspent card money: ₹x. You receive ₹y of ₹z." or "No card fee. You receive ₹y.");
+  the request is one owned request with its key (a lost answer: checked by key, sent again, or given up with the abandon
+  route; after a reload only the key is kept); the list of requests (the server's fee line, state, the bank reference when
+  paid, the reason) with Cancel while one waits (fenced by its version). A lab member needs `wallet.manage` to ask or
+  cancel (`wallet.view` reads).
+- **Admin › Withdrawals** (`/admin/withdrawals`, oldest first, the waiting ones by default): Mark paid (bank transfer or
+  UPI, the bank's reference 4–64 characters, the day, a note; a second step that says what it means; one owned request with
+  its key: a lost answer is checked by reading the withdrawal or sent again), Reject and Void (a reason; fenced by the
+  version shown), each with a link to the owner's wallet.
+- **Recover** (r32 §26.8.4): the admin's card top-ups table (`admin/walletLots.tsx`, moved out of the lab/doctor wallet page
+  and now also on the pharmacy's, `GET /admin/pharmacies/:id/wallet/lots`): "Record a card dispute" (flag only, for every
+  wallet now) and then "Recover the money" (`POST /admin/wallet-lots/:lotId/recover`; taken from the balance, the rest owed,
+  the wallet put on hold; once per top-up, so a lost answer is read again and recovering again is safe); "Money taken back"
+  once done. The by-payment Recover (`/admin/wallet-payments/:id/recover`, for a top-up credited without a lot) is in the
+  api module; no screen lists such top-ups.
+- **i18n**: every new word is in `apps/workspace/src/i18n/withdrawals` (`workspace-withdrawals`); the moved lots words
+  are byte-identical. No file was added to the allowlist; the literal scan treats `scope` as technical (the WQ44 line). For
+  the integrator: the admin nav label "Withdrawals" is in `modules.tsx` as the other labels are on this base; WQ42 moves
+  labels to `labelKey`s.
+- **Shared, not copied**: `walletWithdrawals.ts` builds the three owners' routes from one function; `pharmacyPayoutApi` uses
+  the partner's destination body; `chargebackLot` is one function for every wallet; `PayoutDetailsForm` reads only the
+  destination and its version on its re-read (so the pharmacy's comes from its withdrawable answer).
+
+API gaps: (1) the pharmacy has no read of its home account, so its destination form starts empty and re-reads only the
+version (from `…/withdrawable`); (2) the withdrawable answer has no `quote` reason when the amount is not covered (above
+what is withdrawable is assumed); (3) no list of top-ups credited without a lot, so their Recover has no screen.
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -2414,6 +2453,7 @@ On WQ24 33439af. Against r21 (§24.17.3 "Admin": card refund rows add `payerKind
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ29 wallet withdrawals and Recover (phase 4d web, on stage 3233a59) | Against r32 23c28687 (§26.16.4; mocked API). typecheck clean; Vitest 511/511 (+4 in walletWithdrawals.test.ts: the three owners' routes from one base each, amounts, keys, ids, versions and cursors refused before any request, the admin queue bodies (reject and void fenced by the version, paid with the trimmed bank reference, its key and the destination version, no empty note), Recover by lot and by payment, the shared chargeback, the pharmacy's lots and payout-details PUT, and the rules: minimum, available, weekly wait, the reference, a refusal's safe details); the catalogue check and the literal scan pass with nothing allowlisted. Playwright workspace 1069 passed of 1070 (+20 = 10 journeys x 2: the quote's fee line, ask, list and cancel; below the minimum and above what is withdrawable said before asking; the weekly limit from the server; switched off; a lost answer checked by key after a reload; the pharmacy's payout details added here; the doctor's section; admin mark paid, reject and void; a lost "mark paid" checked by reading; the dispute flag then Recover on a pharmacy top-up) under `pw-slot.sh` with 2 workers on a temporary config (port 5559, deleted). The one failure is the known load-timing check stock-supply.spec.ts:1277 (tablet; as in WQ17c, WQ18b and WQ27): right after the 16:10 hold it failed 2 of 3, then passed 3/3 on this tree and 3/3 on the WQ28 tree without these changes. Release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ27 doctor pays a lab test by card or UPI (phase 3c web, on 292b22d) + WQ25 review items | Against r29 88e152ed (§25.16.4; mocked API). typecheck clean; Vitest 484/484 (doctorLab.test.ts: the card create is the same body with razorpay; a doctor's 403 at verify or reconcile has its own words while the pharmacy's 403 keeps CARD_BLOCKED_WORDS; the card switch is the shared card words); Playwright workspace 1007 passed of 1008 (+16 = 8 journeys x 2: pay by card from a consultation, Checkout closed then Pay now after asking the server, another device's authorized payment gives no second Checkout, cancel to the card, cancel to the wallet (not withdrawable, said before and after), card switched off falls back to the wallet, a lost cancel found as forfeited from the view's payment, the doctor lab switch off from a consultation shown at once; WQ25 journeys updated for r29: the card offered with the wallet as default, "Waiting for payment" in the filter, the doctor's collect words, no family-list loading text). The one failure is the known load-timing check in stock-supply.spec.ts:1277 (as in WQ17c and WQ18b), 6/6 alone. Temporary config on port 5514, `reuseExistingServer: false`, deleted; release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ25 doctor books a lab test (phase 3b web, on 13333e9) | Against r26 + r26b on stage 6a8574e9 (§25.15; mocked API). typecheck clean; Vitest 483/483 (+5 in doctorLab.test.ts: the reads, list, by-key, abandon, cancel and accept under /specialists/me/assisted with the pharmacy's paths unchanged; the lookup and the recommended-tests code with the phone in the body only; a create from a consultation with no phone and a walk-in by phone; a bad consultation id, two sources, no name, the card and a bad key refused before any request; the doctor's words (unverified, consultation not found, window closed, wallet only) with the lab and pharmacy words unchanged and the code field hidden for an unverified doctor; the appointment read keeps the booking only and `labBookableFrom`); Playwright workspace 992/992 (+20 = 10 journeys x 2: book from a consultation, a walk-in with the nav order, the treating window closed, low balance then Add money on Wallet, a lost answer found by key after a reload, cancel with the refund to the doctor wallet, accept a new time, open a released report, an unverified doctor on both pages, another doctor's booking not found; doctor-tools' nav count now 9) on a temporary config (port 5512, `reuseExistingServer: false`, deleted). A targeted run of the shared-piece specs earlier had 1 load-timing failure in pharmacy-extras.spec.ts:825 (admin wallet, untouched), 6/6 alone and green in the full run. Release build with VITE_API_SAME_ORIGIN=true. |
 | 2026-11-25 | WQ24b card refunds name their payer; WQ24 review must-fix (gated on data) and follow-ups, on 33439af | Against r21 (mocked API). typecheck clean; Vitest 491/491 (+4 in `wq24b.test.ts`: `payerWord`, `payerNameOf`, the payer's cause and agreement words with the pharmacy's unchanged, the reschedule refusal in the lab's words; `wq24.test.ts`: a missing permission on the lab's payment routes said as such); Playwright on temporary port 5512 (`reuseExistingServer: false`, config deleted): lab-consult, lab-desk, assisted-booking, card-booking, lab-wallet, admin* and partner-workspace 376/376, and partner-labs, lab-booking, consult-now and pharmacy-extras 184/184; +12 = 6 journeys x 2 (the two failed-refetch journeys fail on 33439af: the held card booking and the booking page's payment panel were unmounted); `VITE_API_SAME_ORIGIN=true npm run build --workspace apps/workspace` built. |

@@ -1,6 +1,6 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import { assistedRefusal, isSwitchedOff, type PharmacyWallet, type WalletMovement } from './assisted.ts';
-import type { WalletOwner } from './labWallet.ts';
+import type { LabWalletLot, WalletOwner } from './labWallet.ts';
 
 /**
  * WQ13 admin: a pharmacy's Jansetu wallet and the admin's manual credit (backend `src1/modules/pharmacyWallet`, q16
@@ -42,6 +42,8 @@ export function adminPharmacyWalletApi(c: ApiClient) {
   return {
     /** `GET /pharmacy-wallet?pharmacyId=`: null when the pharmacy has no wallet yet. */
     wallet: (pharmacyId: string) => c.get<PharmacyWallet | null>('/pharmacy-wallet', { query: { pharmacyId: pharmacyIdOf(pharmacyId) } }),
+    /** WQ29: the pharmacy's card top-ups as lots, newest first (at most 200), as a lab's or a doctor's. */
+    lots: (pharmacyId: string) => c.get<LabWalletLot[]>(`/admin/pharmacies/${pharmacyIdOf(pharmacyId)}/wallet/lots`),
     /** `GET /pharmacy-wallet/transactions?pharmacyId=`: newest first, page-numbered. */
     movements: (pharmacyId: string, page = 1, limit = ADMIN_TOPUP_PAGE_SIZE): Promise<Page<WalletMovement>> =>
       c.page<WalletMovement>('/pharmacy-wallet/transactions', { query: { pharmacyId: pharmacyIdOf(pharmacyId), page, limit } }),
