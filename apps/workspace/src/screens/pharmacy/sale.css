@@ -1,0 +1,10 @@
+/* WQ50 counter sale. Tokens only (packages/ui/src/tokens.css). */
+.sale-choices li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.sale .j-table .j-field { margin: 0; max-width: 7rem; }
+/* The bill alone on paper: everything else on the page is hidden when printing. */
+@media print {
+  body * { visibility: hidden; }
+  .sale-bill, .sale-bill * { visibility: visible; }
+  .sale-bill { position: absolute; inset: 0 auto auto 0; width: 100%; }
+  .sale-noprint { display: none; }
+}

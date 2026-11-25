@@ -2449,6 +2449,48 @@ Waiting for r35b: the admin wallet read's `referral` block (replaces the switch 
   for the degradation journey).
 - Typed only (no screen needs them): `requestedBy` on the admin's withdrawals.
 
+## WQ50 Pharmacy › New sale: a counter sale (2026-11-26, branch `wq50/pharmacy-sale`)
+
+From web stage 06daf52 with stage ebcbfd7 merged. Against backend stage 43f46f57 (`pharmacyOrders`, `pharmacyCustomers`,
+`file`), read in its code; the old app's `CreatePharmacyOrderScreen` sends the same create. Owner asleep: small decisions
+below are mine.
+
+- **One screen** (`/pharmacy/sale`, nav "New sale"; `screens/pharmacy/SaleScreen.tsx`, catalogue `i18n/sale`):
+  1. **Customer**: search this pharmacy's customers (`GET /pharmacy-customers?search`, the name it may show and the phone;
+     empty = latest), or **walk-in** by name and 10-digit phone with the patient's agreement ticked. The server has no
+     customer-less order (400 ORDER_PARTY_REQUIRED), so a walk-in is linked first (`POST /pharmacy-customers`, found or
+     made by phone, `consent: true`; safe to repeat) and the order is `isWalkIn: true` for that holder.
+  2. **Medicines** from active stock (`GET /pharmacy-inventory?isActive=true&search`, sellable = active, unexpired batch
+     units; no price sent: the server prices from the stock's retail price and adds tax).
+  3. **Prescription** (optional): a file uploaded to `/file/upload/pharmacy-order-prescription` (the old app's module), its
+     link in `prescriptionUrls`.
+  4. The one primary action **Create sale** (a check step first): `POST /pharmacy-orders` `{ orderType: 'in_store',
+     customerId, items: [{ medicineId, orderedQty }], paymentMode: 'in_store_payment', deliveryMode: 'pickup', isWalkIn,
+     prescriptionUrls? }`.
+  5. The created sale shows its **bill** (lines, subtotal, tax, total, paid or not; "Print the bill" prints the bill alone)
+     and takes the **counter payment**: Cash or UPI (`POST …/mark-paid { paymentSource: 'cash'|'upi' }`). An order with a
+     prescription medicine (P9: `prescriptionStatus: 'pending'`) is not offered Mark paid: it says the pharmacist approves
+     first and links the existing prescription review; a rejected one says to cancel it in Orders. "Open the order" leads to
+     the existing order page (cancel, status, returns).
+- **Owned request without a key:** the server refuses a request key on a plain create (400 REQUEST_KEY_UNSUPPORTED), so the
+  create is an owned request whose lost answer is **never sent again** (it would sell and take stock twice): Check reads
+  this customer's in-store orders (`?customerId&orderType=in_store`, newest first) and takes the one with the same lines
+  made since the attempt (2 min of clock slack); several, or none, are said; Forget is offered after a check. After a reload
+  only the key is kept: look in Orders. Mark paid is safe to repeat (an answer of ORDER_ALREADY_PAID is taken as done).
+- **No PII stored:** the customer's name and phone stay in the page; the stored request is body-less after a reload; the
+  bill's customer line is this page's own words (the order read does not apply the pharmacy-facing names rule).
+- Shared, not copied: `inventoryApi` (now with `isActive`, `retailPrice`), `sellableQty`, `medicineName`, `orderLabel`,
+  `CheckPanel`/`useOwnedOp`, `ConfirmAction`, the order page and the prescription review.
+- Decisions: the walk-in's agreement tick is required (the server would accept none, recording `not_recorded`); payment
+  is cash or UPI only (no card at the counter here); the estimate is before tax and the bill is the server's.
+
+API gaps (not changed): (1) **no request key on the in-store create** (only Rx-from-booking and checkout have one): a lost
+answer is found by a heuristic match, not exactly; (2) the inventory list does not send `medicineId.prescriptionRequired`,
+so a prescription medicine is known only once the order exists (its line's flag and `prescriptionStatus`); (3)
+`GET /pharmacy-orders/:id` does not apply the pharmacy-facing names rule the list applies, so the bill does not show the
+order's customer name from it; (4) the create has no way to say "already paid" (an in-store sale is always created
+unpaid, then marked paid). Cookie sessions need nothing new: every route is on the pharmacy's bearer token.
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -2788,6 +2830,7 @@ sign-in and a reload the page showed "Signing you in…" or the sign-in screen. 
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-26 | WQ50 Pharmacy › New sale (on stage ebcbfd7) | Against backend 43f46f57 (mocked API). typecheck clean; Vitest 529/529 (+3 in pharmacySale.test.ts: the routes and bodies with no price and no request key, the walk-in checks, the lost-sale match); Playwright pharmacy-sale 8/8 (4 journeys x desktop and tablet: a walk-in cash sale with its bill printed; a known customer with a prescription medicine and its file, not payable before the pharmacist; refusals checked before asking and the server's stock refusal; a lost answer found by Check, never resent) + orders, stock, prescription-review, pharmacy-extras 172/172 on a temporary config (port 5564, deleted); the full suite via pw-slot.sh runs on this commit (result in the report). |
 | 2026-11-25 | WQ48b part 2 (r35b 43f46f57 shapes, on c6a373a) | typecheck clean; Vitest 526/526; Playwright finance-4f + withdrawals 60/60 (+1 journey x 2: nothing due, no set-off offered; at most the smaller of owed and due; the older top-up marked recovered; a lab set-off entry's amount from its change of what is owed; no switch probe), finance + referral-cuts + lab-wallet + doctor-wallet + pharmacy-extras 156/156 on a temporary config (port 5563); the full suite via pw-slot.sh runs on this commit (result in the report). |
 | 2026-11-25 | WQ48b part 1 (on stage 984cc7f) and the full suite on WQ48 4ee5c9b | WQ48 4ee5c9b: full workspace suite 1120/1120 via pw-slot.sh (22.3 min, port 5562, temporary config deleted). WQ48b: typecheck clean; Vitest 526/526 (walletFinance.test.ts: a cleared owed amount is a debit, a lab set-off entry's amount from its receivable change or none); Playwright finance-4f + withdrawals 58/58 (+4 journeys x 2: against r35 nothing missing or NaN and no details form on a referral account; payouts on, the referral payout check names the home details; an unknown quote reason and a lab not verified; a resend refused for a changed fee, then checked by key and given up), and finance + referral-cuts + lab-wallet + doctor-wallet + pharmacy-extras + assisted-booking 196/196 on a temporary config (port 5563, deleted). |
 | 2026-11-25 | WQ48 the 4f finance screens (on 5ade2d5 + origin/stage 53e523e) | Against r35 bbd6a64b (§26.10, §26.18.3) and the r35b shapes (mocked API). typecheck clean; Vitest 525/525 (+5 in walletFinance.test.ts: the pharmacy finance and statement routes with cursor and period, `expectedTransferMinor` and the changed quote read from the refusal, `disputeAcknowledged` only when asked, the disputes, top-ups without a lot and set-off routes with their checks, the referral owner kinds and the set-off row's words); Playwright finance-4f (new) + withdrawals + referral-cuts + finance + lab-wallet + doctor-wallet + pharmacy-extras 206/206 on desktop and tablet (finance-4f 18 = 9 journeys x 2; withdrawals 32 (+6: the dispute acknowledged after the refusal, never offered without it, the quote reason, payout details refused while a withdrawal waits; the fee-changed and payout-details journeys rewritten for r35 and the Finance page); referral-cuts' two pharmacy journeys moved to Finance) on a temporary config (port 5561, deleted). The full workspace suite via pw-slot.sh is still to run. |

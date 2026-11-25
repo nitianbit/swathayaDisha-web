@@ -277,3 +277,6 @@ export { adminWalletFinanceApi, DISPUTE_STATES, pharmacyFinanceApi, WALLET_KINDS
 export type {
   DisputeState, FinanceStatementKind, PharmacyFinance, SetOff, SetOffAnswer, SetOffByKey, TopupWithoutLot, WalletDispute, WalletKind,
 } from './walletFinance.ts';
+// WQ50: the pharmacy's counter sale (a linked or walk-in customer, its stock, an optional prescription, paid at the counter).
+export { COUNTER_PAYMENTS, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, pharmacySaleApi, sameSale, walkInProblems } from './pharmacySale.ts';
+export type { CounterPayment, SaleAnswer, SaleBody, SaleCustomer, SaleLine } from './pharmacySale.ts';

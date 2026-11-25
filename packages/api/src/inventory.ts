@@ -29,6 +29,8 @@ export interface InventoryItem {
   reorderThreshold: number;
   rackLocation?: string;
   isActive?: boolean;
+  /** WQ50: what a customer pays per unit (the order is priced from it; rupees). */
+  retailPrice?: number;
   batches?: Batch[];
   /** How many active refill subscriptions need this medicine soon (low-stock list only). */
   upcomingRefills?: number;
@@ -107,8 +109,8 @@ const batchPath = (itemId: string, batchId: string) => {
 
 export function inventoryApi(c: ApiClient) {
   return {
-    list: (q: { search?: string; page?: number; limit?: number } = {}): Promise<Page<InventoryItem>> =>
-      c.page<InventoryItem>('/pharmacy-inventory', { query: { ...q, includeBatches: 'true' } }),
+    list: (q: { search?: string; page?: number; limit?: number; isActive?: boolean } = {}): Promise<Page<InventoryItem>> =>
+      c.page<InventoryItem>('/pharmacy-inventory', { query: { ...q, isActive: q.isActive === undefined ? undefined : String(q.isActive), includeBatches: 'true' } }),
     lowStock: (q: { page?: number; limit?: number } = {}) =>
       c.page<InventoryItem>('/pharmacy-inventory/low-stock', { query: { ...q, includeBatches: 'true' } }),
     qualityHolds: (q: { qualityStatus?: 'recalled' | 'quarantined' | 'expired'; page?: number; limit?: number } = {}) =>

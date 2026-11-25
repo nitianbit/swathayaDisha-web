@@ -19,6 +19,9 @@ export interface OrderItem {
   orderedQty: number;
   unitPrice: number;
   lineTotal: number;
+  /** The medicine's prescription flag when ordered (P9: any true line puts the order under pharmacist review). */
+  prescriptionRequired?: boolean;
+  gstPercent?: number;
   itemStatus?: 'active' | 'replaced' | 'removed';
   batchAllocations?: BatchAllocation[];
 }
@@ -78,6 +81,11 @@ export interface PharmacyOrder {
   status: OrderStatus;
   items: OrderItem[];
   grandTotal?: number;
+  /** WQ50: the bill's lines (rupees, as stored). */
+  subtotal?: number;
+  discountTotal?: number;
+  taxTotal?: number;
+  isWalkIn?: boolean;
   paymentStatus?: PaymentStatus;
   paymentMode?: PaymentMode;
   /** The online payment's record (customers check it with /payments/reconcile). */
