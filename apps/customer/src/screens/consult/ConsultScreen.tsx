@@ -6,13 +6,21 @@ import {
   instantConsultApi, instantPayableMinor, type CustomerInstantMode as InstantMode, type InstantPayment, type InstantTarget, type NewInstantRequest,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
-import { messageOf, PageHeading } from '../../common.tsx';
+import { messageOf, PageHeading, relationshipLabel } from '../../common.tsx';
+import { t } from '../../i18n/index.ts';
 import { PendingCreatePanel, useOnceOnly } from '../../onceOnly.tsx';
 import { payOrder } from '../../payments.ts';
 import { usePriceAgreement } from '../../priceAgreement.ts';
 import { useCustomer, useSession } from '../../session.tsx';
 
 const SLOT = 'instant-create';
+
+/** Per way of consulting: the empty list's title and what a request is for (whole phrases, not the mode's name inside). */
+const MODE_WORDS = {
+  video: { noneOnline: 'consult.noDoctorOnline.video', forDoctor: 'consult.requestFor.video.doctor', forAny: 'consult.requestFor.video.any' },
+  call: { noneOnline: 'consult.noDoctorOnline.call', forDoctor: 'consult.requestFor.call.doctor', forAny: 'consult.requestFor.call.any' },
+  chat: { noneOnline: 'consult.noDoctorOnline.chat', forDoctor: 'consult.requestFor.chat.doctor', forAny: 'consult.requestFor.chat.any' },
+} as const satisfies Record<InstantMode, unknown>;
 
 /** "Consult now": how and a speciality, an online doctor (or any available) at the quoted price, paid upfront. */
 export function ConsultScreen() {
@@ -32,7 +40,7 @@ export function ConsultScreen() {
     const path = `/consult/requests/${r.request._id}`;
     if (r.paymentRequired && r.payment) {
       try {
-        await payOrder(api, r.payment, payer, `Consultation now · ${r.request.specialization}`);
+        await payOrder(api, r.payment, payer, t('consult.payDescription', { speciality: r.request.specialization }));
       } catch (err) {
         if (alive()) navigate(path, { state: { paymentError: messageOf(err) } });
         return;
@@ -57,7 +65,7 @@ export function ConsultScreen() {
 
   function find(e: FormEvent) {
     e.preventDefault();
-    if (!speciality) { setSpecError('Choose a speciality.'); return; }
+    if (!speciality) { setSpecError(t('consult.specialityMissing')); return; }
     setSpecError(null);
     setSearch({ specialization: speciality, mode });
   }
@@ -65,32 +73,32 @@ export function ConsultScreen() {
   const locked = !!once.pending && (once.pending.restored || once.pending.uncertain || !once.busy);
   return (
     <>
-      <PageHeading title="Consult now">Talk to a doctor who is online now. You pay first; if nobody can take it, you get your money back in your wallet.</PageHeading>
-      <PendingCreatePanel once={once} kind="instant_request_create" what="consultation request" onFound={(id) => navigate(`/consult/requests/${id}`)}>
-        <Link to="/bookings">My bookings</Link>
+      <PageHeading title={t('common.consultNow')}>{t('consult.sub')}</PageHeading>
+      <PendingCreatePanel once={once} kind="instant_request_create" onFound={(id) => navigate(`/consult/requests/${id}`)}>
+        <Link to="/bookings">{t('common.myBookings')}</Link>
       </PendingCreatePanel>
       {!locked && (
         <>
           <form className="card stack" onSubmit={find} noValidate aria-labelledby="need-h">
-            <h2 id="need-h">What do you need?</h2>
+            <h2 id="need-h">{t('consult.need')}</h2>
             <fieldset className="choice">
-              <legend>How</legend>
+              <legend>{t('common.how')}</legend>
               {INSTANT_MODES.map((m) => (
                 <label key={m}><input type="radio" name="mode" checked={mode === m} onChange={() => { setMode(m); setSearch(null); }} /> {INSTANT_MODE_LABEL[m]}</label>
               ))}
             </fieldset>
-            {specialities.isPending ? <Loading label="Loading specialities…" />
+            {specialities.isPending ? <Loading label={t('consult.loadingSpecialities')} />
               : specialities.isError ? <ErrorState message={messageOf(specialities.error)} onRetry={() => void specialities.refetch()} />
-              : specialities.data.length === 0 ? <Empty title="No specialities available yet" />
+              : specialities.data.length === 0 ? <Empty title={t('consult.noSpecialities')} />
               : (
                 <div className="j-field">
-                  <label htmlFor="speciality">Speciality</label>
+                  <label htmlFor="speciality">{t('consult.speciality')}</label>
                   <select id="speciality" value={speciality} aria-invalid={specError ? true : undefined} aria-describedby={specError ? 'speciality-error' : undefined}
                     onChange={(e) => { setSpeciality(e.target.value); setSearch(null); setSpecError(null); }}>
-                    <option value="">Choose…</option>
+                    <option value="">{t('common.choose')}</option>
                     {specialities.data.map((x) => (
                       <option key={x.specialization} value={x.specialization}>
-                        {x.specialization} · {x.onlineNow > 0 ? `${x.onlineNow} online now` : 'nobody online now'}
+                        {x.specialization} · {x.onlineNow > 0 ? t('consult.onlineNow', { number: x.onlineNow }) : t('consult.nobodyOnlineNow')}
                       </option>
                     ))}
                   </select>
@@ -98,8 +106,8 @@ export function ConsultScreen() {
                 </div>
               )}
             <div className="row">
-              <Button type="submit" disabled={!specialities.data?.length}>See who is online</Button>
-              <Button variant="ghost" onClick={() => void specialities.refetch()}>Refresh</Button>
+              <Button type="submit" disabled={!specialities.data?.length}>{t('consult.seeOnline')}</Button>
+              <Button variant="ghost" onClick={() => void specialities.refetch()}>{t('common.refresh')}</Button>
             </div>
           </form>
           {search && <Doctors key={`${search.specialization}:${search.mode}`} search={search} once={once} quoteRefusals={quoteRefusals} />}
@@ -118,21 +126,21 @@ function Doctors({ search, once, quoteRefusals }: { search: { specialization: st
   const [target, setTarget] = useState<InstantTarget | null>(null);
   return (
     <section className="stack" aria-labelledby="online-h">
-      <h2 id="online-h">Online now</h2>
-      {doctors.isPending ? <Loading label="Finding doctors online…" />
+      <h2 id="online-h">{t('consult.onlineHeading')}</h2>
+      {doctors.isPending ? <Loading label={t('common.findingDoctors')} />
         : doctors.isError ? <ErrorState message={messageOf(doctors.error)} onRetry={() => void doctors.refetch()} />
         : doctors.data.length === 0 ? (
-          <Empty title={`No ${search.specialization} doctor is online for a ${INSTANT_MODE_LABEL[search.mode].toLowerCase()} right now`}>
-            <Button variant="secondary" onClick={() => void doctors.refetch()}>Check again</Button>
-            <Link to="/doctors">Book a doctor for later</Link>
+          <Empty title={t(MODE_WORDS[search.mode].noneOnline, { speciality: search.specialization })}>
+            <Button variant="secondary" onClick={() => void doctors.refetch()}>{t('common.checkAgain')}</Button>
+            <Link to="/doctors">{t('consult.bookLater')}</Link>
           </Empty>
         ) : (
           <>
             <fieldset className="stack fieldset-plain">
-              <legend>Doctor</legend>
+              <legend>{t('common.doctor')}</legend>
               <label className="check">
                 <input type="radio" name="doctor" checked={target?.kind === 'any'} onChange={() => setTarget({ kind: 'any' })} />
-                <span>Any available doctor ({doctors.data.length} online)</span>
+                <span>{t('consult.anyDoctorOnline', { number: doctors.data.length })}</span>
               </label>
               {doctors.data.map((d) => (
                 <label key={d.doctorId} className="check">
@@ -196,7 +204,7 @@ function QuoteForm({ search, target, doctorName, once, quoteRefusals }: {
       const r = await instantConsultApi(api).checkCoupon({ code: value, purchaseAmount: price, doctorId, dependentId: dependentId || undefined });
       if (stale()) return; // asked for another price or patient: a newer check (or none) decides
       if (r?.isValid) setCoupon({ code: r.coupon?.code ?? value, discount: Math.min(price, Number(r.discountAmount ?? 0)), ctx: forCtx });
-      else { setCoupon(null); setApplied(null); setCouponError(`Coupon ${value} cannot be used for this consultation.`); }
+      else { setCoupon(null); setApplied(null); setCouponError(t('consult.couponNotForConsult', { code: value })); }
     } catch (err) {
       if (stale()) return;
       setCoupon(null); setApplied(null); setCouponError(messageOf(err));
@@ -211,7 +219,7 @@ function QuoteForm({ search, target, doctorName, once, quoteRefusals }: {
     if (quoteRefusals > 0 && applied && quoteMinor !== undefined) { setCoupon(null); void checkCoupon(applied, ctx, quoteMinor / 100, forWhom); }
   }, [quoteRefusals]);
 
-  if (quote.isPending) return <Loading label="Getting the price…" />;
+  if (quote.isPending) return <Loading label={t('consult.gettingPrice')} />;
   if (quote.isError) return <ErrorState message={messageOf(quote.error)} onRetry={() => void quote.refetch()} />;
   const price = quote.data.quotedAmountMinor / 100;
   const afterCoupon = payableMinor / 100;
@@ -221,7 +229,7 @@ function QuoteForm({ search, target, doctorName, once, quoteRefusals }: {
   async function applyCoupon() {
     setCouponError(null);
     const value = code.trim().toUpperCase();
-    if (!COUPON_PATTERN.test(value)) { setCouponError('Enter a valid coupon code.'); return; }
+    if (!COUPON_PATTERN.test(value)) { setCouponError(t('common.couponInvalid')); return; }
     setChosen(value);
     setApplied(value);
     await checkCoupon(value, ctx, price, forWhom);
@@ -236,60 +244,62 @@ function QuoteForm({ search, target, doctorName, once, quoteRefusals }: {
       ...(current ? { couponCode: current.code } : {}), useWalletBalance: useWallet,
       // Q9: exactly the quote and payable on screen, which the customer agreed to; the server refuses any other.
       acceptedQuoteMinor: quoteMinor, acceptedPayableMinor: payableMinor,
-    }, `${INSTANT_MODE_LABEL[search.mode].toLowerCase()} with ${doctorName ?? `any ${search.specialization} doctor`}`));
+    }, doctorName !== undefined ? t(MODE_WORDS[search.mode].forDoctor, { doctor: doctorName })
+      : t(MODE_WORDS[search.mode].forAny, { speciality: search.specialization })));
   }
 
   return (
     <form className="card stack" onSubmit={submit} noValidate aria-labelledby="pay-h">
-      <h2 id="pay-h">{doctorName ?? 'Any available doctor'}</h2>
+      <h2 id="pay-h">{doctorName ?? t('consult.anyDoctor')}</h2>
       <Alert tone="ok">
         {target.kind === 'any'
-          ? `You pay ${formatRupees(price)} now (the highest fee among the ${quote.data.doctors} doctors online). If the doctor who accepts charges less, the difference goes back to your wallet.`
-          : `You pay ${formatRupees(price)} now.`}
-        {` Each doctor has ${INSTANT_OFFER_MIN} minutes to accept. If nobody does, you can offer it again or get your money back in your wallet.`}
+          ? t('consult.youPayAny', { price: formatRupees(price), doctors: quote.data.doctors })
+          : t('consult.youPay', { price: formatRupees(price) })}
+        {` ${t('consult.offerTime', { minutes: INSTANT_OFFER_MIN })}`}
       </Alert>
       <div className="j-field">
-        <label htmlFor="who">For</label>
+        <label htmlFor="who">{t('common.for')}</label>
         <select id="who" value={forWhom} onChange={(e) => setForWhom(e.target.value)}>
-          <option value="">Myself</option>
+          <option value="">{t('common.myself')}</option>
           {(family.data?.items ?? []).filter((x) => x.relationship !== 'Me').map((x) => (
-            <option key={x._id} value={x._id}>{x.name} ({x.relationship})</option>
+            <option key={x._id} value={x._id}>{x.name} ({relationshipLabel(x.relationship)})</option>
           ))}
         </select>
       </div>
       {price > 0 && (
         <div className="stack">
           <div className="row">
-            <TextField label="Coupon (optional)" value={code} onChange={(e) => { setCode(e.target.value.toUpperCase()); setChosen(null); setApplied(null); setCoupon(null); setCouponError(null); }}
+            <TextField label={t('common.couponOptional')} value={code} onChange={(e) => { setCode(e.target.value.toUpperCase()); setChosen(null); setApplied(null); setCoupon(null); setCouponError(null); }}
               error={couponError} autoCapitalize="characters" />
-            <Button variant="secondary" busy={couponBusy} onClick={() => void applyCoupon()} disabled={!code.trim()}>Apply</Button>
+            <Button variant="secondary" busy={couponBusy} onClick={() => void applyCoupon()} disabled={!code.trim()}>{t('common.apply')}</Button>
           </div>
-          {couponBusy && applied && <p className="muted" role="status">Checking coupon {applied}…</p>}
-          {current && !couponBusy && <Alert tone="ok">Coupon {current.code}: {formatRupees(current.discount)} off.</Alert>}
+          {couponBusy && applied && <p className="muted" role="status">{t('consult.checkingCoupon', { code: applied })}</p>}
+          {current && !couponBusy && <Alert tone="ok">{t('common.couponOff', { code: current.code, amount: formatRupees(current.discount) })}</Alert>}
           {Number(wallet.data?.balance ?? 0) > 0 && (
             <label className="check"><input type="checkbox" checked={useWallet} onChange={(e) => setUseWallet(e.target.checked)} />
-              Use my wallet ({formatRupees(wallet.data?.balance)})</label>
+              {t('common.useWallet', { amount: formatRupees(wallet.data?.balance) })}</label>
           )}
         </div>
       )}
-      <dl className="details" aria-label="Price">
-        <dt>Quoted price</dt><dd>{formatRupees(price)}</dd>
-        {current ? <><dt>Coupon</dt><dd>−{formatRupees(current.discount)}</dd></> : null}
-        {walletUse > 0 ? <><dt>From wallet</dt><dd>−{formatRupees(walletUse)}</dd></> : null}
-        <dt>To pay now</dt><dd><strong>{formatRupees(toPay)}</strong></dd>
+      <dl className="details" aria-label={t('common.price')}>
+        <dt>{t('consult.quotedPrice')}</dt><dd>{formatRupees(price)}</dd>
+        {current ? <><dt>{t('common.coupon')}</dt><dd>−{formatRupees(current.discount)}</dd></> : null}
+        {walletUse > 0 ? <><dt>{t('common.fromWallet')}</dt><dd>−{formatRupees(walletUse)}</dd></> : null}
+        <dt>{t('common.toPayNow')}</dt><dd><strong>{formatRupees(toPay)}</strong></dd>
       </dl>
-      <p className="muted">The server checks the price again when you request. Pay within {INSTANT_PAYMENT_WINDOW_MIN} minutes.</p>
+      <p className="muted">{t('consult.serverChecks', { minutes: INSTANT_PAYMENT_WINDOW_MIN })}</p>
       {once.error && <Alert>{once.error}</Alert>}
       {agreement.changed && (
-        <div className="confirm" role="group" aria-label="Price changed">
+        <div className="confirm" role="group" aria-label={t('common.priceChanged')}>
           <Alert tone="warn">
-            The price changed: the quote is now {formatRupees(price)} and you pay {formatRupees(afterCoupon)}
-            {agreement.previous ? ` (it was ${formatRupees(Number(agreement.previous.split(':')[1]) / 100)})` : ''}. Check it before you request.
+            {agreement.previous
+              ? t('consult.priceChangedWas', { quote: formatRupees(price), pay: formatRupees(afterCoupon), was: formatRupees(Number(agreement.previous.split(':')[1]) / 100) })
+              : t('consult.priceChanged', { quote: formatRupees(price), pay: formatRupees(afterCoupon) })}
           </Alert>
-          <div className="row"><Button variant="secondary" onClick={agreement.accept}>Accept the new price</Button></div>
+          <div className="row"><Button variant="secondary" onClick={agreement.accept}>{t('common.acceptNewPrice')}</Button></div>
         </div>
       )}
-      <Button type="submit" busy={once.busy || couponBusy} disabled={!agreement.agreed}>{toPay > 0 ? 'Pay and request a doctor' : 'Request a doctor'}</Button>
+      <Button type="submit" busy={once.busy || couponBusy} disabled={!agreement.agreed}>{toPay > 0 ? t('consult.payAndRequest') : t('consult.request')}</Button>
     </form>
   );
 }

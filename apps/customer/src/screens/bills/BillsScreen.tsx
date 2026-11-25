@@ -1,16 +1,22 @@
 import { Link } from 'react-router';
 import { customerBillsApi, fromPaise, type BillState } from '@jansetu/api';
 import { Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
-import { messageOf, PageHeading } from '../../common.tsx';
+import { messageOf, PageHeading, type StatusWords } from '../../common.tsx';
+import { t } from '../../i18n/index.ts';
 import { usePagedList } from '../../paging.ts';
 import { useSession } from '../../session.tsx';
 
-export const BILL_STATE: Record<BillState, { label: string; tone?: 'ok' | 'warn' | 'danger' }> = {
-  issued: { label: 'Unpaid', tone: 'warn' },
-  partly_paid: { label: 'Partly paid', tone: 'warn' },
-  paid: { label: 'Paid', tone: 'ok' },
-  cancelled: { label: 'Cancelled', tone: 'danger' },
+const BILL_STATE: Readonly<Record<BillState, StatusWords>> = {
+  issued: { key: 'bills.state.unpaid', tone: 'warn' },
+  partly_paid: { key: 'bills.state.partlyPaid', tone: 'warn' },
+  paid: { key: 'bills.state.paid', tone: 'ok' },
+  cancelled: { key: 'status.cancelled', tone: 'danger' },
 };
+/** A bill's state badge; an unknown state shows as the server sent it. */
+export function billStateOf(state: BillState) {
+  const s = Object.hasOwn(BILL_STATE, state) ? BILL_STATE[state] : undefined;
+  return s ? { label: t(s.key), tone: s.tone } : { label: state as string };
+}
 
 /** Bills from partner labs and clinics, issued to this account's phone number. */
 export function BillsScreen() {
@@ -18,18 +24,18 @@ export function BillsScreen() {
   const { q, items, total } = usePagedList(['bills', 'list'], (page) => customerBillsApi(api).bills(page, 20));
   return (
     <>
-      <PageHeading title="Bills">Bills from partner labs and clinics you visited.</PageHeading>
+      <PageHeading title={t('home.bills')}>{t('bills.sub')}</PageHeading>
       {q.isPending ? <Loading /> : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : items.length === 0 ? <Empty title="No bills yet">Bills from partner labs and clinics appear here when they use your mobile number.</Empty>
+        : items.length === 0 ? <Empty title={t('bills.empty')}>{t('bills.emptyBody')}</Empty>
         : (
           <>
           <ul className="list">
             {items.map((b) => {
-              const s = BILL_STATE[b.lifecycleState] ?? { label: b.lifecycleState };
+              const s = billStateOf(b.lifecycleState);
               return (
                 <li key={b._id}>
                   <Link to={`/bills/${b._id}`} className="list-row link-row">
-                    <strong>{b.supplier?.name ?? 'Bill'}</strong>
+                    <strong>{b.supplier?.name ?? t('bills.bill')}</strong>
                     <span className="muted">{b.serial} · {formatDateTime(b.issuedAt)}</span>
                     <span><Badge tone={s.tone}>{s.label}</Badge> <span className="muted">{formatRupees(fromPaise(b.totals?.totalMinor))}</span></span>
                   </Link>
@@ -37,8 +43,8 @@ export function BillsScreen() {
               );
             })}
           </ul>
-          <p className="muted">Showing {items.length} of {total}.</p>
-          {q.hasNextPage && <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>Show more</Button>}
+          <p className="muted">{t('common.showing', { shown: items.length, total })}</p>
+          {q.hasNextPage && <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{t('common.showMore')}</Button>}
           </>
         )}
     </>

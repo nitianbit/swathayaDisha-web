@@ -8,13 +8,14 @@ import {
   type LabBookingPayment, type LabCatalogueItem, type CustomerLabSlot as LabSlot, type NewLabBooking, type PartnerLab, type CustomerVisitMode as VisitMode,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
-import { messageOf, PageHeading } from '../../common.tsx';
+import { messageOf, PageHeading, relationshipLabel } from '../../common.tsx';
+import { t } from '../../i18n/index.ts';
 import { PendingCreatePanel, useOnceOnly } from '../../onceOnly.tsx';
 import { payOrder } from '../../payments.ts';
 import { usePriceAgreement } from '../../priceAgreement.ts';
 import { useCustomer, useSession } from '../../session.tsx';
 import { nextDays } from '../DoctorScreen.tsx';
-import { clock, VISIT_MODE_LABEL } from './labels.ts';
+import { clock, visitModeLabel } from './labels.ts';
 
 const DAYS = 7;
 const isoDay = (yyyymmdd: string) => `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
@@ -28,10 +29,10 @@ export function LabScreen() {
   const gone = q.error instanceof ApiError && q.error.status === 404;
   return (
     <>
-      <Link to="/labs" className="back"><ArrowLeft size={16} aria-hidden="true" /> Lab tests</Link>
-      {!valid ? <Empty title="Lab not found" />
+      <Link to="/labs" className="back"><ArrowLeft size={16} aria-hidden="true" /> {t('common.labTests')}</Link>
+      {!valid ? <Empty title={t('lab.notFound')} />
         : q.isPending ? <Loading />
-        : gone ? <Empty title="This lab is not available">It may have stopped taking bookings. <Link to="/labs">See other labs</Link></Empty>
+        : gone ? <Empty title={t('lab.gone')}>{t('lab.goneBody')} <Link to="/labs">{t('lab.otherLabs')}</Link></Empty>
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : <LabView key={q.data.partnerId} lab={q.data} />}
     </>
@@ -57,7 +58,7 @@ function LabView({ lab }: { lab: PartnerLab }) {
       const path = `/partner-lab-bookings/${r.booking._id}`;
       if (r.paymentRequired && r.payment) {
         try {
-          await payOrder(api, r.payment, payer, `Lab tests at ${lab.name}`);
+          await payOrder(api, r.payment, payer, t('lab.payDescription', { lab: lab.name }));
         } catch (err) {
           if (alive()) navigate(path, { state: { paymentError: messageOf(err) } });
           return;
@@ -103,36 +104,36 @@ function LabView({ lab }: { lab: PartnerLab }) {
     setPicked((cur) => {
       const n = new Set(cur);
       if (n.has(item.itemId)) n.delete(item.itemId);
-      else if (n.size >= LAB_MAX_ITEMS) { setItemsError(`You can choose up to ${LAB_MAX_ITEMS} tests in one booking.`); return cur; }
+      else if (n.size >= LAB_MAX_ITEMS) { setItemsError(t('lab.maxItems', { max: LAB_MAX_ITEMS })); return cur; }
       else n.add(item.itemId);
       return n;
     });
   }
 
-  if (modes.length === 0 || !branch) return <Empty title="This lab is not taking bookings right now" />;
+  if (modes.length === 0 || !branch) return <Empty title={t('lab.notTaking')} />;
   return (
     <>
       <PageHeading title={lab.name}>
-        {lab.branches.length === 1 ? [branch.name, branch.address?.city].filter(Boolean).join(', ') : `${lab.branches.length} branches`}
+        {lab.branches.length === 1 ? [branch.name, branch.address?.city].filter(Boolean).join(', ') : t('labs.branches', { count: lab.branches.length })}
       </PageHeading>
       {once.pending ? (
-        <PendingCreatePanel once={once} kind="lab_booking_create" what="lab booking request"
+        <PendingCreatePanel once={once} kind="lab_booking_create"
           onFound={(id) => navigate(`/partner-lab-bookings/${id}`)}>
-          <Link to="/bookings">My bookings</Link>
+          <Link to="/bookings">{t('common.myBookings')}</Link>
         </PendingCreatePanel>
       ) : null}
       {once.pending && (once.pending.restored || once.pending.uncertain || !once.busy) ? null : (
         <>
           <section className="stack" aria-labelledby="how-h">
-            <h2 id="how-h">How</h2>
-            <div className="chips" role="group" aria-label="Visit type">
+            <h2 id="how-h">{t('common.how')}</h2>
+            <div className="chips" role="group" aria-label={t('lab.visitType')}>
               {modes.map((m) => (
-                <button key={m} type="button" className="chip" aria-pressed={m === mode} onClick={() => changeMode(m)}>{VISIT_MODE_LABEL[m]}</button>
+                <button key={m} type="button" className="chip" aria-pressed={m === mode} onClick={() => changeMode(m)}>{visitModeLabel(m)}</button>
               ))}
             </div>
             {branches.length > 1 ? (
               <div className="j-field">
-                <label htmlFor="branch">Branch</label>
+                <label htmlFor="branch">{t('lab.branch')}</label>
                 <select id="branch" value={branch.branchId} onChange={(e) => { setBranchId(e.target.value); setSlot(null); }}>
                   {branches.map((b) => <option key={b.branchId} value={b.branchId}>{b.name}{b.address?.city ? `, ${b.address.city}` : ''}</option>)}
                 </select>
@@ -143,22 +144,22 @@ function LabView({ lab }: { lab: PartnerLab }) {
           </section>
 
           <section className="stack" aria-labelledby="tests-h">
-            <h2 id="tests-h">Tests</h2>
-            {catalogue.isPending ? <Loading label="Loading tests…" />
+            <h2 id="tests-h">{t('lab.tests')}</h2>
+            {catalogue.isPending ? <Loading label={t('lab.loadingTests')} />
               : catalogue.isError ? <ErrorState message={messageOf(catalogue.error)} onRetry={() => void catalogue.refetch()} />
-              : catalogue.data.length === 0 ? <Empty title={`No tests offered for ${VISIT_MODE_LABEL[mode].toLowerCase()}`} />
+              : catalogue.data.length === 0 ? <Empty title={mode === 'home' ? t('lab.noTests.home') : t('lab.noTests.lab')} />
               : (
                 <ul className="list" aria-describedby={itemsError ? 'items-error' : undefined}>
                   {catalogue.data.map((i) => (
                     <li key={i.itemId} className="list-row">
                       <label className="check">
                         <input type="checkbox" checked={picked.has(i.itemId)} onChange={() => toggle(i)} />
-                        <span><strong>{i.name}</strong>{i.kind === 'package' ? ' (package)' : ''} · {formatRupees(fromPaise(i.priceMinor))}
+                        <span><strong>{i.name}</strong>{i.kind === 'package' ? ` (${t('lab.packageTag')})` : ''} · {formatRupees(fromPaise(i.priceMinor))}
                           {i.mrpMinor && i.mrpMinor > i.priceMinor ? <span className="muted"> <s>{formatRupees(fromPaise(i.mrpMinor))}</s></span> : null}</span>
                       </label>
-                      {i.includes?.length ? <span className="muted">Includes {i.includes.join(', ')}</span> : null}
-                      {i.preparation && <span className="muted">Preparation: {i.preparation}</span>}
-                      {i.reportTatHours ? <span className="muted">Report in about {i.reportTatHours} hours</span> : null}
+                      {i.includes?.length ? <span className="muted">{t('lab.includes', { tests: i.includes.join(', ') })}</span> : null}
+                      {i.preparation && <span className="muted">{t('lab.preparation', { text: i.preparation })}</span>}
+                      {i.reportTatHours ? <span className="muted">{t('lab.reportIn', { hours: i.reportTatHours })}</span> : null}
                     </li>
                   ))}
                 </ul>
@@ -167,18 +168,18 @@ function LabView({ lab }: { lab: PartnerLab }) {
           </section>
 
           <section className="stack" aria-labelledby="time-h">
-            <h2 id="time-h">Time</h2>
-            <div className="chips" role="group" aria-label="Day">
+            <h2 id="time-h">{t('common.time')}</h2>
+            <div className="chips" role="group" aria-label={t('common.day')}>
               {days.map((x) => (
                 <button key={x.date} type="button" className="chip" aria-pressed={isoDay(x.date) === day}
                   onClick={() => { setDay(isoDay(x.date)); setSlot(null); }}>{x.label}</button>
               ))}
             </div>
-            {slots.isPending ? <Loading label="Loading times…" />
+            {slots.isPending ? <Loading label={t('common.loadingTimes')} />
               : slots.isError ? <ErrorState message={messageOf(slots.error)} onRetry={() => void slots.refetch()} />
-              : daySlots.length === 0 ? <Empty title="No free times on this day">Try another day.</Empty>
+              : daySlots.length === 0 ? <Empty title={t('common.noFreeTimes')}>{t('common.tryAnotherDay')}</Empty>
               : (
-                <div className="chips" role="group" aria-label="Time">
+                <div className="chips" role="group" aria-label={t('common.time')}>
                   {daySlots.map((s) => (
                     <button key={s.slotId} type="button" className="chip" aria-pressed={slot?.slotId === s.slotId} onClick={() => setSlot(s)}>
                       {clock(s.startTime)}
@@ -192,7 +193,7 @@ function LabView({ lab }: { lab: PartnerLab }) {
             <BookForm key={`${branch.branchId}:${slot.slotId}`} lab={lab} branchId={branch.branchId} mode={mode} items={chosen} slot={slot}
               dayLabel={days.find((x) => isoDay(x.date) === day)?.label ?? day} once={once} priceRefusals={priceRefusals} />
           ) : (
-            <p className="muted">Choose at least one test and a time to continue.</p>
+            <p className="muted">{t('lab.chooseTestAndTime')}</p>
           )}
         </>
       )}
@@ -256,7 +257,7 @@ function BookForm({ lab, branchId, mode, items, slot, dayLabel, once, priceRefus
         testIds: forItems.filter((i) => i.kind === 'test').map((i) => i.itemId), packageIds: forItems.filter((i) => i.kind === 'package').map((i) => i.itemId) });
       if (stale()) return; // asked for other tests or prices: a newer check (or none) decides
       if (r?.isValid) setCoupon({ code: r.coupon?.code ?? value, discount: Math.min(sub, Number(r.discountAmount ?? 0)), ctx: forCtx });
-      else { setCoupon(null); setApplied(null); setCouponError(r?.message || `Coupon ${value} cannot be used for these tests.`); }
+      else { setCoupon(null); setApplied(null); setCouponError(r?.message || t('lab.couponNotForTests', { code: value })); }
     } catch (err) {
       if (stale()) return;
       setCoupon(null); setApplied(null); setCouponError(messageOf(err));
@@ -267,7 +268,7 @@ function BookForm({ lab, branchId, mode, items, slot, dayLabel, once, priceRefus
   async function applyCoupon() {
     setCouponError(null);
     const value = code.trim().toUpperCase();
-    if (!COUPON_PATTERN.test(value)) { setCouponError('Enter a valid coupon code.'); return; }
+    if (!COUPON_PATTERN.test(value)) { setCouponError(t('common.couponInvalid')); return; }
     setChosen(value);
     setApplied(value);
     await checkCoupon(value, ctx, items);
@@ -301,65 +302,62 @@ function BookForm({ lab, branchId, mode, items, slot, dayLabel, once, priceRefus
 
   return (
     <form className="card stack" onSubmit={submit} noValidate aria-labelledby="book-h">
-      <h2 id="book-h">Book {clock(slot.startTime)}, {dayLabel}</h2>
+      <h2 id="book-h">{t('common.bookAt', { time: `${clock(slot.startTime)}, ${dayLabel}` })}</h2>
       <div className="j-field">
-        <label htmlFor="who">For</label>
+        <label htmlFor="who">{t('common.for')}</label>
         {/* WQ11a: the applied coupon is checked again for the new patient (never left half-applied, which kept Book off). */}
         <select id="who" value={forWhom} onChange={(e) => { setForWhom(e.target.value); if (applied) { setCoupon(null); void checkCoupon(applied, ctx, items); } }}>
-          <option value="">Myself</option>
+          <option value="">{t('common.myself')}</option>
           {(family.data?.items ?? []).filter((x) => x.relationship !== 'Me').map((x) => (
-            <option key={x._id} value={x._id}>{x.name} ({x.relationship})</option>
+            <option key={x._id} value={x._id}>{x.name} ({relationshipLabel(x.relationship)})</option>
           ))}
         </select>
       </div>
       {mode === 'home' && (
         <fieldset className="stack fieldset-plain">
-          <legend>Collection address</legend>
-          <TextField label="House and street" value={address.line1} onChange={set('line1')} error={errors.line1} maxLength={200} autoComplete="address-line1" />
-          <TextField label="Area (optional)" value={address.line2} onChange={set('line2')} error={errors.line2} maxLength={200} autoComplete="address-line2" />
-          <TextField label="Landmark (optional)" value={address.landmark} onChange={set('landmark')} error={errors.landmark} maxLength={120} />
-          <TextField label="City" value={address.city} onChange={set('city')} error={errors.city} maxLength={80} autoComplete="address-level2" />
-          <TextField label="State (optional)" value={address.state} onChange={set('state')} error={errors.state} maxLength={80} autoComplete="address-level1" />
-          <TextField label="Pincode" value={address.pincode} onChange={set('pincode')} error={errors.pincode} inputMode="numeric" maxLength={6} autoComplete="postal-code" />
+          <legend>{t('lab.address')}</legend>
+          <TextField label={t('lab.line1')} value={address.line1} onChange={set('line1')} error={errors.line1} maxLength={200} autoComplete="address-line1" />
+          <TextField label={t('lab.line2')} value={address.line2} onChange={set('line2')} error={errors.line2} maxLength={200} autoComplete="address-line2" />
+          <TextField label={t('lab.landmark')} value={address.landmark} onChange={set('landmark')} error={errors.landmark} maxLength={120} />
+          <TextField label={t('lab.city')} value={address.city} onChange={set('city')} error={errors.city} maxLength={80} autoComplete="address-level2" />
+          <TextField label={t('lab.state')} value={address.state} onChange={set('state')} error={errors.state} maxLength={80} autoComplete="address-level1" />
+          <TextField label={t('lab.pincode')} value={address.pincode} onChange={set('pincode')} error={errors.pincode} inputMode="numeric" maxLength={6} autoComplete="postal-code" />
         </fieldset>
       )}
       {subtotal > 0 && (
         <div className="stack">
           <div className="row">
-            <TextField label="Coupon (optional)" value={code} onChange={(e) => { setCode(e.target.value.toUpperCase()); setChosen(null); setApplied(null); setCoupon(null); setCouponError(null); }}
+            <TextField label={t('common.couponOptional')} value={code} onChange={(e) => { setCode(e.target.value.toUpperCase()); setChosen(null); setApplied(null); setCoupon(null); setCouponError(null); }}
               error={couponError} autoCapitalize="characters" />
-            <Button variant="secondary" busy={couponBusy} onClick={() => void applyCoupon()} disabled={!code.trim()}>Apply</Button>
+            <Button variant="secondary" busy={couponBusy} onClick={() => void applyCoupon()} disabled={!code.trim()}>{t('common.apply')}</Button>
           </div>
-          {couponBusy && applied && <p className="muted" role="status">Checking coupon {applied} for these tests…</p>}
-          {current && !couponBusy && <Alert tone="ok">Coupon {current.code}: {formatRupees(current.discount)} off.</Alert>}
+          {couponBusy && applied && <p className="muted" role="status">{t('lab.checkingCoupon', { code: applied })}</p>}
+          {current && !couponBusy && <Alert tone="ok">{t('common.couponOff', { code: current.code, amount: formatRupees(current.discount) })}</Alert>}
           {Number(wallet.data?.balance ?? 0) > 0 && (
             <label className="check"><input type="checkbox" checked={useWallet} onChange={(e) => setUseWallet(e.target.checked)} />
-              Use my wallet ({formatRupees(wallet.data?.balance)})</label>
+              {t('common.useWallet', { amount: formatRupees(wallet.data?.balance) })}</label>
           )}
         </div>
       )}
-      <dl className="details" aria-label="Price">
+      <dl className="details" aria-label={t('common.price')}>
         {items.map((i) => <Fragment key={i.itemId}><dt>{i.name}</dt><dd>{formatRupees(fromPaise(i.priceMinor))}</dd></Fragment>)}
-        {current ? <><dt>Coupon</dt><dd>−{formatRupees(current.discount)}</dd></> : null}
-        {walletUse > 0 ? <><dt>From wallet</dt><dd>−{formatRupees(walletUse)}</dd></> : null}
-        <dt>To pay now</dt><dd><strong>{formatRupees(toPay)}</strong></dd>
+        {current ? <><dt>{t('common.coupon')}</dt><dd>−{formatRupees(current.discount)}</dd></> : null}
+        {walletUse > 0 ? <><dt>{t('common.fromWallet')}</dt><dd>−{formatRupees(walletUse)}</dd></> : null}
+        <dt>{t('common.toPayNow')}</dt><dd><strong>{formatRupees(toPay)}</strong></dd>
       </dl>
-      <p className="muted">
-        The final amount is worked out by the lab’s prices on the server and shown on the payment page. Pay within
-        {' '}{LAB_PAYMENT_WINDOW_MIN} minutes or the time is released. You can cancel for a full refund to your wallet until
-        {' '}{LAB_CANCEL_CUTOFF_HOURS} hours before the time.
-      </p>
+      <p className="muted">{t('lab.finalAmount', { minutes: LAB_PAYMENT_WINDOW_MIN, hours: LAB_CANCEL_CUTOFF_HOURS })}</p>
       {once.error && <Alert>{once.error}</Alert>}
       {agreement.changed && (
-        <div className="confirm" role="group" aria-label="Price changed">
+        <div className="confirm" role="group" aria-label={t('common.priceChanged')}>
           <Alert tone="warn">
-            The price changed: you now pay {formatRupees(afterCoupon)} for these tests
-            {agreement.previous ? ` (it was ${formatRupees(Number(agreement.previous.split(':')[1]) / 100)})` : ''}. Check it before you book.
+            {agreement.previous
+              ? t('lab.priceChangedWas', { amount: formatRupees(afterCoupon), was: formatRupees(Number(agreement.previous.split(':')[1]) / 100) })
+              : t('lab.priceChanged', { amount: formatRupees(afterCoupon) })}
           </Alert>
-          <div className="row"><Button variant="secondary" onClick={agreement.accept}>Accept the new price</Button></div>
+          <div className="row"><Button variant="secondary" onClick={agreement.accept}>{t('common.acceptNewPrice')}</Button></div>
         </div>
       )}
-      <Button type="submit" busy={once.busy || couponBusy} disabled={!agreement.agreed}>{toPay > 0 ? 'Book and pay' : 'Book'}</Button>
+      <Button type="submit" busy={once.busy || couponBusy} disabled={!agreement.agreed}>{toPay > 0 ? t('common.bookAndPay') : t('common.book')}</Button>
     </form>
   );
 }

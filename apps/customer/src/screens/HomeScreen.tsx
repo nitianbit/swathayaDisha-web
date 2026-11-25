@@ -4,6 +4,7 @@ import { CalendarDays, FlaskConical, Pill, ReceiptText, Stethoscope, Users, Vide
 import { customerApi } from '@jansetu/api';
 import { Alert, formatRupees, Loading } from '@jansetu/ui';
 import { PageHeading } from '../common.tsx';
+import { t } from '../i18n/index.ts';
 import { useCustomer, useSession } from '../session.tsx';
 
 /** What a complete profile needs before booking for someone (the older app asked for the same). */
@@ -22,27 +23,27 @@ export function HomeScreen() {
   const missing = p ? missingProfileFields(p) : [];
   return (
     <>
-      <PageHeading title={p?.name ? `Hello, ${p.name.split(' ')[0]}` : 'Hello'} />
-      {profile.isError && <Alert>Your profile could not be loaded. Pull down or try again later.</Alert>}
+      <PageHeading title={p?.name ? t('home.hello', { name: p.name.split(' ')[0]! }) : t('home.helloAnon')} />
+      {profile.isError && <Alert>{t('home.profileFailed')}</Alert>}
       {missing.length > 0 && (
         <Alert tone="warn">
-          Complete your profile so we can book for you. <Link to="/profile">Complete profile</Link>
+          {t('home.completeProfile')} <Link to="/profile">{t('home.completeProfileLink')}</Link>
         </Alert>
       )}
       <ul className="tiles">
-        <li><Link to="/consult" className="tile"><Video aria-hidden="true" /><span>Consult now</span></Link></li>
-        <li><Link to="/doctors" className="tile"><Stethoscope aria-hidden="true" /><span>Book a doctor</span></Link></li>
-        <li><Link to="/labs" className="tile"><FlaskConical aria-hidden="true" /><span>Lab tests</span></Link></li>
-        <li><Link to="/pharmacy" className="tile"><Pill aria-hidden="true" /><span>Order medicines</span></Link></li>
-        <li><Link to="/bookings" className="tile"><CalendarDays aria-hidden="true" /><span>My bookings</span></Link></li>
+        <li><Link to="/consult" className="tile"><Video aria-hidden="true" /><span>{t('common.consultNow')}</span></Link></li>
+        <li><Link to="/doctors" className="tile"><Stethoscope aria-hidden="true" /><span>{t('common.bookDoctor')}</span></Link></li>
+        <li><Link to="/labs" className="tile"><FlaskConical aria-hidden="true" /><span>{t('common.labTests')}</span></Link></li>
+        <li><Link to="/pharmacy" className="tile"><Pill aria-hidden="true" /><span>{t('common.orderMedicines')}</span></Link></li>
+        <li><Link to="/bookings" className="tile"><CalendarDays aria-hidden="true" /><span>{t('common.myBookings')}</span></Link></li>
         <li>
           <Link to="/wallet" className="tile">
             <Wallet aria-hidden="true" />
-            <span>Wallet{wallet.data ? <strong className="tile-value">{formatRupees(wallet.data.balance)}</strong> : null}</span>
+            <span>{t('nav.wallet')}{wallet.data ? <strong className="tile-value">{formatRupees(wallet.data.balance)}</strong> : null}</span>
           </Link>
         </li>
-        <li><Link to="/bills" className="tile"><ReceiptText aria-hidden="true" /><span>Bills</span></Link></li>
-        <li><Link to="/profile/family" className="tile"><Users aria-hidden="true" /><span>Family members</span></Link></li>
+        <li><Link to="/bills" className="tile"><ReceiptText aria-hidden="true" /><span>{t('home.bills')}</span></Link></li>
+        <li><Link to="/profile/family" className="tile"><Users aria-hidden="true" /><span>{t('family.title')}</span></Link></li>
       </ul>
     </>
   );

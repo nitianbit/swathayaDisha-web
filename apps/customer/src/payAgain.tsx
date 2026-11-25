@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiError, type PaymentOrder } from '@jansetu/api';
 import { Alert, Button, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { messageOf } from './common.tsx';
+import { t } from './i18n/index.ts';
 import { useAlive } from './onceOnly.tsx';
 import { paymentCheck, payOrder, type PaymentOutcome } from './payments.ts';
 import { useSession } from './session.tsx';
@@ -17,9 +18,15 @@ import { useSession } from './session.tsx';
  * WQ11a: a definite refusal of the check (that attempt failed or was refunded) still lets a new payment start; the
  * amount due is shown, and once the server answered "Pay now", the part already held from the wallet.
  */
-export function PayAgainPanel({ what, amountDue, deadline, paymentTransactionId, expiredCode, description, pay, onSettled }: {
-  /** "booking", "request" */
-  what: string;
+/** The panel's sentences for a lab booking ("booking") and a Consult now request ("request"). */
+const WORDS = {
+  booking: { closed: 'pay.booking.closed', unpaidBy: 'pay.booking.unpaidBy', unpaidSoon: 'pay.booking.unpaidSoon', returned: 'pay.booking.returned' },
+  request: { closed: 'pay.request.closed', unpaidBy: 'pay.request.unpaidBy', unpaidSoon: 'pay.request.unpaidSoon', returned: 'pay.request.returned' },
+} as const;
+
+export function PayAgainPanel({ kind, amountDue, deadline, paymentTransactionId, expiredCode, description, pay, onSettled }: {
+  /** A lab booking or a Consult now request. */
+  kind: keyof typeof WORDS;
   /** Rupees: the whole amount due for the booking or request (coupon applied). */
   amountDue?: number;
   deadline?: string;
@@ -82,39 +89,37 @@ export function PayAgainPanel({ what, amountDue, deadline, paymentTransactionId,
     }
   }
 
+  const words = WORDS[kind];
   return (
     <section className="card stack" aria-labelledby="pay-h">
-      <h2 id="pay-h">Payment</h2>
-      {state === 'checking' ? <Loading label="Checking your payment…" />
-        : state === 'paid' ? <Alert tone="ok">Payment received.</Alert>
+      <h2 id="pay-h">{t('common.payment')}</h2>
+      {state === 'checking' ? <Loading label={t('common.checkingPayment')} />
+        : state === 'paid' ? <Alert tone="ok">{t('pay.received')}</Alert>
         : state === 'closed' ? (
           <>
-            <Alert tone="warn">
-              The time to pay for this {what} has passed, so a new payment cannot be started. If you already paid, it will
-              be confirmed; otherwise it will be released and any wallet money used goes back to your wallet.
-            </Alert>
-            {paymentTransactionId && <div className="row"><Button variant="secondary" onClick={() => void check()}>Check now</Button></div>}
+            <Alert tone="warn">{t(words.closed)}</Alert>
+            {paymentTransactionId && <div className="row"><Button variant="secondary" onClick={() => void check()}>{t('common.checkNow')}</Button></div>}
           </>
         ) : (
           <>
             <Alert tone="warn">
               {state === 'unknown'
-                ? 'We could not check your payment just now. If you have paid, it will show here once we can.'
-                : `This ${what} is not paid yet. Pay ${deadline ? `by ${formatDateTime(deadline)}` : 'within 30 minutes'}, or it is released.`}
+                ? t('pay.unknown')
+                : deadline ? t(words.unpaidBy, { deadline: formatDateTime(deadline) }) : t(words.unpaidSoon)}
             </Alert>
-            {returned && <Alert tone="warn">An earlier payment for this {what} was returned to your Jansetu wallet.</Alert>}
+            {returned && <Alert tone="warn">{t(words.returned)}</Alert>}
             {(amountDue !== undefined || split) && (
-              <dl className="details" aria-label="Amount">
-                {amountDue !== undefined && <><dt>Amount due</dt><dd>{formatRupees(amountDue)}</dd></>}
-                {split && split.held > 0 && <><dt>Already held from your wallet</dt><dd>{formatRupees(split.held)}</dd></>}
-                {split && <><dt>To pay on the payment page</dt><dd><strong>{formatRupees(split.gateway)}</strong></dd></>}
+              <dl className="details" aria-label={t('pay.amount')}>
+                {amountDue !== undefined && <><dt>{t('pay.amountDue')}</dt><dd>{formatRupees(amountDue)}</dd></>}
+                {split && split.held > 0 && <><dt>{t('pay.heldFromWallet')}</dt><dd>{formatRupees(split.held)}</dd></>}
+                {split && <><dt>{t('pay.onPaymentPage')}</dt><dd><strong>{formatRupees(split.gateway)}</strong></dd></>}
               </dl>
             )}
             {error && <Alert>{error}</Alert>}
             <div className="row">
-              <Button busy={state === 'paying'} disabled={state === 'unknown'} onClick={() => void payNow()}>Pay now</Button>
+              <Button busy={state === 'paying'} disabled={state === 'unknown'} onClick={() => void payNow()}>{t('common.payNow')}</Button>
               {paymentTransactionId && (
-                <Button variant="secondary" disabled={state === 'paying'} onClick={() => void check()}>I have paid, check again</Button>
+                <Button variant="secondary" disabled={state === 'paying'} onClick={() => void check()}>{t('common.paidCheckAgain')}</Button>
               )}
             </div>
           </>

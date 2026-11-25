@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 import { canCancelNow, customerApi, type ExternalBooking } from '@jansetu/api';
 import { Alert, Empty, ErrorState, formatRupees, Loading } from '@jansetu/ui';
 import { Confirm, formatAppointment, messageOf, PageHeading } from '../common.tsx';
+import { t } from '../i18n/index.ts';
 import { useSession } from '../session.tsx';
 import { cancelHint, isPaid } from './BookingScreen.tsx';
 import { StatusBadge, titleOf } from './BookingsScreen.tsx';
@@ -18,8 +19,8 @@ export function ExternalBookingScreen() {
   const q = useQuery({ queryKey: ['external-booking', bookingId], queryFn: () => customerApi(api).externalBooking(bookingId), enabled: valid });
   return (
     <>
-      <Link to="/bookings" className="back"><ArrowLeft size={16} aria-hidden="true" /> My bookings</Link>
-      {!valid ? <Empty title="Booking not found" />
+      <Link to="/bookings" className="back"><ArrowLeft size={16} aria-hidden="true" /> {t('common.myBookings')}</Link>
+      {!valid ? <Empty title={t('common.bookingNotFound')} />
         : q.isPending ? <Loading /> : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : <ExternalView booking={q.data} />}
     </>
@@ -36,27 +37,22 @@ function ExternalView({ booking: b }: { booking: ExternalBooking }) {
     <>
       <PageHeading title={titleOf(b)}>{formatAppointment(b.bookingDate, b.bookingTime)}</PageHeading>
       {status === 'cancellation_requested' && (
-        <Alert tone="warn">
-          Your cancellation is with the lab. As soon as the lab confirms it, the amount you paid goes back to your
-          Jansetu wallet. You do not need to do anything.
-        </Alert>
+        <Alert tone="warn">{t('external.cancelRequested')}</Alert>
       )}
       <section className="card stack">
         <dl className="details">
-          <dt>Status</dt><dd><StatusBadge status={status} /></dd>
-          {b.patientName && <><dt>For</dt><dd>{b.patientName}</dd></>}
-          {b.labName && <><dt>Lab</dt><dd>{b.labName}</dd></>}
-          <dt>Price</dt><dd>{formatRupees(b.price)} · {paid ? 'paid' : b.paymentStatus === 'refunded' ? 'refunded' : 'not paid'}</dd>
+          <dt>{t('common.status')}</dt><dd><StatusBadge status={status} /></dd>
+          {b.patientName && <><dt>{t('common.for')}</dt><dd>{b.patientName}</dd></>}
+          {b.labName && <><dt>{t('common.lab')}</dt><dd>{b.labName}</dd></>}
+          <dt>{t('common.price')}</dt><dd>{formatRupees(b.price)} · {paid ? t('common.paid') : b.paymentStatus === 'refunded' ? t('common.refunded') : t('common.notPaid')}</dd>
         </dl>
       </section>
       {CANCELLABLE.includes(status) && (
         <section className="card stack" aria-labelledby="cancel-h">
-          <h2 id="cancel-h">Cancel</h2>
+          <h2 id="cancel-h">{t('common.cancel')}</h2>
           {check.ok ? (
-            <Confirm label="Cancel this test" confirmLabel="Yes, cancel it" withReason
-              consequence={paid
-                ? 'We ask the lab to cancel. Once the lab confirms, the amount you paid goes back to your Jansetu wallet.'
-                : 'The booking is cancelled.'}
+            <Confirm label={t('external.cancel')} confirmLabel={t('common.yesCancel')} withReason
+              consequence={paid ? t('external.cancelPaid') : t('common.bookingCancelled')}
               onConfirm={async (reason) => {
                 try { await customerApi(api).cancelExternal(b._id, reason || undefined); }
                 finally {

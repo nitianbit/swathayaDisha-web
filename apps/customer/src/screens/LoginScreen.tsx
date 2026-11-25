@@ -2,13 +2,14 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import {
   ApiError, EMAIL_NOT_REGISTERED_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, parseLoginIdentifier, targetKey, targetKind, type OtpTarget,
 } from '@jansetu/api';
-import { Alert, Button, LanguageSwitcher, TextField, useCooldowns } from '@jansetu/ui';
+import { Alert, Button, LanguageSwitcher, Parts, TextField, useCooldowns } from '@jansetu/ui';
 import { messageOf } from '../common.tsx';
-import { useSession } from '../session.tsx';
+import { t } from '../i18n/index.ts';
+import { useSession, type SessionNotices } from '../session.tsx';
 
 const RESEND_SECONDS = 30;
 
-export function LoginScreen({ notice }: { notice?: string }) {
+export function LoginScreen({ notice }: { notice?: SessionNotices }) {
   const { requestCode, verifyCode } = useSession();
   // WQ9: a mobile number or an email, as typed. Kept in memory only (never stored, logged or put in a URL).
   const [identifier, setIdentifier] = useState('');
@@ -43,7 +44,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
     e?.preventDefault();
     setError(null);
     const to = step === 'identify' ? typed : target;
-    if (!to) { setFieldError('Enter your 10-digit mobile number or your email address.'); focusOn('identifier'); return; }
+    if (!to) { setFieldError(t('login.identifierMissing')); focusOn('identifier'); return; }
     setFieldError(null);
     setBusy(true);
     try {
@@ -60,7 +61,7 @@ export function LoginScreen({ notice }: { notice?: string }) {
   async function verify(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!OTP_PATTERN.test(otp)) { setFieldError('Enter the 6-digit code.'); focusOn('code'); return; }
+    if (!OTP_PATTERN.test(otp)) { setFieldError(t('code.missing')); focusOn('code'); return; }
     if (!target) { setStep('identify'); return; }
     setFieldError(null);
     setBusy(true);
@@ -81,33 +82,33 @@ export function LoginScreen({ notice }: { notice?: string }) {
   return (
     <main className="login">
       <div className="login-card">
-        <div className="brand">Jansetu</div>
+        <div className="brand">{t('common.brand')}</div>
         <LanguageSwitcher />
-        <h1 id="page-title" tabIndex={-1}>Sign in</h1>
-        <p className="page-sub">Book doctors and lab tests for you and your family.</p>
-        {notice && <Alert tone="warn">{notice}</Alert>}
+        <h1 id="page-title" tabIndex={-1}>{t('login.title')}</h1>
+        <p className="page-sub">{t('login.sub')}</p>
+        {notice?.length ? <Alert tone="warn">{notice.map((n) => t(n)).join(' ')}</Alert> : null}
         {error && <Alert>{error}</Alert>}
         {step === 'identify' ? (
           <form onSubmit={send} className="stack" noValidate>
             {/* WQ11a: a shared family phone: the browser must not offer the previous person's number. */}
-            <TextField ref={identifierRef} label="Mobile number or email" type="text" inputMode="text" autoComplete="off" autoCapitalize="none"
+            <TextField ref={identifierRef} label={t('login.identifier')} type="text" inputMode="text" autoComplete="off" autoCapitalize="none"
               spellCheck={false} maxLength={MAX_EMAIL} value={identifier} onChange={(e) => setIdentifier(e.target.value)} error={fieldError}
-              hint="We will send a 6-digit code by SMS or email. New here? Start with your mobile number; an email works once you add it to your profile." />
-            <Button type="submit" busy={busy} disabled={waiting}>{waiting ? `Send code in ${cooldown}s` : 'Send code'}</Button>
+              hint={t('login.identifierHint')} />
+            <Button type="submit" busy={busy} disabled={waiting}>{waiting ? t('code.sendIn', { seconds: cooldown }) : t('code.send')}</Button>
           </form>
         ) : (
           <form onSubmit={verify} className="stack" noValidate>
-            {target && <p id={sentId}>We sent a 6-digit code to your {targetKind(target)} <strong>{maskTarget(target)}</strong>.</p>}
-            <TextField ref={codeRef} label="6-digit code" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+            {target && <p id={sentId}><Parts of={t.rich(targetKind(target) === 'phone' ? 'code.sentPhone' : 'code.sentEmail', { target: <strong>{maskTarget(target)}</strong> })} /></p>}
+            <TextField ref={codeRef} label={t('common.sixDigitCode')} inputMode="numeric" autoComplete="one-time-code" maxLength={6}
               aria-describedby={target ? sentId : undefined}
               value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} error={fieldError} />
-            <Button type="submit" busy={busy}>Verify and sign in</Button>
+            <Button type="submit" busy={busy}>{t('login.verify')}</Button>
             <div className="row-between">
               <Button variant="ghost" disabled={busy || waiting} onClick={() => void send()}>
-                {waiting ? `Resend code in ${cooldown}s` : 'Resend code'}
+                {waiting ? t('common.resendCodeIn', { seconds: cooldown }) : t('common.resendCode')}
               </Button>
               <Button variant="ghost" disabled={busy} onClick={() => { setStep('identify'); setError(null); setFieldError(null); focusOn('identifier'); }}>
-                Change number or email
+                {t('login.change')}
               </Button>
             </div>
           </form>

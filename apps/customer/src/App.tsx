@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { createHashRouter, NavLink, Outlet, RouterProvider, useLocation } from 'react-router';
 import { CalendarDays, House, Pill, UserRound, Wallet } from 'lucide-react';
 import { Empty, LanguageScope, Loading, useLanguage } from '@jansetu/ui';
+import { t } from './i18n/index.ts';
 import { useSession, type Customer } from './session.tsx';
 import { LoginScreen } from './screens/LoginScreen.tsx';
 import { HomeScreen } from './screens/HomeScreen.tsx';
@@ -27,11 +28,11 @@ import { BillsScreen } from './screens/bills/BillsScreen.tsx';
 import { BillScreen } from './screens/bills/BillScreen.tsx';
 
 const TABS = [
-  { to: '/', label: 'Home', icon: House },
-  { to: '/bookings', label: 'Bookings', icon: CalendarDays },
-  { to: '/pharmacy', label: 'Medicines', icon: Pill },
-  { to: '/wallet', label: 'Wallet', icon: Wallet },
-  { to: '/profile', label: 'Profile', icon: UserRound },
+  { to: '/', words: 'nav.home', icon: House },
+  { to: '/bookings', words: 'nav.bookings', icon: CalendarDays },
+  { to: '/pharmacy', words: 'nav.medicines', icon: Pill },
+  { to: '/wallet', words: 'nav.wallet', icon: Wallet },
+  { to: '/profile', words: 'nav.profile', icon: UserRound },
 ] as const;
 
 function FocusOnNavigate() {
@@ -49,13 +50,13 @@ function Layout() {
   useLanguage(); // the tab names follow a language change; the page itself is mounted again (LanguageScope)
   return (
     <div className="app">
-      <a className="app-skip" href="#main">Skip to content</a>
+      <a className="app-skip" href="#main">{t('nav.skip')}</a>
       <main id="main" className="app-main"><FocusOnNavigate /><LanguageScope><Outlet /></LanguageScope></main>
-      <nav className="app-tabs" aria-label="Main">
-        {TABS.map(({ to, label, icon: Icon }) => (
+      <nav className="app-tabs" aria-label={t('nav.main')}>
+        {TABS.map(({ to, words, icon: Icon }) => (
           <NavLink key={to} to={to} end={to === '/'} className="app-tab">
             <Icon size={22} aria-hidden="true" />
-            <span>{label}</span>
+            <span>{t(words)}</span>
           </NavLink>
         ))}
       </nav>
@@ -88,7 +89,7 @@ function router() {
       { path: '/wallet', element: <WalletScreen /> },
       { path: '/profile', element: <ProfileScreen /> },
       { path: '/profile/family', element: <FamilyScreen /> },
-      { path: '*', element: <Empty title="Page not found">This page does not exist.</Empty> },
+      { path: '*', element: <Empty title={t('app.notFound.title')}>{t('app.notFound.body')}</Empty> },
     ],
   }]);
 }
@@ -101,7 +102,7 @@ function SignedIn({ customer }: { customer: Customer }) {
 export function App() {
   const { state } = useSession();
   // D4: a reload resumes the cookie session before deciding to show the sign-in screen.
-  if (state.status === 'restoring') return <main className="login"><Loading label="Signing you in…" /></main>;
+  if (state.status === 'restoring') return <main className="login"><Loading label={t('app.signingIn')} /></main>;
   if (state.status !== 'signed_in') return <LanguageScope><LoginScreen notice={state.notice} /></LanguageScope>;
   return <SignedIn customer={state.customer} />;
 }

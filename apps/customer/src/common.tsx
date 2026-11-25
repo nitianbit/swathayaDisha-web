@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { ApiError, appointmentInstant } from '@jansetu/api';
+import { ApiError, appointmentInstant, type Relationship } from '@jansetu/api';
 import { formatDateWith, INDIA_TIME } from '@jansetu/i18n';
 import { Alert, Button, TextArea } from '@jansetu/ui';
+import { t, type CustomerKey } from './i18n/index.ts';
 
 export function PageHeading({ title, children }: { title: string; children?: ReactNode }) {
   return (
@@ -15,7 +16,7 @@ export function PageHeading({ title, children }: { title: string; children?: Rea
 /** One sentence the customer can act on. Server messages are written for people and shown as given. */
 export function messageOf(err: unknown): string {
   if (err instanceof ApiError) return err.message;
-  return 'Something went wrong. Please try again.';
+  return t('common.error');
 }
 
 /** "Fri, 20 Nov 2026 · 9:30 am" in IST, from the backend's YYYYMMDD + time. */
@@ -23,22 +24,44 @@ export function formatAppointment(bookingDate: string, bookingTime: string): str
   const a = appointmentInstant(bookingDate, bookingTime);
   if (!a) return [bookingDate, bookingTime].filter(Boolean).join(' ');
   const d = formatDateWith(a.at, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: INDIA_TIME });
-  const t = formatDateWith(a.at, { hour: 'numeric', minute: '2-digit', timeZone: INDIA_TIME });
-  return `${d} · ${t}`;
+  const time = formatDateWith(a.at, { hour: 'numeric', minute: '2-digit', timeZone: INDIA_TIME });
+  return `${d} · ${time}`;
 }
 
-export const BOOKING_STATUS: Record<string, { label: string; tone?: 'ok' | 'warn' | 'danger' }> = {
-  pending: { label: 'Awaiting confirmation', tone: 'warn' },
-  pending_payment: { label: 'Awaiting payment', tone: 'warn' },
-  created: { label: 'Created', tone: 'warn' },
-  confirmed: { label: 'Confirmed', tone: 'ok' },
-  rescheduled: { label: 'Rescheduled', tone: 'ok' },
-  completed: { label: 'Completed' },
-  report_delivered: { label: 'Report ready', tone: 'ok' },
-  cancellation_requested: { label: 'Cancelling', tone: 'warn' },
-  cancelled: { label: 'Cancelled', tone: 'danger' },
-  no_show: { label: 'Missed (no refund)', tone: 'danger' },
+type Tone = 'ok' | 'warn' | 'danger';
+/** A status's words (a catalogue key) and badge tone; worded at render by `statusOf`. */
+export type StatusWords = { key: CustomerKey; tone?: Tone };
+
+/** A status badge: its words, or the raw code (underscores as spaces) when the app does not know it. */
+export function statusOf(map: Readonly<Record<string, StatusWords>>, status: string): { label: string; tone?: Tone } {
+  const s = Object.hasOwn(map, status) ? map[status] : undefined;
+  return s ? { label: t(s.key), tone: s.tone } : { label: String(status).replace(/_/g, ' ') };
+}
+
+export const BOOKING_STATUS: Readonly<Record<string, StatusWords>> = {
+  pending: { key: 'status.awaitingConfirmation', tone: 'warn' },
+  pending_payment: { key: 'status.awaitingPayment', tone: 'warn' },
+  created: { key: 'status.created', tone: 'warn' },
+  confirmed: { key: 'status.confirmed', tone: 'ok' },
+  rescheduled: { key: 'status.rescheduled', tone: 'ok' },
+  completed: { key: 'status.completed' },
+  report_delivered: { key: 'status.reportReady', tone: 'ok' },
+  cancellation_requested: { key: 'status.cancelling', tone: 'warn' },
+  cancelled: { key: 'status.cancelled', tone: 'danger' },
+  no_show: { key: 'status.missedNoRefund', tone: 'danger' },
 };
+
+const GENDER = { Female: 'gender.female', Male: 'gender.male', Other: 'gender.other' } as const;
+/** A gender value from the server in words; an unknown value as sent. */
+export const genderLabel = (g: string) => (Object.hasOwn(GENDER, g) ? t(GENDER[g as keyof typeof GENDER]) : g);
+
+const RELATIONSHIP: Readonly<Record<Relationship, CustomerKey>> = {
+  Me: 'relationship.me', Father: 'relationship.father', Mother: 'relationship.mother', Spouse: 'relationship.spouse', Son: 'relationship.son',
+  Daughter: 'relationship.daughter', Brother: 'relationship.brother', Sister: 'relationship.sister', Grandfather: 'relationship.grandfather',
+  Grandmother: 'relationship.grandmother', Friend: 'relationship.friend', Other: 'relationship.other',
+};
+/** A relationship from the server in words; an unknown value as sent. */
+export const relationshipLabel = (r: string): string => (Object.hasOwn(RELATIONSHIP, r) ? t(RELATIONSHIP[r as Relationship]) : r);
 
 /**
  * Two-step confirmation for things that cannot be undone: the first tap says what will happen, the second does it.
@@ -76,7 +99,7 @@ export function Confirm({ label, consequence, confirmLabel, withReason = false, 
   return (
     <div ref={group} className="confirm" role="group" aria-label={label} aria-describedby={consequenceId}>
       <div id={consequenceId}>{consequence}</div>
-      {withReason && <TextArea label="Reason (optional)" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />}
+      {withReason && <TextArea label={t('confirm.reason')} value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />}
       {error && <Alert>{error}</Alert>}
       <div className="confirm-actions">
         <Button variant="danger" busy={busy} onClick={async () => {
@@ -86,7 +109,7 @@ export function Confirm({ label, consequence, confirmLabel, withReason = false, 
             if (alive.current) close();
           } catch (err) { setError(messageOf(err)); } finally { if (alive.current) setBusy(false); }
         }}>{confirmLabel}</Button>
-        <Button ref={back} variant="ghost" disabled={busy} onClick={() => { setError(null); close(); }}>Back</Button>
+        <Button ref={back} variant="ghost" disabled={busy} onClick={() => { setError(null); close(); }}>{t('common.back')}</Button>
       </div>
     </div>
   );

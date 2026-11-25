@@ -7,6 +7,7 @@ import {
   type ApiClient, type OtpTarget, type PendingMarker, type Principal,
 } from '@jansetu/api';
 import { Reconnecting, ReconnectingStart } from '@jansetu/ui';
+import { t, type CustomerKey } from './i18n/index.ts';
 
 const APP = 'customer';
 /** N1: inside the phone app the refresh token lives in the OS secure store (see nativeSession.ts). */
@@ -17,7 +18,11 @@ export interface Customer {
   id: string;
 }
 
-type SessionState = { status: 'restoring' } | { status: 'signed_out'; notice?: string } | { status: 'signed_in'; customer: Customer };
+/** Why the sign-in screen shows: catalogue keys, worded at render (docs/I18N_PLAN.md §3.4), in the order they happened. */
+export type SessionNotice = Extract<CustomerKey, `session.notice.${string}`>;
+export type SessionNotices = readonly SessionNotice[];
+
+type SessionState = { status: 'restoring' } | { status: 'signed_out'; notice?: SessionNotices } | { status: 'signed_in'; customer: Customer };
 
 /**
  * Lives exactly as long as the signed-in session; one map per session. Pending once-only requests (booking create) are
@@ -38,7 +43,7 @@ interface SessionValue {
   /** WQ9: exactly one of a phone or an email (backend `selectCustomerLoginContact`). */
   requestCode: (target: OtpTarget) => Promise<void>;
   verifyCode: (target: OtpTarget, otp: string) => Promise<void>;
-  signOut: (notice?: string) => void;
+  signOut: (notice?: SessionNotice) => void;
   /** Ends every session of this account on every device (POST /auth/sessions/revoke), then this one. */
   signOutEverywhere: () => Promise<void>;
 }
@@ -46,8 +51,11 @@ interface SessionValue {
 const SessionContext = createContext<SessionValue | null>(null);
 
 /** WQ11a: said while a sign-out has not reached the server yet (the device never resumes that session meanwhile). */
-export const SIGNED_OUT_HERE = 'You are signed out on this device. The server has not confirmed it yet: this app keeps trying, and nobody is signed back in here until it does.';
-const withNote = (notice: string | undefined, note: string) => (notice ? `${notice} ${note}` : note);
+export const SIGNED_OUT_HERE: SessionNotice = 'session.notice.signedOutHere';
+/** A notice added after the ones already shown. */
+const withNote = (notice: SessionNotices | undefined, note: SessionNotice): SessionNotices => [...(notice ?? []), note];
+/** The same notices in the same order (the sign-in screen shows the same words). */
+const sameNotice = (a: SessionNotices | undefined, b: SessionNotices | undefined) => (a ?? []).join(' ') === (b ?? []).join(' ');
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const isPending = (v: unknown): v is PendingMarker =>
@@ -86,7 +94,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
   const startRetry = useRef<{ n: number; timer?: ReturnType<typeof setTimeout> }>({ n: 0 });
   const starting = useRef(true);
 
-  const endLocally = useCallback((notice?: string) => {
+  const endLocally = useCallback((notice?: SessionNotices) => {
     generation.current += 1;
     token.current = null;
     principal.current = null;
@@ -126,9 +134,9 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     void (async () => {
       let clean = await attempt();
       if (clean || cleanup.current !== mine) { if (cleanup.current === mine) cleanup.current = null; return; }
-      setState((s) => (s.status === 'signed_out' ? { status: 'signed_out', notice: `${s.notice ? `${s.notice} ` : ''}${marked
-        ? 'This phone could not clear its saved sign-in yet; it will be cleared when the app next opens.'
-        : 'This phone could not finish signing out yet. Keep the app open for a moment while it tries again.'}` } : s));
+      setState((s) => (s.status === 'signed_out' ? { status: 'signed_out', notice: withNote(s.notice, marked
+        ? 'session.notice.phoneNotCleared'
+        : 'session.notice.phoneStillSigningOut') } : s));
       // Not recorded durably either: keep trying while the app is open (stops when a new sign-in replaces it).
       while (!clean && !marked && cleanup.current === mine) {
         await pause(5000);
@@ -145,7 +153,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
    * answers, the sign-in screen says so and no start resumes the session (`restore` finishes the logout first). Stops
    * when the server answered, another tab finished it, or a new sign-in replaced the session.
    */
-  const finishWebSignOut = useCallback((tabToken: string | null, marked: boolean, notice?: string) => {
+  const finishWebSignOut = useCallback((tabToken: string | null, marked: boolean, notice?: SessionNotices) => {
     const mine = {};
     cleanup.current = mine;
     const attempt = async (): Promise<boolean> => withSessionLock(APP, async () => {
@@ -162,14 +170,14 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     void (async () => {
       let clean = await attempt();
       if (!clean && cleanup.current === mine) {
-        setState((s) => (s.status === 'signed_out' && s.notice === notice ? { status: 'signed_out', notice: noted } : s));
+        setState((s) => (s.status === 'signed_out' && sameNotice(s.notice, notice) ? { status: 'signed_out', notice: noted } : s));
       }
       for (let wait = 1000; !clean && cleanup.current === mine; wait = Math.min(wait * 2, 30_000)) {
         await pause(wait);
         clean = await attempt();
       }
       if (cleanup.current === mine) cleanup.current = null;
-      if (clean) setState((s) => (s.status === 'signed_out' && s.notice === noted ? { status: 'signed_out', ...(notice ? { notice } : {}) } : s));
+      if (clean) setState((s) => (s.status === 'signed_out' && sameNotice(s.notice, noted) ? { status: 'signed_out', ...(notice ? { notice } : {}) } : s));
     })();
   }, []);
 
@@ -179,7 +187,8 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
    * start resumes the session. Reload markers of unconfirmed creates stay (D4): they hold ids and times only, and a
    * request whose answer was lost must still be resolved after signing in again, never made a second time.
    */
-  const endSession = useCallback((notice: string | undefined) => {
+  const endSession = useCallback((said: SessionNotice | undefined) => {
+    const notice: SessionNotices | undefined = said ? [said] : undefined;
     const tabToken = token.current; // the family this tab was using ends too, not only the cookie's
     const marked = secure ? markSignOutPending(NATIVE_APP) : cookieMode ? markWebSignOutPending(APP) : true;
     endLocally(notice);
@@ -188,7 +197,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     else if (cookieMode) finishWebSignOut(tabToken, marked, notice);
   }, [endLocally, channel, cookieMode, secure, finishNativeSignOut, finishWebSignOut]);
 
-  const signOut = useCallback((notice?: string) => endSession(notice), [endSession]);
+  const signOut = useCallback((notice?: SessionNotice) => endSession(notice), [endSession]);
 
   /** WQ11a: a session made by a sign-in that then failed (profile check): ended on the server, never left behind. */
   const discardNew = useCallback((newToken: string) => {
@@ -218,16 +227,16 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       r = await rotate();
     } catch (err) {
       if (gen !== generation.current) return null;
-      if (!isTransientSessionError(err)) { endLocally('Your session has ended. Please sign in again.'); return null; }
+      if (!isTransientSessionError(err)) { endLocally(['session.notice.ended']); return null; }
       setReconnecting(true);
       clearTimeout(retry.current.timer);
       const n = retry.current.n + 1;
       retry.current = { n, timer: setTimeout(() => { if (gen === generation.current) void renewRef.current(null).catch(() => undefined); }, Math.min(60, 2 ** n) * 1000) };
-      throw err instanceof ApiError ? err : new ApiError(0, 'Could not reach the server. Check your connection and try again.', 'NETWORK');
+      throw err instanceof ApiError ? err : new ApiError(0, t('session.error.network'), 'NETWORK');
     }
     if (gen !== generation.current) return null;
     if (!samePrincipal(r.principal, principal.current)) {
-      endLocally('Someone else signed in on this browser. Please sign in again.');
+      endLocally(['session.notice.someoneElse']);
       return null;
     }
     token.current = r.token;
@@ -247,7 +256,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
     getToken: () => token.current,
     getSessionSignal: () => sessionAbort.current.signal,
     ...(mode !== 'memory' ? { renew: (sent: string) => renewRef.current(sent) } : {}),
-    onUnauthorized: (sent) => { if (sent === token.current) endSession('Your session has ended. Please sign in again.'); },
+    onUnauthorized: (sent) => { if (sent === token.current) endSession('session.notice.ended'); },
   }), [baseUrl, endSession]);
   const auth = useMemo(() => authApi(api), [api]);
   authRef.current = auth;
@@ -259,7 +268,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
       if (gen !== generation.current) return false;
       const id = typeof profile?.user?._id === 'string' ? profile.user._id : '';
       if (profile?.userRole !== 'user' || !/^[0-9a-fA-F]{24}$/.test(id)) {
-        throw new ApiError(403, 'This account cannot use the customer app.');
+        throw new ApiError(403, t('session.error.notCustomer'));
       }
       principal.current = { userId: id, userType: 'user' };
       markers.current = markerStore(APP, id);
@@ -289,6 +298,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
         // An unreadable record counts as pending: resuming is only allowed when it is known that nobody signed out.
         if (secure && signOutState(NATIVE_APP) !== 'none') {
           await nativeSignOut(secure, NATIVE_APP, (rt) => auth.logoutNative(NATIVE_APP, rt, null));
+          // i18n-ignore: never shown (caught below: the sign-in screen opens)
           throw new ApiError(401, 'Signed out', 'SESSION_ENDED');
         }
         // WQ11a: a sign-out in this browser has not reached the server yet: finish it BEFORE any refresh, never resume.
@@ -296,6 +306,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
         if (!secure && webSignOutState(APP) !== 'none') {
           if (isSignedOutAnswer(await auth.logoutSession(null).catch(() => null))) clearWebSignOutPending(APP);
           else unfinished = true;
+          // i18n-ignore: never shown (caught below: the sign-in screen opens)
           throw new ApiError(401, 'Signed out', 'SESSION_ENDED');
         }
         const r = await rotate();
@@ -315,7 +326,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
           setStartReconnecting(true);
           return;
         }
-        setState((s) => (s.status === 'restoring' ? { status: 'signed_out', ...(unfinished ? { notice: SIGNED_OUT_HERE } : {}) } : s));
+        setState((s) => (s.status === 'restoring' ? { status: 'signed_out', ...(unfinished ? { notice: [SIGNED_OUT_HERE] } : {}) } : s));
       }
       if (unfinished) finishWebSignOut(null, true);
     }
@@ -344,13 +355,13 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
 
   useEffect(() => channel?.listen((m) => {
     if (m.type === 'signed-out') {
-      if (principal.current) endLocally('You signed out in another tab.');
+      if (principal.current) endLocally(['session.notice.otherTab']);
       return;
     }
     // WQ11a: another tab signed in, so the browser's session is new: a clean-up still retrying here must not end it.
     if (!secure) cleanup.current = null;
     if (principal.current && !samePrincipal(principal.current, m)) {
-      endLocally('Someone else signed in on this browser. Please sign in again.');
+      endLocally(['session.notice.someoneElse']);
     } else if (!principal.current) {
       void restore();
     }
@@ -373,7 +384,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
         } catch {
           // Not stored, so not usable: end the new session on the server rather than leave it behind.
           await auth.logoutNative(NATIVE_APP, n.refreshToken, n.token).catch(() => undefined);
-          throw new ApiError(0, 'This phone could not save your sign-in. Please try again.', 'SECURE_STORE');
+          throw new ApiError(0, t('session.error.secureStore'), 'SECURE_STORE');
         }
         cleanup.current = null; // a retrying clean-up must not remove the new token
         clearSignOutPending(NATIVE_APP); // the new token replaced whatever an unfinished sign-out left behind
@@ -387,7 +398,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
         }
       }
       if (gen !== generation.current) return;
-      if (!signedIn?.token) throw new ApiError(502, 'Sign-in did not return a session. Please try again.');
+      if (!signedIn?.token) throw new ApiError(502, t('session.error.noSession'));
       let admitted;
       try {
         admitted = await establish(gen, signedIn.token, signedIn.expiresIn);
@@ -402,7 +413,7 @@ export function SessionProvider({ baseUrl, children }: { baseUrl: string; childr
 
   const signOutEverywhere = useCallback(async () => {
     await auth.revokeSessions();
-    signOut('You have been signed out on all your devices.');
+    signOut('session.notice.everywhere');
   }, [auth, signOut]);
 
   const value = useMemo(() => ({ state, api, memory, reconnecting, requestCode, verifyCode, signOut, signOutEverywhere }),

@@ -4,8 +4,9 @@ import { Link } from 'react-router';
 import {
   ApiError, customerApi, maskTarget, MAX_EMAIL, normalizeEmail, OTP_PATTERN, targetKey, type CustomerProfile, type Gender, type ProfileUpdate,
 } from '@jansetu/api';
-import { Alert, Button, ErrorState, LanguageSwitcher, Loading, TextField, useCooldowns } from '@jansetu/ui';
-import { Confirm, messageOf, PageHeading } from '../common.tsx';
+import { Alert, Button, ErrorState, LanguageSwitcher, Loading, Parts, TextField, useCooldowns } from '@jansetu/ui';
+import { Confirm, genderLabel, messageOf, PageHeading } from '../common.tsx';
+import { t, type CustomerKey } from '../i18n/index.ts';
 import { useCustomer, useSession } from '../session.tsx';
 import { missingProfileFields } from './HomeScreen.tsx';
 
@@ -21,7 +22,7 @@ export function ProfileScreen() {
   const q = useQuery({ queryKey: ['me', me.id], queryFn: () => customerApi(api).profile() });
   return (
     <>
-      <PageHeading title="Profile" />
+      <PageHeading title={t('nav.profile')} />
       <LanguageSwitcher className="card" />
       {q.isPending ? <Loading /> : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : <>
@@ -29,14 +30,14 @@ export function ProfileScreen() {
           <EmailSection key={`e:${q.data._id}`} profile={q.data} />
         </>}
       <section className="card stack" aria-labelledby="fam-h">
-        <h2 id="fam-h">Family</h2>
-        <Link to="/profile/family">Family members you book for</Link>
+        <h2 id="fam-h">{t('profile.family')}</h2>
+        <Link to="/profile/family">{t('profile.familyLink')}</Link>
       </section>
       <section className="card stack" aria-labelledby="acct-h">
-        <h2 id="acct-h">Account</h2>
-        <Button variant="secondary" onClick={() => signOut()}>Sign out</Button>
-        <Confirm label="Sign out on all devices" confirmLabel="Sign out everywhere"
-          consequence="Every phone or browser signed in to your account will be signed out, including this one."
+        <h2 id="acct-h">{t('profile.account')}</h2>
+        <Button variant="secondary" onClick={() => signOut()}>{t('profile.signOut')}</Button>
+        <Confirm label={t('profile.signOutAll')} confirmLabel={t('profile.signOutEverywhere')}
+          consequence={t('profile.signOutAllConsequence')}
           onConfirm={() => signOutEverywhere()} />
       </section>
     </>
@@ -62,12 +63,12 @@ function ProfileForm({ profile }: { profile: CustomerProfile }) {
     e.preventDefault();
     const errs: Record<string, string> = {};
     const body: ProfileUpdate = {};
-    if (name.trim().length < 2) errs.name = 'Enter your full name.'; else if (name.trim() !== (profile.name ?? '')) body.name = name.trim();
+    if (name.trim().length < 2) errs.name = t('profile.nameMissing'); else if (name.trim() !== (profile.name ?? '')) body.name = name.trim();
     // WQ9: the email is not saved from here: it is added by proving it (EmailSection).
     if (gender && gender !== profile.gender) body.gender = gender;
     if (dob) {
       const v = fromInput(dob);
-      if (!/^\d{8}$/.test(v) || v > fromInput(new Date().toISOString().slice(0, 10))) errs.dob = 'Enter your date of birth.';
+      if (!/^\d{8}$/.test(v) || v > fromInput(new Date().toISOString().slice(0, 10))) errs.dob = t('profile.dobMissing');
       else if (v !== profile.dateOfBirth) body.dateOfBirth = v;
     }
     setErrors(errs);
@@ -76,20 +77,20 @@ function ProfileForm({ profile }: { profile: CustomerProfile }) {
 
   return (
     <form className="card stack" onSubmit={submit} noValidate aria-labelledby="me-h">
-      <h2 id="me-h">Your details</h2>
-      {missing.length > 0 && <Alert tone="warn">Please complete: {missing.map((m) => LABEL[m]).join(', ')}.</Alert>}
-      <TextField label="Full name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} error={errors.name} maxLength={100} />
-      <div className="field-static"><span>Mobile number</span><strong>{profile.phone ?? '—'}</strong></div>
+      <h2 id="me-h">{t('profile.details')}</h2>
+      {missing.length > 0 && <Alert tone="warn">{t('profile.complete', { fields: missing.map((m) => t(FIELD[m])).join(', ') })}</Alert>}
+      <TextField label={t('profile.fullName')} autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} error={errors.name} maxLength={100} />
+      <div className="field-static"><span>{t('profile.mobile')}</span><strong>{profile.phone ?? '—'}</strong></div>
       <fieldset className="choice">
-        <legend>Gender</legend>
+        <legend>{t('profile.gender')}</legend>
         {GENDERS.map((g) => (
-          <label key={g}><input type="radio" name="gender" checked={gender === g} onChange={() => setGender(g)} /> {g}</label>
+          <label key={g}><input type="radio" name="gender" checked={gender === g} onChange={() => setGender(g)} /> {genderLabel(g)}</label>
         ))}
       </fieldset>
-      <TextField label="Date of birth" type="date" value={dob} onChange={(e) => setDob(e.target.value)} error={errors.dob} />
+      <TextField label={t('profile.dob')} type="date" value={dob} onChange={(e) => setDob(e.target.value)} error={errors.dob} />
       {save.isError && <Alert>{messageOf(save.error)}</Alert>}
-      {save.isSuccess && <Alert tone="ok">Saved.</Alert>}
-      <Button type="submit" busy={save.isPending}>Save</Button>
+      {save.isSuccess && <Alert tone="ok">{t('profile.saved')}</Alert>}
+      <Button type="submit" busy={save.isPending}>{t('profile.save')}</Button>
     </form>
   );
 }
@@ -122,11 +123,11 @@ function EmailSection({ profile }: { profile: CustomerProfile }) {
   if (profile.email) {
     return (
       <section className="card stack" aria-labelledby="email-h">
-        <h2 id="email-h">Email</h2>
-        {done && <Alert tone="ok">Email added. You can now also sign in with it.</Alert>}
+        <h2 id="email-h">{t('common.email')}</h2>
+        {done && <Alert tone="ok">{t('profile.emailAdded')}</Alert>}
         {error && <Alert>{error}</Alert>}
-        <div className="field-static"><span>Email</span><strong>{profile.email}</strong>
-          <small>You can sign in with it. To change it, contact support.</small></div>
+        <div className="field-static"><span>{t('common.email')}</span><strong>{profile.email}</strong>
+          <small>{t('profile.emailFixed')}</small></div>
       </section>
     );
   }
@@ -145,7 +146,7 @@ function EmailSection({ profile }: { profile: CustomerProfile }) {
     e?.preventDefault();
     setError(null);
     const email = sentTo ?? normalizeEmail(typed);
-    if (!email) { setFieldError('Enter a valid email address.'); return; }
+    if (!email) { setFieldError(t('profile.emailInvalid')); return; }
     setFieldError(null);
     const mine = ++seq.current;
     setBusy(true);
@@ -167,7 +168,7 @@ function EmailSection({ profile }: { profile: CustomerProfile }) {
     e.preventDefault();
     setError(null);
     if (!sentTo) return;
-    if (!OTP_PATTERN.test(otp)) { setFieldError('Enter the 6-digit code.'); return; }
+    if (!OTP_PATTERN.test(otp)) { setFieldError(t('code.missing')); return; }
     setFieldError(null);
     const mine = ++seq.current;
     setBusy(true);
@@ -188,24 +189,24 @@ function EmailSection({ profile }: { profile: CustomerProfile }) {
 
   return (
     <section className="card stack" aria-labelledby="email-h">
-      <h2 id="email-h">Email</h2>
+      <h2 id="email-h">{t('common.email')}</h2>
       {error && <Alert>{error}</Alert>}
       {!sentTo ? (
         <form className="stack" noValidate onSubmit={(e) => void send(e)}>
-          <TextField label="Email" type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} maxLength={MAX_EMAIL}
+          <TextField label={t('common.email')} type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} maxLength={MAX_EMAIL}
             value={typed} onChange={(e) => setTyped(e.target.value)} error={fieldError}
-            hint="We will send a code to it. Once added, you can also sign in with it; only support can change it." />
-          <Button type="submit" busy={busy} disabled={wait > 0}>{wait > 0 ? `Send code in ${wait}s` : 'Send code'}</Button>
+            hint={t('profile.emailHint')} />
+          <Button type="submit" busy={busy} disabled={wait > 0}>{wait > 0 ? t('code.sendIn', { seconds: wait }) : t('code.send')}</Button>
         </form>
       ) : (
         <form className="stack" noValidate onSubmit={(e) => void verify(e)}>
-          <p>We sent a 6-digit code to your email <strong>{maskTarget({ email: sentTo })}</strong>.</p>
-          <TextField ref={codeRef} label="6-digit code" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+          <p><Parts of={t.rich('code.sentEmail', { target: <strong>{maskTarget({ email: sentTo })}</strong> })} /></p>
+          <TextField ref={codeRef} label={t('common.sixDigitCode')} inputMode="numeric" autoComplete="one-time-code" maxLength={6}
             value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} error={fieldError} />
-          <Button type="submit" busy={busy}>Verify and add email</Button>
+          <Button type="submit" busy={busy}>{t('profile.verifyEmail')}</Button>
           <div className="row-between">
-            <Button variant="ghost" disabled={busy || wait > 0} onClick={() => void send()}>{wait > 0 ? `Resend code in ${wait}s` : 'Resend code'}</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => { setSentTo(null); setOtp(''); setError(null); setFieldError(null); }}>Use another email</Button>
+            <Button variant="ghost" disabled={busy || wait > 0} onClick={() => void send()}>{wait > 0 ? t('common.resendCodeIn', { seconds: wait }) : t('common.resendCode')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => { setSentTo(null); setOtp(''); setError(null); setFieldError(null); }}>{t('profile.otherEmail')}</Button>
           </div>
         </form>
       )}
@@ -213,4 +214,6 @@ function EmailSection({ profile }: { profile: CustomerProfile }) {
   );
 }
 
-const LABEL: Record<string, string> = { name: 'name', email: 'email', gender: 'gender', dateOfBirth: 'date of birth' };
+const FIELD: Readonly<Record<ReturnType<typeof missingProfileFields>[number], CustomerKey>> = {
+  name: 'profile.field.name', email: 'profile.field.email', gender: 'profile.field.gender', dateOfBirth: 'profile.field.dateOfBirth',
+};
