@@ -103,7 +103,8 @@ export function outcomeOfError(err: unknown, org: BookerKind = 'pharmacy'): Card
   if (err.code === 'PAYMENT_DISPUTED') return { kind: 'blocked', message: 'A card dispute was recorded on this booking payment. Please contact Jansetu support.' };
   // WQ27 (r29 DR9): a doctor no longer verified and active; the server returns its capture to the card.
   if (err.code === 'SPECIALIST_NOT_VERIFIED') return { kind: 'blocked', message: DOCTOR_CARD_BLOCKED_WORDS };
-  if (err.status === 403) return { kind: 'blocked', message: err.code === 'INSUFFICIENT_PERMISSIONS' ? CARD_PERMISSION_WORDS : cardBlockedWords(org) };
+  // WQ24b re-check: the permission words ("Ask your lab’s owner") only for a lab member.
+  if (err.status === 403) return { kind: 'blocked', message: err.code === 'INSUFFICIENT_PERMISSIONS' && org === 'lab' ? CARD_PERMISSION_WORDS : cardBlockedWords(org) };
   return null;
 }
 

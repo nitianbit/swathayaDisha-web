@@ -304,14 +304,6 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
     );
   }
 
-  if (off) {
-    return (
-      <Alert tone="warn">
-        {SWITCHED_OFF_MESSAGE} Jansetu turns it on for your {org} when it is ready. Your other tools work as usual.
-      </Alert>
-    );
-  }
-
   if (ended) {
     return <NotBooked words={ended} againLabel="Book another consultation" onAgain={resetAll} listPath={booker.paths.list} listLabel="See booked consultations" />;
   }
@@ -350,6 +342,16 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
           <Link to={booker.paths.list}>See booked consultations</Link>
         </div>
       </section>
+    );
+  }
+
+  // WQ24b re-check: after the booking states. A background doctor read answering 503 or a code-less 404 (a proxy during
+  // a deploy) reads as "switched off"; it never replaces a booking held for its card payment, or one already made.
+  if (off) {
+    return (
+      <Alert tone="warn">
+        {SWITCHED_OFF_MESSAGE} Jansetu turns it on for your {org} when it is ready. Your other tools work as usual.
+      </Alert>
     );
   }
 

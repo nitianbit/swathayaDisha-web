@@ -135,6 +135,8 @@ describe('a lab settles a card payment on its own routes (r21: 2d’s verify and
     expect(outcomeOfError(e(403, 'PARTNER_INACTIVE'), 'lab')).toMatchObject({ kind: 'blocked', message: expect.stringMatching(/^Your lab account is not active or not verified/) });
     // WQ24b: a missing permission is said as such, never as an inactive account.
     expect(outcomeOfError(e(403, 'INSUFFICIENT_PERMISSIONS'), 'lab')).toEqual({ kind: 'blocked', message: CARD_PERMISSION_WORDS });
+    // WQ24b re-check: only a lab member is told to ask the lab's owner.
+    expect(outcomeOfError(e(403, 'INSUFFICIENT_PERMISSIONS'))).toEqual({ kind: 'blocked', message: CARD_BLOCKED_WORDS });
     expect(outcomeOfError(e(403, 'PHARMACY_INACTIVE'))).toEqual({ kind: 'blocked', message: CARD_BLOCKED_WORDS });
     expect(CARD_BLOCKED_WORDS).toMatch(/^Your pharmacy account is not active or not verified/);
     expect(cardCheckProblem(e(404, 'PAYMENT_RECORD_NOT_FOUND'), 'lab')).toBe('This payment was not found for your lab.');
