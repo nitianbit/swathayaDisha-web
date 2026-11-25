@@ -2771,6 +2771,15 @@ Named e2e changes: `partner-invoices.spec.ts` looks for "Tests and packages" (la
 journey) instead of "Price list", and the lab page heading "Tests and packages"; `doctor-tools.spec.ts`'s doctor menu
 has 11 items (+ Bills, Services and prices) and 3 new journeys (no clinic, unverified, verified with the switch).
 
+## WQ52 statement date fields: one shared period, read after a pause (2026-11-26, branch `wq52/date-fields` on stage 06daf52)
+
+- **Doctor › Earnings** uses the finance statements' period fields and CSV (`useStatementPeriod`, `StatementPeriodFields`
+  and their `CsvDownload` in `screens/finance/finance.tsx`) instead of its own form, "Show" button and download; its own
+  period and CSV words are gone from `i18n/doctor`. The list follows the period as the other statements do.
+- **A short pause** (`PERIOD_PAUSE_MS`, 400 ms) inside `useStatementPeriod`: typing a year digit by digit (0002, 0020,
+  0202, 2026) reads the statement once, on every statement (finance, pharmacy finance and referral, doctor earnings). The
+  date error also waits for the pause.
+
 ## Follow-ups
 
 
@@ -2925,3 +2934,4 @@ has 11 items (+ Bills, Services and prices) and 3 new journeys (no clinic, unver
 | 2026-11-25 | WQ26b referral follow-ups on r33 (on stage 25a860c) | Against r33 335e36c2 (§26.16; mocked API). typecheck clean; Vitest 493/493 (referralCuts.test.ts on r33's shapes: `switches` beside the lists, rows from `shortRef` / `category` / `lines`, the pharmacy and lab bases incl. admin scope and the CSV period); Playwright workspace 1024/1024 on temporary port 5563 through `pw-slot.sh` with 2 workers (`reuseExistingServer: false`, config deleted; referral-cuts.spec.ts now 8 journeys x 2 devices: the switch note from `switches` with no rule set and after the switch changes, a lab booking's lines in the statement, the CSV download, a lab finance member's earnings page and CSV, a branch-limited lab member refused); release build with `VITE_API_SAME_ORIGIN=true`. |
 | 2026-11-25 | WQ46 customer sign-in then reload (branch `wq46/signin-reload` on stage 25a860c) | Tests only, no app change. typecheck clean; Vitest 494/494; Playwright customer 270/270 on temporary port 5561 through `pw-slot.sh` (`reuseExistingServer: false`, config deleted). The two journeys on unchanged stage: 8/8 at 1 worker, 4/12 at 5 workers (all 8 failures the 30 s timeout), 4/4 with 90 s, 4/4 in 8–12 s against the release build. |
 | 2026-11-25 | WQ26c referral review fixes (on 5475091) | typecheck clean; Vitest 506/506 (the referral statement with a period); Playwright `referral-cuts.spec.ts` + `finance.spec.ts` 54/54 through `pw-slot.sh` with 2 workers on temporary port 5563 (config deleted; +4 = 2 journeys x 2 devices: a lone cut line that is not the whole booking is listed, the whole-statement CSV refused with the server's words and a period exported with the list following it; a lab member without `finance.view` gets no page and reads nothing). |
+| 2026-11-26 | WQ52 statement date fields (on stage 06daf52) | typecheck clean; Vitest 526/526 (the stricter literal scan included); Playwright `finance.spec.ts`, `finance-4f.spec.ts`, `referral-cuts.spec.ts` and `doctor-tools.spec.ts` 132/132 through `pw-slot.sh` with 2 workers on temporary port 5563 (config deleted; the doctor's statement on the shared period fields and CSV; a year typed 0002 → 0020 → 0202 → 2026 read once). |

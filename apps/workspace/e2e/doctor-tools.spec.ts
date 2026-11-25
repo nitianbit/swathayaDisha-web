@@ -960,15 +960,14 @@ test('earnings: balance, statement with running balance and paging, CSV via blob
   await expect(page.getByRole('button', { name: 'Show older entries' })).toHaveCount(0);
   const older = backend.calls.filter((c) => c.path.startsWith('/specialists/me/finance/statement?')).map((c) => c.path);
   expect(older[1]).toMatch(/before=\d+_[0-9a-f]{24}&limit=50$/);
-  await page.getByLabel('From').fill('2026-11-30');
-  await page.getByLabel('To').fill('2026-11-01');
-  await page.getByRole('button', { name: 'Show', exact: true }).click();
-  await expect(page.getByText('The “from” date must not be after the “to” date.')).toBeVisible();
-  await page.getByLabel('From').fill('2026-10-20');
-  await page.getByLabel('To').fill('2026-10-25');
-  await page.getByRole('button', { name: 'Show', exact: true }).click();
+  // WQ52: the finance statements' period fields (read after a short pause) and CSV.
+  await page.getByLabel('From (India date)').fill('2026-11-30');
+  await page.getByLabel('To (India date)').fill('2026-11-01');
+  await expect(page.getByText('The period ends before it starts.')).toBeVisible();
+  await page.getByLabel('From (India date)').fill('2026-10-20');
+  await page.getByLabel('To (India date)').fill('2026-10-25');
   await expect(lines.getByRole('row')).toHaveCount(13); // 20–25 Oct: two entries a day
-  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /Download CSV \(Tue, 20 Oct, 2026 to Sun, 25 Oct, 2026\)/ }).click()]);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download CSV (from 20 Oct 2026 to 25 Oct 2026)' }).click()]);
   expect(download.suggestedFilename()).toBe('doctor-statement-2026-10-20-to-2026-10-25.csv');
   expect(await readFile((await download.path())!, 'utf8')).toContain('Opening balance');
   const csv = backend.calls.find((c) => c.path.startsWith('/specialists/me/finance/statement.csv'))!;
