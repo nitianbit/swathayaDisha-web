@@ -2822,6 +2822,22 @@ has 11 items (+ Bills, Services and prices) and 3 new journeys (no clinic, unver
   0202, 2026) reads the statement once, on every statement (finance, pharmacy finance and referral, doctor earnings). The
   date error also waits for the pause.
 
+## WQ53 user guides refreshed (2026-11-26, branch `wq53/guides` on stage 06c2080)
+
+One short "where is what" guide per sign-in in `docs/guides`: pharmacy, lab (owner and staff), clinic (owner and staff,
+incl. a doctor's own clinic), doctor, admin and the new customer guide. Each feature ends with a **Switch** line naming
+the backend `.env` switch (`src1/modules/assisted/flags.ts`, `smsNotices/flags.ts`; on only when exactly `true`); the
+admin guide lists them all. Labels from the catalogues; example names from the backend's `demo-accounts.example.json`.
+
+- Word and PDF in `~/Desktop/SwasthaDisha/Jansetu-user-guides` (overwritten, plus `Jansetu-customer-guide`): the 20 Nov
+  converter was lost with /tmp, so `docs/guides/md2html.py` now keeps it. Build: `python3 -I docs/guides/md2html.py
+  docs/guides/<g>-guide.md <out>/Jansetu-<g>-guide.html`, then `soffice --headless --convert-to "docx:MS Word 2007 XML"`
+  on the HTML and `soffice --headless --convert-to pdf` on the .docx.
+- Written as WQ51b and WQ50b will make it: Doctor › Bills lands on the clinic's Bills after the clinic sign-in; the New
+  sale bill is described generally.
+- Found: a clinic's Home tile still says "Tests and packages" (`HomeScreen.tsx` does not use `navLabelKey`); the side
+  menu says "Services and prices". Not fixed here (docs only).
+
 ## Follow-ups
 
 
