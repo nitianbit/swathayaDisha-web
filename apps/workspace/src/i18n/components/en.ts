@@ -20,7 +20,6 @@ export default {
   /** {error} is the reason the last send failed. */
   'pending.unknownWithError': 'The outcome of this request is not known yet ({error}). It may already be recorded. Sending the same request again is safe: it is never recorded twice. If it keeps being refused, ask an admin.',
   'pending.restored': 'A request made earlier on this device (before the page was reloaded, or before you signed out) has not been confirmed yet. Its details are not kept, so it cannot be sent again from here. Check whether it was recorded before making it again.',
-  'pending.resend': 'Send the same request again',
   'pending.check': 'Check whether it was recorded',
   /** Button: give up a request whose outcome is not known, so a new one can be made. */
   'pending.abandon': 'Cancel it and start again',

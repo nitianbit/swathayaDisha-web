@@ -3,6 +3,7 @@ import { ApiError, type ApiClient } from './client.ts';
 import { assistedRefusal, hex, idOf as checkedId, rupees, type BookedConsultation, type BookerKind, type BookingPayment, type CancelAnswer, type CardRefund, type OpenCardOrder } from './assisted.ts';
 import { t, type AssistedKey } from './i18n/assisted/index.ts';
 import { onLanguage, wordMap } from './i18n/words.ts';
+import { tooLongWords } from './messages.ts';
 
 /**
  * WQ16: assisted booking phase 1b, a pharmacy pays a walk-in consultation by card or UPI (backend r10
@@ -322,7 +323,7 @@ const clean = (s: string) => s.trim().replace(/\s+/g, ' ');
 export function agreementProblem(text: string, payer: CardRefundPayerKind = 'pharmacy'): string | undefined {
   const a = clean(text);
   if (!a) return t(payer === 'lab' ? 'agreement.emptyLab' : payer === 'doctor' ? 'agreement.emptyDoctor' : 'agreement.empty');
-  if (a.length > MAX_REFUND_AGREEMENT) return t('field.tooLong', { max: MAX_REFUND_AGREEMENT });
+  if (a.length > MAX_REFUND_AGREEMENT) return tooLongWords(MAX_REFUND_AGREEMENT);
   return undefined;
 }
 

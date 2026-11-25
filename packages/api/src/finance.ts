@@ -3,6 +3,7 @@ import { OBJECT_ID_PATTERN, partnerWorkspaceBase, REQUEST_KEY_PATTERN, type Part
 import { isRealDate, istDateOf } from './partnerLabs.ts';
 import { t } from './i18n/finance/index.ts';
 import { wordMap } from './i18n/words.ts';
+import { tooLongWords } from './messages.ts';
 
 /**
  * Q5 finance: settlement accounts (partners and doctors), the append-only ledger (statement with running balance, CSV),
@@ -218,7 +219,7 @@ export function payoutDetailsProblems(raw: {
 }): { body: PayoutDetailsInput | null; errors: Partial<Record<'accountName' | 'accountNumber' | 'ifsc' | 'bankName' | 'upiId', string>> } {
   const errors: Partial<Record<'accountName' | 'accountNumber' | 'ifsc' | 'bankName' | 'upiId', string>> = {};
   const accountName = (raw.accountName ?? '').trim();
-  if (accountName.length > MAX_ACCOUNT_NAME) errors.accountName = t('form.maxLength', { max: MAX_ACCOUNT_NAME });
+  if (accountName.length > MAX_ACCOUNT_NAME) errors.accountName = tooLongWords(MAX_ACCOUNT_NAME);
   if (raw.method === 'bank') {
     const accountNumber = (raw.accountNumber ?? '').replace(/\s+/g, '');
     const ifsc = (raw.ifsc ?? '').trim().toUpperCase();
@@ -226,7 +227,7 @@ export function payoutDetailsProblems(raw: {
     if (!accountName) errors.accountName = t('details.accountName');
     if (!ACCOUNT_NUMBER_PATTERN.test(accountNumber)) errors.accountNumber = t('details.accountNumber');
     if (!IFSC_PATTERN.test(ifsc)) errors.ifsc = t('details.ifsc');
-    if (bankName.length > MAX_BANK_NAME) errors.bankName = t('form.maxLength', { max: MAX_BANK_NAME });
+    if (bankName.length > MAX_BANK_NAME) errors.bankName = tooLongWords(MAX_BANK_NAME);
     return {
       errors,
       body: Object.keys(errors).length ? null : { method: 'bank', accountName, accountNumber, ifsc, ...(bankName ? { bankName } : {}) },
@@ -250,7 +251,7 @@ export function payoutProblems(p: { amountMinor: number | null; reference: strin
   if (ref.length < MIN_REFERENCE || ref.length > MAX_PAYOUT_REFERENCE) e.reference = t('payout.reference', { min: MIN_REFERENCE, max: MAX_PAYOUT_REFERENCE });
   if (!isRealDate(p.paidOn)) e.paidOn = t('payout.paidOn.missing');
   else if (p.paidOn > today) e.paidOn = t('payout.paidOn.future');
-  if (p.note.trim().length > MAX_PAYOUT_NOTE) e.note = t('form.maxLength', { max: MAX_PAYOUT_NOTE });
+  if (p.note.trim().length > MAX_PAYOUT_NOTE) e.note = tooLongWords(MAX_PAYOUT_NOTE);
   return e;
 }
 
@@ -258,7 +259,7 @@ export function payoutProblems(p: { amountMinor: number | null; reference: strin
 export function reasonProblem(reason: string): string | null {
   const r = reason.trim();
   if (r.length < MIN_FINANCE_REASON) return t('reason.tooShort', { min: MIN_FINANCE_REASON });
-  if (r.length > MAX_FINANCE_REASON) return t('form.maxLength', { max: MAX_FINANCE_REASON });
+  if (r.length > MAX_FINANCE_REASON) return tooLongWords(MAX_FINANCE_REASON);
   return null;
 }
 

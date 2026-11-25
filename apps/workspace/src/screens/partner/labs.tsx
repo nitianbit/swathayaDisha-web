@@ -4,7 +4,7 @@ import {
   hasGlobalScope, isDeskBooking, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODES, reportFileName, type Branch, type LabBooking, type LabBookingStatus, type VisitMode,
 } from '@jansetu/api';
 import { CALENDAR_DAY, formatDateWith } from '@jansetu/i18n';
-import { Alert, Badge, Button, Empty, ErrorState, Loading } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, Loading, shared } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { t } from '../../i18n/partner/index.ts';
 import { sniffDocument } from '../pharmacy/documents.ts';
@@ -66,7 +66,7 @@ export function useNow(): Date {
  */
 export function LabOnly({ ctx, children }: { ctx: ScopeContext; children: ReactNode }) {
   const partner = useWorkspacePartner(ctx);
-  if (!partner.data) return partner.isError ? <ErrorState message={messageOf(partner.error)} onRetry={() => void partner.refetch()} /> : <Loading label={t('common.loading')} />;
+  if (!partner.data) return partner.isError ? <ErrorState message={messageOf(partner.error)} onRetry={() => void partner.refetch()} /> : <Loading label={shared('state.loading')} />;
   if (partner.data.kind !== 'lab') {
     const name = partner.data.name;
     return (

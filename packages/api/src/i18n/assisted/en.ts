@@ -64,8 +64,6 @@ export default {
   /** Fills {mode} in reschedule.rule. */
   'reschedule.mode.video': 'video call',
 
-  /** Under a text field: the text is too long. */
-  'field.tooLong': 'Use at most {max} characters.',
   'patient.nameEmpty': 'Type the patient’s name.',
   'patient.familyNameEmpty': 'Type the family member’s name.',
   'patient.phoneInvalid': 'Enter a valid 10-digit mobile number.',

@@ -5,7 +5,7 @@ import {
   supplierCreateBody, supplierHas, supplierPatchBody, supplierProblems, SUPPLIERS_PAGE_MAX,
   type PharmacySupplier, type SupplierDraft, type SupplierField, type SupplierFields, type SupplierState,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, shared, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -326,7 +326,7 @@ function SupplierForm({ base: opened, busy, locked, onCancel, onSave, reread }: 
         {error && <Alert>{opened ? t('suppliers.notSaved') : t('suppliers.notAdded')}: {error}</Alert>}
         <div className="confirm-actions">
           <Button type="submit" busy={busy} disabled={locked}>{opened ? t('suppliers.saveChanges') : t('suppliers.addSupplier')}</Button>
-          <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('common.back')}</Button>
+          <Button variant="ghost" disabled={busy} onClick={onCancel}>{shared('action.back')}</Button>
         </div>
       </form>
     </section>

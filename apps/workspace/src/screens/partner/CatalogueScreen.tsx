@@ -2,11 +2,11 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   allowedGstRates, ApiError, catalogueAdminApi, chargesGst, holdsAny, ITEM_KINDS_FOR, MAX_CATALOGUE_SEARCH, MAX_CODE, MAX_DESCRIPTION, MAX_ITEM_NAME,
-  MAX_PREPARATION, MAX_PRICE_MINOR, MAX_SAC, MAX_SAMPLE_TYPE, paiseToInput, rupeesToPaise, TAX_REGIME_LABEL, usesVisitModes,
+  MAX_PREPARATION, MAX_PRICE_MINOR, MAX_SAC, MAX_SAMPLE_TYPE, paiseToInput, rupeesToPaise, TAX_REGIME_LABEL, tooLongWords, usesVisitModes,
   type CatalogueItem, type CatalogueItemKind, type CatalogueItemUpdate, type GstRate, type NewCatalogueItem, type Partner,
   type PartnerKind, type VisitMode,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, Loading, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, Loading, shared, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { dirtyKeys, staleMessage, useDraft, type DraftState } from '../../draft.ts';
@@ -71,7 +71,7 @@ export function itemBody(s: DraftState<Draft>, rates: readonly GstRate[], kind: 
   for (const k of Object.keys(LIMITS) as TextKey[]) {
     const v = d[k].trim();
     if (k === 'sampleType' && kind !== 'lab') continue;
-    if (v.length > LIMITS[k]) { errors[k] = t('common.maxChars', { max: LIMITS[k] }); continue; }
+    if (v.length > LIMITS[k]) { errors[k] = tooLongWords(LIMITS[k]); continue; }
     if (!v) {
       if (k === 'name') errors.name = t('catalogue.error.name');
       else if (isEdit && was[k].trim()) errors[k] = t('common.cannotRemove');
@@ -564,7 +564,7 @@ function ItemForm({ ctx, partner, item, onCancel, onSaved, onCreate, createBusy,
         {!item && createRefused && <Alert>{t('catalogue.form.notAdded', { reason: createRefused })}</Alert>}
         <div className="ws-actions">
           <Button type="submit" busy={busy || (!item && createBusy)}>{item ? t('catalogue.form.save') : t('catalogue.form.addItem')}</Button>
-          <Button variant="ghost" disabled={busy || (!item && createBusy)} onClick={onCancel}>{t('common.cancel')}</Button>
+          <Button variant="ghost" disabled={busy || (!item && createBusy)} onClick={onCancel}>{shared('action.cancel')}</Button>
         </div>
       </form>
     </section>

@@ -7,7 +7,7 @@ import {
   referralRuleRefusedBeforeWriting, referralRulesAdminApi, referralRuleText, referralTermsOf, referralTermsText, sameRuleTerms,
   type ReferralBookerKind, type ReferralCategory, type ReferralDraft, type ReferralRule, type ReferralRuleEvent, type ReferralTerms,
 } from '@jansetu/api';
-import { Alert, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, formatDateTime, Loading, shared, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { isRecordChanged } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
@@ -72,7 +72,7 @@ function ReferralCuts({ kind, bookerId, scopeKey }: { kind: ReferralBookerKind; 
       <PageHeading title={name ? t('referralCuts.titleFor', { name }) : t('referralCuts.title')}>
         {name !== undefined ? t('referralCuts.intro', { name }) : t('referralCuts.introNoName')}
       </PageHeading>
-      {booker.isPending ? <Loading label={t('referralCuts.loading')} />
+      {booker.isPending ? <Loading label={shared('state.loading')} />
         : booker.isError ? <ErrorState message={messageOf(booker.error)} onRetry={() => void booker.refetch()} />
         : !booker.data.cuts ? <Empty title={t('referralCuts.noClinics')}>{t('referralCuts.noClinicsHint')}</Empty>
         : (
@@ -243,7 +243,7 @@ function Rules({ kind, bookerId, name, pageKey }: { kind: ReferralBookerKind; bo
               return t('referralCuts.checkNotYet', { category: catWord(pending.body.category), terms: referralRuleText(r), version: r?.version ?? 0 });
             }}
             resend={pending.restored || !pending.body ? undefined : {
-              label: t('referralCuts.sendAgain'), busy: guard.busy,
+              label: shared('action.sendAgain'), busy: guard.busy,
               onClick: () => { void change(pending).catch((err: unknown) => setResendError(messageOf(err))); },
             }}
             forget={{ label: t('referralCuts.forget'), confirmLabel: t('referralCuts.forgetConfirm'), onForget: () => settle(pending.requestKey),
@@ -312,7 +312,7 @@ function RuleEditor({ category, base, name, busy, onSave, onCancel }: {
         <p className="ws-muted">{d.mode === 'off' && !base ? t('referralCuts.nothingToSwitchOff') : t('referralCuts.unchanged')}</p>
       )}
       <div className="ws-actions">
-        <ConfirmAction label={t('referralCuts.save')} confirmLabel={t('referralCuts.saveConfirm', { category: cat })} reason reasonLabel={t('referralCuts.reasonLabel')}
+        <ConfirmAction label={shared('action.save')} confirmLabel={t('referralCuts.saveConfirm', { category: cat })} reason reasonLabel={t('referralCuts.reasonLabel')}
           maxReason={MAX_REFERRAL_REASON}
           disabled={busy || unchanged} version={`${version}:${JSON.stringify(terms)}`}
           consequence={terms && (
@@ -327,7 +327,7 @@ function RuleEditor({ category, base, name, busy, onSave, onCancel }: {
             </>
           )}
           onConfirm={(reason) => (terms ? onSave(terms, version, reason) : Promise.resolve())} />
-        <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('referralCuts.cancel')}</Button>
+        <Button variant="ghost" disabled={busy} onClick={onCancel}>{shared('action.cancel')}</Button>
       </div>
     </div>
   );

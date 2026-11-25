@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import { customerApi, RELATIONSHIPS, type Gender, type NewDependent, type Relationship } from '@jansetu/api';
-import { Alert, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, Loading, shared, TextField } from '@jansetu/ui';
 import { genderLabel, messageOf, PageHeading, relationshipLabel } from '../common.tsx';
 import { t } from '../i18n/index.ts';
 import { usePagedList } from '../paging.ts';
@@ -89,7 +89,7 @@ function AddMember({ onDone }: { onDone: () => void }) {
       {add.isError && <Alert>{messageOf(add.error)}</Alert>}
       <div className="row">
         <Button type="submit" busy={add.isPending}>{t('common.add')}</Button>
-        <Button variant="ghost" disabled={add.isPending} onClick={onDone}>{t('common.cancel')}</Button>
+        <Button variant="ghost" disabled={add.isPending} onClick={onDone}>{shared('action.cancel')}</Button>
       </div>
     </form>
   );

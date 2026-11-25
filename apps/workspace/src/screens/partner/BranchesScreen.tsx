@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  canReopenBranches, GST_STATE_CODE_PATTERN, hasGlobalScope, HHMM_PATTERN, ISO_DATE_PATTERN, MAX_HOLIDAYS, MAX_NAME, PARTNER_PHONE_PATTERN, WEEKDAYS,
+  canReopenBranches, GST_STATE_CODE_PATTERN, hasGlobalScope, HHMM_PATTERN, ISO_DATE_PATTERN, MAX_HOLIDAYS, MAX_NAME, PARTNER_PHONE_PATTERN, tooLongWords, WEEKDAYS,
   type Branch, type BranchInput, type BranchServices, type PartnerKind, type Weekday, type WeeklyHours,
 } from '@jansetu/api';
-import { Alert, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, Loading, shared, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { dirtyKeys, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft, type DraftState } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
@@ -60,7 +60,7 @@ export function branchBody(s: DraftState<Draft>, isNew: boolean): { body: Partia
   const trim = (x: string) => x.trim();
   if (dirty.has('name')) {
     if (!trim(d.name)) errors.name = t('branches.error.name');
-    else if (trim(d.name).length > MAX_NAME) errors.name = t('common.maxChars', { max: MAX_NAME });
+    else if (trim(d.name).length > MAX_NAME) errors.name = tooLongWords(MAX_NAME);
   }
   if (dirty.has('phone') && !PARTNER_PHONE_PATTERN.test(d.phone)) errors.phone = t('branches.error.phone');
   if (addressDirty) for (const k of ['line1', 'city', 'state', 'stateCode', 'pincode'] as const) if (!trim(d[k])) errors[k] = t('branches.error.required');
@@ -408,7 +408,7 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
                 <li key={h}>
                   {h}{' '}
                   <Button variant="ghost" aria-label={t('branches.removeHoliday', { date: h })}
-                    onClick={() => draft.update((x) => ({ ...x, holidays: x.holidays.filter((y) => y !== h) }))}>{t('branches.remove')}</Button>
+                    onClick={() => draft.update((x) => ({ ...x, holidays: x.holidays.filter((y) => y !== h) }))}>{shared('action.remove')}</Button>
                 </li>
               ))}
             </ul>
@@ -433,7 +433,7 @@ function BranchForm({ ctx, branch, kind, onCancel, onSaved }: {
         ) : (
           <div className="ws-actions">
             <Button type="submit" busy={busy}>{branch ? t('branches.save') : t('branches.addBranch')}</Button>
-            <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('common.cancel')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={onCancel}>{shared('action.cancel')}</Button>
           </div>
         )}
       </form>

@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import {
   pharmacyOrdersApi, type CustomerReturn, type Page, type CustomerReturnLine, type CustomerReturnRequest, type PharmacyOrder, requestKeysApi } from '@jansetu/api';
-import { Alert, Button, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Button, ErrorState, formatDateTime, formatRupees, Loading, shared, TextArea, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { afterFailure, beginAttempt, newRequestKey, resolveStored, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
@@ -205,7 +205,7 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
           {refused && <Alert>{t('customerReturnForm.notRecorded')}{refused}</Alert>}
           <div className="rx-actions">
             <Button type="submit" busy={busy}>{t('customerReturnForm.recordReturn')}</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setOpen(false)}>{t('common.cancel')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setOpen(false)}>{shared('action.cancel')}</Button>
           </div>
         </form>
       )}

@@ -6,7 +6,7 @@ import {
   isPharmacyEmailTaken, isPharmacyPhoneTaken, normalizeEmail, OBJECT_ID_PATTERN, pharmacyAdminApi, pharmacyBody, pharmacyForm,
   pharmacyHolds, pharmacyState, signsPharmacyOut, type PharmacyAccount, type PharmacyForm, type PharmacyUpdate,
 } from '@jansetu/api';
-import { Alert, Button, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
+import { Alert, Button, ErrorState, formatDateTime, Loading, shared } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { changedFields, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
@@ -257,7 +257,7 @@ function SignInSection({ p, perform, busy, reread, readNow, update }: SectionPro
           {!review ? (
             <div className="ws-actions">
               <Button type="submit" disabled={busy}>{t('pharmacy.signIn.continue')}</Button>
-              <Button variant="ghost" disabled={busy} onClick={() => { setOpen(null); setError(null); }}>{t('common.cancel')}</Button>
+              <Button variant="ghost" disabled={busy} onClick={() => { setOpen(null); setError(null); }}>{shared('action.cancel')}</Button>
             </div>
           ) : (
             <div className="confirm" role="group" aria-label={t('pharmacy.signIn.confirmLabel')}>
@@ -274,7 +274,7 @@ function SignInSection({ p, perform, busy, reread, readNow, update }: SectionPro
               </div>
               <div className="confirm-actions">
                 <Button busy={busy} onClick={() => void confirm(review, open).catch((err: unknown) => setError(messageOf(err)))}>{t('pharmacy.signIn.confirm')}</Button>
-                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('common.back')}</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{shared('action.back')}</Button>
               </div>
             </div>
           )}

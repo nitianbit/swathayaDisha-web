@@ -5,7 +5,7 @@ import {
   SCHEDULE_WEEKDAYS, SCHEDULE_WINDOWS_MAX, schedulableBranches, scheduleProblems, scheduleSlotCount, WEEKDAYS,
   type ConsultMode, type DoctorSchedule, type MyClinics, type ScheduleExpansion, type ScheduleInput, type ScheduleWindow, type Weekday,
 } from '@jansetu/api';
-import { Alert, Button, ErrorState, Loading, TextField } from '@jansetu/ui';
+import { Alert, Button, ErrorState, Loading, shared, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { staleMessage, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
@@ -207,7 +207,7 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
                     <TextField label={`${name} from`} type="time" value={w.start} disabled={confirming} onChange={(e) => edit(day, i, (x) => ({ ...x, start: e.target.value }))} />
                     <TextField label={`${name} to`} type="time" value={w.end} disabled={confirming} onChange={(e) => edit(day, i, (x) => ({ ...x, end: e.target.value }))} />
                     <Button variant="ghost" disabled={confirming} aria-label={t('schedule.remove', { name })}
-                      onClick={() => draft.update((x) => ({ ...x, [day]: x[day].filter((_, j) => j !== i) }))}>{t('schedule.remove2')}</Button>
+                      onClick={() => draft.update((x) => ({ ...x, [day]: x[day].filter((_, j) => j !== i) }))}>{shared('action.remove')}</Button>
                   </div>
                   <div className="j-field ws-filter">
                     <label htmlFor={`place-${day}-${i}`}>{name}{t('schedule.place')}</label>
@@ -244,7 +244,7 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
       {!confirming ? (
         <div className="confirm-actions">
           <Button type="submit">{t('schedule.reviewTheWeeklyHours')}</Button>
-          <Button variant="ghost" onClick={onClose}>{t('common.cancel')}</Button>
+          <Button variant="ghost" onClick={onClose}>{shared('action.cancel')}</Button>
         </div>
       ) : (
         <div className="confirm" role="group" aria-label={t('schedule.saveTheWeeklyHours')}>
@@ -256,7 +256,7 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
             </ul>{t('schedule.overTheNext')}{DOCTOR_ROLLING_DAYS}{t('schedule.daysMissingSlotsAreAdded')}</div>
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => void save()}>{t('schedule.saveTheWeeklyHours')}</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{t('common.back')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{shared('action.back')}</Button>
           </div>
         </div>
       )}
@@ -323,7 +323,7 @@ function LeaveDays({ d, schedule }: { d: DoctorContext; schedule: DoctorSchedule
           {upcoming.map((day) => (
             <li key={day} className="ws-actions">
               <span>{formatDay(day)}</span>
-              <ConfirmAction label={t('schedule.remove2')} confirmLabel={t('schedule.removeLeaveOn', { when: formatDay(day) })}
+              <ConfirmAction label={shared('action.remove')} confirmLabel={t('schedule.removeLeaveOn', { when: formatDay(day) })}
                 consequence={<>{t('schedule.removeTheLeaveOn')}{formatDay(day)}{t('schedule.slotsOfYourWeeklyHours')}</>}
                 onConfirm={async () => {
                   setNotice(null);
@@ -345,7 +345,7 @@ function LeaveDays({ d, schedule }: { d: DoctorContext; schedule: DoctorSchedule
           {failure && <Alert>{failure}</Alert>}
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => void add(reviewing)}>{t('schedule.takeLeaveOn')}{formatDay(reviewing)}</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => { setReviewing(null); setFailure(null); }}>{t('common.back')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => { setReviewing(null); setFailure(null); }}>{shared('action.back')}</Button>
           </div>
         </div>
       ) : (

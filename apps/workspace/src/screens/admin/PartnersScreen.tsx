@@ -4,7 +4,7 @@ import { Link, useSearchParams } from 'react-router';
 import {
   PARTNER_KIND_LABEL, partnerAdminApi, VERIFICATION_LABEL, type PartnerKind, type PartnerQuery, type VerificationState,
 } from '@jansetu/api';
-import { Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
+import { Badge, Button, Empty, ErrorState, formatDateTime, Loading, shared, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -73,7 +73,7 @@ export function PartnersScreen() {
       <div><Link className="j-btn j-btn--primary" to="/admin/partners/new">{t('partners.add')}</Link></div>
       <form className="ws-search" role="search" onSubmit={submitSearch}>
         <TextField label={t('common.searchByName')} value={search} maxLength={100} onChange={(e) => setSearch(e.target.value)} />
-        <Button type="submit" variant="secondary">{t('common.search')}</Button>
+        <Button type="submit" variant="secondary">{shared('action.search')}</Button>
       </form>
       <div className="ws-search" role="group" aria-label={t('common.filters')}>
         <div className="j-field ws-filter">

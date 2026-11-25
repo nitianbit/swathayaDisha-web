@@ -6,7 +6,7 @@ import {
   doctorAdminListApi, doctorEligibility, doctorStateRefusal, doctorStateRefusedBeforeWriting, isFenceMismatch, OBJECT_ID_PATTERN, verifyFenceOf,
   type AdminDoctor, type VerifyFence,
 } from '@jansetu/api';
-import { Alert, ErrorState, Loading } from '@jansetu/ui';
+import { Alert, ErrorState, Loading, shared } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { t } from '../../i18n/admin/index.ts';
@@ -156,7 +156,7 @@ function VerificationSection({ d, doctorId, perform, busy, reread, readNow }: {
             return t(now.isVerified === true ? 'doctor.check.notYetVerified' : 'doctor.check.notYetNotVerified', { name: now.name });
           }}
           resend={restored ? undefined : {
-            label: t('doctor.resend'), busy,
+            label: shared('action.sendAgain'), busy,
             onClick: () => { void change(op).catch((err: unknown) => setResendError(messageOf(err))); },
           }}
           forget={{ label: t('doctor.forget'), confirmLabel: t('doctor.forgetConfirm'), onForget: () => settle(op.requestKey),

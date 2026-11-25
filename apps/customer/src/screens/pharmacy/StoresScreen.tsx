@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { Package, ShoppingCart } from 'lucide-react';
 import { customerPharmacyApi } from '@jansetu/api';
-import { Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
+import { Button, Empty, ErrorState, formatRupees, Loading, shared, TextField } from '@jansetu/ui';
 import { messageOf, PageHeading } from '../../common.tsx';
 import { t } from '../../i18n/index.ts';
 import { usePagedList } from '../../paging.ts';
@@ -30,7 +30,7 @@ export function StoresScreen() {
       </div>
       <form className="row" role="search" onSubmit={(e: FormEvent) => { e.preventDefault(); setSearch(text.trim()); }}>
         <TextField label={t('stores.search')} value={text} onChange={(e) => setText(e.target.value)} />
-        <Button type="submit">{t('common.search')}</Button>
+        <Button type="submit">{shared('action.search')}</Button>
       </form>
       {q.isPending ? <Loading /> : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : items.length === 0 ? <Empty title={search ? t('stores.noMatch', { search }) : t('stores.none')} />
@@ -48,7 +48,7 @@ export function StoresScreen() {
               ))}
             </ul>
             <p className="muted">{t('common.showing', { shown: items.length, total })}</p>
-            {q.hasNextPage && <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{t('common.showMore')}</Button>}
+            {q.hasNextPage && <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{shared('action.showMore')}</Button>}
           </>
         )}
     </>

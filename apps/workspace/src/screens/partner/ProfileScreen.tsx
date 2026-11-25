@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  canEditProfile, EMAIL_PATTERN, MAX_NAME, PARTNER_KIND_LABEL, PARTNER_PHONE_PATTERN, TAX_REGIME_LABEL, VERIFICATION_LABEL,
+  canEditProfile, EMAIL_PATTERN, MAX_NAME, PARTNER_KIND_LABEL, PARTNER_PHONE_PATTERN, TAX_REGIME_LABEL, tooLongWords, VERIFICATION_LABEL,
   type MyPartnerUpdate, type Partner,
 } from '@jansetu/api';
-import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, shared, TextField } from '@jansetu/ui';
 import { dirtyKeys, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft, type DraftState } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
 import { NoSuchPartner, PartnerPageHeading, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
@@ -27,7 +27,7 @@ export function profileChanges(s: DraftState<Fields>): { changes: MyPartnerUpdat
     const value = s.draft[key].trim();
     if (value === s.base[key].trim()) continue;
     if (!value) { errors[key] = s.base[key] ? t('common.cannotRemove') : t('profile.enterValue'); continue; }
-    if ((key === 'name' || key === 'legalName') && value.length > MAX_NAME) { errors[key] = t('common.maxChars', { max: MAX_NAME }); continue; }
+    if ((key === 'name' || key === 'legalName') && value.length > MAX_NAME) { errors[key] = tooLongWords(MAX_NAME); continue; }
     if (key === 'contactPhone' && !PARTNER_PHONE_PATTERN.test(value)) { errors[key] = t('profile.enterMobile'); continue; }
     if (key === 'contactEmail' && !EMAIL_PATTERN.test(value)) { errors[key] = t('profile.enterEmail'); continue; }
     changes[key] = value;
@@ -162,7 +162,7 @@ function ContactForm({ ctx, partner }: { ctx: ScopeContext; partner: Partner }) 
         {stale && <Alert tone="warn">{stale}</Alert>}
         {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}
-        <Button type="submit" busy={busy}>{t('profile.save')}</Button>
+        <Button type="submit" busy={busy}>{shared('action.save')}</Button>
       </form>
     </section>
   );

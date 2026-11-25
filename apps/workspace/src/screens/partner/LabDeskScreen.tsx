@@ -7,7 +7,7 @@ import {
   type DeskBookingRequest, type DeskByKey, type DeskReceipt, type LabAddress, type LabBooking, type VisitMode,
 } from '@jansetu/api';
 import { formatPaise } from '@jansetu/i18n';
-import { Alert, Button, ErrorState, Loading, Parts, TextField } from '@jansetu/ui';
+import { Alert, Button, ErrorState, Loading, Parts, shared, TextField } from '@jansetu/ui';
 import { newRequestKey } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
@@ -336,7 +336,7 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
             {refused && <Alert>{refused.message}</Alert>}
             <div className="confirm-actions">
               <Button busy={busy} onClick={() => void create.pay()}>{t('labDesk.confirm', { total: money(review.summary.totalMinor) })}</Button>
-              <Button variant="ghost" disabled={busy} onClick={() => { setReview(null); setRefused(null); }}>{t('common.back')}</Button>
+              <Button variant="ghost" disabled={busy} onClick={() => { setReview(null); setRefused(null); }}>{shared('action.back')}</Button>
             </div>
           </div>
         </section>

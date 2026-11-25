@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { pharmacyProfileApi, REGISTRATION_NUMBER_PATTERN } from '@jansetu/api';
-import { Alert, Button, ErrorState, Loading, TextField } from '@jansetu/ui';
+import { Alert, Button, ErrorState, Loading, shared, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
@@ -57,7 +57,7 @@ export function SettingsScreen() {
             </div>
             {saved && <Alert tone="ok">{t('settings.saved')}</Alert>}
             {error && <Alert>{error}</Alert>}
-            <Button type="submit" busy={busy}>{t('settings.save')}</Button>
+            <Button type="submit" busy={busy}>{shared('action.save')}</Button>
           </form>
         </section>
       )}

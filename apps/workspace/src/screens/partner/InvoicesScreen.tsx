@@ -4,7 +4,7 @@ import { Link, useLocation } from 'react-router';
 import {
   DOCUMENT_KIND_LABEL, dueOf, holdsAny, INVOICE_STATE_LABEL, INVOICE_STATES, ISO_DATE_PATTERN, OBJECT_ID_PATTERN, type Invoice, type InvoiceQuery, type InvoiceState,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, shared, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { money } from './billing.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
@@ -89,7 +89,7 @@ function Invoices({ ctx }: { ctx: ScopeContext }) {
       )}
       <form className="ws-search" role="search" aria-label={t('invoices.find')} onSubmit={applySearch}>
         <TextField label={t('invoices.searchLabel')} type="search" maxLength={MAX_SEARCH} value={search} onChange={(e) => setSearch(e.target.value)} />
-        <Button type="submit" variant="secondary">{t('invoices.search')}</Button>
+        <Button type="submit" variant="secondary">{shared('action.search')}</Button>
       </form>
       <div className="ws-search">
         <div className="j-field ws-filter">

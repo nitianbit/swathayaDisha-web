@@ -3,8 +3,6 @@
  * payouts (`finance.ts`). A comment above a key is the translator's note.
  */
 export default {
-  /** Under a text field that is too long. */
-  'form.maxLength': 'Use at most {max} characters.',
 
   /** Who a settlement account belongs to. */
   'owner.partner': 'Lab or clinic',

@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { customerBillsApi, fromPaise, type BillState } from '@jansetu/api';
-import { Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
+import { Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, shared } from '@jansetu/ui';
 import { messageOf, PageHeading, type StatusWords } from '../../common.tsx';
 import { t } from '../../i18n/index.ts';
 import { usePagedList } from '../../paging.ts';
@@ -44,7 +44,7 @@ export function BillsScreen() {
             })}
           </ul>
           <p className="muted">{t('common.showing', { shown: items.length, total })}</p>
-          {q.hasNextPage && <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{t('common.showMore')}</Button>}
+          {q.hasNextPage && <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{shared('action.showMore')}</Button>}
           </>
         )}
     </>

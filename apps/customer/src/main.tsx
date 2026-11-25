@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ApiError } from '@jansetu/api';
 import { startLanguage } from '@jansetu/i18n';
+import { shared } from '@jansetu/ui';
 import '@jansetu/ui/tokens.css';
 import './styles.css';
 import { App } from './App.tsx';
@@ -39,7 +40,7 @@ void startLanguage('customer').then(() => startApp(
   (retry) => root.render(
     <main className="login" role="alert">
       <p>{t('app.secureStoreFailed')}</p>
-      <button type="button" onClick={retry}>{t('common.tryAgain')}</button>
+      <button type="button" onClick={retry}>{shared('action.tryAgain')}</button>
     </main>,
   ),
 ));

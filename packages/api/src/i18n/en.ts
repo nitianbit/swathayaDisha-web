@@ -16,6 +16,9 @@ export default {
   /** No connection to the server (code made by the app). */
   'errors.NETWORK': 'Could not reach the server. Check your connection and try again.',
 
+  /** Under a field whose text is too long; {max} is a number. Every form uses this one (`tooLongWords`). */
+  'field.tooLong': 'Use at most {max} characters.',
+
   /** The phone app has no saved sign-in left. */
   'session.signInAgain': 'Please sign in again',
 

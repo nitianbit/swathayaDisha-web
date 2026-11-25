@@ -4,7 +4,7 @@ import {
   addDays, appointmentStart, CONSULT_MODE_LABEL, doctorToolsApi, fromYmd, istDateOf, meetingLinkState, type ConsultMode, type DoctorAppointment, type DoctorToolsApi,
 } from '@jansetu/api';
 import { formatClock } from '@jansetu/i18n';
-import { Button, Empty, formatRupees } from '@jansetu/ui';
+import { Button, Empty, formatRupees, shared } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { useSession, useStaff, type StaffUser } from '../../session.tsx';
 import { formatDay } from '../partner/labs.tsx';
@@ -99,7 +99,7 @@ export function MeetLink({ b, onRefresh, gaveUp = false }: { b: DoctorAppointmen
   if (state === 'none') return null;
   if (state === 'ready') return <a href={b.virtualMeeting!.joinUrl} target="_blank" rel="noreferrer noopener">{t('doctor.joinTheCall')}</a>;
   const refresh = onRefresh && (
-    <Button variant="secondary" busy={busy} onClick={() => { setBusy(true); void onRefresh().finally(() => setBusy(false)); }}>{t('doctor.refresh')}</Button>
+    <Button variant="secondary" busy={busy} onClick={() => { setBusy(true); void onRefresh().finally(() => setBusy(false)); }}>{shared('action.refresh')}</Button>
   );
   return (
     <div className="doc-meet">
@@ -151,7 +151,7 @@ const clock = formatClock;
 export function RefreshFailed({ error, readAt, onRetry }: { error: unknown; readAt: number; onRetry: () => unknown }) {
   return (
     <p className="ws-muted" role="status">{t('doctor.couldNotRefreshJustNow')}{messageOf(error)}).{readAt > 0 ? t('doctor.showingWhatWasReadAt', { when: clock(readAt) }) : ''}{' '}
-      <Button variant="ghost" onClick={() => void onRetry()}>{t('doctor.tryAgain')}</Button>
+      <Button variant="ghost" onClick={() => void onRetry()}>{shared('action.tryAgain')}</Button>
     </p>
   );
 }

@@ -4,7 +4,7 @@ import {
   formatSlotDate, istToday, MAX_TYPED_NAME, pharmacyAssistedApi, pharmacyCustomersApi, rescheduleRefusal, rescheduleRuleText, rescheduleSlots,
   supportedModes, typedNameProblem, typedNameRefusal, type AssistedSlot, type BookedConsultation, type RescheduleAnswer, type TypedNameTarget,
 } from '@jansetu/api';
-import { Alert, Button, ErrorState, Loading, TextField } from '@jansetu/ui';
+import { Alert, Button, ErrorState, Loading, shared, TextField } from '@jansetu/ui';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import type { Perform } from '../finance/finance.tsx';
@@ -111,7 +111,7 @@ export function ChangeTime({ booker, booking, guard, onChanged, onDone }: {
               : t('bookingChanges.notMovedSoFarIt', { at });
           }}
           resend={restored ? undefined : {
-            label: t('common.sendTheSameRequestAgain'), busy,
+            label: shared('action.sendAgain'), busy,
             onClick: () => { setResendError(null); void sendMove(op).catch((err: unknown) => setResendError(rescheduleRefusal(err, booker.refusal).message)); },
           }}
           forget={{ label: t('common.forgetIt'), confirmLabel: t('common.yesForgetIt'), onForget: () => settle(op.requestKey),
@@ -181,7 +181,7 @@ export function ChangeTime({ booker, booking, guard, onChanged, onDone }: {
                   const { requestKey, ...pending } = review;
                   void sendMove(startOp(requestKey, pending)).catch((err: unknown) => { setReview(null); setRefused(rescheduleRefusal(err, booker.refusal).message); });
                 }}>{t('bookingChanges.yesMoveIt')}</Button>
-                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('common.back')}</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{shared('action.back')}</Button>
               </div>
             </div>
           )}

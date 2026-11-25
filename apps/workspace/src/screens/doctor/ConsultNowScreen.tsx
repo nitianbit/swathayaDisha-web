@@ -6,7 +6,7 @@ import {
   offerSecondsLeft, paiseToInput, presenceProblems, rupeesToPaise,
   type DoctorAppointment, type DoctorProfile, type InstantMode, type InstantOffer,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField, formatDateTime } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, Loading, shared, TextField, formatDateTime } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { afterFailure, beginAttempt, definitelyNotRecorded, newRequestKey, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
@@ -323,7 +323,7 @@ function Offers({ d }: { d: DoctorContext }) {
                       <div className="confirm-text">{t('consultNow.acceptThe')}{offerLabel(o).toLowerCase()}{t('consultNow.for')}{patientLabel(o)}? A {CONSULT_MINUTES}{t('consultNow.minuteConsultationStartsNowAnd')}{' '}{t('consultNow.yourFee2')}{fee ?? 'not confirmed'}{t('consultNow.itIsRefusedIfYour')}</div>
                       <div className="confirm-actions">
                         <Button busy={sending === o.requestId} disabled={left === 0 || !canAccept || tooHigh || (sending !== null && sending !== o.requestId)} onClick={() => void accept(o)}>{t('consultNow.acceptAndStart')}</Button>
-                        <Button variant="ghost" disabled={sending === o.requestId} onClick={() => setConfirmFor(null)}>{t('common.back')}</Button>
+                        <Button variant="ghost" disabled={sending === o.requestId} onClick={() => setConfirmFor(null)}>{shared('action.back')}</Button>
                       </div>
                     </div>
                   ) : (

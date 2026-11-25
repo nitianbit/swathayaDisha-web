@@ -6,7 +6,7 @@ import {
   ApiError, countdown, customerApi, fromPaise, heldRefundMinor, INSTANT_INACTIVITY_MIN, INSTANT_MODE_LABEL, INSTANT_PAYMENT_WINDOW_MIN,
   instantConsultApi, waitingState, type InstantRequest, type InstantTarget,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, Parts } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, Parts, shared } from '@jansetu/ui';
 import { Confirm, messageOf, PageHeading } from '../../common.tsx';
 import { t } from '../../i18n/index.ts';
 import { PayAgainPanel } from '../../payAgain.tsx';
@@ -243,7 +243,7 @@ function Accepted({ request: r }: { request: InstantRequest }) {
         <p className="muted" role="status">{t('instant.accepted.linkPreparing')}</p>
       )}
       {booking.data?.status === 'cancelled' && <Alert tone="warn">{t('instant.accepted.cancelled')}</Alert>}
-      <div className="row"><Button variant="ghost" busy={refreshing} onClick={() => void refreshNow()}>{t('common.refresh')}</Button></div>
+      <div className="row"><Button variant="ghost" busy={refreshing} onClick={() => void refreshNow()}>{shared('action.refresh')}</Button></div>
       <p className="muted">{t('instant.accepted.noCancel')}</p>
     </section>
   );

@@ -7,7 +7,7 @@ import {
   stockEntryProblems, SUPPLIER_REFUSAL, type AddStockReason, type InventoryItem, type Medicine, type PharmacySupplier, type StockAdjustment,
   type StockEntry, type StockEntryDraft,
 } from '@jansetu/api';
-import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, shared, TextArea, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
@@ -347,7 +347,7 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
           <span className="ws-muted">{t('addStock.theUnitsAreOnSale')}</span>
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => void add()}>{t('addStock.yesAddToStock')}</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('common.back')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{shared('action.back')}</Button>
           </div>
         </div>
       )}
@@ -428,7 +428,7 @@ function MedicinePicker({ pharmacyId, error, onChoose }: { pharmacyId: string; e
         <TextField label={t('addStock.findTheMedicine')} value={text} error={error} placeholder={t('common.nameBrandOrGenericName')}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } }} />
-        <Button type="button" variant="secondary" onClick={go}>{t('common.search')}</Button>
+        <Button type="button" variant="secondary" onClick={go}>{shared('action.search')}</Button>
       </div>
       {search === null ? null
         : q.isPending ? <Loading label={t('common.searchingMedicines')} />

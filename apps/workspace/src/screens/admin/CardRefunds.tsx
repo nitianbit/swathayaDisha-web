@@ -4,9 +4,9 @@ import { Link } from 'react-router';
 import {
   adminCardRefundsApi, adminWalletReadError, agreementProblem, isSwitchedOff, cardRefundCauseLabel, CARD_REFUND_STATE_LABEL, findMarkedFailed, findMovedRefund,
   markFailedFinal, markFailedRefusal, markFailedRefusedBeforeWriting, MAX_REFUND_AGREEMENT, moveRefundFinal, moveRefundRefusal, moveRefusedBeforeWriting,
-  payerLabel, payerNameOf, payerWord, recheckRefusal, recheckWords, type AdminCardRefund, type CardRefund,
+  payerLabel, payerNameOf, payerWord, recheckRefusal, recheckWords, tooLongWords, type AdminCardRefund, type CardRefund,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, shared, TextArea } from '@jansetu/ui';
 import { t } from '../../i18n/admin/index.ts';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
@@ -88,7 +88,7 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
     e.preventDefault();
     if (!chosen) return;
     const problem = chosen.action === 'move' ? agreementProblem(text, payerWord(chosen.row.payerKind))
-      : !text.trim() ? t('cardRefunds.writeWhy') : text.trim().length > MAX_REFUND_AGREEMENT ? t('cardRefunds.atMost', { max: MAX_REFUND_AGREEMENT }) : undefined;
+      : !text.trim() ? t('cardRefunds.writeWhy') : text.trim().length > MAX_REFUND_AGREEMENT ? tooLongWords(MAX_REFUND_AGREEMENT) : undefined;
     setTextError(problem);
     if (problem) return;
     setReview({ requestKey: newRequestKey(), ...chosen, text: text.trim().replace(/\s+/g, ' ') });
@@ -140,7 +140,7 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
             return t('cardRefunds.check.notYet');
           }}
           resend={restored ? undefined : {
-            label: t('adminWallet.sendAgain'), busy,
+            label: shared('action.sendAgain'), busy,
             onClick: () => { setResendError(null); void sendAction(op).catch((err: unknown) => setResendError(refusalOf(op.body.action, err))); },
           }}
           forget={{ label: t('adminWallet.forget'), confirmLabel: t('adminWallet.forgetConfirm'), onForget: () => { settle(op.requestKey); setReview(null); setChosen(null); setText(''); },
@@ -225,7 +225,7 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
           {!review ? (
             <div className="confirm-actions">
               <Button type="submit">{t(WORDS[chosen.action].next)}</Button>
-              <Button variant="ghost" onClick={() => setChosen(null)}>{t('adminWallet.cancel')}</Button>
+              <Button variant="ghost" onClick={() => setChosen(null)}>{shared('action.cancel')}</Button>
             </div>
           ) : (
             <div className="confirm" role="group" aria-label={t(review.action === 'move' ? 'cardRefunds.review.move' : 'cardRefunds.review.mark')}>
@@ -246,7 +246,7 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
                   const { requestKey, ...pending } = review;
                   void sendAction(startOp(requestKey, pending)).catch((err: unknown) => refuse(pending.action, err));
                 }}>{t(WORDS[review.action].confirm)}</Button>
-                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('adminWallet.back')}</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{shared('action.back')}</Button>
               </div>
             </div>
           )}

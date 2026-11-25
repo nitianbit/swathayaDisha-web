@@ -5,7 +5,7 @@ import {
   assistedRefusal, doctorWalletApi, pharmacyWalletApi, walletBalancePaise, walletState, type ApiClient, type AssistedPaymentMethod, type BookerKind, type PharmacyWallet,
   type Refusal,
 } from '@jansetu/api';
-import { Alert, Button, ErrorState, formatRupees, Loading } from '@jansetu/ui';
+import { Alert, Button, ErrorState, formatRupees, Loading, shared } from '@jansetu/ui';
 import { pharmacyTopupSource, TopUpForm, type TopupSource } from './topup.tsx';
 import { walletHoldWords, walletKeyOf, type WalletPayer } from './WalletScreen.tsx';
 import { t } from '../../i18n/pharmacy/index.ts';
@@ -115,7 +115,7 @@ export function WalletPay({ wallet: w, priceMinor, couponCode, refused, busy, on
         <Button busy={busy} disabled={!!hold || short || (refused?.kind === 'price')} onClick={onPay}>
           {payLabel ? payLabel(formatRupees(priceMinor / 100)) : t('walletPay.payFromWallet', { amount: formatRupees(priceMinor / 100) })}
         </Button>
-        <Button variant="ghost" disabled={busy} onClick={onBack}>{t('common.back')}</Button>
+        <Button variant="ghost" disabled={busy} onClick={onBack}>{shared('action.back')}</Button>
       </div>
     </>
   );
@@ -152,7 +152,7 @@ export function PayChoice({ wallet, priceMinor, couponCode, refused, busy, metho
           <span className="ws-muted">{t('walletPay.collect')}{formatRupees(priceMinor / 100)}{t('walletPay.fromThePatient')}{counterWords(wallet.owner)}{t('walletPay.youPayItOnThe')}</span>
           <div className="confirm-actions">
             <Button busy={busy} disabled={refused?.kind === 'price'} onClick={onPay}>{t('walletPay.pay')}{formatRupees(priceMinor / 100)}{t('walletPay.byCardOrUpi')}</Button>
-            <Button variant="ghost" disabled={busy} onClick={onBack}>{t('common.back')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={onBack}>{shared('action.back')}</Button>
           </div>
         </>
       ) : (

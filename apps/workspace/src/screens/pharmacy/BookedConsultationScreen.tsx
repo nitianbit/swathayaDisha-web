@@ -7,7 +7,7 @@ import {
   bookingPaidBy, bookingPayBy, formatRecommendationCode, bookingWasPaid, LATE_PAYMENT_BACK, orderFromBooking, PATIENT_LANGUAGES, payByWords, pharmacyAssistedApi, pharmacyStockApi, requestKeysApi, rxOrderProblems, type BookedConsultation,
   type BookerKind, type Medicine, type RefundTo, type RxMedicine, type RxOrderRequest,
 } from '@jansetu/api';
-import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextField } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, shared, TextField } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
@@ -348,7 +348,7 @@ function RxOrder({ pharmacyId, booking, medicines }: { pharmacyId: string; booki
             return t('bookedConsultation.notMadeSoFarIt');
           }}
           resend={restored ? undefined : {
-            label: t('common.sendTheSameRequestAgain'), busy: busy && !givingUp,
+            label: shared('action.sendAgain'), busy: busy && !givingUp,
             onClick: () => { setResendError(null); void sendOrder(op).catch((err: unknown) => setResendError(assistedRefusal(err).message)); },
           }}
           giveUp={{ label: t('common.giveThisUp'), busy: givingUp, onClick: () => void giveUp(op) }}>
@@ -396,7 +396,7 @@ function RxOrder({ pharmacyId, booking, medicines }: { pharmacyId: string; booki
           <span className="ws-muted">{t('bookedConsultation.pricesComeFromYourStock')}</span>
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => { const { requestKey, ...pending } = review; void sendOrder(startOp(requestKey, pending)).catch((err: unknown) => setRefused(assistedRefusal(err).message)); }}>{t('bookedConsultation.makeTheOrder')}</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('common.back')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{shared('action.back')}</Button>
           </div>
         </div>
       )}
@@ -428,7 +428,7 @@ function RxLine({ pharmacyId, prescribed, line, onChange }: { pharmacyId: string
           <div className="ws-search">
             <TextField label={t('bookedConsultation.findTheMedicineFor', { name: prescribed.name })} value={text} onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (text.trim()) setSearch(text.trim()); } }} />
-            <Button variant="secondary" onClick={() => { if (text.trim()) setSearch(text.trim()); }}>{t('common.search')}</Button>
+            <Button variant="secondary" onClick={() => { if (text.trim()) setSearch(text.trim()); }}>{shared('action.search')}</Button>
           </div>
           {search === null ? <span className="ws-muted">{t('bookedConsultation.notAddedYet')}</span>
             : q.isPending ? <Loading label={t('common.searchingMedicines')} />

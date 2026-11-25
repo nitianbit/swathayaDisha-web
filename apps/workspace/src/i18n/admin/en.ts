@@ -22,8 +22,6 @@ export default {
   'common.noName': 'No name',
   /** Accessible name of a group of list filters. */
   'common.filters': 'Filters',
-  /** Button of a search form. */
-  'common.search': 'Search',
   /** Label of the search box of a list. */
   'common.searchByName': 'Search by name',
   /** Under "No … match" in a list. */
@@ -53,8 +51,6 @@ export default {
   'common.verify': 'Verify',
   /** The confirming button; {name} is the account's name. */
   'common.verifyNamed': 'Verify {name}',
-  'common.cancel': 'Cancel',
-  'common.back': 'Back',
   /** {reason}: why it was refused, a whole sentence. */
   'common.notChanged': 'Not changed: {reason}',
 
@@ -103,7 +99,6 @@ export default {
   'doctor.check.restoredNotVerified': 'Read again: {name} is not verified now. The earlier change is not kept on this device, so whether it went through cannot be told. If this is not what you wanted, forget it and make the change again.',
   'doctor.check.notYetVerified': 'Not changed so far: {name} is verified now. It may still be on its way. Sending the same request again is safe.',
   'doctor.check.notYetNotVerified': 'Not changed so far: {name} is not verified now. It may still be on its way. Sending the same request again is safe.',
-  'doctor.resend': 'Send the same request again',
   'doctor.forget': 'Forget it',
   'doctor.forgetConfirm': 'Yes, forget it',
   'doctor.forgetConsequence': 'The change may already have gone through, or may still go through. Forgetting it does not undo that. The status shown is what is saved now.',
@@ -420,10 +415,7 @@ export default {
   'consultation.cancel.refundNo': 'No: the payment stays with Jansetu, as for a no-show, and nobody earns it.',
   /** Button. */
   'consultation.cancel.submit': 'Cancel the appointment',
-  /** Button: close the cancel panel. */
-  'consultation.cancel.back': 'Back',
   'consultation.cancel.reasonShort': 'Give a reason (at least {min} characters).',
-  'consultation.cancel.reasonLong': 'Use at most {max} characters.',
   'consultation.cancel.chooseRefund': 'Choose whether the patient is refunded.',
   /** {amount} is the money refunded. */
   'consultation.cancel.doneRefundedAmount': 'The appointment was cancelled; {amount} is back in the patient’s Jansetu wallet. The patient and the doctor are told.',
@@ -493,7 +485,6 @@ export default {
   'bookingClose.closes.waiting': 'waiting',
   /** A close sent whose answer never arrived. */
   'bookingClose.pending.label': 'Unconfirmed close',
-  'bookingClose.pending.resend': 'Send the same request again',
   'bookingClose.pending.forget': 'Forget it',
   'bookingClose.pending.forgetConfirm': 'Yes, forget it',
   'bookingClose.pending.forgetConsequence': 'The booking may already be closed, or may still be closed by this request. Forgetting it does not undo that. Read the booking again before closing it again: a booking already cancelled is never refunded twice.',
@@ -534,8 +525,6 @@ export default {
   'labBookings.newTimeProposed': 'New time proposed',
   /** {error} says why. */
   'labBookings.moreFailed': 'Could not load more bookings: {error}',
-  /** Button. */
-  'labBookings.showMore': 'Show more',
   /** Button; {left} is how many are not shown yet. */
   'labBookings.showMoreLeft': 'Show more ({left} more)',
 
@@ -618,7 +607,6 @@ export default {
   'adminWallet.balance': 'Balance',
   'adminWallet.loadingWallet': 'Loading the wallet…',
   'adminWallet.addMoney': 'Add money',
-  'adminWallet.loading': 'Loading…',
   /** Shown instead of the Add money form while the owner or its wallet could not be read. */
   'adminWallet.mustLoad.pharmacy': 'The pharmacy and its wallet must load first.',
   'adminWallet.mustLoad.lab': 'The lab and its wallet must load first.',
@@ -646,13 +634,9 @@ export default {
   'adminWallet.unknown': 'The outcome of this request is not known yet.',
   /** The same with the error seen ({error}). */
   'adminWallet.unknownWith': 'The outcome of this request is not known yet ({error}).',
-  /** Button: send a request whose answer was lost again (it is done only once). */
-  'adminWallet.sendAgain': 'Send the same request again',
   /** Button: stop tracking an unconfirmed request. */
   'adminWallet.forget': 'Forget it',
   'adminWallet.forgetConfirm': 'Yes, forget it',
-  'adminWallet.cancel': 'Cancel',
-  'adminWallet.back': 'Back',
   /** Table column: when it happened. */
   'adminWallet.col.when': 'When',
   'adminWallet.col.pharmacy': 'Pharmacy',
@@ -852,7 +836,6 @@ export default {
   /** {reason}: why the server refused. */
   'cardRefunds.notDone': 'Not done: {reason}',
   'cardRefunds.writeWhy': 'Write why it is marked failed.',
-  'cardRefunds.atMost': 'Use at most {max} characters.',
   /** Before the words of Razorpay's answer to a recheck. */
   'cardRefunds.recheckedOf': '{refund} of {name}.',
   'cardRefunds.unconfirmed': 'Unconfirmed refund change',
@@ -1013,8 +996,6 @@ export default {
   'newPartner.title': 'Add a lab or clinic',
   'newPartner.intro': 'It starts waiting for verification; its owner can use the workspace once it is verified.',
   'newPartner.nameMissing': 'Enter the name customers will see.',
-  /** {max}: a number of characters. */
-  'newPartner.tooLong': 'Use at most {max} characters.',
   'newPartner.contactPhoneInvalid': 'Enter the 10-digit contact number.',
   'newPartner.emailInvalid': 'Enter a valid email address.',
   'newPartner.ownerNameMissing': 'Enter the owner’s name.',
@@ -1080,7 +1061,6 @@ export default {
   /** {name}: the pharmacy's or lab's name. */
   'referralCuts.intro': 'What {name} earns for each booking it makes for a patient. The cut is taken from the doctor’s or the lab’s earning, after any coupon.',
   'referralCuts.introNoName': 'What this partner earns for each booking it makes for a patient. The cut is taken from the doctor’s or the lab’s earning, after any coupon.',
-  'referralCuts.loading': 'Loading…',
   'referralCuts.noClinics': 'No referral cuts for clinics',
   'referralCuts.noClinicsHint': 'Referral cuts are set for pharmacies and labs, the partners that book for patients.',
   /** A booking category inside a sentence ("the consultation cut"). */
@@ -1122,8 +1102,6 @@ export default {
   'referralCuts.checkUnknown': 'Read again: the cuts shown are what is saved now. The earlier change is not kept on this device, so whether it went through cannot be told. If the cuts are not what you wanted, forget it and make the change again.',
   'referralCuts.checkNotYet': 'Not saved so far: the {category} cut is {terms} now (version {version}). It may still be on its way. Sending the same request again is safe: it is saved at most once.',
   /** Button. */
-  'referralCuts.sendAgain': 'Send the same request again',
-  /** Button. */
   'referralCuts.forget': 'Forget it',
   /** Confirm button. */
   'referralCuts.forgetConfirm': 'Yes, forget it',
@@ -1146,8 +1124,6 @@ export default {
   'referralCuts.fixedHint': 'At least ₹0.01; no upper limit.',
   'referralCuts.nothingToSwitchOff': 'No cut is set, so there is nothing to switch off.',
   'referralCuts.unchanged': 'Nothing has changed yet.',
-  /** Button. */
-  'referralCuts.save': 'Save',
   /** Confirm button. */
   'referralCuts.saveConfirm': 'Save the {category} cut',
   'referralCuts.reasonLabel': 'Reason (kept in the history)',
@@ -1156,8 +1132,6 @@ export default {
   'referralCuts.confirmActiveLab': 'New {category} bookings that {name} makes: {terms} goes to {name}, taken from the lab’s earning.',
   'referralCuts.confirmInactive': 'New {category} bookings that {name} makes earn it no cut.',
   'referralCuts.confirmKeep': 'Bookings already made keep their cut. If someone else changes this cut before you confirm, nothing is saved.',
-  /** Button. */
-  'referralCuts.cancel': 'Cancel',
   'referralCuts.history': 'History',
   'referralCuts.loadingHistory': 'Loading the history…',
   'referralCuts.noChanges': 'No changes yet',

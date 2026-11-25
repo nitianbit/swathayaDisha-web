@@ -8,7 +8,7 @@ import {
   type Branch, type ClinicAppointment, type ClinicDoctorRow, type DeskAction, type DeskActionOffer, type DeskAppointment, type DeskBookingResult,
   type DeskGender, type DeskPatientInput, type DeskRelation, type DeskSlot, type DeskSlotKnown,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, Parts, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, Parts, shared, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { NoShowMove, noShowMoveSlot, type NoShowMoveOp, type NoShowTarget } from '../../components/NoShowMove.tsx';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
@@ -621,7 +621,7 @@ function BookingForm({ chosen, patient, setPatient, sending, refused, onCancel, 
         {!reviewing ? (
           <div className="rx-actions">
             <Button type="submit">{t('desk.form.review')}</Button>
-            <Button variant="ghost" onClick={onCancel}>{t('common.back')}</Button>
+            <Button variant="ghost" onClick={onCancel}>{shared('action.back')}</Button>
           </div>
         ) : (
           <div className="confirm" role="group" aria-label={t('desk.form.confirmGroup')}>
@@ -900,7 +900,7 @@ function Reschedule({ ctx, clinic, appt, doctors, branches, now, disabled, perfo
       <div className="confirm-actions">
         {!confirming ? <Button type="submit" disabled={choices.length === 0 || places.length === 0}>{t('common.continue')}</Button>
           : <Button busy={sending} disabled={disabled && !sending} onClick={() => void move()}>{t('desk.move.send')}</Button>}
-        <Button variant="ghost" disabled={sending} onClick={() => (confirming ? setConfirming(false) : setOpen(false))}>{t('common.back')}</Button>
+        <Button variant="ghost" disabled={sending} onClick={() => (confirming ? setConfirming(false) : setOpen(false))}>{shared('action.back')}</Button>
       </div>
     </form>
   );

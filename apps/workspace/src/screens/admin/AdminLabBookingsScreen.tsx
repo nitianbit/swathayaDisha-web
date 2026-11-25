@@ -5,7 +5,7 @@ import {
   LAB_BOOKING_STATUS_LABEL, LAB_BOOKING_STATUSES, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, labBookingsAdminApi,
   partnerAdminApi, type AdminLabBookingQuery, type AdminLabBookingRow, type LabBookingStatus,
 } from '@jansetu/api';
-import { Badge, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
+import { Badge, Button, Empty, ErrorState, formatDateTime, Loading, shared } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -106,7 +106,7 @@ export function AdminLabBookingsScreen() {
             {list.hasNextPage && (
               <div>
                 <Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
-                  {total !== undefined ? t('labBookings.showMoreLeft', { left: Math.max(0, total - rows.length) }) : t('labBookings.showMore')}
+                  {total !== undefined ? t('labBookings.showMoreLeft', { left: Math.max(0, total - rows.length) }) : shared('action.showMore')}
                 </Button>
               </div>
             )}

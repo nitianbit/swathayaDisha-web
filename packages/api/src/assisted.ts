@@ -6,6 +6,7 @@ import { istToday } from './finance.ts';
 import { t as core } from './i18n/index.ts';
 import { t, type AssistedKey } from './i18n/assisted/index.ts';
 import { labelledList, onLanguage, wordMap } from './i18n/words.ts';
+import { tooLongWords } from './messages.ts';
 
 /**
  * WQ12: a pharmacy books a doctor consultation for a walk-in patient and pays from its Jansetu wallet (assisted booking
@@ -504,7 +505,7 @@ export const MAX_TYPED_NAME = 200;
 export function typedNameProblem(text: string): string | null {
   const name = cleanName(text);
   if (!name) return t('patient.nameEmpty');
-  if (name.length > MAX_TYPED_NAME) return t('field.tooLong', { max: MAX_TYPED_NAME });
+  if (name.length > MAX_TYPED_NAME) return tooLongWords(MAX_TYPED_NAME);
   return null;
 }
 /** What the typed-name edit changes on this booking: the holder's link `id`, the name shown for the holder now, and whether the patient is a family member. */
@@ -752,11 +753,11 @@ export function patientProblems(d: PatientDraft, exists: boolean, today = istTod
   }
   const name = cleanName(d.name);
   if (!name) e.name = t(d.who === 'self' ? 'patient.nameEmpty' : 'patient.familyNameEmpty');
-  else if (name.length > MAX_PERSON_NAME) e.name = t('field.tooLong', { max: MAX_PERSON_NAME });
+  else if (name.length > MAX_PERSON_NAME) e.name = tooLongWords(MAX_PERSON_NAME);
   if (d.who === 'family') {
     if (!d.relation) e.relation = t('patient.relation');
     if (d.dateOfBirth && (!isRealDay(d.dateOfBirth) || d.dateOfBirth > today)) e.dateOfBirth = t('patient.dateOfBirth');
-    if (cleanName(d.holderName).length > MAX_PERSON_NAME) e.holderName = t('field.tooLong', { max: MAX_PERSON_NAME });
+    if (cleanName(d.holderName).length > MAX_PERSON_NAME) e.holderName = tooLongWords(MAX_PERSON_NAME);
   }
   return e;
 }

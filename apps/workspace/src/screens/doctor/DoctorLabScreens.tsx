@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import { DOCTOR_LAB_CLOSED_MESSAGE, isDoctorWalletClosed, OBJECT_ID_PATTERN } from '@jansetu/api';
-import { Alert, Empty, Loading } from '@jansetu/ui';
+import { Alert, Empty, Loading, shared } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 import { BookLabTest } from '../pharmacy/BookLabTestScreen.tsx';
@@ -42,7 +42,7 @@ export function DoctorBookLabTestScreen() {
  */
 function VerifiedOnly({ doctorId, children }: { doctorId: string; children: ReactNode }) {
   const wallet = usePayerWallet({ kind: 'doctor', id: doctorId });
-  if (wallet.isPending) return <Loading label={t('doctorLab.loading')} />;
+  if (wallet.isPending) return <Loading label={shared('state.loading')} />;
   if (wallet.isError && wallet.data === undefined && isDoctorWalletClosed(wallet.error)) return <Alert tone="warn">{DOCTOR_LAB_CLOSED_MESSAGE}</Alert>;
   return <>{children}</>;
 }

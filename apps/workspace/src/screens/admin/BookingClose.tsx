@@ -6,7 +6,7 @@ import {
   closeByKey, closeRefundTarget, closeRefundWords, doctorAdminListApi, doctorEligibility, isAlreadyCancelled, MAX_ADMIN_CANCEL_REASON, OBJECT_ID_PATTERN,
   type AdminConsultation, type BookingClose, type BookingCloseAnswer, type CloseRefundTarget,
 } from '@jansetu/api';
-import { Alert, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
+import { Alert, ErrorState, formatDateTime, formatRupees, Loading, shared } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { t } from '../../i18n/admin/index.ts';
@@ -224,7 +224,7 @@ function PendingClosePanel({ op, busy, onCheck, onResend, onForget }: {
   const restored = !!op.restored || !op.body;
   return (
     <CheckPanel label={t('bookingClose.pending.label')} onCheck={onCheck}
-      resend={restored ? undefined : { label: t('bookingClose.pending.resend'), busy, onClick: onResend }}
+      resend={restored ? undefined : { label: shared('action.sendAgain'), busy, onClick: onResend }}
       forget={{ label: t('bookingClose.pending.forget'), confirmLabel: t('bookingClose.pending.forgetConfirm'), onForget,
         consequence: t('bookingClose.pending.forgetConsequence') }}>
       <Alert tone="warn">

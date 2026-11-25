@@ -7,6 +7,7 @@ import { wordMap } from './i18n/words.ts';
 import {
   hasGlobalScope, holdsAny, OBJECT_ID_PATTERN, partnerWorkspaceBase, REQUEST_KEY_PATTERN, type Branch, type PartnerActorView, type PartnerScope,
 } from './partners.ts';
+import { tooLongWords } from './messages.ts';
 
 /**
  * Q6 clinics: the doctors who consult at a clinic (by invitation the doctor accepts in their own app) and the clinic's
@@ -234,7 +235,7 @@ export function familyMemberProblems(p: { name: string; relation: string; gender
   const out: Partial<Record<'name' | 'relation' | 'gender' | 'dateOfBirth', string>> = {};
   const name = p.name.trim();
   if (!name) out.name = t('clinic.family.problem.name');
-  else if (name.length > MAX_FAMILY_NAME) out.name = t('clinic.problem.tooLong', { max: MAX_FAMILY_NAME });
+  else if (name.length > MAX_FAMILY_NAME) out.name = tooLongWords(MAX_FAMILY_NAME);
   if (!(DESK_RELATIONS as readonly string[]).includes(p.relation)) out.relation = t('clinic.family.problem.relation');
   if (p.gender && !(DESK_GENDERS as readonly string[]).includes(p.gender)) out.gender = t('clinic.family.problem.gender');
   if (p.dateOfBirth && (!isRealDate(p.dateOfBirth) || Date.parse(`${p.dateOfBirth}T00:00:00Z`) > now.getTime())) out.dateOfBirth = t('clinic.family.problem.dateOfBirth');
@@ -275,8 +276,8 @@ export function deskBookingProblems(d: { phone: string; name: string; notes: str
   const out: Partial<Record<'phone' | 'name' | 'notes', string>> = {};
   if (!d.phone.trim()) out.phone = t('clinic.desk.problem.phone');
   else if (!canonicalMobile(d.phone)) out.phone = t('clinic.desk.problem.mobile');
-  if (d.name.trim().length > MAX_DESK_NAME) out.name = t('clinic.problem.tooLong', { max: MAX_DESK_NAME });
-  if (d.notes.trim().length > MAX_DESK_NOTES) out.notes = t('clinic.problem.tooLong', { max: MAX_DESK_NOTES });
+  if (d.name.trim().length > MAX_DESK_NAME) out.name = tooLongWords(MAX_DESK_NAME);
+  if (d.notes.trim().length > MAX_DESK_NOTES) out.notes = tooLongWords(MAX_DESK_NOTES);
   return out;
 }
 

@@ -6,10 +6,10 @@ import {
   addDays, ApiError, canReadDrafts, COLLECTOR_PHONE_PATTERN, eligibleSigners, hasGlobalScope, holdsAny, isBookable, isLabBookingChanged, isReportTooLarge,
   istDateOf, isUploadFailed, LAB_BOOKING_STATUS_LABEL, LAB_PAYMENT_STATUS_LABEL, LAB_VISIT_MODE_LABEL, labActions, labNoShowMove, MAX_COLLECTOR_NAME,
   MAX_LAB_REASON, MIN_LAB_REASON, noShowMovedOnce, OBJECT_ID_PATTERN, releaseOf, REPORT_ACCEPT, REPORT_MAX_BYTES, reportFileName, reportFileProblem,
-  labBookingsAdminApi, type LabAction, type LabActionOffer, type LabBooking, type LabLifecycleKey, type LabSlot, type PartnerMember,
+  labBookingsAdminApi, tooLongWords, type LabAction, type LabActionOffer, type LabBooking, type LabLifecycleKey, type LabSlot, type PartnerMember,
   canBillDesk, canDeskCancel, deskRefusal, INVOICE_STATE_LABEL, isDeskBooking, labDeskApi, type DeskCancelAnswer,
 } from '@jansetu/api';
-import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, Parts, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, Parts, shared, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { FOCUS_HOST_STYLE, usePanelFocus } from '../../components/focus.ts';
 import { NoShowMove, noShowMoveSlot, type NoShowTarget } from '../../components/NoShowMove.tsx';
@@ -326,7 +326,7 @@ function AdminCancelNoShow({ booking: b, disabled, run }: { booking: LabBooking;
     const r = reason.trim();
     const errs: { reason?: string; refund?: string } = {};
     if (r.length < MIN_LAB_REASON) errs.reason = t('labBooking.adminCancel.reasonShort', { min: MIN_LAB_REASON });
-    else if (r.length > MAX_LAB_REASON) errs.reason = t('common.maxChars', { max: MAX_LAB_REASON });
+    else if (r.length > MAX_LAB_REASON) errs.reason = tooLongWords(MAX_LAB_REASON);
     if (!refund) errs.refund = t('labBooking.adminCancel.chooseRefund');
     setErrors(errs);
     setError(null);
@@ -386,7 +386,7 @@ function AdminCancelNoShow({ booking: b, disabled, run }: { booking: LabBooking;
                   {refund === 'yes' ? t('labBooking.adminCancel.withRefund') : t('labBooking.adminCancel.withoutRefund')}
                 </Button>
               )}
-            <Button variant="ghost" data-focus-back disabled={busy} onClick={() => (confirming ? setConfirming(false) : close())}>{t('common.back')}</Button>
+            <Button variant="ghost" data-focus-back disabled={busy} onClick={() => (confirming ? setConfirming(false) : close())}>{shared('action.back')}</Button>
           </div>
         </form>
       )}
@@ -497,7 +497,7 @@ function AssignCollector({ ctx, booking, disabled, perform }: { ctx: ScopeContex
     const p = phone.trim();
     const errs: Record<string, string> = {};
     if (!chosen && !n) errs.name = t('labBooking.collector.errorName');
-    else if (n.length > MAX_COLLECTOR_NAME) errs.name = t('common.maxChars', { max: MAX_COLLECTOR_NAME });
+    else if (n.length > MAX_COLLECTOR_NAME) errs.name = tooLongWords(MAX_COLLECTOR_NAME);
     if (p && !COLLECTOR_PHONE_PATTERN.test(p)) errs.phone = t('labBooking.collector.errorPhone');
     setErrors(errs);
     if (Object.keys(errs).length) return;
@@ -537,7 +537,7 @@ function AssignCollector({ ctx, booking, disabled, perform }: { ctx: ScopeContex
       {error && <Alert>{error}</Alert>}
       <div className="confirm-actions">
         <Button type="submit" busy={busy}>{t('labBooking.collector.save')}</Button>
-        <Button variant="ghost" data-focus-back disabled={busy} onClick={() => setOpen(false)}>{t('common.back')}</Button>
+        <Button variant="ghost" data-focus-back disabled={busy} onClick={() => setOpen(false)}>{shared('action.back')}</Button>
       </div>
     </form>
   );
@@ -583,7 +583,7 @@ function ProposeTime({ ctx, booking, disabled, now, perform }: { ctx: ScopeConte
     if (!picked) errs.slot = t('labBooking.propose.chooseTime');
     const r = reason.trim();
     if (r.length < MIN_LAB_REASON) errs.reason = t('labBooking.adminCancel.reasonShort', { min: MIN_LAB_REASON });
-    else if (r.length > MAX_LAB_REASON) errs.reason = t('common.maxChars', { max: MAX_LAB_REASON });
+    else if (r.length > MAX_LAB_REASON) errs.reason = tooLongWords(MAX_LAB_REASON);
     setErrors(errs);
     setError(null);
     if (!Object.keys(errs).length) { setReviewedOn(booking.statusVersion); setConfirming(true); }
@@ -638,7 +638,7 @@ function ProposeTime({ ctx, booking, disabled, now, perform }: { ctx: ScopeConte
       <div className="confirm-actions">
         {!confirming ? <Button type="submit" disabled={choices.length === 0}>{t('common.continue')}</Button>
           : <Button busy={busy} onClick={() => void propose()}>{t('labBooking.propose.send')}</Button>}
-        <Button variant="ghost" data-focus-back disabled={busy} onClick={() => (confirming ? setConfirming(false) : setOpen(false))}>{t('common.back')}</Button>
+        <Button variant="ghost" data-focus-back disabled={busy} onClick={() => (confirming ? setConfirming(false) : setOpen(false))}>{shared('action.back')}</Button>
       </div>
     </form>
   );
@@ -903,7 +903,7 @@ function ConfirmLess({ label, ready, blocked, staffLink, onConfirm, onChanged, o
       {error && <Alert>{error}</Alert>}
       <div className="confirm-actions">
         <Button busy={busy} disabled={!ready || (blocked && !busy)} onClick={() => void go()}>{label}</Button>
-        <Button variant="ghost" data-focus-back disabled={busy} onClick={onBack}>{t('common.back')}</Button>
+        <Button variant="ghost" data-focus-back disabled={busy} onClick={onBack}>{shared('action.back')}</Button>
       </div>
     </>
   );

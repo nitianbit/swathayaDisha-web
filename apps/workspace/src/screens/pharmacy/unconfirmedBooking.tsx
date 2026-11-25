@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Alert } from '@jansetu/ui';
+import { Alert, shared } from '@jansetu/ui';
 import type { PendingOp } from '../../requests.ts';
 import { CheckPanel } from './ownedOp.tsx';
 import { t } from '../../i18n/pharmacy/index.ts';
@@ -43,7 +43,7 @@ export function UnconfirmedBooking<B, A extends { state: string }>({ op, what, b
             ? t('unconfirmedBooking.notBookedSoFarIt')
             : t('unconfirmedBooking.notBookedSoFarIt2', { twice });
         }}
-        resend={restored ? undefined : { label: t('common.sendTheSameRequestAgain'), busy: busy && !givingUp, onClick: onResend }}
+        resend={restored ? undefined : { label: shared('action.sendAgain'), busy: busy && !givingUp, onClick: onResend }}
         giveUp={{ label: t('common.giveThisUp'), busy: givingUp, onClick: onGiveUp }}>
         {!restored && extra}
         <Alert tone="warn">

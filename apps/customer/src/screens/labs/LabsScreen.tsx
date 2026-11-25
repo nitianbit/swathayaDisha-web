@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { customerLabsApi, LAB_PINCODE_PATTERN } from '@jansetu/api';
-import { Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
+import { Button, Empty, ErrorState, Loading, shared, TextField } from '@jansetu/ui';
 import { messageOf, PageHeading } from '../../common.tsx';
 import { t } from '../../i18n/index.ts';
 import { useSession } from '../../session.tsx';
@@ -19,7 +19,7 @@ export function LabsScreen() {
       <PageHeading title={t('common.labTests')}>{t('labs.sub')}</PageHeading>
       <form className="row" role="search" onSubmit={(e: FormEvent) => { e.preventDefault(); setPlace(text.trim()); }}>
         <TextField label={t('labs.search')} value={text} maxLength={80} onChange={(e) => setText(e.target.value)} />
-        <Button type="submit">{t('common.search')}</Button>
+        <Button type="submit">{shared('action.search')}</Button>
       </form>
       {q.isPending ? <Loading /> : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : q.data.length === 0 ? <Empty title={place ? t('labs.noneIn', { place }) : t('labs.none')}>{t('labs.tryAnother')}</Empty>

@@ -7,7 +7,7 @@
  *   again, `action.continue` Continue, `action.next` Next, `action.previous` Previous, `action.newer` Newer,
  *   `action.older` Older, `action.showMore` Show more, `action.search` Search, `action.remove` Remove, `action.open` Open,
  *   `action.close` Close, `action.change` Change, `action.edit` Edit, `action.refresh` Refresh, `action.apply` Apply,
- *   `action.signInAgain` Sign in again.
+ *   `action.signInAgain` Sign in again, `action.sendAgain` Send the same request again.
  * - States: `state.loading` Loading…, `state.notFound` Not found, `state.reconnecting` Reconnecting….
  * - Field and column names: `field.status` Status, `field.amount` Amount, `field.date` Date, `field.name` Name,
  *   `field.phone` Phone, `field.email` Email, `field.reason` Reason, `field.note` Note.
@@ -48,6 +48,8 @@ export default {
   /** Button: use the chosen filters. */
   'action.apply': 'Apply',
   'action.signInAgain': 'Sign in again',
+  /** Button: send a request whose answer was lost again, unchanged (the server makes it only once). */
+  'action.sendAgain': 'Send the same request again',
 
   /** Shown while a page or list loads. */
   'state.loading': 'Loading…',

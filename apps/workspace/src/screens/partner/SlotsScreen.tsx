@@ -5,7 +5,7 @@ import {
   mondayOf, reopenable, ROLLING_DAYS, SLOT_CLOSURE_LABEL, SLOT_SEATS_MAX, slotTimesFor, templateInput, TEMPLATE_WEEKDAYS, templateProblems, WEEKDAYS,
   type Branch, type LabSlot, type SlotTemplate, type SlotTemplateInput, type SlotWindow, type TemplateVersion, type VisitMode, type Weekday,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, Loading, shared, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { staleMessage, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
@@ -256,7 +256,7 @@ function CapacityForm({ ctx, slot, onCancel, onDone, onRefused }: {
         onChange={(e) => setValue(e.target.value)} />
       <div className="confirm-actions">
         <Button type="submit" busy={busy}>{t('slots.saveSeats')}</Button>
-        <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('common.cancel')}</Button>
+        <Button variant="ghost" disabled={busy} onClick={onCancel}>{shared('action.cancel')}</Button>
       </div>
     </form>
   );
@@ -311,7 +311,7 @@ function ManualSlotForm({ ctx, branch, mode, defaultDate, onClose, onAdded }: {
         {failure && <Alert>{failure}</Alert>}
         <div className="confirm-actions">
           <Button type="submit" busy={busy}>{t('slots.manual.add')}</Button>
-          <Button variant="ghost" disabled={busy} onClick={onClose}>{t('common.cancel')}</Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>{shared('action.cancel')}</Button>
         </div>
       </form>
     </section>
@@ -496,7 +496,7 @@ function TemplateForm({ ctx, branch, mode, where, saved, reread, templateKey, on
               <TextField label={t('slots.template.windowFrom', { day: DAY_LABEL[day], n: i + 1 })} type="time" value={w.start} disabled={confirming} onChange={(e) => setWindow(day, i, 'start', e.target.value)} />
               <TextField label={t('slots.template.windowTo', { day: DAY_LABEL[day], n: i + 1 })} type="time" value={w.end} disabled={confirming} onChange={(e) => setWindow(day, i, 'end', e.target.value)} />
               <Button variant="ghost" disabled={confirming} aria-label={t('slots.template.removeWindow', { day: DAY_LABEL[day], n: i + 1 })}
-                onClick={() => d.update((x) => ({ ...x, [day]: x[day].filter((_, j) => j !== i) }))}>{t('slots.template.remove')}</Button>
+                onClick={() => d.update((x) => ({ ...x, [day]: x[day].filter((_, j) => j !== i) }))}>{shared('action.remove')}</Button>
             </div>
           ))}
           {errors[day] && <span id={`tpl-${day}-err`} className="j-field__error">{errors[day]}</span>}
@@ -511,7 +511,7 @@ function TemplateForm({ ctx, branch, mode, where, saved, reread, templateKey, on
       {!confirming ? (
         <div className="confirm-actions">
           <Button type="submit">{t('slots.template.review')}</Button>
-          <Button variant="ghost" onClick={onClose}>{t('common.cancel')}</Button>
+          <Button variant="ghost" onClick={onClose}>{shared('action.cancel')}</Button>
         </div>
       ) : (
         <div className="confirm" role="group" aria-label={t('slots.template.saveGroup')}>
@@ -529,7 +529,7 @@ function TemplateForm({ ctx, branch, mode, where, saved, reread, templateKey, on
           </div>
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => void save()}>{t('slots.template.save')}</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{t('common.back')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{shared('action.back')}</Button>
           </div>
         </div>
       )}

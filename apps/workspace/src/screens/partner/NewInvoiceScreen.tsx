@@ -5,10 +5,10 @@ import { ArrowLeft } from 'lucide-react';
 import {
   allowedGstRates, ApiError, chargesGst, customerGstinProblem, INVOICE_PHONE_PATTERN, MAX_LINE_DESCRIPTION,
   MAX_LINES, MAX_NAME, MAX_PRICE_MINOR, MAX_QTY, MAX_SAC, paiseToInput, previewInvoice, rupeesToPaise, STATE_CODE_PATTERN,
-  type Branch, type CatalogueItem, type ClinicDoctor, type GstRate, type Invoice, type InvoiceGender, type InvoicePreview, type LinePreview,
+  tooLongWords, type Branch, type CatalogueItem, type ClinicDoctor, type GstRate, type Invoice, type InvoiceGender, type InvoicePreview, type LinePreview,
   type NewInvoice, type NewInvoiceLine, type Page, type Partner,
 } from '@jansetu/api';
-import { Alert, Button, Empty, ErrorState, Loading, Parts, TextField } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, Loading, Parts, shared, TextField } from '@jansetu/ui';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -69,7 +69,7 @@ export function buildInvoice(d: InvoiceDraft, partner: Pick<Partner, 'taxRegime'
   if (!d.branchId || !branch) errors.branchId = t('newInvoice.error.branch');
   const name = d.name.trim();
   if (!name) errors.name = t('newInvoice.error.name');
-  else if (name.length > MAX_NAME) errors.name = t('common.maxChars', { max: MAX_NAME });
+  else if (name.length > MAX_NAME) errors.name = tooLongWords(MAX_NAME);
   const phone = d.phone.replace(/[\s-]/g, '');
   if (phone && !INVOICE_PHONE_PATTERN.test(phone)) errors.phone = t('newInvoice.error.phone');
   const age = d.age.trim();
@@ -86,9 +86,9 @@ export function buildInvoice(d: InvoiceDraft, partner: Pick<Partner, 'taxRegime'
     const e = (field: string, text: string) => { errors[`${l.key}.${field}`] = text; };
     const description = (l.item?.name ?? l.description).trim();
     if (!description) e('description', t('newInvoice.error.description'));
-    else if (description.length > MAX_LINE_DESCRIPTION) e('description', t('common.maxChars', { max: MAX_LINE_DESCRIPTION }));
+    else if (description.length > MAX_LINE_DESCRIPTION) e('description', tooLongWords(MAX_LINE_DESCRIPTION));
     const sac = (l.item ? l.item.sac ?? '' : l.sac).trim();
-    if (sac.length > MAX_SAC) e('sac', t('common.maxChars', { max: MAX_SAC }));
+    if (sac.length > MAX_SAC) e('sac', tooLongWords(MAX_SAC));
     const qty = /^\d{1,5}$/.test(l.qty.trim()) ? Number(l.qty.trim()) : NaN;
     if (!(qty >= 1 && qty <= MAX_QTY)) e('qty', t('newInvoice.error.qty', { max: MAX_QTY }));
     const price = l.item ? l.item.priceMinor : rupeesToPaise(l.price);
@@ -278,7 +278,7 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
             setGaveUp(true);
           }}
           summary={pending.restored ? null : <PendingSummary body={pending.body} />} />
-      ) : partner.isPending || branches.isPending || catalogue.isPending ? <Loading label={t('common.loading')} />
+      ) : partner.isPending || branches.isPending || catalogue.isPending ? <Loading label={shared('state.loading')} />
         : partner.isError ? <ErrorState message={messageOf(partner.error)} onRetry={() => void partner.refetch()} />
         : branches.isError ? <ErrorState message={messageOf(branches.error)} onRetry={() => void branches.refetch()} />
         : catalogue.isError ? <ErrorState message={messageOf(catalogue.error)} onRetry={() => void catalogue.refetch()} />
@@ -497,7 +497,7 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
               <div className="ws-actions">
                 <span><Parts of={lineAmount(lp)} /></span>
                 <Button variant="ghost" aria-label={t('newInvoice.removeLine', { n: i + 1 })} onClick={() => set({ lines: d.lines.filter((x) => x.key !== l.key) })}>
-                  {t('newInvoice.remove')}
+                  {shared('action.remove')}
                 </Button>
               </div>
             </fieldset>

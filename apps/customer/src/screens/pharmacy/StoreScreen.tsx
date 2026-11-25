@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft, ShoppingCart } from 'lucide-react';
 import { ApiError, customerPharmacyApi, shelfOf, type Cart, type ShelfItem } from '@jansetu/api';
-import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, formatRupees, Loading, shared, TextField } from '@jansetu/ui';
 import { messageOf, PageHeading } from '../../common.tsx';
 import { t } from '../../i18n/index.ts';
 import { usePagedList } from '../../paging.ts';
@@ -84,7 +84,7 @@ function Store({ pharmacyId }: { pharmacyId: string }) {
       {error && <Alert>{error}</Alert>}
       <form className="row" role="search" onSubmit={(e: FormEvent) => { e.preventDefault(); setSearch(text.trim()); }}>
         <TextField label={t('store.search')} value={text} onChange={(e) => setText(e.target.value)} placeholder={t('store.searchPlaceholder')} />
-        <Button type="submit">{t('common.search')}</Button>
+        <Button type="submit">{shared('action.search')}</Button>
       </form>
       <p className="muted">{t('store.rxNote')}</p>
       {stock.isPending ? <Loading label={t('common.loadingMedicines')} />

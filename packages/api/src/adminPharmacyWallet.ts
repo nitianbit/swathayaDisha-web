@@ -3,6 +3,7 @@ import { assistedRefusal, isSwitchedOff, type PharmacyWallet, type WalletMovemen
 import type { WalletOwner } from './labWallet.ts';
 import { t } from './i18n/admin/index.ts';
 import { onLanguage, wordMap } from './i18n/words.ts';
+import { tooLongWords } from './messages.ts';
 
 /**
  * WQ13 admin: a pharmacy's Jansetu wallet and the admin's manual credit (backend `src1/modules/pharmacyWallet`, q16
@@ -122,7 +123,7 @@ export function adminTopupForm(amountText: string, noteText: string): { amount?:
   else if (Number(a) > MAX_ADMIN_TOPUP_RUPEES) out.amount = t('topup.form.amountMax');
   const notes = cleanNote(noteText);
   if (notes.length < MIN_ADMIN_TOPUP_NOTE) out.notes = t('topup.form.note');
-  else if (notes.length > MAX_ADMIN_TOPUP_NOTE) out.notes = t('form.maxLength', { max: MAX_ADMIN_TOPUP_NOTE });
+  else if (notes.length > MAX_ADMIN_TOPUP_NOTE) out.notes = tooLongWords(MAX_ADMIN_TOPUP_NOTE);
   if (out.amount || out.notes) return out;
   return { value: { amount: Number(a), notes } };
 }
@@ -242,7 +243,7 @@ const CLOSE_REASON_EMPTY: Readonly<Record<WalletOwner, string>> = wordMap(t, {
 export function closeReasonProblem(text: string, owner: WalletOwner): string | undefined {
   const fault = closeReasonFault(cleanNote(text));
   if (fault === 'empty') return CLOSE_REASON_EMPTY[owner];
-  if (fault === 'long') return t('form.maxLength', { max: MAX_CLOSE_REASON });
+  if (fault === 'long') return tooLongWords(MAX_CLOSE_REASON);
   return undefined;
 }
 

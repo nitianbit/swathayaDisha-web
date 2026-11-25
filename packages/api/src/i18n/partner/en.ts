@@ -128,7 +128,6 @@ export default {
   'clinic.status.no_show': 'Did not come',
 
   'clinic.family.problem.name': 'Enter the family member’s name.',
-  'clinic.problem.tooLong': 'Use at most {max} characters.',
   'clinic.family.problem.relation': 'Choose how they are related to the account holder.',
   'clinic.family.problem.gender': 'Choose a gender, or leave it empty.',
   'clinic.family.problem.dateOfBirth': 'Enter a real date that is not in the future.',

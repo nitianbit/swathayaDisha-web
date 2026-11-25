@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { formatExpiry, inventoryApi, medicineName, sellableQty, type Batch, type InventoryItem } from '@jansetu/api';
-import { Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
+import { Badge, Button, Empty, ErrorState, Loading, shared, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
@@ -40,7 +40,7 @@ export function StockScreen() {
       </div>
       <form className="ws-search" role="search" onSubmit={(e: FormEvent) => { e.preventDefault(); setParams(text.trim() ? { q: text.trim() } : {}); }}>
         <TextField label={t('common.medicine')} value={text} onChange={(e) => setText(e.target.value)} placeholder={t('common.nameBrandOrGenericName')} />
-        <Button type="submit">{t('common.search')}</Button>
+        <Button type="submit">{shared('action.search')}</Button>
       </form>
       {q.isPending ? <Loading label={t('stock.loadingStock')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />

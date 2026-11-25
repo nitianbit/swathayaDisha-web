@@ -7,7 +7,7 @@ import {
   latestAdminCredit, MAX_ADMIN_TOPUP_NOTE, topupNotFoundWords, type PendingMarker, type WalletMovement, OBJECT_ID_PATTERN, pharmacyAdminApi, signedPaiseOf, walletBalancePaise, walletState, type ApiClient, type Page, type PharmacyWallet,
   closeCompensatedExplain, closeCompensatedFinal, closeCompensatedRefusal, closeReasonProblem, closeRefusedBeforeWriting, MAX_CLOSE_REASON, type CompensatedClose, type UncreditedTopup, type WalletOwner,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, shared, TextArea, TextField } from '@jansetu/ui';
 import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
@@ -56,7 +56,7 @@ function PickPharmacy({ scopeKey }: { scopeKey: readonly string[] }) {
     <>
       <form className="ws-search" role="search" onSubmit={submit}>
         <TextField label={t('pharmacyWallets.findByName')} value={text} maxLength={100} onChange={(e) => setText(e.target.value)} />
-        <Button type="submit" variant="secondary">{t('common.search')}</Button>
+        <Button type="submit" variant="secondary">{shared('action.search')}</Button>
       </form>
       {list.isPending ? <Loading label={t('pharmacyWallets.loading')} />
         : list.isError ? <ErrorState message={adminWalletReadError(list.error)} onRetry={() => void list.refetch()} />
@@ -143,7 +143,7 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
         <h2 id="add-h">{t('adminWallet.addMoney')}</h2>
         {pharmacy.data && wallet.isSuccess
           ? <AddMoney target={pharmacyTarget(api, scopeKey, pharmacyId, pharmacy.data.name)} wallet={wallet.data} />
-          : pharmacy.isPending || wallet.isPending ? <Loading label={t('adminWallet.loading')} /> : <p className="ws-muted">{t('adminWallet.mustLoad.pharmacy')}</p>}
+          : pharmacy.isPending || wallet.isPending ? <Loading label={shared('state.loading')} /> : <p className="ws-muted">{t('adminWallet.mustLoad.pharmacy')}</p>}
       </section>
 
       <section className="ws-section" aria-labelledby="hist-h">
@@ -328,7 +328,7 @@ export function AddMoney({ target, wallet }: { target: AdminTopupTarget; wallet:
             return topupNotFoundWords(found, !restored);
           }}
           resend={restored ? undefined : {
-            label: t('adminWallet.sendAgain'), busy,
+            label: shared('action.sendAgain'), busy,
             onClick: () => { setResendError(null); void sendTopup(op).catch((err: unknown) => setResendError(adminTopupRefusal(err))); },
           }}
           forget={{ label: t('adminWallet.forget'), confirmLabel: t('adminWallet.forgetConfirm'),
@@ -387,7 +387,7 @@ export function AddMoney({ target, wallet }: { target: AdminTopupTarget; wallet:
               const { requestKey, ...pending } = review;
               void sendTopup(startOp(requestKey, pending)).catch((err: unknown) => { setReview(null); setRefused(adminTopupRefusal(err)); });
             }}>{t('adminWallet.add.confirm', { amount: formatRupees(review.body.amount) })}</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('adminWallet.back')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{shared('action.back')}</Button>
           </div>
         </div>
       )}
@@ -503,7 +503,7 @@ export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pha
               : t('adminWallet.close.notYet');
           }}
           resend={restored ? undefined : {
-            label: t('adminWallet.sendAgain'), busy,
+            label: shared('action.sendAgain'), busy,
             onClick: () => { setResendError(null); void sendClose(op).catch((err: unknown) => setResendError(closeCompensatedRefusal(err))); },
           }}
           forget={{ label: t('adminWallet.forget'), confirmLabel: t('adminWallet.forgetConfirm'), onForget: () => settle(op.requestKey),
@@ -568,7 +568,7 @@ export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pha
           {!review ? (
             <div className="confirm-actions">
               <Button type="submit">{t('adminWallet.close.next')}</Button>
-              <Button variant="ghost" onClick={() => setChosen(null)}>{t('adminWallet.cancel')}</Button>
+              <Button variant="ghost" onClick={() => setChosen(null)}>{shared('action.cancel')}</Button>
             </div>
           ) : (
             <div className="confirm" role="group" aria-label={t('adminWallet.close.review')}>
@@ -584,7 +584,7 @@ export function UncreditedTopups({ scopeKey, ownerId: pharmacyId, ownerName: pha
                   const { requestKey, ...pending } = review;
                   void sendClose(startOp(requestKey, pending)).catch((err: unknown) => refuse(err));
                 }}>{t('adminWallet.close.confirm')}</Button>
-                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('adminWallet.back')}</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{shared('action.back')}</Button>
               </div>
             </div>
           )}

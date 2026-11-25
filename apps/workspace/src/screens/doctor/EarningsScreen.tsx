@@ -5,7 +5,7 @@ import {
   doctorStatementCsvName as statementCsvName, type DoctorFinanceSummary as FinanceSummary, type Page,
   type DoctorPayoutDetailsInput as PayoutDetailsInput, type DoctorPayoutDetailsView as PayoutDetailsView, type SettlementAccountView,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField, formatDateTime } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, Loading, shared, TextField, formatDateTime } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded } from '../../requests.ts';
@@ -186,14 +186,14 @@ function PayoutForm({ d, version, onClose, onSaved }: {
       {!confirming ? (
         <div className="confirm-actions">
           <Button type="submit">{t('common.review')}</Button>
-          <Button variant="ghost" onClick={onClose}>{t('common.cancel')}</Button>
+          <Button variant="ghost" onClick={onClose}>{shared('action.cancel')}</Button>
         </div>
       ) : (
         <div className="confirm" role="group" aria-label={t('earnings.savePayoutDetails')}>
           <div className="confirm-text">{t('earnings.sendFuturePayoutsTo')}{masked}{t('earnings.theDetailsYouHaveNow')}</div>
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => void save()}>{t('earnings.savePayoutDetails')}</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{t('common.back')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{shared('action.back')}</Button>
           </div>
         </div>
       )}

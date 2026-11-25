@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ApiError, doctorClinicProblems, doctorStanding, VERIFICATION_LABEL, type ClinicBranchRef, type DoctorClinicFound, type DoctorClinicInput, type MyClinics, type SoloPractice,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField, formatDateTime } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, Loading, shared, TextField, formatDateTime } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { messageOf } from '../../errors.ts';
@@ -272,7 +272,7 @@ function ClinicForm({ d, onSettled }: { d: DoctorContext; onSettled: (s: { tone:
           <div className="confirm-text">{t('clinics.create')}{f.name.trim()}{t('clinics.withItsFirstBranch')}{f.branchName.trim()}{t('clinics.in')}{f.city.trim()}{t('clinics.youCanCreateOnlyOne')}</div>
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => void send(startOp(newRequestKey(), inputOf(f)))}>{t('clinics.createMyClinic')}</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{t('common.back')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{shared('action.back')}</Button>
           </div>
         </div>
       )}

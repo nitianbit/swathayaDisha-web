@@ -4,17 +4,11 @@
  */
 export default {
   // ── Words used on several partner screens ──
-  'common.loading': 'Loading…',
   'common.loadingBranches': 'Loading branches…',
-  /** Button: leave a form or a confirmation step without doing anything. */
-  'common.back': 'Back',
-  /** Button: close a form without saving. */
-  'common.cancel': 'Cancel',
   'common.close': 'Close',
   'common.continue': 'Continue',
   /** After "Save" when no field was changed. */
   'common.nothingChanged': 'Nothing has changed.',
-  'common.maxChars': 'Use at most {max} characters.',
   'common.enterRealDate': 'Enter a real date.',
   /** Under a field that was emptied while editing: the server keeps the old value, so it cannot be cleared. */
   'common.cannotRemove': 'This cannot be removed here. Enter a new value.',
@@ -298,7 +292,6 @@ export default {
   'slots.template.windowFrom': '{day} window {n} from',
   'slots.template.windowTo': '{day} window {n} to',
   'slots.template.removeWindow': 'Remove {day} window {n}',
-  'slots.template.remove': 'Remove',
   'slots.template.addWindowOn': 'Add a window on {day}',
   'slots.template.addWindow': 'Add a window',
   'slots.template.review': 'Review the template',
@@ -530,7 +523,6 @@ export default {
   'invoices.showAll': 'Show all bills',
   'invoices.find': 'Find bills',
   'invoices.searchLabel': 'Bill number, customer name or phone',
-  'invoices.search': 'Search',
   'invoices.status': 'Status',
   /** Filter choice: bills in every state. */
   'invoices.allStates': 'All',
@@ -676,7 +668,6 @@ export default {
   'invoice.pay.referenceN': 'Reference (optional) (method {n})',
   'invoice.pay.referenceHint': 'UPI or card reference, cheque number…',
   'invoice.pay.removeMethod': 'Remove method {n}',
-  'invoice.pay.remove': 'Remove',
   'invoice.pay.note': 'Note (optional)',
   'invoice.pay.total': 'Payment: {total}',
   'invoice.pay.totalLeft': 'Payment: {total} · {left} would stay due',
@@ -797,7 +788,6 @@ export default {
   'newInvoice.quantity': 'Quantity',
   'newInvoice.discount': 'Discount (₹, optional)',
   'newInvoice.removeLine': 'Remove line {n}',
-  'newInvoice.remove': 'Remove',
   'newInvoice.expected': 'Expected amounts',
   'newInvoice.expected.kind': 'This will be {kind}. Worked out as the server does; the server’s numbers on the issued bill are final.',
   'newInvoice.expected.kindIgst': 'This will be {kind}, with IGST (another state). Worked out as the server does; the server’s numbers on the issued bill are final.',
@@ -1150,7 +1140,6 @@ export default {
   'profile.contactPhone': 'Contact phone',
   'profile.contactEmail': 'Contact email',
   'profile.saved': 'Saved.',
-  'profile.save': 'Save',
   'profile.partPayments.on': 'Part payments are allowed: a bill can be paid in several payments, any amount up to what is due each time.',
   'profile.partPayments.off': 'Full payment only: each payment settles everything still due (it may be split across methods, such as cash and UPI).',
   'profile.partPayments.changedMeanwhile': 'Someone else changed this setting while you were editing. The page now shows what is saved; choose again if needed.',
@@ -1237,7 +1226,6 @@ export default {
   'clinicDoctors.find': 'Find a doctor',
   'clinicDoctors.search': 'Doctor’s full name or speciality',
   'clinicDoctors.searchHint': 'Search by the doctor’s full name or speciality (whole words). Check the mobile number shown before choosing.',
-  'clinicDoctors.searchButton': 'Search',
   'clinicDoctors.onlyVerified': 'Only active, verified doctors are found.',
   'clinicDoctors.searching': 'Searching doctors…',
   'clinicDoctors.notFound.title': 'No doctor found',
@@ -1456,7 +1444,6 @@ export default {
   'branches.addHoliday': 'Add holiday',
   'branches.noHolidays': 'No holidays.',
   'branches.removeHoliday': 'Remove holiday {date}',
-  'branches.remove': 'Remove',
   'branches.unconfirmed': 'Unconfirmed branch',
   'branches.lost': 'We could not confirm whether {name} was added. Sending it again is safe: it is the same request, so it never adds a second branch. The form stays locked until it is settled.',
   'branches.sendAgain': 'Send again',
@@ -1506,7 +1493,6 @@ export default {
   'staff.doctor': 'A doctor of this clinic: removed on {doctors} (owner only).',
   /** The Doctors page, as a link inside the sentences above. */
   'staff.doctorsLink': 'Doctors',
-  'staff.remove': 'Remove',
   'staff.removeName': 'Remove {name}',
   'staff.remove.consequence': '{name} loses access to this workspace at once. To give access again, add them again.',
   'staff.removed': '{name} was removed.',

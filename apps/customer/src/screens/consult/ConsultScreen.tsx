@@ -5,7 +5,7 @@ import {
   ApiError, COUPON_PATTERN, customerApi, fromPaise, INSTANT_MODE_LABEL, CUSTOMER_INSTANT_MODES as INSTANT_MODES, INSTANT_OFFER_MIN, INSTANT_PAYMENT_WINDOW_MIN,
   instantConsultApi, instantPayableMinor, type CustomerInstantMode as InstantMode, type InstantPayment, type InstantTarget, type NewInstantRequest,
 } from '@jansetu/api';
-import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, formatRupees, Loading, shared, TextField } from '@jansetu/ui';
 import { messageOf, PageHeading, relationshipLabel } from '../../common.tsx';
 import { t } from '../../i18n/index.ts';
 import { PendingCreatePanel, useOnceOnly } from '../../onceOnly.tsx';
@@ -107,7 +107,7 @@ export function ConsultScreen() {
               )}
             <div className="row">
               <Button type="submit" disabled={!specialities.data?.length}>{t('consult.seeOnline')}</Button>
-              <Button variant="ghost" onClick={() => void specialities.refetch()}>{t('common.refresh')}</Button>
+              <Button variant="ghost" onClick={() => void specialities.refetch()}>{shared('action.refresh')}</Button>
             </div>
           </form>
           {search && <Doctors key={`${search.specialization}:${search.mode}`} search={search} once={once} quoteRefusals={quoteRefusals} />}

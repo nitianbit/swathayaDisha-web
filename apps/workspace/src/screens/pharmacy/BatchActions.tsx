@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import {
   BATCH_ACTION_FROM, inventoryApi, orderStatusLabel, type Batch, type RecallTrace, type SupplierReturn, type SupplierReturnReason,
   type SupplierReturnRequest, requestKeysApi } from '@jansetu/api';
-import { Alert, Button, formatDateTime, Loading, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Button, formatDateTime, Loading, shared, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
@@ -77,7 +77,7 @@ function FormShell({ name, title, children, onSubmit, busy, error, submitLabel, 
       {error && <Alert>{error}</Alert>}
       <div className="confirm-actions">
         <Button type="submit" variant={danger ? 'danger' : 'primary'} busy={busy}>{submitLabel}</Button>
-        <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('common.back')}</Button>
+        <Button variant="ghost" disabled={busy} onClick={onCancel}>{shared('action.back')}</Button>
       </div>
     </form>
   );

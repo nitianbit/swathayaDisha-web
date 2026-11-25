@@ -6,7 +6,7 @@ import {
   ApiError, bookingPaidBy, canCancelLab, formatSlotDate, isSwitchedOff, LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, LATE_PAYMENT_BACK, labStatusLabel,
   orderFromBooking, type LabBookingListStatus, type LabBookingView, type RefundTo,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, shared } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
@@ -249,7 +249,7 @@ function AcceptNewTime({ booker, booking, version, perform, busy, onDone, onRefu
             return op.body ? t('bookedLabTests.notAcceptedSoFarIt')
               : t('bookedLabTests.itsDetailsAreNotKept');
           }}
-          resend={op.restored || !op.body ? undefined : { label: t('common.sendTheSameRequestAgain'), busy, onClick: () => void accept(op).catch((e: unknown) => setError(booker.refusal(e).message)) }}
+          resend={op.restored || !op.body ? undefined : { label: shared('action.sendAgain'), busy, onClick: () => void accept(op).catch((e: unknown) => setError(booker.refusal(e).message)) }}
           forget={{ label: t('common.forgetIt'), confirmLabel: t('common.yesForgetIt'), onForget: () => settle(op.requestKey), consequence: t('bookedLabTests.ifTheEarlierAcceptanceStill') }}>
           <Alert tone="warn">{t('bookedLabTests.theOutcomeOfAcceptingThe')}{op.error ? ` (${op.error})` : ''}.</Alert>
         </CheckPanel>

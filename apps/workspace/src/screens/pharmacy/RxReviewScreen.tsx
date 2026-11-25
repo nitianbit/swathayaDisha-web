@@ -7,7 +7,7 @@ import {
   type PharmacyOrder, type PrescriptionReviewRequest,
 } from '@jansetu/api';
 import {
-  Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea,
+  Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, shared, TextArea,
 } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -289,7 +289,7 @@ function ReviewForm({ order, onChanged, onStale }:
             ) : (
               <>
                 <Button type="submit" variant="danger" busy={review.isPending} disabled={!pharmacist}>{t('rxReview.confirmRejection')}</Button>
-                <Button variant="ghost" disabled={review.isPending} onClick={() => { setRejecting(false); setErrors({}); }}>{t('common.cancel')}</Button>
+                <Button variant="ghost" disabled={review.isPending} onClick={() => { setRejecting(false); setErrors({}); }}>{shared('action.cancel')}</Button>
               </>
             )}
           </div>

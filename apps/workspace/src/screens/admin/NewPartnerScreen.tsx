@@ -5,7 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 import {
   EMAIL_IN_USE_MESSAGE, EMAIL_PATTERN, GSTIN_PATTERN, INVOICE_PREFIX_PATTERN, isEmailInUse, MAX_EMAIL, MAX_NAME, memberEmail, PAN_PATTERN,
   PARTNER_PHONE_PATTERN, partnerAdminApi,
-  TAX_REGIME_LABEL, type NewPartner, type Partner, type PartnerKind, type TaxRegime,
+  TAX_REGIME_LABEL, tooLongWords, type NewPartner, type Partner, type PartnerKind, type TaxRegime,
 } from '@jansetu/api';
 import { Alert, Button, ErrorState, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
@@ -28,7 +28,7 @@ export function newPartnerBody(d: Draft): { body: NewPartner; errors: Record<str
   const e: Record<string, string> = {};
   const trim = (s: string) => s.trim();
   const up = (s: string) => s.trim().toUpperCase();
-  const tooLong = () => t('newPartner.tooLong', { max: MAX_NAME });
+  const tooLong = () => tooLongWords(MAX_NAME);
   if (!trim(d.name)) e.name = t('newPartner.nameMissing');
   else if (trim(d.name).length > MAX_NAME) e.name = tooLong();
   if (trim(d.legalName).length > MAX_NAME) e.legalName = tooLong();

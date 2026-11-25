@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { customerApi, customerLabsApi, fromPaise, INSTANT_MODE_LABEL, instantConsultApi, type ExternalBooking } from '@jansetu/api';
-import { Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
+import { Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, shared } from '@jansetu/ui';
 import { instantStatusOf } from './consult/labels.ts';
 import { labStatusOf, labTitle, visitModeLabel } from './labs/labels.ts';
 import { BOOKING_STATUS, formatAppointment, messageOf, PageHeading, statusOf } from '../common.tsx';
@@ -50,7 +50,7 @@ function OrdinaryBookings() {
             </ul>
             <p className="muted">{t('common.showing', { shown: items.length, total })}</p>
             {q.hasNextPage && (
-              <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{t('common.showMore')}</Button>
+              <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{shared('action.showMore')}</Button>
             )}
           </>
         )}
@@ -92,7 +92,7 @@ function ProviderBookings() {
             {more && (
               <Button variant="secondary" busy={lab.q.isFetchingNextPage || hl.q.isFetchingNextPage}
                 onClick={() => { if (lab.q.hasNextPage) void lab.q.fetchNextPage(); if (hl.q.hasNextPage) void hl.q.fetchNextPage(); }}>
-                {t('common.showMore')}
+                {shared('action.showMore')}
               </Button>
             )}
           </>
@@ -127,7 +127,7 @@ function InstantRequests() {
             })}
           </ul>
           <p className="muted">{t('common.showing', { shown: items.length, total })}</p>
-          {q.hasNextPage && <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{t('common.showMore')}</Button>}
+          {q.hasNextPage && <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{shared('action.showMore')}</Button>}
           </>
         )}
     </section>
@@ -160,7 +160,7 @@ function PartnerLabBookings() {
             })}
           </ul>
           <p className="muted">{t('common.showing', { shown: items.length, total })}</p>
-          {q.hasNextPage && <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{t('common.showMore')}</Button>}
+          {q.hasNextPage && <Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{shared('action.showMore')}</Button>}
           </>
         )}
     </section>

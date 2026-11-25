@@ -4,9 +4,9 @@ import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
   ADMIN_CANCEL_REFUSAL, adminNoShowMove, ApiError, canAdminCancelMovedNoShow, consultationAdminApi, CONSULTATION_STATUS_LABEL, doctorAdminApi, fromYmd,
-  CONSULT_MODE_LABEL, isRealDate, istDateOf, MAX_ADMIN_CANCEL_REASON, MIN_ADMIN_CANCEL_REASON, movableSlot, noShowSlotFits, OBJECT_ID_PATTERN, type AdminConsultation,
+  CONSULT_MODE_LABEL, isRealDate, istDateOf, MAX_ADMIN_CANCEL_REASON, MIN_ADMIN_CANCEL_REASON, movableSlot, noShowSlotFits, OBJECT_ID_PATTERN, tooLongWords, type AdminConsultation,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, shared, TextArea, TextField } from '@jansetu/ui';
 import { FOCUS_HOST_STYLE, usePanelFocus } from '../../components/focus.ts';
 import { definitelyNotRecorded } from '../../requests.ts';
 import { NoShowMove, noShowMoveSlot, type NoShowTarget } from '../../components/NoShowMove.tsx';
@@ -258,7 +258,7 @@ function AdminCancel({ b, perform, busy, cancel, readNow, reread, onNotice, onFa
     const r = reason.trim();
     const errs: { reason?: string; refund?: string } = {};
     if (r.length < MIN_ADMIN_CANCEL_REASON) errs.reason = t('consultation.cancel.reasonShort', { min: MIN_ADMIN_CANCEL_REASON });
-    else if (r.length > MAX_ADMIN_CANCEL_REASON) errs.reason = t('consultation.cancel.reasonLong', { max: MAX_ADMIN_CANCEL_REASON });
+    else if (r.length > MAX_ADMIN_CANCEL_REASON) errs.reason = tooLongWords(MAX_ADMIN_CANCEL_REASON);
     if (!refund) errs.refund = t('consultation.cancel.chooseRefund');
     setErrors(errs);
     if (Object.keys(errs).length) return;
@@ -331,7 +331,7 @@ function AdminCancel({ b, perform, busy, cancel, readNow, reread, onNotice, onFa
           {error && <Alert>{error}</Alert>}
           <div className="confirm-actions">
             <Button variant="danger" busy={sending} disabled={busy && !sending} onClick={() => void submit()}>{t('consultation.cancel.submit')}</Button>
-            <Button variant="ghost" data-focus-back disabled={sending} onClick={() => { setOpen(false); setError(null); }}>{t('consultation.cancel.back')}</Button>
+            <Button variant="ghost" data-focus-back disabled={sending} onClick={() => { setOpen(false); setError(null); }}>{shared('action.back')}</Button>
           </div>
         </div>
       )}

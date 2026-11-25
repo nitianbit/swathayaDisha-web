@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import { ApiError, customerPharmacyApi, PHARMACY_PAYMENT_WINDOW_MIN, requestKeysApi, type Cart, type CartItem, type PaymentMode } from '@jansetu/api';
-import { Alert, Button, Empty, ErrorState, formatRupees, Loading, TextArea } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, formatRupees, Loading, shared, TextArea } from '@jansetu/ui';
 import { messageOf, PageHeading } from '../../common.tsx';
 import { t } from '../../i18n/index.ts';
 import { newRequestKey } from '../../pending.ts';
@@ -303,7 +303,7 @@ function PrescriptionUpload({ names, urls, setUrls, onUpload, disabled }: {
           {urls.map((u, i) => (
             <li key={u} className="row-between">
               <span>{t('cart.rx.attached', { number: i + 1 })}</span>
-              <Button variant="ghost" disabled={disabled} onClick={() => setUrls((current) => current.filter((x) => x !== u))}>{t('cart.rx.remove')}</Button>
+              <Button variant="ghost" disabled={disabled} onClick={() => setUrls((current) => current.filter((x) => x !== u))}>{shared('action.remove')}</Button>
             </li>
           ))}
         </ul>

@@ -5,8 +5,6 @@
  * Refusal keys end with the server's error code. A comment above a key is the translator's note.
  */
 export default {
-  /** Under a text field that is too long. */
-  'form.maxLength': 'Use at most {max} characters.',
 
   /** Status of a doctor consultation booking (a filter and a badge). */
   'consultation.status.pending': 'Waiting',

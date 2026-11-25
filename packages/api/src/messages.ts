@@ -1,6 +1,9 @@
 import { ApiError } from './client.ts';
 import { t } from './i18n/index.ts';
 
+/** "Use at most {max} characters." under a field: the same words on every form. */
+export const tooLongWords = (max: number): string => t('field.tooLong', { max });
+
 /**
  * One sentence a person can act on, for both apps (docs/I18N_PLAN.md §6). An area's own refusal words come first, in
  * the helpers that know the context (`assistedRefusal`, `labRefusal`, …); then the shared words for the error's code

@@ -4,10 +4,10 @@ import { Link, useLocation, useParams } from 'react-router';
 import { ArrowLeft, FileText } from 'lucide-react';
 import {
   ApiError, DOCUMENT_KIND_LABEL, dueOf, holdsAny, INVOICE_STATE_LABEL, invoicePdfName, MAX_CANCEL_REASON, MAX_NOTE, MAX_PAYMENT_SPLITS, MAX_REFERENCE,
-  OBJECT_ID_PATTERN, paidOf, paiseToInput, PAYMENT_MODES, paymentProblem, rupeesToPaise, takesPayment, type Invoice, type InvoiceEvent,
+  OBJECT_ID_PATTERN, paidOf, paiseToInput, PAYMENT_MODES, paymentProblem, rupeesToPaise, takesPayment, tooLongWords, type Invoice, type InvoiceEvent,
   type InvoicePaymentMode, type PaymentInput, type PaymentSplit, type RefundInput,
 } from '@jansetu/api';
-import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, shared, TextArea, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { afterFailure, beginAttempt, newRequestKey, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
@@ -497,7 +497,7 @@ function ZeroBillPayment({ invoice, locked, busy, onRecord }: { invoice: Invoice
       <div className="confirm-text">{t('invoice.pay.zero', { serial: invoice.serial, amount: money(0) })}</div>
       <div className="confirm-actions">
         <Button busy={busy} disabled={locked} onClick={() => { const v = open.version; setOpen(null); void onRecord({ mode }, v); }}>{t('invoice.pay.markPaid')}</Button>
-        <Button variant="ghost" disabled={busy} onClick={() => setOpen(null)}>{t('common.back')}</Button>
+        <Button variant="ghost" disabled={busy} onClick={() => setOpen(null)}>{shared('action.back')}</Button>
       </div>
     </div>
   );
@@ -530,9 +530,9 @@ function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }
     rows.forEach((r) => {
       const a = rupeesToPaise(r.amount);
       if (a === null || a <= 0) errs[`amount${r.key}`] = r.amount.trim() ? t('invoice.pay.enterRupees') : t('invoice.pay.enterAmount');
-      if (r.reference.trim().length > MAX_REFERENCE) errs[`reference${r.key}`] = t('common.maxChars', { max: MAX_REFERENCE });
+      if (r.reference.trim().length > MAX_REFERENCE) errs[`reference${r.key}`] = tooLongWords(MAX_REFERENCE);
     });
-    if (note.trim().length > MAX_NOTE) errs.note = t('common.maxChars', { max: MAX_NOTE });
+    if (note.trim().length > MAX_NOTE) errs.note = tooLongWords(MAX_NOTE);
     const problem = Object.keys(errs).length ? null : paymentProblem(splits, due, allowPartPayments, money);
     if (problem) errs.total = problem;
     setErrors(errs);
@@ -568,7 +568,7 @@ function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }
                 error={errors[`reference${r.key}`]} onChange={(e) => set(r.key, { reference: e.target.value })} />
               {i > 0 && (
                 <Button variant="ghost" aria-label={t('invoice.pay.removeMethod', { n: i + 1 })} onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}>
-                  {t('invoice.pay.remove')}
+                  {shared('action.remove')}
                 </Button>
               )}
             </div>
@@ -585,7 +585,7 @@ function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }
                 {t('invoice.pay.addMethod')}
               </Button>
             )}
-            <Button variant="ghost" onClick={() => setOpen(false)}>{t('common.back')}</Button>
+            <Button variant="ghost" onClick={() => setOpen(false)}>{shared('action.back')}</Button>
           </div>
         </>
       ) : (
@@ -604,7 +604,7 @@ function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }
           {locked && <p className="ws-muted">{t('invoice.pay.cancelSending')}</p>}
           <div className="confirm-actions">
             <Button busy={busy} disabled={locked} onClick={() => { const r = reviewed!; setReviewed(null); setOpen(false); void onRecord(r.body, r.version); }}>{t('invoice.pay.recordAmount', { amount: money(shownTotal) })}</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{t('common.back')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{shared('action.back')}</Button>
           </div>
         </>
       )}
@@ -649,9 +649,9 @@ function CancelForm({ ctx, invoice, locked, onBusy, onDone, onRefused }: {
   async function confirm() {
     const errs: Record<string, string> = {};
     if (reason.trim().length < 3) errs.reason = t('invoice.cancel.reasonShort');
-    else if (reason.trim().length > MAX_CANCEL_REASON) errs.reason = t('common.maxChars', { max: MAX_CANCEL_REASON });
-    if (paid && refundRef.trim().length > MAX_REFERENCE) errs.refundRef = t('common.maxChars', { max: MAX_REFERENCE });
-    if (paid && refundNote.trim().length > MAX_NOTE) errs.refundNote = t('common.maxChars', { max: MAX_NOTE });
+    else if (reason.trim().length > MAX_CANCEL_REASON) errs.reason = tooLongWords(MAX_CANCEL_REASON);
+    if (paid && refundRef.trim().length > MAX_REFERENCE) errs.refundRef = tooLongWords(MAX_REFERENCE);
+    if (paid && refundNote.trim().length > MAX_NOTE) errs.refundNote = tooLongWords(MAX_NOTE);
     setErrors(errs);
     setError(null);
     if (Object.keys(errs).length) return;
@@ -698,7 +698,7 @@ function CancelForm({ ctx, invoice, locked, onBusy, onDone, onRefused }: {
       {locked && <p className="ws-muted">{t('invoice.cancel.paySending')}</p>}
       <div className="confirm-actions">
         <Button variant="danger" busy={busy} disabled={locked} onClick={() => void confirm()}>{t('invoice.cancel.confirm', { serial: invoice.serial })}</Button>
-        <Button variant="ghost" disabled={busy} onClick={() => { setOpen(false); setError(null); setErrors({}); }}>{t('common.back')}</Button>
+        <Button variant="ghost" disabled={busy} onClick={() => { setOpen(false); setError(null); setErrors({}); }}>{shared('action.back')}</Button>
       </div>
     </div>
   );

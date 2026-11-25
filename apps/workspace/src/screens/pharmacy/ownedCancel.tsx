@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { cancelWords, LATE_PAYMENT_BACK, MAX_BOOKER_CANCEL_REASON, type CancelAnswer, type RefundTo } from '@jansetu/api';
-import { Alert } from '@jansetu/ui';
+import { Alert, shared } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import type { Perform } from '../finance/finance.tsx';
@@ -63,7 +63,7 @@ export function OwnedCancel<B, R, V extends object>({ slot, label, intro, extra,
             return t('ownedCancel.notCancelledSoFarIt');
           }}
           resend={restored ? undefined : {
-            label: t('common.sendTheSameRequestAgain'), busy,
+            label: shared('action.sendAgain'), busy,
             onClick: () => { setResendError(null); void sendCancel(op).catch((err: unknown) => setResendError(err instanceof Error ? err.message : String(err))); },
           }}
           forget={{ label: t('common.forgetIt'), confirmLabel: t('common.yesForgetIt'), onForget: () => settle(op.requestKey), consequence: forgetConsequence }}>

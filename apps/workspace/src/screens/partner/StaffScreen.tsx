@@ -2,12 +2,12 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  ALL_PARTNER_PERMISSIONS, ApiError, canAddOwner, canEditProfessional, PROFESSIONAL_KIND_LABEL, PROFESSIONAL_KINDS, professionalInput, type MemberProfessional, canChangeBranches, canEditEmail, canEditPermissions, canGiveEmail, canReopenBranches, EMAIL_IN_USE_MESSAGE, grantablePermissions,
+  ALL_PARTNER_PERMISSIONS, ApiError, canAddOwner, canEditProfessional, PROFESSIONAL_KIND_LABEL, PROFESSIONAL_KINDS, professionalInput, tooLongWords, type MemberProfessional, canChangeBranches, canEditEmail, canEditPermissions, canGiveEmail, canReopenBranches, EMAIL_IN_USE_MESSAGE, grantablePermissions,
   hasGlobalScope, INVALID_BRANCH_IDS_MESSAGE, isEmailInUse, isInvalidBranchIds, isOwnerEmailAdminOnly, isOwnerRequired, isUseDoctorUnlink, MAX_EMAIL, MAX_NAME, memberEmail, OWNER_EMAIL_ADMIN_ONLY_MESSAGE,
   PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN, PERMISSION_LABEL, removalBlock, scopeProblem,
   type Branch, type MemberRole, type PartnerMember, type PartnerPermission,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, Loading, Parts, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, Loading, Parts, shared, TextField } from '@jansetu/ui';
 import { definitelyNotRecorded } from '../../requests.ts';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { changedFields, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft } from '../../draft.ts';
@@ -124,7 +124,7 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
                               ? <span className="ws-muted"><Parts of={t.rich('staff.ownerDoctor', { doctors: <Link to={doctorsLink}>{t('staff.doctorsLink')}</Link> })} /></span>
                               : <span className="ws-muted"><Parts of={t.rich('staff.doctor', { doctors: <Link to={doctorsLink}>{t('staff.doctorsLink')}</Link> })} /></span>
                           ) : block ? <span className="ws-muted">{block}</span> : (
-                            <ConfirmAction label={t('staff.remove')} danger confirmLabel={t('staff.removeName', { name: m.name })}
+                            <ConfirmAction label={shared('action.remove')} danger confirmLabel={t('staff.removeName', { name: m.name })}
                               consequence={t('staff.remove.consequence', { name: m.name })}
                               onConfirm={async () => {
                                 try { await ctx.api.removeMember(m._id); setNotice(t('staff.removed', { name: m.name })); } catch (err) {
@@ -257,7 +257,7 @@ function AddMember({ ctx, branches, branchesError, admin, onCancel, onAdded }: {
     e.preventDefault();
     const errs: Record<string, string> = {};
     if (!name.trim()) errs.name = t('staff.error.name');
-    else if (name.trim().length > MAX_NAME) errs.name = t('common.maxChars', { max: MAX_NAME });
+    else if (name.trim().length > MAX_NAME) errs.name = tooLongWords(MAX_NAME);
     if (!PARTNER_PHONE_PATTERN.test(phone)) errs.phone = t('staff.error.phone');
     // WQ9: only owners (and admins as owner) give a new member a sign-in email; nobody else's form has the field.
     const mail = withEmailField ? memberEmail(email) : '';
@@ -321,7 +321,7 @@ function AddMember({ ctx, branches, branchesError, admin, onCancel, onAdded }: {
         {error && <Alert>{error}</Alert>}
         <div className="ws-actions">
           <Button type="submit" busy={busy}>{role === 'owner' ? t('staff.addOwner') : t('staff.addStaff')}</Button>
-          <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('common.cancel')}</Button>
+          <Button variant="ghost" disabled={busy} onClick={onCancel}>{shared('action.cancel')}</Button>
         </div>
       </form>
     </section>
@@ -446,7 +446,7 @@ function EditEmail({ ctx, member, admin, onClose, onSaved }:
         {error && <Alert>{error}</Alert>}
         <div className="ws-actions">
           <Button type="submit" busy={busy}>{t('staff.email.save')}</Button>
-          <Button variant="ghost" disabled={busy} onClick={onClose}>{t('common.cancel')}</Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>{shared('action.cancel')}</Button>
         </div>
       </form>
     </section>
@@ -503,7 +503,7 @@ function EditPermissions({ ctx, member, onClose, onSaved }:
         {error && <Alert>{error}</Alert>}
         <div className="ws-actions">
           <Button type="submit" busy={busy} disabled={!kind}>{t('staff.permissions.save')}</Button>
-          <Button variant="ghost" disabled={busy} onClick={onClose}>{t('common.cancel')}</Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>{shared('action.cancel')}</Button>
         </div>
       </form>
     </section>
@@ -576,7 +576,7 @@ function EditBranches({ ctx, member, branches, closedBranches, branchesError, on
         {error && <Alert>{error}</Alert>}
         <div className="ws-actions">
           <Button type="submit" busy={busy}>{t('staff.branches.save')}</Button>
-          <Button variant="ghost" disabled={busy} onClick={onClose}>{t('common.cancel')}</Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>{shared('action.cancel')}</Button>
         </div>
       </form>
     </section>
@@ -688,7 +688,7 @@ function EditProfessional({ ctx, member, onClose, onSaved }:
         {error && <Alert>{error}</Alert>}
         <div className="ws-actions">
           <Button type="submit" busy={busy}>{t('staff.registration.save')}</Button>
-          <Button variant="ghost" disabled={busy} onClick={onClose}>{t('common.cancel')}</Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>{shared('action.cancel')}</Button>
         </div>
       </form>
       {held && (

@@ -2,7 +2,7 @@ import { useMemo, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { appointmentAt, appointmentDay, partnerClinicApi, type ClinicAppointmentStatus, type DeskAppointment } from '@jansetu/api';
 import { formatClock } from '@jansetu/i18n';
-import { Empty, ErrorState, Loading } from '@jansetu/ui';
+import { Empty, ErrorState, Loading, shared } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { t } from '../../i18n/partner/index.ts';
 import { useSession } from '../../session.tsx';
@@ -33,7 +33,7 @@ export function useDoctorList(ctx: ScopeContext, clinic: ClinicApi) {
 /** Doctors and the front desk exist for clinics only (admins may open any partner's URL). */
 export function ClinicOnly({ ctx, children }: { ctx: ScopeContext; children: ReactNode }) {
   const partner = useWorkspacePartner(ctx);
-  if (partner.isPending) return <Loading label={t('common.loading')} />;
+  if (partner.isPending) return <Loading label={shared('state.loading')} />;
   if (partner.isError) return <ErrorState message={messageOf(partner.error)} onRetry={() => void partner.refetch()} />;
   if (partner.data?.kind !== 'clinic') {
     const name = partner.data?.name;

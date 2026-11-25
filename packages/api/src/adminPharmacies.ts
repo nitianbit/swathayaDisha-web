@@ -1,6 +1,7 @@
 import { ApiError, type ApiClient, type Page } from './client.ts';
 import { normalizeEmail } from './auth.ts';
 import { t } from './i18n/admin/index.ts';
+import { tooLongWords } from './messages.ts';
 
 /**
  * WQ10b admin: pharmacy accounts (`/api/v1/pharmacies`, backend `src1/modules/pharmacies`). Owner decision (19 Nov
@@ -120,7 +121,7 @@ export function pharmacyBody(f: PharmacyForm, fields: readonly (keyof PharmacyFo
   const val = (k: keyof PharmacyForm) => String(f[k]).trim();
   if (want.has('name')) {
     if (!val('name')) e.name = existing ? t('pharmacy.form.nameRemoved') : t('pharmacy.form.name');
-    else if (val('name').length > MAX_PHARMACY_NAME) e.name = t('form.maxLength', { max: MAX_PHARMACY_NAME });
+    else if (val('name').length > MAX_PHARMACY_NAME) e.name = tooLongWords(MAX_PHARMACY_NAME);
     else body.name = val('name');
   }
   if (want.has('phone')) {
@@ -147,7 +148,7 @@ export function pharmacyBody(f: PharmacyForm, fields: readonly (keyof PharmacyFo
     if (!want.has(k)) continue;
     const v = val(k);
     const max = limits[k];
-    if (max && v.length > max) e[k] = t('form.maxLength', { max });
+    if (max && v.length > max) e[k] = tooLongWords(max);
     else if (v) (body as Record<string, unknown>)[k] = v;
     else if (existing?.[k as keyof PharmacyAccount]) (body as Record<string, unknown>)[k] = null;
   }

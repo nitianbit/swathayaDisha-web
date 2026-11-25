@@ -7,15 +7,9 @@ export default {
 
   /** The app's name. Keep it in Latin letters unless told otherwise. */
   'common.brand': 'Jansetu',
-  'common.back': 'Back',
-  'common.tryAgain': 'Try again',
   'common.cancel': 'Cancel',
   'common.add': 'Add',
   'common.apply': 'Apply',
-  'common.refresh': 'Refresh',
-  'common.search': 'Search',
-  /** Button under a list: loads the next page of it. */
-  'common.showMore': 'Show more',
   /** A label in a list of details (booking, order). */
   'common.status': 'Status',
   /** A label in a list of details: the person the booking or order is for. */
@@ -297,7 +291,6 @@ export default {
   'profile.gender': 'Gender',
   'profile.dob': 'Date of birth',
   'profile.saved': 'Saved.',
-  'profile.save': 'Save',
   'profile.emailAdded': 'Email added. You can now also sign in with it.',
   'profile.emailFixed': 'You can sign in with it. To change it, contact support.',
   'profile.emailInvalid': 'Enter a valid email address.',
@@ -739,7 +732,6 @@ export default {
   'cart.rx.attachingShort': 'Attaching…',
   /** {number} is 1, 2, 3 … */
   'cart.rx.attached': 'Prescription {number} attached',
-  'cart.rx.remove': 'Remove',
 
   'orders.title': 'My medicine orders',
   'orders.empty': 'No medicine orders yet',

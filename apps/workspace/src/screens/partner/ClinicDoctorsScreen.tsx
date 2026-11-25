@@ -4,7 +4,7 @@ import {
   ApiError, clinicBranchesFor, doctorAdminApi, DOCTOR_INVITE_STATE_LABEL, DOCTOR_INVITE_STATES, holdsAny, LINK_REFUSAL, linkProblems,
   MAX_DIRECTORY_SEARCH, type DirectoryDoctor, type DoctorInvite, type DoctorInviteState, type Page,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, Parts, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, Parts, shared, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { messageOf } from '../../errors.ts';
@@ -349,7 +349,7 @@ function AddDoctor({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
             <form className="ws-search" role="search" aria-label={t('clinicDoctors.find')} onSubmit={(e) => { e.preventDefault(); const q = text.trim(); if (q) setSearch(q.slice(0, MAX_DIRECTORY_SEARCH)); }}>
               <TextField label={t('clinicDoctors.search')} type="search" maxLength={MAX_DIRECTORY_SEARCH} value={text} onChange={(e) => setText(e.target.value)}
                 hint={t('clinicDoctors.searchHint')} />
-              <Button type="submit" variant="secondary" disabled={!text.trim()}>{t('clinicDoctors.searchButton')}</Button>
+              <Button type="submit" variant="secondary" disabled={!text.trim()}>{shared('action.search')}</Button>
             </form>
             {search === null ? <p className="ws-muted">{t('clinicDoctors.onlyVerified')}</p>
               : found.isPending ? <Loading label={t('clinicDoctors.searching')} />
@@ -406,7 +406,7 @@ function AddDoctor({ ctx, clinic }: { ctx: ScopeContext; clinic: ClinicApi }) {
                   {t('clinicDoctors.link.button', { name: chosen.name })}
                 </Button>
               )}
-              <Button variant="ghost" disabled={sending} onClick={() => (confirming ? setConfirming(false) : reset())}>{t('common.back')}</Button>
+              <Button variant="ghost" disabled={sending} onClick={() => (confirming ? setConfirming(false) : reset())}>{shared('action.back')}</Button>
             </div>
           </form>
         )}

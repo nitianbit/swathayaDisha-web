@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Alert, Button } from '@jansetu/ui';
+import { Alert, Button, shared } from '@jansetu/ui';
 import { ConfirmAction } from './ConfirmAction.tsx';
 import type { Page } from '@jansetu/api';
 import { messageOf } from '../errors.ts';
@@ -115,7 +115,7 @@ export function PendingOpPanel<B, R extends { requestKey?: string; createdAt?: s
       {summary}
       {note && <Alert tone={note.tone}>{note.text}</Alert>}
       <div className="confirm-actions">
-        <Button busy={busy} disabled={checking} onClick={onResend}>{t('pending.resend')}</Button>
+        <Button busy={busy} disabled={checking} onClick={onResend}>{shared('action.sendAgain')}</Button>
         <Button variant="secondary" busy={checking} disabled={busy} onClick={() => void check()}>{t('pending.check')}</Button>
         {notFound && !busy && abandon && abandonWhenNotFound && (
           <Button variant="secondary" busy={abandoning} disabled={checking} onClick={() => void cancelIt()}>{abandonLabel}</Button>

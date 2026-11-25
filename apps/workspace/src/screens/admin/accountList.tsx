@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
-import { Badge, Button, Empty, TextField } from '@jansetu/ui';
+import { Badge, Button, Empty, shared, TextField } from '@jansetu/ui';
 import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 
@@ -50,7 +50,7 @@ export function NameSearch({ s }: { s: ReturnType<typeof useNameSearch> }) {
   return (
     <form className="ws-search" role="search" onSubmit={s.submit}>
       <TextField label={t('common.searchByName')} value={s.search} maxLength={s.maxLength} onChange={(e) => s.setSearch(e.target.value)} />
-      <Button type="submit" variant="secondary">{t('common.search')}</Button>
+      <Button type="submit" variant="secondary">{shared('action.search')}</Button>
     </form>
   );
 }

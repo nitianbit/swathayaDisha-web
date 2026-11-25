@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import {
   ApiError, customerApi, maskTarget, MAX_EMAIL, normalizeEmail, OTP_PATTERN, targetKey, type CustomerProfile, type Gender, type ProfileUpdate,
 } from '@jansetu/api';
-import { Alert, Button, ErrorState, LanguageSwitcher, Loading, Parts, TextField, useCooldowns } from '@jansetu/ui';
+import { Alert, Button, ErrorState, LanguageSwitcher, Loading, Parts, shared, TextField, useCooldowns } from '@jansetu/ui';
 import { Confirm, genderLabel, messageOf, PageHeading } from '../common.tsx';
 import { t, type CustomerKey } from '../i18n/index.ts';
 import { useCustomer, useSession } from '../session.tsx';
@@ -90,7 +90,7 @@ function ProfileForm({ profile }: { profile: CustomerProfile }) {
       <TextField label={t('profile.dob')} type="date" value={dob} onChange={(e) => setDob(e.target.value)} error={errors.dob} />
       {save.isError && <Alert>{messageOf(save.error)}</Alert>}
       {save.isSuccess && <Alert tone="ok">{t('profile.saved')}</Alert>}
-      <Button type="submit" busy={save.isPending}>{t('profile.save')}</Button>
+      <Button type="submit" busy={save.isPending}>{shared('action.save')}</Button>
     </form>
   );
 }

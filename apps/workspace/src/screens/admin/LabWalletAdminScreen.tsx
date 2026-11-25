@@ -6,7 +6,7 @@ import {
   adminOwnerWalletApi, asPharmacyWallet, doctorAdminListApi, OBJECT_ID_PATTERN, ownerWalletRefusal, partnerAdminApi, type LabWalletLot, type Refusal,
   type WalletOwnerKind,
 } from '@jansetu/api';
-import { Alert, Badge, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
+import { Alert, Badge, ErrorState, formatDateTime, formatRupees, Loading, shared } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -99,7 +99,7 @@ function OwnerWallet({ kind, scopeKey, ownerId }: { kind: WalletOwnerKind; scope
       <section className="ws-section" aria-labelledby="add-h">
         <h2 id="add-h">{t('adminWallet.addMoney')}</h2>
         {owner.data && wallet.isSuccess ? <AddMoney target={ownerTarget(tools, kind, scopeKey, ownerId, owner.data.name)} wallet={view} />
-          : owner.isPending || wallet.isPending ? <Loading label={t('adminWallet.loading')} /> : <p className="ws-muted">{t(`adminWallet.mustLoad.${kind}`)}</p>}
+          : owner.isPending || wallet.isPending ? <Loading label={shared('state.loading')} /> : <p className="ws-muted">{t(`adminWallet.mustLoad.${kind}`)}</p>}
       </section>
       <WalletHistory q={entries} notes empty={t('labWallet.historyEmpty', { name })} first={history.page === 1}
         pager={<CursorPager pages={history} nextCursor={entries.data?.nextCursor} label={t('adminWallet.historyPages')} />} />

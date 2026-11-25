@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { appointmentInstant, messageOf, type Relationship } from '@jansetu/api';
 import { formatDateWith, INDIA_TIME } from '@jansetu/i18n';
-import { Alert, Button, TextArea } from '@jansetu/ui';
+import { Alert, Button, shared, TextArea } from '@jansetu/ui';
 import { t, type CustomerKey } from './i18n/index.ts';
 
 export function PageHeading({ title, children }: { title: string; children?: ReactNode }) {
@@ -106,7 +106,7 @@ export function Confirm({ label, consequence, confirmLabel, withReason = false, 
             if (alive.current) close();
           } catch (err) { setError(messageOf(err)); } finally { if (alive.current) setBusy(false); }
         }}>{confirmLabel}</Button>
-        <Button ref={back} variant="ghost" disabled={busy} onClick={() => { setError(null); close(); }}>{t('common.back')}</Button>
+        <Button ref={back} variant="ghost" disabled={busy} onClick={() => { setError(null); close(); }}>{shared('action.back')}</Button>
       </div>
     </div>
   );
