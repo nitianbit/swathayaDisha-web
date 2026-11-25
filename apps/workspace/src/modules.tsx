@@ -9,7 +9,7 @@ import { Banknote, Landmark, Wallet } from 'lucide-react';
 import { CalendarSearch, Store } from 'lucide-react';
 import { CalendarPlus } from 'lucide-react';
 import { TestTube, TestTubes } from 'lucide-react';
-import { HandCoins } from 'lucide-react';
+import { HandCoins, ShoppingCart } from 'lucide-react';
 import { hasGlobalScope, holdsAny, type PartnerKind, type PartnerPermission } from '@jansetu/api';
 import type { StaffRole, StaffUser } from './session.tsx';
 import type { ShellKey as NavKey } from './i18n/shell/index.ts';
@@ -71,6 +71,7 @@ import { BookedConsultationsScreen } from './screens/pharmacy/BookedConsultation
 import { WalletScreen } from './screens/pharmacy/WalletScreen.tsx';
 import { LabReferralEarningsScreen } from './screens/finance/ReferralEarningsScreen.tsx';
 import { PharmacyFinanceScreen } from './screens/pharmacy/FinanceScreen.tsx';
+import { SaleScreen } from './screens/pharmacy/SaleScreen.tsx';
 import { WalletDisputesScreen } from './screens/admin/WalletDisputesScreen.tsx';
 import { Truck } from 'lucide-react';
 import { PartnerFinanceScreen } from './screens/finance/PartnerFinanceScreen.tsx';
@@ -202,6 +203,11 @@ export const PAGES: readonly WorkspacePage[] = [
   },
   // WQ26's "Referral earnings" page is part of Finance now (WQ48); old links land there.
   { path: '/pharmacy/referral', roles: ['pharmacy'], element: <Navigate to="/pharmacy/finance" replace /> },
+  // WQ50: a counter sale (a linked or walk-in customer, stock, an optional prescription, paid at the counter, its bill).
+  {
+    path: '/pharmacy/sale', roles: ['pharmacy'], element: <SaleScreen />,
+    nav: { labelKey: 'nav.newSale', icon: ShoppingCart, sectionKey: 'nav.section.pharmacy' },
+  },
   {
     path: '/pharmacy/orders', roles: ['pharmacy'], element: <OrdersScreen />,
     nav: { labelKey: 'nav.orders', icon: Package, sectionKey: 'nav.section.pharmacy' },

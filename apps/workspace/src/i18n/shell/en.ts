@@ -28,6 +28,8 @@ export default {
   'nav.lowStock': 'Low stock',
   'nav.orderCancellations': 'Order cancellations',
   'nav.orders': 'Orders',
+  /** WQ50: a sale at the pharmacy's counter. */
+  'nav.newSale': 'New sale',
   'nav.payouts': 'Payouts',
   'nav.pharmacies': 'Pharmacies',
   'nav.pharmacyWallets': 'Pharmacy wallets',
