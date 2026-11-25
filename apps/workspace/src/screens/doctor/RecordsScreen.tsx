@@ -1,9 +1,9 @@
 import { useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft, FileText } from 'lucide-react';
 import {
-  APPOINTMENT_STATUS_LABEL, CONSULT_MODE_LABEL, doctorRecordsApi, formatSlotDate, OBJECT_ID_PATTERN, recordsAccessState, recordsErrorCode,
+  ApiError, APPOINTMENT_STATUS_LABEL, CONSULT_MODE_LABEL, doctorRecordsApi, formatSlotDate, OBJECT_ID_PATTERN, recordsAccessState, recordsErrorCode,
   type OtherConsultation, type OtherLabReport, type RecordsRequestAnswer, type TreatingRecords,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
@@ -42,24 +42,21 @@ function NotFound() {
   return <Empty title={t('notFound.title')}><Link to="/doctor/appointments">{t('notFound.back')}</Link></Empty>;
 }
 
-/** The codes the catalogue words (`error.<code>`). */
-const ERROR_CODES = ['BOOKING_NOT_FOUND', 'PATIENT_HISTORY_NOT_FOUND', 'TREATING_WINDOW_CLOSED', 'SPECIALIST_NOT_VERIFIED', 'RECORDS_ACCESS_DISABLED',
-  'READ_LOG_UNAVAILABLE', 'INDEXES_OUTDATED', 'RECORDS_REQUEST_CHANGED'] as const;
-type ErrorCode = (typeof ERROR_CODES)[number];
-const isWorded = (code: string | null): code is ErrorCode => (ERROR_CODES as readonly (string | null)[]).includes(code);
-
-/** The server's refusal in words: the catalogue's for its code, else the server's message. */
+/** The server's refusal in words: the catalogue's for its code (`error.<code>`), else the server's message. */
 function words(err: unknown): string {
-  const code = recordsErrorCode(err);
-  return isWorded(code) ? t(`error.${code}`) : messageOf(err);
+  const key = `error.${recordsErrorCode(err) ?? ''}`;
+  return t.has(key) ? t(key) : messageOf(err);
 }
+/** WQ28b: for `ConfirmAction` (which shows an `ApiError`'s message): the refusal in words, without its code. */
+const worded = (err: unknown) => new ApiError(err instanceof ApiError ? err.status : 0, words(err));
 
 const recordsKey = (d: DoctorContext, bookingId: string) => [...d.key, 'records', bookingId];
 
 function Records({ d, bookingId }: { d: DoctorContext; bookingId: string }) {
   const { api } = useSession();
-  // Every read is logged by the server: read on opening and on "Check again", not on every focus.
-  const q = useQuery({ queryKey: recordsKey(d, bookingId), queryFn: () => doctorRecordsApi(api).treating(bookingId), refetchOnWindowFocus: false });
+  // Every read is logged by the server: read on opening, after asking and on "Check again", never on focus or reconnect.
+  const q = useQuery({ queryKey: recordsKey(d, bookingId), queryFn: () => doctorRecordsApi(api).treating(bookingId),
+    refetchOnWindowFocus: false, refetchOnReconnect: false });
   if (q.isPending) return <Loading />;
   if (q.isError && q.data === undefined) {
     const code = recordsErrorCode(q.error);
@@ -100,6 +97,12 @@ function OwnConsultations({ r }: { r: TreatingRecords }) {
   );
 }
 
+/** WQ28b: the records are seen until the earlier of the grant's end and this consultation's treating end. */
+function seenUntil(r: TreatingRecords): string | null {
+  const ends = [r.access.grant?.expiresAt, r.access.window.closesAt].filter((x): x is string => !!x && Number.isFinite(Date.parse(x)));
+  return ends.length ? ends.reduce((a, b) => (Date.parse(a) <= Date.parse(b) ? a : b)) : null;
+}
+
 function OtherRecords({ d, bookingId, r, reading, reread }: {
   d: DoctorContext; bookingId: string; r: TreatingRecords; reading: boolean; reread: () => Promise<unknown>;
 }) {
@@ -124,7 +127,7 @@ function OtherRecords({ d, bookingId, r, reading, reread }: {
       {note && <Alert tone="ok">{note}</Alert>}
       {shown ? (
         <>
-          <p className="ws-muted">{t('state.approved', { until: formatDateTime(r.access.grant?.expiresAt ?? '') })}</p>
+          <p className="ws-muted">{t('state.approved', { until: formatDateTime(seenUntil(r) ?? '') })}</p>
           <OthersList consultations={r.others!.consultations} labReports={r.others!.labReports} />
         </>
       ) : (
@@ -134,7 +137,7 @@ function OtherRecords({ d, bookingId, r, reading, reread }: {
           {state === 'none' && <p className="ws-muted">{t('others.why')}</p>}
           {state !== 'pending' && state !== 'approved' && (
             <AskPatient d={d} bookingId={bookingId} reread={reread}
-              onAsked={(a) => setNote(a.state === 'pending' && !a.channels.app ? `${t('ask.sent')} ${t('ask.noApp')}` : t('ask.sent'))} />
+              onAsked={(a) => setNote(a.state === 'approved' ? t('ask.alreadyAllowed') : !a.channels.app ? `${t('ask.sent')} ${t('ask.noApp')}` : t('ask.sent'))} />
           )}
         </>
       )}
@@ -202,6 +205,7 @@ function AskPatient({ d, bookingId, reread, onAsked }: {
   d: DoctorContext; bookingId: string; reread: () => Promise<unknown>; onAsked: (a: RecordsRequestAnswer) => void;
 }) {
   const { api } = useSession();
+  const queryClient = useQueryClient();
   const { op, send, settle } = useOwnedOp<PendingAsk>(`records-request:${d.identity}:${bookingId}`);
   const { perform, busy } = useOneAtATime('records');
   const [resendError, setResendError] = useState<string | null>(null);
@@ -210,7 +214,7 @@ function AskPatient({ d, bookingId, reread, onAsked }: {
     const r = await perform(() => send(p, (b) => doctorRecordsApi(api).request(b.bookingId)));
     if (r.kind === 'stale') return;
     if (r.kind === 'ok') { onAsked(r.value); await reread(); return; }
-    if (r.kind === 'refused') throw new Error(words(r.error));
+    if (r.kind === 'refused') throw worded(r.error);
   }
 
   if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
@@ -221,9 +225,11 @@ function AskPatient({ d, bookingId, reread, onAsked }: {
         <CheckPanel label={t('ask.panel')}
           onCheck={async () => {
             const now = await doctorRecordsApi(api).treating(bookingId);
+            // WQ28b: this read is the page's too (each read is logged once).
+            queryClient.setQueryData(recordsKey(d, bookingId), now);
             const state = recordsAccessState(now.access);
             const asked = now.access.request && Date.parse(now.access.request.createdAt) >= op.firstAttemptAt - 60_000;
-            if (state === 'approved' || (state === 'pending' && asked)) { settle(op.requestKey); await reread(); return null; }
+            if (state === 'approved' || (state === 'pending' && asked)) { settle(op.requestKey); return null; }
             return t('ask.notYet');
           }}
           resend={restored ? undefined : { label: t('ask.resend'), busy, onClick: () => { setResendError(null); void ask(op).catch((e: unknown) => setResendError(e instanceof Error ? e.message : String(e))); } }}

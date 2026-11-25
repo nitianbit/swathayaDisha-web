@@ -2268,6 +2268,18 @@ is read from the consultation (one extra read); a `GET …/bookings/:id/records`
 still sends the holder's contact details (`patient`) and the own consultations' notes and prices (§25.17 "seen"); the web
 drops them. (3) The doctor gets no notice when the holder answers: "Check again" reads it.
 
+### WQ28b review fixes (review of 7a66e9a, 2026-11-25; same branch)
+
+1. A refused first "Ask" (409 `TREATING_WINDOW_CLOSED`, 403, 404) now shows its words in the confirmation: the page throws
+   an `ApiError` carrying them (`ConfirmAction` shows an `ApiError`'s message; no other screen changes).
+2. Customer: a refusal is worded by its code first, so 503 `RECORDS_ACCESS_DISABLED` and `INDEXES_OUTDATED` say their own
+   words (no "may not have arrived").
+3. The doctor's treating view is never read again on reconnect (`refetchOnReconnect: false`, as on focus); the unconfirmed
+   ask's check puts its own read into the page (`setQueryData`): one logged read, not two.
+4. "You can see these records until …" shows the earlier of the grant's end and the consultation's treating end; a request
+   answered `approved` (a grant already in force) says "The patient has already allowed it.", never "Asked".
+5. Both apps word refusals with `t.has('error.<code>')` instead of their own lists of codes.
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.

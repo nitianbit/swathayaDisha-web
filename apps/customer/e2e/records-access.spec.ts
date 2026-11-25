@@ -15,7 +15,7 @@ const NOW = new Date('2026-11-25T04:30:00.000Z');
 const LATER = '2026-11-26T04:30:00.000Z';
 
 type Json = Record<string, unknown>;
-interface Backend { calls: { method: string; path: string }[]; requests: Json[]; grants: Json[]; expireOnAnswer: boolean }
+interface Backend { calls: { method: string; path: string }[]; requests: Json[]; grants: Json[]; expireOnAnswer: boolean; off: boolean }
 
 const request = (o: Json = {}): Json => ({
   _id: R1, state: 'pending', treatingBookingId: 'b1'.repeat(12), createdAt: NOW.toISOString(), expiresAt: LATER, decidedAt: null,
@@ -24,7 +24,7 @@ const request = (o: Json = {}): Json => ({
 
 async function mockBackend(page: Page, init: { requests?: Json[]; grants?: Json[] } = {}): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
-  const b: Backend = { calls: [], requests: init.requests ?? [request()], grants: init.grants ?? [], expireOnAnswer: false };
+  const b: Backend = { calls: [], requests: init.requests ?? [request()], grants: init.grants ?? [], expireOnAnswer: false, off: false };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const ok = (route: Route, data: unknown) => json(route, 200, { success: true, data });
   await page.route('**/api/v1/**', async (route) => {
@@ -47,6 +47,7 @@ async function mockBackend(page: Page, init: { requests?: Json[]; grants?: Json[
     if (decide) {
       const r = b.requests.find((x) => x._id === decide[1]);
       if (!r) return json(route, 404, { error: 404, code: 'RECORDS_REQUEST_NOT_FOUND', message: 'Request not found' });
+      if (b.off) return json(route, 503, { error: 503, code: 'RECORDS_ACCESS_DISABLED', message: 'Records access is not switched on' });
       if (b.expireOnAnswer) { Object.assign(r, { state: 'expired', decidedAt: NOW.toISOString() }); return json(route, 409, { error: 409, code: 'RECORDS_REQUEST_EXPIRED', message: 'This request has expired' }); }
       if (r.state !== 'pending') return json(route, 409, { error: 409, code: 'RECORDS_REQUEST_NOT_PENDING', message: 'Not pending' });
       const approve = decide[2] === 'approve';
@@ -144,4 +145,16 @@ test('who can see the records: Stop sharing (a second step), then nobody; nothin
   await expect(page.getByText('Stopped. Dr Asha Mehta can no longer see these records.')).toBeVisible();
   await expect(page.getByText('No doctor can see your records from other doctors and labs.')).toBeVisible();
   expect(b.calls.filter((c) => c.method === 'POST' && c.path.startsWith('/records-access')).map((c) => c.path)).toEqual([`/records-access/grants/${'f1'.repeat(12)}/revoke`]);
+});
+
+test('WQ28b: switched off on the server (503): said in its own words, and the request still waits', async ({ page }) => {
+  const b = await mockBackend(page);
+  b.off = true;
+  await signIn(page);
+  await card(page).getByRole('button', { name: 'Allow' }).click();
+  await card(page).getByRole('button', { name: 'Yes, allow' }).click();
+  await expect(card(page).getByText('Sharing records with doctors is not switched on yet.')).toBeVisible();
+  await expect(card(page).getByText('Your answer may not have arrived', { exact: false })).toHaveCount(0);
+  await expect(card(page).getByRole('button', { name: 'Allow' })).toBeVisible();
+  expect(b.requests[0]!.state).toBe('pending');
 });

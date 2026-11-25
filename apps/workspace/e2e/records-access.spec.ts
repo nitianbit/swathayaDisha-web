@@ -25,6 +25,9 @@ interface Backend {
   windowClosed: boolean;
   noApp: boolean;
   dropNextRequest: boolean;
+  /** WQ28b: the request is refused with this code (409/403/404), or answered as already allowed. */
+  refuseRequest: { status: number; code: string } | null;
+  grantOnRequest: boolean;
 }
 
 const appointment = (o: Json = {}): Json => ({
@@ -40,7 +43,7 @@ const others = {
 
 async function mockBackend(page: Page): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
-  const b: Backend = { calls: [], request: null, grant: null, windowClosed: false, noApp: false, dropNextRequest: false };
+  const b: Backend = { calls: [], request: null, grant: null, windowClosed: false, noApp: false, dropNextRequest: false, refuseRequest: null, grantOnRequest: false };
   const profile = { _id: DOC, name: 'Dr Asha Mehta', specialization: 'Cardiology', phone: '9000000020', isActive: true, isVerified: true };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const ok = (route: Route, data: unknown, status = 200) => json(route, status, { success: true, data });
@@ -73,6 +76,11 @@ async function mockBackend(page: Page): Promise<Backend> {
         access: { window: { opensAt: '2026-11-25T03:50:00.000Z', closesAt: '2026-12-02T04:30:00.000Z' }, grant: b.grant, request: b.request } });
     }
     if (path === `/specialists/me/bookings/${CONSULT}/records-access/request` && method === 'POST') {
+      if (b.refuseRequest) return refuse(route, b.refuseRequest.status, b.refuseRequest.code, 'This consultation is not open for treatment now');
+      if (b.grantOnRequest) {
+        b.grant = { at: NOW.toISOString(), expiresAt: '2027-11-25T04:30:00.000Z', via: 'app' };
+        return ok(route, { state: 'approved', grant: b.grant });
+      }
       b.request = { state: 'pending', createdAt: NOW.toISOString(), expiresAt: DAY_AFTER };
       if (b.dropNextRequest) { b.dropNextRequest = false; return route.abort('connectionreset'); }
       return ok(route, { requestId: 'a1'.repeat(12), state: 'pending', expiresAt: DAY_AFTER, channels: { app: !b.noApp, sms: false } }, 201);
@@ -132,6 +140,8 @@ test('ask, the patient allows it: the other records are listed and each opens th
   await expect(table.getByRole('row').nth(2)).toContainText('Meena Iyer, Dermatology');
   await expect(table.getByRole('row').nth(2)).toContainText('Prescription');
   await expect(others$(page).getByText('Only your own consultations are shown.')).toHaveCount(0);
+  // WQ28b: seen until the earlier of the permission's end (2027) and this consultation's treating end (2 Dec 2026).
+  await expect(others$(page)).toContainText(/You can see these records until .*2 Dec 2026/);
   await table.getByRole('button', { name: /^Open: Prescription/ }).click();
   await expect(page.getByTitle('Patient record')).toBeVisible();
   await table.getByRole('button', { name: /^Open: Lab report/ }).click();
@@ -185,4 +195,20 @@ test('another doctor’s consultation (or none) shows nothing; a closed treating
   await expect(page.getByText('This consultation is not open for treatment now, so its patient’s records are not shown.', { exact: false })).toBeVisible();
   await expect(page.getByRole('table')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Ask the patient to see their other records' })).toHaveCount(0);
+});
+
+test('WQ28b: a refused first ask keeps its words (a closed treating window); an answer of "already allowed" is said so', async ({ page }) => {
+  const b = await mockBackend(page);
+  b.refuseRequest = { status: 409, code: 'TREATING_WINDOW_CLOSED' };
+  await signIn(page);
+  await page.goto(`/#/doctor/appointments/${CONSULT}/records`);
+  await ask(page);
+  await expect(others$(page).getByText('This consultation is not open for treatment now, so its patient’s records are not shown.', { exact: false })).toBeVisible();
+  await expect(others$(page).getByText('Something went wrong', { exact: false })).toHaveCount(0);
+  b.refuseRequest = null;
+  b.grantOnRequest = true;
+  await others$(page).getByRole('button', { name: 'Yes, ask the patient' }).click();
+  await expect(others$(page).getByText('The patient has already allowed it.')).toBeVisible();
+  await expect(page.getByRole('table', { name: 'Records from other doctors and labs, newest first' })).toBeVisible();
+  await expect(others$(page).getByText('Asked. The patient answers in the Jansetu app.')).toHaveCount(0);
 });

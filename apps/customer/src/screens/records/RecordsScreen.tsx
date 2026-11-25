@@ -29,16 +29,14 @@ function doctorName(p: RecordsParty): string {
   return /^dr\.?\s/i.test(name) ? name : t('doctor.name', { name });
 }
 
-/** The codes the catalogue words (`error.<code>`). */
-const ERROR_CODES = ['RECORDS_REQUEST_EXPIRED', 'RECORDS_REQUEST_NOT_PENDING', 'RECORDS_REQUEST_NOT_FOUND', 'RECORDS_REQUEST_CHANGED', 'RECORDS_GRANT_NOT_FOUND',
-  'RECORDS_ACCESS_DISABLED', 'FORBIDDEN', 'INDEXES_OUTDATED'] as const;
-type ErrorCode = (typeof ERROR_CODES)[number];
-const isWorded = (code: string | null): code is ErrorCode => (ERROR_CODES as readonly (string | null)[]).includes(code);
-
-/** A refusal in the catalogue's words; no answer at all: the answer may have arrived. */
+/**
+ * A refusal in words: the catalogue's for its code first (WQ28b: also the 503s, `RECORDS_ACCESS_DISABLED` and
+ * `INDEXES_OUTDATED`), else the server's message; no answer at all: the answer may have arrived.
+ */
 function refusal(err: unknown): string {
-  const code = recordsErrorCode(err);
-  if (err instanceof ApiError && err.status > 0 && err.status < 500) return isWorded(code) ? t(`error.${code}`) : err.message;
+  const key = `error.${recordsErrorCode(err) ?? ''}`;
+  if (t.has(key)) return t(key);
+  if (err instanceof ApiError && err.status > 0 && err.status < 500) return err.message;
   return t('error.unknown');
 }
 

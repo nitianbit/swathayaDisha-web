@@ -58,6 +58,8 @@ export default {
   'ask.confirm': 'Yes, ask the patient',
   'ask.consequence': 'The account holder is asked in the Jansetu app. The request ends after 24 hours, or earlier when this consultation’s treating time ends. Every record you open is logged.',
   'ask.sent': 'Asked. The patient answers in the Jansetu app.',
+  /** Asking found the patient's permission already in force: nothing was asked. */
+  'ask.alreadyAllowed': 'The patient has already allowed it.',
   /** `channels.app` is false: the account holder has never signed in to the customer app. */
   'ask.noApp': 'The patient hasn’t used the Jansetu app yet; they can’t approve until they sign in.',
   /** The outcome of the request is unknown (a lost answer); {error} says why. */
@@ -75,7 +77,8 @@ export default {
   'state.check': 'Check again',
   'state.denied': 'The patient did not allow it. You can ask again.',
   'state.expired': 'The request ended before the patient answered. You can ask again.',
-  'state.approved': 'The patient allowed it until {until}. Every record you open is logged.',
+  /** {until}: the earlier of the end of the patient's permission and the end of this consultation's treating time. */
+  'state.approved': 'The patient allowed it. You can see these records until {until}. Every record you open is logged.',
   'state.off': 'Seeing other records is not switched on yet.',
 
   'error.BOOKING_NOT_FOUND': 'This consultation was not found among yours.',
