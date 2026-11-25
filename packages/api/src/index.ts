@@ -196,9 +196,9 @@ export {
   moveRefundRefusal, moveRefusedBeforeWriting, outcomeOfAnswer, outcomeOfError, payByClock, payByWords, settleCardPayment,
   bookingPaidBy, bookingPayBy, findMarkedFailed, markFailedFinal, markFailedRefusal, markFailedRefusedBeforeWriting, recheckWords,
   beforeCheckout, bookingWasPaid, cardBookingState, HELD_NOT_STARTED, isCardAnswer, routeCardAnswer, checkoutSeconds, DUPLICATE_WORDS, LATE_PAYMENT_BACK, orderFromBooking, PAY_NOW_MARGIN_MS, payNowOpen, readCardRefund, recheckRefusal,
-  cardBlockedWords, LAB_PAYER, PHARMACY_PAYER,
+  CARD_PERMISSION_WORDS, cardBlockedWords, cardRefundCauseLabel, LAB_PAYER, PHARMACY_PAYER, payerNameOf, payerWord,
 } from './assistedCard.ts';
-export type { AdminCardRefund, CardBookingKind, CardOutcome, CardPayer, CardPaymentAnswer, CardProof, CardRefundMove, CardRefundRecheck, CardRefundState, ReconcileAnswer } from './assistedCard.ts';
+export type { AdminCardRefund, CardBookingKind, CardOutcome, CardPayer, CardRefundPayerKind, CardPaymentAnswer, CardProof, CardRefundMove, CardRefundRecheck, CardRefundState, ReconcileAnswer } from './assistedCard.ts';
 export type {
   AssistedCardPayment, AssistedPaymentMethod, BookingPayment as AssistedBookingPayment, CardRefund, OpenCardOrder, RefundTo,
   AssistedDoctor, AssistedGender, AssistedPatient, AssistedRelation, BookedConsultation, BookingStatus as AssistedBookingStatus, ByKeyAnswer, CancelAnswer,

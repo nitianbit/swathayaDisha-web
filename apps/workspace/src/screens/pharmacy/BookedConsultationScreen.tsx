@@ -19,6 +19,7 @@ import { DocumentPreview, useDocumentViewer } from './documentViewer.tsx';
 import { CardAwareCancel } from './ownedCancel.tsx';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 import { pharmacyConsultBooker, type ConsultBooker } from './consultBooker.ts';
+import { RefreshFailed } from '../doctor/doctor.tsx';
 
 /**
  * WQ12: one consultation this pharmacy booked (`GET /pharmacy-bookings/:id`): join, cancel, the dispensing copy, an order.
@@ -70,8 +71,8 @@ export function BookedConsultationDetail({ booker, bookingId }: { booker: Consul
   if (!valid || (q.isError && q.error instanceof ApiError && q.error.status === 404 && q.error.code === 'BOOKING_NOT_FOUND')) {
     return <Empty title="Consultation not found"><Link to={booker.paths.list}>See all booked consultations</Link></Empty>;
   }
-  if (q.isPending) return <Loading label="Loading the consultation…" />;
-  if (q.isError) return <ErrorState message={booker.refusal(q.error).message} onRetry={() => void q.refetch()} />;
+  // WQ24b: gated on the data: a failed read again (on focus, after a UPI app) keeps the page and its payment panel, with a note.
+  if (!q.data) return q.isError ? <ErrorState message={booker.refusal(q.error).message} onRetry={() => void q.refetch()} /> : <Loading label="Loading the consultation…" />;
   const b = q.data;
   const assistedRow = isAssistedBooking(b);
   // r21 F6: a lab has no typed-name edit.
@@ -87,6 +88,7 @@ export function BookedConsultationDetail({ booker, bookingId }: { booker: Consul
 
   return (
     <>
+      {q.isError && <RefreshFailed error={q.error} readAt={q.dataUpdatedAt} onRetry={() => q.refetch()} />}
       <section className="ws-section" aria-labelledby="bk-h">
         <h2 id="bk-h">Booking</h2>
         <dl className="ws-dl">

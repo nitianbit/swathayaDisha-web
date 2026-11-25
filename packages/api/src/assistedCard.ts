@@ -85,6 +85,9 @@ export function outcomeOfAnswer(a: CardPaymentAnswer | ReconcileAnswer | null | 
 export const cardBlockedWords = (org: BookerKind) =>
   `Your ${org} account is not active or not verified, so the payment cannot be checked here. If you paid, Jansetu checks it with Razorpay: the booking is confirmed, or the money goes back to the card or UPI.`;
 export const CARD_BLOCKED_WORDS = cardBlockedWords('pharmacy');
+/** WQ24b: a lab member without `assisted.book` (403 INSUFFICIENT_PERMISSIONS on the lab's payment routes): a permission, not the account. */
+export const CARD_PERMISSION_WORDS =
+  'Your account is not allowed to check this payment: it needs the right to book consultations for patients. Ask your lab’s owner. If you paid, Jansetu checks it with Razorpay: the booking is confirmed, or the money goes back to the card or UPI.';
 export const DUPLICATE_WORDS = 'This booking was already paid with another payment. This payment is being refunded to the card or UPI.';
 const CARD_FAILED_WORDS = 'This payment failed, so the booking is not paid. If the time is released, book again.';
 
@@ -96,7 +99,7 @@ export function outcomeOfError(err: unknown, org: BookerKind = 'pharmacy'): Card
   if (err.code === 'DUPLICATE_PAYMENT_REFUNDED') return { kind: 'duplicate', message: DUPLICATE_WORDS };
   // r10b: a card dispute recorded on this payment: said as it is (never paid, never "not booked").
   if (err.code === 'PAYMENT_DISPUTED') return { kind: 'blocked', message: 'A card dispute was recorded on this booking payment. Please contact Jansetu support.' };
-  if (err.status === 403) return { kind: 'blocked', message: cardBlockedWords(org) };
+  if (err.status === 403) return { kind: 'blocked', message: err.code === 'INSUFFICIENT_PERMISSIONS' ? CARD_PERMISSION_WORDS : cardBlockedWords(org) };
   return null;
 }
 
@@ -296,13 +299,17 @@ export const CARD_REFUND_CAUSE_LABEL: Readonly<Record<string, string>> = {
   late_capture: 'Paid after the booking was released',
   extra_capture: 'Second payment, refunded',
 };
+/** WQ24b: the cause in words; a booker's own cancel names who paid (r21: a lab, or a doctor, books too). */
+export const cardRefundCauseLabel = (cause: string, payerKind?: string | null): string | undefined =>
+  (cause === 'booker' ? `Cancelled by the ${payerWord(payerKind)}` : CARD_REFUND_CAUSE_LABEL[cause]);
 /** `cardRefundToWalletSchema.agreement`: 1–500 characters after trimming. */
 export const MAX_REFUND_AGREEMENT = 500;
 const clean = (s: string) => s.trim().replace(/\s+/g, ' ');
 
-export function agreementProblem(text: string): string | undefined {
+/** `payer`: whose agreement it is (WQ24b; the pharmacy's by default). */
+export function agreementProblem(text: string, payer: CardRefundPayerKind = 'pharmacy'): string | undefined {
   const a = clean(text);
-  if (!a) return 'Write what the pharmacy agreed to, and how (for example “Agreed on a call with the owner on 23 Nov”).';
+  if (!a) return `Write what the ${payer} agreed to, and how (for example “Agreed on a call with the ${payer === 'doctor' ? 'doctor' : 'owner'} on 23 Nov”).`;
   if (a.length > MAX_REFUND_AGREEMENT) return `Use at most ${MAX_REFUND_AGREEMENT} characters.`;
   return undefined;
 }
@@ -315,8 +322,20 @@ export function cardRefundRowsOf(data: unknown): CardRefund[] {
 }
 
 export interface CardRefundMove { refund: CardRefund; replayed: boolean }
-/** r10c: admin rows name the paying pharmacy. */
-export type AdminCardRefund = CardRefund & { pharmacyId?: string | null; pharmacyName?: string | null };
+/**
+ * r10c: admin rows name the paying pharmacy. r21 (§24.17.3): every row names its payer (`payerKind`, `payerId`,
+ * `payerName`: a pharmacy, a lab or a doctor); pharmacy rows keep `pharmacyId` / `pharmacyName`, and an older answer has
+ * only those.
+ */
+export type CardRefundPayerKind = 'pharmacy' | 'lab' | 'doctor';
+export type AdminCardRefund = CardRefund & {
+  pharmacyId?: string | null; pharmacyName?: string | null;
+  payerKind?: CardRefundPayerKind | string; payerId?: string | null; payerName?: string | null;
+};
+/** WQ24b: the payer as a word ("pharmacy", "lab", "doctor"); an older answer (no `payerKind`) is a pharmacy's. */
+export const payerWord = (kind: string | null | undefined): CardRefundPayerKind => (kind === 'lab' || kind === 'doctor' ? kind : 'pharmacy');
+/** The payer's name on a row (`payerName`, else an older answer's `pharmacyName`), or null. */
+export const payerNameOf = (r: Pick<AdminCardRefund, 'payerName' | 'pharmacyName'>): string | null => r.payerName || r.pharmacyName || null;
 /** r10b `recheckCardRefund`: the row after asking Razorpay, and every refund Razorpay holds for the payment. */
 export interface CardRefundRecheck { refund: AdminCardRefund; gateway: { id: string; status: string; amountMinor: number; ours: boolean }[] }
 

@@ -650,11 +650,14 @@ const RESCHEDULE_WORDS: Readonly<Record<string, { kind: RescheduleRefusalKind; m
   IDEMPOTENCY_KEY_REUSED: { kind: 'changed', message: 'This change was already sent with another time. Look at the booking again, then choose the time again.' },
 };
 
-/** One plain sentence for a refusal of the reschedule (or of the slot read behind it), and what the screen should do. */
-export function rescheduleRefusal(err: unknown): { kind: RescheduleRefusalKind; message: string } {
+/**
+ * One plain sentence for a refusal of the reschedule (or of the slot read behind it), and what the screen should do.
+ * WQ24b: anything else in the booker's own words (`refusal`: a lab's `labBookerRefusal`; the pharmacy's by default).
+ */
+export function rescheduleRefusal(err: unknown, refusal: (err: unknown) => Refusal = assistedRefusal): { kind: RescheduleRefusalKind; message: string } {
   if (isSwitchedOff(err)) return { kind: 'other', message: SWITCHED_OFF_MESSAGE };
   const known = err instanceof ApiError && err.code ? RESCHEDULE_WORDS[err.code] : undefined;
-  return known ?? { kind: 'other', message: assistedRefusal(err).message };
+  return known ?? { kind: 'other', message: refusal(err).message };
 }
 
 /** One plain sentence for a refusal of the typed-name edit. */

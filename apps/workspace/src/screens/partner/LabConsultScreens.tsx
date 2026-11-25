@@ -1,9 +1,7 @@
 import { Fragment, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
-import {
-  holdsAny, LAB_CONSENT_STATEMENT, LAB_CONSENT_STATEMENT_VERSION, LAB_PAYER, labAssistedApi, labBookerRefusal, labWalletApi,
-} from '@jansetu/api';
+import { holdsAny, LAB_CONSENT_STATEMENT, LAB_CONSENT_STATEMENT_VERSION, LAB_PAYER, labAssistedApi, labBookerRefusal } from '@jansetu/api';
 import { ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -12,8 +10,8 @@ import { BookConsultation } from '../pharmacy/BookConsultationScreen.tsx';
 import { BookedConsultationDetail } from '../pharmacy/BookedConsultationScreen.tsx';
 import { BookedConsultationsList } from '../pharmacy/BookedConsultationsScreen.tsx';
 import type { ConsultBooker } from '../pharmacy/consultBooker.ts';
-import { ownerTopupSource } from '../pharmacy/topup.tsx';
 import { LabOnly, useScopedBranches } from './labs.tsx';
+import { labWalletOf } from './LabWalletScreen.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
 /**
@@ -32,15 +30,14 @@ function useLabBooker(ctx: ScopeContext) {
   const { api } = useSession();
   const branches = useScopedBranches(ctx);
   const id = scopeIdentity(ctx);
-  const w = labWalletApi(api, ctx.scope);
-  const walletKey = [...ctx.key, 'lab-wallet'];
+  const { w, queryKey: walletKey, topup } = labWalletOf(api, ctx);
   const canView = holdsAny(ctx.actor, ['wallet.view']);
   const canAdd = holdsAny(ctx.actor, ['wallet.manage']);
   const booker: ConsultBooker = {
     kind: 'lab', id, api: labAssistedApi(api), refusal: labBookerRefusal,
     bookingsKey: [...ctx.key, 'assisted-bookings'], doctorsKey: [...ctx.key, 'assisted-doctors'],
     wallet: {
-      owner: 'lab', queryKey: walletKey, read: canView ? () => w.wallet() : null, topup: canAdd ? ownerTopupSource(w, 'lab', id, walletKey) : null,
+      owner: 'lab', queryKey: walletKey, read: canView ? () => w.wallet() : null, topup: canAdd ? topup : null,
       page: canView || canAdd ? '/partner/wallet' : null,
     },
     payer: LAB_PAYER,
@@ -76,9 +73,9 @@ function LabBook({ ctx }: { ctx: ScopeContext }) {
 
 function LabBookFlow({ ctx }: { ctx: ScopeContext }) {
   const { booker, branches } = useLabBooker(ctx);
-  // The branch is chosen from the member's branches, so they are read first.
-  if (branches.isPending) return <Loading label="Loading your branches…" />;
-  if (branches.isError) return <ErrorState message={messageOf(branches.error)} onRetry={() => void branches.refetch()} />;
+  // The branch is chosen from the member's branches, so they are read first. WQ24b: gated on the data, so a failed read
+  // again never unmounts a booking (or its payment) under way.
+  if (!branches.data) return branches.isError ? <ErrorState message={messageOf(branches.error)} onRetry={() => void branches.refetch()} /> : <Loading label="Loading your branches…" />;
   return <BookConsultation booker={booker} />;
 }
 

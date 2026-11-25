@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import {
   ApiError, assistedRefusal, beforeCheckout, cardBookingState, checkCardPayment, checkoutSeconds, LATE_CAPTURE_WORDS, orderFromBooking, PAY_NOW_MARGIN_MS, payByWords, payNowOpen,
   pharmacyAssistedApi, pharmacyLabApi, settleCardPayment, type ApiClient, type AssistedBookerApi, type AssistedPaymentMethod, type CardBookingKind, type CardOutcome,
-  type CardPayer, type OpenCardOrder, type PendingMarker,
+  type CardPayer, type OpenCardOrder, type PendingMarker, type Refusal,
 } from '@jansetu/api';
 import { Alert, Button, formatRupees } from '@jansetu/ui';
 import { useSession } from '../../session.tsx';
@@ -78,6 +78,8 @@ export interface CardBookingSource {
   listName: string;
   /** WQ24: where the payment is verified and reconciled (default: the pharmacy's `/payments/*`). */
   payer?: CardPayer;
+  /** WQ24b: the booker's words for a refused read (default: the pharmacy's). */
+  refusal?: (err: unknown) => Refusal;
 }
 
 /**
@@ -85,10 +87,10 @@ export interface CardBookingSource {
  * routes and payment routes (default: the pharmacy's).
  */
 export function consultationCardSource(api: ApiClient, bookingId: string, requestKey: string | null,
-  booker?: { api: AssistedBookerApi; payer: CardPayer }): CardBookingSource {
+  booker?: { api: AssistedBookerApi; payer: CardPayer; refusal: (err: unknown) => Refusal }): CardBookingSource {
   const assisted = booker?.api ?? pharmacyAssistedApi(api);
   return {
-    ...(booker ? { payer: booker.payer } : {}),
+    ...(booker ? { payer: booker.payer, refusal: booker.refusal } : {}),
     kind: 'consultation', canReopen: !!requestKey, description: 'Doctor consultation for a patient',
     toldOnPaid: 'The patient and the doctor are told once it is paid.', listName: 'Booked consultations',
     read: async () => {
@@ -261,7 +263,7 @@ export function CardPaymentPanel({ source, order: initial, amountMinor, payBy, p
         await apply(r.step, o, r.reported);
       });
     } catch (err) {
-      if (live.current) setNote({ tone: 'error', text: assistedRefusal(err).message });
+      if (live.current) setNote({ tone: 'error', text: (source.refusal ?? assistedRefusal)(err).message });
     }
   }
 
@@ -274,7 +276,7 @@ export function CardPaymentPanel({ source, order: initial, amountMinor, payBy, p
         await apply(await checkCardPayment(api, id, source.payer), order);
       });
     } catch (err) {
-      if (live.current) setNote({ tone: 'error', text: assistedRefusal(err).message });
+      if (live.current) setNote({ tone: 'error', text: (source.refusal ?? assistedRefusal)(err).message });
     }
   }
 

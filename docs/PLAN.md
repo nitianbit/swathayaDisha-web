@@ -2232,6 +2232,38 @@ its words say "the pharmacy" (r21 adds `payerKind`, `payerId`, `payerName`); the
 `booker_cancellations`, no longer blocking limits) and the `PHARMACY_*` refusals keep their pharmacy words; the document viewer still
 reads files through `pharmacyAssistedApi(api).file` (the same `/file/fetch` for any token).
 
+### WQ24b card refunds name their payer; a lab's refusals in its own words (2026-11-25, branch `wq24b/card-refund-payer`)
+
+On WQ24 33439af. Against r21 (§24.17.3 "Admin": card refund rows add `payerKind`, `payerId`, `payerName`).
+- **Admin › Pharmacy wallets › Card refunds of bookings that need a person**: each row names its payer (`payerName`, else an older
+  answer's `pharmacyName`) under "Paid by" (was "Pharmacy"); the cause "Cancelled by the pharmacy|lab|doctor", the agreement
+  ("The lab's agreement", "Write what the lab agreed to …"), the explanations, the button names and the answers name the payer's
+  wallet. One `payerWord(kind)` (`assistedCard.ts`, an older answer is a pharmacy's) with `payerNameOf` and `cardRefundCauseLabel`;
+  `agreementProblem` takes the payer. Pharmacy rows read exactly as before; the intro now says the bookings may be a pharmacy's, a
+  lab's or a doctor's.
+- **A lab's refusals** go through its `ConsultBooker.refusal` (`labBookerRefusal`) where it can meet them: the patient lookup
+  (`usePatientStep`), the change of time (`rescheduleRefusal(err, refusal)`, the pharmacy's words by default) and the card panel's
+  reads (`CardBookingSource.refusal`). The `PHARMACY_*` refusals (`PHARMACY_INACTIVE`, `PHARMACY_NOT_VERIFIED`,
+  `PHARMACY_PROFILE_REQUIRED`) are raised only by the pharmacy's own guards (`middleware/auth.ts`), so a lab never meets them; the
+  lab's counterparts (`PARTNER_NOT_VERIFIED`, `PARTNER_INACTIVE`, `LAB_PARTNER_REQUIRED`) were already in `labBookerRefusal`.
+- **WQ24 review must-fix: a failed read again no longer tears the booking down.** In TanStack 5 a failed background refetch sets
+  `isError` and keeps the data, so `LabOnly` (`partner/labs.tsx`, also the front desk, lab bookings, slots and wallet),
+  `LabBookFlow` and the shared booked consultation page (pharmacy and lab) replaced a booking, or its waiting card payment,
+  with an error page when the member came back from a UPI app on a weak network (and might pay again). They are now gated on
+  the data (`!data` → error or loading); the booking page says "Could not refresh just now" (the doctor screens'
+  `RefreshFailed`) and keeps the payment panel.
+- **Also from the review**: the wallet pay's top-up reads the balance again only with `wallet.view` (a member with
+  `wallet.manage` alone never calls a read it may not make); a 403 `INSUFFICIENT_PERMISSIONS` on the lab's verify or reconcile is
+  said as a permission (`CARD_PERMISSION_WORDS`), "not active or not verified" only for the account (`PARTNER_NOT_VERIFIED`,
+  inactive); one helper for the lab wallet's routes, query key and keyed top-up (`labWalletOf`, `LabWalletScreen.tsx`), used by
+  the Wallet page and the lab's wallet pay.
+- **Tests**: a failed refetch of the lab and its branches with a card booking held (failing before the fix), Check payment and
+  Pay now from the booking page with a failed read again in between (failing before the fix; the pre-checkout reconcile and the
+  proof on the lab's routes), Change time for a lab (a branch in scope on the slots read), a lab refused at the lookup in the lab's
+  words, and the admin queue with a lab-paid and a doctor-paid refund.
+- Seen, not changed: "Open the booking" in the queue links every row to the admin consultation page, also a lab-test booking's
+  (`bookingKind`).
+
 ## Follow-ups
 
 
@@ -2265,6 +2297,7 @@ reads files through `pharmacyAssistedApi(api).file` (the same `/file/fetch` for 
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ24b card refunds name their payer; WQ24 review must-fix (gated on data) and follow-ups, on 33439af | Against r21 (mocked API). typecheck clean; Vitest 491/491 (+4 in `wq24b.test.ts`: `payerWord`, `payerNameOf`, the payer's cause and agreement words with the pharmacy's unchanged, the reschedule refusal in the lab's words; `wq24.test.ts`: a missing permission on the lab's payment routes said as such); Playwright on temporary port 5512 (`reuseExistingServer: false`, config deleted): lab-consult, lab-desk, assisted-booking, card-booking, lab-wallet, admin* and partner-workspace 376/376, and partner-labs, lab-booking, consult-now and pharmacy-extras 184/184; +12 = 6 journeys x 2 (the two failed-refetch journeys fail on 33439af: the held card booking and the booking page's payment panel were unmounted); `VITE_API_SAME_ORIGIN=true npm run build --workspace apps/workspace` built. |
 | 2026-11-25 | WQ24 lab › Book consultation (phase 2e) on 13333e9 | Against r21 + r21b, stage 6a8574e9 (§24.16–§24.17; mocked API). typecheck clean; Vitest 487/487 (+9 in `wq24.test.ts`: every lab route and its query/body, `branchId` refused before sending, the pharmacy routes and bodies unchanged, the lab consent, join and refusal words, card verify/reconcile/pre-checkout on the lab's payment routes with the lab named in the blocked and not-found words (pharmacy words unchanged), `assisted.book` offered to labs only); Playwright workspace 990/992 on temporary port 5511 (`reuseExistingServer: false`, config deleted), +20 = 10 journeys x 2 in `lab-consult.spec.ts` (wallet, card with the balance hidden without `wallet.view`, a lost answer checked by key, a lost answer given up after a reload, a changed price, cancels to the wallet and to the card or the wallet, the dispensing copy, another branch's and another lab's booking not found, no menu without `assisted.book`, switch off); the 2 failures (partner-invoices:1119 desktop, stock-supply:1277 tablet, both outside this round) were 30 s load timeouts while other agents ran their suites, and pass alone (4/4), as in an earlier desktop run (496/496); every pharmacy spec passes unchanged; `VITE_API_SAME_ORIGIN=true npm run build --workspace apps/workspace` built. 1 new file allowlisted (170). |
 
 

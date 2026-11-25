@@ -76,7 +76,7 @@ export function ChangeTime({ booker, booking, guard, onChanged, onDone }: {
     if (r.kind === 'stale') return;
     if (r.kind === 'ok') { close(); onDone(doneWords(r.value, p.body)); onChanged(); return; }
     if (r.kind === 'refused') {
-      const why = rescheduleRefusal(r.error);
+      const why = rescheduleRefusal(r.error, booker.refusal);
       setRefused(why.message);
       setReview(null);
       setChosen(null);
@@ -111,7 +111,7 @@ export function ChangeTime({ booker, booking, guard, onChanged, onDone }: {
           }}
           resend={restored ? undefined : {
             label: 'Send the same request again', busy,
-            onClick: () => { setResendError(null); void sendMove(op).catch((err: unknown) => setResendError(rescheduleRefusal(err).message)); },
+            onClick: () => { setResendError(null); void sendMove(op).catch((err: unknown) => setResendError(rescheduleRefusal(err, booker.refusal).message)); },
           }}
           forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget: () => settle(op.requestKey),
             consequence: 'If the earlier request still arrives, the consultation moves to that time. Look at the time shown above before you change it again.' }}>
@@ -149,7 +149,7 @@ export function ChangeTime({ booker, booking, guard, onChanged, onDone }: {
               onChange={(e) => { if (e.target.value) { setFrom(e.target.value); setChosen(null); } }} />
             <div className="ws-day">
               {slots.isPending ? <Loading label="Finding free times…" />
-                : slots.isError ? <ErrorState message={rescheduleRefusal(slots.error).message} onRetry={() => void slots.refetch()} />
+                : slots.isError ? <ErrorState message={rescheduleRefusal(slots.error, booker.refusal).message} onRetry={() => void slots.refetch()} />
                 : days.length === 0 ? <span>No other free times from {formatSlotDate(slots.data.from)} to {formatSlotDate(slots.data.to)}. Choose a later day.</span>
                 : days.map(([day, times]) => (
                   <fieldset key={day} className="ws-checks">
@@ -178,7 +178,7 @@ export function ChangeTime({ booker, booking, guard, onChanged, onDone }: {
               <div className="confirm-actions">
                 <Button busy={busy} onClick={() => {
                   const { requestKey, ...pending } = review;
-                  void sendMove(startOp(requestKey, pending)).catch((err: unknown) => { setReview(null); setRefused(rescheduleRefusal(err).message); });
+                  void sendMove(startOp(requestKey, pending)).catch((err: unknown) => { setReview(null); setRefused(rescheduleRefusal(err, booker.refusal).message); });
                 }}>Yes, move it</Button>
                 <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>Back</Button>
               </div>

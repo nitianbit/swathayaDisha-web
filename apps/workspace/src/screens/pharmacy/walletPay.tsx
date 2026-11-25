@@ -92,7 +92,9 @@ export function WalletPay({ pharmacyId, wallet: given, priceMinor, couponCode, r
         </Alert>
       )}
       {showTopUp && w.topup && (
-        <TopUpForm pharmacyId={w.topup.owner} source={w.topup} suggested={Math.max(1, (priceMinor - balance) / 100)} onCredited={() => void wallet.refetch()} />
+        // WQ24b: the balance is read again only where this person may read it (`wallet.manage` without `wallet.view`: never).
+        <TopUpForm pharmacyId={w.topup.owner} source={w.topup} suggested={Math.max(1, (priceMinor - balance) / 100)}
+          {...(w.read ? { onCredited: () => void wallet.refetch() } : {})} />
       )}
       <span className="ws-muted">Collect {formatRupees(priceMinor / 100)} from the patient at your counter. If the booking is cancelled, the money comes back to your wallet.</span>
       <div className="confirm-actions">

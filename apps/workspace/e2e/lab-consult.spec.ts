@@ -15,6 +15,8 @@ const BR1 = 'c1'.repeat(12);
 const BR2 = 'c2'.repeat(12);
 const DOC = 'd1'.repeat(12);
 const SLOT1 = '51'.repeat(12);
+const SLOT2 = '52'.repeat(12);
+const P1 = 'e6'.repeat(12);
 const REC = 'c9'.repeat(12);
 const RF = 'f1'.repeat(12);
 const W1 = 'e1'.repeat(12);
@@ -49,10 +51,15 @@ interface Backend {
   loseAfter?: boolean;
   /** The next create is lost before it reaches the server. */
   dropNext?: boolean;
+  /** WQ24b: the lab's verification was revoked (r21b `admitLabBooker`: 403 PARTNER_NOT_VERIFIED before counting). */
+  unverified?: boolean;
+  /** WQ24b: background reads (the lab, its branches, one booking) are lost on the network. */
+  failReads?: boolean;
 }
 
 const doctor = { doctorId: DOC, name: 'Dr Meera Rao', specialization: 'General Physician', languages: ['Hindi'], city: 'Bengaluru', experienceYears: 8, feeMinor: 50_000, nearby: 'pincode' };
 const slot = { slotId: SLOT1, date: '20261126', startTime: '10:30', endTime: '10:45', startsAt: '2026-11-26T05:00:00.000Z', modes: ['video'] };
+const slot2 = { slotId: SLOT2, date: '20261126', startTime: '11:00', endTime: '11:15', startsAt: '2026-11-26T05:30:00.000Z', modes: ['video'] };
 const order = { paymentRequired: true, paymentTransactionId: REC, razorpayOrderId: 'order_L1', razorpayKeyId: 'rzp_test', amount: 500, amountMinor: 50_000, currency: 'INR', payBy: PAY_BY };
 
 function row(id: string, o: Rec = {}): Rec {
@@ -67,9 +74,9 @@ function row(id: string, o: Rec = {}): Rec {
 const cardPaid = (id: string): Rec => row(id, { payment: { method: 'razorpay', state: 'captured', payBy: null, paymentTransactionId: REC } });
 const strip = (r: Rec | undefined): Rec | undefined => { if (!r) return r; const { _branch, _lab, ...v } = r; void _branch; void _lab; return v; };
 
-async function mockBackend(page: Page, me: Me, init: { bookings?: Rec[] } = {}): Promise<Backend> {
+async function mockBackend(page: Page, me: Me, init: { bookings?: Rec[]; record?: Backend['record'] } = {}): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
-  const b: Backend = { calls: [], me, live: false, feeMinor: 50_000, walletMinor: 200_000, bookings: init.bookings ?? [], keys: {}, record: { status: 'none' } };
+  const b: Backend = { calls: [], me, live: false, feeMinor: 50_000, walletMinor: 200_000, bookings: init.bookings ?? [], keys: {}, record: init.record ?? { status: 'none' } };
   const partner = { _id: LAB, kind: 'lab', name: 'City Lab', contact: { phone: '9000000000' }, verification: { state: 'verified' }, taxRegime: 'unregistered',
     invoiceSeries: { prefix: 'LB' }, activeOwnerCount: 1, isActive: true };
   const branches = [
@@ -105,7 +112,11 @@ async function mockBackend(page: Page, me: Me, init: { bookings?: Rec[] } = {}):
     body: `window.Razorpay = function (o) {
       window.__rzLast = { key: o.key, order_id: o.order_id, amount: o.amount, currency: o.currency };
       this.on = function () {};
-      this.open = function () { setTimeout(function () { o.handler({ razorpay_payment_id: 'pay_L1', razorpay_order_id: o.order_id, razorpay_signature: 'sig_L1' }); }, 10); };
+      window.__rzOpened = (window.__rzOpened || 0) + 1;
+      this.open = function () { setTimeout(function () {
+        if (window.__rzClose) o.modal.ondismiss();
+        else o.handler({ razorpay_payment_id: 'pay_L1', razorpay_order_id: o.order_id, razorpay_signature: 'sig_L1' });
+      }, 10); };
     };`,
   }));
   await page.route('**/api/v1/**', async (route) => {
@@ -132,6 +143,7 @@ async function mockBackend(page: Page, me: Me, init: { bookings?: Rec[] } = {}):
     const ws = /^\/partner-workspace(\/.*)$/.exec(path);
     if (!ws) return fail(route, 404, 'NOT_FOUND', 'Not found');
     const sub = ws[1]!;
+    if ((sub === '/me' || sub === '/branches') && b.failReads) return route.abort('failed');
     if (sub === '/me') return ok(route, partner);
     if (sub === '/branches') return ok(route, branches);
     const as = /^\/assisted(\/.*)$/.exec(sub)?.[1];
@@ -157,13 +169,14 @@ async function mockBackend(page: Page, me: Me, init: { bookings?: Rec[] } = {}):
     const branchProblem = (id: unknown): [number, string, string] | null => (!id ? [400, 'VALIDATION_ERROR', '"branchId" is required']
       : !inScope(id) ? [403, 'BRANCH_SCOPE_EXCEEDED', 'Operation not allowed for this branch'] : null);
     if (as === '/patients/lookup' && method === 'POST') {
+      if (b.unverified) return fail(route, 403, 'PARTNER_NOT_VERIFIED', 'Partner verification is required for this operation');
       if (b.off) return fail(route, 503, 'ASSISTED_BOOKING_DISABLED', 'Booking for patients is not switched on');
       return ok(route, body?.phone === PHONE ? { exists: true, holderNameMasked: 'R*** K***' } : { exists: false, holderNameMasked: null });
     }
     if (as === '/doctors' || as === `/doctors/${DOC}/slots`) {
       const problem = branchProblem(url.searchParams.get('branchId'));
       if (problem) return fail(route, ...problem);
-      return as === '/doctors' ? ok(route, [{ ...doctor, nextSlot: slot }]) : ok(route, { doctor, from: '20261125', to: '20261201', slots: [slot] });
+      return as === '/doctors' ? ok(route, [{ ...doctor, nextSlot: slot }]) : ok(route, { doctor, from: '20261125', to: '20261201', slots: [slot, slot2] });
     }
     if (as === '/consultations' && method === 'POST') {
       if (b.dropNext) { b.dropNext = false; return route.abort('failed'); }
@@ -210,11 +223,17 @@ async function mockBackend(page: Page, me: Me, init: { bookings?: Rec[] } = {}):
       if (key[2]) { b.keys[key[1]!] = { abandoned: true }; return ok(route, { state: 'abandoned' }); }
       return ok(route, k?.abandoned ? { state: 'abandoned' } : { state: 'unknown' });
     }
-    const one = /^\/bookings\/([0-9a-f]{24})(\/cancel)?$/.exec(as);
+    const one = /^\/bookings\/([0-9a-f]{24})(\/cancel|\/reschedule)?$/.exec(as);
     if (one) {
       const r = find(one[1]!);
       if (!mine(r)) return fail(route, 404, 'BOOKING_NOT_FOUND', 'Booking not found');
-      if (!one[2]) return ok(route, strip(r));
+      if (!one[2]) return b.failReads ? route.abort('failed') : ok(route, strip(r));
+      if (one[2] === '/reschedule') {
+        const to = [slot, slot2].find((x) => x.slotId === body?.slotId);
+        if (!to) return fail(route, 409, 'SLOT_NOT_AVAILABLE', 'This slot is not available');
+        Object.assign(r!, { slotId: to.slotId, bookingDate: to.date, bookingTime: to.startTime, updatedAt: NOW.toISOString() });
+        return ok(route, { booking: strip(r), replayed: false });
+      }
       const wasCard = isCard(r!);
       Object.assign(r!, { status: 'cancelled', cancellationCause: 'booker', updatedAt: NOW.toISOString() });
       if (!wasCard) {
@@ -481,4 +500,94 @@ test('switched off: the lookup says booking for patients is not switched on; not
   await expect(page.getByText('Booking for patients is not switched on yet. Jansetu turns it on for your lab when it is ready.')).toBeVisible();
   await expect(page.getByLabel('Patient’s mobile number')).toHaveCount(0);
   expect(creates(b)).toHaveLength(0);
+});
+
+test('WQ24b: a lab refused at the lookup (not verified) is told in the lab’s words, not the server’s', async ({ page }) => {
+  const b = await mockBackend(page, owner);
+  b.unverified = true;
+  await signIn(page);
+  await page.goto('/#/partner/book-consultation');
+  await page.getByLabel('Patient’s mobile number').fill(PHONE);
+  await page.getByRole('button', { name: 'Find' }).click();
+  await expect(page.getByText('Your lab is not verified yet, so it cannot book for patients.')).toBeVisible();
+  await expect(page.getByText('Partner verification is required for this operation')).toHaveCount(0);
+  expect(creates(b)).toHaveLength(0);
+});
+
+/** WQ24b: a background read again (focus, past the 15 s stale time) that is lost on the network, with its two retries. */
+async function failedRefetch(page: Page, b: Backend, path: string) {
+  const before = b.calls.filter((c) => c.path === path).length;
+  b.failReads = true;
+  await page.clock.setFixedTime(new Date(NOW.getTime() + 20_000));
+  await page.evaluate(() => { window.dispatchEvent(new Event('visibilitychange')); document.dispatchEvent(new Event('visibilitychange')); });
+  await expect.poll(() => b.calls.filter((c) => c.path === path).length, { timeout: 10_000 }).toBeGreaterThanOrEqual(before + 2);
+  await page.waitForTimeout(3_500); // the last retry (after 1 s and 2 s) has failed: the query is in error, with its old data
+}
+
+test('WQ24b: a failed background read of the lab and its branches leaves a held card booking on screen; Pay now asks the lab route first', async ({ page }) => {
+  test.setTimeout(45_000);
+  const b = await mockBackend(page, owner);
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Book consultation' }).click();
+  await patient(page);
+  await page.getByLabel('Branch the patient is at').selectOption({ label: 'Indiranagar' });
+  await doctorAndTime(page);
+  await page.evaluate(() => { (window as unknown as { __rzClose: boolean }).__rzClose = true; });
+  await page.getByLabel('Pay by card or UPI').check();
+  await page.getByRole('button', { name: 'Pay ₹500.00 by card or UPI' }).click();
+  await expect(page.getByRole('heading', { name: 'Booking held: waiting for payment' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Waiting for payment' }).getByText(/^Not paid yet\./)).toBeVisible();
+  // The member comes back from the UPI app on a weak network: the lab and its branches cannot be read again.
+  await failedRefetch(page, b, '/partner-workspace/me');
+  expect(b.calls.filter((c) => c.path === '/partner-workspace/branches').length).toBeGreaterThan(1);
+  await expect(page.getByRole('heading', { name: 'Booking held: waiting for payment' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
+  b.failReads = false;
+  await page.evaluate(() => { (window as unknown as { __rzClose: boolean }).__rzClose = false; });
+  await page.getByRole('button', { name: 'Pay now ₹500.00' }).click();
+  await expect(page.getByRole('heading', { name: 'Booked', exact: true })).toBeVisible();
+  const pay = b.calls.filter((c) => c.path.startsWith('/partner-workspace/assisted/payments/') || c.path.startsWith('/payments/')).map((c) => c.path);
+  // Checkout closed (reconcile), then Pay now asks before opening it again (reconcile), then the proof (verify): one booking.
+  expect(pay).toEqual(['/partner-workspace/assisted/payments/reconcile', '/partner-workspace/assisted/payments/reconcile', '/partner-workspace/assisted/payments/verify']);
+  expect(creates(b)).toHaveLength(1);
+  expect(await page.evaluate(() => (window as unknown as { __rzOpened: number }).__rzOpened)).toBe(2);
+});
+
+test('WQ24b: from the booking page, Check payment and Pay now use the lab routes; a failed read again keeps the payment panel', async ({ page }) => {
+  test.setTimeout(45_000);
+  const b = await mockBackend(page, staff(['assisted.book']), { record: { status: 'created', bookingId: P1 }, bookings: [row(P1, {
+    status: 'pending', paymentStatus: 'pending', payment: { method: 'razorpay', state: 'pending', payBy: PAY_BY, paymentTransactionId: REC,
+      razorpayOrderId: 'order_L1', razorpayKeyId: 'rzp_test' } })] });
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Booked consultations' }).click();
+  await page.getByRole('link', { name: /^Pay now for the consultation of Rina Kumari/ }).click();
+  await expect(page.getByText('₹500.00 (not paid yet)')).toBeVisible();
+  const panel = page.getByRole('group', { name: 'Waiting for payment' });
+  await panel.getByRole('button', { name: 'Check payment' }).click();
+  await expect(panel.getByText(/^Not paid yet\./)).toBeVisible();
+  await failedRefetch(page, b, `/partner-workspace/assisted/bookings/${P1}`);
+  await expect(panel).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: /^Could not refresh just now/ })).toBeVisible();
+  b.failReads = false;
+  await panel.getByRole('button', { name: 'Pay now ₹500.00' }).click();
+  await expect(page.getByText('Paid. The consultation is booked. The patient and the doctor are told.')).toBeVisible();
+  const pay = b.calls.filter((c) => /payments\/(verify|reconcile)$/.test(c.path)).map((c) => c.path);
+  expect(pay).toEqual(['/partner-workspace/assisted/payments/reconcile', '/partner-workspace/assisted/payments/reconcile', '/partner-workspace/assisted/payments/verify']);
+});
+
+test('WQ24b: change time from the booking page: the doctor’s other times read with a branch in scope, one keyed move', async ({ page }) => {
+  const b = await mockBackend(page, staff(['assisted.book']), { bookings: [row(W1)] });
+  await signIn(page);
+  await page.goto(`/#/partner/consultations/${W1}`);
+  await page.getByRole('button', { name: 'Change time' }).click();
+  await expect(page.getByRole('button', { name: /10:30–10:45/ })).toHaveCount(0);
+  await page.getByRole('button', { name: /11:00–11:15/ }).click();
+  await page.getByRole('button', { name: 'Next: check the new time' }).click();
+  await page.getByRole('button', { name: 'Yes, move it' }).click();
+  await expect(page.getByText('Moved to 26 Nov 2026 at 11:00. The patient and the doctor are told the new time.')).toBeVisible();
+  expect(b.calls.some((c) => c.path.startsWith(`/partner-workspace/assisted/doctors/${DOC}/slots?branchId=${BR1}&`))).toBe(true);
+  const moves = b.calls.filter((c) => c.path === `/partner-workspace/assisted/bookings/${W1}/reschedule`);
+  expect(moves).toHaveLength(1);
+  expect(moves[0]!.body).toMatchObject({ slotId: SLOT2, expectedUpdatedAt: CREATED });
+  expect(String(moves[0]!.body!.requestKey)).toMatch(/^[A-Za-z0-9]{32}$/);
 });

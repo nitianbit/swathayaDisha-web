@@ -23,7 +23,7 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
    * WQ24: a consultation booker's own routes (a lab member's): its lookup, and family members it booked for before from its
    * own booked list (default: the pharmacy's).
    */
-  booker?: Pick<ConsultBooker, 'api' | 'bookingsKey'>;
+  booker?: Pick<ConsultBooker, 'api' | 'bookingsKey' | 'refusal'>;
   /**
    * WQ19: another booker's lookup (the lab desk's `POST /lab-desk/patients/lookup`). With it, family members booked before
    * are not offered (only a pharmacy has that list): a family member is typed by name.
@@ -67,7 +67,8 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
       setPatientErrors({});
     } catch (err) {
       if (isSwitchedOff(err)) { onSwitchedOff(); return; }
-      setPhoneError(assistedRefusal(err).message);
+      // WQ24b: in the booker's own words (a lab's permission, branch and verification refusals).
+      setPhoneError((booker?.refusal ?? assistedRefusal)(err).message);
     }
   }
 

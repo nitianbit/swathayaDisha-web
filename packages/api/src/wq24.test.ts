@@ -4,7 +4,7 @@ import {
   assistedBookerApi, isAssistedBooking, joinWords, LAB_CONSENT_STATEMENT, LAB_CONSENT_STATEMENT_VERSION, labAssistedApi, labBookerRefusal, pharmacyAssistedApi,
   type ConsultationRequest,
 } from './assisted.ts';
-import { beforeCheckout, CARD_BLOCKED_WORDS, cardCheckProblem, checkCardPayment, LAB_PAYER, outcomeOfError, settleCardPayment } from './assistedCard.ts';
+import { beforeCheckout, CARD_BLOCKED_WORDS, CARD_PERMISSION_WORDS, cardCheckProblem, checkCardPayment, LAB_PAYER, outcomeOfError, settleCardPayment } from './assistedCard.ts';
 import { ALL_PARTNER_PERMISSIONS, grantablePermissions, permissionsForKind } from './partners.ts';
 
 // WQ24 (backend r21, round 2e, design §24.17): a lab member books a doctor consultation; the pharmacy's helpers, by booker.
@@ -131,13 +131,16 @@ describe('a lab settles a card payment on its own routes (r21: 2d’s verify and
 
   it('names the lab when the payment cannot be checked; the pharmacy’s words are unchanged', async () => {
     const e = (status: number, code: string) => new ApiError(status, 'refused', code);
-    expect(outcomeOfError(e(403, 'INSUFFICIENT_PERMISSIONS'), 'lab')).toMatchObject({ kind: 'blocked', message: expect.stringMatching(/^Your lab account is not active or not verified/) });
+    expect(outcomeOfError(e(403, 'PARTNER_NOT_VERIFIED'), 'lab')).toMatchObject({ kind: 'blocked', message: expect.stringMatching(/^Your lab account is not active or not verified/) });
+    expect(outcomeOfError(e(403, 'PARTNER_INACTIVE'), 'lab')).toMatchObject({ kind: 'blocked', message: expect.stringMatching(/^Your lab account is not active or not verified/) });
+    // WQ24b: a missing permission is said as such, never as an inactive account.
+    expect(outcomeOfError(e(403, 'INSUFFICIENT_PERMISSIONS'), 'lab')).toEqual({ kind: 'blocked', message: CARD_PERMISSION_WORDS });
     expect(outcomeOfError(e(403, 'PHARMACY_INACTIVE'))).toEqual({ kind: 'blocked', message: CARD_BLOCKED_WORDS });
     expect(CARD_BLOCKED_WORDS).toMatch(/^Your pharmacy account is not active or not verified/);
     expect(cardCheckProblem(e(404, 'PAYMENT_RECORD_NOT_FOUND'), 'lab')).toBe('This payment was not found for your lab.');
     expect(cardCheckProblem(e(404, 'PAYMENT_RECORD_NOT_FOUND'))).toBe('This payment was not found for your pharmacy.');
     const { c, calls } = client(() => json(403, { error: 403, code: 'INSUFFICIENT_PERMISSIONS', message: 'Missing permissions: assisted.book' }));
-    await expect(checkCardPayment(c, REC, LAB_PAYER)).resolves.toMatchObject({ kind: 'blocked', message: expect.stringMatching(/^Your lab account/) });
+    await expect(checkCardPayment(c, REC, LAB_PAYER)).resolves.toMatchObject({ kind: 'blocked', message: expect.stringMatching(/^Your account is not allowed to check this payment/) });
     expect(calls[0]!.url).toMatch(/\/partner-workspace\/assisted\/payments\/reconcile$/);
   });
 });
