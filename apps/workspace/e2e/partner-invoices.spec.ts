@@ -464,8 +464,8 @@ const creates = (b: Backend) => b.calls.filter((c) => c.method === 'POST' && /\/
 test('catalogue: add with prices in rupees sent as paise, edit only what changed, deactivate after confirming', async ({ page }) => {
   const backend = await mockBackend(page);
   await signInPartner(page);
-  await nav(page).getByRole('link', { name: 'Price list' }).click();
-  await expect(page.getByRole('heading', { name: 'Tests and prices' })).toBeVisible();
+  await nav(page).getByRole('link', { name: 'Tests and packages' }).click();
+  await expect(page.getByRole('heading', { name: 'Tests and packages' })).toBeVisible();
   await expect(page.getByRole('row').filter({ hasText: 'Vitamin D' })).toContainText('Disabled by Jansetu');
   await expect(page.getByRole('row').filter({ hasText: 'Thyroid profile' })).toContainText('MRP ₹1,500.00');
   await page.getByLabel('Status').selectOption('disabled');
@@ -539,7 +539,7 @@ test('a supplier without GST: only 0% offered; a GST item is refused on a bill; 
   const backend = await mockBackend(page, owner(), { tax: 'unregistered' });
   backend.linkingOffOnce = true;
   await signInPartner(page);
-  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await nav(page).getByRole('link', { name: 'Tests and packages' }).click();
   await expect(page.getByRole('row').filter({ hasText: 'Thyroid profile' })).toContainText('Cannot be billed');
   await page.getByRole('button', { name: 'Add an item' }).click();
   await expect(page.getByLabel('GST rate').locator('option')).toHaveText(['0%']);
@@ -694,7 +694,7 @@ test('a bill issued just before a reload is found by its key and opened', async 
 test('an open item edit survives searching for something else (the editor is not tied to the search results)', async ({ page }) => {
   const backend = await mockBackend(page);
   await signInPartner(page);
-  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await nav(page).getByRole('link', { name: 'Tests and packages' }).click();
   await page.getByRole('button', { name: 'Edit CBC' }).click();
   await page.getByLabel('Price (₹)').fill('499.75');
   // A search whose results do not include CBC: the edit stays open with what was typed.
@@ -798,7 +798,7 @@ test('permissions: finance sees bills read-only; a biller reads the price list; 
   const backend = await mockBackend(page, { _id: STAFF, partnerId: LAB, name: 'Fin Staff', role: 'staff', permissions: ['finance.view'], branchIds: [] }, { seed: true });
   await signInPartner(page);
   await expect(nav(page).getByRole('link', { name: 'Bills' })).toBeVisible();
-  await expect(nav(page).getByRole('link', { name: 'Price list' })).toHaveCount(0);
+  await expect(nav(page).getByRole('link', { name: 'Tests and packages' })).toHaveCount(0);
   await nav(page).getByRole('link', { name: 'Bills' }).click();
   await expect(page.getByText('You can view bills and their PDFs.')).toBeVisible();
   await expect(page.getByRole('link', { name: 'New bill' })).toHaveCount(0);
@@ -817,7 +817,7 @@ test('permissions: finance sees bills read-only; a biller reads the price list; 
   backend.me = { _id: STAFF, partnerId: LAB, name: 'Bill Staff', role: 'staff', permissions: ['invoices.create'], branchIds: [] };
   await page.reload();
   await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
-  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await nav(page).getByRole('link', { name: 'Tests and packages' }).click();
   await expect(page.getByText('You can see the catalogue to make bills')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add an item' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^Edit/ })).toHaveCount(0);
@@ -887,7 +887,7 @@ test('admin as owner: bills and catalogue through the admin workspace routes; di
 test('catalogue edits send only what this person changed; a field also changed by someone else is shown again, not overwritten', async ({ page }) => {
   const backend = await mockBackend(page);
   await signInPartner(page);
-  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await nav(page).getByRole('link', { name: 'Tests and packages' }).click();
   // Someone else changes the price while this person renames the item: only the name is sent.
   await page.getByRole('button', { name: 'Edit CBC' }).click();
   await page.getByLabel('Name', { exact: true }).fill('Complete blood count');
@@ -913,7 +913,7 @@ test('a new item whose answer is lost is locked to "send again" with the same ke
   const backend = await mockBackend(page);
   backend.loseNextItemAnswer = true;
   await signInPartner(page);
-  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await nav(page).getByRole('link', { name: 'Tests and packages' }).click();
   await page.getByRole('button', { name: 'Add an item' }).click();
   await page.getByLabel('Name', { exact: true }).fill('Lipid profile');
   await page.getByLabel('Price (₹)').fill('450');
@@ -935,7 +935,7 @@ test('Q12: a new item lost before a reload is checked by its key and given up on
   const backend = await mockBackend(page);
   backend.dropNextItem = true;
   await signInPartner(page);
-  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await nav(page).getByRole('link', { name: 'Tests and packages' }).click();
   await page.getByRole('button', { name: 'Add an item' }).click();
   await page.getByLabel('Name', { exact: true }).fill('Lipid profile');
   await page.getByLabel('Price (₹)').fill('450');
@@ -972,7 +972,7 @@ test('Q12: a resend of an item whose key was given up elsewhere is refused for g
   const backend = await mockBackend(page);
   backend.dropNextItem = true;
   await signInPartner(page);
-  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await nav(page).getByRole('link', { name: 'Tests and packages' }).click();
   await page.getByRole('button', { name: 'Add an item' }).click();
   await page.getByLabel('Name', { exact: true }).fill('Lipid profile');
   await page.getByLabel('Price (₹)').fill('450');
@@ -991,7 +991,7 @@ test('Q12: a resend of an item whose key was given up elsewhere is refused for g
 test('an item edit that someone else saved in between is refused (expectedUpdatedAt) and shown again', async ({ page }) => {
   const backend = await mockBackend(page);
   await signInPartner(page);
-  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await nav(page).getByRole('link', { name: 'Tests and packages' }).click();
   await page.getByRole('button', { name: 'Edit CBC' }).click();
   await page.getByLabel('Price (₹)').fill('480');
   backend.changeAfterRead = { priceMinor: 49000 };
@@ -1007,7 +1007,7 @@ test('an item edit that someone else saved in between is refused (expectedUpdate
 test('clinic price list: consultations, procedures, packages and other items, without visit modes', async ({ page }) => {
   const backend = await mockBackend(page, owner(CLINIC));
   await signInPartner(page);
-  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await nav(page).getByRole('link', { name: 'Services and prices' }).click();
   await expect(page.getByRole('heading', { name: 'Services and prices' })).toBeVisible();
   await page.getByRole('button', { name: 'Add an item' }).click();
   await expect(page.getByRole('group', { name: 'Type' }).getByRole('radio')).toHaveCount(4);
@@ -1505,7 +1505,7 @@ test('WQ11b: Reactivate is busy while it runs and one row step at a time: the ot
   let release!: () => void;
   backend.holdReactivate = new Promise<void>((r) => { release = r; });
   await signInPartner(page);
-  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await nav(page).getByRole('link', { name: 'Tests and packages' }).click();
   await page.getByLabel('Status').selectOption('inactive');
   const old = page.getByRole('button', { name: 'Reactivate Old panel' });
   await old.click();
@@ -1520,7 +1520,7 @@ test('WQ11b: Reactivate is busy while it runs and one row step at a time: the ot
 test('WQ11b: a field reset because someone else changed it is not reported as saved: the save says which change was kept', async ({ page }) => {
   const backend = await mockBackend(page);
   await signInPartner(page);
-  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await nav(page).getByRole('link', { name: 'Tests and packages' }).click();
   await page.getByRole('button', { name: 'Edit CBC' }).click();
   await page.getByLabel('Name', { exact: true }).fill('Complete blood count');
   await page.getByLabel('Price (₹)').fill('480');
@@ -1545,7 +1545,7 @@ test('WQ11b: an item refused while the page was left: back on the page, "Give up
   let release!: () => void;
   backend.holdRefusedItem = new Promise<void>((r) => { release = r; });
   await signInPartner(page);
-  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await nav(page).getByRole('link', { name: 'Tests and packages' }).click();
   await page.getByRole('button', { name: 'Add an item' }).click();
   await page.getByLabel('Name', { exact: true }).fill('Lipid profile');
   await page.getByLabel('Price (₹)').fill('450');
@@ -1554,7 +1554,7 @@ test('WQ11b: an item refused while the page was left: back on the page, "Give up
   const key = (backend.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/catalogue')!.body as Rec).requestKey as string;
   // Leave while it is on its way, and come back: the stored item is shown as unconfirmed.
   await nav(page).getByRole('link', { name: 'Bills' }).click();
-  await nav(page).getByRole('link', { name: 'Price list' }).click();
+  await nav(page).getByRole('link', { name: 'Tests and packages' }).click();
   const panel = page.getByRole('group', { name: 'Unconfirmed item' });
   await expect(panel).toBeVisible();
   // The first page's request is refused for good: that page, now gone, forgets the stored item.

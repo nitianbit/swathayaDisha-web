@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { NavLink } from 'react-router';
 import { LogOut } from 'lucide-react';
 import { Button, LanguageScope, LanguageSwitcher, useLanguage } from '@jansetu/ui';
-import { pagesFor } from './modules.tsx';
+import { navLabelKey, pagesFor } from './modules.tsx';
 import { t } from './i18n/shell/index.ts';
 import { useSession, useStaff } from './session.tsx';
 import { DoctorPresenceProvider } from './screens/doctor/presence.tsx';
@@ -31,7 +31,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 return (
                   <NavLink key={p.path} to={p.path} end={p.path === '/'} className="ws-nav-link">
                     <Icon size={18} aria-hidden="true" />
-                    {t(p.nav!.labelKey)}
+                    {t(navLabelKey(p, user))}
                   </NavLink>
                 );
               })}

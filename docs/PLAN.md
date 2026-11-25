@@ -2746,6 +2746,31 @@ sign-in and a reload the page showed "Signing you in…" or the sign-in screen. 
 - **Fix (tests only, checks unchanged):** both journeys get `test.setTimeout(90_000)`, as the same files already do for
   their other long journeys (45 s and 60 s).
 
+## WQ51 Doctor › Bills and Doctor › Services and prices; "Price list" renamed (2026-11-26, branch `wq51/doctor-bills-names` on stage 06daf52)
+
+**Option (b).** A doctor's session cannot read its own clinic's bills or prices: every partner workspace route needs
+`req.user.userType === 'partner'` (`requireOperationalPartner` and `partnerPermissionGuard` in the backend's
+`src1/modules/middleware/auth.ts`), and the only way into a partner workspace is the workspace choice after a sign-in
+code (`POST /api/v1/auth/partner/select` with its one-use ticket). No existing endpoint switches a signed-in doctor, so
+(a) is not possible and (c) is not needed.
+
+- The doctor menu has **Bills** (`/doctor/bills`) and **Services and prices** (`/doctor/services`), specialists only.
+  Both read the doctor's practice (the Clinics page's query, `practiceKey`) and show the clinic's name and state, one
+  line saying where these pages are, and "Sign out and open my clinic’s workspace": it signs out with the notice code
+  `toClinicWorkspace`, and the sign-in screen opens with "Lab or clinic staff" chosen and says to choose the clinic.
+  Nothing is written to the URL or storage (the notice is a code in memory).
+- **No clinic:** "You have no clinic of your own yet" with a link to Doctor › Clinics ("Create your clinic"); no button.
+- **Unverified clinic:** its state badge and "Jansetu has not verified your clinic yet.", and the button is still
+  offered (decision: the clinic workspace itself shows what an unverified clinic can do; hiding the way there helps no one).
+- **Renamed:** the partner menu's "Price list" is "Tests and packages" for a lab and "Services and prices" for a clinic
+  (`nav.labelKeyByKind` in `modules.tsx`, read by `navLabelKey`); the lab catalogue page title "Tests and prices" →
+  "Tests and packages"; the admin's partner page button "Tests and packages". Words only in catalogues.
+- Kept: the audit log's area name "Price list" (`audit.area.catalogue`), a record name for both kinds, not a menu item.
+
+Named e2e changes: `partner-invoices.spec.ts` looks for "Tests and packages" (labs) and "Services and prices" (the clinic
+journey) instead of "Price list", and the lab page heading "Tests and packages"; `doctor-tools.spec.ts`'s doctor menu
+has 11 items (+ Bills, Services and prices) and 3 new journeys (no clinic, unverified, verified with the switch).
+
 ## Follow-ups
 
 

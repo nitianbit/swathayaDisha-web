@@ -950,7 +950,7 @@ export default {
   'partner.manage.branches': 'Branches',
   'partner.manage.audit': 'Activity log',
   'partner.manage.clinicCatalogue': 'Services and prices',
-  'partner.manage.labCatalogue': 'Tests and prices',
+  'partner.manage.labCatalogue': 'Tests and packages',
   'partner.manage.bills': 'Bills',
   'partner.manage.labBookings': 'Lab bookings',
   'partner.manage.slots': 'Slots',

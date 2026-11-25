@@ -16,7 +16,8 @@ const ROLES: readonly StaffRole[] = ['pharmacy', 'partner', 'specialist', 'admin
 export function LoginScreen({ notice: codes }: { notice?: SessionNotices }) {
   const notice = codes?.length ? noticeWords(codes) : undefined;
   const { requestCode, verifyCode, choosePartner } = useSession();
-  const [role, setRole] = useState<StaffRole>('pharmacy');
+  // WQ51: a doctor on the way to their clinic's workspace starts on "Lab or clinic staff".
+  const [role, setRole] = useState<StaffRole>(codes?.includes('toClinicWorkspace') ? 'partner' : 'pharmacy');
   // WQ9: a mobile number or an email, as typed. Kept in memory only (never stored, logged or put in a URL).
   const [identifier, setIdentifier] = useState('');
   // The role and destination the current code was sent for: verify, resend and the workspace choice use exactly these.

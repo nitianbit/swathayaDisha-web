@@ -21,7 +21,7 @@ export function ClinicsScreen() {
 }
 
 const branchesText = (list: readonly ClinicBranchRef[]) =>
-  list.length === 0 ? 'no branch taking in-clinic consultations' : list.map((b) => `${b.name}${b.address?.city ? `, ${b.address.city}` : ''}`).join('; ');
+  list.length === 0 ? t('clinics.noInClinicBranch') : list.map((b) => `${b.name}${b.address?.city ? `, ${b.address.city}` : ''}`).join('; ');
 
 function Clinics({ d }: { d: DoctorContext }) {
   const clinics = useClinics(d);
@@ -109,7 +109,8 @@ function ClinicLists({ d, data }: { d: DoctorContext; data: MyClinics }) {
 
 // ── Q14: the doctor's own clinic ──
 
-const practiceKey = (d: DoctorContext) => [...d.key, 'practice'];
+/** The doctor's own clinic (also read by Doctor › Bills and › Services and prices: one cache). */
+export const practiceKey = (d: DoctorContext) => [...d.key, 'practice'];
 type ClinicOp = PendingOp<DoctorClinicInput>;
 
 function Practice({ d }: { d: DoctorContext }) {

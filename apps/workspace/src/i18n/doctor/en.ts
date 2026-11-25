@@ -461,4 +461,16 @@ export default {
   /** {name} is "Monday window 1". */
   'schedule.windowFrom': '{name} from',
   'schedule.windowTo': '{name} to',
+  'clinics.noInClinicBranch': 'no branch taking in-clinic consultations',
+  // WQ51: Bills and Services and prices from the doctor menu (they are in the doctor's own clinic's workspace).
+  'clinicPage.bills.title': 'Bills',
+  'clinicPage.prices.title': 'Services and prices',
+  /** {name} is the doctor's clinic. */
+  'clinicPage.bills.where': 'The bills of {name} are in your clinic’s workspace: sign out here, then sign in as “Lab or clinic staff” with the same mobile number.',
+  'clinicPage.prices.where': 'The services and prices of {name} are in your clinic’s workspace: sign out here, then sign in as “Lab or clinic staff” with the same mobile number.',
+  'clinicPage.open': 'Sign out and open my clinic’s workspace',
+  'clinicPage.notVerified': 'Jansetu has not verified your clinic yet.',
+  'clinicPage.noClinic.title': 'You have no clinic of your own yet',
+  'clinicPage.noClinic.body': 'Bills and prices belong to your clinic.',
+  'clinicPage.noClinic.create': 'Create your clinic',
 } as const;

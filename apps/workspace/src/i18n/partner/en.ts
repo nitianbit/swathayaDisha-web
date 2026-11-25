@@ -838,7 +838,7 @@ export default {
   'catalogue.added': '{name} was added.',
   'catalogue.givenUpEarlier': 'This item was given up earlier, so it was never added and never will be. Add it again if it is still needed.',
   'catalogue.title.clinic': 'Services and prices',
-  'catalogue.title.lab': 'Tests and prices',
+  'catalogue.title.lab': 'Tests and packages',
   'catalogue.intro': 'What customers can book and what appears on bills. Price changes apply at once.',
   /** {regime}: the partner's GST registration, like "Composition". */
   'catalogue.noGst': '{name} cannot charge GST ({regime}): items carry 0% GST.',

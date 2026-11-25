@@ -121,7 +121,9 @@ export let PARTNER_NEEDS_SAME_ORIGIN = '';
  * `signedOutHere` is said while a sign-out has not reached the server yet (this browser never resumes that session
  * meanwhile); WQ15: `clinicRefused` is the refusal of a clinic member whose doctor is not verified.
  */
-export type SessionNotice = 'ended' | 'someoneElse' | 'otherTab' | 'signedOutHere' | 'phoneNotCleared' | 'phoneNotSignedOut' | 'clinicRefused';
+export type SessionNotice = 'ended' | 'someoneElse' | 'otherTab' | 'signedOutHere' | 'phoneNotCleared' | 'phoneNotSignedOut' | 'clinicRefused'
+  // WQ51: a doctor going to their own clinic's workspace (the sign-in opens on "Lab or clinic staff").
+  | 'toClinicWorkspace';
 export type SessionNotices = readonly SessionNotice[];
 /** The notices in words, one sentence after another. */
 export const noticeWords = (notice: SessionNotices): string =>

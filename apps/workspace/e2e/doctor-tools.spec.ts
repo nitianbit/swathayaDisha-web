@@ -493,10 +493,10 @@ test('a doctor signs in: doctor pages only, a status card on Home, and no partne
   expect(backend.calls.find((c) => c.path === '/auth/specialist/verify')?.body).toMatchObject({ phone: '9000000020', otp: '123456', session: 'cookie' });
   await expect(page.getByRole('heading', { name: 'Welcome, Dr Meera Rao', level: 1 })).toBeVisible();
   await expect(page.getByText('Doctor · Cardiology')).toBeVisible();
-  for (const label of ['Home', 'Consult now', 'Appointments', 'Schedule', 'Clinics', 'Earnings', 'Wallet', 'Book lab test', 'Lab tests booked']) {
+  for (const label of ['Home', 'Consult now', 'Appointments', 'Schedule', 'Clinics', 'Bills', 'Services and prices', 'Earnings', 'Wallet', 'Book lab test', 'Lab tests booked']) {
     await expect(nav(page).getByRole('link', { name: label, exact: true })).toBeVisible();
   }
-  await expect(nav(page).getByRole('link')).toHaveCount(9);
+  await expect(nav(page).getByRole('link')).toHaveCount(11); // WQ51: + Bills, Services and prices
   const status = page.getByRole('region', { name: 'Your status' });
   await expect(status).toContainText('Verified');
   await expect(status).toContainText('Off'); // read from the server (Q13 GET /me/presence)
@@ -1589,4 +1589,44 @@ test('WQ11c (re-review N7): "Patient did not come" from 15 minutes after the sta
   await expect(unreadable.getByRole('button', { name: 'Patient did not come' })).toHaveCount(0);
   await page.clock.runFor(5 * 60_000 + 30_000); // 15 minutes after 09:50
   await expect(recent.getByRole('button', { name: 'Patient did not come' })).toBeVisible();
+});
+
+// ── WQ51: Bills and Services and prices from the doctor menu ──
+
+test('WQ51: Bills and Services and prices are in the doctor menu: without a clinic, "Create your clinic" opens Doctor › Clinics', async ({ page }) => {
+  await mockBackend(page);
+  await signIn(page);
+  await expect(nav(page).getByRole('link', { name: 'Bills' })).toBeVisible();
+  await nav(page).getByRole('link', { name: 'Services and prices' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Services and prices' })).toBeVisible();
+  await expect(page.getByText('You have no clinic of your own yet')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign out and open my clinic’s workspace' })).toHaveCount(0);
+  await page.getByRole('link', { name: 'Create your clinic' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Clinics' })).toBeVisible();
+});
+
+test('WQ51: a clinic not verified yet is said; the clinic shows its state and the way to its workspace', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.practice = { partner: { _id: PRACTICE, name: 'First Clinic', solo: true, verification: { state: 'pending' } }, branches: [] };
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Bills' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Bills' })).toBeVisible();
+  await expect(page.getByText('First Clinic', { exact: true })).toBeVisible();
+  await expect(page.getByText('Jansetu has not verified your clinic yet.')).toBeVisible();
+  await expect(page.getByText(/The bills of First Clinic are in your clinic’s workspace/)).toBeVisible();
+});
+
+test('WQ51: with a verified clinic, the menu item signs out and opens the sign-in on "Lab or clinic staff"; nothing about the clinic is stored', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.practice = { partner: { _id: PRACTICE, name: 'First Clinic', solo: true, verification: { state: 'verified' } }, branches: [] };
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Services and prices' }).click();
+  await expect(page.getByText(/The services and prices of First Clinic are in your clinic’s workspace/)).toBeVisible();
+  await expect(page.getByText('Jansetu has not verified your clinic yet.')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Sign out and open my clinic’s workspace' }).click();
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+  await expect(page.getByText('Sign in as “Lab or clinic staff” with your mobile number, then choose your clinic.')).toBeVisible();
+  await expect(page.getByLabel('Lab or clinic staff')).toBeChecked();
+  expect(page.url()).not.toContain('First');
+  expect(await storage(page)).not.toContain('First Clinic');
 });

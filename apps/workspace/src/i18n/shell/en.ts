@@ -32,7 +32,8 @@ export default {
   'nav.pharmacies': 'Pharmacies',
   'nav.pharmacyWallets': 'Pharmacy wallets',
   'nav.prescriptionReview': 'Prescription review',
-  'nav.priceList': 'Price list',
+  'nav.testsAndPackages': 'Tests and packages',
+  'nav.servicesAndPrices': 'Services and prices',
   'nav.profile': 'Profile',
   'nav.quality': 'Quality',
   'nav.referralEarnings': 'Referral earnings',
@@ -120,6 +121,8 @@ export default {
   'session.ended': 'Your session has ended. Please sign in again.',
   'session.someoneElse': 'Someone else signed in to the workspace in this browser. Please sign in again.',
   'session.otherTab': 'You signed out in another tab.',
+  /** After a doctor chose Bills or Services and prices: their clinic's workspace is a separate sign-in. */
+  'session.toClinicWorkspace': 'Sign in as “Lab or clinic staff” with your mobile number, then choose your clinic.',
   'session.notStaff': 'This account cannot use the staff workspace.',
   'session.incompleteProfile': 'Sign-in returned an incomplete profile. Please try again.',
   'session.noSession': 'Sign-in did not return a session. Please try again.',
