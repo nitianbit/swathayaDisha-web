@@ -62,8 +62,8 @@ export function Lots({ load, refusal, queryKey, changed, takesNow = false }: {
     <section className="ws-section" aria-labelledby="lots-h">
       <h2 id="lots-h">{t('lots.title')}</h2>
       {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
-      {lots.isPending ? <Loading label={t('lots.loading')} />
-        : lots.isError ? <ErrorState message={refusal(lots.error).message} onRetry={() => void lots.refetch()} />
+      {/* WQ29c: a failed read again keeps the lots read before. */}
+      {!lots.data ? (lots.isError ? <ErrorState message={refusal(lots.error).message} onRetry={() => void lots.refetch()} /> : <Loading label={t('lots.loading')} />)
         : lots.data.length === 0 ? <p className="ws-muted">{t('lots.none')}</p>
         : (
           <div className="ws-table-wrap">

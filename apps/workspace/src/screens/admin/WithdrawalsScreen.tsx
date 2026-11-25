@@ -36,6 +36,8 @@ export function WithdrawalsScreen() {
 const FILTERS: readonly (WithdrawalState | '')[] = ['requested', 'paid', 'rejected', 'cancelled', 'voided', ''];
 const walletPath = (w: AdminWithdrawal) => (w.walletRef.kind === 'pharmacy' ? `/admin/pharmacy-wallets/${w.walletRef.id}`
   : w.walletRef.kind === 'lab' ? `/admin/partners/${w.walletRef.id}/wallet` : `/admin/doctors/${w.walletRef.id}/wallet`);
+/** WQ29c: a withdrawal named without anyone's details: the last six characters of its id. */
+const shortRef = (w: AdminWithdrawal) => w._id.slice(-6).toUpperCase();
 const ownerWords = (kind: string) => (kind === 'pharmacy' || kind === 'lab' || kind === 'doctor' ? t(`owner.${kind}`) : kind);
 
 function Queue({ adminId, queueKey }: { adminId: string; queueKey: readonly unknown[] }) {
@@ -43,9 +45,12 @@ function Queue({ adminId, queueKey }: { adminId: string; queueKey: readonly unkn
   const [state, setState] = useState<WithdrawalState | ''>('requested');
   const pages = useCursorPages();
   const q = useQuery({ queryKey: [...queueKey, state, pages.cursor], queryFn: () => adminWithdrawalsApi(api).list({ ...(state ? { state } : {}), cursor: pages.cursor || undefined }) });
+  // WQ29c: what was just done, above the list: a paid, rejected or voided row leaves the filter shown when it is read again.
+  const [done, setDone] = useState<string | null>(null);
   return (
     <section className="ws-section" aria-labelledby="wq-h">
       <h2 id="wq-h" className="j-sr-only">{t('admin.title')}</h2>
+      {done && <Alert tone="ok">{done}</Alert>}
       <div className="ws-filter">
         <div className="j-field">
           <label htmlFor="wd-state">{t('admin.filter')}</label>
@@ -70,7 +75,7 @@ function Queue({ adminId, queueKey }: { adminId: string; queueKey: readonly unkn
                 </thead>
                 <tbody>
                   {/* Keyed by the withdrawal only: an open confirmation stays (it closes itself on a new version). */}
-                  {q.data.items.map((w) => <Row key={w._id} adminId={adminId} w={w} queueKey={queueKey} />)}
+                  {q.data.items.map((w) => <Row key={w._id} adminId={adminId} w={w} queueKey={queueKey} onDone={setDone} />)}
                 </tbody>
               </table>
             </div>
@@ -81,7 +86,7 @@ function Queue({ adminId, queueKey }: { adminId: string; queueKey: readonly unkn
   );
 }
 
-function Row({ adminId, w, queueKey }: { adminId: string; w: AdminWithdrawal; queueKey: readonly unknown[] }) {
+function Row({ adminId, w, queueKey, onDone }: { adminId: string; w: AdminWithdrawal; queueKey: readonly unknown[]; onDone: (words: string) => void }) {
   const { api } = useSession();
   const queryClient = useQueryClient();
   const [note, setNote] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
@@ -95,6 +100,7 @@ function Row({ adminId, w, queueKey }: { adminId: string; w: AdminWithdrawal; qu
     if (stored.restored || !stored.body || w.paid?.reference === stored.body.reference) {
       paid.settle(stored.requestKey);
       setNote({ tone: 'ok', text: t('paid.done', { reference: w.paid?.reference ?? '' }) });
+      onDone(t('admin.paidRef', { ref: shortRef(w), amount: formatPaise(w.transferMinor) }));
     }
   }, [stored, w.state, w.paid?.reference]);
 
@@ -105,6 +111,7 @@ function Row({ adminId, w, queueKey }: { adminId: string; w: AdminWithdrawal; qu
     try {
       await (kind === 'reject' ? adminWithdrawalsApi(api).reject(w._id, body) : adminWithdrawalsApi(api).void(w._id, body));
       setNote({ tone: 'ok', text: kind === 'reject' ? t('reject.done', { gross: formatPaise(w.grossMinor) }) : t('void.done', { gross: formatPaise(w.grossMinor) }) });
+      onDone(t(kind === 'reject' ? 'admin.rejectedRef' : 'admin.voidedRef', { ref: shortRef(w), amount: formatPaise(w.grossMinor) }));
     } catch (err) {
       if (definitelyNotRecorded(err)) throw wordedError(err);
       setNote({ tone: 'warn', text: t('admin.unknown', { error: messageOf(err) }) });
@@ -115,7 +122,7 @@ function Row({ adminId, w, queueKey }: { adminId: string; w: AdminWithdrawal; qu
 
   return (
     <tr>
-      <td>{ownerWords(w.walletRef.kind)}<div><Link to={walletPath(w)}>{t('admin.openWallet')}</Link></div></td>
+      <td>{ownerWords(w.walletRef.kind)}<div className="ws-muted">{t('admin.ref', { ref: shortRef(w) })}</div><div><Link to={walletPath(w)}>{t('admin.openWallet')}</Link></div></td>
       <td>{formatDateTime(w.createdAt)}</td>
       <td>{formatPaise(w.grossMinor)}<div className="ws-muted">{w.feeLine}</div></td>
       <td><strong>{formatPaise(w.transferMinor)}</strong></td>
@@ -128,7 +135,9 @@ function Row({ adminId, w, queueKey }: { adminId: string; w: AdminWithdrawal; qu
       <td>
         {note && <Alert tone={note.tone}>{note.text}</Alert>}
         <div className="ws-actions">
-          {(w.state === 'requested' || stored) && <MarkPaid w={w} owned={paid} queueKey={queueKey} />}
+          {(w.state === 'requested' || stored) && (
+            <MarkPaid w={w} owned={paid} queueKey={queueKey} onPaid={() => onDone(t('admin.paidRef', { ref: shortRef(w), amount: formatPaise(w.transferMinor) }))} />
+          )}
           {w.state === 'requested' && (
             <>
               <ConfirmAction label={t('reject.button')} danger reason reasonLabel={t('reject.reason')} confirmLabel={t('reject.confirm')} version={w.version}
@@ -148,7 +157,9 @@ function Row({ adminId, w, queueKey }: { adminId: string; w: AdminWithdrawal; qu
 type PendingPaid = Omit<PaidBody, 'requestKey'>;
 
 /** "Mark paid": how it was paid, the bank's reference and the day; then one owned request with its key (held by the row). */
-function MarkPaid({ w, owned, queueKey }: { w: AdminWithdrawal; owned: ReturnType<typeof useOwnedOp<PendingPaid>>; queueKey: readonly unknown[] }) {
+function MarkPaid({ w, owned, queueKey, onPaid }: {
+  w: AdminWithdrawal; owned: ReturnType<typeof useOwnedOp<PendingPaid>>; queueKey: readonly unknown[]; onPaid: () => void;
+}) {
   const { api } = useSession();
   const queryClient = useQueryClient();
   const { perform, busy } = useOneAtATime('withdrawal');
@@ -175,7 +186,7 @@ function MarkPaid({ w, owned, queueKey }: { w: AdminWithdrawal; owned: ReturnTyp
     setOutcome(null);
     const r = await perform(() => send(p, (b) => adminWithdrawalsApi(api).paid(w._id, { ...b, requestKey: p.requestKey })));
     if (r.kind === 'stale') return;
-    if (r.kind === 'ok') { setOutcome({ tone: 'ok', text: t('paid.done', { reference: p.body.reference }) }); setReview(null); setOpen(false); await reread(); return; }
+    if (r.kind === 'ok') { setOutcome({ tone: 'ok', text: t('paid.done', { reference: p.body.reference }) }); onPaid(); setReview(null); setOpen(false); await reread(); return; }
     if (r.kind === 'refused') { setReview(null); setOutcome({ tone: 'error', text: withdrawalWords(r.error) }); await reread(); }
   }
 
@@ -186,7 +197,7 @@ function MarkPaid({ w, owned, queueKey }: { w: AdminWithdrawal; owned: ReturnTyp
         onCheck={async () => {
           const now = await adminWithdrawalsApi(api).get(w._id);
           if (now.state === 'paid' && (restored || now.paid?.reference === op.body.reference)) {
-            settle(op.requestKey); setOutcome({ tone: 'ok', text: t('paid.done', { reference: now.paid?.reference ?? '' }) }); await reread(); return null;
+            settle(op.requestKey); setOutcome({ tone: 'ok', text: t('paid.done', { reference: now.paid?.reference ?? '' }) }); onPaid(); await reread(); return null;
           }
           return t('paid.notYet');
         }}

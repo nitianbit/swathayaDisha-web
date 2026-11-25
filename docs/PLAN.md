@@ -2342,6 +2342,13 @@ what is withdrawable is assumed); (3) no list of top-ups credited without a lot,
 9. A lab member who cannot open Finance (`finance.view` and partner-wide scope, as the page declares) is told "Ask a lab owner
    to add payout details in Finance." instead of a link.
 
+### WQ29c leftovers (re-check of add6328, 2026-11-25; branch `wq29c/withdrawal-leftovers`)
+
+1. The admin's card top-ups table keeps the lots read before when a read again fails (`if (!data) return isError ? … : …`).
+2. Admin › Withdrawals says what was just done above the list ("Marked paid: ref 0000A1, ₹980.00.", "Rejected: …",
+   "Voided: …"): a paid, rejected or voided row leaves the filter shown when it is read again, and its own confirmation
+   with it. The ref is the last six characters of the withdrawal's id (no one's details), also shown on each row.
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -2561,6 +2568,7 @@ On WQ24 33439af. Against r21 (§24.17.3 "Admin": card refund rows add `payerKind
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ29c leftovers (on add6328) | typecheck clean; Vitest 513/513; Playwright withdrawals 26/26 (the admin journey now checks the three notices by short ref; the mock's ids end in their number) on a temporary config (port 5559, deleted). |
 | 2026-11-25 | WQ29b review fixes (09c8e4f) + origin/stage c3b68d2 merged | Against r32b 8b1f6c35 (§26.17.7; mocked API). typecheck clean; Vitest 513/513 after the merge (`chargebackLot` now one function, the lab wallet test on it); Playwright withdrawals + lab-wallet + doctor-wallet + pharmacy-extras 128/128 (withdrawals +6 = 3 journeys x 2: a pharmacy's dispute says and does the take (flag-only switch off), Mark paid refused on disputed money, a fee recorded unlike the quote and a replayed request no longer waiting; the Recover journey now runs with the flag-only switch on) under `pw-slot.sh` with 2 workers on a temporary config (port 5559, deleted). |
 | 2026-11-25 | WQ28b review fixes (b199189) + origin/stage 3233a59 merged | typecheck clean; Vitest 510/510 after the merge; Playwright workspace records-access + doctor-tools 64/64 (+2 = 1 journey x 2: a refused first ask keeps its words, then an "already allowed" answer is said so; journey 1 now checks the date is the treating end, not the grant's) on a temporary config (port 5557); customer 280/280 (+2 = 1 journey x 2: a 503 switch-off says its own words and the request still waits) under `pw-slot.sh` with 2 workers (port 5558); configs deleted. |
 | 2026-11-25 | WQ28 records access, both apps (phase 3f web, on f321df4) | Against r30 233ef1ab (§25.17; mocked API). typecheck clean; Vitest 487/487 (+3 in recordsAccess.test.ts: the treating view reads the booking then the history with bookingId and keeps no contacts or health details; the request and holder routes with ids checked first; where a request stands, incl. an approved one whose grant ended; the catalogue check and the literal scan pass with no file allowlisted). An earlier full run had 2 five-second timeouts in untouched component tests at load ~70 (the same test timed out on the WQ27 base then); clean at load ~24. Playwright workspace 1016/1016 (+8 = 4 journeys x 2: ask, allowed, the other records listed and opened through the file route with the history read three times only; denied and the no-app words; ended and a lost answer to asking checked by reading again; another doctor's consultation and a closed window show nothing) and customer 278/278 (+8 = 4 journeys x 2: Allow on Home then the page's who-can-see and history; a family member's request denied; an ended request said and moved to the past; Stop sharing, and no card when nothing waits), both under `pw-slot.sh` with 2 workers on temporary configs (ports 5557 and 5558, `reuseExistingServer: false`, deleted); both builds with VITE_API_SAME_ORIGIN=true. |

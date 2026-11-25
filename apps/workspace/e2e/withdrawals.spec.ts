@@ -42,7 +42,7 @@ const feeLine = (gross: number) => {
 };
 const withdrawal = (i: number, o: Json = {}): Json => {
   const gross = Number(o.grossMinor ?? 100_000);
-  return { _id: `a${i}`.padEnd(24, '0'), walletKind: 'pharmacy', state: 'requested', grossMinor: gross, feeMinor: feeOf(gross), transferMinor: gross - feeOf(gross),
+  return { _id: `a${i}`.padStart(24, '0'), walletKind: 'pharmacy', state: 'requested', grossMinor: gross, feeMinor: feeOf(gross), transferMinor: gross - feeOf(gross),
     feeLine: feeLine(gross), lots: [], destination: { masked: 'Bank ••••6789', detailsVersion: 3 }, paid: null, reason: null, version: 0,
     createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(), walletRef: { kind: 'pharmacy', id: PH }, ...o };
 };
@@ -307,11 +307,14 @@ test('admin: mark paid with the bank’s reference (a second step), reject with 
   await expect(form).toContainText('Mark ₹980.00 to Bank ••••6789 as paid on 2026-11-25 with reference UTR12345678?');
   await form.getByRole('button', { name: 'Yes, mark it paid' }).click();
   await expect(table.getByRole('row')).toHaveCount(2); // the paid one leaves the waiting list
+  // WQ29c: what was done is said above the list (by a short ref, no one's details) once its row has gone.
+  await expect(page.getByText('Marked paid: ref 0000A1, ₹980.00.')).toBeVisible();
   const rest = table.getByRole('row').nth(1);
   await rest.getByRole('button', { name: 'Reject' }).click();
   await rest.getByLabel('Why is it rejected? (the owner sees it)').fill('Wrong account');
   await rest.getByRole('button', { name: 'Yes, reject it' }).click();
   await expect(page.getByText('No withdrawals here.')).toBeVisible();
+  await expect(page.getByText('Rejected: ref 0000A2, ₹600.00 back in the wallet.')).toBeVisible();
   await page.getByLabel('Show').selectOption({ label: 'Paid' });
   const paid = table.getByRole('row').nth(1);
   await expect(paid).toContainText('Paid on 2026-11-25, reference UTR12345678');
@@ -319,6 +322,7 @@ test('admin: mark paid with the bank’s reference (a second step), reject with 
   await paid.getByLabel('Why is it voided? (the owner sees it)').fill('Returned by the bank');
   await paid.getByRole('button', { name: 'Yes, void it' }).click();
   await expect(page.getByText('No withdrawals here.')).toBeVisible();
+  await expect(page.getByText('Voided: ref 0000A1, ₹1,000.00 back in the wallet.')).toBeVisible();
   const admin = b.calls.filter((c) => c.method === 'POST' && c.path.startsWith('/admin/wallet-withdrawals/'));
   expect(admin.map((c) => c.path.split('/').pop())).toEqual(['paid', 'reject', 'void']);
   expect(admin[0]!.body).toMatchObject({ method: 'bank_transfer', reference: 'UTR12345678', paidOn: '2026-11-25', detailsVersion: 3, expectedVersion: 0 });

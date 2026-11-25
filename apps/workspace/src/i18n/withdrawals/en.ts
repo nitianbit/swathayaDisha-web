@@ -119,6 +119,12 @@ export default {
   'admin.none': 'No withdrawals here.',
   'admin.pages': 'Withdrawal pages',
   'admin.openWallet': 'Open wallet',
+  /** WQ29c: a withdrawal's short reference (the end of its id; no one's details). */
+  'admin.ref': 'Ref {ref}',
+  /** Said above the list once a row has left it; {amount} is formatted. */
+  'admin.paidRef': 'Marked paid: ref {ref}, {amount}.',
+  'admin.rejectedRef': 'Rejected: ref {ref}, {amount} back in the wallet.',
+  'admin.voidedRef': 'Voided: ref {ref}, {amount} back in the wallet.',
   /** Whose wallet: a pharmacy, a lab or a doctor. */
   'owner.pharmacy': 'Pharmacy',
   'owner.lab': 'Lab',
