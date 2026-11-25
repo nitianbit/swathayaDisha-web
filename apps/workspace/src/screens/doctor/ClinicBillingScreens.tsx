@@ -1,12 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { VERIFICATION_LABEL } from '@jansetu/api';
+import { CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, doctorStanding, VERIFICATION_LABEL } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { practiceKey } from './ClinicsScreen.tsx';
-import { NotADoctor, useDoctor, type DoctorContext } from './doctor.tsx';
+import { NotADoctor, useDoctor, useDoctorProfile, type DoctorContext } from './doctor.tsx';
 import { t } from '../../i18n/doctor/index.ts';
 
 /**
@@ -25,6 +25,8 @@ export function DoctorPricesScreen() {
 }
 
 type Page = 'bills' | 'prices';
+/** WQ51b: where the clinic workspace opens after the sign-in (the sign-in resumes the address it was left on). */
+const LANDING: Record<Page, string> = { bills: '#/partner/invoices', prices: '#/partner/catalogue' };
 
 function ClinicPage({ kind }: { kind: Page }) {
   const d = useDoctor();
@@ -36,6 +38,9 @@ function ClinicPageFor({ d, page }: { d: DoctorContext; page: Page }) {
   const { signOut } = useSession();
   // The same read as Doctor › Clinics (one cache): the doctor's own clinic, or null.
   const q = useQuery({ queryKey: practiceKey(d), queryFn: () => d.api.practice() });
+  // WQ51b: a doctor who is not verified and active cannot use the clinic workspace (the server closes it): no button.
+  const profile = useDoctorProfile(d);
+  const active = profile.data ? doctorStanding(profile.data) === 'active' : null;
   const state = q.data?.partner.verification?.state ?? 'pending';
   return (
     <>
@@ -52,9 +57,16 @@ function ClinicPageFor({ d, page }: { d: DoctorContext; page: Page }) {
               <strong>{q.data.partner.name}</strong>{' '}
               <Badge tone={state === 'verified' ? 'ok' : 'warn'}>{VERIFICATION_LABEL[state] ?? state}</Badge>
             </p>
-            {state !== 'verified' && <Alert tone="warn">{t('clinicPage.notVerified')}</Alert>}
+            {state === 'suspended' ? <Alert tone="warn">{t('clinics.suspended')}</Alert>
+              : state !== 'verified' && <Alert tone="warn">{t('clinicPage.notVerified')}</Alert>}
             <p>{t(`clinicPage.${page}.where`, { name: q.data.partner.name })}</p>
-            <div className="ws-actions"><Button onClick={() => signOut('toClinicWorkspace')}>{t('clinicPage.open')}</Button></div>
+            {active === false ? <Alert tone="warn">{CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE}</Alert>
+              : active && (
+                <div className="ws-actions">
+                  {/* As Shell's sign-out: the address is set first, so the clinic workspace opens on this page's twin. */}
+                  <Button onClick={() => { window.history.replaceState(null, '', LANDING[page]); signOut('toClinicWorkspace'); }}>{t('clinicPage.open')}</Button>
+                </div>
+              )}
           </section>
         )}
     </>

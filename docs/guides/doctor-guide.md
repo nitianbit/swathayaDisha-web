@@ -1,214 +1,129 @@
 # Jansetu Workspace: Doctor Guide
 
-**What you can do here:** take instant consultations, manage your appointments, set your weekly hours and leave, see the clinics you consult at (or create your own), and track your earnings and payouts.
+**For:** doctors. **Website:** https://staff.swasthadisha.etryx.in
 
-Website: **https://staff.swasthadisha.etryx.in**. Patients book you in the Jansetu app or at https://swasthadisha.etryx.in.
+This guide says where things are. The names in it (Dr Kavya Demo, Dr Arjun Skin Clinic, Asha Demo) are examples.
 
----
-
-## 1. Sign in
-
-1. Open the website.
-2. Under **I am signing in as**, choose **Doctor**.
-3. Type your **Mobile number or email**. Email works only if the Jansetu team has added it to your account.
-4. Tap **Send code**, type the 6-digit code from the SMS or email, and tap **Verify and sign in**.
-
-Your menu is on the left, under **Doctor**: **Consult now**, **Appointments**, **Schedule**, **Clinics** and **Earnings**. **Sign out** is at the bottom.
-
-### Home: your status
-
-**Home** shows:
-
-- **Verification**: **Verified**, **Waiting for verification** or **Not active**. Until you are verified, patients cannot book you.
-- **Available now**: whether you are taking instant consultations.
-- **Offers waiting**: instant consultation offers for you right now.
-- **Next appointments**: the next two weeks.
+Some pages work only after Jansetu switches them on. Each section ends with a **Switch** line for the Jansetu team. "None" means the page always works. Until a switch is on, the page says "… is not switched on yet" or "… not open yet". Your other pages keep working.
 
 ---
 
-## 2. Consult now (instant consultations)
+## Sign in
 
-Patients who pay now are offered to available doctors of their speciality. The first doctor to accept gets the consultation.
+1. Under **I am signing in as**, choose **Doctor**.
+2. Type your **Mobile number or email** and tap **Send code**. Email works only if the Jansetu team has added it.
+3. Type the **6-digit code** and tap **Verify and sign in**.
 
-### Go online
+Your first sign-in with a new mobile number creates your doctor account. Patients can book you, and you can take instant consultations, once Jansetu has verified you. **Home** shows **Verified** or **Waiting for verification**.
 
-1. Open **Consult now**.
-2. Under **Consultation types you take now**, tick **Video**, **Phone call** and/or **Chat**.
-3. Enter **Your fee for an instant consultation (₹)**. You get offers only from patients who paid at least this much. If a patient's coupon does not apply to your fee, what they paid may not cover it: such an offer cannot be accepted and stays open for other doctors.
-4. Tap **Go available now**. The status shows **On**.
+## Where is what
 
-**Keep a workspace page open and visible.** It checks in every minute, and at once when the page is opened or reloaded. If the page is hidden or closed, you stop getting offers two minutes later. "On, not checked in" means no page has checked in recently. Tap **Go available now** again.
+Your menu is on the left, under **Doctor**.
 
-To stop, tap **Stop being available**. To change types or fee, edit them and tap **Update**.
-
-### Accept an offer
-
-1. Offers appear under **Offers for you**. Each one shows a timer ("Closes in …"). An offer stays open for 5 minutes.
-2. Tap **Accept…**, then **Accept and start**.
-3. A 30-minute consultation starts now and the patient is told you are joining. It appears on **Appointments**, with **Join the call** for video and phone calls.
-
-If an offer says your fee is above what the patient paid, you cannot take it. Lower your fee to take requests like it.
-
-### Give more time
-
-Under **Instant consultations today**, enter **Extend by (minutes)** (1 to 60) and tap **Extend**. It is refused if it would run into your next booking.
-
-If the answer does not arrive, tap **Send the same extension again** (it is added once, never twice) or **Check whether it was recorded**. If the same extension is then refused (for example it would run into your next booking), tap **Choose another extension** to try other minutes. If a check finds nothing (for example after a reload), **Forget it** frees the field after a second step; check the time held for you before extending again.
-
----
-
-## 3. Appointments
-
-**Appointments** lists your consultations. Choose **Show**: **Today**, **Next 14 days** or **One day**. Times are India time.
-
-| Status | What it means |
+| Menu | What is there |
 |---|---|
-| Waiting | Booked, not yet confirmed. |
-| Confirmed | Booked and ready. |
-| Completed | Done. Your earning is recorded. |
-| Cancelled | Cancelled. A paid patient gets a full refund. |
-| No-show | The patient did not come. |
-
-The **Kind** column shows **Booked**, **Instant** or **At a clinic**.
-
-### Actions
-
-- **Confirm**: confirm a paid appointment that is waiting.
-- **Mark completed**: after the consultation. It only shows once the appointment's start time has passed. This cannot be changed later.
-- **Patient did not come**: marks a no-show. It only shows 15 minutes after the appointment time; in a session with several patients, 15 minutes after the session ends. The patient is not refunded and you are not paid.
-- **Cancel**: write a reason (the patient sees it). A paid patient gets the full amount back in their Jansetu wallet. This cannot be undone.
-
-### Reschedule a no-show (once)
-
-On a no-show (not an instant one):
-
-1. Tap **Reschedule no-show**.
-2. Choose a **New day** and **New time**, tap **Continue**, then confirm. Only times for the same consultation type, at the same place, are offered: each time shows its place (the clinic and branch, **your own place**, or **online**), and so does the confirmation. If the time is refused (for example it does not take this consultation type), the screen says why and shows the times again.
-
-It is booked again at the same price, with nothing paid or refunded. You earn only if it is then completed. This works once only. A second no-show is final.
-
-If a list cannot be read again (for example the connection dropped), the list already shown stays, with "Could not refresh just now" and **Try again**.
-
-### Clinic desk appointments
-
-If a clinic's front desk booked the appointment, the clinic moves it. You will see "The clinic can move this appointment: it was booked at its front desk." These appointments are paid at the clinic, not through Jansetu.
+| Home | Your status, offers waiting, next appointments |
+| Consult now | Go online and accept instant consultations |
+| Appointments | Your consultations; a patient's records |
+| Schedule | Weekly hours and leave days |
+| Clinics | Clinics you consult at; create your own clinic |
+| Bills, Services and prices | The way to your own clinic's bills and prices |
+| Earnings | What you earned, payouts, payout details |
+| Wallet | Add money; withdraw card money |
+| Book lab test, Lab tests booked | Book a lab test for your patient |
 
 ---
 
-## 4. Schedule
+## Consult now
 
-Patients book slots made from your weekly hours, for the next 30 days.
+1. Tick the **Consultation types you take now** (video, phone call, chat) and enter **Your fee for an instant consultation (₹)**.
+2. Tap **Go available now**. Keep a workspace page open and visible: you stop getting offers soon after it is closed.
+3. Offers appear under **Offers for you**, each for 5 minutes. Tap **Accept…**, then **Accept and start**.
+4. Under **Instant consultations today** you can **Extend** a consultation.
 
-### Weekly hours
+To stop, tap **Stop being available**.
 
-1. Tap **Change weekly hours**.
-2. Set **Slot length (minutes)**.
-3. For each day, tap **Add a window** and set its start and end times.
-4. Choose the window's **place**: **Online, or your own place**, or **Clinic: …** for one of your clinics.
-5. Tick how patients can consult: **Video**, **Phone call**, **Chat**, **In person**. A clinic window is always in person.
-6. Tap **Review the weekly hours**, then **Save the weekly hours**.
+**Switch:** none.
 
-Saving replaces all your weekly hours. Appointments already booked are kept.
+## Appointments
 
-### Leave days
+Your consultations, booked and instant. **Show**: today, the next days, or one day. Times are India time.
 
-1. Under **Leave days**, choose a **Leave date** and tap **Add a leave day**.
-2. Tap **Take leave on …** to confirm.
+On an appointment: **Confirm**, **Join the call**, **Mark completed**, **Patient did not come**, **Cancel**, **Patient's records**, **Book lab test for this patient**.
 
-On a leave day nobody can book you. Appointments already booked that day stay: cancel them on **Appointments** if you will not see those patients. To undo a leave day, tap **Remove**.
+**Switch:** none.
 
----
+## Patient records
 
-## 5. Clinics
+Open **Patient's records** on an appointment.
 
-### Clinics you consult at
+- **Your consultations with this patient** are always shown.
+- To see their prescriptions from other doctors and their lab reports, tap **Ask the patient to see their other records**, then **Yes, ask the patient**. The account holder answers in the Jansetu app. The request ends after 24 hours.
+- While you wait: "Waiting for the patient to answer in the Jansetu app". Tap **Check again**.
+- Once allowed, the records are listed with **Open**. Every record you open is logged.
 
-This lists the clinics you are linked to, with their branches and status (**Verified** or **Waiting for verification**). The Jansetu team links you to a clinic after checking. You can then add in-person hours there on your **Schedule**, and its front desk can book patients for you.
+**Switch:** `RECORDS_ACCESS_ENABLED`. Until then only your own consultations are shown.
 
-To stop consulting somewhere, tap **Leave**. Appointments already booked are kept. You cannot leave a clinic you own.
+## Schedule
 
-### Old invitations
+- **Change weekly hours**: set the slot length, **Add a window** for each day, choose its place (online, your own place, or a clinic) and the consultation types. Then **Review the weekly hours** and **Save the weekly hours**.
+- **Leave days**: **Add a leave day**. Nobody can book you that day.
 
-Old clinic invitations show **No longer valid**. Clinics no longer invite doctors. To consult at a clinic, ask the Jansetu team to link you. Tap **Dismiss** to clear an invitation.
+**Switch:** none.
 
-### Create my clinic
+## Clinics
 
-If you are verified, you can create one clinic of your own:
+- **Clinics you consult at**: the clinics the Jansetu team has linked you to. **Leave** to stop consulting at one.
+- **Your own clinic**: if you are verified, fill in the clinic and its first branch and tap **Create my clinic**. It waits for Jansetu to verify it.
 
-1. Under **Your own clinic**, fill in **Clinic name**, **Bill number prefix** (1 to 6 letters or digits) and, if you have them, legal name, GSTIN, PAN and contact email.
-2. Add the first branch: **Branch name**, **Branch phone**, **Address**, **City**, **State**, **State code** and **PIN code**.
-3. Tap **Review**, then **Create my clinic**.
+**Switch:** none.
 
-Your clinic starts as **Waiting for verification**. Patients cannot book you there until Jansetu verifies it. You are its owner. Other doctors join only when the Jansetu team links them.
+## Bills and Services and prices
 
-### Your clinic's workspace
+Your clinic's bills and prices are in your clinic's workspace, not here.
 
-To make bills, run the front desk or add staff:
+- **No clinic yet**: the page says "You have no clinic of your own yet". Tap **Create your clinic**.
+- **Clinic not verified yet**: the page says "Jansetu has not verified your clinic yet."
+- **To open them**: tap **Sign out and open my clinic's workspace**. Sign in as **Lab or clinic staff** with the same mobile number and choose your clinic. You land on its **Bills**. See the Clinic guide.
 
-1. Tap **Sign out**.
-2. Sign in again as **Lab or clinic staff** with your mobile number.
-3. If asked, choose your clinic.
-
-See the Clinic guide for the clinic workspace (Profile, Staff, Branches, Front desk, Bills, Finance).
+**Switch:** none.
 
 ---
 
-## 6. Earnings
+## Earnings
 
-You earn for a consultation once it is **completed**. A no-show earns nothing, so it never appears here.
+What you earned through Jansetu and what was paid out. You earn for a consultation once it is completed.
 
-- **Balance**: **Balance due to you**, **Earned**, **Reversed (refunds)**, **Paid out**, **Adjustments** and your last payout.
-- **Where payouts go**: tap **Add payout details** (or **Change payout details**). Choose **Bank transfer** or **UPI** under **Pay me by**, fill it in, tap **Review**, then **Save payout details**. Jansetu must verify every change before the next payout.
-- **Statement**: choose **From** and **To**, tap **Show**, and **Download CSV** if you need a file.
-- **Payouts**: each payout with its date, amount and reference. **Voided** means it was cancelled and the money went back to your balance.
-- **Earlier payouts**: payouts from the older system, for reference only.
-- **Account activity**: changes to your payout details, payouts and adjustments.
+- **Balance**, **Statement** (choose the dates; **Download CSV**), **Payouts**.
+- **Where payouts go**: **Add payout details** (bank or UPI). Jansetu verifies every change.
+- **Referral earned**: what you earn for lab tests you book for patients.
+- **Withdrawals to the bank**: shows "Not open yet" until withdrawals are switched on.
 
----
+**Switch:** none for earnings. Referral earnings need `REFERRAL_CUTS_ENABLED` and `REFERRAL_DOCTOR_CUTS_ENABLED`. Paying them out needs `REFERRAL_PAYOUTS_ENABLED`.
 
-## Good to know
+## Wallet
 
-- No-shows are never refunded, and you are not paid for them.
-- You can reschedule a no-show once. Instant consultations cannot be rescheduled.
-- Once you accept an instant consultation, the patient cannot cancel it. You can still cancel it on **Appointments**, which refunds the patient in full.
-- Cancelling any paid appointment refunds the patient in full.
-- Only the Jansetu team links doctors to clinics.
-- Your clinic stays pending until a Jansetu admin verifies it.
-- If you see "The outcome of this request is not known yet", tap the button to send the same request again. It is never recorded twice.
+Your wallet pays for the lab tests you book for patients. It opens once you are verified.
 
----
+- **Add money**: type the amount and tap **Top up**. You pay by card or UPI.
+- **Withdraw to bank**: only card money can be withdrawn. Add your payout details on **Earnings** first. Until withdrawals are switched on, it says "Withdrawals to your bank are not open yet. Your wallet keeps paying for bookings as before."
 
-## Common questions
+**Switch:** adding money needs `ASSISTED_BOOKING_ENABLED_DOCTOR`. Withdrawals need `WALLET_WITHDRAWALS_ENABLED`.
 
-**I typed my email but it says "No account uses this email".**
-Sign in with your mobile number. To use email sign-in, ask the Jansetu team to add your email.
+## Book lab test
 
-**Why am I not getting any offers?**
-Check that **Available now** shows **On** (not "On, not checked in"). Keep the page open, and check that your fee is not higher than patients pay.
+Book a lab test for your patient. Jansetu takes the price from your wallet; you collect it from the patient.
 
-**Can I take an offer after its timer runs out?**
-No. It says **Closed**.
+1. Start from an appointment (**Book lab test for this patient**), or open **Book lab test** and find the patient by mobile number.
+2. Choose the lab, branch, tests and a time. On **Book lab test** you can also type a recommended-tests code and tap **Load tests**.
+3. Check and pay.
 
-**I added hours but patients can't book them.**
-Check your **Verification** on Home. For clinic hours, the clinic must also be verified.
+**Lab tests booked** lists what you booked. Open one to see its time, cancel it or read its report.
 
-**A patient missed the appointment. What now?**
-Tap **Patient did not come**. You can then use **Reschedule no-show** once.
-
-**Why can't I reschedule a clinic appointment?**
-If the clinic desk booked it, only the clinic moves it.
-
-**When do I get paid?**
-Jansetu pays your balance to your verified payout details. Check **Earnings** for each payout.
+**Switch:** `ASSISTED_BOOKING_ENABLED_DOCTOR` and `ASSISTED_LAB_BOOKING_ENABLED_DOCTOR`. Codes for recommended tests (printed on your prescription) need `TEST_RECOMMENDATIONS_ENABLED`.
 
 ---
 
 ## Need help?
 
-Contact the Jansetu team. Tell them:
-
-- your name and registered mobile number;
-- the appointment date and time, if there is one;
-- what you tried, and the exact message on screen.
-
-Jansetu support: (add phone and email here)
+Contact the Jansetu team. Tell them your name, the appointment date and time if there is one, and the exact message on screen.

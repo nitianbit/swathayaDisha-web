@@ -1629,3 +1629,48 @@ test('WQ51: with a verified clinic, the menu item signs out and opens the sign-i
   expect(page.url()).not.toContain('First');
   expect(await storage(page)).not.toContain('First Clinic');
 });
+
+// ── WQ51b ──
+
+for (const [item, landing] of [['Bills', '#/partner/invoices'], ['Services and prices', '#/partner/catalogue']] as const) {
+  test(`WQ51b: ${item} signs out, and signing in as clinic staff (no address typed) opens ${landing}`, async ({ page }) => {
+    const backend = await mockBackend(page);
+    backend.practice = { partner: { _id: PRACTICE, name: 'First Clinic', solo: true, verification: { state: 'verified' } }, branches: [] };
+    await signIn(page);
+    await nav(page).getByRole('link', { name: item }).click();
+    await page.getByRole('button', { name: 'Sign out and open my clinic’s workspace' }).click();
+    await expect(page.getByLabel('Lab or clinic staff')).toBeChecked();
+    // The clinic staff sign-in, from where the page left the address (no page.goto).
+    await page.getByLabel('Mobile number').fill('9000000020');
+    await page.getByRole('button', { name: 'Send code' }).click();
+    await page.getByLabel('6-digit code').fill('123456');
+    await page.getByRole('button', { name: 'Verify and sign in' }).click();
+    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`${landing.replace('#', '#')}$`));
+    expect(backend.calls.some((c) => c.path === '/auth/partner/verify')).toBe(true);
+  });
+}
+
+test('WQ51b: a doctor who is not verified and active gets the closed-workspace words and no button; a suspended clinic is said as such', async ({ page }) => {
+  const backend = await mockBackend(page);
+  backend.profile = { ...backend.profile, isVerified: false };
+  backend.practice = { partner: { _id: PRACTICE, name: 'First Clinic', solo: true, verification: { state: 'suspended' } }, branches: [] };
+  await signIn(page);
+  await nav(page).getByRole('link', { name: 'Bills' }).click();
+  await expect(page.getByText('Your doctor account is not verified or not active, so this clinic workspace is closed for you. Contact the Jansetu team.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign out and open my clinic’s workspace' })).toHaveCount(0);
+  await expect(page.getByText('Jansetu has suspended your clinic. Please contact Jansetu support.')).toBeVisible();
+  await expect(page.getByText('Jansetu has not verified your clinic yet.')).toHaveCount(0);
+  await nav(page).getByRole('link', { name: 'Clinics' }).click();
+  await expect(page.getByText('Jansetu has suspended your clinic. Please contact Jansetu support.')).toBeVisible();
+  await expect(page.getByText('Jansetu has not verified your clinic yet', { exact: false })).toHaveCount(0);
+});
+
+test('WQ51b: a clinic’s Home tile has the menu’s words (its services, not a lab’s tests)', async ({ page }) => {
+  await mockBackend(page);
+  await signIn(page, 'Lab or clinic staff');
+  const tiles = page.locator('.home-links');
+  await expect(nav(page).getByRole('link', { name: 'Services and prices' })).toBeVisible();
+  await expect(tiles.getByRole('link', { name: 'Services and prices' })).toBeVisible();
+  await expect(tiles.getByRole('link', { name: 'Tests and packages' })).toHaveCount(0);
+});
