@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { ApiError, appointmentInstant, type Relationship } from '@jansetu/api';
+import { appointmentInstant, messageOf, type Relationship } from '@jansetu/api';
 import { formatDateWith, INDIA_TIME } from '@jansetu/i18n';
 import { Alert, Button, TextArea } from '@jansetu/ui';
 import { t, type CustomerKey } from './i18n/index.ts';
@@ -13,11 +13,8 @@ export function PageHeading({ title, children }: { title: string; children?: Rea
   );
 }
 
-/** One sentence the customer can act on. Server messages are written for people and shown as given. */
-export function messageOf(err: unknown): string {
-  if (err instanceof ApiError) return err.message;
-  return t('common.error');
-}
+/** One sentence the customer can act on: the shared `messageOf` of `@jansetu/api` (re-exported for the screens). */
+export { messageOf };
 
 /** "Fri, 20 Nov 2026 · 9:30 am" in IST, from the backend's YYYYMMDD + time. */
 export function formatAppointment(bookingDate: string, bookingTime: string): string {

@@ -7,8 +7,6 @@ export default {
 
   /** The app's name. Keep it in Latin letters unless told otherwise. */
   'common.brand': 'Jansetu',
-  /** Shown when an action failed for a reason the app cannot name. */
-  'common.error': 'Something went wrong. Please try again.',
   'common.back': 'Back',
   'common.tryAgain': 'Try again',
   'common.cancel': 'Cancel',
