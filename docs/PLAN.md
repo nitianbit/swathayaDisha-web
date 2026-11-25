@@ -2267,6 +2267,29 @@ API gaps: (1) the pharmacy has no read of its home account, so its destination f
 version (from `…/withdrawable`); (2) the withdrawable answer has no `quote` reason when the amount is not covered (above
 what is withdrawable is assumed); (3) no list of top-ups credited without a lot, so their Recover has no screen.
 
+### WQ29b review fixes (review of 313979a, 2026-11-25; same branch; backend r32b, `m0/r32-phase4cd` 8b1f6c35, §26.17.7)
+
+1. **HIGH: a pharmacy's card dispute takes the money.** With `WALLET_CHARGEBACK_FLAG_ONLY` off (the default) r32b takes a
+   pharmacy's lost dispute at once (the debit, the rest owed, the wallet on hold); a lab's and a doctor's are flagged only
+   whatever it says. The lots table takes `takesNow` (the pharmacy's admin wallet) and says "The money is taken back from the
+   wallet now"; what was done is said from the answer (`chargebackTook`: the debit `entry` = taken, else flagged; `entry?` on
+   the `chargebackLot` answer). The e2e mock follows the rule; both answers are tested.
+2. Mark paid refused with 409 `WITHDRAWAL_LOT_DISPUTED`: "A card dispute was recorded on money this withdrawal holds. Reject
+   it instead of paying it."
+3. A stale quote (until the server's `expectedTransferMinor` fence, r35): the figures the person confirmed are kept with the
+   owned request on this device; when the recorded withdrawal's fee or transfer differs, the new figures are said, with Cancel
+   in the list.
+4. Give up that finds the request recorded clears the review; a replayed answer no longer waiting says the state it is in.
+5. The review's destination and its version (the fence) come from the fresh `withdrawable(amount)` answer.
+6. A failed read again keeps the owner's list and the admin queue read before.
+7. The stored "mark paid" request is held by its row and settled when a read shows the withdrawal paid (with its reference;
+   after a reload, paid at all); rows are keyed by the withdrawal only, so an open confirmation stays (it closes itself on a
+   new version).
+8. The admin queue's key comes from `useAdminScope`; the `adminOwnerWalletApi().chargebackLot` alias is gone (one
+   `chargebackLot`).
+9. A lab member who cannot open Finance (`finance.view` and partner-wide scope, as the page declares) is told "Ask a lab owner
+   to add payout details in Finance." instead of a link.
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.

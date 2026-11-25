@@ -154,9 +154,9 @@ function WalletDetail({ scopeKey, pharmacyId }: { scopeKey: readonly string[]; p
           )}
       </section>
 
-      {/* WQ29 (r32): the pharmacy's card top-ups with the dispute flag and Recover, as a lab's and a doctor's. */}
+      {/* WQ29 (r32): the pharmacy's card top-ups with the dispute and Recover; WQ29b (r32b): its dispute takes the money at once. */}
       <Lots load={() => wallets.lots(pharmacyId)} refusal={(err) => ({ kind: 'other', message: adminWalletReadError(err) })}
-        queryKey={[...scopeKey, pharmacyId, 'lots']} changed={[...scopeKey, pharmacyId]} />
+        queryKey={[...scopeKey, pharmacyId, 'lots']} changed={[...scopeKey, pharmacyId]} takesNow />
 
       <section className="ws-section" aria-labelledby="uncredited-h">
         <h2 id="uncredited-h">Card top-ups not credited</h2>

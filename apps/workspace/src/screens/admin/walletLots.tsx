@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { chargebackLot, walletRecoverApi, type LabWalletLot, type Refusal } from '@jansetu/api';
+import { chargebackLot, chargebackTook, walletRecoverApi, type LabWalletLot, type Refusal } from '@jansetu/api';
 import { Alert, Badge, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
@@ -12,17 +12,21 @@ import { wordedError } from '../pharmacy/withdrawals.tsx';
 
 /**
  * WQ20/WQ23, moved here by WQ29 for every wallet (a pharmacy's too): the admin's card top-ups as lots (newest first, at
- * most 200). "Record a card dispute" (`POST /admin/wallet-lots/:lotId/chargeback`) only flags the top-up: nothing is taken,
- * the money stops being withdrawable (r32: the pharmacy's included). WQ29 (r32 §26.8.4): then "Recover the money"
- * (`POST /admin/wallet-lots/:lotId/recover {reason, requestKey}`) takes it back: from the balance, the rest owed, the wallet
- * put on hold; once per top-up, so a lost answer is read again and recovering again is safe.
+ * most 200). "Record a card dispute" (`POST /admin/wallet-lots/:lotId/chargeback`): a lab's or a doctor's top-up is only
+ * flagged (nothing taken; the money stops being withdrawable); WQ29b (r32b §26.17.7): a pharmacy's is taken back at once
+ * while the server's `WALLET_CHARGEBACK_FLAG_ONLY` is off (the default), so its step says so (`takesNow`); what was done is
+ * said from the answer (the debit `entry`, or the flag). WQ29 (r32 §26.8.4): a flagged top-up then gets "Recover the money"
+ * (`POST /admin/wallet-lots/:lotId/recover {reason, requestKey}`): from the balance, the rest owed, the wallet put on hold;
+ * once per top-up, so a lost answer is read again and recovering again is safe.
  */
-export function Lots({ load, refusal, queryKey, changed }: {
+export function Lots({ load, refusal, queryKey, changed, takesNow = false }: {
   load: () => Promise<LabWalletLot[]>;
   refusal: (err: unknown) => Refusal;
   queryKey: readonly unknown[];
   /** Read again after a flag or a recover (the wallet and its lots). */
   changed: readonly unknown[];
+  /** WQ29b: a pharmacy's dispute takes the money back at once (the server's default). */
+  takesNow?: boolean;
 }) {
   const { api } = useSession();
   const queryClient = useQueryClient();
@@ -34,7 +38,7 @@ export function Lots({ load, refusal, queryKey, changed }: {
     setNotice(null);
     try {
       const r = await chargebackLot(api, lot._id, reason);
-      setNotice({ tone: 'ok', text: r.replayed ? t('flag.replayed') : t('flag.done', { amount: amountOf(lot) }) });
+      setNotice({ tone: 'ok', text: r.replayed ? t('flag.replayed') : chargebackTook(r) ? t('flag.taken', { amount: amountOf(lot) }) : t('flag.done', { amount: amountOf(lot) }) });
     } catch (err) {
       if (definitelyNotRecorded(err)) setNotice({ tone: 'error', text: t('flag.notRecorded', { error: refusal(err).message }) });
       else setNotice({ tone: 'warn', text: t('flag.notConfirmed', { error: refusal(err).message }) });
@@ -82,7 +86,8 @@ export function Lots({ load, refusal, queryKey, changed }: {
                     <td>
                       {l.disputeState !== 'lost' ? (
                         <ConfirmAction label={t('flag.button')} danger reason reasonLabel={t('flag.reason')} confirmLabel={t('flag.confirm')} disabled={busy}
-                          consequence={t('flag.consequence', { amount: amountOf(l), date: formatDateTime(l.createdAt) })}
+                          consequence={takesNow ? t('flag.consequenceTake', { amount: amountOf(l), date: formatDateTime(l.createdAt) })
+                            : t('flag.consequence', { amount: amountOf(l), date: formatDateTime(l.createdAt) })}
                           onConfirm={(reason) => dispute(l, reason)} />
                       ) : !l.chargedBackAt && (
                         <ConfirmAction label={t('recover.button')} danger reason reasonLabel={t('recover.reason')} confirmLabel={t('recover.confirm')} disabled={busy}

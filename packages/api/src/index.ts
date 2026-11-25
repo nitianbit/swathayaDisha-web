@@ -234,7 +234,7 @@ export {
   asMovement, asPharmacyWallet, LAB_ADMIN_TOPUP_MAX_MINOR, LAB_TOPUP_MAX_MINOR, LAB_TOPUP_MIN_MINOR, LAB_TOPUP_STATE_LABEL,
   LAB_WALLET_SWITCHED_OFF_MESSAGE, labTopupCheckable, labWalletApi,
   // WQ23: the doctor's wallet (r20) on the same routes and shapes.
-  adminOwnerWalletApi, chargebackLot, DOCTOR_WALLET_CLOSED_MESSAGE, DOCTOR_WALLET_SWITCHED_OFF_MESSAGE, doctorWalletApi, isDoctorWalletClosed, ownerWalletRefusal,
+  adminOwnerWalletApi, chargebackLot, chargebackTook, DOCTOR_WALLET_CLOSED_MESSAGE, DOCTOR_WALLET_SWITCHED_OFF_MESSAGE, doctorWalletApi, isDoctorWalletClosed, ownerWalletRefusal,
 } from './labWallet.ts';
 export type {
   LabTopupOrder, LabTopupRow, LabTopupState, LabWalletEntry, LabWalletLot, LabWalletView, OwnWalletApi, WalletOwner, WalletOwnerKind,

@@ -21,6 +21,8 @@ export default {
   'dest.elsewhere': 'Add your bank account or UPI ID on the {page} page first.',
   'dest.finance': 'Finance',
   'dest.earnings': 'Earnings',
+  /** WQ29b: a lab member who cannot open Finance. */
+  'dest.askOwner': 'Ask a lab owner to add payout details in Finance.',
   'dest.add': 'Add bank account or UPI ID',
   'dest.saved': 'Saved. Jansetu checks these details before your first withdrawal.',
   'dest.unverified': 'Jansetu is checking your payout details ({masked}). You can withdraw once they are verified.',
@@ -40,6 +42,10 @@ export default {
   'quote.send': 'Withdraw {gross}',
   'quote.back': 'Back',
   'done': 'Asked for: {transfer} goes to {masked} once Jansetu pays it out. It is listed below until then.',
+  /** WQ29b: the server worked the fee out differently from the quote shown (the card money changed meanwhile). */
+  'changed': 'The fee changed before it was recorded: card fee {fee}; you receive {transfer} of {gross}. If that is not right, cancel it in the list below.',
+  /** WQ29b: the same request was already recorded earlier and is no longer waiting; {state} is its state now. */
+  'replayed': 'This request was already recorded earlier. It is now: {state}.',
 
   'unconfirmed.panel': 'Unconfirmed withdrawal',
   /** {error}: why the answer was not read. */
@@ -94,6 +100,7 @@ export default {
   'error.INDEXES_OUTDATED': 'The server needs an update before this can be used. Please ask the Jansetu team.',
   'error.SPECIALIST_NOT_VERIFIED': 'Withdrawals open once Jansetu has verified your account and it is active.',
   'error.REFERENCE_REUSED': 'This bank reference was already used for another payment to this owner.',
+  'error.WITHDRAWAL_LOT_DISPUTED': 'A card dispute was recorded on money this withdrawal holds. Reject it instead of paying it.',
   'error.DISPUTE_NOT_RECORDED': 'Record the card dispute first, then recover the money.',
   'error.NOTHING_TO_RECOVER': 'This top-up was never added to the wallet, so there is nothing to recover.',
 
@@ -172,6 +179,9 @@ export default {
   'flag.consequence': 'Record that the {amount} card top-up of {date} was disputed and lost? Nothing is taken from the wallet; the money stops being withdrawable. This cannot be undone here.',
   'flag.replayed': 'This card dispute was already recorded. Nothing more was changed.',
   'flag.done': 'Card dispute recorded on the {amount} top-up. No money was taken from the wallet; that money is no longer withdrawable.',
+  /** WQ29b: a pharmacy's lost dispute is taken at once (the server's default). */
+  'flag.consequenceTake': 'Record that the {amount} card top-up of {date} was disputed and lost? The money is taken back from the wallet now: from the balance, what is missing is owed to Jansetu, and the wallet is put on hold. This cannot be undone here.',
+  'flag.taken': 'Card dispute recorded on the {amount} top-up, and the money was taken back from the wallet (what was missing is owed to Jansetu; the wallet is on hold).',
   'flag.notRecorded': 'Not recorded: {error}',
   'flag.notConfirmed': 'Not confirmed: {error} The list shows what is saved now; recording it again is safe.',
 

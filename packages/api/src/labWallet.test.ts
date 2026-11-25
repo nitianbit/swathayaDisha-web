@@ -1,5 +1,5 @@
 import { ApiError, createApiClient } from './client.ts';
-import { adminOwnerWalletApi, asMovement, asPharmacyWallet, LAB_WALLET_SWITCHED_OFF_MESSAGE, labTopupCheckable, labWalletApi, ownerWalletRefusal } from './labWallet.ts';
+import { adminOwnerWalletApi, asMovement, asPharmacyWallet, chargebackLot, LAB_WALLET_SWITCHED_OFF_MESSAGE, labTopupCheckable, labWalletApi, ownerWalletRefusal } from './labWallet.ts';
 import { movementLabel, signedPaiseOf, walletBalancePaise, walletState } from './assisted.ts';
 import { adminTopupWarning, ADMIN_TOPUP_WARNING, uncreditedOf } from './adminPharmacyWallet.ts';
 import { ALL_PARTNER_PERMISSIONS, grantablePermissions, permissionsForKind } from './partners.ts';
@@ -78,7 +78,7 @@ describe('WQ20 lab wallet (r13 /partner-workspace/assisted, /admin/labs)', () =>
     const found = await a.topupByKey(LAB, KEY);
     expect(found.state === 'used' && found.row.notes).toBe('support');
     await a.freeze(LAB, true, ' dispute ');
-    await a.chargebackLot(LOT, 'bank said lost');
+    await chargebackLot(client, LOT, 'bank said lost');
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       `GET /admin/labs/${LAB}/wallet`, `GET /admin/labs/${LAB}/wallet/entries?limit=20`, `GET /admin/labs/${LAB}/wallet/lots`,
       `POST /admin/labs/${LAB}/wallet/topup`, `GET /admin/labs/${LAB}/wallet/topups/by-key/${KEY}`, `PUT /admin/labs/${LAB}/wallet/freeze`,

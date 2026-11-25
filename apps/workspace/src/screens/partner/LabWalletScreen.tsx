@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { holdsAny, LAB_TOPUP_STATE_LABEL, labTopupCheckable, labWalletApi, labWithdrawalsApi, type ApiClient } from '@jansetu/api';
+import { hasGlobalScope, holdsAny, LAB_TOPUP_STATE_LABEL, labTopupCheckable, labWalletApi, labWithdrawalsApi, type ApiClient } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { useSession } from '../../session.tsx';
 import { CHECK_LABEL, ownerTopupSource, TopUpForm, UNPAID_CHECK_AGAIN, useTopupCheck, type TopupSource } from '../pharmacy/topup.tsx';
@@ -61,7 +61,8 @@ function Wallet({ ctx }: { ctx: ScopeContext }) {
       <Topups ctx={ctx} source={source} />
       {/* WQ29 (r32): withdrawals to the bank (switched off on the server until allowed); `wallet.manage` asks and cancels. */}
       <WithdrawSection source={{ owner: `lab:${scopeIdentity(ctx)}`, walletKey: key, api: labWithdrawalsApi(api, ctx.scope), canAct: holdsAny(ctx.actor, ['wallet.manage']),
-        destination: { link: '/partner/finance', page: 'finance' } }} />
+        // WQ29b: the Finance page needs `finance.view` and partner-wide scope (as its page declaration); else ask an owner.
+        destination: holdsAny(ctx.actor, ['finance.view']) && hasGlobalScope(ctx.actor) ? { link: '/partner/finance', page: 'finance' } : { askOwner: true } }} />
       <WalletHistory q={entries} empty="Top-ups and bookings paid from the wallet are listed here." first={history.page === 1}
         pager={<CursorPager pages={history} nextCursor={entries.data?.nextCursor} label="Wallet history pages" />} />
     </>

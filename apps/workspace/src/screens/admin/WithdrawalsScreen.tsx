@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { adminWithdrawalsApi, isPaidReference, istToday, type AdminWithdrawal, type PaidBody, type PaidMethod, type WithdrawalState } from '@jansetu/api';
@@ -13,6 +13,7 @@ import { useSession, useStaff } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { CursorPager, useCursorPages } from '../pharmacy/cursorList.tsx';
 import { CheckPanel, useOwnedOp } from '../pharmacy/ownedOp.tsx';
+import { useAdminScope } from './adminScope.ts';
 import { WITHDRAWAL_STATE_TONE, withdrawalStateWords, withdrawalWords, wordedError } from '../pharmacy/withdrawals.tsx';
 
 /**
@@ -23,21 +24,21 @@ import { WITHDRAWAL_STATE_TONE, withdrawalStateWords, withdrawalWords, wordedErr
  */
 export function WithdrawalsScreen() {
   const admin = useStaff();
+  const scope = useAdminScope('withdrawals');
   return (
     <>
       <PageHeading title={t('admin.title')}>{t('admin.intro')}</PageHeading>
-      <Queue key={admin.id} adminId={admin.id} />
+      <Queue key={scope.identity} adminId={admin.id} queueKey={scope.key} />
     </>
   );
 }
 
 const FILTERS: readonly (WithdrawalState | '')[] = ['requested', 'paid', 'rejected', 'cancelled', 'voided', ''];
-const queueKey = ['admin-withdrawals'] as const;
 const walletPath = (w: AdminWithdrawal) => (w.walletRef.kind === 'pharmacy' ? `/admin/pharmacy-wallets/${w.walletRef.id}`
   : w.walletRef.kind === 'lab' ? `/admin/partners/${w.walletRef.id}/wallet` : `/admin/doctors/${w.walletRef.id}/wallet`);
 const ownerWords = (kind: string) => (kind === 'pharmacy' || kind === 'lab' || kind === 'doctor' ? t(`owner.${kind}`) : kind);
 
-function Queue({ adminId }: { adminId: string }) {
+function Queue({ adminId, queueKey }: { adminId: string; queueKey: readonly unknown[] }) {
   const { api } = useSession();
   const [state, setState] = useState<WithdrawalState | ''>('requested');
   const pages = useCursorPages();
@@ -53,8 +54,8 @@ function Queue({ adminId }: { adminId: string }) {
           </select>
         </div>
       </div>
-      {q.isPending ? <Loading />
-        : q.isError ? <ErrorState message={withdrawalWords(q.error)} onRetry={() => void q.refetch()} />
+      {/* WQ29b: a failed read again keeps the queue read before. */}
+      {!q.data ? (q.isError ? <ErrorState message={withdrawalWords(q.error)} onRetry={() => void q.refetch()} /> : <Loading />)
         : q.data.items.length === 0 ? <Empty title={t('admin.none')} />
         : (
           <>
@@ -68,7 +69,8 @@ function Queue({ adminId }: { adminId: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {q.data.items.map((w) => <Row key={`${w._id}:${w.version}`} adminId={adminId} w={w} />)}
+                  {/* Keyed by the withdrawal only: an open confirmation stays (it closes itself on a new version). */}
+                  {q.data.items.map((w) => <Row key={w._id} adminId={adminId} w={w} queueKey={queueKey} />)}
                 </tbody>
               </table>
             </div>
@@ -79,11 +81,22 @@ function Queue({ adminId }: { adminId: string }) {
   );
 }
 
-function Row({ adminId, w }: { adminId: string; w: AdminWithdrawal }) {
+function Row({ adminId, w, queueKey }: { adminId: string; w: AdminWithdrawal; queueKey: readonly unknown[] }) {
   const { api } = useSession();
   const queryClient = useQueryClient();
   const [note, setNote] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
   const reread = () => queryClient.invalidateQueries({ queryKey: queueKey });
+  // WQ29b: the stored "mark paid" request is the row's: when a read shows the withdrawal paid with its reference (or, after a
+  // reload, paid at all), it is settled here, whatever the row shows now.
+  const paid = useOwnedOp<PendingPaid>(`admin-withdrawal-paid:${adminId}:${w._id}`);
+  const stored = paid.op;
+  useEffect(() => {
+    if (!stored || w.state !== 'paid') return;
+    if (stored.restored || !stored.body || w.paid?.reference === stored.body.reference) {
+      paid.settle(stored.requestKey);
+      setNote({ tone: 'ok', text: t('paid.done', { reference: w.paid?.reference ?? '' }) });
+    }
+  }, [stored, w.state, w.paid?.reference]);
 
   /** Reject (waiting) or void (paid), fenced by the version shown; an unknown outcome is read again. */
   async function act(kind: 'reject' | 'void', reason: string) {
@@ -115,9 +128,9 @@ function Row({ adminId, w }: { adminId: string; w: AdminWithdrawal }) {
       <td>
         {note && <Alert tone={note.tone}>{note.text}</Alert>}
         <div className="ws-actions">
+          {(w.state === 'requested' || stored) && <MarkPaid w={w} owned={paid} queueKey={queueKey} />}
           {w.state === 'requested' && (
             <>
-              <MarkPaid adminId={adminId} w={w} />
               <ConfirmAction label={t('reject.button')} danger reason reasonLabel={t('reject.reason')} confirmLabel={t('reject.confirm')} version={w.version}
                 consequence={t('reject.consequence', { gross: formatPaise(w.grossMinor) })} onConfirm={(reason) => act('reject', reason)} />
             </>
@@ -134,12 +147,12 @@ function Row({ adminId, w }: { adminId: string; w: AdminWithdrawal }) {
 
 type PendingPaid = Omit<PaidBody, 'requestKey'>;
 
-/** "Mark paid": how it was paid, the bank's reference and the day; then one owned request with its key. */
-function MarkPaid({ adminId, w }: { adminId: string; w: AdminWithdrawal }) {
+/** "Mark paid": how it was paid, the bank's reference and the day; then one owned request with its key (held by the row). */
+function MarkPaid({ w, owned, queueKey }: { w: AdminWithdrawal; owned: ReturnType<typeof useOwnedOp<PendingPaid>>; queueKey: readonly unknown[] }) {
   const { api } = useSession();
   const queryClient = useQueryClient();
   const { perform, busy } = useOneAtATime('withdrawal');
-  const { op, send, settle } = useOwnedOp<PendingPaid>(`admin-withdrawal-paid:${adminId}:${w._id}`);
+  const { op, send, settle } = owned;
   const [open, setOpen] = useState(false);
   const [method, setMethod] = useState<PaidMethod>('bank_transfer');
   const [reference, setReference] = useState('');

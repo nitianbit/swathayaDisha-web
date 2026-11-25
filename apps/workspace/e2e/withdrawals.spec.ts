@@ -27,6 +27,12 @@ interface Backend {
   weeklyOnRequest: boolean;
   losePaidNext: boolean;
   lots: Json[];
+  /** WQ29b (r32b): `WALLET_CHARGEBACK_FLAG_ONLY` on (a pharmacy's dispute is then flagged only; off, the default, it is taken). */
+  flagOnly: boolean;
+  /** The paid step finds a recorded dispute on the money the withdrawal holds (409 WITHDRAWAL_LOT_DISPUTED). */
+  lotDisputed: boolean;
+  /** The server works the fee out differently from the quote (the card money changed meanwhile). */
+  feeShift: number;
 }
 const rupees = (minor: number) => `₹${(minor / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const feeOf = (amount: number) => (amount === 100_000 ? 2_000 : 0);
@@ -44,7 +50,7 @@ const withdrawal = (i: number, o: Json = {}): Json => {
 async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
   const b: Backend = { calls: [], enabled: true, nowMinor: 300_000, nextAllowedAt: null, destination: { state: 'verified', masked: 'Bank ••••6789', detailsVersion: 3 },
-    withdrawals: [], keys: {}, loseNextRequest: false, weeklyOnRequest: false, losePaidNext: false,
+    withdrawals: [], keys: {}, loseNextRequest: false, weeklyOnRequest: false, losePaidNext: false, flagOnly: false, lotDisputed: false, feeShift: 0,
     lots: [{ _id: LOT, paymentRecordId: 'c1'.repeat(12), amountMinor: 200_000, gatewayFeeMinor: 4_000, feeState: 'known', disputeState: 'none', closed: false,
       remainingMinor: 150_000, createdAt: '2026-11-10T05:00:00.000Z' }], ...init };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -98,7 +104,8 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
         if (b.keys[key]) return ok(route, { withdrawal: b.withdrawals.find((x) => x._id === b.keys[key]), wallet: {}, replayed: true });
         if (amount < 50_000) return refuse(route, 400, 'WITHDRAWAL_BELOW_MINIMUM', { minimumMinor: 50_000 });
         if (b.weeklyOnRequest) { b.nextAllowedAt = NEXT_WEEK; return refuse(route, 409, 'WITHDRAWAL_WEEKLY_LIMIT', { nextAllowedAt: NEXT_WEEK }); }
-        const w = withdrawal(b.withdrawals.length + 1, { grossMinor: amount, destination: { masked: b.destination.masked, detailsVersion: body!.detailsVersion } });
+        const w = withdrawal(b.withdrawals.length + 1, { grossMinor: amount, destination: { masked: b.destination.masked, detailsVersion: body!.detailsVersion },
+          ...(b.feeShift ? { feeMinor: feeOf(amount) + b.feeShift, transferMinor: amount - feeOf(amount) - b.feeShift } : {}) });
         b.withdrawals.unshift(w);
         b.keys[key] = String(w._id);
         b.nowMinor -= amount;
@@ -135,6 +142,7 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
       const w = b.withdrawals.find((x) => x._id === adm[1])!;
       if (!adm[2]) return ok(route, w);
       if (body!.expectedVersion !== w.version && !(adm[3] === 'paid' && w.state === 'paid')) return refuse(route, 409, 'WITHDRAWAL_CHANGED');
+      if (adm[3] === 'paid' && b.lotDisputed) return refuse(route, 409, 'WITHDRAWAL_LOT_DISPUTED');
       if (adm[3] === 'paid') {
         if (w.state !== 'paid') Object.assign(w, { state: 'paid', version: Number(w.version) + 1, paid: { method: body!.method, reference: body!.reference, paidOn: body!.paidOn, at: NOW.toISOString() } });
         if (b.losePaidNext) { b.losePaidNext = false; return route.abort('connectionreset'); }
@@ -146,7 +154,13 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
     const flag = /^\/admin\/wallet-lots\/(\w{24})\/(chargeback|recover)$/.exec(path);
     if (flag) {
       const lot = b.lots.find((x) => x._id === flag[1])!;
-      if (flag[2] === 'chargeback') { lot.disputeState = 'lost'; return ok(route, { flagged: true, credited: true, replayed: false, lotId: LOT }); }
+      if (flag[2] === 'chargeback') {
+        lot.disputeState = 'lost';
+        if (b.flagOnly) return ok(route, { flagged: true, credited: true, replayed: false, lotId: LOT });
+        // r32b: with the flag-only switch off (the default) a pharmacy's lost dispute is taken at once (the production answer).
+        lot.chargedBackAt = NOW.toISOString();
+        return ok(route, { entry: { _id: 'e9'.repeat(12), kind: 'chargeback', amountMinor: 150_000 }, wallet: { balancePaise: 0, receivableMinor: 50_000, frozen: true }, replayed: false });
+      }
       if (lot.disputeState !== 'lost') return refuse(route, 409, 'DISPUTE_NOT_RECORDED');
       const replayed = !!lot.chargedBackAt;
       lot.chargedBackAt = NOW.toISOString();
@@ -328,8 +342,8 @@ test('admin: a lost "mark paid" answer is checked by reading the withdrawal; sen
   expect(b.withdrawals[0]!.state).toBe('paid');
 });
 
-test('admin Recover on a pharmacy’s card top-up: the dispute is recorded first (flag only), then the money is taken back once', async ({ page }) => {
-  const b = await mockBackend(page);
+test('admin Recover on a pharmacy’s card top-up (the flag-only switch on): the dispute is flagged first, then the money is taken back once', async ({ page }) => {
+  const b = await mockBackend(page, { flagOnly: true });
   await signIn(page, 'Admin');
   await page.goto(`/#/admin/pharmacy-wallets/${PH}`);
   const lots = page.getByRole('region', { name: 'Card top-ups' });
@@ -348,4 +362,60 @@ test('admin Recover on a pharmacy’s card top-up: the dispute is recorded first
   const recover = b.calls.filter((c) => c.method === 'POST' && c.path === `/admin/wallet-lots/${LOT}/recover`);
   expect(recover).toHaveLength(1);
   expect(recover[0]!.body).toMatchObject({ reason: 'Bank took it back' });
+});
+
+// ── WQ29b (review of 313979a; backend r32b §26.17.7) ──
+
+test('WQ29b: a pharmacy’s card dispute (flag-only switch off, the default) says the money is taken now, and says it was taken', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page, 'Admin');
+  await page.goto(`/#/admin/pharmacy-wallets/${PH}`);
+  const lots = page.getByRole('region', { name: 'Card top-ups' });
+  await lots.getByRole('button', { name: 'Record a card dispute' }).click();
+  await expect(lots.getByText('The money is taken back from the wallet now', { exact: false })).toBeVisible();
+  await expect(lots.getByText('Nothing is taken from the wallet', { exact: false })).toHaveCount(0);
+  await lots.getByLabel('What did the bank say?').fill('Chargeback lost');
+  await lots.getByRole('button', { name: 'Yes, record it' }).click();
+  await expect(lots.getByText('Card dispute recorded on the ₹2,000.00 top-up, and the money was taken back from the wallet', { exact: false })).toBeVisible();
+  await expect(lots.getByText('Money taken back')).toBeVisible();
+  await expect(lots.getByRole('button', { name: 'Recover the money' })).toHaveCount(0);
+  expect(b.calls.filter((c) => c.path.endsWith('/recover'))).toHaveLength(0);
+});
+
+test('WQ29b: Mark paid refused on disputed money is said in words', async ({ page }) => {
+  await mockBackend(page, { withdrawals: [withdrawal(1)], lotDisputed: true });
+  await signIn(page, 'Admin');
+  await page.goto('/#/admin/withdrawals');
+  const row = page.getByRole('table', { name: 'Withdrawals, oldest first' }).getByRole('row').nth(1);
+  await row.getByRole('button', { name: 'Mark paid' }).click();
+  await row.getByLabel('Bank reference (UTR)').fill('UTR12345678');
+  await row.getByRole('button', { name: 'Next: check' }).click();
+  await row.getByRole('button', { name: 'Yes, mark it paid' }).click();
+  await expect(row.getByText('A card dispute was recorded on money this withdrawal holds. Reject it instead of paying it.')).toBeVisible();
+  await expect(row.getByRole('button', { name: 'Reject' })).toBeVisible();
+});
+
+test('WQ29b: a fee worked out differently from the quote is said with the new figures; a resent request no longer waiting says its state', async ({ page }) => {
+  const b = await mockBackend(page, { feeShift: 1_000 });
+  await signIn(page);
+  await page.goto('/#/pharmacy/wallet');
+  await section(page).getByLabel('Amount to withdraw (₹)').fill('1000');
+  await section(page).getByRole('button', { name: 'Next: see the fee' }).click();
+  await expect(page.getByRole('group', { name: 'Check and withdraw' })).toContainText('Card fee on unspent card money: ₹20.00.');
+  await page.getByRole('button', { name: 'Withdraw ₹1,000.00' }).click();
+  await expect(section(page).getByText('The fee changed before it was recorded: card fee ₹30.00; you receive ₹970.00 of ₹1,000.00.', { exact: false })).toBeVisible();
+
+  // A lost answer, then the same request sent again after that withdrawal was cancelled elsewhere.
+  b.feeShift = 0;
+  b.nextAllowedAt = null;
+  b.loseNextRequest = true;
+  await page.reload();
+  await section(page).getByLabel('Amount to withdraw (₹)').fill('600');
+  await section(page).getByRole('button', { name: 'Next: see the fee' }).click();
+  await page.getByRole('button', { name: 'Withdraw ₹600.00' }).click();
+  await expect(section(page).getByText(/The outcome of this withdrawal is not known yet/)).toBeVisible();
+  Object.assign(b.withdrawals[0]!, { state: 'cancelled', version: 1 });
+  await section(page).getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(section(page).getByText('This request was already recorded earlier. It is now: Cancelled.')).toBeVisible();
+  expect(posts(b, '/wallet/withdrawals')).toHaveLength(3);
 });

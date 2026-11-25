@@ -29,13 +29,17 @@ export interface WithdrawalSource {
   api: WithdrawalsApi;
   /** May ask for and cancel withdrawals (a lab member needs `wallet.manage`). */
   canAct: boolean;
-  /** Where the destination is set: the pharmacy's form here, or a link (a lab's Finance, a doctor's Earnings). */
-  destination: { save: (body: PayoutDetailsInput, expectedDetailsVersion: number) => Promise<SettlementAccount> } | { link: string; page: 'finance' | 'earnings' };
+  /**
+   * Where the destination is set: the pharmacy's form here, a link (a lab's Finance, a doctor's Earnings), or (WQ29b) a lab
+   * member who cannot open Finance is told to ask a lab owner.
+   */
+  destination: { save: (body: PayoutDetailsInput, expectedDetailsVersion: number) => Promise<SettlementAccount> } | { link: string; page: 'finance' | 'earnings' }
+    | { askOwner: true };
 }
 
 const WORDED = ['PAYOUT_DESTINATION_NOT_VERIFIED', 'PAYOUT_DETAILS_CHANGED', 'WALLET_FROZEN', 'WALLET_RECEIVABLE', 'WITHDRAWALS_DISABLED', 'WITHDRAWAL_CHANGED',
   'WITHDRAWAL_NOT_REQUESTED', 'WITHDRAWAL_NOT_FOUND', 'WITHDRAWAL_NOT_PAID', 'IDEMPOTENCY_KEY_REUSED', 'REQUEST_ABANDONED', 'INDEXES_OUTDATED',
-  'SPECIALIST_NOT_VERIFIED', 'REFERENCE_REUSED', 'DISPUTE_NOT_RECORDED', 'NOTHING_TO_RECOVER'] as const;
+  'SPECIALIST_NOT_VERIFIED', 'REFERENCE_REUSED', 'DISPUTE_NOT_RECORDED', 'NOTHING_TO_RECOVER', 'WITHDRAWAL_LOT_DISPUTED'] as const;
 type Worded = (typeof WORDED)[number];
 const isWorded = (code: string | null): code is Worded => (WORDED as readonly (string | null)[]).includes(code);
 const money = (v: unknown) => (Number.isFinite(Number(v)) ? formatPaise(Number(v)) : null);
@@ -96,6 +100,7 @@ function Destination({ source, onNote }: { source: WithdrawalSource; onNote: (n:
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const d = source.destination;
+  if ('askOwner' in d) return <p>{t('dest.askOwner')}</p>;
   if ('link' in d) {
     const page = <Link key="page" to={d.link}>{d.page === 'finance' ? t('dest.finance') : t('dest.earnings')}</Link>;
     return <p><Parts of={t.rich('dest.elsewhere', { page })} /></p>;
@@ -115,8 +120,9 @@ function Destination({ source, onNote }: { source: WithdrawalSource; onNote: (n:
 }
 
 type Note = { tone: 'ok' | 'error' | 'warn'; text: string };
-interface PendingWithdrawal { amountMinor: number; detailsVersion: number }
-interface Review extends PendingWithdrawal { requestKey: string; feeMinor: number; transferMinor: number }
+/** What is sent (`amountMinor`, `detailsVersion`) and, kept with it on this device only, the figures the person confirmed. */
+interface PendingWithdrawal { amountMinor: number; detailsVersion: number; quotedFeeMinor: number; quotedTransferMinor: number }
+interface Review extends PendingWithdrawal { requestKey: string; masked: string }
 
 const feeWords = (r: { feeMinor: number; transferMinor: number; grossMinor: number }) => (r.feeMinor > 0
   ? t('quote.fee', { fee: formatPaise(r.feeMinor), transfer: formatPaise(r.transferMinor), gross: formatPaise(r.grossMinor) })
@@ -149,9 +155,13 @@ function Withdraw({ source, w }: { source: WithdrawalSource; w: Withdrawable }) 
     if (problem === 'above_available') { setError(t('amount.above', { max: formatPaise(w.withdrawableNowMinor) })); return; }
     setError(null);
     try {
-      const q = (await perform(() => source.api.withdrawable(amount))).quote;
-      if (!q || !q.available) { setError(t('amount.above', { max: formatPaise(w.withdrawableNowMinor) })); return; }
-      setReview({ amountMinor: amount, detailsVersion: w.destination.detailsVersion, requestKey: newRequestKey(), feeMinor: q.feeMinor, transferMinor: q.transferMinor });
+      const fresh = await perform(() => source.api.withdrawable(amount));
+      const q = fresh.quote;
+      if (!q || !q.available) { setError(t('amount.above', { max: formatPaise(fresh.withdrawableNowMinor) })); return; }
+      // WQ29b: the destination (and its version, the fence) as the fresh answer has it, not as the page first read it.
+      if (fresh.destination.state !== 'verified') { setError(null); await refresh(); return; }
+      setReview({ amountMinor: amount, detailsVersion: fresh.destination.detailsVersion, requestKey: newRequestKey(), quotedFeeMinor: q.feeMinor,
+        quotedTransferMinor: q.transferMinor, masked: fresh.destination.masked ?? '' });
     } catch (err) {
       setError(withdrawalWords(err));
     }
@@ -165,7 +175,13 @@ function Withdraw({ source, w }: { source: WithdrawalSource; w: Withdrawable }) 
     if (r.kind === 'stale') return;
     if (r.kind === 'ok') {
       setReview(null); setText('');
-      setNote({ tone: 'ok', text: t('done', { transfer: formatPaise(r.value.withdrawal.transferMinor), masked: r.value.withdrawal.destination.masked ?? masked }) });
+      const x = r.value.withdrawal;
+      // WQ29b: the same key answered an earlier request that is no longer waiting: say what the server holds.
+      if (r.value.replayed && x.state !== 'requested') setNote({ tone: 'warn', text: t('replayed', { state: stateWords(x.state) }) });
+      // WQ29b: the server worked the fee out on the card money it holds now (until its fence, r35): never the quote's figures.
+      else if (p.body && (x.feeMinor !== p.body.quotedFeeMinor || x.transferMinor !== p.body.quotedTransferMinor)) {
+        setNote({ tone: 'warn', text: t('changed', { fee: formatPaise(x.feeMinor), transfer: formatPaise(x.transferMinor), gross: formatPaise(x.grossMinor) }) });
+      } else setNote({ tone: 'ok', text: t('done', { transfer: formatPaise(x.transferMinor), masked: x.destination.masked ?? masked }) });
       await refresh();
       return;
     }
@@ -178,7 +194,7 @@ function Withdraw({ source, w }: { source: WithdrawalSource; w: Withdrawable }) 
     setGivingUp(true);
     try {
       const r = await perform(() => source.api.abandon(p.requestKey));
-      if (r.state === 'used') { settle(p.requestKey); found(r.withdrawal); await refresh(); return; }
+      if (r.state === 'used') { settle(p.requestKey); setReview(null); found(r.withdrawal); await refresh(); return; }
       if (r.state !== 'abandoned') { setNote({ tone: 'warn', text: t('unconfirmed.cannotGiveUp') }); return; }
       settle(p.requestKey); setReview(null);
       setNote({ tone: 'ok', text: t('unconfirmed.givenUp') });
@@ -222,10 +238,10 @@ function Withdraw({ source, w }: { source: WithdrawalSource; w: Withdrawable }) 
         : review ? (
         <div className="confirm" role="group" aria-label={t('quote.title')}>
           <p>{t('quote.amount', { gross: formatPaise(review.amountMinor) })}</p>
-          <p><strong>{feeWords({ ...review, grossMinor: review.amountMinor })}</strong></p>
-          <p>{t('dest.to', { masked })}</p>
+          <p><strong>{feeWords({ feeMinor: review.quotedFeeMinor, transferMinor: review.quotedTransferMinor, grossMinor: review.amountMinor })}</strong></p>
+          <p>{t('dest.to', { masked: review.masked })}</p>
           <div className="confirm-actions">
-            <Button busy={busy} onClick={() => { setNote(null); const { requestKey, amountMinor, detailsVersion } = review; void ask(startOp(requestKey, { amountMinor, detailsVersion })); }}>
+            <Button busy={busy} onClick={() => { setNote(null); const { requestKey, masked: _m, ...body } = review; void ask(startOp(requestKey, body)); }}>
               {t('quote.send', { gross: formatPaise(review.amountMinor) })}
             </Button>
             <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('quote.back')}</Button>
@@ -264,8 +280,8 @@ function WithdrawalList({ source }: { source: WithdrawalSource }) {
       await queryClient.invalidateQueries({ queryKey: source.walletKey });
     }
   }
-  if (q.isPending) return <Loading />;
-  if (q.isError) return <ErrorState message={withdrawalWords(q.error)} onRetry={() => void q.refetch()} />;
+  // WQ29b: a failed read again keeps the list read before.
+  if (!q.data) return q.isError ? <ErrorState message={withdrawalWords(q.error)} onRetry={() => void q.refetch()} /> : <Loading />;
   if (q.data.items.length === 0 && pages.page === 1) return null;
   return (
     <>
