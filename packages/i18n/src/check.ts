@@ -4,7 +4,7 @@ import type { Entry, Messages } from './index.ts';
  * The catalogue check (docs/I18N_PLAN.md §5.4), as a pure function so it is tested on its own; `catalogues.test.ts`
  * runs it on every catalogue in the repo.
  */
-export type ProblemKind = 'extra' | 'shape' | 'plural' | 'empty' | 'placeholders' | 'stale';
+export type ProblemKind = 'extra' | 'shape' | 'plural' | 'empty' | 'syntax' | 'placeholders' | 'stale';
 export interface Problem { key: string; kind: ProblemKind }
 export interface CheckResult {
   problems: Problem[];
@@ -15,6 +15,11 @@ export interface CheckResult {
 }
 
 const placeholders = (text: string) => new Set([...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]!));
+/**
+ * Words may hold only plain `{name}` placeholders. Any other brace (`{{x}}`, `{x, number}`, `{-x}`) or an i18next nesting
+ * `$t(…)` would be read by the engine its own way: a machine-translated `{{amount}}` would show braces on screen.
+ */
+export const foreignSyntax = (text: string) => /[{}]/.test(text.replace(/\{\w+\}/g, '')) || text.includes('$t(');
 const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>) => a.size === b.size && [...a].every((x) => b.has(x));
 const englishNames = (e: Entry) => (typeof e === 'string' ? placeholders(e) : new Set([...placeholders(e.one), ...placeholders(e.other)]));
 
@@ -52,6 +57,7 @@ export function checkTranslation(en: Messages, lang: string, translation: Readon
       texts.push(...Object.values(own as Record<string, string>));
     }
     if (texts.some((x) => !x.trim())) { problems.push({ key, kind: 'empty' }); continue; }
+    if (texts.some(foreignSyntax)) { problems.push({ key, kind: 'syntax' }); continue; }
     const expected = englishNames(english);
     const used = new Set(texts.flatMap((x) => [...placeholders(x)]));
     // A plural form may leave out {count} (Hindi "one" covers 0 and 1), but no form may add a name.

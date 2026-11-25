@@ -31,4 +31,13 @@ describe('checkTranslation', () => {
     expect(checkTranslation(en, 'hi', { title: 'वॉलेट' }, { title: 'Purse' }).problems).toEqual([{ key: 'title', kind: 'stale' }]);
     expect(checkTranslation(en, 'hi', { title: 'वॉलेट' }, {}).problems).toEqual([{ key: 'title', kind: 'stale' }]);
   });
+
+  it('refuses braces other than a plain {name}, and i18next nesting', () => {
+    for (const collect of ['{who} से {{amount}} लें।', '{who} से {amount, number} लें।', '{who} से {-amount} {amount} लें।', '{who} से {amount} लें। $t(title)', '{who} से {amount} लें। }']) {
+      expect(checkTranslation(en, 'hi', { collect }, source).problems).toEqual([{ key: 'collect', kind: 'syntax' }]);
+    }
+    expect(checkTranslation(en, 'hi', { units: { one: '{{count}} यूनिट', other: '{count} यूनिट' } }, source).problems)
+      .toEqual([{ key: 'units', kind: 'syntax' }]);
+    expect(checkTranslation(en, 'hi', { collect: '{who} से {amount} लें।' }, source).problems).toEqual([]);
+  });
 });

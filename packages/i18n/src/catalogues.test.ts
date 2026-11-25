@@ -3,7 +3,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkTranslation, type Problem } from './check.ts';
+import { checkTranslation, foreignSyntax, type Problem } from './check.ts';
 import type { Messages } from './index.ts';
 import { LANGUAGES, RELEASED, type AppName } from './languages.ts';
 
@@ -34,7 +34,42 @@ const readJson = (path: string): Record<string, unknown> => (existsSync(path) ? 
 const dirs = SOURCES.flatMap((s) => catalogueDirs(join(ROOT, s)));
 const translatedLanguages = LANGUAGES.map((l) => l.code).filter((c) => c !== 'en');
 
+/** Every source file that can register a catalogue (tests excluded). */
+function sourceFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name);
+    if (statSync(path).isDirectory()) {
+      if (name !== 'node_modules') out.push(...sourceFiles(path));
+    } else if (/\.tsx?$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name)) {
+      out.push(path);
+    }
+  }
+  return out;
+}
+
 describe('catalogues', () => {
+  it('each has its own name: it is an i18next namespace, and a second catalogue of the same name would drop the first', () => {
+    const registered = SOURCES.flatMap((s) => sourceFiles(join(ROOT, s))).flatMap((file) =>
+      [...readFileSync(file, 'utf8').matchAll(/\bcatalogue\(\s*['"`]([^'"`]+)['"`]/g)].map((m) => ({ name: m[1]!, file: relative(ROOT, file) })));
+    const byName = new Map<string, string[]>();
+    for (const r of registered) byName.set(r.name, [...(byName.get(r.name) ?? []), r.file]);
+    expect([...byName].filter(([, files]) => files.length > 1).map(([name, files]) => `${name}: ${files.join(', ')}`)).toEqual([]);
+    // Every catalogue folder registers itself, so a name can be checked for each.
+    expect(registered.length).toBeGreaterThanOrEqual(dirs.length);
+  });
+
+  it('English words hold only plain {name} placeholders (what the translations are checked against)', async () => {
+    const bad: string[] = [];
+    for (const dir of dirs) {
+      const en = (await import(/* @vite-ignore */ join(dir, 'en.ts')) as { default: Messages }).default;
+      for (const [key, entry] of Object.entries(en)) {
+        if ((typeof entry === 'string' ? [entry] : [entry.one, entry.other]).some(foreignSyntax)) bad.push(`${relative(ROOT, dir)} ${key}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
   it('finds the catalogues (the shared UI words at least)', () => {
     expect(dirs.map((d) => relative(ROOT, d))).toContain(join('packages', 'ui', 'src', 'i18n'));
   });
