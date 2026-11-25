@@ -12,8 +12,11 @@ import { messageOf } from '../../errors.ts';
 import { definitelyNotRecorded } from '../../requests.ts';
 import { formatDay, LabOnly, modesOf, slotLabel, useNow, useScopedBranches } from './labs.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
+import { t, type PartnerKey } from '../../i18n/partner/index.ts';
 
 const DAY_LABEL = Object.fromEntries(WEEKDAYS.map((d) => [d.value, d.label])) as Record<Weekday, string>;
+/** A schedule named inside other sentences ("Weekly template: home collection at Main Road"). */
+const WHERE_KEY = { home: 'slots.where.home', lab: 'slots.where.lab' } as const satisfies Record<VisitMode, PartnerKey>;
 
 /** Server-owned lab slots of one branch and visit mode, a week at a time; `slots.manage` edits them. */
 export function SlotsScreen() {
@@ -28,9 +31,8 @@ function Slots({ ctx }: { ctx: ScopeContext }) {
   const canManage = holdsAny(ctx.actor, ['slots.manage']);
   return (
     <>
-      <PartnerPageHeading ctx={ctx} title="Slots" partnerName={partner.data?.name}>
-        Times customers can book, per branch and visit type. Slots come from the weekly template for the next {ROLLING_DAYS} days;
-        {canManage ? ' you can add one-off slots, change seats, and close or reopen a slot.' : ' you can view them.'}
+      <PartnerPageHeading ctx={ctx} title={t('slots.title')} partnerName={partner.data?.name}>
+        {t(canManage ? 'slots.intro.manage' : 'slots.intro.view', { days: ROLLING_DAYS })}
       </PartnerPageHeading>
       <LabOnly ctx={ctx}><Schedule ctx={ctx} canManage={canManage} /></LabOnly>
     </>
@@ -46,22 +48,22 @@ function Schedule({ ctx, canManage }: { ctx: ScopeContext; canManage: boolean })
   const modes = branch ? modesOf(branch) : [];
   const visitMode = modes.includes(mode as VisitMode) ? (mode as VisitMode) : modes[0];
 
-  if (branches.isPending) return <Loading label="Loading branches…" />;
+  if (branches.isPending) return <Loading label={t('common.loadingBranches')} />;
   if (branches.isError) return <ErrorState message={messageOf(branches.error)} onRetry={() => void branches.refetch()} />;
   if (!branch || !visitMode) {
-    return <Empty title="No branch takes bookings">None of your branches offers home collection or lab visits. Turn them on under Branches.</Empty>;
+    return <Empty title={t('slots.noBranch.title')}>{t('slots.noBranch.body')}</Empty>;
   }
   return (
     <>
       <div className="ws-search">
         <div className="j-field ws-filter">
-          <label htmlFor="slot-branch">Branch</label>
+          <label htmlFor="slot-branch">{t('slots.branch')}</label>
           <select id="slot-branch" value={branch._id} onChange={(e) => setBranchId(e.target.value)}>
             {usable.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
           </select>
         </div>
         <div className="j-field ws-filter">
-          <label htmlFor="slot-mode">Visit type</label>
+          <label htmlFor="slot-mode">{t('slots.visitType')}</label>
           <select id="slot-mode" value={visitMode} onChange={(e) => setMode(e.target.value as VisitMode)}>
             {modes.map((m) => <option key={m} value={m}>{LAB_VISIT_MODE_LABEL[m]}</option>)}
           </select>
@@ -81,7 +83,7 @@ function BranchSchedule({ ctx, branch, mode, canManage }: { ctx: ScopeContext; b
   const [open, setOpen] = useState<{ kind: 'template' | 'slot'; gen: number } | null>(null);
   const generation = useRef(0);
   const [notice, setNotice] = useState<string | null>(null);
-  const where = `${LAB_VISIT_MODE_LABEL[mode].toLowerCase()} at ${branch.name}`;
+  const where = t(WHERE_KEY[mode], { branch: branch.name });
   const openEditor = (kind: 'template' | 'slot') => { generation.current += 1; setOpen({ kind, gen: generation.current }); setNotice(null); };
   const current = (gen: number) => generation.current === gen;
   const closeIf = (gen: number) => { if (current(gen)) setOpen(null); };
@@ -90,8 +92,8 @@ function BranchSchedule({ ctx, branch, mode, canManage }: { ctx: ScopeContext; b
       {notice && <Alert tone="ok">{notice}</Alert>}
       {canManage && (
         <div className="ws-actions">
-          {open?.kind !== 'template' && <Button variant="secondary" onClick={() => openEditor('template')}>Edit the weekly template</Button>}
-          {open?.kind !== 'slot' && <Button variant="secondary" onClick={() => openEditor('slot')}>Add a one-off slot</Button>}
+          {open?.kind !== 'template' && <Button variant="secondary" onClick={() => openEditor('template')}>{t('slots.editTemplate')}</Button>}
+          {open?.kind !== 'slot' && <Button variant="secondary" onClick={() => openEditor('slot')}>{t('slots.addOneOff')}</Button>}
         </div>
       )}
       {canManage && open?.kind === 'template' && (() => {
@@ -107,16 +109,16 @@ function BranchSchedule({ ctx, branch, mode, canManage }: { ctx: ScopeContext; b
           <ManualSlotForm key={gen} ctx={ctx} branch={branch} mode={mode} defaultDate={week < today ? today : week} onClose={() => closeIf(gen)}
             onAdded={(s) => {
               if (current(gen)) { setOpen(null); setWeek(mondayOf(s.date)); }
-              setNotice(`Slot ${slotLabel(s)} added with ${s.capacity} ${s.capacity === 1 ? 'seat' : 'seats'}.`);
+              setNotice(t('slots.added', { slot: slotLabel(s), count: s.capacity }));
             }} />
         );
       })()}
       <section className="ws-section" aria-labelledby="week-h">
-        <h2 id="week-h">Week of {formatDay(week)}</h2>
+        <h2 id="week-h">{t('slots.weekOf', { day: formatDay(week) })}</h2>
         <div className="ws-actions">
-          <Button variant="secondary" onClick={() => setWeek(addDays(week, -7))}>Previous week</Button>
-          <Button variant="secondary" disabled={week === mondayOf(today)} onClick={() => setWeek(mondayOf(today))}>This week</Button>
-          <Button variant="secondary" onClick={() => setWeek(addDays(week, 7))}>Next week</Button>
+          <Button variant="secondary" onClick={() => setWeek(addDays(week, -7))}>{t('slots.previousWeek')}</Button>
+          <Button variant="secondary" disabled={week === mondayOf(today)} onClick={() => setWeek(mondayOf(today))}>{t('slots.thisWeek')}</Button>
+          <Button variant="secondary" onClick={() => setWeek(addDays(week, 7))}>{t('slots.nextWeek')}</Button>
         </div>
         {/* Keyed by week: an open capacity change or confirmation belongs to the week it was opened in. */}
         <WeekView key={week} ctx={ctx} branch={branch} mode={mode} week={week} canManage={canManage} />
@@ -141,23 +143,26 @@ function WeekView({ ctx, branch, mode, week, canManage }: { ctx: ScopeContext; b
   const refresh = () => queryClient.invalidateQueries({ queryKey: [...ctx.key, 'slots'] });
   const changed = (message: string) => { setNotice(message); setEditing(null); void refresh(); };
 
-  if (q.isPending) return <Loading label="Loading slots…" />;
+  if (q.isPending) return <Loading label={t('slots.loading')} />;
   if (q.isError) return <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />;
   const slots = q.data ?? [];
   return (
     <>
       {notice && <Alert tone="ok">{notice}</Alert>}
-      {slots.length === 0 && <Empty title="No slots this week">{canManage ? 'Edit the weekly template or add a one-off slot.' : 'No times are set up for this week.'}</Empty>}
+      {slots.length === 0 && <Empty title={t('slots.noneThisWeek.title')}>{canManage ? t('slots.noneThisWeek.manage') : t('slots.noneThisWeek.view')}</Empty>}
       {slots.length > 0 && days.map((day) => {
         const rows = slots.filter((s) => s.date === day);
         return (
           <div key={day} className="ws-day">
             <h3 id={`day-${day}`}>{formatDay(day)}</h3>
-            {rows.length === 0 ? <p className="ws-muted">No slots.</p> : (
+            {rows.length === 0 ? <p className="ws-muted">{t('slots.noneThisDay')}</p> : (
               <div className="ws-table-wrap">
                 <table className="j-table" aria-labelledby={`day-${day}`}>
                   <thead>
-                    <tr><th scope="col">Time</th><th scope="col">Booked</th><th scope="col">Seats</th><th scope="col">Status</th><th scope="col">From</th>{canManage && <th scope="col">Actions</th>}</tr>
+                    <tr>
+                      <th scope="col">{t('slots.col.time')}</th><th scope="col">{t('slots.col.booked')}</th><th scope="col">{t('slots.col.seats')}</th>
+                      <th scope="col">{t('slots.col.status')}</th><th scope="col">{t('slots.col.from')}</th>{canManage && <th scope="col">{t('slots.col.actions')}</th>}
+                    </tr>
                   </thead>
                   <tbody>
                     {rows.map((s) => (
@@ -188,32 +193,32 @@ function SlotRow({ ctx, slot, canManage, started, editing, onEdit, onChanged, on
       <td>{slot.capacity}</td>
       <td>
         {slot.closed ? <Badge tone="danger">{SLOT_CLOSURE_LABEL[slot.closed]}</Badge>
-          : started ? <Badge>Started</Badge> : full ? <Badge tone="warn">Full</Badge> : <Badge tone="ok">Open</Badge>}
+          : started ? <Badge>{t('slots.started')}</Badge> : full ? <Badge tone="warn">{t('slots.full')}</Badge> : <Badge tone="ok">{t('slots.open')}</Badge>}
       </td>
-      <td>{slot.source === 'manual' ? 'One-off' : 'Template'}</td>
+      <td>{slot.source === 'manual' ? t('slots.oneOff') : t('slots.template')}</td>
       {canManage && (
         <td>
           {started ? <span className="ws-muted">—</span> : editing
-            ? <CapacityForm ctx={ctx} slot={slot} onCancel={() => onEdit(false)} onDone={(s) => onChanged(`${label} now has ${s.capacity} ${s.capacity === 1 ? 'seat' : 'seats'}.`)} onRefused={onRefused} />
+            ? <CapacityForm ctx={ctx} slot={slot} onCancel={() => onEdit(false)} onDone={(s) => onChanged(t('slots.nowSeats', { slot: label, count: s.capacity }))} onRefused={onRefused} />
             : (
               <div className="ws-actions">
-                <Button variant="secondary" aria-label={`Change seats of ${label}`} onClick={() => onEdit(true)}>Change seats</Button>
+                <Button variant="secondary" aria-label={t('slots.changeSeatsOf', { slot: label })} onClick={() => onEdit(true)}>{t('slots.changeSeats')}</Button>
                 {slot.closed === null && (
-                  <ConfirmAction label="Close" confirmLabel={`Close ${label}`} danger
-                    consequence={<>Close {label}? Customers can no longer book it.{slot.booked > 0 ? ` The ${slot.booked} booked ${slot.booked === 1 ? 'customer keeps' : 'customers keep'} their seats; reschedule or reject those bookings separately.` : ''} You can reopen it later.</>}
+                  <ConfirmAction label={t('slots.close')} confirmLabel={t('slots.closeSlot', { slot: label })} danger
+                    consequence={slot.booked > 0 ? t('slots.close.consequenceBooked', { slot: label, count: slot.booked }) : t('slots.close.consequence', { slot: label })}
                     onConfirm={async () => {
-                      try { await ctx.labs.closeSlot(slot._id); onChanged(`${label} is closed.`); } catch (err) { onRefused(); throw err; }
+                      try { await ctx.labs.closeSlot(slot._id); onChanged(t('slots.closed', { slot: label })); } catch (err) { onRefused(); throw err; }
                     }} />
                 )}
                 {reopenable(slot) && (
-                  <ConfirmAction label="Reopen" confirmLabel={`Reopen ${label}`}
-                    consequence={<>Reopen {label}? Customers can book its {Math.max(slot.capacity - slot.booked, 0)} free {slot.capacity - slot.booked === 1 ? 'seat' : 'seats'} again.</>}
+                  <ConfirmAction label={t('slots.reopen')} confirmLabel={t('slots.reopenSlot', { slot: label })}
+                    consequence={t('slots.reopen.consequence', { slot: label, count: Math.max(slot.capacity - slot.booked, 0) })}
                     onConfirm={async () => {
-                      try { await ctx.labs.reopenSlot(slot._id); onChanged(`${label} is open again.`); } catch (err) { onRefused(); throw err; }
+                      try { await ctx.labs.reopenSlot(slot._id); onChanged(t('slots.reopened', { slot: label })); } catch (err) { onRefused(); throw err; }
                     }} />
                 )}
-                {slot.closed === 'holiday' && <span className="ws-muted">Change the branch holidays to open it.</span>}
-                {slot.closed === 'template' && <span className="ws-muted">Add this time to the weekly template to open it.</span>}
+                {slot.closed === 'holiday' && <span className="ws-muted">{t('slots.holidayHint')}</span>}
+                {slot.closed === 'template' && <span className="ws-muted">{t('slots.templateHint')}</span>}
               </div>
             )}
         </td>
@@ -246,12 +251,12 @@ function CapacityForm({ ctx, slot, onCancel, onDone, onRefused }: {
     }
   }
   return (
-    <form className="ws-inline-form" noValidate onSubmit={(e) => void save(e)} aria-label={`Seats of ${slotLabel(slot)}`}>
-      <TextField label="Seats" inputMode="numeric" value={value} error={error} hint={slot.booked ? `${slot.booked} booked` : undefined}
+    <form className="ws-inline-form" noValidate onSubmit={(e) => void save(e)} aria-label={t('slots.seatsOf', { slot: slotLabel(slot) })}>
+      <TextField label={t('slots.seats')} inputMode="numeric" value={value} error={error} hint={slot.booked ? t('slots.bookedCount', { count: slot.booked }) : undefined}
         onChange={(e) => setValue(e.target.value)} />
       <div className="confirm-actions">
-        <Button type="submit" busy={busy}>Save seats</Button>
-        <Button variant="ghost" disabled={busy} onClick={onCancel}>Cancel</Button>
+        <Button type="submit" busy={busy}>{t('slots.saveSeats')}</Button>
+        <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('common.cancel')}</Button>
       </div>
     </form>
   );
@@ -285,7 +290,7 @@ function ManualSlotForm({ ctx, branch, mode, defaultDate, onClose, onAdded }: {
     } catch (err) {
       // No request key on this route, but a second slot at the same start is refused (409 SLOT_EXISTS), so a resend is safe.
       setFailure(definitelyNotRecorded(err) ? messageOf(err)
-        : `${messageOf(err)} The slot may have been added: look for it in the week below before adding it again (a second one at the same time is refused).`);
+        : t('slots.manual.mayBeAdded', { reason: messageOf(err) }));
     } finally {
       setBusy(false);
       void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'slots'] });
@@ -294,19 +299,19 @@ function ManualSlotForm({ ctx, branch, mode, defaultDate, onClose, onAdded }: {
 
   return (
     <section className="ws-section" aria-labelledby="manual-h">
-      <h2 id="manual-h">Add a one-off slot</h2>
-      <p className="ws-muted">For {LAB_VISIT_MODE_LABEL[mode].toLowerCase()} at {branch.name}. Times are India time. A one-off slot is never changed by the weekly template.</p>
+      <h2 id="manual-h">{t('slots.addOneOff')}</h2>
+      <p className="ws-muted">{t('slots.manual.intro', { where: t(WHERE_KEY[mode], { branch: branch.name }) })}</p>
       <form className="rx-form" noValidate onSubmit={(e) => void add(e)}>
         <div className="rx-form-row">
-          <TextField label="Date" type="date" value={date} error={errors.date} onChange={(e) => setDate(e.target.value)} />
-          <TextField label="Starts" type="time" value={start} error={errors.startTime} onChange={(e) => setStart(e.target.value)} />
-          <TextField label="Ends" type="time" value={end} error={errors.endTime} onChange={(e) => setEnd(e.target.value)} />
-          <TextField label="Seats" inputMode="numeric" value={seats} error={errors.capacity} hint={`1 to ${SLOT_SEATS_MAX}`} onChange={(e) => setSeats(e.target.value)} />
+          <TextField label={t('slots.manual.date')} type="date" value={date} error={errors.date} onChange={(e) => setDate(e.target.value)} />
+          <TextField label={t('slots.manual.starts')} type="time" value={start} error={errors.startTime} onChange={(e) => setStart(e.target.value)} />
+          <TextField label={t('slots.manual.ends')} type="time" value={end} error={errors.endTime} onChange={(e) => setEnd(e.target.value)} />
+          <TextField label={t('slots.seats')} inputMode="numeric" value={seats} error={errors.capacity} hint={t('slots.manual.seatsHint', { max: SLOT_SEATS_MAX })} onChange={(e) => setSeats(e.target.value)} />
         </div>
         {failure && <Alert>{failure}</Alert>}
         <div className="confirm-actions">
-          <Button type="submit" busy={busy}>Add slot</Button>
-          <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button type="submit" busy={busy}>{t('slots.manual.add')}</Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>{t('common.cancel')}</Button>
         </div>
       </form>
     </section>
@@ -316,14 +321,13 @@ function ManualSlotForm({ ctx, branch, mode, defaultDate, onClose, onAdded }: {
 // ── Weekly template ──
 
 type TemplateDraft = { slotMinutes: string; capacity: string } & Record<Weekday, SlotWindow[]>;
-const DRAFT_LABEL: Record<keyof TemplateDraft, string> = {
-  slotMinutes: 'slot length', capacity: 'seats per slot',
-  ...Object.fromEntries(TEMPLATE_WEEKDAYS.map((d) => [d, `${DAY_LABEL[d]} times`])) as Record<Weekday, string>,
-};
+/** A template field named in a "changed by someone else" notice. */
+const draftLabel = (k: keyof TemplateDraft) => (k === 'slotMinutes' ? t('slots.field.slotMinutes')
+  : k === 'capacity' ? t('slots.field.capacity') : t('slots.field.dayTimes', { day: DAY_LABEL[k] }));
 
-const toDraft = (t: SlotTemplateInput): TemplateDraft => ({
-  slotMinutes: String(t.slotMinutes), capacity: String(t.capacity),
-  ...Object.fromEntries(TEMPLATE_WEEKDAYS.map((d) => [d, (t.days[d] ?? []).map((w) => ({ ...w }))])) as Record<Weekday, SlotWindow[]>,
+const toDraft = (x: SlotTemplateInput): TemplateDraft => ({
+  slotMinutes: String(x.slotMinutes), capacity: String(x.capacity),
+  ...Object.fromEntries(TEMPLATE_WEEKDAYS.map((d) => [d, (x.days[d] ?? []).map((w) => ({ ...w }))])) as Record<Weekday, SlotWindow[]>,
 });
 const fromDraft = (d: TemplateDraft): SlotTemplateInput => ({
   slotMinutes: /^\d{1,3}$/.test(d.slotMinutes.trim()) ? Number(d.slotMinutes.trim()) : NaN,
@@ -349,8 +353,6 @@ function basisOf(saved: SlotTemplate | null, branch: Branch): Basis {
 /** Whether two templates are the same (the server keeps exactly what is sent). */
 const sameTemplate = (a: SlotTemplateInput, b: SlotTemplateInput) => JSON.stringify(toDraft(a)) === JSON.stringify(toDraft(b));
 
-export const TEMPLATE_CHANGED_MESSAGE = 'Someone else saved the weekly template while you were editing, so nothing was saved. The form now shows what is saved; check it and save again.';
-
 function TemplateEditor({ ctx, branch, mode, where, onClose, onSaved }: {
   ctx: ScopeContext; branch: Branch; mode: VisitMode; where: string; onClose: () => void; onSaved: (message: string) => void;
 }) {
@@ -367,9 +369,9 @@ function TemplateEditor({ ctx, branch, mode, where, onClose, onSaved }: {
   if (!fresh && saved.isSuccess && !saved.isFetching && readsSoFar() > openedAt) setFresh(true);
   return (
     <section className="ws-section" aria-labelledby="tpl-h">
-      <h2 id="tpl-h">Weekly template: {where}</h2>
+      <h2 id="tpl-h">{t('slots.template.title', { where })}</h2>
       {!fresh && saved.isError ? <ErrorState message={messageOf(saved.error)} onRetry={() => void saved.refetch()} />
-        : !fresh ? <Loading label="Reading the saved template…" />
+        : !fresh ? <Loading label={t('slots.template.reading')} />
         : saved.isError ? <ErrorState message={messageOf(saved.error)} onRetry={() => void saved.refetch()} />
         : <TemplateForm ctx={ctx} branch={branch} mode={mode} where={where} saved={saved.data ?? null} reread={read} templateKey={key} onClose={onClose} onSaved={onSaved} />}
     </section>
@@ -397,7 +399,7 @@ function TemplateForm({ ctx, branch, mode, where, saved, reread, templateKey, on
   useEffect(() => {
     const c = rebaseTo(JSON.parse(serverValue) as TemplateDraft);
     baseVersion.current = serverVersion;
-    if (c.length) { setStale(staleMessage(c.map((k) => DRAFT_LABEL[k]))); setConfirming(false); }
+    if (c.length) { setStale(staleMessage(c.map(draftLabel))); setConfirming(false); }
   }, [serverValue, serverVersion, rebaseTo]);
   /** Reads the saved template now (and shows it), moving the form onto it; the conflicting fields, if any. */
   const rebaseOnSaved = async () => {
@@ -407,8 +409,8 @@ function TemplateForm({ ctx, branch, mode, where, saved, reread, templateKey, on
     return { fresh, conflicts: rebaseTo(toDraft(b.template)) };
   };
 
-  const t = d.draft;
-  const body = fromDraft(t);
+  const tpl = d.draft;
+  const body = fromDraft(tpl);
   const counts = Object.fromEntries(TEMPLATE_WEEKDAYS.map((day) => [day, slotTimesFor(body, day).length])) as Record<Weekday, number>;
 
   function check(): boolean {
@@ -431,7 +433,7 @@ function TemplateForm({ ctx, branch, mode, where, saved, reread, templateKey, on
     try {
       // Read again right before replacing: a change made elsewhere since the form opened is shown, not overwritten.
       const { conflicts } = await rebaseOnSaved();
-      if (conflicts.length) { setStale(staleMessage(conflicts.map((k) => DRAFT_LABEL[k]))); setConfirming(false); return; }
+      if (conflicts.length) { setStale(staleMessage(conflicts.map(draftLabel))); setConfirming(false); return; }
       if (!check()) { setConfirming(false); return; }
       sent = fromDraft(d.current().draft);
       // Q11: named by the version just read; another save in between is refused (409 TEMPLATE_CHANGED), never overwritten.
@@ -439,27 +441,29 @@ function TemplateForm({ ctx, branch, mode, where, saved, reread, templateKey, on
       // WQ11d: the saved template is the cache from now on (also when this editor was closed meanwhile).
       if (r.template) queryClient.setQueryData(templateKey, r.template);
       const x = r.expansion;
-      onSaved(`Weekly template saved for ${where}. Next ${ROLLING_DAYS} days: ${x.inserted} slots added, ${x.updated} changed, ${x.closed} closed, ${x.reopened} reopened.`);
+      onSaved(t('slots.template.saved', {
+        where, days: ROLLING_DAYS, inserted: x.inserted, updated: x.updated, closed: x.closed, reopened: x.reopened,
+      }));
     } catch (err) {
       if (isTemplateChanged(err)) {
         // Read the template as saved now and show it: what someone else changed is never overwritten unseen.
         setConfirming(false);
         try {
           const { conflicts } = await rebaseOnSaved();
-          setStale(conflicts.length ? staleMessage(conflicts.map((k) => DRAFT_LABEL[k])) : TEMPLATE_CHANGED_MESSAGE);
-        } catch (e) { setFailure(`Not saved: ${TEMPLATE_CHANGED_MESSAGE} It could not be read again: ${messageOf(e)}`); }
+          setStale(conflicts.length ? staleMessage(conflicts.map(draftLabel)) : t('slots.template.changed'));
+        } catch (e) { setFailure(t('slots.template.notSavedUnread', { changed: t('slots.template.changed'), reason: messageOf(e) })); }
         return;
       }
-      if (definitelyNotRecorded(err) || !sent) { setFailure(`Not saved: ${messageOf(err)}`); return; }
+      if (definitelyNotRecorded(err) || !sent) { setFailure(t('slots.template.notSaved', { reason: messageOf(err) })); return; }
       // The answer was lost: the template as saved now says whether it went through.
       try {
         const now = await queryClient.fetchQuery({ queryKey: templateKey, queryFn: reread, staleTime: 0 });
         if (now && sameTemplate(templateInput(now), sent)) {
-          onSaved(`Weekly template saved for ${where} (its answer was lost; the saved template is what you sent). The slots of the next ${ROLLING_DAYS} days follow it.`);
+          onSaved(t('slots.template.savedAfterLoss', { where, days: ROLLING_DAYS }));
           return;
         }
       } catch { /* still unknown: said below */ }
-      setFailure(`${messageOf(err)} It is not known whether the template was saved. Check the slots, then review and save again if needed.`);
+      setFailure(t('slots.template.unknown', { reason: messageOf(err) }));
     } finally {
       setBusy(false);
       void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'slots'] });
@@ -472,34 +476,33 @@ function TemplateForm({ ctx, branch, mode, where, saved, reread, templateKey, on
     d.update((x) => ({ ...x, [day]: x[day].map((w, j) => (j === i ? { ...w, [part]: v } : w)) }));
 
   return (
-    <form className="rx-form" noValidate onSubmit={review} aria-label="Weekly template">
+    <form className="rx-form" noValidate onSubmit={review} aria-label={t('slots.template.form')}>
       <p className="ws-muted">
-        {basis.source === 'saved' ? 'This is the saved weekly template.'
-          : basis.source === 'hours' ? 'There is no weekly template yet, so this starts from the branch’s opening hours.'
-          : 'There is no weekly template yet and no opening hours: add the times for each day.'}
-        {' '}Times are India time. Saving replaces the whole template.
+        {basis.source === 'saved' ? t('slots.template.source.saved')
+          : basis.source === 'hours' ? t('slots.template.source.hours')
+          : t('slots.template.source.none')}
       </p>
       <div className="rx-form-row">
-        <TextField label="Slot length (minutes)" inputMode="numeric" value={t.slotMinutes} error={errors.slotMinutes} disabled={confirming}
+        <TextField label={t('slots.template.slotMinutes')} inputMode="numeric" value={tpl.slotMinutes} error={errors.slotMinutes} disabled={confirming}
           onChange={(e) => d.set('slotMinutes', e.target.value)} />
-        <TextField label="Seats per slot" inputMode="numeric" value={t.capacity} error={errors.capacity} disabled={confirming}
+        <TextField label={t('slots.template.capacity')} inputMode="numeric" value={tpl.capacity} error={errors.capacity} disabled={confirming}
           onChange={(e) => d.set('capacity', e.target.value)} />
       </div>
       {TEMPLATE_WEEKDAYS.map((day) => (
         <fieldset key={day} className="ws-line" aria-describedby={errors[day] ? `tpl-${day}-err` : undefined}>
-          <legend>{DAY_LABEL[day]}: {t[day].length === 0 ? 'no slots' : `${counts[day]} ${counts[day] === 1 ? 'slot' : 'slots'}`}</legend>
-          {t[day].map((w, i) => (
+          <legend>{tpl[day].length === 0 ? t('slots.template.dayNone', { day: DAY_LABEL[day] }) : t('slots.template.dayCount', { day: DAY_LABEL[day], count: counts[day] })}</legend>
+          {tpl[day].map((w, i) => (
             <div key={i} className="ws-window">
-              <TextField label={`${DAY_LABEL[day]} window ${i + 1} from`} type="time" value={w.start} disabled={confirming} onChange={(e) => setWindow(day, i, 'start', e.target.value)} />
-              <TextField label={`${DAY_LABEL[day]} window ${i + 1} to`} type="time" value={w.end} disabled={confirming} onChange={(e) => setWindow(day, i, 'end', e.target.value)} />
-              <Button variant="ghost" disabled={confirming} aria-label={`Remove ${DAY_LABEL[day]} window ${i + 1}`}
-                onClick={() => d.update((x) => ({ ...x, [day]: x[day].filter((_, j) => j !== i) }))}>Remove</Button>
+              <TextField label={t('slots.template.windowFrom', { day: DAY_LABEL[day], n: i + 1 })} type="time" value={w.start} disabled={confirming} onChange={(e) => setWindow(day, i, 'start', e.target.value)} />
+              <TextField label={t('slots.template.windowTo', { day: DAY_LABEL[day], n: i + 1 })} type="time" value={w.end} disabled={confirming} onChange={(e) => setWindow(day, i, 'end', e.target.value)} />
+              <Button variant="ghost" disabled={confirming} aria-label={t('slots.template.removeWindow', { day: DAY_LABEL[day], n: i + 1 })}
+                onClick={() => d.update((x) => ({ ...x, [day]: x[day].filter((_, j) => j !== i) }))}>{t('slots.template.remove')}</Button>
             </div>
           ))}
           {errors[day] && <span id={`tpl-${day}-err`} className="j-field__error">{errors[day]}</span>}
           <div>
-            <Button variant="secondary" disabled={confirming || t[day].length >= MAX_WINDOWS_PER_DAY} aria-label={`Add a window on ${DAY_LABEL[day]}`}
-              onClick={() => d.update((x) => ({ ...x, [day]: [...x[day], { start: '', end: '' }] }))}>Add a window</Button>
+            <Button variant="secondary" disabled={confirming || tpl[day].length >= MAX_WINDOWS_PER_DAY} aria-label={t('slots.template.addWindowOn', { day: DAY_LABEL[day] })}
+              onClick={() => d.update((x) => ({ ...x, [day]: [...x[day], { start: '', end: '' }] }))}>{t('slots.template.addWindow')}</Button>
           </div>
         </fieldset>
       ))}
@@ -507,24 +510,26 @@ function TemplateForm({ ctx, branch, mode, where, saved, reread, templateKey, on
       {failure && <Alert>{failure}</Alert>}
       {!confirming ? (
         <div className="confirm-actions">
-          <Button type="submit">Review the template</Button>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="submit">{t('slots.template.review')}</Button>
+          <Button variant="ghost" onClick={onClose}>{t('common.cancel')}</Button>
         </div>
       ) : (
-        <div className="confirm" role="group" aria-label="Save the weekly template">
+        <div className="confirm" role="group" aria-label={t('slots.template.saveGroup')}>
           <div className="confirm-text">
-            Replace the weekly template for {where}: {body.slotMinutes}-minute slots, {body.capacity} {body.capacity === 1 ? 'seat' : 'seats'} each.
+            {t('slots.template.replace', { where, minutes: body.slotMinutes, count: body.capacity })}
             <ul className="ws-list">
               {TEMPLATE_WEEKDAYS.map((day) => (
-                <li key={day}>{DAY_LABEL[day]}: {t[day].length === 0 ? 'no slots' : `${t[day].map((w) => `${w.start}–${w.end}`).join(', ')} (${counts[day]} ${counts[day] === 1 ? 'slot' : 'slots'})`}</li>
+                <li key={day}>
+                  {tpl[day].length === 0 ? t('slots.template.dayNone', { day: DAY_LABEL[day] })
+                    : t('slots.template.dayWindows', { day: DAY_LABEL[day], windows: tpl[day].map((w) => `${w.start}–${w.end}`).join(', '), count: counts[day] })}
+                </li>
               ))}
             </ul>
-            Over the next {ROLLING_DAYS} days, missing slots are added; slots nobody booked take the new length and seats; slots no longer in the
-            template are closed (their bookings stay). Booked slots keep their time and never lose seats. Holidays and slots closed by staff stay closed.
+            {t('slots.template.effect', { days: ROLLING_DAYS })}
           </div>
           <div className="confirm-actions">
-            <Button busy={busy} onClick={() => void save()}>Save the template</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>Back</Button>
+            <Button busy={busy} onClick={() => void save()}>{t('slots.template.save')}</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{t('common.back')}</Button>
           </div>
         </div>
       )}

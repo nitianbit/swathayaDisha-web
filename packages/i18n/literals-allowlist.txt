@@ -12,18 +12,6 @@ apps/workspace/src/main.tsx
 apps/workspace/src/modules.tsx
 apps/workspace/src/screens/HomeScreen.tsx
 apps/workspace/src/screens/LoginScreen.tsx
-# WQ43: the admin files below hold no English left; only `scope="col"` / `scope="row"` still trips the scan here. Drop
-# them once `scope` is a technical attribute in literals.test.ts (WQ44 adds it; the stale-entry check then names them).
-apps/workspace/src/screens/admin/AdminLabBookingsScreen.tsx
-apps/workspace/src/screens/admin/CardRefunds.tsx
-apps/workspace/src/screens/admin/ConsultationsScreen.tsx
-apps/workspace/src/screens/admin/DoctorsScreen.tsx
-apps/workspace/src/screens/admin/LabWalletAdminScreen.tsx
-apps/workspace/src/screens/admin/PartnersScreen.tsx
-apps/workspace/src/screens/admin/PharmaciesScreen.tsx
-apps/workspace/src/screens/admin/PharmacyWalletsScreen.tsx
-apps/workspace/src/screens/admin/ReferralCutsScreen.tsx
-apps/workspace/src/screens/admin/RefundsScreen.tsx
 apps/workspace/src/screens/doctor/AppointmentsScreen.tsx
 apps/workspace/src/screens/doctor/ClinicsScreen.tsx
 apps/workspace/src/screens/doctor/ConsultNowScreen.tsx
@@ -39,26 +27,7 @@ apps/workspace/src/screens/finance/PayoutsQueueScreen.tsx
 apps/workspace/src/screens/finance/SettlementAccountScreen.tsx
 apps/workspace/src/screens/finance/SettlementsScreen.tsx
 apps/workspace/src/screens/finance/finance.tsx
-apps/workspace/src/screens/partner/AuditScreen.tsx
-apps/workspace/src/screens/partner/BranchesScreen.tsx
-apps/workspace/src/screens/partner/CatalogueScreen.tsx
-apps/workspace/src/screens/partner/ClinicDoctorsScreen.tsx
-apps/workspace/src/screens/partner/DeskScreen.tsx
-apps/workspace/src/screens/partner/InvoiceScreen.tsx
-apps/workspace/src/screens/partner/InvoicesScreen.tsx
-apps/workspace/src/screens/partner/LabBookingScreen.tsx
-apps/workspace/src/screens/partner/LabBookingsScreen.tsx
 apps/workspace/src/screens/partner/LabConsultScreens.tsx
-apps/workspace/src/screens/partner/LabDeskScreen.tsx
-apps/workspace/src/screens/partner/LabWalletScreen.tsx
-apps/workspace/src/screens/partner/NewInvoiceScreen.tsx
-apps/workspace/src/screens/partner/ProfileScreen.tsx
-apps/workspace/src/screens/partner/SlotsScreen.tsx
-apps/workspace/src/screens/partner/StaffScreen.tsx
-apps/workspace/src/screens/partner/billing.tsx
-apps/workspace/src/screens/partner/clinic.tsx
-apps/workspace/src/screens/partner/labs.tsx
-apps/workspace/src/screens/partner/scope.tsx
 apps/workspace/src/screens/pharmacy/AddStockScreen.tsx
 apps/workspace/src/screens/pharmacy/BatchActions.tsx
 apps/workspace/src/screens/pharmacy/BookConsultationScreen.tsx

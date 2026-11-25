@@ -4,6 +4,7 @@ import { appointmentAt, appointmentDay, partnerClinicApi, type ClinicAppointment
 import { formatClock } from '@jansetu/i18n';
 import { Empty, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/partner/index.ts';
 import { useSession } from '../../session.tsx';
 import { formatDay } from './labs.tsx';
 import { scopeIdentity, useWorkspacePartner, type ScopeContext } from './scope.tsx';
@@ -32,18 +33,23 @@ export function useDoctorList(ctx: ScopeContext, clinic: ClinicApi) {
 /** Doctors and the front desk exist for clinics only (admins may open any partner's URL). */
 export function ClinicOnly({ ctx, children }: { ctx: ScopeContext; children: ReactNode }) {
   const partner = useWorkspacePartner(ctx);
-  if (partner.isPending) return <Loading label="Loading…" />;
+  if (partner.isPending) return <Loading label={t('common.loading')} />;
   if (partner.isError) return <ErrorState message={messageOf(partner.error)} onRetry={() => void partner.refetch()} />;
   if (partner.data?.kind !== 'clinic') {
-    return <Empty title="Only for clinics">Doctors and the front desk are kept by clinics. {partner.data?.name ?? 'This partner'} is a lab.</Empty>;
+    const name = partner.data?.name;
+    return (
+      <Empty title={t('clinic.onlyClinics.title')}>
+        {name === undefined ? t('clinic.onlyClinics.bodyUnnamed') : t('clinic.onlyClinics.body', { name })}
+      </Empty>
+    );
   }
   return <>{children}</>;
 }
 
 /** An instant as India time "HH:MM". */
 export const istTime = (iso: string | Date) => {
-  const t = typeof iso === 'string' ? Date.parse(iso) : iso.getTime();
-  return Number.isNaN(t) ? '—' : formatClock(t);
+  const at = typeof iso === 'string' ? Date.parse(iso) : iso.getTime();
+  return Number.isNaN(at) ? '—' : formatClock(at);
 };
 
 /** An appointment's India-time day and time as staff read them ("Tue, 17 Nov 2026, 10:30"). */

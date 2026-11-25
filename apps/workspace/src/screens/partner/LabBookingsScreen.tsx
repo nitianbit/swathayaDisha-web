@@ -9,6 +9,7 @@ import { Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/u
 import { messageOf } from '../../errors.ts';
 import { LabOnly, LabPayment, labStatusTone, slotLabel, useScopedBranches } from './labs.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
+import { t } from '../../i18n/partner/index.ts';
 
 /** Online bookings at this lab's branches (`bookings.view`, `bookings.manage`, `reports.upload` or `reports.release`). */
 export function LabBookingsScreen() {
@@ -22,10 +23,10 @@ function LabBookings({ ctx }: { ctx: ScopeContext }) {
   const partner = useWorkspacePartner(ctx);
   return (
     <>
-      <PartnerPageHeading ctx={ctx} title="Lab bookings" partnerName={partner.data?.name}>
-        Tests booked in the Jansetu app or at your front desk (pay at lab), by slot time: upcoming ones first. Times are India time.
+      <PartnerPageHeading ctx={ctx} title={t('labBookings.title')} partnerName={partner.data?.name}>
+        {t('labBookings.intro')}
       </PartnerPageHeading>
-      {ctx.adminHome && <div><Link to={ctx.link('slots')}>Slots of this lab</Link></div>}
+      {ctx.adminHome && <div><Link to={ctx.link('slots')}>{t('labBookings.slotsLink')}</Link></div>}
       <LabOnly ctx={ctx}><BookingList ctx={ctx} /></LabOnly>
     </>
   );
@@ -47,12 +48,12 @@ export function labListFilter(f: { view: LabListView; status: string; branchId: 
   const to = isRealDate(f.to) ? f.to : undefined;
   const base = { status: (f.status || undefined) as LabBookingStatus | undefined, branchId: f.branchId || undefined, limit: LAB_BOOKINGS_PAGE };
   if (f.view === 'upcoming') {
-    if (to && to < today) return { query: {}, error: 'Choose today or a later date (earlier bookings are under Past).' };
+    if (to && to < today) return { query: {}, error: t('labBookings.error.upcomingPast') };
     return { query: { ...base, from: today, to }, error: null };
   }
   const until = to && to < today ? to : yesterday;
-  if (to && to >= today) return { query: {}, error: 'Choose a date before today (today and later are under Upcoming).' };
-  if (from && from > until) return { query: {}, error: 'The start date is after the end date.' };
+  if (to && to >= today) return { query: {}, error: t('labBookings.error.pastFuture') };
+  if (from && from > until) return { query: {}, error: t('labBookings.error.startAfterEnd') };
   return { query: { ...base, from, to: until }, error: null };
 }
 
@@ -84,57 +85,64 @@ function BookingList({ ctx }: { ctx: ScopeContext }) {
   return (
     <>
       <fieldset className="ws-checks" aria-describedby="lb-view-hint">
-        <legend>Show</legend>
+        <legend>{t('labBookings.show')}</legend>
         <label className="ws-check">
-          <input type="radio" name="lb-view" checked={view === 'upcoming'} onChange={() => setView('upcoming')} /> Upcoming (today and later)
+          <input type="radio" name="lb-view" checked={view === 'upcoming'} onChange={() => setView('upcoming')} /> {t('labBookings.upcoming')}
         </label>
         <label className="ws-check">
-          <input type="radio" name="lb-view" checked={view === 'past'} onChange={() => setView('past')} /> Past (before today)
+          <input type="radio" name="lb-view" checked={view === 'past'} onChange={() => setView('past')} /> {t('labBookings.past')}
         </label>
         <span id="lb-view-hint" className="j-field__hint">
-          {view === 'upcoming' ? 'Soonest first.' : 'Oldest first within the dates you choose.'} Times are India time.
+          {view === 'upcoming' ? t('labBookings.hint.upcoming') : t('labBookings.hint.past')}
         </span>
       </fieldset>
       <div className="ws-search">
         <div className="j-field ws-filter">
-          <label htmlFor="lb-branch">Branch</label>
+          <label htmlFor="lb-branch">{t('labBookings.branch')}</label>
           <select id="lb-branch" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
-            <option value="">All your branches</option>
+            <option value="">{t('labBookings.allBranches')}</option>
             {branches.inScope.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
           </select>
         </div>
         <div className="j-field ws-filter">
-          <label htmlFor="lb-status">Status</label>
+          <label htmlFor="lb-status">{t('labBookings.status')}</label>
           <select id="lb-status" value={status} onChange={(e) => setStatus(e.target.value as '' | LabBookingStatus)}>
-            <option value="">All</option>
+            <option value="">{t('labBookings.allStatuses')}</option>
             {LAB_BOOKING_STATUSES.map((s) => <option key={s} value={s}>{LAB_BOOKING_STATUS_LABEL[s]}</option>)}
           </select>
         </div>
         {view === 'upcoming' ? (
-          <TextField label="Slot until (optional)" type="date" min={today} value={until} error={dateError} onChange={(e) => setUntil(e.target.value)} />
+          <TextField label={t('labBookings.until')} type="date" min={today} value={until} error={dateError} onChange={(e) => setUntil(e.target.value)} />
         ) : (
           <>
-            <TextField label="Slot from" type="date" max={addDays(today, -1)} value={pastFrom} onChange={(e) => setPastFrom(e.target.value)} />
-            <TextField label="Slot until" type="date" max={addDays(today, -1)} value={pastTo} error={dateError}
-              hint={pastTo ? undefined : 'Empty: until yesterday.'} onChange={(e) => setPastTo(e.target.value)} />
+            <TextField label={t('labBookings.from')} type="date" max={addDays(today, -1)} value={pastFrom} onChange={(e) => setPastFrom(e.target.value)} />
+            <TextField label={t('labBookings.untilPast')} type="date" max={addDays(today, -1)} value={pastTo} error={dateError}
+              hint={pastTo ? undefined : t('labBookings.untilYesterday')} onChange={(e) => setPastTo(e.target.value)} />
           </>
         )}
       </div>
       {dateError ? null
-        : list.isPending ? <Loading label="Loading bookings…" />
+        : list.isPending ? <Loading label={t('labBookings.loading')} />
         : list.isError && !list.data ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
-        : rows.length === 0 ? <Empty title="No bookings">{filtered ? 'No booking matches these filters.' : view === 'upcoming' ? 'No booking from today on.' : 'No booking in these dates.'}</Empty>
+        : rows.length === 0 ? <Empty title={t('labBookings.none.title')}>
+          {filtered ? t('labBookings.none.filtered') : view === 'upcoming' ? t('labBookings.none.upcoming') : t('labBookings.none.past')}
+        </Empty>
         : (
           <>
             <p className="ws-count" aria-live="polite">
-              {total === undefined ? `${rows.length} ${rows.length === 1 ? 'booking' : 'bookings'}`
-                : `${total} ${total === 1 ? 'booking' : 'bookings'}${list.hasNextPage ? ` · showing the ${view === 'upcoming' ? 'soonest' : 'earliest'} ${rows.length}` : ''}`}
+              {total === undefined ? t('labBookings.count', { count: rows.length })
+                : !list.hasNextPage ? t('labBookings.count', { count: total })
+                : t(view === 'upcoming' ? 'labBookings.countSoonest' : 'labBookings.countEarliest', { count: total, shown: rows.length })}
             </p>
             <div className="ws-table-wrap">
               <table className="j-table">
-                <caption className="j-sr-only">Lab bookings</caption>
+                <caption className="j-sr-only">{t('labBookings.caption')}</caption>
                 <thead>
-                  <tr><th scope="col">Slot</th><th scope="col">Patient</th><th scope="col">Tests</th><th scope="col">Visit</th><th scope="col">Branch</th><th scope="col">Status</th><th scope="col">Payment</th></tr>
+                  <tr>
+                    <th scope="col">{t('labBookings.col.slot')}</th><th scope="col">{t('labBookings.col.patient')}</th><th scope="col">{t('labBookings.col.tests')}</th>
+                    <th scope="col">{t('labBookings.col.visit')}</th><th scope="col">{t('labBookings.col.branch')}</th><th scope="col">{t('labBookings.col.status')}</th>
+                    <th scope="col">{t('labBookings.col.payment')}</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {rows.map((b) => (
@@ -143,10 +151,10 @@ function BookingList({ ctx }: { ctx: ScopeContext }) {
                       <td>{b.patient?.name}</td>
                       <td>{b.items.map((i) => i.name).join(', ')}</td>
                       <td>{LAB_VISIT_MODE_LABEL[b.visitMode] ?? b.visitMode}</td>
-                      <td>{names.get(b.branchId) ?? `Branch …${b.branchId.slice(-6)}`}</td>
+                      <td>{names.get(b.branchId) ?? t('common.branchById', { tail: b.branchId.slice(-6) })}</td>
                       <td>
                         <Badge tone={labStatusTone(b.status)}>{LAB_BOOKING_STATUS_LABEL[b.status] ?? b.status}</Badge>
-                        {b.reschedule?.pending && <> <Badge tone="warn">New time proposed</Badge></>}
+                        {b.reschedule?.pending && <> <Badge tone="warn">{t('labBookings.newTimeProposed')}</Badge></>}
                       </td>
                       <td><LabPayment b={b} /></td>
                     </tr>
@@ -154,11 +162,11 @@ function BookingList({ ctx }: { ctx: ScopeContext }) {
                 </tbody>
               </table>
             </div>
-            {list.isFetchNextPageError && <ErrorState message={`Could not load more bookings: ${messageOf(list.error)}`} onRetry={() => void list.fetchNextPage()} />}
+            {list.isFetchNextPageError && <ErrorState message={t('labBookings.moreFailed', { reason: messageOf(list.error) })} onRetry={() => void list.fetchNextPage()} />}
             {list.hasNextPage && (
               <div>
                 <Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
-                  Show more ({total !== undefined ? `${total - rows.length} more` : 'later slots'})
+                  {total !== undefined ? t('labBookings.showMoreCount', { n: total - rows.length }) : t('labBookings.showMoreLater')}
                 </Button>
               </div>
             )}

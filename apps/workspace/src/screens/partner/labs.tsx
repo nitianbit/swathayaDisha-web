@@ -6,20 +6,23 @@ import {
 import { CALENDAR_DAY, formatDateWith } from '@jansetu/i18n';
 import { Alert, Badge, Button, Empty, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/partner/index.ts';
 import { sniffDocument } from '../pharmacy/documents.ts';
 import { useBranches, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
 /** A calendar date (YYYY-MM-DD, already India time) as "Mon, 16 Nov 2026". */
 export function formatDay(date: string): string {
-  const t = Date.parse(`${date}T00:00:00Z`);
-  if (Number.isNaN(t)) return date;
-  return formatDateWith(t, CALENDAR_DAY);
+  const at = Date.parse(`${date}T00:00:00Z`);
+  if (Number.isNaN(at)) return date;
+  return formatDateWith(at, CALENDAR_DAY);
 }
 
 /** A slot as staff read it: its India-time day and times. */
 /** r12: a desk walk-in has no seat: its arrival day and time, "walk-in". */
 export const slotLabel = (s: { date: string; startTime: string; endTime?: string; walkIn?: boolean }) =>
-  `${formatDay(s.date)}, ${s.startTime}${s.walkIn || !s.endTime ? ' (walk-in)' : `–${s.endTime}`}`;
+  (s.walkIn || !s.endTime
+    ? t('labs.slot.walkIn', { day: formatDay(s.date), start: s.startTime })
+    : t('labs.slot.range', { day: formatDay(s.date), start: s.startTime, end: s.endTime }));
 
 /**
  * How a booking is paid, as a badge: r12 desk rows are paid at the lab ("Pay at lab"; no Jansetu payment), with the
@@ -27,7 +30,8 @@ export const slotLabel = (s: { date: string; startTime: string; endTime?: string
  */
 export function LabPayment({ b }: { b: Pick<LabBooking, 'paymentStatus' | 'source' | 'payAtLab' | 'bill'> }) {
   if (isDeskBooking(b)) {
-    return <><Badge>Pay at lab</Badge>{b.bill ? <> · Bill {b.bill.serial}{b.bill.state === 'cancelled' ? ' (cancelled)' : ''}</> : null}</>;
+    const bill = b.bill;
+    return <><Badge>{t('labs.payAtLab')}</Badge>{bill ? <> · {t(bill.state === 'cancelled' ? 'labs.billCancelled' : 'labs.bill', { serial: bill.serial })}</> : null}</>;
   }
   return <Badge tone={b.paymentStatus === 'paid' ? 'ok' : b.paymentStatus === 'refunded' ? 'danger' : 'warn'}>{LAB_PAYMENT_STATUS_LABEL[b.paymentStatus] ?? b.paymentStatus}</Badge>;
 }
@@ -50,8 +54,8 @@ export function useScopedBranches(ctx: ScopeContext) {
 export function useNow(): Date {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 30_000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(timer);
   }, []);
   return now;
 }
@@ -62,8 +66,15 @@ export function useNow(): Date {
  */
 export function LabOnly({ ctx, children }: { ctx: ScopeContext; children: ReactNode }) {
   const partner = useWorkspacePartner(ctx);
-  if (!partner.data) return partner.isError ? <ErrorState message={messageOf(partner.error)} onRetry={() => void partner.refetch()} /> : <Loading label="Loading…" />;
-  if (partner.data.kind !== 'lab') return <Empty title="Only for labs">Slots and lab bookings are kept by lab partners. {partner.data.name ?? 'This partner'} is a clinic.</Empty>;
+  if (!partner.data) return partner.isError ? <ErrorState message={messageOf(partner.error)} onRetry={() => void partner.refetch()} /> : <Loading label={t('common.loading')} />;
+  if (partner.data.kind !== 'lab') {
+    const name = partner.data.name;
+    return (
+      <Empty title={t('labs.onlyLabs.title')}>
+        {name === undefined ? t('labs.onlyLabs.bodyUnnamed') : t('labs.onlyLabs.body', { name })}
+      </Empty>
+    );
+  }
   return <>{children}</>;
 }
 
@@ -91,7 +102,7 @@ export function useReportViewer(ctx: ScopeContext, bookingId: string) {
       const blob = await ctx.labs.reportFile(bookingId, file, ctrl.signal);
       const { kind, type } = await sniffDocument(blob);
       if (ctrl.signal.aborted) return;
-      if (kind === 'other') { setError({ file, message: 'This file is not a PDF or an image, so it is not shown.' }); return; }
+      if (kind === 'other') { setError({ file, message: t('labs.report.notShown') }); return; }
       setShown({ file, url: URL.createObjectURL(new Blob([blob], { type })), kind });
     } catch (err) {
       if (!ctrl.signal.aborted) setError({ file, message: messageOf(err) });
@@ -107,17 +118,17 @@ export function ReportPreview({ viewer }: { viewer: ReturnType<typeof useReportV
   const { shown, error } = viewer;
   return (
     <>
-      {error && <Alert>Could not open {reportFileName(error.file)}: {error.message}</Alert>}
+      {error && <Alert>{t('labs.report.openFailed', { file: reportFileName(error.file), reason: error.message })}</Alert>}
       {shown && (
         <div className="rx-preview-wrap">
           <div className="rx-preview">
             {shown.kind === 'pdf'
-              ? <div className="rx-pdf"><iframe src={shown.url} title={`Report ${reportFileName(shown.file)}`} /></div>
-              : <img src={shown.url} alt={`Report ${reportFileName(shown.file)}`} />}
+              ? <div className="rx-pdf"><iframe src={shown.url} title={t('labs.report.title', { file: reportFileName(shown.file) })} /></div>
+              : <img src={shown.url} alt={t('labs.report.title', { file: reportFileName(shown.file) })} />}
           </div>
           <div className="ws-actions">
-            <a className="j-btn j-btn--secondary" href={shown.url} download={reportFileName(shown.file)}>Save {reportFileName(shown.file)}</a>
-            <Button variant="ghost" onClick={viewer.close}>Close the preview</Button>
+            <a className="j-btn j-btn--secondary" href={shown.url} download={reportFileName(shown.file)}>{t('labs.report.save', { file: reportFileName(shown.file) })}</a>
+            <Button variant="ghost" onClick={viewer.close}>{t('labs.report.closePreview')}</Button>
           </div>
         </div>
       )}
@@ -127,8 +138,8 @@ export function ReportPreview({ viewer }: { viewer: ReturnType<typeof useReportV
 
 export function ViewFileButton({ viewer, file }: { viewer: ReturnType<typeof useReportViewer>; file: string }) {
   return (
-    <Button variant="secondary" busy={viewer.loading === file} aria-label={`View ${reportFileName(file)}`} onClick={() => void viewer.open(file)}>
-      <FileText size={16} aria-hidden="true" /> View
+    <Button variant="secondary" busy={viewer.loading === file} aria-label={t('labs.report.viewLabel', { file: reportFileName(file) })} onClick={() => void viewer.open(file)}>
+      <FileText size={16} aria-hidden="true" /> {t('labs.report.view')}
     </Button>
   );
 }

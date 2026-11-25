@@ -7,6 +7,7 @@ import {
 } from '@jansetu/api';
 import { Empty } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
+import { t } from '../../i18n/partner/index.ts';
 import { useSession, useStaff } from '../../session.tsx';
 
 export type PartnerSection = 'profile' | 'staff' | 'branches' | 'audit' | 'catalogue' | 'invoices' | 'slots' | 'lab-bookings' | 'lab-desk';
@@ -76,13 +77,13 @@ export function useBranches(ctx: ScopeContext) {
 
 /** `memberIds`/`branchIds` → names, for tables. */
 export const branchLabel = (names: Map<string, string>, ids: readonly string[]) =>
-  ids.length === 0 ? 'All branches' : ids.map((id) => names.get(id) ?? `Branch …${id.slice(-6)}`).join(', ');
+  ids.length === 0 ? t('common.allBranches') : ids.map((id) => names.get(id) ?? t('common.branchById', { tail: id.slice(-6) })).join(', ');
 
 /** A one-line identity for the scope: a subtree keyed by it never sends one partner's draft to another. */
 export const scopeIdentity = (ctx: ScopeContext) => ctx.key.join(':');
 
 export function NoSuchPartner() {
-  return <Empty title="Page not found">This page does not exist or is not available to your account.</Empty>;
+  return <Empty title={t('scope.notFound.title')}>{t('scope.notFound.body')}</Empty>;
 }
 
 /** Page heading; for admins it names the partner being managed and links back to its admin page. */
@@ -92,11 +93,13 @@ export function PartnerPageHeading({ ctx, title, partnerName, children }:
     <>
       {ctx.adminHome && (
         <Link className="ws-back" to={ctx.adminHome}>
-          <ArrowLeft size={16} aria-hidden="true" /> Back to {partnerName ?? 'the partner'}
+          <ArrowLeft size={16} aria-hidden="true" /> {partnerName === undefined ? t('scope.backToPartner') : t('scope.backTo', { name: partnerName })}
         </Link>
       )}
       <PageHeading title={title}>
-        {ctx.adminHome ? <>Managing {partnerName ?? 'this partner'} with owner authority. {children}</> : children}
+        {ctx.adminHome
+          ? <>{partnerName === undefined ? t('scope.managingThis') : t('scope.managing', { name: partnerName })} {children}</>
+          : children}
       </PageHeading>
     </>
   );

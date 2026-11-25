@@ -7,7 +7,7 @@ import {
   PARTNER_PERMISSIONS, PARTNER_PHONE_PATTERN, PERMISSION_LABEL, removalBlock, scopeProblem,
   type Branch, type MemberRole, type PartnerMember, type PartnerPermission,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, Loading, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, Loading, Parts, TextField } from '@jansetu/ui';
 import { definitelyNotRecorded } from '../../requests.ts';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { changedFields, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft } from '../../draft.ts';
@@ -16,6 +16,7 @@ import { clinicLink } from './clinic.tsx';
 import {
   branchLabel, NoSuchPartner, PartnerPageHeading, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext,
 } from './scope.tsx';
+import { t } from '../../i18n/partner/index.ts';
 
 /**
  * Staff of a partner (`staff.manage`). Mirrors the backend's rules (`partners/services`): only owners add owners or
@@ -46,7 +47,7 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<Editing>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const names = new Map([...(withClosed.data ?? []), ...(branches.data ?? [])].map((b) => [b._id, b.isActive === false ? `${b.name} (closed)` : b.name]));
+  const names = new Map([...(withClosed.data ?? []), ...(branches.data ?? [])].map((b) => [b._id, b.isActive === false ? t('staff.closedBranch', { name: b.name }) : b.name]));
   const admin = ctx.scope.kind === 'admin';
   const doctorsLink = clinicLink(ctx, 'clinic-doctors');
   const refresh = () => Promise.all([
@@ -63,68 +64,72 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
 
   return (
     <>
-      <PartnerPageHeading ctx={ctx} title="Staff" partnerName={partner.data?.name}>Who can use this workspace, and what each person may do.</PartnerPageHeading>
+      <PartnerPageHeading ctx={ctx} title={t('staff.title')} partnerName={partner.data?.name}>{t('staff.intro')}</PartnerPageHeading>
       {ctx.actor.role !== 'owner' && (
-        <p className="ws-muted">Only an owner adds or changes a professional registration (the number reports are released under).</p>
+        <p className="ws-muted">{t('staff.ownerOnlyRegistration')}</p>
       )}
       {notice && <Alert tone="ok">{notice}</Alert>}
-      {!adding && <div><Button onClick={() => { setAdding(true); setNotice(null); }}>Add a staff member</Button></div>}
+      {!adding && <div><Button onClick={() => { setAdding(true); setNotice(null); }}>{t('staff.add')}</Button></div>}
       {adding && (
         <AddMember ctx={ctx} branches={branches.data} branchesError={branches.isError ? messageOf(branches.error) : null}
           onCancel={() => setAdding(false)}
-          admin={admin} onAdded={async (m) => { setAdding(false); setNotice(`${m.name} was added.`); await refresh(); }} />
+          admin={admin} onAdded={async (m) => { setAdding(false); setNotice(t('staff.added', { name: m.name })); await refresh(); }} />
       )}
-      {members.isPending ? <Loading label="Loading staff…" />
+      {members.isPending ? <Loading label={t('staff.loading')} />
         : members.isError ? <ErrorState message={messageOf(members.error)} onRetry={() => void members.refetch()} />
-        : members.data.length === 0 ? <Empty title="No staff you can manage">People you add appear here.</Empty>
+        : members.data.length === 0 ? <Empty title={t('staff.none.title')}>{t('staff.none.body')}</Empty>
         : (
           <div className="ws-table-wrap">
             <table className="j-table">
-              <caption className="j-sr-only">Staff members</caption>
+              <caption className="j-sr-only">{t('staff.caption')}</caption>
               <thead>
-                <tr><th scope="col">Name</th><th scope="col">Phone</th><th scope="col">Email</th><th scope="col">Role</th><th scope="col">Registration</th><th scope="col">Permissions</th><th scope="col">Branches</th><th scope="col">Actions</th></tr>
+                <tr>
+                  <th scope="col">{t('staff.col.name')}</th><th scope="col">{t('staff.col.phone')}</th><th scope="col">{t('staff.col.email')}</th>
+                  <th scope="col">{t('staff.col.role')}</th><th scope="col">{t('staff.col.registration')}</th><th scope="col">{t('staff.col.permissions')}</th>
+                  <th scope="col">{t('staff.col.branches')}</th><th scope="col">{t('staff.col.actions')}</th>
+                </tr>
               </thead>
               <tbody>
                 {members.data.map((m) => {
                   const block = removalBlock(ctx.actor, m, partner.data?.activeOwnerCount);
                   return (
                     <tr key={m._id}>
-                      <td>{m.name}{ctx.actor.memberId === m._id && <> <Badge>You</Badge></>}</td>
+                      <td>{m.name}{ctx.actor.memberId === m._id && <> <Badge>{t('staff.you')}</Badge></>}</td>
                       <td>{m.phone}</td>
-                      <td>{m.email || <span className="ws-muted">None</span>}</td>
-                      <td>{m.role === 'owner' ? 'Owner' : m.doctorId ? 'Clinic doctor' : 'Staff'}</td>
-                      <td>{m.professional?.registrationNumber ? professionalLabel(m.professional) : <span className="ws-muted">Not added</span>}</td>
-                      <td>{m.role === 'owner' ? 'Everything' : m.permissions.length ? m.permissions.map((p) => PERMISSION_LABEL[p] ?? p).join(', ') : 'None'}</td>
-                      <td>{m.role === 'owner' ? 'All branches' : branchLabel(names, m.branchIds)}</td>
+                      <td>{m.email || <span className="ws-muted">{t('staff.none')}</span>}</td>
+                      <td>{m.role === 'owner' ? t('staff.role.owner') : m.doctorId ? t('staff.role.clinicDoctor') : t('staff.role.staff')}</td>
+                      <td>{m.professional?.registrationNumber ? professionalLabel(m.professional) : <span className="ws-muted">{t('staff.notAdded')}</span>}</td>
+                      <td>{m.role === 'owner' ? t('staff.everything') : m.permissions.length ? m.permissions.map((p) => PERMISSION_LABEL[p] ?? p).join(', ') : t('staff.none')}</td>
+                      <td>{m.role === 'owner' ? t('common.allBranches') : branchLabel(names, m.branchIds)}</td>
                       <td>
                         <div className="ws-actions">
                           {canEditPermissions(ctx.actor, m) && (
-                            <Button variant="secondary" onClick={() => open({ kind: 'permissions', id: m._id })}>Edit permissions</Button>
+                            <Button variant="secondary" onClick={() => open({ kind: 'permissions', id: m._id })}>{t('staff.editPermissions')}</Button>
                           )}
                           {canEditEmail(ctx.actor, m, admin) && (
-                            <Button variant="secondary" onClick={() => open({ kind: 'email', id: m._id })}>{m.email ? 'Change email' : 'Add email'}</Button>
+                            <Button variant="secondary" onClick={() => open({ kind: 'email', id: m._id })}>{m.email ? t('staff.changeEmail') : t('staff.addEmail')}</Button>
                           )}
                           {canEditProfessional(ctx.actor, m) && (
                             <Button variant="secondary" onClick={() => open({ kind: 'professional', id: m._id })}>
-                              {m.professional?.registrationNumber ? 'Change registration' : 'Add registration'}
+                              {m.professional?.registrationNumber ? t('staff.changeRegistration') : t('staff.addRegistration')}
                             </Button>
                           )}
                           {canChangeBranches(ctx.actor, m) && (
-                            <Button variant="secondary" onClick={() => open({ kind: 'branches', id: m._id })}>Change branch access</Button>
+                            <Button variant="secondary" onClick={() => open({ kind: 'branches', id: m._id })}>{t('staff.changeBranches')}</Button>
                           )}
                           {m.doctorId && ctx.actor.memberId !== m._id ? (
                             // Q16b: a clinic doctor's membership ends on Doctors (owner or admin), never as staff (409 USE_DOCTOR_UNLINK).
                             m.role === 'owner'
                               // Q16b N1: an owner who is also the doctor loses the doctor link on Doctors (another owner or an admin).
-                              ? <span className="ws-muted">Also a doctor of this clinic: the doctor link is removed on <Link to={doctorsLink}>Doctors</Link> by another owner or the Jansetu team.</span>
-                              : <span className="ws-muted">A doctor of this clinic: removed on <Link to={doctorsLink}>Doctors</Link> (owner only).</span>
+                              ? <span className="ws-muted"><Parts of={t.rich('staff.ownerDoctor', { doctors: <Link to={doctorsLink}>{t('staff.doctorsLink')}</Link> })} /></span>
+                              : <span className="ws-muted"><Parts of={t.rich('staff.doctor', { doctors: <Link to={doctorsLink}>{t('staff.doctorsLink')}</Link> })} /></span>
                           ) : block ? <span className="ws-muted">{block}</span> : (
-                            <ConfirmAction label="Remove" danger confirmLabel={`Remove ${m.name}`}
-                              consequence={`${m.name} loses access to this workspace at once. To give access again, add them again.`}
+                            <ConfirmAction label={t('staff.remove')} danger confirmLabel={t('staff.removeName', { name: m.name })}
+                              consequence={t('staff.remove.consequence', { name: m.name })}
                               onConfirm={async () => {
-                                try { await ctx.api.removeMember(m._id); setNotice(`${m.name} was removed.`); } catch (err) {
+                                try { await ctx.api.removeMember(m._id); setNotice(t('staff.removed', { name: m.name })); } catch (err) {
                                   if (isUseDoctorUnlink(err)) {
-                                    throw new ApiError(409, `${m.name} is a doctor of this clinic, so nothing was changed. The owner removes them from the clinic on the Doctors page.`, 'USE_DOCTOR_UNLINK');
+                                    throw new ApiError(409, t('staff.removeDoctor', { name: m.name }), 'USE_DOCTOR_UNLINK');
                                   }
                                   throw err;
                                 } finally { await refresh(); }
@@ -141,24 +146,24 @@ function Staff({ ctx }: { ctx: ScopeContext }) {
         )}
       {editTarget && editing?.kind === 'permissions' && (
         <EditPermissions key={`p:${editTarget._id}`} ctx={ctx} member={editTarget} onClose={() => setEditing(null)}
-          onSaved={async () => { closeIfOpen({ kind: 'permissions', id: editTarget._id }); setNotice(`Permissions for ${editTarget.name} were saved.`); await refresh(); }} />
+          onSaved={async () => { closeIfOpen({ kind: 'permissions', id: editTarget._id }); setNotice(t('staff.permissionsSaved', { name: editTarget.name })); await refresh(); }} />
       )}
       {editTarget && editing?.kind === 'email' && (
         <EditEmail key={`e:${editTarget._id}`} ctx={ctx} member={editTarget} admin={admin} onClose={() => setEditing(null)}
-          onSaved={async () => { closeIfOpen({ kind: 'email', id: editTarget._id }); setNotice(`The email for ${editTarget.name} was saved.`); await refresh(); }} />
+          onSaved={async () => { closeIfOpen({ kind: 'email', id: editTarget._id }); setNotice(t('staff.emailSaved', { name: editTarget.name })); await refresh(); }} />
       )}
       {editTarget && editing?.kind === 'professional' && (
         <EditProfessional key={`r:${editTarget._id}`} ctx={ctx} member={editTarget} onClose={() => setEditing(null)}
           onSaved={async (removed) => {
             closeIfOpen({ kind: 'professional', id: editTarget._id });
-            setNotice(removed ? `The registration of ${editTarget.name} was removed.` : `The registration of ${editTarget.name} was saved.`);
+            setNotice(removed ? t('staff.registrationRemoved', { name: editTarget.name }) : t('staff.registrationSaved', { name: editTarget.name }));
             await refresh();
           }} />
       )}
       {editTarget && editing?.kind === 'branches' && (
         <EditBranches key={`b:${editTarget._id}`} ctx={ctx} member={editTarget} branches={branches.data} closedBranches={withClosed.data}
           branchesError={branches.isError ? messageOf(branches.error) : null} onClose={() => setEditing(null)}
-          onSaved={async () => { closeIfOpen({ kind: 'branches', id: editTarget._id }); setNotice(`Branch access for ${editTarget.name} was saved.`); await refresh(); }} />
+          onSaved={async () => { closeIfOpen({ kind: 'branches', id: editTarget._id }); setNotice(t('staff.branchesSaved', { name: editTarget.name })); await refresh(); }} />
       )}
     </>
   );
@@ -170,7 +175,7 @@ function PermissionChecklist({ legend, allowed, value, onChange, error }:
   return (
     <fieldset className="ws-checks" aria-describedby={error ? 'perm-error' : undefined}>
       <legend>{legend}</legend>
-      {shown.length === 0 ? <p className="ws-muted">You hold no permissions you can give.</p> : shown.map((p) => (
+      {shown.length === 0 ? <p className="ws-muted">{t('staff.noGrantable')}</p> : shown.map((p) => (
         <label key={p.value} className="ws-check">
           <input type="checkbox" checked={value.includes(p.value)} onChange={(e) =>
             onChange(ordered(e.target.checked ? [...value, p.value] : value.filter((x) => x !== p.value)))} />
@@ -194,12 +199,16 @@ function BranchPicker({ wide, all, ids, options, held = [], closedNames, loadErr
 }) {
   const open = new Set((options ?? []).map((b) => b._id));
   const extra = held.filter((id) => !open.has(id));
+  const heldLabel = (id: string) => {
+    const name = closedNames?.get(id) ?? (wide ? t('staff.closedOrRemoved', { tail: id.slice(-6) }) : t('staff.notYours', { tail: id.slice(-6) }));
+    return wide || closedNames?.has(id) ? t('staff.closedBranch', { name }) : name;
+  };
   return (
     <fieldset className="ws-checks" aria-describedby={error ? 'branch-error' : undefined}>
-      <legend>Branches</legend>
+      <legend>{t('staff.branches')}</legend>
       {wide && (
         <label className="ws-check">
-          <input type="checkbox" checked={all} onChange={(e) => onChange({ all: e.target.checked, ids: [...ids] })} /> All branches, including new ones
+          <input type="checkbox" checked={all} onChange={(e) => onChange({ all: e.target.checked, ids: [...ids] })} /> {t('staff.allBranches')}
         </label>
       )}
       {!all && (options ?? []).map((b) => (
@@ -212,18 +221,18 @@ function BranchPicker({ wide, all, ids, options, held = [], closedNames, loadErr
         <label key={id} className="ws-check">
           <input type="checkbox" checked={ids.includes(id)} onChange={(e) =>
             onChange({ all, ids: (e.target.checked ? [...ids, id] : ids.filter((x) => x !== id)).sort() })} />{' '}
-          {closedNames?.get(id) ?? (wide ? `Closed or removed branch …${id.slice(-6)}` : `Branch …${id.slice(-6)} (not one of yours)`)}{wide || closedNames?.has(id) ? ' (closed)' : ''}
+          {heldLabel(id)}
         </label>
       ))}
-      {!all && options?.length === 0 && extra.length === 0 && <p className="ws-muted">There are no branches yet.</p>}
-      {!all && loadError && <p className="ws-muted">Branches could not be loaded: {loadError}</p>}
+      {!all && options?.length === 0 && extra.length === 0 && <p className="ws-muted">{t('staff.noBranches')}</p>}
+      {!all && loadError && <p className="ws-muted">{t('staff.branchesFailed', { reason: loadError })}</p>}
       {error && <span id="branch-error" className="j-field__error">{error}</span>}
     </fieldset>
   );
 }
 
 const branchProblem = (ctx: ScopeContext, all: boolean, ids: string[], closed?: ReadonlySet<string>) =>
-  !all && ids.length === 0 ? 'Choose at least one branch, or all branches.' : scopeProblem(ctx.actor, all ? [] : ids, closed);
+  !all && ids.length === 0 ? t('staff.error.branches') : scopeProblem(ctx.actor, all ? [] : ids, closed);
 
 function AddMember({ ctx, branches, branchesError, admin, onCancel, onAdded }: {
   ctx: ScopeContext; branches: Branch[] | undefined; branchesError: string | null; admin: boolean;
@@ -247,12 +256,12 @@ function AddMember({ ctx, branches, branchesError, admin, onCancel, onAdded }: {
   async function submit(e: FormEvent) {
     e.preventDefault();
     const errs: Record<string, string> = {};
-    if (!name.trim()) errs.name = 'Enter the person’s name.';
-    else if (name.trim().length > MAX_NAME) errs.name = `Use at most ${MAX_NAME} characters.`;
-    if (!PARTNER_PHONE_PATTERN.test(phone)) errs.phone = 'Enter the 10-digit mobile number.';
+    if (!name.trim()) errs.name = t('staff.error.name');
+    else if (name.trim().length > MAX_NAME) errs.name = t('common.maxChars', { max: MAX_NAME });
+    if (!PARTNER_PHONE_PATTERN.test(phone)) errs.phone = t('staff.error.phone');
     // WQ9: only owners (and admins as owner) give a new member a sign-in email; nobody else's form has the field.
     const mail = withEmailField ? memberEmail(email) : '';
-    if (mail === null) errs.email = 'Enter a valid email address, or leave it empty.';
+    if (mail === null) errs.email = t('staff.error.email');
     if (role === 'staff') { const problem = branchProblem(ctx, scope.all, scope.ids); if (problem) errs.branches = problem; }
     setErrors(errs); setError(null);
     if (Object.keys(errs).length) return;
@@ -267,8 +276,8 @@ function AddMember({ ctx, branches, branchesError, admin, onCancel, onAdded }: {
     } catch (err) {
       // WQ9: the email belongs to another account: say so on the field (nothing was added).
       if (isEmailInUse(err)) setErrors({ email: EMAIL_IN_USE_MESSAGE });
-      else if (mail && isOwnerRequired(err)) setErrors({ email: 'Only an owner can give a member a sign-in email. Leave it empty to add them without one.' });
-      else if (mail && isOwnerEmailAdminOnly(err)) setErrors({ email: `${OWNER_EMAIL_ADMIN_ONLY_MESSAGE} Leave it empty to add them without one.` });
+      else if (mail && isOwnerRequired(err)) setErrors({ email: t('staff.error.emailOwnerOnly') });
+      else if (mail && isOwnerEmailAdminOnly(err)) setErrors({ email: t('staff.error.emailLeaveEmpty', { reason: OWNER_EMAIL_ADMIN_ONLY_MESSAGE }) });
       else if (isInvalidBranchIds(err)) setErrors({ branches: INVALID_BRANCH_IDS_MESSAGE });
       else setError(messageOf(err));
     } finally {
@@ -278,41 +287,41 @@ function AddMember({ ctx, branches, branchesError, admin, onCancel, onAdded }: {
 
   return (
     <section className="ws-section" aria-labelledby="add-h">
-      <h2 id="add-h">Add a staff member</h2>
+      <h2 id="add-h">{t('staff.add')}</h2>
       <p className="ws-muted">
-        They sign in with this mobile number (a code by SMS){withEmailField ? ', or with the email if you add one (a code by email)' : ''}.
-        {anyEmailField && !withEmailField && ' An owner’s sign-in email is added by the Jansetu team.'}
+        {withEmailField ? t('staff.signInEmail') : t('staff.signIn')}
+        {anyEmailField && !withEmailField && <> {t('staff.ownerEmailByJansetu')}</>}
       </p>
       <form className="rx-form" noValidate onSubmit={(e) => void submit(e)}>
         <div className="rx-form-row">
-          <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} error={errors.name} maxLength={MAX_NAME} autoComplete="off" />
-          <TextField label="Mobile number" inputMode="numeric" maxLength={10} value={phone}
+          <TextField label={t('staff.name')} value={name} onChange={(e) => setName(e.target.value)} error={errors.name} maxLength={MAX_NAME} autoComplete="off" />
+          <TextField label={t('staff.mobile')} inputMode="numeric" maxLength={10} value={phone}
             onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))} error={errors.phone} autoComplete="off" />
           {withEmailField && (
-            <TextField label="Email (optional)" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} maxLength={MAX_EMAIL}
+            <TextField label={t('staff.emailOptional')} type="email" inputMode="email" autoCapitalize="none" spellCheck={false} maxLength={MAX_EMAIL}
               value={email} onChange={(e) => setEmail(e.target.value)} error={errors.email} autoComplete="off" />
           )}
         </div>
         <fieldset className="ws-checks">
-          <legend>Role</legend>
-          <label className="ws-check"><input type="radio" name="member-role" checked={role === 'staff'} onChange={() => setRole('staff')} /> Staff</label>
+          <legend>{t('staff.role')}</legend>
+          <label className="ws-check"><input type="radio" name="member-role" checked={role === 'staff'} onChange={() => setRole('staff')} /> {t('staff.role.staff')}</label>
           {canAddOwner(ctx.actor) && (
-            <label className="ws-check"><input type="radio" name="member-role" checked={role === 'owner'} onChange={() => setRole('owner')} /> Owner</label>
+            <label className="ws-check"><input type="radio" name="member-role" checked={role === 'owner'} onChange={() => setRole('owner')} /> {t('staff.role.owner')}</label>
           )}
         </fieldset>
         {role === 'owner' ? (
-          <p className="ws-muted">An owner can do everything, in every branch, including managing other owners.</p>
+          <p className="ws-muted">{t('staff.ownerCan')}</p>
         ) : (
           <>
-            <PermissionChecklist legend="Permissions" allowed={grantable} value={perms} onChange={setPerms} />
-            {ctx.actor.role !== 'owner' && <p className="ws-muted">You can give only permissions you hold yourself.</p>}
+            <PermissionChecklist legend={t('staff.permissions')} allowed={grantable} value={perms} onChange={setPerms} />
+            {ctx.actor.role !== 'owner' && <p className="ws-muted">{t('staff.onlyYours')}</p>}
             <BranchPicker wide={wide} all={scope.all} ids={scope.ids} options={branches} loadError={branchesError} error={errors.branches} onChange={setScope} />
           </>
         )}
         {error && <Alert>{error}</Alert>}
         <div className="ws-actions">
-          <Button type="submit" busy={busy}>Add {role === 'owner' ? 'owner' : 'staff member'}</Button>
-          <Button variant="ghost" disabled={busy} onClick={onCancel}>Cancel</Button>
+          <Button type="submit" busy={busy}>{role === 'owner' ? t('staff.addOwner') : t('staff.addStaff')}</Button>
+          <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('common.cancel')}</Button>
         </div>
       </form>
     </section>
@@ -345,7 +354,7 @@ function useMemberDraft<T extends object>(ctx: ScopeContext, member: PartnerMemb
   const recheck = async (): Promise<PartnerMember | null> => {
     setStale(null);
     const fresh = await read();
-    if (fresh.isActive === false) { setStale(`${member.name} is no longer a member.`); return null; }
+    if (fresh.isActive === false) { setStale(t('staff.noLongerMember', { name: member.name })); return null; }
     if (rebaseTo(toDraft(fresh)).length) { setStale(staleMessage([label])); return null; }
     return fresh;
   };
@@ -377,7 +386,7 @@ const emailDraft = (m: PartnerMember) => ({ email: m.email ?? '' });
 function EditEmail({ ctx, member, admin, onClose, onSaved }:
   { ctx: ScopeContext; member: PartnerMember; admin: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
   const queryClient = useQueryClient();
-  const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, emailDraft, 'email');
+  const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, emailDraft, t('staff.field.email'));
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | null>(null);
@@ -390,9 +399,9 @@ function EditEmail({ ctx, member, admin, onClose, onSaved }:
     e.preventDefault();
     setError(null); setNotice(null);
     const validated = memberEmail(d.current().draft.email);
-    setFieldError(validated === null ? 'Enter a valid email address, or leave it empty to remove it.' : undefined);
+    setFieldError(validated === null ? t('staff.email.invalid') : undefined);
     if (validated === null) return;
-    if (validated === memberEmail(d.current().base.email)) { setNotice('Nothing has changed.'); return; }
+    if (validated === memberEmail(d.current().base.email)) { setNotice(t('common.nothingChanged')); return; }
     const mine = ++seq.current;
     const owns = () => live.current && seq.current === mine;
     setBusy(true);
@@ -400,8 +409,8 @@ function EditEmail({ ctx, member, admin, onClose, onSaved }:
       const fresh = await recheck();
       if (!owns() || !fresh) return;
       // Re-read the draft after the wait: anything but exactly the validated email is not sent.
-      if (memberEmail(d.current().draft.email) !== validated) { setNotice('The email changed while saving. Check it and save again.'); return; }
-      if (validated === memberEmail(d.current().base.email)) { setNotice('Nothing has changed.'); return; }
+      if (memberEmail(d.current().draft.email) !== validated) { setNotice(t('staff.email.changedWhileSaving')); return; }
+      if (validated === memberEmail(d.current().base.email)) { setNotice(t('common.nothingChanged')); return; }
       const saved = await fenced(() => ctx.api.setEmail(member._id, validated || null, fresh.updatedAt));
       // Saved: the list shows it whatever happened to this editor meanwhile (closed, or replaced by another one);
       // only the editor's own notice and closing need it to still be the one on screen.
@@ -419,25 +428,25 @@ function EditEmail({ ctx, member, admin, onClose, onSaved }:
 
   return (
     <section className="ws-section" aria-labelledby="email-h">
-      <h2 id="email-h">Email for {member.name}</h2>
+      <h2 id="email-h">{t('staff.email.title', { name: member.name })}</h2>
       <p className="ws-muted">
-        They can sign in with this email (a code by email) as well as with their mobile number. Leave it empty to remove it.
+        {t('staff.email.intro')}
         {/* A first email ends nothing; changing or removing one ends the member's sessions (`updateMemberEmail`). */}
-        {member.email && ` Changing or removing it signs them out of the workspace on the web and in the phone app${ctx.actor.memberId === member._id ? ' (you too)' : ''}.`}
-        {' '}They are told when it is set, changed or removed.
-        {member.role === 'owner' && admin && ' Only the Jansetu team changes an owner’s sign-in email.'}
+        {member.email && <> {t(ctx.actor.memberId === member._id ? 'staff.email.signsOutYou' : 'staff.email.signsOut')}</>}
+        {' '}{t('staff.email.told')}
+        {member.role === 'owner' && admin && <> {t('staff.email.ownerByJansetu')}</>}
       </p>
       <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
         <fieldset className="ws-frozen" disabled={busy}>
-          <TextField label="Email" type="email" inputMode="email" autoCapitalize="none" spellCheck={false} maxLength={MAX_EMAIL} autoComplete="off"
+          <TextField label={t('staff.email.label')} type="email" inputMode="email" autoCapitalize="none" spellCheck={false} maxLength={MAX_EMAIL} autoComplete="off"
             value={d.draft.email} onChange={(e) => d.set('email', e.target.value)} error={fieldError} />
         </fieldset>
         {stale && <Alert tone="warn">{stale}</Alert>}
         {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}
         <div className="ws-actions">
-          <Button type="submit" busy={busy}>Save email</Button>
-          <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button type="submit" busy={busy}>{t('staff.email.save')}</Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>{t('common.cancel')}</Button>
         </div>
       </form>
     </section>
@@ -446,7 +455,7 @@ function EditEmail({ ctx, member, admin, onClose, onSaved }:
 
 function EditPermissions({ ctx, member, onClose, onSaved }:
   { ctx: ScopeContext; member: PartnerMember; onClose: () => void; onSaved: () => Promise<void> }) {
-  const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, permsDraft, 'permissions');
+  const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, permsDraft, t('staff.field.permissions'));
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -462,13 +471,13 @@ function EditPermissions({ ctx, member, onClose, onSaved }:
     e.preventDefault();
     setError(null); setNotice(null);
     if (!kind) return;
-    if (!changedFields(d.current()).permissions) { setNotice('Nothing has changed.'); return; }
+    if (!changedFields(d.current()).permissions) { setNotice(t('common.nothingChanged')); return; }
     setBusy(true);
     try {
       const fresh = await recheck();
       if (!fresh || !live.current) return;
       const next = changedFields(d.current()).permissions;
-      if (!next) { setNotice('Nothing has changed.'); return; }
+      if (!next) { setNotice(t('common.nothingChanged')); return; }
       // Saved: the page says so and reads the list again; it closes this editor only if it is still the one open.
       if (await fenced(() => ctx.api.setPermissions(member._id, next.filter((p) => grantable.includes(p)), fresh.updatedAt))) await onSaved();
     } catch (err) {
@@ -480,21 +489,21 @@ function EditPermissions({ ctx, member, onClose, onSaved }:
 
   return (
     <section className="ws-section" aria-labelledby="perm-h">
-      <h2 id="perm-h">Permissions for {member.name}</h2>
+      <h2 id="perm-h">{t('staff.permissions.title', { name: member.name })}</h2>
       <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
-        {partner.isPending ? <Loading label="Loading the permissions this partner can give…" />
+        {partner.isPending ? <Loading label={t('staff.permissions.loading')} />
           : partner.isError ? <ErrorState message={messageOf(partner.error)} onRetry={() => void partner.refetch()} />
           : (
             <fieldset className="ws-frozen" disabled={busy}>
-              <PermissionChecklist legend="Permissions" allowed={grantable} value={d.draft.permissions} onChange={(v) => d.set('permissions', v)} />
+              <PermissionChecklist legend={t('staff.permissions')} allowed={grantable} value={d.draft.permissions} onChange={(v) => d.set('permissions', v)} />
             </fieldset>
           )}
         {stale && <Alert tone="warn">{stale}</Alert>}
         {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}
         <div className="ws-actions">
-          <Button type="submit" busy={busy} disabled={!kind}>Save permissions</Button>
-          <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button type="submit" busy={busy} disabled={!kind}>{t('staff.permissions.save')}</Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>{t('common.cancel')}</Button>
         </div>
       </form>
     </section>
@@ -509,7 +518,7 @@ function EditBranches({ ctx, member, branches, closedBranches, branchesError, on
   ctx: ScopeContext; member: PartnerMember; branches: Branch[] | undefined; closedBranches?: Branch[]; branchesError: string | null;
   onClose: () => void; onSaved: () => Promise<void>;
 }) {
-  const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, scopeDraft, 'branch access');
+  const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, scopeDraft, t('staff.field.branches'));
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | null>(null);
@@ -533,7 +542,7 @@ function EditBranches({ ctx, member, branches, closedBranches, branchesError, on
     const problem = branchProblem(ctx, now.all, now.ids, closed);
     setFieldError(problem ?? undefined);
     if (problem) return;
-    if (unchanged()) { setNotice('Nothing has changed.'); return; }
+    if (unchanged()) { setNotice(t('common.nothingChanged')); return; }
     const validated = [...scopeOf(now)];
     setBusy(true);
     try {
@@ -541,8 +550,8 @@ function EditBranches({ ctx, member, branches, closedBranches, branchesError, on
       if (!fresh || !live.current) return;
       // Re-read the draft after the wait: anything but exactly the validated scope is not sent.
       const after = d.current().draft.scope;
-      if (JSON.stringify(scopeOf(after)) !== JSON.stringify(validated)) { setNotice('The branch choice changed while saving. Check it and save again.'); return; }
-      if (unchanged()) { setNotice('Nothing has changed.'); return; }
+      if (JSON.stringify(scopeOf(after)) !== JSON.stringify(validated)) { setNotice(t('staff.branches.changedWhileSaving')); return; }
+      if (unchanged()) { setNotice(t('common.nothingChanged')); return; }
       // Saved: the page says so and reads the list again; it closes this editor only if it is still the one open.
       if (await fenced(() => ctx.api.setBranches(member._id, validated, fresh.updatedAt))) await onSaved();
     } catch (err) {
@@ -556,7 +565,7 @@ function EditBranches({ ctx, member, branches, closedBranches, branchesError, on
 
   return (
     <section className="ws-section" aria-labelledby="scope-h">
-      <h2 id="scope-h">Branch access for {member.name}</h2>
+      <h2 id="scope-h">{t('staff.branches.title', { name: member.name })}</h2>
       <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
         <fieldset className="ws-frozen" disabled={busy}>
           <BranchPicker wide={wide} all={d.draft.scope.all} ids={d.draft.scope.ids} options={branches} loadError={branchesError}
@@ -566,8 +575,8 @@ function EditBranches({ ctx, member, branches, closedBranches, branchesError, on
         {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}
         <div className="ws-actions">
-          <Button type="submit" busy={busy}>Save branch access</Button>
-          <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button type="submit" busy={busy}>{t('staff.branches.save')}</Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>{t('common.cancel')}</Button>
         </div>
       </form>
     </section>
@@ -594,7 +603,7 @@ const sameProfessional = (a: MemberProfessional | null | undefined, b: MemberPro
 function EditProfessional({ ctx, member, onClose, onSaved }:
   { ctx: ScopeContext; member: PartnerMember; onClose: () => void; onSaved: (removed: boolean) => Promise<void> }) {
   const queryClient = useQueryClient();
-  const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, professionalDraft, 'registration');
+  const { d, stale, recheck, fenced } = useMemberDraft(ctx, member, professionalDraft, t('staff.field.registration'));
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ kind?: string; registrationNumber?: string }>({});
   const [notice, setNotice] = useState<string | null>(null);
@@ -607,7 +616,7 @@ function EditProfessional({ ctx, member, onClose, onSaved }:
   /** Sends `next` (null removes) on the member as read right before. True when this editor may close. */
   async function send(next: MemberProfessional | null, typed: () => MemberProfessional | null): Promise<void> {
     setError(null); setNotice(null);
-    if (sameProfessional(next, base())) { setNotice('Nothing has changed.'); return; }
+    if (sameProfessional(next, base())) { setNotice(t('common.nothingChanged')); return; }
     const mine = ++seq.current;
     const owns = () => live.current && seq.current === mine;
     setBusy(true);
@@ -615,8 +624,8 @@ function EditProfessional({ ctx, member, onClose, onSaved }:
       const fresh = await recheck();
       if (!owns() || !fresh) return;
       // Re-read the draft after the wait: anything but exactly the checked value is not sent.
-      if (!sameProfessional(typed(), next)) { setNotice('The registration changed while saving. Check it and save again.'); return; }
-      if (sameProfessional(next, base())) { setNotice('Nothing has changed.'); return; }
+      if (!sameProfessional(typed(), next)) { setNotice(t('staff.registration.changedWhileSaving')); return; }
+      if (sameProfessional(next, base())) { setNotice(t('common.nothingChanged')); return; }
       const saved = await fenced(() => ctx.api.setProfessional(member._id, next, fresh.updatedAt));
       if (saved && !owns()) await queryClient.invalidateQueries({ queryKey: [...ctx.key, 'members'] });
       if (saved && owns()) await onSaved(next === null);
@@ -630,7 +639,7 @@ function EditProfessional({ ctx, member, onClose, onSaved }:
           if (!owns()) return;
           if (sameProfessional(now.professional ?? null, next)) { await onSaved(next === null); return; }
         } catch { /* still unknown: say so below */ }
-        if (owns()) setError(`Not confirmed: ${messageOf(err)} The registration shown is what is saved as far as we know; save again if it is still needed.`);
+        if (owns()) setError(t('staff.registration.notConfirmed', { reason: messageOf(err) }));
         return;
       }
       setError(messageOf(err));
@@ -655,24 +664,21 @@ function EditProfessional({ ctx, member, onClose, onSaved }:
   const held = member.professional?.registrationNumber ? member.professional : null;
   return (
     <section className="ws-section" aria-labelledby="prof-h">
-      <h2 id="prof-h">Professional registration of {member.name}</h2>
-      <p className="ws-muted">
-        Lab reports are released under a registered professional: their name, what they are registered as and the number are
-        printed on the report the customer gets. To release reports they also need “Release reports” (owners hold it).
-      </p>
+      <h2 id="prof-h">{t('staff.registration.title', { name: member.name })}</h2>
+      <p className="ws-muted">{t('staff.registration.intro')}</p>
       <form className="rx-form" noValidate onSubmit={save}>
         <fieldset className="ws-frozen" disabled={busy}>
           <div className="rx-form-row">
             <div className="j-field">
-              <label htmlFor="prof-kind">Registered as</label>
+              <label htmlFor="prof-kind">{t('staff.registration.kind')}</label>
               <select id="prof-kind" value={p.kind} aria-describedby={fieldErrors.kind ? 'prof-kind-err' : undefined}
                 onChange={(e) => d.set('professional', { ...d.current().draft.professional, kind: e.target.value as MemberProfessional['kind'] })}>
-                <option value="">Choose</option>
+                <option value="">{t('staff.registration.choose')}</option>
                 {PROFESSIONAL_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
               </select>
               {fieldErrors.kind && <span id="prof-kind-err" className="j-field__error">{fieldErrors.kind}</span>}
             </div>
-            <TextField label="Registration number" value={p.registrationNumber} maxLength={MAX_REGISTRATION_INPUT} autoComplete="off" spellCheck={false}
+            <TextField label={t('staff.registration.number')} value={p.registrationNumber} maxLength={MAX_REGISTRATION_INPUT} autoComplete="off" spellCheck={false}
               error={fieldErrors.registrationNumber}
               onChange={(e) => d.set('professional', { ...d.current().draft.professional, registrationNumber: e.target.value })} />
           </div>
@@ -681,13 +687,13 @@ function EditProfessional({ ctx, member, onClose, onSaved }:
         {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}
         <div className="ws-actions">
-          <Button type="submit" busy={busy}>Save registration</Button>
-          <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button type="submit" busy={busy}>{t('staff.registration.save')}</Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>{t('common.cancel')}</Button>
         </div>
       </form>
       {held && (
-        <ConfirmAction label="Remove registration" danger disabled={busy} confirmLabel={`Remove the registration of ${member.name}`}
-          consequence={`${member.name} can no longer release reports until a registration is added again. Reports already released keep the registration they were released under.`}
+        <ConfirmAction label={t('staff.registration.remove')} danger disabled={busy} confirmLabel={t('staff.registration.removeName', { name: member.name })}
+          consequence={t('staff.registration.remove.consequence', { name: member.name })}
           onConfirm={() => send(null, () => null)} />
       )}
     </section>

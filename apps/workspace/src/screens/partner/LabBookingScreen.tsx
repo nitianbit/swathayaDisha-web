@@ -9,7 +9,7 @@ import {
   labBookingsAdminApi, type LabAction, type LabActionOffer, type LabBooking, type LabLifecycleKey, type LabSlot, type PartnerMember,
   canBillDesk, canDeskCancel, deskRefusal, INVOICE_STATE_LABEL, isDeskBooking, labDeskApi, type DeskCancelAnswer,
 } from '@jansetu/api';
-import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, Parts, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { FOCUS_HOST_STYLE, usePanelFocus } from '../../components/focus.ts';
 import { NoShowMove, noShowMoveSlot, type NoShowTarget } from '../../components/NoShowMove.tsx';
@@ -23,18 +23,23 @@ import {
   formatDay, LabOnly, LabPayment, labStatusTone, ReportPreview, slotLabel, useNow, useReportViewer, ViewFileButton,
 } from './labs.tsx';
 import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
+import { t } from '../../i18n/partner/index.ts';
 
-const LIFECYCLE: readonly [LabLifecycleKey, string][] = [
-  ['paidAt', 'Paid'], ['confirmedAt', 'Confirmed'], ['collectedAt', 'Sample collected'], ['visitedAt', 'Visited the lab'],
-  ['processingAt', 'Processing started'], ['reportReadyAt', 'First report released'], ['completedAt', 'Completed'],
-  ['cancelledAt', 'Cancelled'], ['noShowAt', 'Marked as no-show'],
+const LIFECYCLE: readonly LabLifecycleKey[] = [
+  'paidAt', 'confirmedAt', 'collectedAt', 'visitedAt', 'processingAt', 'reportReadyAt', 'completedAt', 'cancelledAt', 'noShowAt',
 ];
-const CANCEL_REASON: Record<string, string> = {
-  timeout: 'Not paid in time', customer: 'Cancelled by the customer', lab_reject: 'Rejected by the lab',
-  // Q16a: an admin cancels a booking moved after a no-show, with or without a refund (`cancellation.refund`).
-  admin_no_show: 'Cancelled by the Jansetu team after a no-show move',
-  // r11 / r12: the pharmacy that booked it, or the lab's own front desk.
-  partner: 'Cancelled by the pharmacy that booked it', desk: 'Cancelled at the front desk',
+/**
+ * Why a booking was cancelled (Q16a: an admin cancels a booking moved after a no-show, with or without a refund; r11 /
+ * r12: the pharmacy that booked it, or the lab's own front desk). A reason this app does not know shows as sent.
+ */
+const cancelReason = (reason: string) => {
+  const key = `labBooking.cancelReason.${reason}`;
+  return t.has(key) ? t(key) : reason;
+};
+/** A gender as given at booking (the new-bill form's words). */
+const genderLabel = (g: string) => {
+  const key = `newInvoice.gender.${g}`;
+  return g !== 'none' && t.has(key) ? t(key) : g;
 };
 
 /**
@@ -42,9 +47,7 @@ const CANCEL_REASON: Record<string, string> = {
  * moved meanwhile the server does nothing (409 LAB_BOOKING_CHANGED); the page reads the booking again (every step
  * re-reads it when it ends) and says so.
  */
-export const LAB_BOOKING_CHANGED_MESSAGE = 'The booking changed since you looked at it (someone else acted on it), so nothing was done. It has been read again: check it and try again.';
-const stepMessage = (err: unknown) => (isLabBookingChanged(err) ? LAB_BOOKING_CHANGED_MESSAGE : messageOf(err));
-const GENDER_LABEL: Record<string, string> = { male: 'Male', female: 'Female', other: 'Other' };
+const stepMessage = (err: unknown) => (isLabBookingChanged(err) ? t('labBooking.changed') : messageOf(err));
 
 /** One online lab booking: what was booked, its timeline, the steps this person may take now, and its reports. */
 export function LabBookingScreen() {
@@ -59,7 +62,7 @@ function BookingPage({ ctx, bookingId }: { ctx: ScopeContext; bookingId: string 
   const partner = useWorkspacePartner(ctx);
   return (
     <>
-      <Link className="ws-back" to={ctx.link('lab-bookings')}><ArrowLeft size={16} aria-hidden="true" /> Back to lab bookings</Link>
+      <Link className="ws-back" to={ctx.link('lab-bookings')}><ArrowLeft size={16} aria-hidden="true" /> {t('labBooking.back')}</Link>
       <LabOnly ctx={ctx}><BookingDetail ctx={ctx} bookingId={bookingId} partnerName={partner.data?.name} /></LabOnly>
     </>
   );
@@ -98,7 +101,7 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
    */
   async function guarded<T>(action: Step, run: () => Promise<T>): Promise<T> {
     if (inFlight.current) {
-      throw new ApiError(409, 'Another step on this booking is still running. Wait for it to finish, then try again.', 'STEP_IN_FLIGHT');
+      throw new ApiError(409, t('labBooking.stepRunning'), 'STEP_IN_FLIGHT');
     }
     inFlight.current = true;
     setBusy(action);
@@ -115,15 +118,15 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
     }
   }
   const click = (action: LabAction, what: string, run: () => Promise<LabBooking>, done: string) =>
-    perform(action, run, done).catch((err: unknown) => setFailure(`${what}: ${stepMessage(err)}`));
+    perform(action, run, done).catch((err: unknown) => setFailure(t('labBooking.stepFailed', { what, reason: stepMessage(err) })));
   /** For confirmations: the refusal in words (LAB_BOOKING_CHANGED explained), shown inside the confirmation. */
   const confirmed = (action: LabAction, run: () => Promise<LabBooking>, done: string) =>
     perform(action, run, done).catch((err: unknown) => { throw new ApiError(err instanceof ApiError ? err.status : 0, stepMessage(err), err instanceof ApiError ? err.code : undefined); });
 
-  if (q.isPending) return <><PageHeading title="Lab booking" /><Loading label="Loading the booking…" /></>;
-  if (q.isError || !b) return <><PageHeading title="Lab booking" /><ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} /></>;
+  if (q.isPending) return <><PageHeading title={t('labBooking.titleUnknown')} /><Loading label={t('labBooking.loading')} /></>;
+  if (q.isError || !b) return <><PageHeading title={t('labBooking.titleUnknown')} /><ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} /></>;
 
-  const branchName = branches.data?.find((x) => x._id === b.branchId)?.name ?? `Branch …${b.branchId.slice(-6)}`;
+  const branchName = branches.data?.find((x) => x._id === b.branchId)?.name ?? t('common.branchById', { tail: b.branchId.slice(-6) });
   const offers = labActions(b, ctx.actor, now);
   // Q14: the one move of a no-show (also shown while a move sent earlier is still unconfirmed, whatever the status now).
   const move = labNoShowMove(b, ctx.actor);
@@ -134,53 +137,51 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
 
   return (
     <>
-      <PageHeading title={`Lab booking: ${b.patient.name}`}>
-        {ctx.adminHome ? <>Managing {partnerName ?? 'this partner'} with owner authority. </> : null}
+      <PageHeading title={t('labBooking.title', { name: b.patient.name })}>
+        {ctx.adminHome ? <>{partnerName === undefined ? t('scope.managingThis') : t('scope.managing', { name: partnerName })} </> : null}
         {slotLabel(b.slot)} · {LAB_VISIT_MODE_LABEL[b.visitMode]} · {branchName}
       </PageHeading>
       {notice && <Alert tone="ok">{notice}</Alert>}
 
       <section className="ws-section" aria-labelledby="lb-status-h">
-        <h2 id="lb-status-h">Status</h2>
+        <h2 id="lb-status-h">{t('labBooking.status')}</h2>
         {failure && <Alert>{failure}</Alert>}
         <div className="ws-actions">
           <Badge tone={labStatusTone(b.status)}>{LAB_BOOKING_STATUS_LABEL[b.status] ?? b.status}</Badge>
           <LabPayment b={b} />
-          {b.reschedule?.pending && <Badge tone="warn">New time proposed</Badge>}
+          {b.reschedule?.pending && <Badge tone="warn">{t('labBooking.newTimeProposed')}</Badge>}
         </div>
         {b.status === 'pending_payment' && (
-          <p className="ws-muted">The customer has not paid yet (until {formatDateTime(b.paymentDeadline)}). Nothing can be done on it until it is paid; unpaid bookings expire on their own.</p>
+          <p className="ws-muted">{t('labBooking.unpaid', { deadline: formatDateTime(b.paymentDeadline) })}</p>
         )}
         {b.reschedule?.pending && b.reschedule.previousSlot && (
           <Alert tone="warn">
-            You proposed {slotLabel(b.slot)} instead of {slotLabel(b.reschedule.previousSlot)}{b.reschedule.reason ? ` (“${b.reschedule.reason}”)` : ''}.
-            The customer has not accepted it yet; they may also cancel with a full refund.
+            {b.reschedule.reason
+              ? t('labBooking.proposedReason', { slot: slotLabel(b.slot), previous: slotLabel(b.reschedule.previousSlot), reason: b.reschedule.reason })
+              : t('labBooking.proposed', { slot: slotLabel(b.slot), previous: slotLabel(b.reschedule.previousSlot) })}
           </Alert>
         )}
         {b.cancellation && (
-          <p>{CANCEL_REASON[b.cancellation.reason] ?? b.cancellation.reason}{b.cancellation.note ? `: “${b.cancellation.note}”` : ''} · {formatDateTime(b.cancellation.at)}
+          <p>{cancelReason(b.cancellation.reason)}{b.cancellation.note ? `: “${b.cancellation.note}”` : ''} · {formatDateTime(b.cancellation.at)}
             {/* WQ11d: an admin's cancel of a moved no-show says whether the patient was refunded. */}
             {b.cancellation.reason === 'admin_no_show' && (b.cancellation.refund === true
-              ? <> · The patient’s payment of {money(b.pricing.payableMinor)} went back to their Jansetu wallet.</>
-              : b.cancellation.refund === false ? <> · The patient was not refunded: the payment is kept, as for a no-show, and nobody earns it.</> : null)}
+              ? <> · {t('labBooking.adminRefunded', { amount: money(b.pricing.payableMinor) })}</>
+              : b.cancellation.refund === false ? <> · {t('labBooking.adminNotRefunded')}</> : null)}
           </p>
         )}
         {b.status === 'no_show' && (
-          <p className="ws-muted">
-            Not refunded: the customer missed the slot. The lab earns nothing for a no-show; it earns only when a booking is completed.
-            {move === 'offer' ? ' The lab may move it once to a new time.' : ''}
-          </p>
+          <p className="ws-muted">{move === 'offer' ? t('labBooking.noShowMovable') : t('labBooking.noShow')}</p>
         )}
         <NoShowHistory booking={b} />
         {showMove && (
           <div className="ws-actions">
             <NoShowMove key={`${b._id}:${b.statusVersion}`} slot={moveSlot} who={b.patient.name} missed={slotLabel(b.slot)} state={move === 'used' ? 'used' : 'offer'}
               status={b.status} readAt={q.dataUpdatedAt} reading={q.isFetching} disabled={busy !== null || q.isFetching} version={b.statusVersion}
-              consequence={<>The seat moves now; the customer is told the new time. The lab earns only once the booking is completed.</>}
+              consequence={t('labBooking.move.consequence')}
               picker={(choose) => <LabSlotPicker ctx={ctx} booking={b} now={now} onChoose={choose} />}
-              send={(t: NoShowTarget, requestKey) => guarded('reschedule_no_show', () => ctx.labs.rescheduleNoShow(b._id, t.slotId, requestKey, typeof t.version === 'number' ? t.version : undefined))}
+              send={(target: NoShowTarget, requestKey) => guarded('reschedule_no_show', () => ctx.labs.rescheduleNoShow(b._id, target.slotId, requestKey, typeof target.version === 'number' ? target.version : undefined))}
               reread={() => void queryClient.invalidateQueries({ queryKey: key, exact: true })}
-              onNotice={(t) => { setFailure(null); setNotice(t); }} onFailure={(t) => { setNotice(null); setFailure(t); }}
+              onNotice={(text) => { setFailure(null); setNotice(text); }} onFailure={(text) => { setNotice(null); setFailure(text); }}
               onSlotRefused={() => void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'slots', b.branchId, b.visitMode] })} />
           </div>
         )}
@@ -188,45 +189,43 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
           <div className="ws-actions">
             {/* A button step is reviewed on the booking as shown: it names that version. */}
             {offer('collect') && (
-              <Step offer={offer('collect')!} disabled={disabled} busy={busy === 'collect'} label="Mark sample collected"
-                onClick={() => void click('collect', 'Not marked collected', () => ctx.labs.markCollected(b._id, b.statusVersion), 'Marked as sample collected.')} />
+              <Step offer={offer('collect')!} disabled={disabled} busy={busy === 'collect'} label={t('labBooking.collect')}
+                onClick={() => void click('collect', t('labBooking.collect.failed'), () => ctx.labs.markCollected(b._id, b.statusVersion), t('labBooking.collect.done'))} />
             )}
             {offer('visit') && (
-              <Step offer={offer('visit')!} disabled={disabled} busy={busy === 'visit'} label="Mark visited"
-                onClick={() => void click('visit', 'Not marked visited', () => ctx.labs.markVisited(b._id, b.statusVersion), 'Marked as visited.')} />
+              <Step offer={offer('visit')!} disabled={disabled} busy={busy === 'visit'} label={t('labBooking.visit')}
+                onClick={() => void click('visit', t('labBooking.visit.failed'), () => ctx.labs.markVisited(b._id, b.statusVersion), t('labBooking.visit.done'))} />
             )}
             {offer('process') && (
-              <Step offer={offer('process')!} disabled={disabled} busy={busy === 'process'} label="Start processing"
-                onClick={() => void click('process', 'Not moved to processing', () => ctx.labs.startProcessing(b._id, b.statusVersion), 'Processing started. Reports can be uploaded now.')} />
+              <Step offer={offer('process')!} disabled={disabled} busy={busy === 'process'} label={t('labBooking.process')}
+                onClick={() => void click('process', t('labBooking.process.failed'), () => ctx.labs.startProcessing(b._id, b.statusVersion), t('labBooking.process.done'))} />
             )}
             {offer('no_show') && (offer('no_show')!.blocked
-              ? <Step offer={offer('no_show')!} disabled label="Mark no-show" onClick={() => undefined} />
+              ? <Step offer={offer('no_show')!} disabled label={t('labBooking.noShowMark')} onClick={() => undefined} />
               : (
-                <ConfirmAction label="Mark no-show" danger disabled={disabled} confirmLabel="Mark no-show" version={b.statusVersion}
-                  consequence={noShowMovedOnce(b)
-                    // Q14: a booking already moved once after a no-show is never moved again (409 NO_SHOW_RESCHEDULE_USED).
-                    ? <>Mark {b.patient.name} as not present for {slotLabel(b.slot)}? This booking was already moved once after a no-show, so this second no-show is final: it cannot be moved again, the customer is not refunded and the lab earns nothing for it. This cannot be undone.</>
-                    : <>Mark {b.patient.name} as not present for {slotLabel(b.slot)}? The customer is not refunded and the lab earns nothing for it. Afterwards the lab may move it once to a new time; otherwise the booking ends here. This cannot be undone.</>}
-                  onConfirm={(_r, v) => confirmed('no_show', () => ctx.labs.markNoShow(b._id, v as number), 'Marked as no-show.')} />
+                <ConfirmAction label={t('labBooking.noShowMark')} danger disabled={disabled} confirmLabel={t('labBooking.noShowMark')} version={b.statusVersion}
+                  // Q14: a booking already moved once after a no-show is never moved again (409 NO_SHOW_RESCHEDULE_USED).
+                  consequence={t(noShowMovedOnce(b) ? 'labBooking.noShowMark.final' : 'labBooking.noShowMark.consequence', { name: b.patient.name, slot: slotLabel(b.slot) })}
+                  onConfirm={(_r, v) => confirmed('no_show', () => ctx.labs.markNoShow(b._id, v as number), t('labBooking.noShowMark.done'))} />
               ))}
             {offer('complete') && (
-              <ConfirmAction label="Complete booking" disabled={disabled} confirmLabel="Complete booking" version={b.statusVersion}
+              <ConfirmAction label={t('labBooking.complete')} disabled={disabled} confirmLabel={t('labBooking.complete')} version={b.statusVersion}
                 consequence={isDeskBooking(b)
-                  ? <>Complete this booking? It ends here: no more reports can be uploaded or released. It was paid at the lab, so nothing is recorded through Jansetu.</>
-                  : <>Complete this booking? It ends here: no more reports can be uploaded or released, and the lab’s earning of {money(Math.max(0, b.pricing.subtotalMinor - b.pricing.discountMinor))} is recorded.</>}
-                onConfirm={(_r, v) => confirmed('complete', () => ctx.labs.complete(b._id, v as number), 'Booking completed.')} />
+                  ? t('labBooking.complete.desk')
+                  : t('labBooking.complete.online', { amount: money(Math.max(0, b.pricing.subtotalMinor - b.pricing.discountMinor)) })}
+                onConfirm={(_r, v) => confirmed('complete', () => ctx.labs.complete(b._id, v as number), t('labBooking.complete.done'))} />
             )}
             {offer('assign') && <AssignCollector ctx={ctx} booking={b} disabled={disabled} perform={perform} />}
             {offer('reschedule') && <ProposeTime ctx={ctx} booking={b} disabled={disabled} now={now} perform={perform} />}
             {offer('reject') && (
-              <ConfirmAction label="Reject booking" danger disabled={disabled} reason reasonLabel="Why can the lab not take this booking? (the customer sees this)"
-                maxReason={MAX_LAB_REASON} confirmLabel="Reject and refund" version={b.statusVersion}
-                consequence={<>Reject this booking? It is cancelled, its seat is freed, and the customer’s full payment of {money(b.pricing.payableMinor)} goes back to their Jansetu wallet. This cannot be undone.</>}
-                onConfirm={(reason, v) => confirmed('reject', async () => (await ctx.labs.reject(b._id, reason, v as number)).booking, 'Booking rejected; the customer’s payment is back in their wallet.')} />
+              <ConfirmAction label={t('labBooking.reject')} danger disabled={disabled} reason reasonLabel={t('labBooking.reject.reason')}
+                maxReason={MAX_LAB_REASON} confirmLabel={t('labBooking.reject.confirm')} version={b.statusVersion}
+                consequence={t('labBooking.reject.consequence', { amount: money(b.pricing.payableMinor) })}
+                onConfirm={(reason, v) => confirmed('reject', async () => (await ctx.labs.reject(b._id, reason, v as number)).booking, t('labBooking.reject.done'))} />
             )}
           </div>
         ) : !showMove && b.status !== 'pending_payment' && !['completed', 'cancelled', 'no_show'].includes(b.status) && (
-          <p className="ws-muted">You can view this booking; the next step needs another permission.</p>
+          <p className="ws-muted">{t('labBooking.viewOnly')}</p>
         )}
         {ctx.scope.kind === 'admin' && b.status === 'confirmed' && noShowMovedOnce(b) && (
           <AdminCancelNoShow booking={b} disabled={disabled}
@@ -234,12 +233,12 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
               try {
                 const r = await labBookingsAdminApi(api).cancelMovedNoShow(b._id, { reason, refund });
                 await apply(r.booking);
-                setNotice(refund ? 'Cancelled by the Jansetu team; the patient’s payment is back in their wallet.' : 'Cancelled by the Jansetu team; the patient was not refunded.');
+                setNotice(refund ? t('labBooking.adminCancel.refunded') : t('labBooking.adminCancel.notRefunded'));
               } catch (err) {
                 // Q16a final: a repeat is refused 409 ALREADY_CANCELLED (another admin, or an earlier try whose answer was
                 // lost); nothing more was done, never refunded twice. The booking is read again (`guarded`).
                 if (!(err instanceof ApiError && err.code === 'ALREADY_CANCELLED')) throw err;
-                setNotice('This booking was already cancelled (by another admin, or by an earlier try whose answer was lost): nothing more was done. It is shown as it is now.');
+                setNotice(t('labBooking.adminCancel.already'));
               }
             })} />
         )}
@@ -253,41 +252,51 @@ function BookingDetail({ ctx, bookingId, partnerName }: { ctx: ScopeContext; boo
       <Reports ctx={ctx} booking={b} offers={offers} disabled={disabled} perform={perform} />
 
       <section className="ws-section" aria-labelledby="lb-visit-h">
-        <h2 id="lb-visit-h">Patient and visit</h2>
+        <h2 id="lb-visit-h">{t('labBooking.patientAndVisit')}</h2>
         <dl className="ws-dl">
-          <dt>Patient</dt>
-          <dd>{b.patient.name}{b.patient.kind === 'dependent' ? ' (family member of the account holder)' : ''}</dd>
-          {b.patient.age !== undefined && <><dt>Age</dt><dd>{b.patient.age}</dd></>}
-          {b.patient.gender && <><dt>Gender</dt><dd>{GENDER_LABEL[b.patient.gender] ?? b.patient.gender}</dd></>}
-          <dt>Slot</dt><dd>{slotLabel(b.slot)} (India time)</dd>
-          <dt>Visit</dt><dd>{LAB_VISIT_MODE_LABEL[b.visitMode]} · {branchName}</dd>
+          <dt>{t('labBooking.patient')}</dt>
+          <dd>{b.patient.kind === 'dependent' ? t('labBooking.dependent', { name: b.patient.name }) : b.patient.name}</dd>
+          {b.patient.age !== undefined && <><dt>{t('labBooking.age')}</dt><dd>{b.patient.age}</dd></>}
+          {b.patient.gender && <><dt>{t('labBooking.gender')}</dt><dd>{genderLabel(b.patient.gender)}</dd></>}
+          <dt>{t('labBooking.slot')}</dt><dd>{t('labBooking.slotIst', { slot: slotLabel(b.slot) })}</dd>
+          <dt>{t('labBooking.visitLabel')}</dt><dd>{LAB_VISIT_MODE_LABEL[b.visitMode]} · {branchName}</dd>
           {b.visitMode === 'home' && b.address && (
-            <><dt>Address</dt><dd>{[b.address.line1, b.address.line2, b.address.landmark, b.address.city, b.address.state, b.address.pincode].filter(Boolean).join(', ')}</dd></>
+            <><dt>{t('labBooking.address')}</dt><dd>{[b.address.line1, b.address.line2, b.address.landmark, b.address.city, b.address.state, b.address.pincode].filter(Boolean).join(', ')}</dd></>
           )}
-          {b.collector && <><dt>Collector</dt><dd>{b.collector.name}{b.collector.phone ? ` · ${b.collector.phone}` : ''}</dd></>}
+          {b.collector && <><dt>{t('labBooking.collector')}</dt><dd>{b.collector.name}{b.collector.phone ? ` · ${b.collector.phone}` : ''}</dd></>}
         </dl>
       </section>
 
       <section className="ws-section" aria-labelledby="lb-tests-h">
-        <h2 id="lb-tests-h">Tests and payment</h2>
+        <h2 id="lb-tests-h">{t('labBooking.testsAndPayment')}</h2>
         <div className="ws-table-wrap">
           <table className="j-table">
-            <caption className="j-sr-only">Tests booked: {tests}</caption>
-            <thead><tr><th scope="col">Test</th><th scope="col">Code</th><th scope="col">Type</th><th scope="col">Report within</th><th scope="col">Price</th></tr></thead>
+            <caption className="j-sr-only">{t('labBooking.testsCaption', { tests })}</caption>
+            <thead>
+              <tr>
+                <th scope="col">{t('labBooking.col.test')}</th><th scope="col">{t('labBooking.col.code')}</th><th scope="col">{t('labBooking.col.type')}</th>
+                <th scope="col">{t('labBooking.col.reportWithin')}</th><th scope="col">{t('labBooking.col.price')}</th>
+              </tr>
+            </thead>
             <tbody>
               {b.items.map((i) => (
                 <tr key={i.catalogItemId}>
-                  <td>{i.name}</td><td>{i.code ?? '—'}</td><td>{i.kind === 'package' ? 'Package' : 'Test'}</td>
-                  <td>{i.reportTatHours ? `${i.reportTatHours} h` : '—'}</td><td>{money(i.priceMinor)}</td>
+                  <td>{i.name}</td><td>{i.code ?? '—'}</td><td>{i.kind === 'package' ? t('billing.kind.package') : t('billing.kind.test')}</td>
+                  <td>{i.reportTatHours ? t('catalogue.hours', { n: i.reportTatHours }) : '—'}</td><td>{money(i.priceMinor)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <dl className="ws-dl" aria-label="Payment">
-          <dt>Tests</dt><dd>{money(b.pricing.subtotalMinor)}</dd>
-          {b.pricing.discountMinor > 0 && <><dt>Coupon{b.pricing.couponCode ? ` ${b.pricing.couponCode}` : ''}</dt><dd>− {money(b.pricing.discountMinor)}</dd></>}
-          <dt><strong>Paid by the customer</strong></dt><dd><strong>{money(b.pricing.payableMinor)}</strong> · {LAB_PAYMENT_STATUS_LABEL[b.paymentStatus] ?? b.paymentStatus}</dd>
+        <dl className="ws-dl" aria-label={t('labBooking.payment')}>
+          <dt>{t('labBooking.tests')}</dt><dd>{money(b.pricing.subtotalMinor)}</dd>
+          {b.pricing.discountMinor > 0 && (
+            <>
+              <dt>{b.pricing.couponCode ? t('labBooking.couponCode', { code: b.pricing.couponCode }) : t('labBooking.coupon')}</dt>
+              <dd>− {money(b.pricing.discountMinor)}</dd>
+            </>
+          )}
+          <dt><strong>{t('labBooking.paidByCustomer')}</strong></dt><dd><strong>{money(b.pricing.payableMinor)}</strong> · {LAB_PAYMENT_STATUS_LABEL[b.paymentStatus] ?? b.paymentStatus}</dd>
         </dl>
       </section>
 
@@ -316,9 +325,9 @@ function AdminCancelNoShow({ booking: b, disabled, run }: { booking: LabBooking;
     e.preventDefault();
     const r = reason.trim();
     const errs: { reason?: string; refund?: string } = {};
-    if (r.length < MIN_LAB_REASON) errs.reason = `Give a reason (at least ${MIN_LAB_REASON} characters).`;
-    else if (r.length > MAX_LAB_REASON) errs.reason = `Use at most ${MAX_LAB_REASON} characters.`;
-    if (!refund) errs.refund = 'Choose whether the patient is refunded.';
+    if (r.length < MIN_LAB_REASON) errs.reason = t('labBooking.adminCancel.reasonShort', { min: MIN_LAB_REASON });
+    else if (r.length > MAX_LAB_REASON) errs.reason = t('common.maxChars', { max: MAX_LAB_REASON });
+    if (!refund) errs.refund = t('labBooking.adminCancel.chooseRefund');
     setErrors(errs);
     setError(null);
     if (!Object.keys(errs).length) setConfirming(true);
@@ -331,7 +340,8 @@ function AdminCancelNoShow({ booking: b, disabled, run }: { booking: LabBooking;
       close();
     } catch (err) {
       // Every answer re-reads the booking: a lost answer is settled by what it shows (Cancelled = done).
-      setError(definitelyNotRecorded(err) ? `Not cancelled: ${stepMessage(err)}` : `Not confirmed: ${messageOf(err)} The booking was read again: if it shows Cancelled, it is done.`);
+      setError(definitelyNotRecorded(err) ? t('labBooking.adminCancel.notCancelled', { reason: stepMessage(err) })
+        : t('labBooking.adminCancel.notConfirmed', { reason: messageOf(err) }));
       setConfirming(false);
     } finally {
       setBusy(false);
@@ -342,37 +352,41 @@ function AdminCancelNoShow({ booking: b, disabled, run }: { booking: LabBooking;
     <span ref={host} style={FOCUS_HOST_STYLE}>
       {!open ? (
         <div className="ws-actions">
-          <Button variant="secondary" disabled={disabled} onClick={() => setOpen(true)}>Cancel (admin)</Button>
-          <span className="ws-muted">Moved after a no-show: only the Jansetu team cancels it, with or without a refund.</span>
+          <Button variant="secondary" disabled={disabled} onClick={() => setOpen(true)}>{t('labBooking.adminCancel.open')}</Button>
+          <span className="ws-muted">{t('labBooking.adminCancel.intro')}</span>
         </div>
       ) : (
-        <form className="confirm" noValidate onSubmit={review} aria-label="Cancel (admin)">
+        <form className="confirm" noValidate onSubmit={review} aria-label={t('labBooking.adminCancel.open')}>
           {!confirming ? (
             <>
-              <TextArea label="Reason (the patient sees this)" value={reason} maxLength={MAX_LAB_REASON} error={errors.reason} onChange={(e) => setReason(e.target.value)} />
+              <TextArea label={t('labBooking.adminCancel.reason')} value={reason} maxLength={MAX_LAB_REASON} error={errors.reason} onChange={(e) => setReason(e.target.value)} />
               <fieldset className="ws-checks" aria-describedby={errors.refund ? 'lb-admin-refund-err' : undefined}>
-                <legend>Refund the patient?</legend>
+                <legend>{t('labBooking.adminCancel.refund')}</legend>
                 <label className="ws-check">
-                  <input type="radio" name="lb-admin-refund" checked={refund === 'yes'} onChange={() => setRefund('yes')} /> Yes: the full payment of {money(b.pricing.payableMinor)} goes back to their Jansetu wallet
+                  <input type="radio" name="lb-admin-refund" checked={refund === 'yes'} onChange={() => setRefund('yes')} /> {t('labBooking.adminCancel.yes', { amount: money(b.pricing.payableMinor) })}
                 </label>
                 <label className="ws-check">
-                  <input type="radio" name="lb-admin-refund" checked={refund === 'no'} onChange={() => setRefund('no')} /> No: the payment is kept, as for a no-show (nobody earns it)
+                  <input type="radio" name="lb-admin-refund" checked={refund === 'no'} onChange={() => setRefund('no')} /> {t('labBooking.adminCancel.no')}
                 </label>
                 {errors.refund && <span id="lb-admin-refund-err" className="j-field__error">{errors.refund}</span>}
               </fieldset>
             </>
           ) : (
             <div className="confirm-text">
-              Cancel {b.patient.name}’s booking for {slotLabel(b.slot)}? Its seat is freed and the patient is told.
-              {refund === 'yes' ? ` The full payment of ${money(b.pricing.payableMinor)} goes back to their Jansetu wallet.` : ' The patient is not refunded: the payment is kept, as for a no-show, and nobody earns it.'}
-              {' '}This cannot be undone.
+              {refund === 'yes'
+                ? t('labBooking.adminCancel.confirmRefund', { name: b.patient.name, slot: slotLabel(b.slot), amount: money(b.pricing.payableMinor) })
+                : t('labBooking.adminCancel.confirmNoRefund', { name: b.patient.name, slot: slotLabel(b.slot) })}
             </div>
           )}
           {error && <Alert>{error}</Alert>}
           <div className="confirm-actions">
-            {!confirming ? <Button type="submit" disabled={disabled}>Continue</Button>
-              : <Button variant="danger" busy={busy} disabled={disabled && !busy} onClick={() => void go()}>{refund === 'yes' ? 'Cancel and refund' : 'Cancel without a refund'}</Button>}
-            <Button variant="ghost" data-focus-back disabled={busy} onClick={() => (confirming ? setConfirming(false) : close())}>Back</Button>
+            {!confirming ? <Button type="submit" disabled={disabled}>{t('common.continue')}</Button>
+              : (
+                <Button variant="danger" busy={busy} disabled={disabled && !busy} onClick={() => void go()}>
+                  {refund === 'yes' ? t('labBooking.adminCancel.withRefund') : t('labBooking.adminCancel.withoutRefund')}
+                </Button>
+              )}
+            <Button variant="ghost" data-focus-back disabled={busy} onClick={() => (confirming ? setConfirming(false) : close())}>{t('common.back')}</Button>
           </div>
         </form>
       )}
@@ -398,16 +412,24 @@ type Step = LabAction | 'reschedule_no_show' | 'desk_cancel';
 function NoShowHistory({ booking: b }: { booking: LabBooking }) {
   if (!b.noShows?.length) return null;
   return (
-    <ul className="ws-list" aria-label="No-show history">
-      {b.noShows.map((n, i) => (
-        <li key={i}>
-          Missed {slotLabel(n.fromSlot)}{n.at ? ` (marked ${formatDateTime(n.at)})` : ''} · moved to {slotLabel(n.toSlot)} on {formatDateTime(n.rescheduledAt)}
-          {n.byKind === 'admin' ? ' by a Jansetu admin' : ''}. A second no-show is final.
-        </li>
-      ))}
+    <ul className="ws-list" aria-label={t('labBooking.noShowHistory')}>
+      {b.noShows.map((n, i) => {
+        const words = { from: slotLabel(n.fromSlot), to: slotLabel(n.toSlot), date: formatDateTime(n.rescheduledAt) };
+        const admin = n.byKind === 'admin';
+        return (
+          <li key={i}>
+            {n.at
+              ? t(admin ? 'labBooking.noShowHistory.itemMarkedAdmin' : 'labBooking.noShowHistory.itemMarked', { ...words, marked: formatDateTime(n.at) })
+              : t(admin ? 'labBooking.noShowHistory.itemAdmin' : 'labBooking.noShowHistory.item', words)}
+          </li>
+        );
+      })}
     </ul>
   );
 }
+
+/** A slot to choose: "Mon, 16 Nov 2026, 09:00–09:30 (2 free)". */
+const slotOption = (s: LabSlot) => t('labBooking.slotOption', { day: formatDay(s.date), start: s.startTime, end: s.endTime, free: s.capacity - s.booked });
 
 /** Q14: a later open slot of this branch and visit mode (next two weeks), for the one move of a no-show. */
 function LabSlotPicker({ ctx, booking, now, onChoose }: { ctx: ScopeContext; booking: LabBooking; now: Date; onChoose: (t: NoShowTarget | null) => void }) {
@@ -418,24 +440,24 @@ function LabSlotPicker({ ctx, booking, now, onChoose }: { ctx: ScopeContext; boo
     queryFn: () => ctx.labs.slots({ branchId: booking.branchId, visitMode: booking.visitMode, from, to }),
   });
   const [slotId, setSlotId] = useState('');
-  if (slots.isPending) return <Loading label="Loading open slots…" />;
+  if (slots.isPending) return <Loading label={t('labBooking.loadingSlots')} />;
   if (slots.isError) return <ErrorState message={messageOf(slots.error)} onRetry={() => void slots.refetch()} />;
   const choices = (slots.data ?? []).filter((s) => isBookable(s, now) && s._id !== booking.slot.slotId);
-  if (choices.length === 0) return <p className="ws-muted">No open slot with a free seat in the next two weeks. Add a slot under Slots first.</p>;
+  if (choices.length === 0) return <p className="ws-muted">{t('labBooking.noOpenSlot')}</p>;
   const byDay = new Map<string, LabSlot[]>();
   for (const s of choices) byDay.set(s.date, [...(byDay.get(s.date) ?? []), s]);
   return (
     <div className="j-field">
-      <label htmlFor="lb-noshow-slot">New time</label>
+      <label htmlFor="lb-noshow-slot">{t('labBooking.newTime')}</label>
       <select id="lb-noshow-slot" value={slotId} onChange={(e) => {
         setSlotId(e.target.value);
         const s = choices.find((x) => x._id === e.target.value);
         onChoose(s ? { slotId: s._id, label: slotLabel(s) } : null);
       }}>
-        <option value="">Choose a slot</option>
+        <option value="">{t('labBooking.chooseSlot')}</option>
         {[...byDay].map(([day, rows]) => (
           <optgroup key={day} label={formatDay(day)}>
-            {rows.map((s) => <option key={s._id} value={s._id}>{formatDay(s.date)}, {s.startTime}–{s.endTime} ({s.capacity - s.booked} free)</option>)}
+            {rows.map((s) => <option key={s._id} value={s._id}>{slotOption(s)}</option>)}
           </optgroup>
         ))}
       </select>
@@ -465,7 +487,7 @@ function AssignCollector({ ctx, booking, disabled, perform }: { ctx: ScopeContex
 
   return <span ref={host} style={FOCUS_HOST_STYLE}>{open ? form() : (
     <Button variant="secondary" disabled={disabled} onClick={() => { setOpenedOn(booking.statusVersion); setError(null); setOpen(true); }}>
-      {booking.collector ? 'Change collector' : 'Assign collector'}
+      {booking.collector ? t('labBooking.collector.change') : t('labBooking.collector.assign')}
     </Button>
   )}</span>;
 
@@ -474,16 +496,16 @@ function AssignCollector({ ctx, booking, disabled, perform }: { ctx: ScopeContex
     const n = (chosen?.name ?? name).trim();
     const p = phone.trim();
     const errs: Record<string, string> = {};
-    if (!chosen && !n) errs.name = 'Enter the collector’s name.';
-    else if (n.length > MAX_COLLECTOR_NAME) errs.name = `Use at most ${MAX_COLLECTOR_NAME} characters.`;
-    if (p && !COLLECTOR_PHONE_PATTERN.test(p)) errs.phone = 'Enter 10 digits.';
+    if (!chosen && !n) errs.name = t('labBooking.collector.errorName');
+    else if (n.length > MAX_COLLECTOR_NAME) errs.name = t('common.maxChars', { max: MAX_COLLECTOR_NAME });
+    if (p && !COLLECTOR_PHONE_PATTERN.test(p)) errs.phone = t('labBooking.collector.errorPhone');
     setErrors(errs);
     if (Object.keys(errs).length) return;
     setBusy(true);
     setError(null);
     try {
       await perform('assign', () => ctx.labs.assignCollector(booking._id, { ...(chosen ? { memberId: chosen._id } : {}), name: n, ...(p ? { phone: p } : {}) }, openedOn),
-        `${n} will collect the sample.`);
+        t('labBooking.collector.done', { name: n }));
       setOpen(false);
     } catch (err) {
       setError(stepMessage(err));
@@ -496,26 +518,26 @@ function AssignCollector({ ctx, booking, disabled, perform }: { ctx: ScopeContex
 
   function form() {
   return (
-    <form className="confirm" noValidate onSubmit={(e) => void submit(e)} aria-label="Assign collector">
+    <form className="confirm" noValidate onSubmit={(e) => void submit(e)} aria-label={t('labBooking.collector.assign')}>
       {canList && (
         <div className="j-field">
-          <label htmlFor="lb-collector">Who collects</label>
+          <label htmlFor="lb-collector">{t('labBooking.collector.who')}</label>
           <select id="lb-collector" value={memberId} onChange={(e) => setMemberId(e.target.value)}>
-            <option value="">Someone else (type the name)</option>
+            <option value="">{t('labBooking.collector.someoneElse')}</option>
             {here.map((m) => <option key={m._id} value={m._id}>{m.name}</option>)}
           </select>
-          {members.isError && <span className="j-field__hint">Staff could not be listed: {messageOf(members.error)}</span>}
+          {members.isError && <span className="j-field__hint">{t('labBooking.collector.staffFailed', { reason: messageOf(members.error) })}</span>}
         </div>
       )}
       <div className="rx-form-row">
-        {!chosen && <TextField label="Collector’s name" value={name} maxLength={MAX_COLLECTOR_NAME} error={errors.name} onChange={(e) => setName(e.target.value)} />}
-        <TextField label="Collector’s mobile (optional)" inputMode="numeric" value={phone} maxLength={10} error={errors.phone} onChange={(e) => setPhone(e.target.value)} />
+        {!chosen && <TextField label={t('labBooking.collector.name')} value={name} maxLength={MAX_COLLECTOR_NAME} error={errors.name} onChange={(e) => setName(e.target.value)} />}
+        <TextField label={t('labBooking.collector.phone')} inputMode="numeric" value={phone} maxLength={10} error={errors.phone} onChange={(e) => setPhone(e.target.value)} />
       </div>
-      <p className="ws-muted">The customer sees the collector’s name and mobile number.</p>
+      <p className="ws-muted">{t('labBooking.collector.visible')}</p>
       {error && <Alert>{error}</Alert>}
       <div className="confirm-actions">
-        <Button type="submit" busy={busy}>Save collector</Button>
-        <Button variant="ghost" data-focus-back disabled={busy} onClick={() => setOpen(false)}>Back</Button>
+        <Button type="submit" busy={busy}>{t('labBooking.collector.save')}</Button>
+        <Button variant="ghost" data-focus-back disabled={busy} onClick={() => setOpen(false)}>{t('common.back')}</Button>
       </div>
     </form>
   );
@@ -551,17 +573,17 @@ function ProposeTime({ ctx, booking, disabled, now, perform }: { ctx: ScopeConte
   const picked = choices.find((s) => s._id === slotId);
 
   return <span ref={host} style={FOCUS_HOST_STYLE}>{open ? form() : (
-    <Button variant="secondary" disabled={disabled} onClick={() => { setError(null); setConfirming(false); setOpen(true); }}>Propose a new time</Button>
+    <Button variant="secondary" disabled={disabled} onClick={() => { setError(null); setConfirming(false); setOpen(true); }}>{t('labBooking.propose')}</Button>
   )}</span>;
 
   function form() {
   function review(e: FormEvent) {
     e.preventDefault();
     const errs: Record<string, string> = {};
-    if (!picked) errs.slot = 'Choose the new time.';
+    if (!picked) errs.slot = t('labBooking.propose.chooseTime');
     const r = reason.trim();
-    if (r.length < MIN_LAB_REASON) errs.reason = `Give a reason (at least ${MIN_LAB_REASON} characters).`;
-    else if (r.length > MAX_LAB_REASON) errs.reason = `Use at most ${MAX_LAB_REASON} characters.`;
+    if (r.length < MIN_LAB_REASON) errs.reason = t('labBooking.adminCancel.reasonShort', { min: MIN_LAB_REASON });
+    else if (r.length > MAX_LAB_REASON) errs.reason = t('common.maxChars', { max: MAX_LAB_REASON });
     setErrors(errs);
     setError(null);
     if (!Object.keys(errs).length) { setReviewedOn(booking.statusVersion); setConfirming(true); }
@@ -573,7 +595,7 @@ function ProposeTime({ ctx, booking, disabled, now, perform }: { ctx: ScopeConte
     setError(null);
     try {
       await perform('reschedule', () => ctx.labs.reschedule(booking._id, picked._id, reason.trim(), reviewedOn),
-        `New time proposed: ${slotLabel(picked)}. The customer has been told and can accept it or cancel for a full refund.`);
+        t('labBooking.propose.done', { slot: slotLabel(picked) }));
       setOpen(false);
     } catch (err) {
       // E.g. "That slot is no longer available", or the booking changed: show the current slots and booking.
@@ -586,39 +608,37 @@ function ProposeTime({ ctx, booking, disabled, now, perform }: { ctx: ScopeConte
   }
 
   return (
-    <form className="confirm" noValidate onSubmit={review} aria-label="Propose a new time">
-      {slots.isPending ? <Loading label="Loading open slots…" />
+    <form className="confirm" noValidate onSubmit={review} aria-label={t('labBooking.propose')}>
+      {slots.isPending ? <Loading label={t('labBooking.loadingSlots')} />
         : slots.isError ? <ErrorState message={messageOf(slots.error)} onRetry={() => void slots.refetch()} />
-        : choices.length === 0 ? <p className="ws-muted">No open slot with a free seat in the next two weeks. Add a slot under Slots first.</p>
+        : choices.length === 0 ? <p className="ws-muted">{t('labBooking.noOpenSlot')}</p>
         : !confirming ? (
           <>
             <div className="j-field">
-              <label htmlFor="lb-new-slot">New time</label>
+              <label htmlFor="lb-new-slot">{t('labBooking.newTime')}</label>
               <select id="lb-new-slot" value={slotId} aria-invalid={errors.slot ? true : undefined} aria-describedby={errors.slot ? 'lb-new-slot-err' : undefined}
                 onChange={(e) => setSlotId(e.target.value)}>
-                <option value="">Choose a slot</option>
+                <option value="">{t('labBooking.chooseSlot')}</option>
                 {[...byDay].map(([day, rows]) => (
                   <optgroup key={day} label={formatDay(day)}>
-                    {rows.map((s) => <option key={s._id} value={s._id}>{formatDay(s.date)}, {s.startTime}–{s.endTime} ({s.capacity - s.booked} free)</option>)}
+                    {rows.map((s) => <option key={s._id} value={s._id}>{slotOption(s)}</option>)}
                   </optgroup>
                 ))}
               </select>
               {errors.slot && <span id="lb-new-slot-err" className="j-field__error">{errors.slot}</span>}
             </div>
-            <TextArea label="Reason (the customer sees this)" value={reason} maxLength={MAX_LAB_REASON} error={errors.reason} onChange={(e) => setReason(e.target.value)} />
+            <TextArea label={t('labBooking.propose.reason')} value={reason} maxLength={MAX_LAB_REASON} error={errors.reason} onChange={(e) => setReason(e.target.value)} />
           </>
         ) : picked && (
           <div className="confirm-text">
-            Propose {slotLabel(picked)} instead of {slotLabel(booking.slot)}? The new seat is taken now and the current one is freed.
-            The customer is told and can accept the new time or cancel for a full refund; until they answer, the booking cannot be marked
-            {booking.visitMode === 'home' ? ' collected' : ' visited'} or no-show.
+            {t(booking.visitMode === 'home' ? 'labBooking.propose.confirmHome' : 'labBooking.propose.confirmLab', { slot: slotLabel(picked), previous: slotLabel(booking.slot) })}
           </div>
         )}
-      {error && <Alert>Not proposed: {error}</Alert>}
+      {error && <Alert>{t('labBooking.propose.failed', { reason: error })}</Alert>}
       <div className="confirm-actions">
-        {!confirming ? <Button type="submit" disabled={choices.length === 0}>Continue</Button>
-          : <Button busy={busy} onClick={() => void propose()}>Propose the new time</Button>}
-        <Button variant="ghost" data-focus-back disabled={busy} onClick={() => (confirming ? setConfirming(false) : setOpen(false))}>Back</Button>
+        {!confirming ? <Button type="submit" disabled={choices.length === 0}>{t('common.continue')}</Button>
+          : <Button busy={busy} onClick={() => void propose()}>{t('labBooking.propose.send')}</Button>}
+        <Button variant="ghost" data-focus-back disabled={busy} onClick={() => (confirming ? setConfirming(false) : setOpen(false))}>{t('common.back')}</Button>
       </div>
     </form>
   );
@@ -639,16 +659,20 @@ function Reports({ ctx, booking, offers, disabled, perform }: {
   if (!drafts.length && !released.length && !canUpload) return null;
   return (
     <section className="ws-section" aria-labelledby="lb-reports-h">
-      <h2 id="lb-reports-h">Reports</h2>
-      <h3>Released to the customer</h3>
-      {released.length === 0 ? <p className="ws-muted">No report has been released yet.</p> : (
-        <ul className="ws-list" aria-label="Released reports">
+      <h2 id="lb-reports-h">{t('labBooking.reports')}</h2>
+      <h3>{t('labBooking.reports.released')}</h3>
+      {released.length === 0 ? <p className="ws-muted">{t('labBooking.reports.noneReleased')}</p> : (
+        <ul className="ws-list" aria-label={t('labBooking.reports.releasedList')}>
           {released.map((f) => {
             const r = releaseOf(booking, f);
             return (
               <li key={f}>
                 <div className="ws-actions">
-                  <span>{reportFileName(f)}{r ? ` · released ${formatDateTime(r.releasedAt)} under ${r.signer.name}${r.signer.kind ? ` (${r.signer.kind})` : ''}, registration ${r.signer.registrationNumber}` : ''}</span>
+                  <span>
+                    {!r ? reportFileName(f) : t(r.signer.kind ? 'labBooking.reports.releasedFileKind' : 'labBooking.reports.releasedFile', {
+                      file: reportFileName(f), date: formatDateTime(r.releasedAt), signer: r.signer.name, kind: r.signer.kind ?? '', registration: r.signer.registrationNumber,
+                    })}
+                  </span>
                   <ViewFileButton viewer={viewer} file={f} />
                 </div>
               </li>
@@ -656,11 +680,11 @@ function Reports({ ctx, booking, offers, disabled, perform }: {
           })}
         </ul>
       )}
-      <h3>Drafts (not visible to the customer)</h3>
-      {drafts.length === 0 ? <p className="ws-muted">No draft waiting.</p>
-        : !seeDrafts ? <p className="ws-muted">{drafts.length} {drafts.length === 1 ? 'draft is' : 'drafts are'} waiting for release. Only report staff can open drafts.</p>
+      <h3>{t('labBooking.reports.drafts')}</h3>
+      {drafts.length === 0 ? <p className="ws-muted">{t('labBooking.reports.noDraft')}</p>
+        : !seeDrafts ? <p className="ws-muted">{t('labBooking.reports.draftsWaiting', { count: drafts.length })}</p>
         : (
-          <ul className="ws-list" aria-label="Draft reports">
+          <ul className="ws-list" aria-label={t('labBooking.reports.draftList')}>
             {drafts.map((f) => (
               <li key={f}>
                 <div className="ws-actions">
@@ -688,11 +712,11 @@ interface UploadItem { file: File; key: string; done: boolean; /** WQ11d: its la
  * and the ones after it to send again with the same keys (a file already attached is answered, not copied).
  */
 export function uploadFailureMessage(name: string, err: unknown): { text: string; certain: boolean } {
-  if (isReportTooLarge(err)) return { text: `File too large: ${name} is over the ${REPORT_MAX_BYTES / 1024 / 1024} MB limit, so it was not uploaded. Choose a smaller file.`, certain: true };
+  if (isReportTooLarge(err)) return { text: t('labBooking.upload.tooLarge', { file: name, max: REPORT_MAX_BYTES / 1024 / 1024 }), certain: true };
   // UPLOAD_FAILED: the file service gave up before anything was attached (its files are removed again).
-  if (isUploadFailed(err) || definitelyNotRecorded(err)) return { text: `${name} was not uploaded: ${stepMessage(err)}`, certain: true };
+  if (isUploadFailed(err) || definitelyNotRecorded(err)) return { text: t('labBooking.upload.notUploaded', { file: name, reason: stepMessage(err) }), certain: true };
   return {
-    text: `${name}: ${messageOf(err)} It may have been uploaded. Upload again to send it once more: a file already added is never added twice.`,
+    text: t('labBooking.upload.unknown', { file: name, reason: messageOf(err) }),
     certain: false,
   };
 }
@@ -722,11 +746,13 @@ function UploadReports({ ctx, booking, disabled, perform }: { ctx: ScopeContext;
       const next = items.map((x) => (found.some((f) => f.key === x.key) ? { ...x, done: true, uncertain: false } : x));
       setItems(next.every((x) => x.done) ? [] : next);
       const still = next.filter((x) => !x.done);
-      setError(still.length === 0 ? null
-        : `${found.length ? `Found: ${found.map((f) => f.file.name).join(', ')}. ` : ''}Not found among the reports yet: ${still.map((x) => x.file.name).join(', ')}. Tap “Upload the rest” to send ${still.length === 1 ? 'it' : 'them'} again (never added twice).`);
+      setError(still.length === 0 ? null : [
+        ...(found.length ? [t('labBooking.upload.found', { files: found.map((f) => f.file.name).join(', ') })] : []),
+        t('labBooking.upload.notFound', { count: still.length, files: still.map((x) => x.file.name).join(', ') }),
+      ].join(' '));
       if (still.length === 0 && input.current) input.current.value = '';
     } catch (err) {
-      setError(`Could not check: ${messageOf(err)}`);
+      setError(t('labBooking.upload.checkFailed', { reason: messageOf(err) }));
     } finally {
       setChecking(false);
     }
@@ -734,7 +760,7 @@ function UploadReports({ ctx, booking, disabled, perform }: { ctx: ScopeContext;
 
   async function upload(e: FormEvent) {
     e.preventDefault();
-    if (items.length === 0) { setError('Choose the report files first.'); return; }
+    if (items.length === 0) { setError(t('labBooking.upload.chooseFirst')); return; }
     if (problems.length) { setError(problems.join(' ')); return; }
     setBusy(true);
     setError(null);
@@ -744,12 +770,12 @@ function UploadReports({ ctx, booking, disabled, perform }: { ctx: ScopeContext;
         const last = added + 1 === items.length;
         try {
           await perform('upload', () => ctx.labs.uploadReport(booking._id, it.file, it.key), last
-            ? `${items.length} ${items.length === 1 ? 'file was' : 'files were'} added as drafts. Release each one when it is checked.`
-            : `${it.file.name} was added as a draft; sending the next file…`);
+            ? t('labBooking.upload.allAdded', { count: items.length })
+            : t('labBooking.upload.oneAdded', { file: it.file.name }));
         } catch (err) {
           const why = uploadFailureMessage(it.file.name, err);
           setItems((cur) => cur.map((x) => (x.key === it.key ? { ...x, uncertain: !why.certain } : x)));
-          setError(`${added ? `${added} of ${items.length} added. ` : ''}${why.text}`);
+          setError([...(added ? [t('labBooking.upload.partial', { added, total: items.length })] : []), why.text].join(' '));
           if (!why.certain) void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'lab-booking', booking._id] });
           return;
         }
@@ -764,28 +790,25 @@ function UploadReports({ ctx, booking, disabled, perform }: { ctx: ScopeContext;
   }
 
   return (
-    <form className="rx-form" noValidate onSubmit={(e) => void upload(e)} aria-label="Upload reports">
-      <h3>Upload reports</h3>
+    <form className="rx-form" noValidate onSubmit={(e) => void upload(e)} aria-label={t('labBooking.upload.form')}>
+      <h3>{t('labBooking.upload.form')}</h3>
       <div className="j-field">
-        <label htmlFor="lb-files">Report files (PDF, JPEG, PNG or WebP; up to 10 MB each, sent one by one)</label>
+        <label htmlFor="lb-files">{t('labBooking.upload.files')}</label>
         <input id="lb-files" ref={input} type="file" multiple accept={REPORT_ACCEPT} aria-describedby={error ? 'lb-files-err' : undefined}
           disabled={locked || busy}
           onChange={(e) => { if (locked) return; setItems([...(e.target.files ?? [])].map((file) => ({ file, key: newRequestKey(), done: false }))); setError(null); }} />
         {locked && (
-          <span className="j-field__hint">
-            An upload got no answer, so these files are kept with their keys: tap “Upload the rest” (a file already added is never
-            added twice) or check the reports. Other files can be chosen once this is settled.
-          </span>
+          <span className="j-field__hint">{t('labBooking.upload.locked')}</span>
         )}
         {problems.length > 0 && <span className="j-field__error">{problems.join(' ')}</span>}
         {items.length > 1 && left.length < items.length && left.length > 0 && (
-          <span className="j-field__hint">Still to send: {left.map((i) => i.file.name).join(', ')}.</span>
+          <span className="j-field__hint">{t('labBooking.upload.stillToSend', { files: left.map((i) => i.file.name).join(', ') })}</span>
         )}
       </div>
       {error && <div id="lb-files-err"><Alert>{error}</Alert></div>}
       <div className="ws-actions">
-        <Button type="submit" busy={busy} disabled={(disabled && !busy) || checking}>{locked || (left.length < items.length && left.length > 0) ? 'Upload the rest' : 'Upload as drafts'}</Button>
-        {locked && <Button variant="secondary" busy={checking} disabled={busy || disabled} onClick={() => void check()}>Check the reports</Button>}
+        <Button type="submit" busy={busy} disabled={(disabled && !busy) || checking}>{locked || (left.length < items.length && left.length > 0) ? t('labBooking.upload.rest') : t('labBooking.upload.asDrafts')}</Button>
+        {locked && <Button variant="secondary" busy={checking} disabled={busy || disabled} onClick={() => void check()}>{t('labBooking.upload.check')}</Button>}
       </div>
     </form>
   );
@@ -812,44 +835,42 @@ function ReleaseDraft({ ctx, booking, file, disabled, perform }: { ctx: ScopeCon
   return (
     <span ref={host} style={FOCUS_HOST_STYLE}>
       {open ? panel() : (
-        <Button variant="secondary" disabled={disabled} aria-label={`Release ${name}`} onClick={() => { setOpenedOn(booking.statusVersion); setOpen(true); }}>Release</Button>
+        <Button variant="secondary" disabled={disabled} aria-label={t('labBooking.release.name', { file: name })} onClick={() => { setOpenedOn(booking.statusVersion); setOpen(true); }}>{t('labBooking.release')}</Button>
       )}
     </span>
   );
 
   function panel() {
-  let who: ReactNode;
-  if (!admin) who = <>under your own name ({user.name}) and your professional registration</>;
-  else if (signer) who = <>under {signer.name} ({signer.professional!.kind}, registration {signer.professional!.registrationNumber})</>;
+  let who: string | undefined;
+  if (!admin) who = t('labBooking.release.self', { name: user.name });
+  else if (signer) who = t('labBooking.release.signer', { name: signer.name, kind: signer.professional!.kind, registration: signer.professional!.registrationNumber });
 
   return (
-    <div className="confirm" role="group" aria-label={`Release ${name}`}>
-      {admin && (members.isPending ? <Loading label="Loading who can sign…" />
+    <div className="confirm" role="group" aria-label={t('labBooking.release.name', { file: name })}>
+      {admin && (members.isPending ? <Loading label={t('labBooking.release.loadingSigners')} />
         : members.isError ? <ErrorState message={messageOf(members.error)} onRetry={() => void members.refetch()} />
         : signers.length === 0 ? (
           <Alert tone="warn">
-            Nobody can sign this report. A signer must be an owner or hold “Release reports”, work at this branch, and have a professional
-            registration number on their staff record. Add one on <Link to={ctx.link('staff')}>Staff</Link> (“Add registration”).
+            <Parts of={t.rich('labBooking.release.nobody', { staff: <Link to={ctx.link('staff')}>{t('labBooking.release.staffLink')}</Link> })} />
           </Alert>
         ) : (
           <div className="j-field">
-            <label htmlFor={`signer-${name}`}>Signed by</label>
+            <label htmlFor={`signer-${name}`}>{t('labBooking.release.signedBy')}</label>
             <select id={`signer-${name}`} value={signerId} onChange={(e) => setSignerId(e.target.value)}>
-              <option value="">Choose the professional</option>
+              <option value="">{t('labBooking.release.chooseSigner')}</option>
               {signers.map((m) => <option key={m._id} value={m._id}>{m.name} · {m.professional!.registrationNumber}</option>)}
             </select>
           </div>
         ))}
       {who && (
         <div className="confirm-text">
-          Release {name} to the customer {who}? They can open and download it in the Jansetu app at once and are told it is ready.
-          A released report cannot be withdrawn here.
+          {t('labBooking.release.confirm', { file: name, who })}
         </div>
       )}
       <ConfirmLess
-        label={`Release ${name}`} ready={!!who} blocked={disabled} staffLink={ctx.link('staff')}
+        label={t('labBooking.release.name', { file: name })} ready={!!who} blocked={disabled} staffLink={ctx.link('staff')}
         onConfirm={() => perform('release', () => ctx.labs.releaseReport(booking._id, file, admin ? signer?._id : undefined, openedOn),
-          `${name} was released to the customer.`)}
+          t('labBooking.release.done', { file: name }))}
         onChanged={() => setAdopt(true)}
         onBack={() => setOpen(false)} />
     </div>
@@ -872,8 +893,8 @@ function ConfirmLess({ label, ready, blocked, staffLink, onConfirm, onChanged, o
       // Releasing the same file again is safe (an already released file is left as it is).
       // Q11: the signer's staff record has no registration (409 SIGNER_REGISTRATION_MISSING): an owner adds it on Staff.
       if (err instanceof ApiError && err.code === 'SIGNER_REGISTRATION_MISSING') {
-        setError(<>Not released: the signer’s staff record has no professional registration number. An owner adds it on <Link to={staffLink}>Staff</Link> (“Add registration”).</>);
-      } else setError(`Not released: ${stepMessage(err)}`);
+        setError(<Parts of={t.rich('labBooking.release.noRegistration', { staff: <Link to={staffLink}>{t('labBooking.release.staffLink')}</Link> })} />);
+      } else setError(t('labBooking.release.failed', { reason: stepMessage(err) }));
       if (isLabBookingChanged(err)) onChanged();
     } finally { setBusy(false); }
   }
@@ -882,7 +903,7 @@ function ConfirmLess({ label, ready, blocked, staffLink, onConfirm, onChanged, o
       {error && <Alert>{error}</Alert>}
       <div className="confirm-actions">
         <Button busy={busy} disabled={!ready || (blocked && !busy)} onClick={() => void go()}>{label}</Button>
-        <Button variant="ghost" data-focus-back disabled={busy} onClick={onBack}>Back</Button>
+        <Button variant="ghost" data-focus-back disabled={busy} onClick={onBack}>{t('common.back')}</Button>
       </div>
     </>
   );
@@ -890,29 +911,33 @@ function ConfirmLess({ label, ready, blocked, staffLink, onConfirm, onChanged, o
 
 function Timeline({ booking: b }: { booking: LabBooking }) {
   const events: { at: string; text: string }[] = [];
-  if (b.createdAt) events.push({ at: b.createdAt, text: 'Booked in the app' });
-  for (const [k, label] of LIFECYCLE) {
+  if (b.createdAt) events.push({ at: b.createdAt, text: t('labBooking.timeline.booked') });
+  for (const k of LIFECYCLE) {
     const at = b.lifecycle?.[k];
-    if (at) events.push({ at, text: label });
+    if (at) events.push({ at, text: t(`labBooking.lifecycle.${k}`) });
   }
-  if (b.reschedule?.at && b.reschedule.previousSlot) {
+  const r = b.reschedule;
+  if (r?.at && r.previousSlot) {
+    const words = { slot: slotLabel(b.slot), previous: slotLabel(r.previousSlot) };
     events.push({
-      at: b.reschedule.at,
-      text: `New time proposed: ${slotLabel(b.slot)} instead of ${slotLabel(b.reschedule.previousSlot)}${b.reschedule.reason ? ` (“${b.reschedule.reason}”)` : ''}${b.reschedule.pending ? '; waiting for the customer' : '; accepted'}`,
+      at: r.at,
+      text: r.reason
+        ? t(r.pending ? 'labBooking.timeline.proposedReasonWaiting' : 'labBooking.timeline.proposedReason', { ...words, reason: r.reason })
+        : t(r.pending ? 'labBooking.timeline.proposedWaiting' : 'labBooking.timeline.proposed', words),
     });
   }
-  for (const r of b.report.releases) {
-    events.push({ at: r.releasedAt, text: `Report ${reportFileName(r.path)} released under ${r.signer.name} (registration ${r.signer.registrationNumber})` });
+  for (const x of b.report.releases) {
+    events.push({ at: x.releasedAt, text: t('labBooking.timeline.released', { file: reportFileName(x.path), name: x.signer.name, registration: x.signer.registrationNumber }) });
   }
   for (const n of b.noShows ?? []) {
-    if (n.at) events.push({ at: n.at, text: `Marked as no-show (${slotLabel(n.fromSlot)})` });
-    events.push({ at: n.rescheduledAt, text: `No-show moved to ${slotLabel(n.toSlot)}` });
+    if (n.at) events.push({ at: n.at, text: t('labBooking.timeline.noShow', { slot: slotLabel(n.fromSlot) }) });
+    events.push({ at: n.rescheduledAt, text: t('labBooking.timeline.moved', { slot: slotLabel(n.toSlot) }) });
   }
   events.sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
   return (
     <section className="ws-section" aria-labelledby="lb-time-h">
-      <h2 id="lb-time-h">Timeline</h2>
-      {events.length === 0 ? <p className="ws-muted">Nothing recorded yet.</p> : (
+      <h2 id="lb-time-h">{t('labBooking.timeline')}</h2>
+      {events.length === 0 ? <p className="ws-muted">{t('labBooking.timeline.empty')}</p> : (
         <ol className="ws-timeline">
           {events.map((e, i) => <li key={i}><time dateTime={e.at}>{formatDateTime(e.at)}</time><span>{e.text}</span></li>)}
         </ol>
@@ -937,33 +962,35 @@ function DeskParts({ ctx, booking: b, disabled, perform, onNotice, reread, readN
   return (
     <>
       <section className="ws-section" aria-labelledby="lb-bill-h">
-        <h2 id="lb-bill-h">Bill</h2>
-        <p className="ws-muted">Booked at your front desk: the patient pays at the lab, and the lab makes its own bill.</p>
+        <h2 id="lb-bill-h">{t('labBooking.desk.bill')}</h2>
+        <p className="ws-muted">{t('labBooking.desk.billIntro')}</p>
         {b.bill ? (
           <p>
-            Bill: {holdsAny(ctx.actor, BILL_READERS) ? <Link to={`${ctx.link('invoices')}/${b.bill.invoiceId}`}>{b.bill.serial}</Link> : b.bill.serial}
+            <Parts of={t.rich('labBooking.desk.billSerial', {
+              serial: holdsAny(ctx.actor, BILL_READERS) ? <Link to={`${ctx.link('invoices')}/${b.bill.invoiceId}`}>{b.bill.serial}</Link> : b.bill.serial,
+            })} />
             {' · '}{INVOICE_STATE_LABEL[b.bill.state as keyof typeof INVOICE_STATE_LABEL] ?? b.bill.state}
           </p>
-        ) : <p>No bill yet.</p>}
+        ) : <p>{t('labBooking.desk.noBill')}</p>}
         {canBillDesk(b) && (
-          <BillLink ctx={ctx} memory={memory} label="Make bill" prefill={{
+          <BillLink ctx={ctx} memory={memory} label={t('labBooking.desk.makeBill')} prefill={{
             link: { kind: 'lab_booking', id: b._id }, branchId: b.branchId, doctorId: '', name: '', phone: '', label: `${b.patient.name}, ${slotLabel(b.slot)}`,
           }} />
         )}
       </section>
       {manage && canDeskCancel(b) && (
         <OwnedCancel<{ reason?: string; expectedVersion: number }, DeskCancelAnswer, LabBooking> slot={`lab-desk-cancel:${scopeIdentity(ctx)}:${b._id}`}
-          label="Cancel this booking" intro="Booked at your front desk: cancelling moves no money. The patient is told." version={b.statusVersion}
-          consequence={`Cancel ${b.patient.name}’s booking for ${slotLabel(b.slot)}? ${b.slot.walkIn ? '' : 'Its seat is freed. '}This cannot be undone. A bill already made is not cancelled with it.`}
+          label={t('labBooking.desk.cancel')} intro={t('labBooking.desk.cancelIntro')} version={b.statusVersion}
+          consequence={t(b.slot.walkIn ? 'labBooking.desk.cancelWalkIn' : 'labBooking.desk.cancelSeat', { name: b.patient.name, slot: slotLabel(b.slot) })}
           perform={perform} busy={disabled}
           makeBody={(reason) => ({ ...(reason ? { reason } : {}), expectedVersion: b.statusVersion })}
           send={(body) => desk.cancel(b._id, body)}
-          doneWords={(a) => (a.alreadyCancelled ? 'This booking was already cancelled: nothing more was done.' : 'Cancelled. The patient is told; nothing was paid through Jansetu, so nothing is refunded.')}
+          doneWords={(a) => (a.alreadyCancelled ? t('labBooking.desk.alreadyCancelled') : t('labBooking.desk.cancelled'))}
           refusalWords={(err) => deskRefusal(err).message}
           onChanged={reread}
           isCancelled={async () => { const now = await readNow(); return now.status === 'cancelled' ? now : null; }}
-          checkedWords={() => 'The booking is cancelled.'}
-          forgetConsequence="The booking may already be cancelled, or may still be. Forgetting it does not undo that. The booking shown is as it is saved now."
+          checkedWords={() => t('labBooking.desk.isCancelled')}
+          forgetConsequence={t('labBooking.desk.forget')}
           onDone={onNotice} />
       )}
     </>
