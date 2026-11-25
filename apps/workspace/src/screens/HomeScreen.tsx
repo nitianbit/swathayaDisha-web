@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { Alert, Empty } from '@jansetu/ui';
-import { pagesFor } from '../modules.tsx';
+import { navLabelKey, pagesFor } from '../modules.tsx';
 import { PageHeading } from '../PageHeading.tsx';
 import { useStaff } from '../session.tsx';
 import { t } from '../i18n/shell/index.ts';
@@ -32,7 +32,7 @@ export function HomeScreen() {
               <li key={p.path}>
                 <Link to={p.path} className="home-link">
                   <Icon size={22} aria-hidden="true" />
-                  <span>{t(p.nav!.labelKey)}</span>
+                  <span>{t(navLabelKey(p, user))}</span>
                 </Link>
               </li>
             );
