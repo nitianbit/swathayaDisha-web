@@ -64,6 +64,47 @@ export function useOwnedOp<B>(slot: string) {
   return { op, send, settle, live };
 }
 
+/** A by-key answer (Q13 shape): the request was recorded (with what it recorded), given up for good, or not known yet. */
+type KeyedAnswer = { state: 'used' } | { state: 'abandoned' } | { state: 'unknown' };
+
+/**
+ * WQ48b: "Check whether it was recorded" and "Give this up" of an owned request the server looks up by its key
+ * (`…/by-key/:key`, `…/abandon`): one place that settles the stored request when the answer is `used` (found) or
+ * `abandoned` (given up), and otherwise says what is still unknown. Used by the withdrawal and the set-off; "mark paid"
+ * has neither route (it reads the withdrawal and offers Forget).
+ */
+export function useKeyedCheck<A extends KeyedAnswer>(settle: (requestKey: string) => void, read: {
+  byKey: (requestKey: string) => Promise<A>; abandon: (requestKey: string) => Promise<A>;
+}, on: {
+  found: (answer: Extract<A, { state: 'used' }>) => void | Promise<void>;
+  givenUp: () => void;
+  /** What is still unknown after a check (`restored`: its details are not kept on this device). */
+  notYet: (restored: boolean) => string;
+  cannotGiveUp: () => void;
+  failed: (err: unknown) => void;
+}) {
+  const [givingUp, setGivingUp] = useState(false);
+  const settled = async (requestKey: string, r: A) => {
+    if (r.state === 'used') { settle(requestKey); await on.found(r as Extract<A, { state: 'used' }>); return true; }
+    if (r.state === 'abandoned') { settle(requestKey); on.givenUp(); return true; }
+    return false;
+  };
+  return {
+    givingUp,
+    check: async <B,>(op: PendingOp<B>) => ((await settled(op.requestKey, await read.byKey(op.requestKey))) ? null : on.notYet(!!op.restored || !op.body)),
+    giveUp: async <B,>(op: PendingOp<B>, perform: <T>(run: () => Promise<T>) => Promise<T>) => {
+      setGivingUp(true);
+      try {
+        if (!(await settled(op.requestKey, await perform(() => read.abandon(op.requestKey))))) on.cannotGiveUp();
+      } catch (err) {
+        on.failed(err);
+      } finally {
+        setGivingUp(false);
+      }
+    },
+  };
+}
+
 /**
  * An unconfirmed change: what it was, a way to find out whether it was recorded, and (only where repeating it is safe)
  * sending it again. `onCheck` answers null once it settled the change, or a sentence saying what is still unknown.

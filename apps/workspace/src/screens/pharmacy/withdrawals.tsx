@@ -13,7 +13,7 @@ import { t } from '../../i18n/withdrawals/index.ts';
 import { definitelyNotRecorded, newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { CursorPager, useCursorPages } from './cursorList.tsx';
-import { CheckPanel, useOwnedOp } from './ownedOp.tsx';
+import { CheckPanel, useKeyedCheck, useOwnedOp } from './ownedOp.tsx';
 
 /**
  * WQ29: "Withdraw to bank" on a wallet page (backend r32 round 4d, design §26.16.4; switched off on the server until it is
@@ -43,7 +43,8 @@ export interface WithdrawalSource {
 const WORDED = ['PAYOUT_DESTINATION_NOT_VERIFIED', 'PAYOUT_DETAILS_CHANGED', 'WALLET_FROZEN', 'WALLET_RECEIVABLE', 'WITHDRAWALS_DISABLED', 'WITHDRAWAL_CHANGED',
   'WITHDRAWAL_NOT_REQUESTED', 'WITHDRAWAL_NOT_FOUND', 'WITHDRAWAL_NOT_PAID', 'IDEMPOTENCY_KEY_REUSED', 'REQUEST_ABANDONED', 'INDEXES_OUTDATED',
   'SPECIALIST_NOT_VERIFIED', 'REFERENCE_REUSED', 'DISPUTE_NOT_RECORDED', 'NOTHING_TO_RECOVER', 'WITHDRAWAL_LOT_DISPUTED', 'WITHDRAWAL_QUOTE_CHANGED',
-  'WITHDRAWAL_OPEN', 'FINANCE_SCOPE_REQUIRED', 'REFERRAL_ACCOUNT_USES_HOME', 'REFERRAL_PAYOUTS_DISABLED', 'WALLET_NOT_FOUND'] as const;
+  'WITHDRAWAL_OPEN', 'FINANCE_SCOPE_REQUIRED', 'REFERRAL_ACCOUNT_USES_HOME', 'REFERRAL_PAYOUTS_DISABLED', 'WALLET_NOT_FOUND', 'WALLET_INACTIVE',
+  'PARTNER_NOT_VERIFIED'] as const;
 type Worded = (typeof WORDED)[number];
 const isWorded = (code: string | null): code is Worded => (WORDED as readonly (string | null)[]).includes(code);
 const money = (v: unknown) => (Number.isFinite(Number(v)) ? formatPaise(Number(v)) : null);
@@ -72,7 +73,11 @@ function reasonWords(reason: QuoteReason | null | undefined, w: Withdrawable): s
     case 'WALLET_RECEIVABLE': return t('error.WALLET_RECEIVABLE');
     case 'WALLET_FROZEN': return t('error.WALLET_FROZEN');
     case 'WEEKLY_LIMIT': return t('weekly', { date: w.nextAllowedAt ? formatDateTime(w.nextAllowedAt) : '—' });
-    default: return t('amount.above', { max: formatPaise(w.withdrawableNowMinor) });
+    case 'ABOVE_WITHDRAWABLE': return t('amount.above', { max: formatPaise(w.withdrawableNowMinor) });
+    case 'LAB_NOT_VERIFIED': return t('error.PARTNER_NOT_VERIFIED');
+    case 'WALLET_INACTIVE': return t('error.WALLET_INACTIVE');
+    // A reason this page does not know (a newer server), or none sent: said plainly, never a guess.
+    default: return t('reason.other');
   }
 }
 /** The switch, or indexes not built: refused before anything was written (a sole first attempt asked nothing). */
@@ -152,7 +157,6 @@ function Withdraw({ source, w }: { source: WithdrawalSource; w: Withdrawable }) 
   const [error, setError] = useState<string | null>(null);
   const [review, setReview] = useState<Review | null>(null);
   const [note, setNote] = useState<Note | null>(null);
-  const [givingUp, setGivingUp] = useState(false);
   const masked = w.destination.masked ?? '';
   const refresh = () => queryClient.invalidateQueries({ queryKey: source.walletKey });
 
@@ -181,6 +185,14 @@ function Withdraw({ source, w }: { source: WithdrawalSource; w: Withdrawable }) 
   }
 
   const found = (x: Withdrawal) => setNote({ tone: 'ok', text: t('unconfirmed.found', { transfer: formatPaise(x.transferMinor), masked: x.destination.masked ?? masked }) });
+  const keyed = useKeyedCheck(settle, { byKey: source.api.byKey, abandon: source.api.abandon }, {
+    found: async (r) => { setReview(null); found(r.withdrawal); await refresh(); },
+    givenUp: () => { setReview(null); setNote({ tone: 'ok', text: t('unconfirmed.givenUp') }); },
+    notYet: (restored) => (restored ? t('unconfirmed.notYetRestored') : t('unconfirmed.notYet')),
+    cannotGiveUp: () => setNote({ tone: 'warn', text: t('unconfirmed.cannotGiveUp') }),
+    failed: (err) => setNote({ tone: 'error', text: withdrawalWords(err) }),
+  });
+  const givingUp = keyed.givingUp;
 
   async function ask(p: PendingOp<PendingWithdrawal>) {
     const sole = p.attempts === 0 && !p.uncertain;
@@ -204,22 +216,9 @@ function Withdraw({ source, w }: { source: WithdrawalSource; w: Withdrawable }) 
       setNote({ tone: 'warn', text: t('quote.changed') });
       return;
     }
+    // WQ48b: a resend refused because the fee moved: that attempt recorded nothing, but the first one may have.
+    if (r.kind === 'unknown' && quoteChangedOf(r.error)) { setNote({ tone: 'warn', text: t('unconfirmed.quoteChanged') }); return; }
     if (r.kind === 'refused') { setReview(null); setNote({ tone: 'error', text: withdrawalWords(r.error) }); await refresh(); }
-  }
-
-  async function giveUp(p: PendingOp<PendingWithdrawal>) {
-    setGivingUp(true);
-    try {
-      const r = await perform(() => source.api.abandon(p.requestKey));
-      if (r.state === 'used') { settle(p.requestKey); setReview(null); found(r.withdrawal); await refresh(); return; }
-      if (r.state !== 'abandoned') { setNote({ tone: 'warn', text: t('unconfirmed.cannotGiveUp') }); return; }
-      settle(p.requestKey); setReview(null);
-      setNote({ tone: 'ok', text: t('unconfirmed.givenUp') });
-    } catch (err) {
-      setNote({ tone: 'error', text: withdrawalWords(err) });
-    } finally {
-      setGivingUp(false);
-    }
   }
 
   if (op && !(busy && !givingUp && op.attempts === 1 && !op.uncertain)) {
@@ -228,14 +227,9 @@ function Withdraw({ source, w }: { source: WithdrawalSource; w: Withdrawable }) 
       <>
         {note && <Alert tone={note.tone}>{note.text}</Alert>}
         <CheckPanel label={t('unconfirmed.panel')}
-          onCheck={async () => {
-            const r = await source.api.byKey(op.requestKey);
-            if (r.state === 'used') { settle(op.requestKey); setReview(null); found(r.withdrawal); await refresh(); return null; }
-            if (r.state === 'abandoned') { settle(op.requestKey); setReview(null); setNote({ tone: 'ok', text: t('unconfirmed.givenUp') }); return null; }
-            return restored ? t('unconfirmed.notYetRestored') : t('unconfirmed.notYet');
-          }}
+          onCheck={() => keyed.check(op)}
           resend={restored ? undefined : { label: t('unconfirmed.resend'), busy: busy && !givingUp, onClick: () => { setNote(null); void ask(op).catch((e: unknown) => setNote({ tone: 'error', text: withdrawalWords(e) })); } }}
-          giveUp={{ label: t('unconfirmed.giveUp'), busy: givingUp, onClick: () => void giveUp(op) }}>
+          giveUp={{ label: t('unconfirmed.giveUp'), busy: givingUp, onClick: () => void keyed.giveUp(op, perform) }}>
           <Alert tone="warn">{restored ? t('unconfirmed.restored') : t('unconfirmed.text', { error: op.error ?? '' })}</Alert>
         </CheckPanel>
       </>
@@ -291,6 +285,8 @@ function WithdrawalList({ source }: { source: WithdrawalSource }) {
       await source.api.cancel(x._id, x.version);
       setNote({ tone: 'ok', text: t('cancel.done', { gross: formatPaise(x.grossMinor) }) });
     } catch (err) {
+      // WQ48b: a branch-limited lab manager may cancel only the withdrawals it asked for (r35b).
+      if (withdrawalErrorCode(err) === 'FINANCE_SCOPE_REQUIRED') throw new ApiError(err instanceof ApiError ? err.status : 403, t('cancel.notYours'));
       if (definitelyNotRecorded(err)) throw wordedError(err);
       setNote({ tone: 'warn', text: t('cancel.unknown', { error: messageOf(err) }) });
     } finally {
@@ -319,7 +315,8 @@ function WithdrawalList({ source }: { source: WithdrawalSource }) {
                   {x.reason && <div className="ws-muted">{t('list.reason', { reason: x.reason })}</div>}
                 </td>
                 <td>
-                  {x.state === 'requested' && (source.canCancel ?? source.canAct) && (
+                  {/* r35b: one this person did not ask for is not offered to a manager who can only cancel its own. */}
+                  {x.state === 'requested' && (source.canCancel ?? source.canAct) && (source.canAct || x.requestedByMe !== false) && (
                     <ConfirmAction label={t('cancel.button')} confirmLabel={t('cancel.confirm')} version={x.version}
                       consequence={t('cancel.consequence', { gross: formatPaise(x.grossMinor) })} onConfirm={() => cancel(x)} />
                   )}

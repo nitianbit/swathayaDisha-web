@@ -32,6 +32,13 @@ type Funded = FinanceSummary & { account: SettlementAccount };
 
 /** r35b: a lab's or a doctor's referral account pays to its HOME account (that account's details, version and state). */
 const homeOf = (a: SettlementAccount) => (a.home && a.home.accountId !== a._id ? a.home : null);
+/** A lab's or a doctor's referral account: its own details are never used or changed (a pharmacy's is its own home). */
+const usesHome = (a: SettlementAccount) => a.ownerKind === 'lab_referral' || a.ownerKind === 'doctor_referral';
+/**
+ * WQ48b: whether a payout may be recorded as far as the referral switch goes: any other account `open`; a referral account
+ * only once the server is known to have referral payouts on (`open`), else `paused`, or still `checking`, or `failed`.
+ */
+type PayoutGate = 'open' | 'paused' | 'checking' | 'failed';
 /** Where a payout recorded on this account goes: its own details, or its home account's. */
 function payoutTarget(a: SettlementAccount) {
   const home = homeOf(a);
@@ -67,8 +74,12 @@ function AccountPage({ accountId }: { accountId: string }) {
   const data = summary.data;
   const a = data?.account;
   const home = a ? homeOf(a) : null;
-  // WQ48 (r35 §26.9): a referral account's payouts are paused while the server's switch is off ("until tax advice").
-  const paused = useReferralPayoutsPaused(['settlements'], !!a && isReferralOwnerKind(a.ownerKind));
+  // WQ48 (r35 §26.9): a referral account's payouts are paused while the server's switch is off ("until tax advice"); its
+  // payout form is offered only once the switch is known to be on.
+  const referral = !!a && isReferralOwnerKind(a.ownerKind);
+  const paused = useReferralPayoutsPaused(['settlements'], referral);
+  const gate: PayoutGate = !referral || paused.data === false ? 'open' : paused.data === true ? 'paused'
+    : paused.isError || paused.data === null ? 'failed' : 'checking';
   return (
     <>
       <Link className="ws-back" to="/admin/settlements"><ArrowLeft size={16} aria-hidden="true" /> {t('account.back')}</Link>
@@ -95,8 +106,9 @@ function AccountPage({ accountId }: { accountId: string }) {
                   {home.masked ? t('account.home', { destination: home.masked, state: DETAILS_STATE_LABEL[home.state] ?? home.state }) : t('account.homeNone')}
                   {' '}<Link to={`/admin/settlements/${home.accountId}`}>{t('account.homeLink')}</Link>
                 </p>
-              ) : a.payoutDetails ? <PayoutDetailsList account={a} /> : <p className="ws-muted">{t('details.noneYet')}</p>}
-              {home ? null : editing ? (
+              ) : usesHome(a) ? <p>{t('account.homeUnknown')}</p>
+                : a.payoutDetails ? <PayoutDetailsList account={a} /> : <p className="ws-muted">{t('details.noneYet')}</p>}
+              {usesHome(a) ? null : editing ? (
                 // i18n-ignore: `audience` is a code (who edits), not words
                 <PayoutDetailsForm account={a} audience="admin" perform={perform}
                   reread={async () => (await s.account(accountId)).account}
@@ -119,14 +131,17 @@ function AccountPage({ accountId }: { accountId: string }) {
                         }
                       })} />
                   )}
-                  <Button variant="secondary" disabled={busy} onClick={() => { setNotice(null); setEditing(true); }}>
-                    {a.payoutDetails ? t('details.change') : t('details.add')}
-                  </Button>
+                  {/* WQ48b: a referral account never gets "Add" here (a pharmacy adds its own on its Finance page). */}
+                  {(!referral || a.payoutDetails) && (
+                    <Button variant="secondary" disabled={busy} onClick={() => { setNotice(null); setEditing(true); }}>
+                      {a.payoutDetails ? t('details.change') : t('details.add')}
+                    </Button>
+                  )}
                 </div>
               )}
             </section>
 
-            <RecordPayout api={s} accountId={accountId} summary={{ ...data, account: a }} perform={perform} onChanged={reload} paused={paused.data === true} />
+            <RecordPayout api={s} accountId={accountId} summary={{ ...data, account: a }} perform={perform} onChanged={reload} gate={gate} />
             <PostAdjustment api={s} accountId={accountId} summary={{ ...data, account: a }} perform={perform} onChanged={reload} />
 
             <StatementSection queryKey={key} load={(q) => s.statement(accountId, q)} csv={(q, signal) => s.statementCsv(accountId, q, signal)}
@@ -204,8 +219,8 @@ type PendingPayout = PendingOp<RecordPayoutInput>;
  * resend it unchanged, look it up by its key (Q13 `GET .../payouts/by-key/:key`), or give it up on the server (`abandon`:
  * then it can never be recorded). The same works after a reload, from the body-less marker's key.
  */
-function RecordPayout({ api: s, accountId, summary, perform, onChanged, paused }: {
-  api: Api; accountId: string; summary: Funded; perform: Perform; onChanged: () => void; paused: boolean;
+function RecordPayout({ api: s, accountId, summary, perform, onChanged, gate }: {
+  api: Api; accountId: string; summary: Funded; perform: Perform; onChanged: () => void; gate: PayoutGate;
 }) {
   const { memory } = useSession();
   const slot = `settlement-payout:${accountId}`;
@@ -284,7 +299,8 @@ function RecordPayout({ api: s, accountId, summary, perform, onChanged, paused }
 
   const a = summary.account;
   const to = payoutTarget(a);
-  const blocked = paused ? t('payout.blocked.paused')
+  const blocked = gate === 'paused' ? t('payout.blocked.paused') : gate === 'checking' ? t('payout.blocked.checking')
+    : gate === 'failed' ? t('payout.blocked.checkFailed')
     : !a.isActive ? t('payout.blocked.inactive')
     : to.state === 'none' || !to.has ? t('payout.blocked.noDetails')
     : to.state !== 'verified' ? t('payout.blocked.unverified')

@@ -2404,6 +2404,36 @@ infers the switch from a referral account's `payoutsPaused` and learns the most 
 withdrawal and the server refuses the ones it did not ask for; (3) `topups-without-lot` has no recovered marker, so Recover
 stays offered after it (a repeat answers "already recovered").
 
+### WQ48b review fixes, part 1: what does not need r35b (2026-11-25, branch `wq48b/finance-fixes` from stage 4ee5c9b, stage 984cc7f merged)
+
+The full workspace suite on 4ee5c9b: 1120/1120 (pw-slot.sh, 22.3 min). Against r35 (198ccc5b) the screens degrade
+without a missing line or a NaN: no `setOffMinor` hides that line, no `home` shows the referral account's "paid to the
+lab's or doctor's own account" sentence, `recoveredAt` is not read yet. Review items done here:
+
+1. **HIGH:** `isReferralSetOff` matches `referenceType === 'referral_setoff'` only: any other `receivable_setoff` (an owed
+   amount cleared from a credit) is a real debit and shows −₹x.
+2. (Ahead of r35b) a lab's or doctor's set-off entry takes its amount from `receivableDeltaMinor` when sent; without it
+   the amount cell is "—", never ₹0.
+3. (Ahead of r35b) a referral account never offers "Add payout details"; a lab's or doctor's offers no details form at all
+   (with `home`: its home account's line and link; without: a sentence that payouts go to the lab's or doctor's own
+   account); the payout check names the home details.
+4. `QuoteReason` adds `LAB_NOT_VERIFIED` and `WALLET_INACTIVE`; 409 `WALLET_INACTIVE` and 403 `PARTNER_NOT_VERIFIED` are
+   worded; only `ABOVE_WITHDRAWABLE` says "up to ₹x"; an unknown reason says "This amount cannot be withdrawn now."
+5. Card disputes reads `limit: 200`.
+6. (Until r35b's `requestedByMe`) a withdrawal with `requestedByMe: false` offers no Cancel to a branch-limited manager;
+   a refused cancel (`FINANCE_SCOPE_REQUIRED`) says "You can only cancel withdrawals you asked for."
+7. A referral account's payout form is offered only when the switch is known to be on (`paused.data === false`): else
+   "Paused until tax advice", "Checking…", or "Could not check…".
+8. The referral tile adds "Includes other adjustments: ₹x" when earned − paid − set off ≠ due.
+9. A resend refused with `WITHDRAWAL_QUOTE_CHANGED` is worded (the first request's outcome is still unknown).
+10. `useKeyedCheck` (ownedOp.tsx): one Check and Give up for owned requests the server looks up by key, used by Withdraw and
+    the set-off. Mark paid has no by-key read or give-up route (it reads the withdrawal and offers Forget), so it keeps
+    its own check.
+11. The untracked temporary Playwright config is deleted.
+
+Waiting for r35b: the admin wallet read's `referral` block (replaces the switch probe), `requestedByMe`, `recoveredAt`,
+`home` on the account read and the owner view's `receivableDeltaMinor` (the e2e mocks follow the shapes sent so far).
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -2734,6 +2764,7 @@ sign-in and a reload the page showed "Signing you in…" or the sign-in screen. 
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-25 | WQ48b part 1 (on stage 984cc7f) and the full suite on WQ48 4ee5c9b | WQ48 4ee5c9b: full workspace suite 1120/1120 via pw-slot.sh (22.3 min, port 5562, temporary config deleted). WQ48b: typecheck clean; Vitest 526/526 (walletFinance.test.ts: a cleared owed amount is a debit, a lab set-off entry's amount from its receivable change or none); Playwright finance-4f + withdrawals 58/58 (+4 journeys x 2: against r35 nothing missing or NaN and no details form on a referral account; payouts on, the referral payout check names the home details; an unknown quote reason and a lab not verified; a resend refused for a changed fee, then checked by key and given up), and finance + referral-cuts + lab-wallet + doctor-wallet + pharmacy-extras + assisted-booking 196/196 on a temporary config (port 5563, deleted). |
 | 2026-11-25 | WQ48 the 4f finance screens (on 5ade2d5 + origin/stage 53e523e) | Against r35 bbd6a64b (§26.10, §26.18.3) and the r35b shapes (mocked API). typecheck clean; Vitest 525/525 (+5 in walletFinance.test.ts: the pharmacy finance and statement routes with cursor and period, `expectedTransferMinor` and the changed quote read from the refusal, `disputeAcknowledged` only when asked, the disputes, top-ups without a lot and set-off routes with their checks, the referral owner kinds and the set-off row's words); Playwright finance-4f (new) + withdrawals + referral-cuts + finance + lab-wallet + doctor-wallet + pharmacy-extras 206/206 on desktop and tablet (finance-4f 18 = 9 journeys x 2; withdrawals 32 (+6: the dispute acknowledged after the refusal, never offered without it, the quote reason, payout details refused while a withdrawal waits; the fee-changed and payout-details journeys rewritten for r35 and the Finance page); referral-cuts' two pharmacy journeys moved to Finance) on a temporary config (port 5561, deleted). The full workspace suite via pw-slot.sh is still to run. |
 | 2026-11-25 | WQ45 rounds 6e, 6f, 6i (pharmacy and doctor screens) on wq45a 3233a59 + the WQ24b re-check fixes | typecheck clean; Vitest 506/507 (the literal scan and the catalogue check pass with the 49 files off the allowlist; the one failure, `components/NoShowMove.test.tsx` WQ11b, is a 5 s timeout under load that fails the same way on origin/stage and passed in the wq45a run); Playwright workspace on a temporary config, port 5566 (5556 was held by another agent; `reuseExistingServer: false`, deleted): 1011/1052 with the machine at load 64, then the 41 failures (all 30 s timeouts: page.reload, "Signing you in…") 41/41 with `--last-failed --workers=2`; no assertion changed; `VITE_API_SAME_ORIGIN=true npm run build --workspace apps/workspace` built. |
 | 2026-11-25 | WQ29c leftovers (on add6328) | typecheck clean; Vitest 513/513; Playwright withdrawals 26/26 (the admin journey now checks the three notices by short ref; the mock's ids end in their number) on a temporary config (port 5559, deleted). |

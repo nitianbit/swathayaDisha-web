@@ -158,8 +158,8 @@ export function MovementsTable({ rows, notes = false }: { rows: readonly WalletM
                   {m.status && m.status !== 'completed' && <> <Badge tone="warn">{m.status === 'pending' ? t('wallet.status.pending') : t('wallet.status.failed')}</Badge></>}
                 </td>
                 {notes && <td>{m.notes || '—'}</td>}
-                {/* WQ48 (r35b): paid from referral earnings moves no wallet money: its amount, without a sign. */}
-                <td>{isReferralSetOff(m) ? formatRupees(Math.abs(Number(m.amountPaise ?? 0)) / 100)
+                {/* WQ48: paid from referral earnings moves no wallet money: its amount, without a sign ('—' when not sent). */}
+                <td>{isReferralSetOff(m) ? (typeof m.amountPaise === 'number' && Number.isFinite(m.amountPaise) ? formatRupees(Math.abs(m.amountPaise) / 100) : '—')
                   : signed >= 0 ? <span>+{formatRupees(signed / 100)}</span> : <span className="ws-warn-text">−{formatRupees(-signed / 100)}</span>}</td>
                 <td>{formatRupees(after)}</td>
               </tr>

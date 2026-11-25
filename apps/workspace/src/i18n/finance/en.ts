@@ -370,6 +370,8 @@ export default {
   'tiles.referralPaid': 'Paid out: {amount}',
   /** r35b: referral earnings that paid what the wallet owed Jansetu. */
   'tiles.referralSetOff': 'Paid what the wallet owed: {amount}',
+  /** WQ48b: the part of what is due that earned − paid − set off does not explain (Jansetu's corrections); {amount} may be negative. */
+  'tiles.referralOther': 'Includes other adjustments: {amount}',
   'tiles.referralDue': 'Due to you: {amount}',
   'tiles.referralPaused': 'Payouts are paused for now.',
   'tiles.referralLink': 'See referral earnings',
@@ -391,8 +393,13 @@ export default {
   'settlements.referralAll': 'Referral (all)',
   'settlements.paused': 'Paused until tax advice',
   'payout.blocked.paused': 'Paused until tax advice: referral earnings cannot be paid out yet.',
+  /** WQ48b: a referral account's payout form waits until the server says referral payouts are on. */
+  'payout.blocked.checking': 'Checking whether referral payouts are switched on…',
+  'payout.blocked.checkFailed': 'Could not check whether referral payouts are switched on. Read the page again before recording a payout.',
   /** r35b: a lab's or doctor's referral account is paid to its own account's details. {destination}: masked; {state}: verified or not. */
   'account.home': 'Payouts go to the payout details of the lab’s or doctor’s own account: {destination} ({state}).',
   'account.homeNone': 'Payouts go to the payout details of the lab’s or doctor’s own account, which has none yet.',
   'account.homeLink': 'Open that account',
+  /** WQ48b: an older server does not name the home account; payouts still go there. */
+  'account.homeUnknown': 'Payouts go to the payout details of the lab’s or doctor’s own account, and are changed there.',
 } as const;

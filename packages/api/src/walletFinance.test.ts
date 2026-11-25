@@ -4,6 +4,7 @@ import { adminWalletFinanceApi, pharmacyFinanceApi } from './walletFinance.ts';
 import { adminWithdrawalsApi, pharmacyWithdrawalsApi, quoteChangedOf } from './walletWithdrawals.ts';
 import { isReferralOwnerKind, OWNER_KIND_LABEL, settlementsApi } from './finance.ts';
 import { isReferralSetOff, movementLabel } from './assisted.ts';
+import { asMovement } from './labWallet.ts';
 
 // WQ48 (backend r35 rounds 4e/4f, design §26.10 and §26.18.3): the pharmacy's Finance reads and the admin's wallet tools.
 
@@ -98,10 +99,17 @@ describe('WQ48 finance (r35)', () => {
     expect(isReferralOwnerKind('lab_referral')).toBe(true);
     expect(isReferralOwnerKind('partner')).toBe(false);
     expect(OWNER_KIND_LABEL.pharmacy_referral).toBe('Pharmacy referral');
-    const row = { _id: W, transactionType: 'adjustment', movementType: 'receivable_setoff', amountPaise: 5_000, signedAmountPaise: 0 };
+    const row = { _id: W, transactionType: 'adjustment', movementType: 'receivable_setoff', referenceType: 'referral_setoff', amountPaise: 5_000, signedAmountPaise: 0 };
     expect(isReferralSetOff(row)).toBe(true);
     expect(movementLabel(row)).toBe('Paid from referral earnings');
-    expect(isReferralSetOff({ ...row, transactionType: 'credit', referenceType: 'wallet_recharge' })).toBe(false);
-    expect(movementLabel({ ...row, transactionType: 'credit' })).toBe('Used to clear money owed to Jansetu');
+    // WQ48b: an owed amount cleared from a credit is a real debit, whatever its transaction type says.
+    const cleared = { _id: W, transactionType: 'adjustment', movementType: 'receivable_setoff', referenceType: 'wallet_recharge', amountPaise: 5_000, signedAmountPaise: -5_000 };
+    expect(isReferralSetOff(cleared)).toBe(false);
+    expect(movementLabel(cleared)).toBe('Used to clear money owed to Jansetu');
+    // A lab's or doctor's set-off entry moves no balance: its amount is what it cleared (r35b's `receivableDeltaMinor`), else none.
+    const entry = { _id: W, kind: 'receivable_setoff', amountMinor: 0, balanceAfterMinor: 0, referenceType: 'referral_setoff', at: '2026-11-25T04:30:00.000Z' };
+    expect(asMovement({ ...entry, receivableDeltaMinor: -5_000 }).amountPaise).toBe(5_000);
+    expect(asMovement(entry).amountPaise).toBeUndefined();
+    expect(isReferralSetOff(asMovement(entry))).toBe(true);
   });
 });

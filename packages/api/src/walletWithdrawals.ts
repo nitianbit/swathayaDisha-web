@@ -33,7 +33,7 @@ export interface Withdrawable {
 }
 /** r35 (WQ29 gap 2): the first refusal that applies to a quoted amount, in the request's own order of checks. */
 export type QuoteReason = 'WITHDRAWALS_DISABLED' | 'BELOW_MINIMUM' | 'DESTINATION_NOT_VERIFIED' | 'WALLET_RECEIVABLE' | 'WALLET_FROZEN' | 'WEEKLY_LIMIT'
-  | 'ABOVE_WITHDRAWABLE';
+  | 'ABOVE_WITHDRAWABLE' | 'LAB_NOT_VERIFIED' | 'WALLET_INACTIVE';
 
 export interface Withdrawal {
   _id: string;
@@ -49,6 +49,8 @@ export interface Withdrawal {
   /** r35: `disputeAcknowledged` when it was marked paid after a card dispute (`disputedMinor` of it is owed back). */
   paid: { method: string; reference: string; paidOn: string; at: string; note?: string | null; disputeAcknowledged?: boolean; disputedMinor?: number } | null;
   reason: string | null;
+  /** r35b (WQ48b): whether the signed-in member asked for it (a branch-limited lab manager cancels only its own). */
+  requestedByMe?: boolean;
   version: number;
   createdAt: string;
   updatedAt: string;

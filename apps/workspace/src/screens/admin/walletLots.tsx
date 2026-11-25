@@ -11,7 +11,7 @@ import { t } from '../../i18n/withdrawals/index.ts';
 import { definitelyNotRecorded, newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
 import { useOneAtATime, useReferralPayoutsPaused } from '../finance/finance.tsx';
-import { CheckPanel, useOwnedOp } from '../pharmacy/ownedOp.tsx';
+import { CheckPanel, useKeyedCheck, useOwnedOp } from '../pharmacy/ownedOp.tsx';
 import { withdrawalWords, wordedError } from '../pharmacy/withdrawals.tsx';
 
 type Notice = { tone: 'ok' | 'warn' | 'error'; text: string };
@@ -192,10 +192,17 @@ export function SetOffFromReferral({ kind, ownerId, owedMinor, scopeKey, changed
   const [error, setError] = useState<string | null>(null);
   const [review, setReview] = useState<{ amountMinor: number; requestKey: string } | null>(null);
   const [note, setNote] = useState<Notice | null>(null);
-  const [givingUp, setGivingUp] = useState(false);
   const w = adminWalletFinanceApi(api);
   const reread = () => queryClient.invalidateQueries({ queryKey: changed });
   const owed = formatPaise(owedMinor);
+  const keyed = useKeyedCheck(settle, { byKey: (k) => w.setOffByKey(kind, ownerId, k), abandon: (k) => w.abandonSetOff(kind, ownerId, k) }, {
+    found: async (r) => { setReview(null); setText(''); setNote({ tone: 'ok', text: t('setoff.found', { amount: formatPaise(r.setoff.amountMinor) }) }); await reread(); },
+    givenUp: () => { setReview(null); setNote({ tone: 'ok', text: t('setoff.givenUp') }); },
+    notYet: () => t('setoff.notYet'),
+    cannotGiveUp: () => setNote({ tone: 'warn', text: t('setoff.cannotGiveUp') }),
+    failed: (err) => setNote({ tone: 'error', text: withdrawalWords(err) }),
+  });
+  const givingUp = keyed.givingUp;
 
   function check(e: FormEvent) {
     e.preventDefault();
@@ -225,21 +232,6 @@ export function SetOffFromReferral({ kind, ownerId, owedMinor, scopeKey, changed
     }
   }
 
-  async function giveUp(p: PendingOp<PendingSetOff>) {
-    setGivingUp(true);
-    try {
-      const r = await perform(() => w.abandonSetOff(kind, ownerId, p.requestKey));
-      if (r.state === 'used') { settle(p.requestKey); setReview(null); setText(''); setNote({ tone: 'ok', text: t('setoff.found', { amount: formatPaise(r.setoff.amountMinor) }) }); await reread(); return; }
-      if (r.state !== 'abandoned') { setNote({ tone: 'warn', text: t('setoff.cannotGiveUp') }); return; }
-      settle(p.requestKey); setReview(null);
-      setNote({ tone: 'ok', text: t('setoff.givenUp') });
-    } catch (err) {
-      setNote({ tone: 'error', text: withdrawalWords(err) });
-    } finally {
-      setGivingUp(false);
-    }
-  }
-
   if (!op && (owedMinor <= 0 || paused.data === null)) return note ? <Alert tone={note.tone}>{note.text}</Alert> : null;
   const said = note && <Alert tone={note.tone}>{note.text}</Alert>;
   let body;
@@ -247,14 +239,9 @@ export function SetOffFromReferral({ kind, ownerId, owedMinor, scopeKey, changed
     const restored = !!op.restored || !op.body;
     body = (
       <CheckPanel label={t('setoff.panel')}
-        onCheck={async () => {
-          const r = await w.setOffByKey(kind, ownerId, op.requestKey);
-          if (r.state === 'used') { settle(op.requestKey); setReview(null); setText(''); setNote({ tone: 'ok', text: t('setoff.found', { amount: formatPaise(r.setoff.amountMinor) }) }); await reread(); return null; }
-          if (r.state === 'abandoned') { settle(op.requestKey); setReview(null); setNote({ tone: 'ok', text: t('setoff.givenUp') }); return null; }
-          return t('setoff.notYet');
-        }}
+        onCheck={() => keyed.check(op)}
         resend={restored ? undefined : { label: t('unconfirmed.resend'), busy: busy && !givingUp, onClick: () => { setNote(null); void pay(op).catch((e: unknown) => setNote({ tone: 'error', text: withdrawalWords(e) })); } }}
-        giveUp={{ label: t('setoff.giveUp'), busy: givingUp, onClick: () => void giveUp(op) }}>
+        giveUp={{ label: t('setoff.giveUp'), busy: givingUp, onClick: () => void keyed.giveUp(op, perform) }}>
         <Alert tone="warn">{restored ? t('setoff.restored') : t('setoff.unconfirmed', { error: op.error ?? '' })}</Alert>
       </CheckPanel>
     );

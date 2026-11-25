@@ -35,6 +35,11 @@ interface Backend {
   feeShift: number;
   /** WQ48 (r35): the wallet is on hold (a quote's `reason` is WALLET_FROZEN). */
   frozen: boolean;
+  /** WQ48b: the next request is lost before anything is recorded. */
+  dropNextRequest: boolean;
+  /** WQ48b: a quote's reason as a newer server may send it. */
+  reasonOverride: string | null;
+  abandoned: string[];
 }
 const rupees = (minor: number) => `₹${(minor / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const feeOf = (amount: number) => (amount === 100_000 ? 2_000 : 0);
@@ -52,7 +57,7 @@ const withdrawal = (i: number, o: Json = {}): Json => {
 async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
   const b: Backend = { calls: [], enabled: true, nowMinor: 300_000, nextAllowedAt: null, destination: { state: 'verified', masked: 'Bank ••••6789', detailsVersion: 3 },
-    withdrawals: [], keys: {}, loseNextRequest: false, weeklyOnRequest: false, losePaidNext: false, flagOnly: false, lotDisputed: false, feeShift: 0, frozen: false,
+    withdrawals: [], keys: {}, loseNextRequest: false, weeklyOnRequest: false, losePaidNext: false, flagOnly: false, lotDisputed: false, feeShift: 0, frozen: false, dropNextRequest: false, reasonOverride: null, abandoned: [],
     lots: [{ _id: LOT, paymentRecordId: 'c1'.repeat(12), amountMinor: 200_000, gatewayFeeMinor: 4_000, feeState: 'known', disputeState: 'none', closed: false,
       remainingMinor: 150_000, createdAt: '2026-11-10T05:00:00.000Z' }], ...init };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -96,7 +101,7 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
       if (sub === '/withdrawable') {
         const amount = Number(url.searchParams.get('amountMinor') ?? 0);
         // r35/r35b: `reason` is the first refusal a request of this amount would meet now; `available` = it would go through.
-        const reason = !b.enabled ? 'WITHDRAWALS_DISABLED' : amount < 50_000 ? 'BELOW_MINIMUM' : b.destination.state !== 'verified' ? 'DESTINATION_NOT_VERIFIED'
+        const reason = b.reasonOverride ? b.reasonOverride : !b.enabled ? 'WITHDRAWALS_DISABLED' : amount < 50_000 ? 'BELOW_MINIMUM' : b.destination.state !== 'verified' ? 'DESTINATION_NOT_VERIFIED'
           : b.frozen ? 'WALLET_FROZEN' : b.nextAllowedAt ? 'WEEKLY_LIMIT' : amount > b.nowMinor ? 'ABOVE_WITHDRAWABLE' : null;
         return ok(route, { enabled: b.enabled, minimumMinor: 50_000, withdrawableNowMinor: b.nowMinor, availableLater: [{ amountMinor: 50_000, availableAt: LATER }],
           nextAllowedAt: b.nextAllowedAt, destination: { ...b.destination, details: null },
@@ -107,6 +112,8 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
         const key = String(body!.requestKey);
         const amount = Number(body!.amountMinor);
         if (b.keys[key]) return ok(route, { withdrawal: b.withdrawals.find((x) => x._id === b.keys[key]), wallet: {}, replayed: true });
+        if (b.abandoned.includes(key)) return refuse(route, 409, 'REQUEST_ABANDONED');
+        if (b.dropNextRequest) { b.dropNextRequest = false; return route.abort('connectionreset'); }
         if (amount < 50_000) return refuse(route, 400, 'WITHDRAWAL_BELOW_MINIMUM', { minimumMinor: 50_000 });
         if (b.weeklyOnRequest) { b.nextAllowedAt = NEXT_WEEK; return refuse(route, 409, 'WITHDRAWAL_WEEKLY_LIMIT', { nextAllowedAt: NEXT_WEEK }); }
         // r35: the fee on the card money held now; a transfer other than the one the person was shown is refused with the new quote.
@@ -127,6 +134,7 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
       const byKey = /^\/withdrawals\/by-key\/([\w-]+)(\/abandon)?$/.exec(sub);
       if (byKey) {
         const id = b.keys[byKey[1]!];
+        if (!id && byKey[2]) b.abandoned.push(byKey[1]!);
         return ok(route, id ? { state: 'used', withdrawal: b.withdrawals.find((x) => x._id === id) } : byKey[2] ? { state: 'abandoned' } : { state: 'unknown' });
       }
       const cancel = /^\/withdrawals\/(\w{24})\/cancel$/.exec(sub);
@@ -510,4 +518,38 @@ test('WQ48: payout details cannot change while a withdrawal to them waits: cance
   await expect(details.getByText('A withdrawal to these details is waiting. Cancel the waiting withdrawal first, then change them.')).toBeVisible();
   expect(b.destination.state).toBe('verified');
   expect(b.calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
+});
+
+test('WQ48b: a reason this page does not know is said plainly; a lab not verified yet is said so', async ({ page }) => {
+  const b = await mockBackend(page, { reasonOverride: 'SOMETHING_NEW' });
+  await signIn(page);
+  await page.goto('/#/pharmacy/finance');
+  await section(page).getByLabel('Amount to withdraw (₹)').fill('1000');
+  await section(page).getByRole('button', { name: 'Next: see the fee' }).click();
+  await expect(section(page).getByText('This amount cannot be withdrawn now.')).toBeVisible();
+  b.reasonOverride = 'LAB_NOT_VERIFIED';
+  await section(page).getByRole('button', { name: 'Next: see the fee' }).click();
+  await expect(section(page).getByText('Withdrawals open once Jansetu has verified your lab.')).toBeVisible();
+  expect(posts(b, '/wallet/withdrawals')).toHaveLength(0);
+});
+
+test('WQ48b: a lost request sent again after the fee moved: the refusal is worded, then checked by key and given up (one helper)', async ({ page }) => {
+  const b = await mockBackend(page, { dropNextRequest: true });
+  await signIn(page);
+  await page.goto('/#/pharmacy/finance');
+  await section(page).getByLabel('Amount to withdraw (₹)').fill('1000');
+  await section(page).getByRole('button', { name: 'Next: see the fee' }).click();
+  await page.getByRole('button', { name: 'Withdraw ₹1,000.00' }).click();
+  await expect(section(page).getByText(/The outcome of this withdrawal is not known yet/)).toBeVisible();
+  b.feeShift = 1_000;
+  await section(page).getByRole('button', { name: 'Send the same request again' }).click();
+  await expect(section(page).getByText('The card fee changed since you checked, so the request sent again was refused.', { exact: false })).toBeVisible();
+  await section(page).getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(section(page).getByText('Not recorded so far. It may still be on its way. Sending the same request again is safe.')).toBeVisible();
+  await section(page).getByRole('button', { name: 'Give this up' }).click();
+  await expect(section(page).getByText('Given up: nothing was withdrawn with that request, and it can never be made now.')).toBeVisible();
+  await expect(section(page).getByLabel('Amount to withdraw (₹)')).toBeVisible();
+  expect(b.withdrawals).toHaveLength(0);
+  expect(posts(b, '/wallet/withdrawals')).toHaveLength(2);
+  expect(b.calls.filter((c) => c.path.includes('/withdrawals/by-key/')).map((c) => c.path.endsWith('/abandon'))).toEqual([false, true]);
 });

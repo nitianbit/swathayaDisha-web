@@ -23,6 +23,8 @@ export interface LabWalletView {
 export interface LabWalletEntry {
   _id: string; kind: string; amountMinor: number; balanceAfterMinor: number; description?: string; referenceType?: string; referenceId?: string;
   at: string; notes?: string | null; actor?: { kind: string; id: string } | null;
+  /** The admin's view (and r35b's owner view): how the entry moved what the wallet owes (a set-off: −amount). */
+  receivableDeltaMinor?: number;
 }
 export type LabTopupState = 'awaiting_payment' | 'credited' | 'paid_not_credited' | 'blocked' | 'closed_compensated' | 'failed' | 'refunded';
 export interface LabTopupRow {
@@ -47,6 +49,8 @@ export const asPharmacyWallet = (w: LabWalletView | null | undefined): PharmacyW
 /** One lab wallet entry in the shape the wallet history shows (a card top-up credit names `wallet_recharge`). */
 export const asMovement = (e: LabWalletEntry): WalletMovement => ({
   _id: e._id, transactionType: e.amountMinor >= 0 ? 'credit' : 'debit', movementType: e.kind, signedAmountPaise: e.amountMinor,
+  // WQ48b: a set-off moves no balance (amount 0); what it cleared is the receivable's change (r35b sends it to the owner too).
+  ...(e.kind === 'receivable_setoff' && e.amountMinor === 0 && Number.isSafeInteger(e.receivableDeltaMinor) ? { amountPaise: Math.abs(e.receivableDeltaMinor!) } : {}),
   balanceAfterPaise: e.balanceAfterMinor, description: e.description, referenceType: e.referenceType, referenceId: e.referenceId,
   ...(e.notes ? { notes: e.notes } : {}), ...(e.actor ? { actor: e.actor } : {}), createdAt: e.at,
 });

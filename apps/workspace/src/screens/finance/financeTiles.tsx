@@ -50,10 +50,13 @@ export function CardMoneyTile({ wallet }: { wallet: PharmacyFinance['wallet'] })
 
 /** What the referral cuts earned, were paid (r35b: and set off against an owed wallet amount) and are due. */
 export function ReferralTile({ referral, link }: { referral: ReferralBlock; link?: string }) {
+  // WQ48b: what the lines above do not explain (adjustments, or a set-off an older server does not name): said, so the sum holds.
+  const other = referral.dueMinor - (referral.earnedMinor - referral.paidMinor - (referral.setOffMinor ?? 0));
   return (
     <Tile title={t('tiles.referral')} value={formatPaise(referral.earnedMinor)}>
       <Sub>{t('tiles.referralPaid', { amount: formatPaise(referral.paidMinor) })}</Sub>
       {(referral.setOffMinor ?? 0) > 0 && <Sub>{t('tiles.referralSetOff', { amount: formatPaise(referral.setOffMinor!) })}</Sub>}
+      {Number.isSafeInteger(other) && other !== 0 && <Sub>{t('tiles.referralOther', { amount: formatPaise(other) })}</Sub>}
       <Sub>{t('tiles.referralDue', { amount: formatPaise(referral.dueMinor) })}</Sub>
       {!referral.payoutsEnabled && <Sub>{t('tiles.referralPaused')}</Sub>}
       {link && <Sub><Link to={link}>{t('tiles.referralLink')}</Link></Sub>}

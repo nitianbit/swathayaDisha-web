@@ -42,9 +42,14 @@ interface Backend {
   noLot: Json[];
   recovered: string[];
   labWithdrawals: Json[];
+  /** WQ48b: answer as r35 does (no `setOffMinor`, no `home`, no `recoveredAt`). */
+  r35: boolean;
 }
 
 const walletRows = (): Json[] => [
+  // An owed amount cleared from a credit: a real debit (never "Paid from referral earnings").
+  { _id: 'a4'.padStart(24, '0'), transactionType: 'debit', movementType: 'receivable_setoff', referenceType: 'wallet_recharge', amountPaise: 20_000, signedAmountPaise: -20_000,
+    balanceAfterPaise: 280_000, createdAt: '2026-11-24T07:00:00.000Z', status: 'completed' },
   { _id: 'a3'.padStart(24, '0'), transactionType: 'debit', movementType: 'booking_debit', amountPaise: 50_000, signedAmountPaise: -50_000, balanceAfterPaise: 300_000,
     createdAt: '2026-11-24T06:00:00.000Z', status: 'completed' },
   // r35b: an owed amount paid from referral earnings moves no wallet money.
@@ -63,7 +68,7 @@ const referralRows = (): Json[] => [
 async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
   const b: Backend = { calls: [], me: { _id: OWNER, partnerId: LAB, name: 'Ravi Owner', role: 'owner', permissions: ALL, branchIds: [] }, payoutsOn: false,
-    receivableMinor: 20_000, referralDueMinor: 155_500, setOffKeys: {}, loseNextSetOff: false, recovered: [], labWithdrawals: [],
+    receivableMinor: 20_000, referralDueMinor: 155_500, setOffKeys: {}, loseNextSetOff: false, recovered: [], labWithdrawals: [], r35: false,
     disputes: [
       { paymentRecordId: PAY, walletKind: 'pharmacy', ownerId: PH, lotId: LOT, amountMinor: 200_000, remainingMinor: 150_000, state: 'flagged', chargebackAt: '2026-11-24T05:00:00.000Z', recoveredAt: null, at: '2026-11-24T05:00:00.000Z' },
       { paymentRecordId: PAY2, walletKind: 'lab', ownerId: LAB, lotId: null, amountMinor: 80_000, remainingMinor: null, state: 'flagged', chargebackAt: '2026-11-23T05:00:00.000Z', recoveredAt: null, at: '2026-11-23T05:00:00.000Z' },
@@ -80,7 +85,8 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
   const refuse = (route: Route, status: number, code: string, details?: Json) => json(route, status, { error: status, code, message: code, ...(details ? { details } : {}) });
   const csv = (route: Route) => route.fulfill({ status: 200, contentType: 'text/csv; charset=utf-8', body: `${CSV_HEADER}\n"","Opening balance","","","","","0.00"\n` });
   const empty = (route: Route) => ok(route, [], 200, { pagination: { nextCursor: null } });
-  const referral = () => ({ earnedMinor: 160_500, paidMinor: 0, setOffMinor: 5_000, dueMinor: b.referralDueMinor, cutsEnabled: true, payoutsEnabled: b.payoutsOn });
+  const referral = () => ({ earnedMinor: 160_500, paidMinor: 0, ...(b.r35 ? {} : { setOffMinor: 5_000 }), dueMinor: b.referralDueMinor, cutsEnabled: true, payoutsEnabled: b.payoutsOn });
+  const homeOf = () => (b.r35 ? {} : { home: { accountId: HOME_ACC, masked: 'HDFC0001234 XXXX4321', detailsVersion: 3, state: 'verified' } });
   const labPartner = { _id: LAB, kind: 'lab', name: 'City Lab', contact: { phone: '9000000000' }, verification: { state: 'verified' }, activeOwnerCount: 1, isActive: true };
   const clinicPartner = { ...labPartner, _id: CLINIC, kind: 'clinic', name: 'Sunrise Clinic' };
   const account = (o: Json = {}) => ({ _id: 'f9'.repeat(12), ownerKind: 'partner', ownerId: LAB, beneficiaryName: 'City Lab', isActive: true, payoutDetails: null,
@@ -164,6 +170,7 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
         const cancel = /^\/withdrawals\/(\w{24})\/cancel$/.exec(sub);
         if (cancel) {
           const w = b.labWithdrawals.find((x) => x._id === cancel[1])!;
+          if (w.notMine) return refuse(route, 403, 'FINANCE_SCOPE_REQUIRED');
           Object.assign(w, { state: 'cancelled', version: Number(w.version) + 1 });
           return ok(route, { withdrawal: w, wallet: {}, replayed: false });
         }
@@ -220,14 +227,13 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
       if (path === '/settlements/accounts') {
         const kind = url.searchParams.get('ownerKind');
         const refRow = { ...account({ _id: REF_ACC, ownerKind: 'lab_referral', ownerId: LAB, beneficiaryName: 'City Lab' }), balanceMinor: 155_500, payoutsPaused: !b.payoutsOn,
-          home: { accountId: HOME_ACC, masked: 'HDFC0001234 XXXX4321', detailsVersion: 3, state: 'verified' } };
+          ...homeOf() };
         const partnerRow = { ...account({ _id: HOME_ACC, payoutDetailsState: 'verified', payoutDetailsVersion: 3 }), balanceMinor: 0 };
         const rows = kind === 'referral' || kind === 'lab_referral' ? [refRow] : kind ? [] : [refRow, partnerRow];
         return ok(route, { total: rows.length, totalDueMinor: 155_500, rows });
       }
       if (path === `/settlements/accounts/${REF_ACC}`) {
-        return ok(route, { account: account({ _id: REF_ACC, ownerKind: 'lab_referral', ownerId: LAB, beneficiaryName: 'City Lab',
-          home: { accountId: HOME_ACC, masked: 'HDFC0001234 XXXX4321', detailsVersion: 3, state: 'verified' } }), balanceMinor: 155_500,
+        return ok(route, { account: account({ _id: REF_ACC, ownerKind: 'lab_referral', ownerId: LAB, beneficiaryName: 'City Lab', ...homeOf() }), balanceMinor: 155_500,
           totals: { ...totals, earnedMinor: 155_500 }, lastPayout: null });
       }
       if (path === `/settlements/accounts/${REF_ACC}/history`) return ok(route, []);
@@ -238,6 +244,10 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
   });
   return b;
 }
+
+const labWithdrawal = (id: string, o: Json = {}): Json => ({ _id: id.padStart(24, '0'), walletKind: 'lab', state: 'requested', grossMinor: 60_000, feeMinor: 0,
+  transferMinor: Number(o.grossMinor ?? 60_000), feeLine: 'No card fee.', lots: [], destination: { masked: 'HDFC0001234 XXXX4321', detailsVersion: 1 }, paid: null,
+  reason: null, version: 0, createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(), ...o });
 
 async function signIn(page: Page, as: 'Pharmacy' | 'Doctor' | 'Admin' | 'Lab or clinic staff' = 'Pharmacy') {
   await page.goto('/');
@@ -275,12 +285,15 @@ test('pharmacy Finance: three tiles, one statement (wallet and referral earnings
 
   const statement = page.getByRole('region', { name: 'Statement' });
   const rows = statement.getByRole('row');
-  await expect(rows).toHaveCount(4);
-  await expect(rows.nth(1)).toContainText('Paid for a consultation booking');
-  await expect(rows.nth(1)).toContainText('−₹500.00');
-  // r35b: paid from referral earnings: its amount, without a sign (not a debit).
-  await expect(rows.nth(2)).toContainText('Paid from referral earnings₹50.00₹3,500.00');
-  await expect(rows.nth(3)).toContainText('Top-up (card / UPI)+₹3,500.00');
+  await expect(rows).toHaveCount(5);
+  await expect(rows.nth(1)).toContainText('Used to clear money owed to Jansetu−₹200.00');
+  await expect(rows.nth(2)).toContainText('Paid for a consultation booking');
+  await expect(rows.nth(2)).toContainText('−₹500.00');
+  // Paid from referral earnings: its amount, without a sign (not a debit).
+  await expect(rows.nth(3)).toContainText('Paid from referral earnings₹50.00₹3,500.00');
+  await expect(rows.nth(4)).toContainText('Top-up (card / UPI)+₹3,500.00');
+  // earned − paid − set off = due here: no other line.
+  await expect(tiles).not.toContainText('Includes other adjustments');
   await statement.getByRole('button', { name: 'Older' }).click();
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(1)).toContainText('+₹100.00');
@@ -320,12 +333,14 @@ test('pharmacy Finance: three tiles, one statement (wallet and referral earnings
 });
 
 test('a lab’s Finance gains the referral and withdrawals tiles (its referral page stays, linked); a clinic’s shows none', async ({ page }) => {
-  await mockBackend(page);
+  await mockBackend(page, { referralDueMinor: 150_000 });
   await signIn(page, 'Lab or clinic staff');
   await nav(page).getByRole('link', { name: 'Finance', exact: true }).click();
   const tiles = page.getByLabel('Money at a glance');
   await expect(tiles).toContainText('Referral earned₹1,605.00');
-  await expect(tiles).toContainText('Due to you: ₹1,555.00');
+  // WQ48b: ₹1,605 earned − ₹0 paid − ₹50 set off is ₹1,555, but ₹1,500 is due: the difference is said.
+  await expect(tiles).toContainText(/Includes other adjustments: -₹55\.00/);
+  await expect(tiles).toContainText('Due to you: ₹1,500.00');
   await expect(tiles).toContainText('Withdrawals to the bankWaiting: 1');
   await expect(tiles).toContainText('Last paid:');
   await tiles.getByRole('link', { name: 'See referral earnings' }).click();
@@ -353,19 +368,28 @@ test('a doctor’s Earnings gains the same tiles', async ({ page }) => {
 test('a branch-limited lab manager cannot ask for a withdrawal (it covers the whole lab) but can cancel the one it asked for', async ({ page }) => {
   const b = await mockBackend(page, {
     me: { _id: OWNER, partnerId: LAB, name: 'Sita Staff', role: 'staff', permissions: ['wallet.view', 'wallet.manage'], branchIds: ['b7'.repeat(12)] },
-    labWithdrawals: [{ _id: 'a9'.padStart(24, '0'), walletKind: 'lab', state: 'requested', grossMinor: 60_000, feeMinor: 0, transferMinor: 60_000, feeLine: 'No card fee. You receive ₹600.00.',
-      lots: [], destination: { masked: 'HDFC0001234 XXXX4321', detailsVersion: 1 }, paid: null, reason: null, version: 0, createdAt: NOW.toISOString(), updatedAt: NOW.toISOString() }],
+    labWithdrawals: [
+      labWithdrawal('a9', { requestedByMe: true }),
+      labWithdrawal('a8', { requestedByMe: false, grossMinor: 70_000 }),
+      // r35: no `requestedByMe`; the server refuses one this member did not ask for.
+      labWithdrawal('a7', { grossMinor: 80_000, notMine: true }),
+    ],
   });
   await signIn(page, 'Lab or clinic staff');
   await page.goto('/#/partner/wallet');
   const section = page.getByRole('region', { name: 'Withdraw to bank' });
   await expect(section).toContainText('Withdrawals cover the whole lab, so only members who can see every branch can ask for one.');
   await expect(section.getByLabel('Amount to withdraw (₹)')).toHaveCount(0);
-  const table = page.getByRole('table', { name: 'Withdrawals, newest first' });
-  await table.getByRole('button', { name: 'Cancel' }).click();
-  await table.getByRole('button', { name: 'Yes, cancel it' }).click();
+  const rows = page.getByRole('table', { name: 'Withdrawals, newest first' }).getByRole('row');
+  await expect(rows.nth(2).getByRole('button', { name: 'Cancel' })).toHaveCount(0);
+  await rows.nth(3).getByRole('button', { name: 'Cancel' }).click();
+  await rows.nth(3).getByRole('button', { name: 'Yes, cancel it' }).click();
+  await expect(rows.nth(3).getByText('You can only cancel withdrawals you asked for.')).toBeVisible();
+  await rows.nth(1).getByRole('button', { name: 'Cancel' }).click();
+  await rows.nth(1).getByRole('button', { name: 'Yes, cancel it' }).click();
   await expect(section.getByText('Cancelled. ₹600.00 is back in your wallet.')).toBeVisible();
-  expect(writes(b)).toEqual([`/partner-workspace/assisted/wallet/withdrawals/${'a9'.padStart(24, '0')}/cancel`]);
+  expect(writes(b)).toEqual([`/partner-workspace/assisted/wallet/withdrawals/${'a7'.padStart(24, '0')}/cancel`,
+    `/partner-workspace/assisted/wallet/withdrawals/${'a9'.padStart(24, '0')}/cancel`]);
 });
 
 test('admin Card disputes: the ones to recover first, Recover by the lot or by the payment id, each opens its wallet; all states', async ({ page }) => {
@@ -389,6 +413,7 @@ test('admin Card disputes: the ones to recover first, Recover by the lot or by t
   await rows.nth(1).getByRole('button', { name: 'Yes, recover it' }).click();
   await expect(page.getByText('No card disputes here.')).toBeVisible();
   expect(writes(b)).toEqual([`/admin/wallet-lots/${LOT}/recover`, `/admin/wallet-payments/${PAY2}/recover`]);
+  expect(b.calls.some((c) => c.path === '/admin/wallet-disputes?state=flagged&limit=200')).toBe(true);
   await page.getByLabel('Show').selectOption({ label: 'All' });
   await expect(rows).toHaveCount(5);
   await expect(table.getByRole('button', { name: 'Recover the money' })).toHaveCount(0);
@@ -460,8 +485,40 @@ test('admin referral accounts: filtered by kind, paused until tax advice, paid t
   expect(b.calls.some((c) => c.path.startsWith('/settlements/accounts?ownerKind=referral'))).toBe(true);
   await table.getByRole('link', { name: 'City Lab' }).click();
   await expect(page.getByRole('region', { name: 'Payout details' })).toContainText('Payouts go to the payout details of the lab’s or doctor’s own account: HDFC0001234 XXXX4321 (Verified).');
-  await expect(page.getByRole('region', { name: 'Payout details' }).getByRole('button', { name: 'Change payout details' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Payout details' }).getByRole('button')).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Record a payout' })).toContainText('Paused until tax advice: referral earnings cannot be paid out yet.');
   await page.getByRole('link', { name: 'Open that account' }).click();
   await expect(page).toHaveURL(new RegExp(`/admin/settlements/${HOME_ACC}$`));
+});
+
+test('WQ48b: against r35 (no set-off line, no home account): lines are hidden, nothing reads NaN, a referral account offers no details form', async ({ page }) => {
+  await mockBackend(page, { r35: true });
+  await signIn(page);
+  await page.goto('/#/pharmacy/finance');
+  const tiles = page.getByLabel('Money at a glance');
+  await expect(tiles).toContainText('Referral earned₹1,605.00');
+  await expect(tiles).not.toContainText('Paid what the wallet owed');
+  // The set-off an older server does not name is still explained, so the sum holds.
+  await expect(tiles).toContainText(/Includes other adjustments: -₹50\.00/);
+  await expect(page.getByRole('main')).not.toContainText('NaN');
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await signIn(page, 'Admin');
+  await page.goto(`/#/admin/settlements/${REF_ACC}`);
+  const details = page.getByRole('region', { name: 'Payout details' });
+  await expect(details).toContainText('Payouts go to the payout details of the lab’s or doctor’s own account, and are changed there.');
+  await expect(details.getByRole('button')).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Record a payout' })).toContainText('Paused until tax advice');
+  await expect(page.getByRole('main')).not.toContainText('NaN');
+});
+
+test('WQ48b: referral payouts on: the referral account’s payout form is offered and its check names the home account’s details', async ({ page }) => {
+  const b = await mockBackend(page, { payoutsOn: true });
+  await signIn(page, 'Admin');
+  await page.goto(`/#/admin/settlements/${REF_ACC}`);
+  const pay = page.getByRole('region', { name: 'Record a payout' });
+  await pay.getByLabel('Amount paid (₹)').fill('500');
+  await pay.getByLabel('Bank reference (UTR)').fill('UTR12345678');
+  await pay.getByRole('button', { name: 'Review the payout' }).click();
+  await expect(pay).toContainText('at HDFC0001234 XXXX4321 (details version 3)');
+  expect(b.calls.some((c) => c.path === '/settlements/accounts?ownerKind=referral&limit=1')).toBe(true);
 });

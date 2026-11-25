@@ -36,7 +36,7 @@ const ownerWords = (kind: string | null) => (kind === 'pharmacy' || kind === 'la
 function Disputes({ scopeKey }: { scopeKey: readonly unknown[] }) {
   const { api } = useSession();
   const [state, setState] = useState<DisputeState | ''>('flagged');
-  const q = useQuery({ queryKey: [...scopeKey, state], queryFn: () => adminWalletFinanceApi(api).disputes(state ? { state } : {}) });
+  const q = useQuery({ queryKey: [...scopeKey, state], queryFn: () => adminWalletFinanceApi(api).disputes({ limit: 200, ...(state ? { state } : {}) }) });
   const { perform, busy } = useOneAtATime('lot');
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'error'; text: string } | null>(null);
   const recover = useRecover(scopeKey, setNotice);

@@ -58,6 +58,8 @@ export default {
   'unconfirmed.giveUp': 'Give this up',
   'unconfirmed.found': 'It was recorded: {transfer} goes to {masked} once Jansetu pays it out.',
   'unconfirmed.givenUp': 'Given up: nothing was withdrawn with that request, and it can never be made now.',
+  /** WQ48b: the request sent again was refused because the card fee changed; the first one's outcome is still unknown. */
+  'unconfirmed.quoteChanged': 'The card fee changed since you checked, so the request sent again was refused. Check whether the first one was recorded; if not, give it up and withdraw again with the new fee.',
   'unconfirmed.cannotGiveUp': 'It could not be given up yet. Check whether it was recorded, then try again.',
 
   'list.title': 'Your withdrawals',
@@ -82,6 +84,8 @@ export default {
   'cancel.confirm': 'Yes, cancel it',
   'cancel.consequence': 'The withdrawal of {gross} is cancelled and the money goes back to your wallet.',
   'cancel.done': 'Cancelled. {gross} is back in your wallet.',
+  /** WQ48b: a lab member limited to some branches cancels only the withdrawals it asked for. */
+  'cancel.notYours': 'You can only cancel withdrawals you asked for.',
   'cancel.unknown': 'Not confirmed ({error}). The list was read again: if it still says “Asked for”, cancel again; that is safe.',
 
   'error.WITHDRAWAL_BELOW_MINIMUM': 'The smallest withdrawal is {minimum}.',
@@ -115,6 +119,12 @@ export default {
   'error.REFERRAL_PAYOUTS_DISABLED': 'Paused until tax advice: referral earnings cannot be paid out yet.',
   'error.SETOFF_ABOVE_AVAILABLE': 'This is more than can be paid from referral earnings now.',
   'error.WALLET_NOT_FOUND': 'This owner has no wallet or no referral earnings to pay from.',
+  /** WQ48b. */
+  'error.WALLET_INACTIVE': 'The wallet is switched off, so nothing can be withdrawn. Please contact Jansetu support.',
+  /** WQ48b: the lab is not verified by Jansetu yet. */
+  'error.PARTNER_NOT_VERIFIED': 'Withdrawals open once Jansetu has verified your lab.',
+  /** WQ48b: a quoted amount cannot be withdrawn now for a reason this page does not know. */
+  'reason.other': 'This amount cannot be withdrawn now.',
 
   'admin.title': 'Withdrawals',
   'admin.intro': 'Requests to withdraw wallet money to the bank, oldest first. Pay them by bank transfer or UPI, then mark them paid with the bank’s reference.',
