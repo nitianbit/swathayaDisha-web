@@ -7,8 +7,7 @@ import {
   type PharmacyOrder, type PrescriptionReviewRequest,
 } from '@jansetu/api';
 import {
-  Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, shared, TextArea,
-} from '@jansetu/ui';
+  Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, shared, TextArea, Parts } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
@@ -36,7 +35,7 @@ function RxReview({ orderId }: { orderId: string }) {
 
   return (
     <>
-      <Link to="/pharmacy/prescriptions" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('rxReview.prescriptionReview')}</Link>
+      <Link to="/pharmacy/prescriptions" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{` ${t('rxReview.prescriptionReview')}`}</Link>
       {q.isPending ? <Loading label={t('common.loadingOrder')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : <OrderReview order={q.data} onChanged={() => {
@@ -58,9 +57,7 @@ function OrderReview({ order, onChanged, onStale }:
 
   return (
     <>
-      <PageHeading title={title}>{t('common.placed')}{formatDateTime(order.createdAt)} · {formatRupees(order.grandTotal)}{t('rxReview.order')}{' '}
-        <Badge>{orderStatusLabel(order.status)}</Badge>{t('rxReview.payment')}{' '}
-        <Badge tone={order.paymentStatus === 'paid' ? 'ok' : undefined}>{paymentStatusLabel(order.paymentStatus)}</Badge>
+      <PageHeading title={title}><Parts of={t.rich('common.placedFull2', { time: formatDateTime(order.createdAt), amount: formatRupees(order.grandTotal), orderStatusLabel: <Badge>{orderStatusLabel(order.status)}</Badge>, paymentStatusLabel: <Badge tone={order.paymentStatus === 'paid' ? 'ok' : undefined}>{paymentStatusLabel(order.paymentStatus)}</Badge> })} />
       </PageHeading>
       <section className="ws-section" aria-labelledby="items-h">
         <h2 id="items-h">{t('common.medicines')}</h2>
@@ -76,7 +73,7 @@ function OrderReview({ order, onChanged, onStale }:
       {pending && !seller ? (
         <Alert tone="warn">{t('rxReview.yourPharmacyIsTheBuyer')}</Alert>
       ) : pending && !reviewableState ? (
-        <Alert tone="warn">{t('common.thisOrderIs')}{orderStatusLabel(order.status).toLowerCase()}{t('rxReview.soItsPrescriptionCanNo')}</Alert>
+        <Alert tone="warn">{t('common.thisOrderIsFull2', { orderStatusLabel: orderStatusLabel(order.status).toLowerCase() })}</Alert>
       ) : pending ? (
         // A changed document list starts the review again: what was read no longer covers it.
         <ReviewForm key={(order.prescriptionUrls ?? []).join('\n')} order={order} onChanged={onChanged} onStale={onStale} />
@@ -217,7 +214,7 @@ function ReviewForm({ order, onChanged, onStale }:
                   <li key={i}>
                     <Button variant={preview?.index === i ? 'primary' : 'secondary'} busy={fetchingIndex === i}
                       onClick={() => void open(i)}>
-                      <FileText size={16} aria-hidden="true" />{t('rxReview.document')}{i + 1}
+                      <FileText size={16} aria-hidden="true" />{' '}{t('rxReview.documentFull', { value: i + 1 })}
                     </Button>
                     {read.has(i) ? <Badge tone="ok">{t('rxReview.read')}</Badge>
                       : s?.status === 'failed' ? <Badge tone="danger">{t('rxReview.couldNotOpen')}</Badge> : null}
@@ -226,7 +223,7 @@ function ReviewForm({ order, onChanged, onStale }:
               })}
             </ul>
             {Object.entries(docState).filter(([, s]) => s.status === 'failed').map(([i, s]) => (
-              <Alert key={i}>{t('rxReview.document2')}{Number(i) + 1}: {(s as { message: string }).message}</Alert>
+              <Alert key={i}>{t('rxReview.documentFull2', { value: Number(i) + 1, message: (s as { message: string }).message })}</Alert>
             ))}
             {preview && current?.status !== 'failed' && (
               <div className="rx-preview-wrap">
@@ -237,13 +234,13 @@ function ReviewForm({ order, onChanged, onStale }:
                   ) : preview.kind === 'pdf' ? (
                     <div className="rx-pdf">
                       <iframe src={preview.url} title={label(preview.index)} />
-                      <a href={preview.url} target="_blank" rel="noopener">{t('rxReview.openDocument')}{preview.index + 1}{t('rxReview.inANewTab')}</a>
+                      <a href={preview.url} target="_blank" rel="noopener">{t('rxReview.openDocumentFull', { value: preview.index + 1 })}</a>
                     </div>
                   ) : (
                     <div className="j-state">
                       <span>{t('rxReview.thisFileTypeCannotBe')}</span>
                       <a href={preview.url} download={`prescription-${preview.index + 1}`}
-                        onClick={() => setState(preview.index, { status: 'shown' })}>{t('rxReview.downloadDocument')}{preview.index + 1}{t('rxReview.toReadIt')}</a>
+                        onClick={() => setState(preview.index, { status: 'shown' })}>{t('rxReview.downloadDocumentFull', { value: preview.index + 1 })}</a>
                     </div>
                   )}
                 </div>
@@ -252,7 +249,7 @@ function ReviewForm({ order, onChanged, onStale }:
                     onChange={(e) => {
                       const i = preview.index;
                       setRead((r) => { const n = new Set(r); if (e.target.checked) n.add(i); else n.delete(i); return n; });
-                    }} />{t('rxReview.iHaveReadDocument')}{preview.index + 1}{t('rxReview.andItIsLegible')}</label>
+                    }} />{t('rxReview.iHaveReadDocumentFull', { value: preview.index + 1 })}</label>
               </div>
             )}
           </>
@@ -268,14 +265,14 @@ function ReviewForm({ order, onChanged, onStale }:
                 <Link to="/pharmacy/settings">{t('rxReview.goToSettings')}</Link>
               </Alert>
             ) : (
-              <p className="ws-muted">{t('rxReview.decidingAs')}{pharmacist.name} ({pharmacist.registrationNumber}). <Link to="/pharmacy/settings">{t('common.change')}</Link></p>
+              <p className="ws-muted"><Parts of={t.rich('rxReview.decidingAsFull', { name: pharmacist.name, registrationNumber: pharmacist.registrationNumber, words: <Link to="/pharmacy/settings">{t('common.change')}</Link> })} /></p>
             )}
           {rejecting && (
             <TextArea label={t('rxReview.reasonForRejection')} hint={t('rxReview.theCustomerSeesThisPaid')}
               value={reason} onChange={(e) => setReason(e.target.value)} error={errors.reason} maxLength={1000} />
           )}
           {review.isError && <Alert>{messageOf(review.error)}{review.error instanceof ApiError && review.error.status === 409
-            ? t('rxReview.theOrderHasBeenReloaded') : ''}</Alert>}
+            ? ` ${t('rxReview.theOrderHasBeenReloaded')}` : ''}</Alert>}
           <div className="rx-actions">
             {!rejecting ? (
               <>
@@ -283,7 +280,7 @@ function ReviewForm({ order, onChanged, onStale }:
                 {/* Rejecting is allowed without reading: an unreadable or missing prescription is a reason to reject. */}
                 <Button variant="secondary" disabled={review.isPending || !pharmacist} onClick={() => setRejecting(true)}>{t('rxReview.reject')}</Button>
                 {docs.length > 0 && !allRead && (
-                  <span className="ws-muted">{t('rxReview.readAndConfirmAll')}{docs.length}{t('rxReview.documentsToApprove')}</span>
+                  <span className="ws-muted">{t('rxReview.readAndConfirmAllFull', { length: docs.length })}</span>
                 )}
               </>
             ) : (

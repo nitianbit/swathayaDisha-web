@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import {
   formatExpiry, inventoryApi, pharmacyOrdersApi, REALLOCATABLE_ORDER_STATUSES, type ImpactedOrder,
 } from '@jansetu/api';
-import { Badge, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
+import { Badge, Empty, ErrorState, formatDateTime, Loading , Parts } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -56,7 +56,7 @@ function HeldOrder({ order, onChanged }: { order: ImpactedOrder; onChanged: () =
   return (
     <li>
       <div>
-        <Link to={`/pharmacy/orders/${order.orderId}`}>{t('common.order')}{order.orderNumber ?? order.orderId.slice(-8)}</Link>{' '}
+        <Link to={`/pharmacy/orders/${order.orderId}`}>{t('common.orderFull2', { orderNumber: order.orderNumber ?? order.orderId.slice(-8) })}</Link>{' '}
         <Badge>{ORDER_STATUS_LABEL[order.status] ?? order.status}</Badge>
       </div>
       <div className="ws-muted">
@@ -67,7 +67,7 @@ function HeldOrder({ order, onChanged }: { order: ImpactedOrder; onChanged: () =
           <ConfirmAction label={t('quality.swapToGoodStock')} confirmLabel={t('quality.swapBatches')}
             consequence={t('quality.theHeldUnitsAreReplaced')}
             onConfirm={() => run(() => orders.reallocateHeldStock(order.orderId))} />
-        ) : <span className="ws-muted">{t('common.thisOrderIs')}{ORDER_STATUS_LABEL[order.status]?.toLowerCase()}{t('quality.itsStockCanNoLonger')}</span>}
+        ) : <span className="ws-muted">{t('common.thisOrderIsFull', { value: ORDER_STATUS_LABEL[order.status]?.toLowerCase() })}</span>}
         <ConfirmAction label={t('common.cancelOrder')} confirmLabel={t('common.cancelOrder')} danger reason reasonLabel={t('quality.reasonTheCustomerSeesIt')}
           consequence={t('quality.theOrderIsCancelledAnd')}
           onConfirm={(reason) => run(() => orders.stockHoldCancel(order.orderId, reason))} />
@@ -105,7 +105,7 @@ function HeldBatches() {
             </table>
           </div>
         )}
-      {q.data && q.data.total > q.data.items.length && <span className="ws-muted">{t('common.showing')}{q.data.items.length}{t('common.of')}{q.data.total}.</span>}
+      {q.data && q.data.total > q.data.items.length && <span className="ws-muted">{t('common.showingFull3', { length: q.data.items.length, total: q.data.total })}</span>}
     </section>
   );
 }
@@ -122,8 +122,7 @@ function SupplierReturns() {
         : (
           <ul className="ws-list">
             {q.data.items.map((r) => (
-              <li key={r._id}>{formatDateTime(r.createdAt)}{t('quality.batch')}{r.batchNumber} · {r.quantity}{t('quality.units')}{r.reason.replace(/_/g, ' ')}
-                {r.notes && <> · “{r.notes}”</>}</li>
+              <li key={r._id}><Parts of={t.rich('quality.batchFull', { time: formatDateTime(r.createdAt), batchNumber: r.batchNumber, quantity: r.quantity, reason: r.reason.replace(/_/g, ' '), value: r.notes && <> · “{r.notes}”</> })} /></li>
             ))}
           </ul>
         )}

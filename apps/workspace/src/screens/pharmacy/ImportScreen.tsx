@@ -7,7 +7,7 @@ import {
   importStuck, importZeroPrices, isImportClaimed, monthFirstRows, pharmacyStockApi, recentSameFile, type ImportRow, type InventoryImport,
   IMPORT_DATE_FORMAT, allSuppliers, importLeavesUnpriced, importPriceView, IMPORT_PRICE_FIELDS, TEMPLATE_EXAMPLE_MARK, type ImportPriceView,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading , Parts } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -55,7 +55,7 @@ function settles(p: PendingOp<PendingStep>, r: InventoryImport): boolean {
 export function ImportScreen() {
   const { importId = '' } = useParams();
   const pharmacyId = usePharmacyId();
-  const back = <Link to="/pharmacy/stock/import" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('import.importStock')}</Link>;
+  const back = <Link to="/pharmacy/stock/import" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{` ${t('import.importStock')}`}</Link>;
   if (!/^[0-9a-fA-F]{24}$/.test(importId)) return <>{back}<Empty title={t('import.importNotFound')}>{t('import.openItFromTheList')}</Empty></>;
   return <>{back}<ImportLoader key={`${pharmacyId}:${importId}`} pharmacyId={pharmacyId} importId={importId} /></>;
 }
@@ -123,7 +123,7 @@ function ImportView({ pharmacyId, record, reread }: {
   };
   const outcome = (r: InventoryImport) => {
     const skipped = (r.previewRows ?? []).filter((x) => x.status === 'skipped').length;
-    const skip = skipped > 0 ? t('import.skippedByTheRowsYou', { skipped, value: skipped === 1 ? 'row was' : 'rows were' }) : '';
+    const skip = skipped > 0 ? ` ${t('import.skippedByTheRowsYou', { skipped, value: skipped === 1 ? 'row was' : 'rows were' })}` : '';
     return r.status === 'committed' ? t('import.doneRowsWereAddedTo', { value: r.committedRows ?? 0, skip })
       : r.status === 'partially_committed' ? t('import.partlyDoneRowsWereAdded', { value: r.committedRows ?? 0, value2: r.failedRows ?? 0, skip })
       : r.status === 'failed' ? t('import.noRowWasAddedSee')
@@ -187,7 +187,7 @@ function ImportView({ pharmacyId, record, reread }: {
   const named = (list: readonly ImportRow[]) => list.slice(0, 5).map((r) => `row ${r.rowIndex} (${r.medicineName || 'no name'})`).join(', ') + (list.length > 5 ? ` and ${list.length - 5} more` : '');
   return (
     <>
-      <PageHeading title={t('import.importOf', { fileName: record.fileName })}>{t('import.uploaded')}{formatDateTime(record.createdAt)} · <Badge tone={importTone(record.status)}>{isDiscarded ? t('common.discardedOnThisDevice') : IMPORT_STATUS_LABEL[record.status] ?? record.status}</Badge>
+      <PageHeading title={t('import.importOf', { fileName: record.fileName })}><Parts of={t.rich('import.uploadedFull', { time: formatDateTime(record.createdAt), discardedOnThisDevice: <Badge tone={importTone(record.status)}>{isDiscarded ? t('common.discardedOnThisDevice') : IMPORT_STATUS_LABEL[record.status] ?? record.status}</Badge> })} />
       </PageHeading>
       {notice && <Alert tone="ok">{notice}</Alert>}
       <section className="ws-section" aria-labelledby="sum-h">
@@ -202,10 +202,10 @@ function ImportView({ pharmacyId, record, reread }: {
           {fileSupplier && <><dt>{t('common.supplier')}</dt><dd>{fileSupplier}</dd></>}
         </dl>
         {arrival?.supplierAsked && !record.supplierId && record.status === 'previewed' && (
-          <Alert tone="warn">{t('import.youChose')}{arrival.supplierAsked}{t('import.asTheSupplierOfThis')}</Alert>
+          <Alert tone="warn">{t('import.youChoseFull', { supplierAsked: arrival.supplierAsked })}</Alert>
         )}
         {monthFirst.length > 0 && (
-          <Alert tone="warn">{t('import.thisFileWritesDatesMonth')}{monthFirst.length === 1 ? '1 row was' : `${monthFirst.length} rows were`}{t('import.refusedDatesAreReadDay')}{IMPORT_DATE_FORMAT}{t('import.andUploadTheFileAgain')}</Alert>
+          <Alert tone="warn">{t('import.thisFileWritesDatesMonthFull', { value: monthFirst.length === 1 ? '1 row was' : `${monthFirst.length} rows were`, IMPORT_DATE_FORMAT })}</Alert>
         )}
         {problemRows > 0 && <ProblemFile importId={record._id} fileName={record.fileName} />}
       </section>
@@ -238,29 +238,28 @@ function ImportView({ pharmacyId, record, reread }: {
             <section className="ws-section" aria-labelledby="go-h">
               <h2 id="go-h">{t('import.addToStock')}</h2>
               {twin && (
-                <Alert tone="warn">{t('import.anotherImportOf')}{record.fileName}{t('import.wasAdded')}{formatDateTime(twin.committedAt ?? twin.updatedAt)}{' '}
-                  (<Link to={`/pharmacy/stock/imports/${twin._id}`}>{t('import.openIt')}</Link>{t('import.addingThisOneTooAdds')}</Alert>
+                <Alert tone="warn"><Parts of={t.rich('import.anotherImportOfFull', { fileName: record.fileName, time: formatDateTime(twin.committedAt ?? twin.updatedAt), words: <Link to={`/pharmacy/stock/imports/${twin._id}`}>{t('import.openIt')}</Link> })} /></Alert>
               )}
               {plan.zeroPrices.length > 0 && (
                 <Alert tone="warn">
-                  {rowsWord(plan.zeroPrices.length)}{t('import.wouldSetAPriceTo')}{named(plan.zeroPrices)}{t('import.ifACellShouldKeep')}</Alert>
+                  {t('import.wouldSetAPriceToFull', { rowsWord: rowsWord(plan.zeroPrices.length), named: named(plan.zeroPrices) })}</Alert>
               )}
               {plan.examples.length > 0 ? (
-                <Alert>{t('import.row')}{plan.examples.map((r) => r.rowIndex).join(', ')}{t('import.isTheTemplateSExample')}{TEMPLATE_EXAMPLE_MARK}{t('import.deleteItFromTheFile')}</Alert>
+                <Alert>{t('import.rowFull', { examples: plan.examples.map((r) => r.rowIndex).join(', '), TEMPLATE_EXAMPLE_MARK })}</Alert>
               ) : importCommittable(record) && plan.rows > 0 ? (
                 <ConfirmAction label={t('import.addReadyToStock', { validRows: record.validRows, value: record.validRows === 1 ? 'row' : 'rows' })} confirmLabel={t('import.yesAddThem')}
                   consequence={<>
                     {record.importMode === 'create_only' && plan.mayBeSkipped > 0
                       ? t('import.upToUnitsAreAdded', { value: rowsWord(plan.rows), units: plan.units, mayBeSkipped: plan.mayBeSkipped })
                       : t('import.unitsAdded', { value: rowsWord(plan.rows), units: plan.units, value2: plan.rows === 1 ? 'is' : 'are', value3: record.importMode === 'update_only' ? ' if the medicine is in your stock (others are skipped)' : '' })}
-                    {plan.skippedNew > 0 && t('import.forMedicinesNotInYour', { value: rowsWord(plan.skippedNew), value2: plan.skippedNew === 1 ? 'is' : 'are' })}
+                    {plan.skippedNew > 0 && ` ${t('import.forMedicinesNotInYour', { value: rowsWord(plan.skippedNew), value2: plan.skippedNew === 1 ? 'is' : 'are' })}`}
                     {plan.newMedicines > 0 && ` ${plan.newMedicines} ${plan.newMedicines === 1 ? 'medicine is' : 'medicines are'} not in the medicine list yet and will be added to it`}
-                    {plan.newMedicines > 0 && (plan.newNeedingPrescription > 0 ? t('import.needingAPrescription', { newNeedingPrescription: plan.newNeedingPrescription }) : t('import.noneNeedingAPrescription'))}
-                    {plan.unpriced.length > 0 && t('import.withoutASellingPriceNot', { value: rowsWord(plan.unpriced.length), value2: plan.unpriced.length === 1 ? 'leaves its medicine' : 'leave their medicines', value3: named(plan.unpriced) })}
+                    {plan.newMedicines > 0 && (plan.newNeedingPrescription > 0 ? ` ${t('import.needingAPrescription', { newNeedingPrescription: plan.newNeedingPrescription })}` : ` ${t('import.noneNeedingAPrescription')}`)}
+                    {plan.unpriced.length > 0 && ` ${t('import.withoutASellingPriceNot', { value: rowsWord(plan.unpriced.length), value2: plan.unpriced.length === 1 ? 'leaves its medicine' : 'leave their medicines', value3: named(plan.unpriced) })}`}
                     {plan.priceChanges.length > 0
-                      ? t('import.pricesChangeInBlankPrice', { value: rowsWord(plan.priceChanges.length), value2: named(plan.priceChanges), value3: plan.zeroPrices.length > 0 ? `, ${rowsWord(plan.zeroPrices.length)} to ₹0` : '' })
-                      : t('import.noPriceChangesEveryPrice')}
-                    {' '}{t('import.stockWithASellingPrice')}{record.errorRows > 0 && t('import.leftOutFixThemAnd', { errorRows: record.errorRows, value: record.errorRows === 1 ? 'row with a problem is' : 'rows with problems are' })}
+                      ? ` ${t('import.pricesChangeInBlankPrice', { value: rowsWord(plan.priceChanges.length), value2: named(plan.priceChanges), value3: plan.zeroPrices.length > 0 ? `, ${rowsWord(plan.zeroPrices.length)} to ₹0` : '' })}`
+                      : ` ${t('import.noPriceChangesEveryPrice')}`}
+                    {' '}{t('import.stockWithASellingPrice')}{record.errorRows > 0 && ` ${t('import.leftOutFixThemAnd', { errorRows: record.errorRows, value: record.errorRows === 1 ? 'row with a problem is' : 'rows with problems are' })}`}
                     {' '}{t('import.theWorkspaceCannotUndoThis')}</>}
                   onConfirm={() => run(startOp(record._id, { kind: 'commit', importId: record._id }))} />
               ) : importCommittable(record) ? <Alert tone="warn">{t('import.everyReadyRowIsFor')}</Alert>
@@ -298,7 +297,7 @@ function StuckRetry({ record, disabled, onRetry }: { record: InventoryImport; di
   return (
     <section className="ws-section" aria-labelledby="stuck-h">
       <h2 id="stuck-h">{t('import.addingStopped')}</h2>
-      <Alert tone="warn">{t('import.addingTheseRowsStartedBut')}{formatDateTime(record.updatedAt)}{t('import.youCanTryAgainRows')}</Alert>
+      <Alert tone="warn">{t('import.addingTheseRowsStartedButFull', { time: formatDateTime(record.updatedAt) })}</Alert>
       <ConfirmAction label={t('import.tryAgain')} confirmLabel={t('import.yesTryAgain')} disabled={disabled}
         consequence={t('import.theRowsNotAddedYet')}
         onConfirm={onRetry} />
@@ -341,9 +340,9 @@ function ProblemFile({ importId, fileName }: { importId: string; fileName: strin
   return (
     <div className="ws-action">
       <Button variant="secondary" busy={busy} onClick={() => void download()}>
-        <Download size={16} aria-hidden="true" />{t('import.downloadTheRowsWithProblems')}</Button>
-      {file && <a href={file.url} download={file.name}>{t('import.save')}{file.name}{t('import.again')}</a>}
-      {error && <Alert>{t('import.couldNotDownloadTheRows')}{error}</Alert>}
+        <Download size={16} aria-hidden="true" />{` ${t('import.downloadTheRowsWithProblems')}`}</Button>
+      {file && <a href={file.url} download={file.name}>{t('import.saveFull', { name: file.name })}</a>}
+      {error && <Alert>{t('import.couldNotDownloadTheRowsFull', { error })}</Alert>}
     </div>
   );
 }
@@ -360,7 +359,7 @@ const STEP = 100;
 function Price({ view, ready, mrp = false }: { view: ImportPriceView; ready: boolean; mrp?: boolean }) {
   if (!ready) return <>—</>;
   if (view.kind === 'set') return <>{formatRupees(view.value)}</>;
-  if (view.kind === 'kept') return <span className="ws-muted">{t('import.kept')}{formatRupees(view.value)}</span>;
+  if (view.kind === 'kept') return <span className="ws-muted">{t('import.keptFull', { amount: formatRupees(view.value) })}</span>;
   // Q16d: MRP is per batch; a new batch (`batchInStock` false) with a blank cell has none.
   if (view.kind === 'none') return <span className="ws-muted">{mrp ? t('import.noMrpYet') : t('import.noPriceYet')}</span>;
   return <span className="ws-muted">{t('import.currentPriceKept')}</span>;
@@ -416,7 +415,7 @@ function Rows({ rows }: { rows: ImportRow[] }) {
                   {withSupplier && <td>{r.data?.supplierName ?? (r.data?.supplierId ? t('common.aSupplier') : '—')}</td>}
                   <td>
                     <Badge tone={rowTone(r.status)}>{IMPORT_ROW_STATUS_LABEL[r.status] ?? r.status}</Badge>
-                    {zero.length > 0 && <div className="ws-warn-text">{t('import.setsThe')}{zero.join(', ')}{t('import.to0')}</div>}
+                    {zero.length > 0 && <div className="ws-warn-text">{t('import.setsTheFull', { zero: zero.join(', ') })}</div>}
                     {r.errors?.length ? <div className="ws-muted">{r.errors.join('; ')}</div> : null}
                   </td>
                 </tr>
@@ -426,7 +425,7 @@ function Rows({ rows }: { rows: ImportRow[] }) {
         </table>
       </div>
       {ordered.length > shown && (
-        <div><Button variant="secondary" onClick={() => setShown(shown + STEP)}>{t('import.show')}{Math.min(STEP, ordered.length - shown)}{t('import.moreOf')}{ordered.length - shown}</Button></div>
+        <div><Button variant="secondary" onClick={() => setShown(shown + STEP)}>{t('import.showFull', { min: Math.min(STEP, ordered.length - shown), value: ordered.length - shown })}</Button></div>
       )}
     </section>
   );

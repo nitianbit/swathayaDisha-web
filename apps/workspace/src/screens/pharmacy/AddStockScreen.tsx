@@ -7,7 +7,7 @@ import {
   stockEntryProblems, SUPPLIER_REFUSAL, type AddStockReason, type InventoryItem, type Medicine, type PharmacySupplier, type StockAdjustment,
   type StockEntry, type StockEntryDraft,
 } from '@jansetu/api';
-import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, shared, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, shared, TextArea, TextField , Parts } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
@@ -35,9 +35,8 @@ export function AddStockScreen() {
   const pharmacyId = usePharmacyId();
   return (
     <>
-      <Link to="/pharmacy/stock" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('common.stock')}</Link>
-      <PageHeading title={t('common.addStock')}>{t('addStock.addTheUnitsOfOne')}<Link to="/pharmacy/stock/import">{t('addStock.importAFile')}</Link>.
-      </PageHeading>
+      <Link to="/pharmacy/stock" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{` ${t('common.stock')}`}</Link>
+      <PageHeading title={t('common.addStock')}><Parts of={t.rich('addStock.addTheUnitsOfOneFull', { words: <Link to="/pharmacy/stock/import">{t('addStock.importAFile')}</Link> })} /></PageHeading>
       <AddStock key={pharmacyId} pharmacyId={pharmacyId} />
     </>
   );
@@ -328,20 +327,20 @@ function AddStock({ pharmacyId }: { pharmacyId: string }) {
           <TextArea label={t('addStock.noteOptional')} value={draft.note} maxLength={MAX_STOCK_NOTE} error={errors.note}
             hint={t('addStock.forExampleTheSupplierS')} onChange={(e) => set('note', e.target.value)} />
         </fieldset>
-        {refused && <Alert>{t('addStock.notAdded')}{refused}</Alert>}
+        {refused && <Alert>{t('addStock.notAddedFull', { refused })}</Alert>}
         {!review && <div><Button type="submit">{t('addStock.checkAndAdd')}</Button></div>}
       </form>
 
       {review && (
         <div className="confirm" role="group" aria-label={t('addStock.addThisStock')}>
-          <div className="confirm-text">{t('addStock.add')}{describe(review.entry, review.medicineName)}?</div>
+          <div className="confirm-text">{t('addStock.addFull', { describe: describe(review.entry, review.medicineName) })}</div>
           <ul className="ws-list">
-            {review.entry.mrp !== undefined && <li>{t('addStock.mrp')}{formatRupees(review.entry.mrp)}</li>}
-            {review.entry.retailPrice !== undefined && <li>{t('addStock.sellingPrice')}{formatRupees(review.entry.retailPrice)}</li>}
-            {review.entry.purchasePrice !== undefined && <li>{t('addStock.purchasePrice')}{formatRupees(review.entry.purchasePrice)}</li>}
-            {review.entry.rackLocation && <li>{t('addStock.rack')}{review.entry.rackLocation}</li>}
-            {review.entry.reorderThreshold !== undefined && <li>{t('addStock.reorderAt')}{review.entry.reorderThreshold}</li>}
-            <li>{t('addStock.supplier')}{review.supplierName ?? 'not said'}</li>
+            {review.entry.mrp !== undefined && <li>{t('addStock.mrpFull', { amount: formatRupees(review.entry.mrp) })}</li>}
+            {review.entry.retailPrice !== undefined && <li>{t('addStock.sellingPriceFull', { amount: formatRupees(review.entry.retailPrice) })}</li>}
+            {review.entry.purchasePrice !== undefined && <li>{t('addStock.purchasePriceFull', { amount: formatRupees(review.entry.purchasePrice) })}</li>}
+            {review.entry.rackLocation && <li>{t('addStock.rackFull', { rackLocation: review.entry.rackLocation })}</li>}
+            {review.entry.reorderThreshold !== undefined && <li>{t('addStock.reorderAtFull', { reorderThreshold: review.entry.reorderThreshold })}</li>}
+            <li>{t('addStock.supplierFull', { supplierName: review.supplierName ?? 'not said' })}</li>
             <li>{ADD_STOCK_REASONS.find((r) => r.value === review.entry.reason)?.label}</li>
           </ul>
           <span className="ws-muted">{t('addStock.theUnitsAreOnSale')}</span>
@@ -402,7 +401,7 @@ function StockHistory({ pharmacyId, suppliers }: { pharmacyId: string; suppliers
             {q.data.totalPages > 1 && (
               <nav className="ws-pager" aria-label={t('addStock.stockHistoryPages')}>
                 <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>{t('common.newer')}</Button>
-                <span>{t('common.page')}{page}{t('common.of')}{q.data.totalPages}</span>
+                <span>{t('common.pageFull', { page, totalPages: q.data.totalPages })}</span>
                 <Button variant="secondary" disabled={page >= q.data.totalPages} onClick={() => setPage(page + 1)}>{t('common.older')}</Button>
               </nav>
             )}
@@ -434,7 +433,7 @@ function MedicinePicker({ pharmacyId, error, onChoose }: { pharmacyId: string; e
         : q.isPending ? <Loading label={t('common.searchingMedicines')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : q.data.items.length === 0 ? (
-          <Empty title={t('addStock.noMedicineMatches', { search })}>{t('addStock.aMedicineThatIsNot')}<Link to="/pharmacy/stock/import">{t('addStock.importingAFile')}</Link>{t('addStock.withItsName')}</Empty>
+          <Empty title={t('addStock.noMedicineMatches', { search })}><Parts of={t.rich('addStock.aMedicineThatIsNotFull', { words: <Link to="/pharmacy/stock/import">{t('addStock.importingAFile')}</Link> })} /></Empty>
         ) : (
           <ul className="ws-list" aria-label={t('addStock.medicinesFound')}>
             {q.data.items.map((m) => (
@@ -444,7 +443,7 @@ function MedicinePicker({ pharmacyId, error, onChoose }: { pharmacyId: string; e
               </li>
             ))}
             {q.data.total > q.data.items.length && (
-              <li className="ws-muted">{t('common.showing')}{q.data.items.length}{t('common.of')}{q.data.total}{t('addStock.typeMoreOfTheName')}</li>
+              <li className="ws-muted">{t('common.showingFull', { length: q.data.items.length, total: q.data.total })}</li>
             )}
           </ul>
         )}

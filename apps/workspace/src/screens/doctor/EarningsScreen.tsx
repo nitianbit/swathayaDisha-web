@@ -190,7 +190,7 @@ function PayoutForm({ d, version, onClose, onSaved }: {
         </div>
       ) : (
         <div className="confirm" role="group" aria-label={t('earnings.savePayoutDetails')}>
-          <div className="confirm-text">{t('earnings.sendFuturePayoutsTo')}{masked}{t('earnings.theDetailsYouHaveNow')}</div>
+          <div className="confirm-text">{t('earnings.sendFuturePayoutsToFull', { masked })}</div>
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => void save()}>{t('earnings.savePayoutDetails')}</Button>
             <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{shared('action.back')}</Button>
@@ -256,7 +256,7 @@ function Statement({ d }: { d: DoctorContext }) {
               </table>
             </div>
             {q.hasNextPage && <div className="ws-actions"><Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{t('earnings.showOlderEntries')}</Button></div>}
-            {olderError && <Alert>{t('earnings.couldNotLoadOlderEntries')}{olderError}</Alert>}
+            {olderError && <Alert>{t('earnings.couldNotLoadOlderEntriesFull', { olderError })}</Alert>}
           </>
         )}
     </section>
@@ -298,7 +298,7 @@ function CsvDownload({ d, from, to }: { d: DoctorContext; from?: string; to?: st
     <div className="ws-action">
       <Button variant="secondary" busy={busy} onClick={() => void download()}>{t('earnings.downloadCsv')}{from || to ? ` (${from ? formatDay(from) : 'start'} to ${to ? formatDay(to) : 'today'})` : ' (everything)'}
       </Button>
-      {error && <Alert>{t('earnings.couldNotDownloadTheStatement')}{error}</Alert>}
+      {error && <Alert>{t('earnings.couldNotDownloadTheStatementFull', { error })}</Alert>}
     </div>
   );
 }
@@ -321,7 +321,7 @@ function MoreButton({ q, label }: { q: ReturnType<typeof usePaged>['q']; label: 
   return (
     <>
       <div className="ws-actions"><Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{label}</Button></div>
-      {q.isFetchNextPageError && <Alert>{t('earnings.couldNotLoadMore')}{messageOf(q.error)}</Alert>}
+      {q.isFetchNextPageError && <Alert>{t('earnings.couldNotLoadMoreFull', { messageOf: messageOf(q.error) })}</Alert>}
     </>
   );
 }
@@ -336,7 +336,7 @@ function Payouts({ d }: { d: DoctorContext }) {
         : items.length === 0 ? <Empty title={t('earnings.noPayoutsYet')} />
         : (
           <>
-          <p className="ws-count">{t('earnings.showing')}{items.length}{t('earnings.of')}{total}</p>
+          <p className="ws-count">{t('earnings.showingFull', { length: items.length, total })}</p>
           <div className="ws-table-wrap">
             <table className="j-table" aria-label={t('earnings.payouts')}>
               <thead><tr><th scope={'col'}>{t('earnings.paidOn')}</th><th scope={'col'}>{t('earnings.amount')}</th><th scope={'col'}>{t('earnings.how')}</th><th scope={'col'}>{t('earnings.reference')}</th><th scope={'col'}>{t('earnings.to')}</th><th scope={'col'}>{t('earnings.state')}</th></tr></thead>

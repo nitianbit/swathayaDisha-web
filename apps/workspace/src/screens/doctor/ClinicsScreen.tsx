@@ -61,11 +61,11 @@ function ClinicLists({ d, data }: { d: DoctorContext; data: MyClinics }) {
               return (
                 <li key={i.inviteId} className="doc-offer" aria-label={t('clinics.invitationFrom', { name })}>
                   <div className="stock-head"><strong>{name}</strong><Badge tone="warn">{t('clinics.noLongerValid')}</Badge></div>
-                  <span>{t('clinics.branches')}{i.branches.length ? branchesText(i.branches) : 'all its in-clinic branches'}{i.createdAt ? ` · invited ${formatDateTime(i.createdAt)}` : ''}</span>
-                  <span className="ws-muted">{t('clinics.toConsultAt')}{name}{t('clinics.askTheJansetuTeamTo')}</span>
+                  <span>{t('clinics.branchesFull', { branchesText: i.branches.length ? branchesText(i.branches) : 'all its in-clinic branches', value: i.createdAt ? ` · invited ${formatDateTime(i.createdAt)}` : '' })}</span>
+                  <span className="ws-muted">{t('clinics.toConsultAtFull', { name })}</span>
                   <div className="ws-actions">
                     <ConfirmAction label={t('clinics.dismiss')} confirmLabel={t('clinics.dismissTheInvitationFrom', { name })}
-                      consequence={<>{t('clinics.dismissTheInvitationFrom2')}{name}{t('clinics.itIsClosedAsDeclined')}</>}
+                      consequence={<>{t('clinics.dismissTheInvitationFromFull', { name })}</>}
                       onConfirm={() => step(() => d.api.declineInvite(i.inviteId), t('clinics.theInvitationFromWasDismissed', { name }))} />
                   </div>
                 </li>
@@ -88,12 +88,12 @@ function ClinicLists({ d, data }: { d: DoctorContext; data: MyClinics }) {
                     {c.verified ? <Badge tone="ok">{t('common.verified')}</Badge> : <Badge tone="warn">{t('common.waitingForVerification')}</Badge>}
                     <Badge>{c.role === 'owner' ? 'Owner' : 'Doctor'}</Badge>
                   </div>
-                  <span>{t('clinics.branches')}{branchesText(c.branches)}</span>
+                  <span>{t('clinics.branchesFull2', { branchesText: branchesText(c.branches) })}</span>
                   {!c.verified && <span className="ws-muted">{t('clinics.patientsCannotBookYouHere')}</span>}
                   {c.role === 'owner' ? <span className="ws-muted">{t('clinics.asItsOwnerYouCannot')}</span> : (
                     <div className="ws-actions">
                       <ConfirmAction label={t('clinics.leave')} confirmLabel={t('clinics.leave2', { name })} danger
-                        consequence={<>{t('clinics.stopConsultingAt')}{name}{t('clinics.newBookingsThereStopAt')}</>}
+                        consequence={<>{t('clinics.stopConsultingAtFull', { name })}</>}
                         onConfirm={() => step(() => d.api.leaveClinic(c.partnerId), t('clinics.youNoLongerConsultAt', { name }))} />
                     </div>
                   )}
@@ -145,8 +145,7 @@ function PracticeView({ practice, phone }: { practice: SoloPractice; phone?: str
         <dt>{t('clinics.branch')}</dt><dd>{practice.branches.map((b) => `${b.name}${b.address?.city ? `, ${b.address.city}` : ''}`).join('; ') || '—'}</dd>
       </dl>
       {state !== 'verified' && <Alert tone="warn">{t('clinics.jansetuHasNotVerifiedYour')}</Alert>}
-      <p>{t('clinics.yourClinicSWorkspaceBills')}{phone ? ` ${phone}` : ''}{t('clinics.andChoose')}{practice.partner.name}.
-      </p>
+      <p>{t('clinics.andChooseFull', { value: phone ? ` ${phone}` : '', name: practice.partner.name })}</p>
     </>
   );
 }
@@ -241,7 +240,7 @@ function ClinicForm({ d, onSettled }: { d: DoctorContext; onSettled: (s: { tone:
         forget={{ label: t('clinics.forgetItAndStartAgain'), confirmLabel: t('clinics.forgetTheEarlierRequest'),
           consequence: t('clinics.ifTheEarlierRequestStill'),
           onForget: () => { if (owns(op)) { store(undefined); reread(); onSettled(null); } } }}
-        summary={op.restored ? null : <div>{t('clinics.clinic')}{op.body.name.trim()}{t('clinics.withItsBranch')}{op.body.branch.name.trim()}{t('clinics.in')}{op.body.branch.address.city.trim()}.</div>} />
+        summary={op.restored ? null : <div>{t('clinics.withItsBranchFull', { name: op.body.name.trim(), name2: op.body.branch.name.trim(), city: op.body.branch.address.city.trim() })}</div>} />
     );
   }
   return (
@@ -269,7 +268,7 @@ function ClinicForm({ d, onSettled }: { d: DoctorContext; onSettled: (s: { tone:
         <div className="confirm-actions"><Button type="submit">{t('common.review')}</Button></div>
       ) : (
         <div className="confirm" role="group" aria-label={t('clinics.createMyClinic')}>
-          <div className="confirm-text">{t('clinics.create')}{f.name.trim()}{t('clinics.withItsFirstBranch')}{f.branchName.trim()}{t('clinics.in')}{f.city.trim()}{t('clinics.youCanCreateOnlyOne')}</div>
+          <div className="confirm-text">{t('clinics.withItsFirstBranchFull', { name: f.name.trim(), branchName: f.branchName.trim(), city: f.city.trim() })}</div>
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => void send(startOp(newRequestKey(), inputOf(f)))}>{t('clinics.createMyClinic')}</Button>
             <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{shared('action.back')}</Button>

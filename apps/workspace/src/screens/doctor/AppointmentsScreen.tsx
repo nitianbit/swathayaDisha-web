@@ -43,7 +43,7 @@ function Appointments({ d }: { d: DoctorContext }) {
           <label htmlFor="appt-view">{t('common.show')}</label>
           <select id="appt-view" value={view} onChange={(e) => setView(e.target.value as View)}>
             <option value="today">{t('appointments.today')}</option>
-            <option value="upcoming">{t('appointments.next')}{UPCOMING_DAYS}{t('appointments.days')}</option>
+            <option value="upcoming">{t('appointments.nextFull', { UPCOMING_DAYS })}</option>
             <option value="day">{t('appointments.oneDay')}</option>
           </select>
         </div>
@@ -206,22 +206,22 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
           <div className="ws-actions">
             {actions.includes('confirm') && (
               <ConfirmAction label={t('appointments.confirm')} confirmLabel={t('appointments.confirm2', { label })}
-                consequence={<>{t('appointments.confirmTheAppointmentOn')}{label}{t('appointments.thePatientIsToldIt')}</>}
+                consequence={<>{t('appointments.confirmTheAppointmentOnFull', { label })}</>}
                 onConfirm={() => run('confirmed', t('appointments.isConfirmed', { label }))} />
             )}
             {actions.includes('complete') && (
               <ConfirmAction label={t('appointments.markCompleted')} confirmLabel={t('appointments.complete', { label })}
-                consequence={<>{t('appointments.markTheConsultationOn')}{label}{t('appointments.asCompletedThisCannotBe')}</>}
+                consequence={<>{t('appointments.markTheConsultationOnFull', { label })}</>}
                 onConfirm={() => run('completed', t('appointments.isCompleted', { label }))} />
             )}
             {actions.includes('no_show') && (
               <ConfirmAction label={t('appointments.patientDidNotCome')} confirmLabel={t('appointments.markAsNoShow', { label })} danger
-                consequence={<>{t('appointments.mark')}{label}{t('appointments.asANoShowThe')}</>}
+                consequence={<>{t('appointments.markFull', { label })}</>}
                 onConfirm={() => run('no_show', t('appointments.isMarkedAsANo', { label }))} />
             )}
             {actions.includes('cancel') && (
               <ConfirmAction label={t('common.cancel')} confirmLabel={t('appointments.cancel2', { label })} danger reason reasonLabel={t('appointments.reasonThePatientSeesIt')}
-                consequence={<>{t('appointments.cancelTheAppointmentOn')}{label}? {b.paymentStatus === 'paid' ? t('appointments.thePatientGetsTheirFull') : ''}{t('appointments.thisCannotBeUndone')}</>}
+                consequence={<>{t('appointments.cancelTheAppointmentOnFull', { label, thePatientGetsTheirFull: b.paymentStatus === 'paid' ? `${t('appointments.thePatientGetsTheirFull')} ` : '' })}</>}
                 onConfirm={(reason) => run('cancelled', t('appointments.isCancelled', { label, value: b.paymentStatus === 'paid' ? ' and the patient refunded in full' : '' }), reason)} />
             )}
           </div>
@@ -264,7 +264,7 @@ function DoctorSlotPicker({ d, b, now, onChoose }: { d: DoctorContext; b: Doctor
   const mode = b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode : null;
   return (
     <>
-      <p className="ws-muted">{t('appointments.times')}{mode ? `for ${mode.toLowerCase()} consultations ` : ''}{t('appointments.at')}{inPerson ? (b.clinicVisit?.branchId ? branches.get(String(b.clinicVisit.branchId).toLowerCase()) ?? 'the same clinic' : 'your own place') : 'no clinic (online)'}{t('appointments.asBooked')}</p>
+      <p className="ws-muted">{t('appointments.timesFull', { value: mode ? `for ${mode.toLowerCase()} consultations ` : '', get: inPerson ? (b.clinicVisit?.branchId ? branches.get(String(b.clinicVisit.branchId).toLowerCase()) ?? 'the same clinic' : 'your own place') : 'no clinic (online)' })}</p>
       <TextField label={t('appointments.newDay')} type="date" value={day} min={istDateOf(now)} error={ok ? undefined : t('appointments.enterARealDate')}
         onChange={(e) => { setDay(e.target.value); setSlotId(''); onChoose(null); }} />
       {!ok ? null

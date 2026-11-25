@@ -5,7 +5,7 @@ import {
   addressErrors, isCardAnswer, routeCardAnswer, orderFromBooking, branchesFor, CONSENT_STATEMENT_LANGUAGE, formatSlotDate, isSwitchedOff, istToday,
   LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, labTotalMinor, patientBody, type AssistedLabSlot, type LabAddress, type LabBookingView, type LabByKeyAnswer, type LabCreateRequest, type LabPatientSource, type LabReceipt, type AssistedCardPayment, type AssistedPaymentMethod, type OpenCardOrder, type Refusal,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextField , Parts } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
@@ -57,12 +57,12 @@ const SLOT_DAYS = 7;
 function SummaryList({ s }: { s: ShownSummary }) {
   return (
     <ul className="ws-list">
-      <li>{t('common.patient')}<strong>{s.patient}</strong></li>
-      <li>{t('bookLabTest.lab')}<strong>{s.lab}</strong>, {s.branch}</li>
-      <li>{t('bookLabTest.visit')}<strong>{LAB_VISIT_MODE_LABEL[s.mode]}</strong>{s.address ? ` at ${s.address}` : ''}</li>
-      <li>{t('common.when2')}<strong>{formatSlotDate(s.date)}{t('bookLabTest.at')}{s.time}</strong></li>
-      <li>{t('bookLabTest.tests')}<strong>{s.tests.join(', ')}</strong></li>
-      {s.priceMinor !== undefined && <li>{t('common.price')}<strong>{formatRupees(s.priceMinor / 100)}</strong>{s.couponCode ? ` (coupon ${s.couponCode})` : ''}</li>}
+      <li><Parts of={t.rich('common.patientFull', { patient: <strong>{s.patient}</strong> })} /></li>
+      <li><Parts of={t.rich('bookLabTest.labFull', { lab: <strong>{s.lab}</strong>, branch: s.branch })} /></li>
+      <li><Parts of={t.rich('bookLabTest.visitFull', { value: <strong>{LAB_VISIT_MODE_LABEL[s.mode]}</strong>, value2: s.address ? ` at ${s.address}` : '' })} /></li>
+      <li><Parts of={t.rich('common.whenFull2', { strong: <strong>{formatSlotDate(s.date)}{` ${t('bookLabTest.at')} `}{s.time}</strong> })} /></li>
+      <li><Parts of={t.rich('bookLabTest.testsFull', { tests: <strong>{s.tests.join(', ')}</strong> })} /></li>
+      {s.priceMinor !== undefined && <li><Parts of={t.rich('common.priceFull', { amount: <strong>{formatRupees(s.priceMinor / 100)}</strong>, value: s.couponCode ? ` (coupon ${s.couponCode})` : '' })} /></li>}
     </ul>
   );
 }
@@ -256,7 +256,7 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
   }
 
   if (off) {
-    return <Alert tone="warn">{LAB_SWITCHED_OFF_MESSAGE}{t('bookLabTest.jansetuTurnsItOn')}{booker.words.offFor}{t('common.whenItIsReadyYour')}</Alert>;
+    return <Alert tone="warn">{t('bookLabTest.jansetuTurnsItOnFull', { LAB_SWITCHED_OFF_MESSAGE, offFor: booker.words.offFor })}</Alert>;
   }
 
   if (ended) {
@@ -284,7 +284,7 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
         <Alert tone="ok">
           {done.replayed ? t('common.thisBookingWasAlreadyMade')
             : byCard ? t('bookLabTest.theLabTestIsBooked') : t('bookLabTest.theLabTestIsBooked2')}
-          {done.ref ? <>{t('common.bookingReference')}<strong>{done.ref}</strong>.</> : null}
+          {done.ref ? <>{' '}<Parts of={t.rich('common.bookingReferenceFull', { ref: <strong>{done.ref}</strong> })} /></> : null}
         </Alert>
         {done.note && <Alert tone="warn">{done.note}</Alert>}
         <SummaryList s={done.summary} />

@@ -5,7 +5,7 @@ import {
   cancelRefusal, DELIVERY_EXCEPTION_FROM, ORDER_TRANSITIONS, pharmacyOrdersApi, refId,
   type DeliveryExceptionType, type PharmacyOrder,
 } from '@jansetu/api';
-import { Alert, Badge, Empty, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
+import { Alert, Badge, Empty, ErrorState, formatDateTime, formatRupees, Loading , Parts } from '@jansetu/ui';
 import { CancelRequestPanel } from '../../components/CancelRequestPanel.tsx';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
@@ -31,7 +31,7 @@ function OrderLoader({ orderId }: { orderId: string }) {
   const q = useQuery({ queryKey: ['pharmacy-orders', 'detail', orderId], queryFn: () => pharmacyOrdersApi(api).get(orderId) });
   return (
     <>
-      <Link to="/pharmacy/orders" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('order.orders')}</Link>
+      <Link to="/pharmacy/orders" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{` ${t('order.orders')}`}</Link>
       {q.isPending ? <Loading label={t('common.loadingOrder')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : <OrderView order={q.data} />}
@@ -69,12 +69,9 @@ function OrderView({ order }: { order: PharmacyOrder }) {
 
   return (
     <>
-      <PageHeading title={t('common.order2', { value: orderLabel(order) })}>{t('common.placed')}{formatDateTime(order.createdAt)} · {formatRupees(order.grandTotal)} ·{' '}
-        <Badge>{ORDER_STATUS_LABEL[order.status] ?? order.status}</Badge>{' '}
-        <Badge tone={order.paymentStatus === 'paid' ? 'ok' : undefined}>
+      <PageHeading title={t('common.order2', { value: orderLabel(order) })}><Parts of={t.rich('common.placedFull', { time: formatDateTime(order.createdAt), amount: formatRupees(order.grandTotal), value: <Badge>{ORDER_STATUS_LABEL[order.status] ?? order.status}</Badge>, value2: <Badge tone={order.paymentStatus === 'paid' ? 'ok' : undefined}>
           {PAYMENT_STATUS_LABEL[order.paymentStatus ?? 'pending'] ?? order.paymentStatus}
-        </Badge>
-        {order.refill && <> <Badge tone="warn">{t('order.refill')}</Badge></>}
+        </Badge>, refill: order.refill && <> <Badge tone="warn">{t('order.refill')}</Badge></> })} />
       </PageHeading>
 
       {!seller && <Alert tone="warn">{t('order.yourPharmacyIsTheBuyer')}</Alert>}
@@ -170,7 +167,7 @@ function OrderView({ order }: { order: PharmacyOrder }) {
           )}
 
           {cancelBlock === 'payment' && (
-            <Alert tone="warn">{t('order.thisOrderCannotBeCancelled')}{PAYMENT_STATUS_LABEL[order.paymentStatus ?? 'pending']?.toLowerCase()}{t('order.askTheJansetuTeamTo')}</Alert>
+            <Alert tone="warn">{t('order.thisOrderCannotBeCancelledFull', { value: PAYMENT_STATUS_LABEL[order.paymentStatus ?? 'pending']?.toLowerCase() })}</Alert>
           )}
         </section>
       )}

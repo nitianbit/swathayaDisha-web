@@ -213,7 +213,7 @@ function Suppliers({ pharmacyId }: { pharmacyId: string }) {
                   <tbody>
                     {q.data.items.map((s) => (
                       <tr key={s.supplierId}>
-                        <td>{s.displayName}{s.state === 'archived' && <> <Badge>{t('suppliers.archived2')}{formatDateTime(s.archivedAt)}</Badge></>}</td>
+                        <td>{s.displayName}{s.state === 'archived' && <> <Badge>{t('suppliers.archivedFull', { time: formatDateTime(s.archivedAt) })}</Badge></>}</td>
                         <td>{s.contactName ?? '—'}</td>
                         <td>{s.phone ?? '—'}</td>
                         <td>{s.email ?? '—'}</td>
@@ -246,7 +246,7 @@ function Suppliers({ pharmacyId }: { pharmacyId: string }) {
               {q.data.totalPages > 1 && (
                 <nav className="ws-pager" aria-label={t('common.pages')}>
                   <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>{t('common.previous')}</Button>
-                  <span>{t('common.page')}{page}{t('common.of')}{q.data.totalPages}</span>
+                  <span>{t('common.pageFull', { page, totalPages: q.data.totalPages })}</span>
                   <Button variant="secondary" disabled={page >= q.data.totalPages} onClick={() => setPage(page + 1)}>{t('common.next')}</Button>
                 </nav>
               )}

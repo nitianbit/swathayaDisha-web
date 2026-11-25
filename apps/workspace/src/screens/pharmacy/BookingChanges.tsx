@@ -4,7 +4,7 @@ import {
   formatSlotDate, istToday, MAX_TYPED_NAME, pharmacyAssistedApi, pharmacyCustomersApi, rescheduleRefusal, rescheduleRuleText, rescheduleSlots,
   supportedModes, typedNameProblem, typedNameRefusal, type AssistedSlot, type BookedConsultation, type RescheduleAnswer, type TypedNameTarget,
 } from '@jansetu/api';
-import { Alert, Button, ErrorState, Loading, shared, TextField } from '@jansetu/ui';
+import { Alert, Button, ErrorState, Loading, shared, TextField , Parts } from '@jansetu/ui';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import type { Perform } from '../finance/finance.tsx';
@@ -151,10 +151,10 @@ export function ChangeTime({ booker, booking, guard, onChanged, onDone }: {
             <div className="ws-day">
               {slots.isPending ? <Loading label={t('common.findingFreeTimes')} />
                 : slots.isError ? <ErrorState message={rescheduleRefusal(slots.error, booker.refusal).message} onRetry={() => void slots.refetch()} />
-                : days.length === 0 ? <span>{t('bookingChanges.noOtherFreeTimesFrom')}{formatSlotDate(slots.data.from)}{t('common.to')}{formatSlotDate(slots.data.to)}{t('bookingChanges.chooseALaterDay')}</span>
+                : days.length === 0 ? <span>{t('bookingChanges.noOtherFreeTimesFromFull', { date: formatSlotDate(slots.data.from), date2: formatSlotDate(slots.data.to) })}</span>
                 : days.map(([day, times]) => (
                   <fieldset key={day} className="ws-checks">
-                    <legend>{t('common.freeTimesOn')}{formatSlotDate(day)}</legend>
+                    <legend>{t('common.freeTimesOnFull', { date: formatSlotDate(day) })}</legend>
                     <div className="ws-actions">
                       {times.map((s) => (
                         <Button key={s.slotId} variant={chosen?.slotId === s.slotId ? 'primary' : 'secondary'} aria-pressed={chosen?.slotId === s.slotId}
@@ -174,7 +174,7 @@ export function ChangeTime({ booker, booking, guard, onChanged, onDone }: {
             </div>
           ) : (
             <div className="confirm" role="group" aria-label={t('bookingChanges.moveThisConsultation')}>
-              <div className="confirm-text">{t('bookingChanges.moveTheConsultationFrom')}<strong>{review.from}</strong>{t('common.to')}<strong>{review.to}</strong>?</div>
+              <div className="confirm-text"><Parts of={t.rich('bookingChanges.moveTheConsultationFromFull', { from: <strong>{review.from}</strong>, to: <strong>{review.to}</strong> })} /></div>
               <span className="ws-muted">{t('bookingChanges.sameDoctorSamePriceTell')}</span>
               <div className="confirm-actions">
                 <Button busy={busy} onClick={() => {
@@ -261,7 +261,7 @@ export function CorrectName({ pharmacyId, booking, target, guard, onChanged }: {
             const typed = (await pharmacyAssistedApi(api).booking(booking._id)).holder?.typedName;
             onChanged();
             // WQ14b: a restored change cannot be sent again from here (no body), so that is not offered in words either.
-            if (typed !== null && typeof typed !== 'string') return t('bookingChanges.theOutcomeOfThisRequest2', { value: restored ? '' : t('bookingChanges.sendingTheSameNameAgain') });
+            if (typed !== null && typeof typed !== 'string') return t('bookingChanges.theOutcomeOfThisRequest2', { value: restored ? '' : ` ${t('bookingChanges.sendingTheSameNameAgain')}` });
             if (!restored && op.body && typed === op.body.name) {
               settle(op.requestKey);
               setSaved({ name: op.body.name, shown: undefined });
@@ -290,7 +290,7 @@ export function CorrectName({ pharmacyId, booking, target, guard, onChanged }: {
   return (
     <section className="ws-section" aria-labelledby="name-h">
       <h2 id="name-h">{title}</h2>
-      {target.family && <p>{t('bookingChanges.yourPharmacySeesThePhone')}<strong>{target.name ?? '—'}</strong>.</p>}
+      {target.family && <p><Parts of={t.rich('bookingChanges.yourPharmacySeesThePhoneFull', { name: <strong>{target.name ?? '—'}</strong> })} /></p>}
       {saved && (
         <Alert tone="ok">
           {saved.shown === undefined
@@ -308,7 +308,7 @@ export function CorrectName({ pharmacyId, booking, target, guard, onChanged }: {
         </div>
       ) : (
         <form className="rx-form" noValidate onSubmit={submit} aria-label={t('bookingChanges.correctTheName')}>
-          <p className="ws-muted">{t('bookingChanges.thisChangesOnlyTheName')}{who}{t('bookingChanges.itNeverChangesThePatient')}{target.family ? t('bookingChanges.theFamilyMemberSName') : ''}
+          <p className="ws-muted">{t('bookingChanges.thisChangesOnlyTheNameFull', { who, theFamilyMemberSName: target.family ? ` ${t('bookingChanges.theFamilyMemberSName')}` : '' })}
           </p>
           <TextField label={target.family ? t('bookingChanges.nameOfThePhoneS2') : t('bookingChanges.patientSNameAsYour')} autoComplete="off"
             value={text} maxLength={MAX_TYPED_NAME} error={error} disabled={busy} onChange={(e) => setText(e.target.value)} />

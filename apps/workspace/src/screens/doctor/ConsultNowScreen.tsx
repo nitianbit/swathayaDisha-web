@@ -6,7 +6,7 @@ import {
   offerSecondsLeft, paiseToInput, presenceProblems, rupeesToPaise,
   type DoctorAppointment, type DoctorProfile, type InstantMode, type InstantOffer,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, Loading, shared, TextField, formatDateTime } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, Loading, shared, TextField, formatDateTime , Parts } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { afterFailure, beginAttempt, definitelyNotRecorded, newRequestKey, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
@@ -107,7 +107,7 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
       setFee(null);
       setModes(null);
       setNotice(t('consultNow.theServerHasVersion', { value: r.available ? `available for ${termsText(r)}` : 'not available', presenceVersion: r.presenceVersion, value2: p.unconfirmed
-        ? t('consultNow.confirmTheseTermsOrChange')
+        ? ` ${t('consultNow.confirmTheseTermsOrChange')}`
         : '' }));
     } catch (err) {
       setFailure(t('consultNow.couldNotReadYourAvailability', { value: messageOf(err) }));
@@ -139,19 +139,18 @@ function Availability({ profile }: { profile?: DoctorProfile }) {
         <Alert tone="warn">
           {sent ? <>{t('consultNow.yourLastChange')}{sent.available
             ? `available for ${sent.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')}${sent.instantFeeMinor !== undefined ? ` at ${rupeesOf(sent.instantFeeMinor)}` : ''}`
-            : 'not available'}{t('consultNow.wasSentButNoAnswer')}{doubt.message}).</> : <>{t('consultNow.yourAvailabilityIsNotConfirmed')}{doubt.message}.</>}
+            : 'not available'}{t('consultNow.wasSentButNoAnswer')}{doubt.message}).</> : <>{t('consultNow.yourAvailabilityIsNotConfirmedFull', { message: doubt.message })}</>}
           {' '}{t('consultNow.itMayStillBeApplied')}</Alert>
       )}
       {on && !p.live && (
         <p className="ws-muted">{t('consultNow.switchedOnButNoWorkspace')}</p>
       )}
       {on && p.live && (
-        <p className="ws-muted">{t('consultNow.keepAWorkspacePageOpen')}{p.lastBeatAt ? t('consultNow.lastCheckIn', { when: formatDateTime(new Date(p.lastBeatAt).toISOString()), value: now.getTime() - p.lastBeatAt > 120_000 ? ' (more than two minutes ago)' : '' }) : ''}
+        <p className="ws-muted">{t('consultNow.keepAWorkspacePageOpen')}{p.lastBeatAt ? ` ${t('consultNow.lastCheckIn', { when: formatDateTime(new Date(p.lastBeatAt).toISOString()), value: now.getTime() - p.lastBeatAt > 120_000 ? ' (more than two minutes ago)' : '' })}` : ''}
         </p>
       )}
       {on && p.live && p.online === false && (
-        <Alert tone="warn">{t('consultNow.youAreNotBeingOffered')}{pr?.busy ? `you are in a consultation${pr.busyUntil ? ` until ${formatDateTime(pr.busyUntil)}` : ''}` : 'you are in a consultation, or “available now” was switched off elsewhere'}.
-        </Alert>
+        <Alert tone="warn">{t('consultNow.youAreNotBeingOfferedFull', { value: pr?.busy ? `you are in a consultation${pr.busyUntil ? ` until ${formatDateTime(pr.busyUntil)}` : ''}` : 'you are in a consultation, or “available now” was switched off elsewhere' })}</Alert>
       )}
       {p.problem && <Alert tone="warn">{p.problem}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
@@ -280,16 +279,14 @@ function Offers({ d }: { d: DoctorContext }) {
   return (
     <section className="ws-section" aria-labelledby="offers-h">
       <h2 id="offers-h">{t('consultNow.offersForYou')}</h2>
-      <p className="ws-muted">{t('consultNow.anOfferStaysOpenFor')}{CONSULT_MINUTES}{t('consultNow.minuteConsultationNow')}</p>
+      <p className="ws-muted">{t('consultNow.anOfferStaysOpenForFull', { CONSULT_MINUTES })}</p>
       {outcome?.kind === 'accepted' && (
-        <Alert tone="ok">{t('consultNow.youAcceptedThe')}{offerLabel(outcome.offer).toLowerCase()}{t('consultNow.for')}{outcome.offer.patient.name}{outcome.replayed ? ' (your earlier accept had gone through)' : ''}{t('consultNow.itIsOnYour')}<Link to="/doctor/appointments">{t('consultNow.appointments')}</Link>.
-        </Alert>
+        <Alert tone="ok"><Parts of={t.rich('consultNow.youAcceptedTheFull', { offerLabel: offerLabel(outcome.offer).toLowerCase(), name: outcome.offer.patient.name, value: outcome.replayed ? ' (your earlier accept had gone through)' : '', words: <Link to="/doctor/appointments">{t('consultNow.appointments')}</Link> })} /></Alert>
       )}
       {acceptedBooking && <MeetLink b={acceptedBooking} onRefresh={() => day.refetch()} />}
       {outcome?.kind === 'refused' && <Alert>{t('consultNow.notAccepted')}{outcome.offer.patient.name}): {outcome.message}</Alert>}
       {outcome?.kind === 'unknown' && (
-        <Alert tone="warn">{t('consultNow.theAnswerToYourAccept')}{outcome.offer.patient.name}{t('consultNow.didNotArrive')}{outcome.message}).{' '}
-          {outcome.checking ? t('consultNow.checkingYourAppointments') : outcome.checked}
+        <Alert tone="warn">{t('consultNow.theAnswerToYourAcceptFull', { name: outcome.offer.patient.name, message: outcome.message, checkingYourAppointments: outcome.checking ? t('consultNow.checkingYourAppointments') : outcome.checked ?? '' })}
         </Alert>
       )}
       {offers.isError && offers.data !== undefined && <RefreshFailed error={offers.error} readAt={offers.dataUpdatedAt} onRetry={offers.refetch} />}
@@ -314,13 +311,13 @@ function Offers({ d }: { d: DoctorContext }) {
                 <li key={`${o.requestId}:${o.generation}`} className="doc-offer" aria-label={t('consultNow.offerFor', { name: o.patient.name })}>
                   <div className="stock-head">
                     <strong>{offerLabel(o)}</strong>
-                    {left > 0 ? <Badge tone={left < 60 ? 'warn' : undefined}>{t('consultNow.closesIn')}{mmss(left)}</Badge> : <Badge tone="danger">{t('consultNow.closed')}</Badge>}
+                    {left > 0 ? <Badge tone={left < 60 ? 'warn' : undefined}>{t('consultNow.closesInFull', { mmss: mmss(left) })}</Badge> : <Badge tone="danger">{t('consultNow.closed')}</Badge>}
                   </div>
-                  <span>{t('consultNow.patient')}{patientLabel(o)}{o.quotedAmountMinor !== undefined ? ` · paid ${rupeesOf(o.quotedAmountMinor)}` : ''}</span>
-                  {tooHigh && <span className="ws-muted">{t('consultNow.yourFee')}{myFee !== null ? ` (${rupeesOf(myFee)})` : ''}{t('consultNow.isAboveWhatThisPatient')}</span>}
+                  <span>{t('consultNow.patientFull', { patientLabel: patientLabel(o), value: o.quotedAmountMinor !== undefined ? ` · paid ${rupeesOf(o.quotedAmountMinor)}` : '' })}</span>
+                  {tooHigh && <span className="ws-muted">{t('consultNow.isAboveWhatThisPatientFull', { value: myFee !== null ? ` (${rupeesOf(myFee)})` : '' })}</span>}
                   {confirmFor === o.requestId ? (
                     <div className="confirm" role="group" aria-label={t('consultNow.acceptTheOfferFor', { name: o.patient.name })}>
-                      <div className="confirm-text">{t('consultNow.acceptThe')}{offerLabel(o).toLowerCase()}{t('consultNow.for')}{patientLabel(o)}? A {CONSULT_MINUTES}{t('consultNow.minuteConsultationStartsNowAnd')}{' '}{t('consultNow.yourFee2')}{fee ?? 'not confirmed'}{t('consultNow.itIsRefusedIfYour')}</div>
+                      <div className="confirm-text">{t('consultNow.acceptTheFull', { offerLabel: offerLabel(o).toLowerCase(), patientLabel: patientLabel(o), CONSULT_MINUTES, fee: fee ?? 'not confirmed' })}</div>
                       <div className="confirm-actions">
                         <Button busy={sending === o.requestId} disabled={left === 0 || !canAccept || tooHigh || (sending !== null && sending !== o.requestId)} onClick={() => void accept(o)}>{t('consultNow.acceptAndStart')}</Button>
                         <Button variant="ghost" disabled={sending === o.requestId} onClick={() => setConfirmFor(null)}>{shared('action.back')}</Button>
@@ -365,7 +362,7 @@ function Running({ d }: { d: DoctorContext }) {
             ))}
           </ul>
         )}
-      <p className="ws-muted">{t('consultNow.markAConsultationCompletedOr')}<Link to="/doctor/appointments">{t('common.appointments')}</Link>.</p>
+      <p className="ws-muted"><Parts of={t.rich('consultNow.markAConsultationCompletedOrFull', { words: <Link to="/doctor/appointments">{t('common.appointments')}</Link> })} /></p>
     </section>
   );
 }

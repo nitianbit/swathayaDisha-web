@@ -150,7 +150,7 @@ const clock = formatClock;
  */
 export function RefreshFailed({ error, readAt, onRetry }: { error: unknown; readAt: number; onRetry: () => unknown }) {
   return (
-    <p className="ws-muted" role="status">{t('doctor.couldNotRefreshJustNow')}{messageOf(error)}).{readAt > 0 ? t('doctor.showingWhatWasReadAt', { when: clock(readAt) }) : ''}{' '}
+    <p className="ws-muted" role="status">{t('doctor.couldNotRefreshJustNow')}{messageOf(error)}).{readAt > 0 ? ` ${t('doctor.showingWhatWasReadAt', { when: clock(readAt) })}` : ''}{' '}
       <Button variant="ghost" onClick={() => void onRetry()}>{shared('action.tryAgain')}</Button>
     </p>
   );

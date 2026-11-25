@@ -35,7 +35,7 @@ function Schedule({ d }: { d: DoctorContext }) {
   const [notice, setNotice] = useState<string | null>(null);
   return (
     <>
-      <PageHeading title={t('schedule.schedule')}>{t('schedule.yourWeeklyHoursAndLeave')}{DOCTOR_ROLLING_DAYS}{t('schedule.daysTimesAreIndiaTime')}</PageHeading>
+      <PageHeading title={t('schedule.schedule')}>{t('schedule.yourWeeklyHoursAndLeaveFull', { DOCTOR_ROLLING_DAYS })}</PageHeading>
       {notice && <Alert tone="ok">{notice}</Alert>}
       {schedule.isPending || clinics.isPending ? <Loading label={t('schedule.loadingYourSchedule')} />
         : schedule.isError ? <ErrorState message={messageOf(schedule.error)} onRetry={() => void schedule.refetch()} />
@@ -186,8 +186,7 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
         <p className="ws-muted">{t('schedule.youDoNotConsultAt')}</p>
       )}
       {unverified.length > 0 && (
-        <p className="ws-muted">{t('schedule.notOfferedUntilJansetuVerifies')}{unverified.length === 1 ? 'it' : 'them'}: {unverified.map((c) => c.name ?? 'a clinic').join(', ')}.
-        </p>
+        <p className="ws-muted">{t('schedule.notOfferedUntilJansetuVerifiesFull', { value: unverified.length === 1 ? 'it' : 'them', unverified: unverified.map((c) => c.name ?? 'a clinic').join(', ') })}</p>
       )}
       <div className="rx-form-row">
         <TextField label={t('schedule.slotLengthMinutes')} inputMode="numeric" value={tpl.slotMinutes} error={errors.slotMinutes} disabled={confirming}
@@ -210,15 +209,15 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
                       onClick={() => draft.update((x) => ({ ...x, [day]: x[day].filter((_, j) => j !== i) }))}>{shared('action.remove')}</Button>
                   </div>
                   <div className="j-field ws-filter">
-                    <label htmlFor={`place-${day}-${i}`}>{name}{t('schedule.place')}</label>
+                    <label htmlFor={`place-${day}-${i}`}>{t('schedule.placeFull', { name })}</label>
                     <select id={`place-${day}-${i}`} value={w.branchId ?? ''} disabled={confirming} onChange={(e) => setPlace(day, i, e.target.value)}>
                       <option value="">{t('schedule.onlineOrYourOwnPlace')}</option>
-                      {places.map((p) => <option key={p.branchId} value={p.branchId}>{t('schedule.clinic')}{p.label}</option>)}
+                      {places.map((p) => <option key={p.branchId} value={p.branchId}>{t('schedule.clinicFull', { label: p.label })}</option>)}
                       {!known && <option value={w.branchId}>{t('schedule.aClinicBranchYouNo')}</option>}
                     </select>
                   </div>
                   <fieldset className="ws-checks doc-modes">
-                    <legend>{name}{t('schedule.consultationTypes')}</legend>
+                    <legend>{t('schedule.consultationTypesFull', { name })}</legend>
                     {CONSULT_MODES.map((m) => (
                       <label key={m} className="ws-check">
                         <input type="checkbox" checked={w.modes.includes(m)} disabled={confirming || !!w.branchId}
@@ -248,12 +247,12 @@ function TemplateForm({ d, saved, clinics, onClose, onSaved }: {
         </div>
       ) : (
         <div className="confirm" role="group" aria-label={t('schedule.saveTheWeeklyHours')}>
-          <div className="confirm-text">{t('schedule.replaceYourWeeklyHours')}{body.slotMinutes}{t('schedule.minuteSlots2')}<ul className="ws-list">
+          <div className="confirm-text">{t('schedule.replaceYourWeeklyHoursFull', { slotMinutes: body.slotMinutes })}<ul className="ws-list">
               {SCHEDULE_WEEKDAYS.map((day) => (
                 <li key={day}>{DAY_LABEL[day]}: {tpl[day].length === 0 ? 'off'
                   : tpl[day].map((w) => `${w.start}–${w.end} (${w.modes.map((m) => CONSULT_MODE_LABEL[m]).join(', ')}${placeName(w, clinics)})`).join('; ')}</li>
               ))}
-            </ul>{t('schedule.overTheNext')}{DOCTOR_ROLLING_DAYS}{t('schedule.daysMissingSlotsAreAdded')}</div>
+            </ul>{t('schedule.overTheNextFull', { DOCTOR_ROLLING_DAYS })}</div>
           <div className="confirm-actions">
             <Button busy={busy} onClick={() => void save()}>{t('schedule.saveTheWeeklyHours')}</Button>
             <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>{shared('action.back')}</Button>
@@ -324,7 +323,7 @@ function LeaveDays({ d, schedule }: { d: DoctorContext; schedule: DoctorSchedule
             <li key={day} className="ws-actions">
               <span>{formatDay(day)}</span>
               <ConfirmAction label={shared('action.remove')} confirmLabel={t('schedule.removeLeaveOn', { when: formatDay(day) })}
-                consequence={<>{t('schedule.removeTheLeaveOn')}{formatDay(day)}{t('schedule.slotsOfYourWeeklyHours')}</>}
+                consequence={<>{t('schedule.removeTheLeaveOnFull', { date: formatDay(day) })}</>}
                 onConfirm={async () => {
                   setNotice(null);
                   try {
@@ -338,13 +337,13 @@ function LeaveDays({ d, schedule }: { d: DoctorContext; schedule: DoctorSchedule
           ))}
         </ul>
       )}
-      {past > 0 && <p className="ws-muted">{past}{t('schedule.earlierLeave')}{past === 1 ? 'day' : 'days'}{t('schedule.notShown')}</p>}
+      {past > 0 && <p className="ws-muted">{t('schedule.earlierLeaveFull', { past, value: past === 1 ? 'day' : 'days' })}</p>}
       {reviewing ? (
         <div className="confirm" role="group" aria-label={t('schedule.addALeaveDay')}>
-          <div className="confirm-text">{t('schedule.takeLeaveOn')}{formatDay(reviewing)}{t('schedule.nobodyCanBookYouThat')}</div>
+          <div className="confirm-text">{t('schedule.takeLeaveOnFull', { date: formatDay(reviewing) })}</div>
           {failure && <Alert>{failure}</Alert>}
           <div className="confirm-actions">
-            <Button busy={busy} onClick={() => void add(reviewing)}>{t('schedule.takeLeaveOn')}{formatDay(reviewing)}</Button>
+            <Button busy={busy} onClick={() => void add(reviewing)}>{t('schedule.takeLeaveOnFull2', { date: formatDay(reviewing) })}</Button>
             <Button variant="ghost" disabled={busy} onClick={() => { setReviewing(null); setFailure(null); }}>{shared('action.back')}</Button>
           </div>
         </div>

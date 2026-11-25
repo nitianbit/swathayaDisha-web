@@ -50,10 +50,10 @@ export function DocumentPreview({ preview, title, noun, fileName }: {
         {preview.kind === 'pdf' ? (
           <div className="rx-pdf">
             <iframe src={preview.url} title={title} />
-            <a href={preview.url} target="_blank" rel="noopener">{t('documentViewer.openThe')}{noun}{t('documentViewer.inANewTabTo')}</a>
+            <a href={preview.url} target="_blank" rel="noopener">{t('documentViewer.openTheFull', { noun })}</a>
           </div>
         ) : preview.kind === 'image' ? <img src={preview.url} alt={title} />
-          : <a href={preview.url} download={fileName}>{t('documentViewer.downloadThe')}{noun}</a>}
+          : <a href={preview.url} download={fileName}>{t('documentViewer.downloadTheFull', { noun })}</a>}
       </div>
     </div>
   );

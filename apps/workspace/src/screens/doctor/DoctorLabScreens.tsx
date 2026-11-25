@@ -66,7 +66,7 @@ export function DoctorLabTestScreen() {
   const { api } = useSession();
   return (
     <>
-      <Link to="/doctor/lab-tests" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('doctorLab.labTestsBooked2')}</Link>
+      <Link to="/doctor/lab-tests" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{` ${t('doctorLab.labTestsBooked2')}`}</Link>
       <PageHeading title={t('doctorLab.labTest')} />
       <LabDetail key={`${doctor.id}:${bookingId}`} booker={doctorLabBooker(api, doctor.id)} bookingId={bookingId} />
     </>

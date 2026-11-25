@@ -57,7 +57,7 @@ export function pharmacyLabBooker(api: ApiClient, pharmacyId: string): LabBooker
     slot: (what, bookingId) => `assisted-lab-${what}:${pharmacyId}${bookingId ? `:${bookingId}` : ''}`,
     listKey: ['pharmacy-lab-bookings', pharmacyId], labsKey: ['assisted-labs', pharmacyId], walletKey: ['pharmacy-wallet', pharmacyId],
     paths: { book: '/pharmacy/lab-book', list: '/pharmacy/lab-tests' },
-    words: { offFor: 'for your pharmacy', byBooker: t('labBooker.byYourPharmacy'), emptyFor: t('common.forAPatientAtYour') },
+    words: { offFor: 'for your pharmacy', byBooker: t('labBooker.byYourPharmacy'), emptyFor: ` ${t('common.forAPatientAtYour')}` },
   };
 }
 
@@ -71,6 +71,6 @@ export function doctorLabBooker(api: ApiClient, doctorId: string): LabBooker {
     slot: (what, bookingId) => `assisted-lab-${what}:doctor:${doctorId}${bookingId ? `:${bookingId}` : ''}`,
     listKey: ['doctor-lab-bookings', doctorId], labsKey: ['doctor-assisted-labs', doctorId], walletKey: ['doctor-wallet', doctorId],
     paths: { book: '/doctor/lab-book', list: '/doctor/lab-tests' },
-    words: { offFor: 'for you', byBooker: t('labBooker.byYou'), emptyFor: t('labBooker.forAPatient'), recommendationLabel: t('labBooker.haveARecommendedTestsCode') },
+    words: { offFor: 'for you', byBooker: t('labBooker.byYou'), emptyFor: ` ${t('labBooker.forAPatient')}`, recommendationLabel: t('labBooker.haveARecommendedTestsCode') },
   };
 }

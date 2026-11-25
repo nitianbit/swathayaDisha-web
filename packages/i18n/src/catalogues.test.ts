@@ -70,6 +70,17 @@ describe('catalogues', () => {
     expect(bad).toEqual([]);
   });
 
+  it('English words are whole: none starts or ends with a space (a fragment glued to a value is not translatable)', async () => {
+    const bad: string[] = [];
+    for (const dir of dirs) {
+      const en = (await import(/* @vite-ignore */ join(dir, 'en.ts')) as { default: Messages }).default;
+      for (const [key, entry] of Object.entries(en)) {
+        if ((typeof entry === 'string' ? [entry] : [entry.one, entry.other]).some((x) => x !== x.trim())) bad.push(`${relative(ROOT, dir)} ${key}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
   it('finds the catalogues (the shared UI words at least)', () => {
     expect(dirs.map((d) => relative(ROOT, d))).toContain(join('packages', 'ui', 'src', 'i18n'));
   });

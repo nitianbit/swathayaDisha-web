@@ -5,7 +5,7 @@ import {
   assistedRefusal, doctorWalletApi, pharmacyWalletApi, walletBalancePaise, walletState, type ApiClient, type AssistedPaymentMethod, type BookerKind, type PharmacyWallet,
   type Refusal,
 } from '@jansetu/api';
-import { Alert, Button, ErrorState, formatRupees, Loading, shared } from '@jansetu/ui';
+import { Alert, Button, ErrorState, formatRupees, Loading, shared , Parts } from '@jansetu/ui';
 import { pharmacyTopupSource, TopUpForm, type TopupSource } from './topup.tsx';
 import { walletHoldWords, walletKeyOf, type WalletPayer } from './WalletScreen.tsx';
 import { t } from '../../i18n/pharmacy/index.ts';
@@ -85,8 +85,7 @@ export function WalletPay({ wallet: w, priceMinor, couponCode, refused, busy, on
         : wallet.isPending ? <Loading label={t('walletPay.readingYourWallet')} />
         : wallet.isError ? <ErrorState message={assistedRefusal(wallet.error).message} onRetry={() => void wallet.refetch()} />
         : (
-          <p>{t('walletPay.moneyInYourWallet')}<strong>{formatRupees(balance / 100)}</strong>
-            {!hold && !short ? <>{t('walletPay.afterThisBooking')}{formatRupees((balance - priceMinor) / 100)}</> : null}
+          <p><Parts of={t.rich('walletPay.moneyInYourWalletFull', { amount: <strong>{formatRupees(balance / 100)}</strong>, afterThisBooking: !hold && !short ? <>{` ${t('walletPay.afterThisBooking')} `}{formatRupees((balance - priceMinor) / 100)}</> : null })} />
           </p>
         )}
       {hold && <Alert tone="warn">{hold}</Alert>}
@@ -97,12 +96,12 @@ export function WalletPay({ wallet: w, priceMinor, couponCode, refused, busy, on
           {w.topup ? (
             <>
               {' '}<Button variant="secondary" onClick={() => setShowTopUp(true)}>{t('walletPay.topUpNow')}</Button>{' '}
-              {w.page && <>{t('walletPay.orOpenThe')}<Link to={w.page}>{t('common.wallet')}</Link>{t('walletPay.pageThisBookingIsNot')}</>}
+              {w.page && <><Parts of={t.rich('walletPay.orOpenTheFull', { words: <Link to={w.page}>{t('common.wallet')}</Link> })} /></>}
             </>
           ) : w.owner === 'doctor' && w.page ? (
             // WQ25: a doctor adds money on its own Wallet page (WQ23).
-            <>{' '}<Link to={w.page}>{t('common.addMoney')}</Link>{t('walletPay.onYourWalletPageThen')}</>
-          ) : t('walletPay.askSomeoneWhoCanAdd')}
+            <>{' '}<Parts of={t.rich('walletPay.onYourWalletPageThenFull', { words: <Link to={w.page}>{t('common.addMoney')}</Link> })} /></>
+          ) : ` ${t('walletPay.askSomeoneWhoCanAdd')}`}
         </Alert>
       )}
       {showTopUp && w.topup && (
@@ -110,7 +109,7 @@ export function WalletPay({ wallet: w, priceMinor, couponCode, refused, busy, on
         <TopUpForm pharmacyId={w.topup.owner} source={w.topup} suggested={Math.max(1, (priceMinor - balance) / 100)}
           {...(w.read ? { onCredited: () => void wallet.refetch() } : {})} />
       )}
-      <span className="ws-muted">{t('walletPay.collect')}{formatRupees(priceMinor / 100)}{t('walletPay.fromThePatient')}{where}{t('walletPay.ifTheBookingIsCancelled')}</span>
+      <span className="ws-muted">{t('walletPay.collectFull', { amount: formatRupees(priceMinor / 100), where })}</span>
       <div className="confirm-actions">
         <Button busy={busy} disabled={!!hold || short || (refused?.kind === 'price')} onClick={onPay}>
           {payLabel ? payLabel(formatRupees(priceMinor / 100)) : t('walletPay.payFromWallet', { amount: formatRupees(priceMinor / 100) })}
@@ -149,9 +148,9 @@ export function PayChoice({ wallet, priceMinor, couponCode, refused, busy, metho
       {byCard ? (
         <>
           <RefusalAlert refused={refused} couponCode={couponCode} onNewPrice={onNewPrice} />
-          <span className="ws-muted">{t('walletPay.collect')}{formatRupees(priceMinor / 100)}{t('walletPay.fromThePatient')}{counterWords(wallet.owner)}{t('walletPay.youPayItOnThe')}</span>
+          <span className="ws-muted">{t('walletPay.collectFull2', { amount: formatRupees(priceMinor / 100), counterWords: counterWords(wallet.owner) })}</span>
           <div className="confirm-actions">
-            <Button busy={busy} disabled={refused?.kind === 'price'} onClick={onPay}>{t('walletPay.pay')}{formatRupees(priceMinor / 100)}{t('walletPay.byCardOrUpi')}</Button>
+            <Button busy={busy} disabled={refused?.kind === 'price'} onClick={onPay}>{t('walletPay.payFull', { amount: formatRupees(priceMinor / 100) })}</Button>
             <Button variant="ghost" disabled={busy} onClick={onBack}>{shared('action.back')}</Button>
           </div>
         </>

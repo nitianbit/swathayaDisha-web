@@ -78,7 +78,7 @@ function Wallet({ pharmacyId }: { pharmacyId: string }) {
       <WalletHistory q={movements} empty={t('wallet.topUpsBookingPaymentsAnd')} pager={movements.data && movements.data.totalPages > 1 && (
         <nav className="ws-pager" aria-label={t('wallet.walletHistoryPages')}>
           <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>{t('common.newer')}</Button>
-          <span>{t('common.page')}{page}{t('common.of')}{movements.data.totalPages}</span>
+          <span>{t('common.pageFull', { page, totalPages: movements.data.totalPages })}</span>
           <Button variant="secondary" disabled={page >= movements.data.totalPages} onClick={() => setPage(page + 1)}>{t('common.older')}</Button>
         </nav>
       )} />

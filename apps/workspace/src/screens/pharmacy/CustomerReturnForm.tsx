@@ -145,7 +145,7 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
           }}
           summary={pending.restored ? null : <>
             <ReturnLines lines={pending.body.lines.map((l) => ({ ...l, ...nameOf(l.medicineId, l.batchId) }))} />
-            <div>{t('customerReturnForm.reason')}{pending.body.reason}{t('customerReturnForm.refund')}{pending.body.refundAmount != null ? formatRupees(pending.body.refundAmount) : 'none'}</div>
+            <div>{t('customerReturnForm.refundFull', { reason: pending.body.reason, amount: pending.body.refundAmount != null ? formatRupees(pending.body.refundAmount) : 'none' })}</div>
           </>} />
       ) : receipt ? (
         <div className="confirm" role="group" aria-label={t('customerReturnForm.recordedReturn')}>
@@ -153,7 +153,7 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
             {receipt.duplicate ? t('customerReturnForm.thisReturnHadAlreadyBeen') : t('customerReturnForm.returnRecorded')}
           </Alert>
           <ReturnLines lines={receipt.lines} />
-          <div>{t('customerReturnForm.value')}{formatRupees(receipt.returnValuePaise / 100)}{t('customerReturnForm.refundedToTheWallet')}{formatRupees(receipt.refundPaise / 100)}</div>
+          <div>{t('customerReturnForm.valueFull', { amount: formatRupees(receipt.returnValuePaise / 100), amount2: formatRupees(receipt.refundPaise / 100) })}</div>
           <div className="confirm-actions"><Button variant="secondary" onClick={startAnother}>{t('customerReturnForm.recordAnotherReturn')}</Button></div>
         </div>
       ) : !open ? (
@@ -184,7 +184,7 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
                     </td>
                     <td>
                       <div className="j-field">
-                        <label htmlFor={`disp-${r.key}`} className="j-sr-only">{t('customerReturnForm.whatHappensTo')}{r.medicineName}{t('customerReturnForm.batch')}{r.batchNumber}</label>
+                        <label htmlFor={`disp-${r.key}`} className="j-sr-only">{t('customerReturnForm.whatHappensToFull', { medicineName: r.medicineName, batchNumber: r.batchNumber })}</label>
                         <select id={`disp-${r.key}`} value={disposition[r.key] ?? 'restock'}
                           onChange={(e) => setDisposition((d) => ({ ...d, [r.key]: e.target.value as CustomerReturnLine['disposition'] }))}>
                           <option value="restock">{t('customerReturnForm.backToStock')}</option>
@@ -202,7 +202,7 @@ export function CustomerReturnForm({ order, onDone }: { order: PharmacyOrder; on
           <TextField label={t('customerReturnForm.refundToTheCustomerS')} inputMode="decimal" value={refund}
             onChange={(e) => setRefund(e.target.value)} error={errors.refund}
             hint={t('customerReturnForm.leaveEmptyForNoRefund')} />
-          {refused && <Alert>{t('customerReturnForm.notRecorded')}{refused}</Alert>}
+          {refused && <Alert>{t('customerReturnForm.notRecordedFull', { refused })}</Alert>}
           <div className="rx-actions">
             <Button type="submit" busy={busy}>{t('customerReturnForm.recordReturn')}</Button>
             <Button variant="ghost" disabled={busy} onClick={() => setOpen(false)}>{shared('action.cancel')}</Button>
@@ -217,7 +217,7 @@ function ReturnLines({ lines }: { lines: (CustomerReturnLine & { medicineName?: 
   return (
     <ul className="ws-list">
       {lines.map((l, i) => (
-        <li key={i}>{l.medicineName ?? l.medicineId}{t('customerReturnForm.batch2')}{l.batchNumber ?? l.batchId}) × {l.quantity}, {DISPOSITION[l.disposition]}</li>
+        <li key={i}>{t('customerReturnForm.batchFull', { medicineName: l.medicineName ?? l.medicineId, batchNumber: l.batchNumber ?? l.batchId, quantity: l.quantity, value: DISPOSITION[l.disposition] })}</li>
       ))}
     </ul>
   );
@@ -233,13 +233,11 @@ function ReturnHistory({ query, page, onPage }: { query: UseQueryResult<Page<Cus
   return (
     <div>
       <h3>{t('customerReturnForm.alreadyRecorded')}{total})</h3>
-      {totalPages > 1 && <p className="ws-muted">{t('common.showing')}{from}–{to}{t('common.of')}{total}{t('customerReturnForm.newestFirst')}</p>}
+      {totalPages > 1 && <p className="ws-muted">{t('common.showingFull2', { from, to, total })}</p>}
       <ul className="ws-list">
         {query.data.items.map((r) => (
           <li key={r._id}>
-            {formatDateTime(r.createdAt)} · {r.lines.map((l) => `${l.medicineName ?? l.medicineId} × ${l.quantity} ${DISPOSITION[l.disposition]}`).join('; ')}
-            {' '}{t('customerReturnForm.refund2')}{formatRupees(r.refundPaise / 100)} · “{r.reason}”
-          </li>
+            {t('customerReturnForm.refundFull2', { time: formatDateTime(r.createdAt), lines: r.lines.map((l) => `${l.medicineName ?? l.medicineId} × ${l.quantity} ${DISPOSITION[l.disposition]}`).join('; '), amount: formatRupees(r.refundPaise / 100), reason: r.reason })}</li>
         ))}
       </ul>
       {totalPages > 1 && (

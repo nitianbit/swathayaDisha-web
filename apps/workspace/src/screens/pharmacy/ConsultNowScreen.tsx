@@ -6,7 +6,7 @@ import {
   INSTANT_SWITCHED_OFF_MESSAGE, instantBookerRefusal, instantStage, offerCountdown, patientBody, pharmacyAssistedApi, pharmacyInstantApi,
   type InstantBookerByKey, type InstantBookerReceipt, type InstantBookerRequest, type InstantDeskMode, type InstantTarget,
 } from '@jansetu/api';
-import { Alert, Badge, Button, ErrorState, formatRupees, Loading } from '@jansetu/ui';
+import { Alert, Badge, Button, ErrorState, formatRupees, Loading , Parts } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
@@ -48,10 +48,10 @@ const activeSlot = (pharmacyId: string) => `assisted-instant-active:${pharmacyId
 function SummaryList({ s }: { s: Summary }) {
   return (
     <ul className="ws-list">
-      <li>{t('common.patient')}<strong>{s.patient}</strong></li>
-      <li>{t('common.doctor')}<strong>{s.doctor}</strong>, {s.speciality}</li>
-      <li>{t('common.how2')}<strong>{INSTANT_MODE_LABEL[s.mode]}</strong></li>
-      <li>{t('common.price')}<strong>{formatRupees(s.priceMinor / 100)}</strong>{s.couponCode ? ` (coupon ${s.couponCode})` : ''}</li>
+      <li><Parts of={t.rich('common.patientFull', { patient: <strong>{s.patient}</strong> })} /></li>
+      <li><Parts of={t.rich('common.doctorFull2', { doctor: <strong>{s.doctor}</strong>, speciality: s.speciality })} /></li>
+      <li><Parts of={t.rich('common.howFull2', { value: <strong>{INSTANT_MODE_LABEL[s.mode]}</strong> })} /></li>
+      <li><Parts of={t.rich('common.priceFull', { amount: <strong>{formatRupees(s.priceMinor / 100)}</strong>, value: s.couponCode ? ` (coupon ${s.couponCode})` : '' })} /></li>
     </ul>
   );
 }
@@ -166,7 +166,7 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
         summary={op.body && <SummaryList s={op.body.summary} />} />
     );
   }
-  if (off) return <Alert tone="warn">{INSTANT_SWITCHED_OFF_MESSAGE}{t('consultNow.jansetuTurnsItOnFor')}</Alert>;
+  if (off) return <Alert tone="warn">{t('consultNow.jansetuTurnsItOnForFull', { INSTANT_SWITCHED_OFF_MESSAGE })}</Alert>;
   if (activeId) return <Waiting pharmacyId={pharmacyId} requestId={activeId} onAnother={resetAll} />;
 
   const frozen = !!review || busy;
@@ -190,14 +190,14 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
               </fieldset>
               {specialities.isPending ? <Loading label={t('consultNow.findingDoctorsOnline')} />
                 : specialities.isError ? <ErrorState message={instantBookerRefusal(specialities.error).message} onRetry={() => void specialities.refetch()} />
-                : online.length === 0 ? <Alert tone="warn">{t('consultNow.noDoctorIsOnlineFor')}{INSTANT_MODE_LABEL[mode].toLowerCase()}{t('consultNow.sNowTryAgainIn')}<Link to="/pharmacy/book">{t('consultNow.bookATime')}</Link>.</Alert>
+                : online.length === 0 ? <Alert tone="warn"><Parts of={t.rich('consultNow.noDoctorIsOnlineForFull', { value: INSTANT_MODE_LABEL[mode].toLowerCase(), words: <Link to="/pharmacy/book">{t('consultNow.bookATime')}</Link> })} /></Alert>
                 : (
                   <div className="j-field">
                     <label htmlFor="cn-speciality">{t('consultNow.whatDoesThePatientNeed')}</label>
                     <select id="cn-speciality" value={speciality} aria-invalid={errors.speciality ? true : undefined}
                       aria-describedby={errors.speciality ? 'cn-speciality-err' : undefined} onChange={(e) => { setSpeciality(e.target.value); setDoctorId(''); }}>
                       <option value="">{t('common.choose3')}</option>
-                      {online.map((x) => <option key={x.specialization} value={x.specialization}>{x.specialization} ({x.onlineNow}{t('consultNow.online')}</option>)}
+                      {online.map((x) => <option key={x.specialization} value={x.specialization}>{t('consultNow.onlineFull', { specialization: x.specialization, onlineNow: x.onlineNow })}</option>)}
                     </select>
                     {errors.speciality && <span id="cn-speciality-err" className="j-field__error" role="alert">{errors.speciality}</span>}
                   </div>
@@ -206,7 +206,7 @@ function Consult({ pharmacyId }: { pharmacyId: string }) {
                 <fieldset className="ws-checks">
                   <legend>{t('common.doctor2')}</legend>
                   <label className="ws-check">
-                    <input type="radio" name="cn-doctor" checked={doctorId === ''} onChange={() => setDoctorId('')} />{t('consultNow.anyAvailableDoctorTheFirst')}</label>
+                    <input type="radio" name="cn-doctor" checked={doctorId === ''} onChange={() => setDoctorId('')} />{` ${t('consultNow.anyAvailableDoctorTheFirst')}`}</label>
                   {doctors.isPending ? <Loading label={t('common.findingDoctors')} />
                     : doctors.isError ? <ErrorState message={instantBookerRefusal(doctors.error).message} onRetry={() => void doctors.refetch()} />
                     : doctors.data.map((d) => (
@@ -338,13 +338,13 @@ function Waiting({ pharmacyId, requestId, onAnother }: { pharmacyId: string; req
       <h2 id="wait-h">{stage === 'accepted' ? t('consultNow.aDoctorAccepted') : stage === 'refunded' ? t('consultNow.cancelledAndRefunded') : t('consultNow.waitingForADoctor')}</h2>
       {outcome && <Alert tone={outcome.tone}>{outcome.text}</Alert>}
       <ul className="ws-list">
-        <li>{t('common.patient')}<strong>{v.patientName ?? t('common.thePatient')}</strong></li>
-        <li>{v.specialization} · {INSTANT_MODE_LABEL[v.mode] ?? v.mode}{v.assisted?.shortRef ? <>{t('consultNow.ref')}<strong>{v.assisted.shortRef}</strong></> : null}</li>
-        {v.money && <li>{t('consultNow.paidFromYourWallet')}<strong>{paid}</strong></li>}
+        <li><Parts of={t.rich('common.patientFull2', { patientName: <strong>{v.patientName ?? t('common.thePatient')}</strong> })} /></li>
+        <li>{v.specialization} · {INSTANT_MODE_LABEL[v.mode] ?? v.mode}{v.assisted?.shortRef ? <>{' '}<Parts of={t.rich('consultNow.refFull', { shortRef: <strong>{v.assisted.shortRef}</strong> })} /></> : null}</li>
+        {v.money && <li><Parts of={t.rich('consultNow.paidFromYourWalletFull', { paid: <strong>{paid}</strong> })} /></li>}
       </ul>
       {stage === 'waiting' && (
         <>
-          <p>{t('consultNow.offeredTo')}{v.offeredCount ?? 'the'} {v.offeredCount === 1 ? 'doctor' : 'doctors'}{t('consultNow.online2')}<strong>{offerCountdown(v.offerExpiresAt ?? undefined, now)}</strong>{t('consultNow.leftForADoctorTo')}</p>
+          <p><Parts of={t.rich('consultNow.offeredToFull', { offeredCount: v.offeredCount ?? 'the', value: v.offeredCount === 1 ? 'doctor' : 'doctors', offerCountdown: <strong>{offerCountdown(v.offerExpiresAt ?? undefined, now)}</strong> })} /></p>
           <p className="ws-muted">{t('consultNow.keepThisScreenOpenThe')}</p>
           <div className="ws-actions">{refundStep}</div>
         </>
@@ -363,12 +363,12 @@ function Waiting({ pharmacyId, requestId, onAnother }: { pharmacyId: string; req
       )}
       {stage === 'accepted' && (
         <>
-          <Alert tone="ok">{v.acceptedDoctorName ?? t('common.theDoctor')}{t('consultNow.accepted')}{v.money && v.money.returnedMinor > 0 ? t('consultNow.ofThePriceCameBack', { amount: formatRupees(v.money.returnedMinor / 100) }) : ''}</Alert>
+          <Alert tone="ok">{t('consultNow.acceptedFull', { acceptedDoctorName: v.acceptedDoctorName ?? t('common.theDoctor'), ofThePriceCameBack: v.money && v.money.returnedMinor > 0 ? t('consultNow.ofThePriceCameBack', { amount: formatRupees(v.money.returnedMinor / 100) }) : '' })}</Alert>
           {booking.data && <JoinCall b={booking.data} />}
           {v.bookingId && <p><Link to={`/pharmacy/consultations/${v.bookingId}`}>{t('consultNow.openTheBooking')}</Link></p>}
         </>
       )}
-      {stage === 'refunded' && <p>{v.money ? t('consultNow.isBackInYourWallet', { amount: formatRupees(v.money.refundedMinor / 100) }) : t('consultNow.theMoneyIsBackIn')}{t('consultNow.giveThePatientTheirMoney')}</p>}
+      {stage === 'refunded' && <p>{t('consultNow.giveThePatientTheirMoneyFull', { isBackInYourWallet: v.money ? t('consultNow.isBackInYourWallet', { amount: formatRupees(v.money.refundedMinor / 100) }) : t('consultNow.theMoneyIsBackIn') })}</p>}
       {(stage === 'accepted' || stage === 'refunded') && <div><Button variant="secondary" onClick={onAnother}>{t('consultNow.startAnother')}</Button></div>}
     </section>
   );

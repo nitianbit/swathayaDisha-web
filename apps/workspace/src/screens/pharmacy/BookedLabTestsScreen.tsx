@@ -6,7 +6,7 @@ import {
   ApiError, bookingPaidBy, canCancelLab, formatSlotDate, isSwitchedOff, LAB_SWITCHED_OFF_MESSAGE, LAB_VISIT_MODE_LABEL, LATE_PAYMENT_BACK, labStatusLabel,
   orderFromBooking, type LabBookingListStatus, type LabBookingView, type RefundTo,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, shared } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, shared , Parts } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
@@ -121,7 +121,7 @@ export function BookedLabTestScreen() {
   const { api } = useSession();
   return (
     <>
-      <Link to="/pharmacy/lab-tests" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('bookedLabTests.bookedLabTests2')}</Link>
+      <Link to="/pharmacy/lab-tests" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{` ${t('bookedLabTests.bookedLabTests2')}`}</Link>
       <PageHeading title={t('bookedLabTests.labTest')} />
       <LabDetail key={`${pharmacyId}:${bookingId}`} booker={pharmacyLabBooker(api, pharmacyId)} bookingId={bookingId} />
     </>
@@ -259,8 +259,7 @@ function AcceptNewTime({ booker, booking, version, perform, busy, onDone, onRefu
   return (
     <section className="ws-section" aria-labelledby="lab-new-h">
       <h2 id="lab-new-h">{t('bookedLabTests.newTimeFromTheLab')}</h2>
-      <Alert tone="warn">{t('bookedLabTests.theLabProposedANew')}<strong>{newTime}</strong>{oldTime ? ` (it was ${oldTime})` : ''}.{r.reason ? t('bookedLabTests.reason', { reason: r.reason }) : ''}
-        {' '}{t('bookedLabTests.askThePatientThenAccept')}</Alert>
+      <Alert tone="warn"><Parts of={t.rich('bookedLabTests.theLabProposedANewFull', { newTime: <strong>{newTime}</strong>, value: oldTime ? ` (it was ${oldTime})` : '', reason: r.reason ? ` ${t('bookedLabTests.reason', { reason: r.reason })}` : '' })} /></Alert>
       {error && <Alert>{error}</Alert>}
       <div className="ws-actions">
         <Button busy={busy} onClick={() => void accept(startOp(newRequestKey(), { bookingId: booking._id, version })).catch((e: unknown) => setError(booker.refusal(e).message))}>{t('bookedLabTests.acceptNewTime')}</Button>
@@ -325,15 +324,15 @@ function Reports({ booking }: { booking: LabBookingView }) {
         <ul className="ws-list">
           {releases.map((r, i) => (
             <li key={`${r.file}:${i}`} className="ws-actions">
-              <span>{t('bookedLabTests.released')}{r.releasedAt ? formatDateTime(r.releasedAt) : ''}{r.signer?.name ? `, signed by ${r.signer.name}` : ''}</span>
+              <span>{t('bookedLabTests.releasedFull', { time: r.releasedAt ? formatDateTime(r.releasedAt) : '', value: r.signer?.name ? `, signed by ${r.signer.name}` : '' })}</span>
               <Button variant="secondary" busy={opening === r.file} onClick={() => void open(r.file)}>
-                <FileText size={16} aria-hidden="true" />{t('bookedLabTests.openTheReport')}{releases.length > 1 ? ` ${i + 1}` : ''}
+                <FileText size={16} aria-hidden="true" />{' '}{t('bookedLabTests.openTheReportFull', { value: releases.length > 1 ? ` ${i + 1}` : '' })}
               </Button>
             </li>
           ))}
         </ul>
       )}
-      {error && <Alert>{t('bookedLabTests.couldNotOpenTheReport')}{error}</Alert>}
+      {error && <Alert>{t('bookedLabTests.couldNotOpenTheReportFull', { error })}</Alert>}
       <DocumentPreview preview={preview} title={t('bookedLabTests.labReport')} noun={t('bookedLabTests.report2')} fileName={t('bookedLabTests.labReport2')} />
     </section>
   );

@@ -6,7 +6,7 @@ import {
   formatSlotDate, istToday, isSwitchedOff, MAX_PERSON_NAME, patientProblems, pharmacyAssistedApi, type AssistedGender, type AssistedRelation, type DoctorAppointment,
   type PatientDraft, type PatientLookup, type Refusal,
 } from '@jansetu/api';
-import { Alert, Badge, Button, ErrorState, Loading, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, ErrorState, Loading, TextField , Parts } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { useSession } from '../../session.tsx';
 import type { Perform } from '../finance/finance.tsx';
@@ -146,12 +146,11 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = t('comm
       ) : (
         <form className="rx-form" noValidate onSubmit={patientNext}>
           <div className="ws-actions">
-            <span>{t('patientStep.mobileNumber')}<strong>{lookup.phone}</strong></span>
+            <span><Parts of={t.rich('patientStep.mobileNumberFull', { phone: <strong>{lookup.phone}</strong> })} /></span>
             <Button variant="ghost" disabled={frozenPatient} onClick={changePhone}>{t('patientStep.changeNumber')}</Button>
           </div>
           {lookup.result.exists ? (
-            <Alert tone="ok">{t('patientStep.thisNumberIsOnJansetu')}<strong>{lookup.result.holderNameMasked ?? 'name not given'}</strong>.
-              {' '}{t('patientStep.onlyPartOfTheName')}</Alert>
+            <Alert tone="ok"><Parts of={t.rich('patientStep.thisNumberIsOnJansetuFull', { holderNameMasked: <strong>{lookup.result.holderNameMasked ?? 'name not given'}</strong> })} /></Alert>
           ) : (
             <Alert tone="warn">{t('patientStep.thisNumberIsNewTo')}</Alert>
           )}
@@ -169,7 +168,7 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = t('comm
                 <label key={f.dependentId} className="ws-check">
                   <input type="radio" name="who" checked={patient.who === 'known' && patient.dependentId === f.dependentId}
                     onChange={() => setPatient((d) => ({ ...d, who: 'known', dependentId: f.dependentId }))} />
-                  {f.name}{t('patientStep.familyMemberBookedHereBefore')}</label>
+                  {t('patientStep.familyMemberBookedHereBeforeFull', { name: f.name })}</label>
               ))}
               <label className="ws-check">
                 <input type="radio" name="who" checked={patient.who === 'family'} onChange={() => setPatient((d) => ({ ...d, who: 'family', dependentId: '' }))} />
@@ -297,9 +296,7 @@ export function ConsultationPatientSection({ step, frozen, locked, consent, walk
         : missing ? <Alert>{t('patientStep.thisConsultationWasNotFound')}</Alert>
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : (
-          <p>{t('patientStep.fromYourConsultationOn')}<strong>{formatSlotDate(b?.bookingDate)}, {b?.bookingTime}</strong>
-            {b?.consultationMode ? ` (${CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode})` : ''}{b?.family ? ', for a family member' : ''}.
-          </p>
+          <p><Parts of={t.rich('patientStep.fromYourConsultationOnFull', { strong: <strong>{formatSlotDate(b?.bookingDate)}, {b?.bookingTime}</strong>, value: b?.consultationMode ? ` (${CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode})` : '', value2: b?.family ? ', for a family member' : '' })} /></p>
         )}
       <p className="ws-muted"><Link to={walkInPath}>{t('patientStep.bookForAPatientBy')}</Link></p>
       {!missing && (

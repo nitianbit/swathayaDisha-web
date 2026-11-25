@@ -5,7 +5,7 @@ import {
   payNowOpen, pharmacyAssistedApi, pharmacyLabApi, settleCardPayment, type ApiClient, type AssistedBookerApi, type AssistedPaymentMethod, type CardBookingKind, type CardOutcome,
   type CardPayer, type LabRoutes, type OpenCardOrder, type PendingMarker, type Refusal,
 } from '@jansetu/api';
-import { Alert, Button, formatRupees } from '@jansetu/ui';
+import { Alert, Button, formatRupees , Parts } from '@jansetu/ui';
 import { useSession } from '../../session.tsx';
 import type { Perform } from '../finance/finance.tsx';
 import { NOT_OPENED, openCheckout } from './topup.tsx';
@@ -225,11 +225,11 @@ export function CardPaymentPanel({ source, order: initial, amountMinor, payBy, p
       case 'refunded': onEnded(LATE_CAPTURE_WORDS); return;
       case 'failed': onEnded(step.message); return;
       case 'not_opened':
-        setNote({ tone: 'warn', text: `${NOT_OPENED()} ${dueWords}${stillOpen && !held ? t('cardBooking.tapPayNowToTry') : ''}` }); return;
+        setNote({ tone: 'warn', text: `${NOT_OPENED()} ${dueWords}${stillOpen && !held ? ` ${t('cardBooking.tapPayNowToTry')}` : ''}` }); return;
       case 'unpaid':
         if (step.inFlight || reported.current) { setHeld(true); setNote({ tone: 'warn', text: DO_NOT_PAY_AGAIN() }); return; }
         setHeld(false);
-        setNote({ tone: 'warn', text: t('cardBooking.notPaidYetIfYou', { dueWords, value: stillOpen ? t('cardBooking.tapPayNowToPay') : '' }) });
+        setNote({ tone: 'warn', text: t('cardBooking.notPaidYetIfYou', { dueWords, value: stillOpen ? ` ${t('cardBooking.tapPayNowToPay')}` : '' }) });
         return;
       case 'blocked': if (reported.current) setHeld(true); setNote({ tone: 'error', text: step.message }); return;
       default:
@@ -299,7 +299,7 @@ export function CardPaymentPanel({ source, order: initial, amountMinor, payBy, p
   return (
     <div className="confirm" role="group" aria-label={t('common.waitingForPayment2')}>
       <Alert tone="warn">
-        <strong>{t('common.waitingForPayment')}</strong> {payByWords(due)}{t('cardBooking.theTimeIsHeldFor')}{source.toldOnPaid}
+        <Parts of={t.rich('cardBooking.theTimeIsHeldForFull', { words: <strong>{t('common.waitingForPayment')}</strong>, payByWords: payByWords(due), toldOnPaid: source.toldOnPaid })} />
       </Alert>
       {note && <Alert tone={note.tone}>{note.text}</Alert>}
       {!canPay && !held && (
@@ -327,7 +327,7 @@ export function CardDueSection({ bookingRef, summary, newAccount, listPath, list
   return (
     <section className="ws-section" aria-labelledby="card-h">
       <h2 id="card-h">{t('cardBooking.bookingHeldWaitingForPayment')}</h2>
-      <p>{t('cardBooking.payByCardOrUpi')}{bookingRef ? <>{t('common.bookingReference')}<strong>{bookingRef}</strong>.</> : null}</p>
+      <p>{t('cardBooking.payByCardOrUpi')}{bookingRef ? <>{' '}<Parts of={t.rich('common.bookingReferenceFull2', { bookingRef: <strong>{bookingRef}</strong> })} /></> : null}</p>
       {summary}
       {children}
       {newAccount && <p className="ws-muted">{t('common.thisNumberWasNewTo')}</p>}

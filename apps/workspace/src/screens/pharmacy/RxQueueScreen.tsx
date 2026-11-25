@@ -34,7 +34,7 @@ export function RxQueueScreen() {
           <Empty title={t('rxQueue.noPrescriptionsWaiting')}>{t('rxQueue.newPrescriptionOrdersWillAppear')}</Empty>
         ) : (
           <>
-            <p className="ws-count" aria-live="polite">{q.data.total}{t('rxQueue.waiting')}</p>
+            <p className="ws-count" aria-live="polite">{t('rxQueue.waitingFull', { total: q.data.total })}</p>
             <div className="ws-table-wrap">
               <table className="j-table">
                 <thead>
@@ -66,7 +66,7 @@ export function RxQueueScreen() {
             {q.data.totalPages > 1 && (
               <nav className="ws-pager" aria-label={t('common.pages')}>
                 <Button variant="secondary" disabled={page <= 1} onClick={() => setParams({ page: String(page - 1) })}>{t('common.previous')}</Button>
-                <span>{t('common.page')}{page}{t('common.of')}{q.data.totalPages}</span>
+                <span>{t('common.pageFull', { page, totalPages: q.data.totalPages })}</span>
                 <Button variant="secondary" disabled={page >= q.data.totalPages}
                   onClick={() => setParams({ page: String(page + 1) })}>{t('common.next')}</Button>
               </nav>

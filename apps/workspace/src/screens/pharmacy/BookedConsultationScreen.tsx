@@ -7,7 +7,7 @@ import {
   bookingPaidBy, bookingPayBy, formatRecommendationCode, bookingWasPaid, LATE_PAYMENT_BACK, orderFromBooking, PATIENT_LANGUAGES, payByWords, pharmacyAssistedApi, pharmacyStockApi, requestKeysApi, rxOrderProblems, type BookedConsultation,
   type BookerKind, type Medicine, type RefundTo, type RxMedicine, type RxOrderRequest,
 } from '@jansetu/api';
-import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, shared, TextField } from '@jansetu/ui';
+import { Alert, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, shared, TextField , Parts } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, wasAbandoned, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
@@ -36,7 +36,7 @@ export function BookedConsultationScreen() {
   const { api } = useSession();
   return (
     <>
-      <Link to="/pharmacy/consultations" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('bookedConsultation.bookedConsultations')}</Link>
+      <Link to="/pharmacy/consultations" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{` ${t('bookedConsultation.bookedConsultations')}`}</Link>
       <PageHeading title={t('bookedConsultation.consultation')} />
       <BookedConsultationDetail key={`${pharmacyId}:${bookingId}`} booker={pharmacyConsultBooker(api, pharmacyId)} bookingId={bookingId} />
     </>
@@ -98,7 +98,7 @@ export function BookedConsultationDetail({ booker, bookingId }: { booker: Consul
           <dt>{t('common.patient2')}</dt>
           <dd>
             {b.patientName ?? '—'}
-            {assistedRow && b.dependentId && <span className="ws-muted">{t('bookedConsultation.aFamilyMemberOnThe')}</span>}
+            {assistedRow && b.dependentId && <span className="ws-muted">{` ${t('bookedConsultation.aFamilyMemberOnThe')}`}</span>}
           </dd>
           <dt>{t('common.doctor2')}</dt><dd>{b.doctorName ?? '—'}</dd>
           <dt>{t('common.when')}</dt><dd>{formatSlotDate(b.bookingDate)}{b.bookingTime ? ` at ${b.bookingTime}` : ''}</dd>
@@ -106,8 +106,8 @@ export function BookedConsultationDetail({ booker, bookingId }: { booker: Consul
           {assistedRow && b.status !== 'cancelled' && <><dt>{t('bookedConsultation.howThePatientJoins')}</dt><dd>{joinWords(String(b.consultationMode ?? ''), b.assisted?.join?.on, org)}</dd></>}
           {/* WQ16c: "paid" only when the server says the money was taken (captured, refunded or forfeited). */}
           {assistedRow && typeof b.price === 'number' && (waiting
-            ? <><dt>{t('bookedConsultation.price')}</dt><dd>{formatRupees(b.price)}{t('bookedConsultation.notPaidYet')}</dd></>
-            : !bookingWasPaid(b) ? <><dt>{t('bookedConsultation.price')}</dt><dd>{formatRupees(b.price)}{t('bookedConsultation.notPaid')}</dd></>
+            ? <><dt>{t('bookedConsultation.price')}</dt><dd>{t('bookedConsultation.notPaidYetFull', { amount: formatRupees(b.price) })}</dd></>
+            : !bookingWasPaid(b) ? <><dt>{t('bookedConsultation.price')}</dt><dd>{t('bookedConsultation.notPaidFull', { amount: formatRupees(b.price) })}</dd></>
             : <><dt>{paidBy === 'card' ? t('common.paidByCardOrUpi') : paidBy === 'wallet' ? t('common.paidFromYourWallet') : t('bookedConsultation.amountPaid')}</dt><dd>{formatRupees(b.price)}</dd></>)}
           {b.assisted?.preferredLanguage && <><dt>{t('bookedConsultation.language')}</dt><dd>{languageWords(b.assisted.preferredLanguage)}</dd></>}
           {b.primaryConcern && <><dt>{t('bookedConsultation.problem')}</dt><dd>{b.primaryConcern}</dd></>}
@@ -217,7 +217,7 @@ function Prescription({ pharmacyId, org, booking, onRetry }: { pharmacyId: strin
     <section className="ws-section" aria-labelledby="rx-h">
       <h2 id="rx-h">{t('bookedConsultation.prescriptionDispensingCopy')}</h2>
       <p className="ws-muted">{t(`bookedConsultation.diagnosisNotShown.${org}`)}
-        {p.prescribedBySpecialistName ? t('bookedConsultation.writtenBy', { prescribedBySpecialistName: p.prescribedBySpecialistName }) : ''}{p.prescribedAt ? ` on ${formatDateTime(p.prescribedAt)}` : ''}.
+        {p.prescribedBySpecialistName ? ` ${t('bookedConsultation.writtenBy', { prescribedBySpecialistName: p.prescribedBySpecialistName })}` : ''}{p.prescribedAt ? ` on ${formatDateTime(p.prescribedAt)}` : ''}.
       </p>
       {medicines.length > 0 ? (
         <div className="ws-table-wrap">
@@ -238,7 +238,7 @@ function Prescription({ pharmacyId, org, booking, onRetry }: { pharmacyId: strin
       {p.recommendationCode && <p><strong>{t('bookedConsultation.recommendedTestsCode')}</strong> {formatRecommendationCode(p.recommendationCode)}</p>}
       <div className="ws-actions">
         {p.fileUrls[0] ? (
-          <Button variant="secondary" busy={opening !== null} onClick={() => void open(p.fileUrls[0]!)}><FileText size={16} aria-hidden="true" />{t('bookedConsultation.openThePrescriptionCopy')}</Button>
+          <Button variant="secondary" busy={opening !== null} onClick={() => void open(p.fileUrls[0]!)}><FileText size={16} aria-hidden="true" />{` ${t('bookedConsultation.openThePrescriptionCopy')}`}</Button>
         ) : p.copyPending ? (
           <>
             <span className="ws-muted">{t('bookedConsultation.thePrintableCopyIsBeing')}</span>
@@ -246,7 +246,7 @@ function Prescription({ pharmacyId, org, booking, onRetry }: { pharmacyId: strin
           </>
         ) : null}
       </div>
-      {fileError && <Alert>{t('bookedConsultation.couldNotOpenTheCopy')}{fileError}</Alert>}
+      {fileError && <Alert>{t('bookedConsultation.couldNotOpenTheCopyFull', { fileError })}</Alert>}
       <DocumentPreview preview={preview} title={t('bookedConsultation.prescriptionCopy')} noun={t('bookedConsultation.copy')} fileName={t('bookedConsultation.prescriptionCopy2')} />
       {org === 'pharmacy' && medicines.length > 0 && <RxOrder pharmacyId={pharmacyId} booking={booking} medicines={medicines} />}
     </section>
@@ -383,7 +383,7 @@ function RxOrder({ pharmacyId, booking, medicines }: { pharmacyId: string; booki
         <TextField label={t('bookedConsultation.noteForTheOrderOptional')} value={notes} maxLength={1000} onChange={(e) => setNotes(e.target.value)} />
       </fieldset>
       {problem && <Alert>{problem}</Alert>}
-      {refused && <Alert>{t('bookedConsultation.notMade')}{refused}</Alert>}
+      {refused && <Alert>{t('bookedConsultation.notMadeFull', { refused })}</Alert>}
       {!review ? (
         <div className="ws-actions">
           <Button type="submit">{t('bookedConsultation.checkTheOrder')}</Button>
@@ -454,5 +454,5 @@ function RxLine({ pharmacyId, prescribed, line, onChange }: { pharmacyId: string
 export function JoinCall({ b }: { b: Pick<BookedConsultation, 'virtualMeeting'> }) {
   const joinUrl = b.virtualMeeting?.joinUrl && /^https:\/\//.test(b.virtualMeeting.joinUrl) ? b.virtualMeeting.joinUrl : null;
   if (!joinUrl) return null;
-  return <p><a className="j-btn j-btn--primary" href={joinUrl} target="_blank" rel="noopener noreferrer">{t('bookedConsultation.joinCall')}</a>{t('bookedConsultation.openItOnThisDevice')}</p>;
+  return <p><Parts of={t.rich('bookedConsultation.openItOnThisDeviceFull', { words: <a className="j-btn j-btn--primary" href={joinUrl} target="_blank" rel="noopener noreferrer">{t('bookedConsultation.joinCall')}</a> })} /></p>;
 }

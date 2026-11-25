@@ -41,7 +41,7 @@ function Status({ d }: { d: DoctorContext }) {
           {' '}<Link to="/doctor/consult-now">{t('common.consultNow')}</Link>
         </dd>
         <dt>{t('doctorHome.offersWaiting')}</dt>
-        <dd>{offers.isPending ? '…' : offers.isError ? messageOf(offers.error) : offers.data.length === 0 ? 'None' : <Link to="/doctor/consult-now">{offers.data.length}{t('doctorHome.open')}{offers.data.length === 1 ? 'offer' : 'offers'}</Link>}</dd>
+        <dd>{offers.isPending ? '…' : offers.isError ? messageOf(offers.error) : offers.data.length === 0 ? 'None' : <Link to="/doctor/consult-now">{t('doctorHome.openFull', { length: offers.data.length, value: offers.data.length === 1 ? 'offer' : 'offers' })}</Link>}</dd>
       </dl>
       <h3>{t('doctorHome.nextAppointments')}</h3>
       {next.refreshError && <RefreshFailed error={next.refreshError} readAt={next.readAt} onRetry={next.refetch} />}

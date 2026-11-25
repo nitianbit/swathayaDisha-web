@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import {
   BATCH_ACTION_FROM, inventoryApi, orderStatusLabel, type Batch, type RecallTrace, type SupplierReturn, type SupplierReturnReason,
   type SupplierReturnRequest, requestKeysApi } from '@jansetu/api';
-import { Alert, Button, formatDateTime, Loading, shared, TextArea, TextField } from '@jansetu/ui';
+import { Alert, Button, formatDateTime, Loading, shared, TextArea, TextField , Parts } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
@@ -191,7 +191,7 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
           const r = await requestKeysApi(api).abandon('supplier_return', pending.requestKey);
           return { state: r.state, record: r.record as unknown as SupplierReturn | undefined };
         }}
-        summary={pending.restored || !b ? null : <div>{b.quantity}{t('batchActions.unitsTo')}{pending.supplierName} · {b.reason.replace(/_/g, ' ')}{b.notes ? ` · “${b.notes}”` : ''}</div>} />
+        summary={pending.restored || !b ? null : <div>{t('batchActions.unitsToFull', { quantity: b.quantity, supplierName: pending.supplierName, reason: b.reason.replace(/_/g, ' '), value: b.notes ? ` · “${b.notes}”` : '' })}</div>} />
     );
   }
 
@@ -200,7 +200,7 @@ function SupplierReturnForm({ itemId, batch, onDone, onCancel }: {
   const active = suppliers.data.filter((s) => s.state === 'active');
   if (active.length === 0) {
     return (
-      <Alert tone="warn">{t('batchActions.returnsGoToOneOf')}<Link to="/pharmacy/suppliers">{t('common.addASupplier')}</Link>{t('batchActions.thenComeBackToThis')}</Alert>
+      <Alert tone="warn"><Parts of={t.rich('batchActions.returnsGoToOneOfFull', { words: <Link to="/pharmacy/suppliers">{t('common.addASupplier')}</Link> })} /></Alert>
     );
   }
 
@@ -276,13 +276,12 @@ function TraceLoader({ itemId, batchId }: { itemId: string; batchId: string }) {
 function TraceView({ trace, justRecalled = false }: { trace: RecallTrace; justRecalled?: boolean }) {
   return (
     <div className="confirm" role="region" aria-label={t('batchActions.recallTraceForBatch', { batchNumber: trace.batch.batchNumber })}>
-      {justRecalled && <Alert tone="ok">{t('batchActions.batch')}{trace.batch.batchNumber}{t('batchActions.isRecalled')}</Alert>}
+      {justRecalled && <Alert tone="ok">{t('batchActions.batchFull', { batchNumber: trace.batch.batchNumber })}</Alert>}
       <div className="confirm-text">{t('batchActions.openOrdersHoldingThisBatch')}{trace.openOrders.length})</div>
       {trace.openOrders.length === 0 ? <span className="ws-muted">{t('batchActions.none')}</span> : (
         <ul className="ws-list">
           {trace.openOrders.map((o) => (
-            <li key={o.orderId}>{o.orderNumber ?? o.orderId.slice(-8)} · {orderStatusLabel(o.status)} ·{' '}
-              {o.heldUnits.reduce((a, u) => a + u.quantity, 0)}{t('batchActions.unitsSwapOrCancelIt')}</li>
+            <li key={o.orderId}>{t('batchActions.unitsSwapOrCancelItFull', { orderNumber: o.orderNumber ?? o.orderId.slice(-8), orderStatusLabel: orderStatusLabel(o.status), reduce: o.heldUnits.reduce((a, u) => a + u.quantity, 0) })}</li>
           ))}
         </ul>
       )}
@@ -290,7 +289,7 @@ function TraceView({ trace, justRecalled = false }: { trace: RecallTrace; justRe
       {trace.dispensedTo.length === 0 ? <span className="ws-muted">{t('batchActions.none')}</span> : (
         <ul className="ws-list">
           {trace.dispensedTo.map((d) => (
-            <li key={d.orderId}>{t('common.order')}{d.orderNumber ?? d.orderId.slice(-8)} · {d.quantity}{t('batchActions.units2')}{d.returnedQty ? ` (${d.returnedQty} returned)` : ''} · {formatDateTime(d.completedAt)}</li>
+            <li key={d.orderId}>{t('common.orderFull', { orderNumber: d.orderNumber ?? d.orderId.slice(-8), quantity: d.quantity, value: d.returnedQty ? ` (${d.returnedQty} returned)` : '', time: formatDateTime(d.completedAt) })}</li>
           ))}
         </ul>
       )}

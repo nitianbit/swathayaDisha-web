@@ -22,7 +22,7 @@ export function CursorPager({ pages, nextCursor, label }: { pages: ReturnType<ty
   return (
     <nav className="ws-pager" aria-label={label}>
       <Button variant="secondary" disabled={pages.page <= 1} onClick={pages.newer}>{t('common.newer')}</Button>
-      <span>{t('common.page')}{pages.page}</span>
+      <span>{t('common.pageFull2', { page: pages.page })}</span>
       <Button variant="secondary" disabled={!nextCursor} onClick={() => pages.older(nextCursor!)}>{t('common.older')}</Button>
     </nav>
   );

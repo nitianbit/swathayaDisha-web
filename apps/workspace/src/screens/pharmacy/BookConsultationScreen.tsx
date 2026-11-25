@@ -7,7 +7,7 @@ import {
   patientBody, SWITCHED_OFF_MESSAGE, type AssistedCardPayment, type AssistedDoctor, type AssistedMode, type AssistedSlot, type BookedConsultation, type BookerKind,
   type ByKeyAnswer, type ConsultationReceipt, type ConsultationRequest, type JoinOn, type Refusal,
 } from '@jansetu/api';
-import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextField } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatRupees, Loading, TextField , Parts } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
@@ -69,12 +69,12 @@ function SummaryList({ s }: { s: Summary }) {
   const org = s.org ?? 'pharmacy';
   return (
     <ul className="ws-list">
-      <li>{t('common.patient')}<strong>{s.patient}</strong></li>
-      {s.branch && <li>{t('bookConsultation.bookedAt')}<strong>{s.branch}</strong></li>}
-      <li>{t('common.doctor')}<strong>{s.doctor}</strong></li>
-      <li>{t('common.when2')}<strong>{describeWhen(s)}</strong></li>
-      <li>{t('common.how2')}<strong>{ASSISTED_MODE_LABEL[s.mode]}</strong>{s.mode !== 'in-person' && s.joinOn ? t('bookConsultation.joinsOn', { where: s.joinOn === 'partner_device' ? t(`bookConsultation.onThisDevice.${org}`) : t('bookConsultation.onThePatientsPhone') }) : ''}</li>
-      <li>{t('common.price')}<strong>{formatRupees(s.priceMinor / 100)}</strong>{s.couponCode ? ` (coupon ${s.couponCode})` : ''}</li>
+      <li><Parts of={t.rich('common.patientFull', { patient: <strong>{s.patient}</strong> })} /></li>
+      {s.branch && <li><Parts of={t.rich('bookConsultation.bookedAtFull', { branch: <strong>{s.branch}</strong> })} /></li>}
+      <li><Parts of={t.rich('common.doctorFull', { doctor: <strong>{s.doctor}</strong> })} /></li>
+      <li><Parts of={t.rich('common.whenFull', { describeWhen: <strong>{describeWhen(s)}</strong> })} /></li>
+      <li><Parts of={t.rich('common.howFull', { value: <strong>{ASSISTED_MODE_LABEL[s.mode]}</strong>, joinsOn: s.mode !== 'in-person' && s.joinOn ? ` ${t('bookConsultation.joinsOn', { where: s.joinOn === 'partner_device' ? t(`bookConsultation.onThisDevice.${org}`) : t('bookConsultation.onThePatientsPhone') })}` : '' })} /></li>
+      <li><Parts of={t.rich('common.priceFull', { amount: <strong>{formatRupees(s.priceMinor / 100)}</strong>, value: s.couponCode ? ` (coupon ${s.couponCode})` : '' })} /></li>
     </ul>
   );
 }
@@ -334,7 +334,7 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
         <Alert tone="ok">
           {done.replayed ? t('common.thisBookingWasAlreadyMade')
             : byCard ? t('bookConsultation.theConsultationIsBookedAnd') : t('bookConsultation.theConsultationIsBookedAnd2')}
-          {done.ref ? <>{t('common.bookingReference')}<strong>{done.ref}</strong>.</> : null}
+          {done.ref ? <>{' '}<Parts of={t.rich('common.bookingReferenceFull', { ref: <strong>{done.ref}</strong> })} /></> : null}
         </Alert>
         {done.note && <Alert tone="warn">{done.note}</Alert>}
         <SummaryList s={done.summary} />
@@ -354,7 +354,7 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
   if (off) {
     return (
       <Alert tone="warn">
-        {SWITCHED_OFF_MESSAGE}{t(`bookConsultation.turnsItOnFor.${org}`)}</Alert>
+        {SWITCHED_OFF_MESSAGE}{' '}{t(`bookConsultation.turnsItOnFor.${org}`)}</Alert>
     );
   }
 
@@ -431,7 +431,7 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
                             {slots.isPending ? <Loading label={t('common.findingFreeTimes')} />
                               : slots.isError ? <ErrorState message={booker.refusal(slots.error).message} onRetry={() => void slots.refetch()} />
                               : slotDays.length === 0 ? (
-                                <span>{t('bookConsultation.noFreeTimesFrom')}{formatSlotDate(slots.data.from)}{t('common.to')}{formatSlotDate(slots.data.to)}{t('bookConsultation.chooseALaterDayOr')}</span>
+                                <span>{t('bookConsultation.noFreeTimesFromFull', { date: formatSlotDate(slots.data.from), date2: formatSlotDate(slots.data.to) })}</span>
                               ) : <SlotDays days={slotDays} chosen={slotId} onChoose={chooseSlot} />}
                           </div>
                         )}

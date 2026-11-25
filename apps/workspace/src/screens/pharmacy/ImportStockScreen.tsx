@@ -8,7 +8,7 @@ import {
   type InventoryImport,
 } from '@jansetu/api';
 import { formatClock } from '@jansetu/i18n';
-import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
+import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading , Parts } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp } from '../../requests.ts';
@@ -30,7 +30,7 @@ export function ImportStockScreen() {
   const pharmacyId = usePharmacyId();
   return (
     <>
-      <Link to="/pharmacy/stock" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{t('common.stock')}</Link>
+      <Link to="/pharmacy/stock" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{` ${t('common.stock')}`}</Link>
       <PageHeading title={t('common.importStockFromAFile')}>{t('importStock.uploadASpreadsheetOfThe')}</PageHeading>
       <ImportStock key={pharmacyId} pharmacyId={pharmacyId} />
     </>
@@ -90,9 +90,9 @@ function Columns() {
       <h2 id="cols-h">{t('importStock.n1PrepareTheFile')}</h2>
       <p>{t('importStock.useAnExcelXlsxXls')}</p>
       <Alert tone="warn">
-        <strong>{t('importStock.datesAreReadDayFirst')}</strong>{t('importStock.writeExpiryDatesAs')}{IMPORT_DATE_FORMAT}{t('importStock.n05062027Is5')}</Alert>
+        <Parts of={t.rich('importStock.writeExpiryDatesAsFull', { words: <strong>{t('importStock.datesAreReadDayFirst')}</strong>, IMPORT_DATE_FORMAT })} /></Alert>
       <div className="ws-actions">
-        <Button variant="secondary" busy={busy} onClick={() => void template()}><Download size={16} aria-hidden="true" />{t('importStock.downloadTheTemplateWithAn')}</Button>
+        <Button variant="secondary" busy={busy} onClick={() => void template()}><Download size={16} aria-hidden="true" />{` ${t('importStock.downloadTheTemplateWithAn')}`}</Button>
         {file && <a href={file.url} download={file.name}>{t('importStock.saveTheTemplateAgain')}</a>}
       </div>
       <p className="ws-muted">{t('importStock.theTemplateHasEveryColumn')}</p>
@@ -117,7 +117,7 @@ function Columns() {
       <p>{IMPORT_NUMBER_NOTE}</p>
       <p>{t('importStock.aPriceCellLeftBlank')}</p>
       <h3>{t('importStock.newMedicines')}</h3>
-      <p>{t('importStock.aMedicineNotInThe')}<code>{t('importStock.prescriptionRequired')}</code>.</p>
+      <p><Parts of={t.rich('importStock.aMedicineNotInTheFull', { words: <code>{t('importStock.prescriptionRequired')}</code> })} /></p>
     </section>
   );
 }
@@ -198,11 +198,11 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
             consequence: t('importStock.checkingAFileAddsNothing'),
             onForget: () => settle(op.requestKey),
           }}>
-          <Alert tone="warn">{t('importStock.theAnswerToTheFile')}{op.error ? ` (${op.error})` : ''}{t('importStock.nothingWasAddedToStock')}{op.body ? t('importStock.file', { fileName: op.body.fileName }) : ''}
+          <Alert tone="warn">{t('importStock.theAnswerToTheFile')}{op.error ? ` (${op.error})` : ''}{t('importStock.nothingWasAddedToStock')}{op.body ? ` ${t('importStock.file', { fileName: op.body.fileName })}` : ''}
           </Alert>
           {candidate && (
             <div className="confirm" role="group" aria-label={t('importStock.isThisTheImport')}>
-              <div className="confirm-text">{t('importStock.anImportOf')}{candidate.fileName}{t('importStock.startedAt')}{formatTime(candidate.createdAt)}{t('importStock.isThisIt')}</div>
+              <div className="confirm-text">{t('importStock.anImportOfFull', { fileName: candidate.fileName, time: formatTime(candidate.createdAt) })}</div>
               <div className="confirm-actions">
                 <Button onClick={() => { settle(op.requestKey); open(candidate); }}>{t('importStock.openIt')}</Button>
                 <Button variant="secondary" onClick={() => { setCandidate(null); settle(op.requestKey); }}>{t('importStock.uploadAgain')}</Button>
@@ -237,7 +237,7 @@ function Upload({ pharmacyId }: { pharmacyId: string }) {
             <span id="import-file-hint" className="j-field__hint">{t('importStock.xlsxXlsOrCsvUp')}</span>
             {fileError && <span id="import-file-error" className="j-field__error">{fileError}</span>}
           </div>
-          {refused && <Alert>{t('importStock.theFileWasNotChecked')}{refused}</Alert>}
+          {refused && <Alert>{t('importStock.theFileWasNotCheckedFull', { refused })}</Alert>}
           <div><Button type="submit" busy={busy}>{t('importStock.checkTheFile')}</Button></div>
         </form>
       )}
@@ -281,7 +281,7 @@ function History({ pharmacyId }: { pharmacyId: string }) {
                       <td>{r.status === 'previewed' && discarded.ids.includes(r._id)
                         ? <Badge>{t('common.discardedOnThisDevice')}</Badge>
                         : <Badge tone={importTone(r.status)}>{IMPORT_STATUS_LABEL[r.status] ?? r.status}</Badge>}</td>
-                      <td>{r.totalRows} ({r.validRows}{t('importStock.ready')}{r.errorRows}{t('importStock.withProblems')}</td>
+                      <td>{t('importStock.readyFull', { totalRows: r.totalRows, validRows: r.validRows, errorRows: r.errorRows })}</td>
                       <td>{r.committedRows ?? 0}</td>
                     </tr>
                   ))}
@@ -291,7 +291,7 @@ function History({ pharmacyId }: { pharmacyId: string }) {
             {q.data.totalPages > 1 && (
               <nav className="ws-pager" aria-label={t('common.pages')}>
                 <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>{t('common.previous')}</Button>
-                <span>{t('common.page')}{page}{t('common.of')}{q.data.totalPages}</span>
+                <span>{t('common.pageFull', { page, totalPages: q.data.totalPages })}</span>
                 <Button variant="secondary" disabled={page >= q.data.totalPages} onClick={() => setPage(page + 1)}>{t('common.next')}</Button>
               </nav>
             )}

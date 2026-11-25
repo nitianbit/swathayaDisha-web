@@ -28,7 +28,7 @@ export function LowStockScreen() {
         : q.data.items.length === 0 ? <Empty title={t('lowStock.nothingIsLow')}>{t('lowStock.everyMedicineIsAboveIts')}</Empty>
         : (
           <>
-            <p className="ws-count">{q.data.total}{t('lowStock.medicinesToReorder')}</p>
+            <p className="ws-count">{t('lowStock.medicinesToReorderFull', { total: q.data.total })}</p>
             <div className="ws-table-wrap">
               <table className="j-table">
                 <thead>
@@ -53,7 +53,7 @@ export function LowStockScreen() {
             {q.data.totalPages > 1 && (
               <nav className="ws-pager" aria-label={t('common.pages')}>
                 <Button variant="secondary" disabled={page <= 1} onClick={() => setParams({ page: String(page - 1) })}>{t('common.previous')}</Button>
-                <span>{t('common.page')}{page}{t('common.of')}{q.data.totalPages}</span>
+                <span>{t('common.pageFull', { page, totalPages: q.data.totalPages })}</span>
                 <Button variant="secondary" disabled={page >= q.data.totalPages} onClick={() => setParams({ page: String(page + 1) })}>{t('common.next')}</Button>
               </nav>
             )}

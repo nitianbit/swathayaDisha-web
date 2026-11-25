@@ -5,7 +5,7 @@ import {
   ASSISTED_MODE_LABEL, awaitingCardPayment, bookingStatusLabel, isAssistedBooking, formatSlotDate, isSwitchedOff, SWITCHED_OFF_MESSAGE,
   type AssistedBookingStatus, type AssistedMode, type BookedConsultation,
 } from '@jansetu/api';
-import { Alert, Badge, Empty, ErrorState, Loading } from '@jansetu/ui';
+import { Alert, Badge, Empty, ErrorState, Loading , Parts } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { CursorPager, StatusFilter, useCursorPages } from './cursorList.tsx';
@@ -72,7 +72,7 @@ export function BookedConsultationsList({ booker }: { booker: ConsultBooker }) {
           : <ErrorState message={booker.refusal(q.error).message} onRetry={() => void q.refetch()} />)
         : q.data.items.length === 0 ? (
           <Empty title={status ? t('bookedConsultations.noConsultationsWithThisStatus') : t('bookedConsultations.noConsultationsBookedYet')}>
-            <Link to={booker.paths.book}>{t('bookedConsultations.bookAConsultation')}</Link>{t('common.forAPatientAtYour')}</Empty>
+            <Parts of={t.rich('common.forAPatientAtYourFull', { words: <Link to={booker.paths.book}>{t('bookedConsultations.bookAConsultation')}</Link> })} /></Empty>
         ) : (
           <>
             <div className="ws-table-wrap">

@@ -15,7 +15,7 @@ export function SlotDays<S extends { slotId: string; startTime: string; endTime?
         const shown = formatSlotDate(day.replace(/-/g, ''));
         return (
           <fieldset key={day} className="ws-checks">
-            <legend>{t('common.freeTimesOn')}{shown}</legend>
+            <legend>{t('common.freeTimesOnFull2', { shown })}</legend>
             <div className="ws-actions">
               {times.map((s) => (
                 <Button key={s.slotId} variant={chosen === s.slotId ? 'primary' : 'secondary'} aria-pressed={chosen === s.slotId}
