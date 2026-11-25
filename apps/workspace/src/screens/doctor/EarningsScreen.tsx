@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ApiError, DOCTOR_LEDGER_KIND_LABEL as LEDGER_KIND_LABEL, doctorPayoutDetailsProblems as payoutDetailsProblems, periodProblem,
-  doctorStatementCsvName as statementCsvName, type DoctorFinanceSummary as FinanceSummary, type Page,
+  ApiError, DOCTOR_LEDGER_KIND_LABEL as LEDGER_KIND_LABEL, doctorPayoutDetailsProblems as payoutDetailsProblems,
+  type DoctorFinanceSummary as FinanceSummary, type Page,
   type DoctorPayoutDetailsInput as PayoutDetailsInput, type DoctorPayoutDetailsView as PayoutDetailsView, type SettlementAccountView,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, shared, TextField, formatDateTime } from '@jansetu/ui';
@@ -11,11 +11,14 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded } from '../../requests.ts';
 import { formatDay } from '../partner/labs.tsx';
 import { OwnerFinanceTiles } from '../finance/financeTiles.tsx';
+import { StatementPeriodFields, useStatementPeriod } from '../finance/finance.tsx';
 import { NotADoctor, rupeesOf, useDoctor, type DoctorContext } from './doctor.tsx';
 import { t } from '../../i18n/doctor/index.ts';
 import { t as wt } from '../../i18n/withdrawals/index.ts';
 
 const STATEMENT_PAGE = 50;
+/** The statement file's name: `doctor-statement[-from][-to-…].csv`, as before. */
+const CSV_PREFIX = 'doctor'; // i18n-ignore: a file-name part, not words
 const PAYOUT_METHOD_LABEL = () => ({ bank_transfer: t('earnings.bankTransfer'), upi: 'UPI', other: 'Other' } as const);
 const EVENT_LABEL = (): Record<string, string> => ({
   'finance.payout_details_changed': t('earnings.payoutDetailsChanged'),
@@ -211,39 +214,27 @@ function PayoutForm({ d, version, onClose, onSaved }: {
 // ── Statement ──
 
 function Statement({ d }: { d: DoctorContext }) {
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [period, setPeriod] = useState<{ from?: string; to?: string }>({});
-  const [periodError, setPeriodError] = useState<string | null>(null);
+  // WQ52: the finance statements' period fields and CSV (India dates, a short pause while a date is typed).
+  const statementPeriod = useStatementPeriod();
+  const { period, filtered } = statementPeriod;
   const q = useInfiniteQuery({
-    queryKey: [...d.key, 'statement', period.from ?? '', period.to ?? ''],
-    queryFn: ({ pageParam }) => d.api.statement({ before: pageParam, limit: STATEMENT_PAGE, from: period.from, to: period.to }),
+    queryKey: [...d.key, 'statement', period],
+    queryFn: ({ pageParam }) => d.api.statement({ ...period, before: pageParam, limit: STATEMENT_PAGE }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
+    enabled: period !== null,
   });
-
-  function apply(e: FormEvent) {
-    e.preventDefault();
-    const p = periodProblem(from || undefined, to || undefined);
-    setPeriodError(p);
-    if (!p) setPeriod({ ...(from ? { from } : {}), ...(to ? { to } : {}) });
-  }
 
   const lines = q.data?.pages.flatMap((p) => p.lines) ?? [];
   const olderError = q.isFetchNextPageError ? messageOf(q.error) : null;
   return (
     <section className="ws-section" aria-labelledby="stmt-h">
       <h2 id="stmt-h">{t('earnings.statement')}</h2>
-      <form className="ws-search" noValidate onSubmit={apply} aria-label={t('earnings.statementPeriod')}>
-        <TextField label={t('earnings.from')} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        <TextField label={t('earnings.to')} type="date" value={to} error={periodError} onChange={(e) => setTo(e.target.value)} />
-        <Button type="submit" variant="secondary">{t('common.show')}</Button>
-      </form>
-      {/* Keyed by period: a download started for one period never reports into another. */}
-      <CsvDownload key={`${period.from ?? ''}:${period.to ?? ''}`} d={d} from={period.from} to={period.to} />
-      {q.isPending ? <Loading label={t('earnings.loadingTheStatement')} />
+      <StatementPeriodFields p={statementPeriod} csv={(p, signal) => d.api.statementCsv(p, signal)} csvPrefix={CSV_PREFIX} />
+      {!period ? null
+        : q.isPending ? <Loading label={t('earnings.loadingTheStatement')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : lines.length === 0 ? <Empty title={t('earnings.noEntries')}>{period.from || period.to ? t('earnings.nothingInThisPeriod') : t('earnings.nothingHasBeenEarnedOr')}</Empty>
+        : lines.length === 0 ? <Empty title={t('earnings.noEntries')}>{filtered ? t('earnings.nothingInThisPeriod') : t('earnings.nothingHasBeenEarnedOr')}</Empty>
         : (
           <>
             <div className="ws-table-wrap">
@@ -267,46 +258,6 @@ function Statement({ d }: { d: DoctorContext }) {
           </>
         )}
     </section>
-  );
-}
-
-/** The period's CSV, read with the session's token into an in-memory blob and saved under the server's file name. */
-function CsvDownload({ d, from, to }: { d: DoctorContext; from?: string; to?: string }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const ctrl = useRef<AbortController | null>(null);
-  useEffect(() => () => ctrl.current?.abort(), []);
-
-  async function download() {
-    ctrl.current?.abort();
-    const mine = new AbortController();
-    ctrl.current = mine;
-    setBusy(true);
-    setError(null);
-    try {
-      const blob = await d.api.statementCsv({ from, to }, mine.signal);
-      if (mine.signal.aborted) return;
-      const url = URL.createObjectURL(new Blob([blob], { type: 'text/csv' }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = statementCsvName(from, to);
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    } catch (err) {
-      if (!mine.signal.aborted) setError(messageOf(err));
-    } finally {
-      if (ctrl.current === mine) { ctrl.current = null; setBusy(false); }
-    }
-  }
-
-  return (
-    <div className="ws-action">
-      <Button variant="secondary" busy={busy} onClick={() => void download()}>{from || to ? t('earnings.downloadCsvRange', { from: from ? formatDay(from) : t('earnings.rangeStart'), to: to ? formatDay(to) : t('earnings.rangeToday') }) : t('earnings.downloadCsvAll')}
-      </Button>
-      {error && <Alert>{t('earnings.couldNotDownloadTheStatementFull', { error })}</Alert>}
-    </div>
   );
 }
 

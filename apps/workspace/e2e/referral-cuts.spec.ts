@@ -485,7 +485,8 @@ test('pharmacy statement: a lone cut line that is not the whole booking is liste
   // The whole statement is refused by the server, in its words; a period is exported instead.
   await statement.getByRole('button', { name: 'Download CSV (all entries)' }).click();
   await expect(statement.getByText('Could not download the statement: More than 5000 entries in this period; export a shorter period')).toBeVisible();
-  await statement.getByLabel('From (India date)').fill('2026-11-01');
+  // WQ52: a year typed digit by digit (0002 → 0020 → 0202 → 2026) is read once, after a short pause.
+  for (const year of ['0002', '0020', '0202', '2026']) await statement.getByLabel('From (India date)').fill(`${year}-11-01`);
   await statement.getByLabel('To (India date)').fill('2026-11-30');
   const download = page.waitForEvent('download');
   await statement.getByRole('button', { name: 'Download CSV (from 1 Nov 2026 to 30 Nov 2026)' }).click();
@@ -495,7 +496,6 @@ test('pharmacy statement: a lone cut line that is not the whole booking is liste
   await expect.poll(() => backend.calls.filter((c) => c.path.startsWith('/pharmacy-assisted/finance/statement') && !c.path.includes('kind=wallet')).map((c) => c.path)).toEqual([
     '/pharmacy-assisted/finance/statement?kind=referral&limit=50',
     '/pharmacy-assisted/finance/statement.csv?kind=referral',
-    '/pharmacy-assisted/finance/statement?kind=referral&from=2026-11-01&limit=50',
     '/pharmacy-assisted/finance/statement?kind=referral&from=2026-11-01&to=2026-11-30&limit=50',
     '/pharmacy-assisted/finance/statement.csv?kind=referral&from=2026-11-01&to=2026-11-30',
   ]);

@@ -333,8 +333,7 @@ export default {
   'earnings.sendFuturePayoutsToFull': 'Send future payouts to {masked}? The details you have now stop being used, and no payout is made until Jansetu has verified the new ones.',
   'earnings.theDetailsYouHaveNow': '? The details you have now stop being used, and no payout is made until Jansetu has verified the new ones.',
   'earnings.statement': 'Statement',
-  'earnings.statementPeriod': 'Statement period',
-  'earnings.from': 'From',
+  /** Column of the payouts table: where the payout was sent. */
   'earnings.to': 'To',
   'earnings.loadingTheStatement': 'Loading the statement…',
   'earnings.noEntries': 'No entries',
@@ -347,13 +346,7 @@ export default {
   'earnings.balanceAfter': 'Balance after',
   'earnings.showOlderEntries': 'Show older entries',
   'earnings.couldNotLoadOlderEntriesFull': 'Could not load older entries: {olderError}',
-  /** {from} and {to} are dates, or the words below. */
-  'earnings.downloadCsvRange': 'Download CSV ({from} to {to})',
-  'earnings.downloadCsvAll': 'Download CSV (everything)',
-  'earnings.rangeStart': 'start',
-  'earnings.rangeToday': 'today',
   'earnings.billed': 'Billed',
-  'earnings.couldNotDownloadTheStatementFull': 'Could not download the statement: {error}',
   'earnings.couldNotLoadMoreFull': 'Could not load more: {messageOf}',
   'earnings.payouts': 'Payouts',
   'earnings.loadingPayouts': 'Loading payouts…',

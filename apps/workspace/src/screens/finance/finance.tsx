@@ -228,10 +228,22 @@ export function StatementSection({ queryKey, load, csv, csvPrefix, emptyText = t
 export function useStatementPeriod() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const bad = (from && !isRealDate(from)) || (to && !isRealDate(to)) ? t('period.badDates') : from && to && from > to ? t('period.endsBeforeStart') : null;
-  const period: PeriodQuery | null = bad ? null : { ...(from ? { from } : {}), ...(to ? { to } : {}) };
-  return { from, to, setFrom, setTo, bad, period, filtered: !!(from || to) };
+  // WQ52: the dates take effect after a short pause, so typing a year digit by digit (0002, 0020, 0202, 2026) reads once.
+  const [settled, setSettled] = useState({ from: '', to: '' });
+  useEffect(() => {
+    if (settled.from === from && settled.to === to) return undefined;
+    const timer = setTimeout(() => setSettled({ from, to }), PERIOD_PAUSE_MS);
+    return () => clearTimeout(timer);
+  }, [from, to, settled]);
+  const f = settled.from;
+  const tt = settled.to;
+  const bad = (f && !isRealDate(f)) || (tt && !isRealDate(tt)) ? t('period.badDates') : f && tt && f > tt ? t('period.endsBeforeStart') : null;
+  const period: PeriodQuery | null = bad ? null : { ...(f ? { from: f } : {}), ...(tt ? { to: tt } : {}) };
+  return { from, to, setFrom, setTo, bad, period, filtered: !!(f || tt) };
 }
+
+/** WQ52: how long the period waits after the last keystroke before it is read. */
+export const PERIOD_PAUSE_MS = 400;
 
 /** The period's fields and the CSV of that period (a new download for each period; the server's refusal is shown). */
 export function StatementPeriodFields({ p, csv, csvPrefix }: {
