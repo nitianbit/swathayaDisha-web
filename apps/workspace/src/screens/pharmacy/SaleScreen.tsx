@@ -1,10 +1,11 @@
 import './sale.css';
 import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 import {
-  ApiError, COUNTER_PAYMENTS, inventoryApi, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, medicineName, pharmacySaleApi, sameSale, sellableQty, walkInProblems,
-  type CounterPayment, type InventoryItem, type PharmacyOrder, type SaleBody, type SaleCustomer,
+  ApiError, COUNTER_PAYMENTS, formatExpiry, inventoryApi, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, medicineName, pharmacyOrdersApi, pharmacyProfileApi,
+  pharmacySaleApi, saleCandidates, saleRequestBody, sellableQty, usableCustomers, walkInProblems,
+  type CounterPayment, type InventoryItem, type PharmacyOrder, type SaleBody,
 } from '@jansetu/api';
 import { formatRupees } from '@jansetu/i18n';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, Loading, shared, TextField } from '@jansetu/ui';
@@ -12,47 +13,39 @@ import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
 import { t } from '../../i18n/sale/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
-import { definitelyNotRecorded, newRequestKey, startOp, type PendingOp } from '../../requests.ts';
+import { definitelyNotRecorded, newRequestKey, startOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
-import { orderLabel } from './orderLabels.ts';
+import { canMarkPaid, orderLabel, paymentWaitsForPharmacist } from './orderLabels.ts';
 import { CheckPanel, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
+import { PHARMACY_PROFILE_KEY } from './RxReviewScreen.tsx';
 
 /**
  * WQ50: Pharmacy › New sale, one screen for a counter sale: the customer (one this pharmacy already has, or a walk-in by
  * name and phone, linked with the patient's agreement), medicines from active stock, an optional prescription, then the
- * one primary action, "Create sale" (an owned request: the server has no request key for it, so a lost answer is looked
- * for among this customer's in-store orders, never sent again). The created sale then shows its bill (printable) and
- * takes the counter payment (cash or UPI, marked paid); an order with a prescription medicine waits for the pharmacist.
+ * one primary action, "Create sale" (an owned request: r35 has no request key for it, so a lost answer is looked for
+ * among this customer's in-store orders that did not exist before it was sent, never sent again). WQ50b: the created
+ * sale has its own page (`/pharmacy/sale/:orderId`): its bill (printable) and the counter payment (cash or UPI, marked
+ * paid); an order with a prescription medicine waits for the pharmacist.
  */
 export function SaleScreen() {
   const pharmacyId = usePharmacyId();
   return (
     <>
       <PageHeading title={t('title')}>{t('intro')}</PageHeading>
-      <Sale key={pharmacyId} pharmacyId={pharmacyId} />
+      <SaleForm key={pharmacyId} pharmacyId={pharmacyId} />
     </>
   );
-}
-
-/** The customer's words for the bill (kept in this page only, never stored). */
-type Sold = { orderId: string; customer: string | null };
-
-function Sale({ pharmacyId }: { pharmacyId: string }) {
-  const [sold, setSold] = useState<Sold | null>(null);
-  const [round, setRound] = useState(0);
-  if (sold) return <SaleDone sold={sold} onNew={() => { setSold(null); setRound((r) => r + 1); }} />;
-  return <SaleForm key={round} pharmacyId={pharmacyId} onCreated={setSold} />;
 }
 
 // ── The sale ──
 
 type Customer = { kind: 'existing'; id: string; label: string } | { kind: 'walkin' };
 interface Line { medicineId: string; name: string; qty: string; max: number; price: number | null }
-type Errors = Partial<Record<'customer' | 'name' | 'phone' | 'consent' | 'lines' | 'prescription', string>>;
+type Errors = Partial<Record<'customer' | 'name' | 'phone' | 'consent' | 'lines', string>>;
+/** The stored request (this tab's memory only): the sale, and the customer's in-store orders that existed before it. */
+type PendingSale = SaleBody & { before: string[] };
 
-const customerLabel = (c: SaleCustomer) => [c.userId.name ?? c.typedName ?? t('customer.unnamed'), c.userId.phone].filter(Boolean).join(' · ');
-const qtyOf = (l: Line) => (/^\d{1,5}$/.test(l.qty.trim()) ? Number(l.qty.trim()) : NaN);
 const codeOf = (err: unknown) => (err instanceof ApiError ? err.code ?? null : null);
 /** The server's refusals of a sale this page words (pharmacyOrders, pharmacyCustomers, the pharmacy guard). */
 const REFUSALS = ['INSUFFICIENT_BATCH_STOCK', 'INSUFFICIENT_STOCK', 'MEDICINE_NOT_AVAILABLE', 'PRICE_NOT_AVAILABLE', 'DUPLICATE_ORDER_MEDICINE',
@@ -64,29 +57,37 @@ function saleWords(err: unknown): string {
   const code = codeOf(err);
   return (REFUSALS as readonly (string | null)[]).includes(code) ? t(`refusal.${code as Refusal}`) : messageOf(err);
 }
+const qtyOf = (l: Line) => (/^\d{1,5}$/.test(l.qty.trim()) ? Number(l.qty.trim()) : NaN);
+/** After a lost answer, Forget only once a check found nothing at least 30 s after the attempt, and not on the first check. */
+const FORGET_AFTER_MS = 30_000;
 
-function SaleForm({ pharmacyId, onCreated }: { pharmacyId: string; onCreated: (s: Sold) => void }) {
+function SaleForm({ pharmacyId }: { pharmacyId: string }) {
   const { api } = useSession();
   const sale = pharmacySaleApi(api);
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { perform, busy } = useOneAtATime('order');
-  const { op, send, settle } = useOwnedOp<SaleBody>(`pharmacy-sale:${pharmacyId}`);
+  const { op, send, settle } = useOwnedOp<PendingSale>(`pharmacy-sale:${pharmacyId}`);
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [walkIn, setWalkIn] = useState({ name: '', phone: '', consent: false });
   const [lines, setLines] = useState<Line[]>([]);
   const [prescriptions, setPrescriptions] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
   const [review, setReview] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [checks, setChecks] = useState({ count: 0, lastAt: 0 });
 
   const linesOk = lines.length > 0 && lines.every((l) => Number.isInteger(qtyOf(l)) && qtyOf(l) >= 1 && qtyOf(l) <= l.max);
   const estimate = lines.reduce((a, l) => a + (Number.isFinite(qtyOf(l)) && l.price !== null ? qtyOf(l) * l.price : 0), 0);
   const unpriced = lines.some((l) => l.price === null);
   const shownCustomer = customer?.kind === 'existing' ? customer.label : customer?.kind === 'walkin' ? `${walkIn.name.trim()} · ${walkIn.phone.trim()}` : '';
+  const done = (orderId: string) => navigate(`/pharmacy/sale/${orderId}`, { replace: true });
 
   function check(e: FormEvent) {
     e.preventDefault();
     setNote(null);
+    if (uploading) return;
     const errs: Errors = {};
     if (!customer) errs.customer = t('customer.required');
     if (customer?.kind === 'walkin') {
@@ -101,23 +102,36 @@ function SaleForm({ pharmacyId, onCreated }: { pharmacyId: string; onCreated: (s
     setReview(Object.keys(errs).length === 0);
   }
 
-  /** The walk-in is linked first (found or made by phone: safe to repeat), then the sale is created once. */
+  /**
+   * The walk-in is linked first (found or made by phone: safe to repeat), the customer's in-store orders are read (so a
+   * lost answer is never matched to one of them), then the sale is created once. Nothing in here throws from inside the
+   * owned request: its body is built before it is sent.
+   */
   async function create() {
-    if (!customer) return;
+    if (!customer || uploading) return;
     setNote(null);
     try {
       await perform(async () => {
         const customerId = customer.kind === 'existing' ? customer.id : (await sale.linkWalkIn(walkIn)).userId;
         const body: SaleBody = { customerId, items: lines.map((l) => ({ medicineId: l.medicineId, orderedQty: qtyOf(l) })),
           isWalkIn: customer.kind === 'walkin', prescriptionUrls: prescriptions };
-        const r = await send(startOp(newRequestKey(), body), (b) => sale.create(b));
+        const request = saleRequestBody(body);
+        const before = (await sale.recentFor(customerId)).items.map((o) => o._id);
+        const p = startOp<PendingSale>(newRequestKey(), { ...body, before });
+        const r = await send(p, () => sale.create(request));
         if (r.kind === 'ok') {
           await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] });
-          onCreated({ orderId: r.value.order._id, customer: shownCustomer });
-        } else if (r.kind === 'refused') { setReview(false); setNote(saleWords(r.error)); }
+          done(r.value.order._id);
+          return;
+        }
+        // 503 PRESCRIPTION_CHECKOUT_UNAVAILABLE is decided before anything is written (the prescription gate runs first).
+        if (r.kind === 'unknown' && codeOf(r.error) === 'PRESCRIPTION_CHECKOUT_UNAVAILABLE' && r.error instanceof ApiError && r.error.status === 503) {
+          settle(p.requestKey); setReview(false); setNote(saleWords(r.error)); return;
+        }
+        if (r.kind === 'refused') { setReview(false); setNote(saleWords(r.error)); }
       });
     } catch (err) {
-      // The walk-in's link (or the one-at-a-time guard) refused or did not answer: no sale was sent.
+      // The walk-in's link, the read before, or the one-at-a-time guard refused or did not answer: no sale was sent.
       setReview(false);
       setNote(definitelyNotRecorded(err) ? saleWords(err) : t('walkIn.notConfirmed', { error: messageOf(err) }));
     }
@@ -125,29 +139,31 @@ function SaleForm({ pharmacyId, onCreated }: { pharmacyId: string; onCreated: (s
 
   if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
     const restored = !!op.restored || !op.body;
+    const late = checks.count >= 2 && checks.lastAt - op.lastAttemptAt >= FORGET_AFTER_MS;
     return (
       <CheckPanel label={t('unconfirmed.panel')}
         onCheck={async () => {
+          setChecks((c) => ({ count: c.count + 1, lastAt: Date.now() }));
           if (restored) return t('unconfirmed.lookInOrders');
-          const found = (await sale.recentFor(op.body.customerId)).items.filter((o) => sameSale(o, op.body, op.firstAttemptAt));
-          if (found.length === 1) { settle(op.requestKey); onCreated({ orderId: found[0]!._id, customer: shownCustomer || null }); return null; }
+          const found = saleCandidates((await sale.recentFor(op.body.customerId)).items, op.body, op.body.before);
+          if (found.length === 1) { settle(op.requestKey); done(found[0]!._id); return null; }
           return found.length > 1 ? t('unconfirmed.several') : t('unconfirmed.notFound');
         }}
-        forget={{ label: t('unconfirmed.forget'), confirmLabel: t('unconfirmed.forgetConfirm'), consequence: t('unconfirmed.forgetConsequence'),
-          onForget: () => settle(op.requestKey) }}>
-        <Alert tone="warn">{restored ? t('unconfirmed.restored') : t('unconfirmed.text', { error: op.error ?? '' })}</Alert>
+        forget={late ? { label: t('unconfirmed.forget'), confirmLabel: t('unconfirmed.forgetConfirm'), consequence: t('unconfirmed.forgetConsequence'),
+          onForget: () => { settle(op.requestKey); setReview(false); } } : undefined}>
+        <Alert tone="warn">{restored ? t('unconfirmed.restored') : t('unconfirmed.text', { error: op.error || t('unconfirmed.noAnswer') })}</Alert>
       </CheckPanel>
     );
   }
 
-  const locked = review || busy;
+  const locked = review || busy || uploading;
   return (
     <form className="rx-form sale" noValidate onSubmit={check}>
       {note && <Alert>{note}</Alert>}
       <CustomerPicker customer={customer} walkIn={walkIn} errors={errors} disabled={locked}
         onCustomer={(c) => { setCustomer(c); setErrors({}); }} onWalkIn={setWalkIn} />
       <MedicinePicker lines={lines} error={errors.lines} disabled={locked} onLines={setLines} />
-      <Prescriptions urls={prescriptions} disabled={locked} onUrls={setPrescriptions} />
+      <Prescriptions urls={prescriptions} disabled={review || busy} uploading={uploading} onUploading={setUploading} onUrls={setPrescriptions} />
 
       <section className="ws-section" aria-labelledby="sale-total-h">
         <h2 id="sale-total-h" className="j-sr-only">{t('total.title')}</h2>
@@ -162,7 +178,7 @@ function SaleForm({ pharmacyId, onCreated }: { pharmacyId: string; onCreated: (s
               <Button variant="ghost" disabled={busy} onClick={() => setReview(false)}>{shared('action.back')}</Button>
             </div>
           </div>
-        ) : <div><Button type="submit">{t('create')}</Button></div>}
+        ) : <div><Button type="submit" disabled={uploading}>{t('create')}</Button></div>}
       </section>
     </form>
   );
@@ -176,6 +192,8 @@ function CustomerPicker({ customer, walkIn, errors, disabled, onCustomer, onWalk
   const [text, setText] = useState('');
   const [search, setSearch] = useState<string | null>(null);
   const q = useQuery({ queryKey: ['pharmacy-sale', 'customers', search], queryFn: () => pharmacySaleApi(api).customers(search ?? ''), enabled: search !== null });
+  const rows = usableCustomers(q.data?.items ?? []);
+  const label = (c: (typeof rows)[number]) => [c.userId.name ?? c.typedName ?? t('customer.unnamed'), c.userId.phone].filter(Boolean).join(' · ');
   const mode = customer?.kind === 'walkin' ? 'walkin' : 'existing';
   return (
     <section className="ws-section" aria-labelledby="sale-customer-h">
@@ -208,13 +226,13 @@ function CustomerPicker({ customer, walkIn, errors, disabled, onCustomer, onWalk
             <Button variant="secondary" onClick={() => setSearch(text.trim())}>{shared('action.search')}</Button>
           </div>
           {search !== null && (!q.data ? (q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} /> : <Loading />)
-            : q.data.items.length === 0 ? <Empty title={t('customer.none')}>{t('customer.noneText')}</Empty>
+            : rows.length === 0 ? <Empty title={t('customer.none')}>{t('customer.noneText')}</Empty>
             : (
               <ul className="ws-list sale-choices" aria-label={t('customer.results')}>
-                {q.data.items.map((c) => (
+                {rows.map((c) => (
                   <li key={c._id}>
-                    <Button variant="secondary" onClick={() => onCustomer({ kind: 'existing', id: c.userId._id, label: customerLabel(c) })}>
-                      {t('customer.choose', { customer: customerLabel(c) })}
+                    <Button variant="secondary" onClick={() => onCustomer({ kind: 'existing', id: c.userId._id, label: label(c) })}>
+                      {t('customer.choose', { customer: label(c) })}
                     </Button>
                   </li>
                 ))}
@@ -232,8 +250,9 @@ function MedicinePicker({ lines, error, disabled, onLines }: { lines: Line[]; er
   const [search, setSearch] = useState<string | null>(null);
   const q = useQuery({ queryKey: ['pharmacy-sale', 'stock', search], queryFn: () => inventoryApi(api).list({ search: search || undefined, isActive: true, limit: 20 }),
     enabled: search !== null });
+  const idOfItem = (i: InventoryItem) => (typeof i.medicineId === 'object' ? i.medicineId._id : i.medicineId);
   const add = (i: InventoryItem) => {
-    const id = typeof i.medicineId === 'object' ? i.medicineId._id : i.medicineId;
+    const id = idOfItem(i);
     if (lines.some((l) => l.medicineId === id)) return;
     onLines([...lines, { medicineId: id, name: medicineName(i.medicineId), qty: '1', max: sellableQty(i), price: typeof i.retailPrice === 'number' ? i.retailPrice : null }]);
   };
@@ -276,12 +295,11 @@ function MedicinePicker({ lines, error, disabled, onLines }: { lines: Line[]; er
             : (
               <ul className="ws-list sale-choices" aria-label={t('lines.results')}>
                 {sellable.map((i) => {
-                  const id = typeof i.medicineId === 'object' ? i.medicineId._id : i.medicineId;
                   const name = medicineName(i.medicineId);
                   return (
                     <li key={i._id}>
                       {name} · {t('lines.inStock', { count: sellableQty(i) })}{typeof i.retailPrice === 'number' ? ` · ${formatRupees(i.retailPrice)}` : ''}{' '}
-                      <Button variant="secondary" disabled={lines.some((l) => l.medicineId === id)} onClick={() => add(i)}>{t('lines.add', { medicine: name })}</Button>
+                      <Button variant="secondary" disabled={lines.some((l) => l.medicineId === idOfItem(i))} onClick={() => add(i)}>{t('lines.add', { medicine: name })}</Button>
                     </li>
                   );
                 })}
@@ -293,13 +311,15 @@ function MedicinePicker({ lines, error, disabled, onLines }: { lines: Line[]; er
   );
 }
 
-function Prescriptions({ urls, disabled, onUrls }: { urls: string[]; disabled: boolean; onUrls: (u: string[]) => void }) {
+/** The prescription files; the upload's state belongs to the sale (Create waits while one is running). */
+function Prescriptions({ urls, disabled, uploading, onUploading, onUrls }: {
+  urls: string[]; disabled: boolean; uploading: boolean; onUploading: (b: boolean) => void; onUrls: (u: string[]) => void;
+}) {
   const { api } = useSession();
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function upload(file: File | undefined) {
     if (!file) return;
-    setBusy(true);
+    onUploading(true);
     setError(null);
     try {
       const url = await pharmacySaleApi(api).uploadPrescription(file);
@@ -307,7 +327,7 @@ function Prescriptions({ urls, disabled, onUrls }: { urls: string[]; disabled: b
     } catch (err) {
       setError(t('prescription.failed', { error: messageOf(err) }));
     } finally {
-      setBusy(false);
+      onUploading(false);
     }
   }
   return (
@@ -318,58 +338,77 @@ function Prescriptions({ urls, disabled, onUrls }: { urls: string[]; disabled: b
         <ul className="ws-list">
           {urls.map((u, i) => (
             <li key={u}>{t('prescription.attached', { n: i + 1 })}{' '}
-              <Button variant="ghost" disabled={disabled} onClick={() => onUrls(urls.filter((x) => x !== u))}>{t('prescription.remove', { n: i + 1 })}</Button></li>
+              <Button variant="ghost" disabled={disabled || uploading} onClick={() => onUrls(urls.filter((x) => x !== u))}>{t('prescription.remove', { n: i + 1 })}</Button></li>
           ))}
         </ul>
       )}
       {!disabled && (
         <div className="j-field">
           <label htmlFor="sale-rx-file">{t('prescription.add')}</label>
-          <input id="sale-rx-file" type="file" accept="image/*,application/pdf" disabled={busy}
+          <input id="sale-rx-file" type="file" accept="image/*,application/pdf" disabled={uploading}
             onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; void upload(f); }} />
         </div>
       )}
-      {busy && <Loading label={t('prescription.uploading')} />}
+      {uploading && <Loading label={t('prescription.uploading')} />}
       {error && <Alert>{error}</Alert>}
     </section>
   );
 }
 
-// ── The created sale: its bill and the counter payment ──
+// ── The created sale (`/pharmacy/sale/:orderId`): its bill and the counter payment ──
 
-function SaleDone({ sold, onNew }: { sold: Sold; onNew: () => void }) {
+export function SaleBillScreen() {
+  const { orderId = '' } = useParams();
+  if (!/^[0-9a-fA-F]{24}$/.test(orderId)) return <Empty title={t('done.notFound')}><Link to="/pharmacy/sale">{t('done.new')}</Link></Empty>;
+  return <SaleDone key={orderId} orderId={orderId} />;
+}
+
+function SaleDone({ orderId }: { orderId: string }) {
   const { api } = useSession();
-  const q = useQuery({ queryKey: ['pharmacy-orders', 'detail', sold.orderId], queryFn: () => pharmacySaleApi(api).order(sold.orderId) });
-  if (!q.data) return q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} /> : <Loading label={t('done.loading')} />;
-  const o = q.data;
+  const q = useQuery({ queryKey: ['pharmacy-orders', 'detail', orderId], queryFn: () => pharmacyOrdersApi(api).get(orderId) });
+  const profile = useQuery({ queryKey: PHARMACY_PROFILE_KEY, queryFn: () => pharmacyProfileApi(api).me() });
   return (
     <>
-      <Alert tone="ok">{t('done.created', { order: orderLabel(o) })}</Alert>
-      <Bill order={o} customer={sold.customer} />
-      <Payment order={o} />
-      <div className="ws-actions sale-noprint">
-        <Button variant="secondary" onClick={() => window.print()}>{t('done.print')}</Button>
-        <Link to={`/pharmacy/orders/${o._id}`}>{t('done.openOrder')}</Link>
-        <Button variant="ghost" onClick={onNew}>{t('done.new')}</Button>
-      </div>
+      <PageHeading title={t('title')}>{t('done.intro')}</PageHeading>
+      {!q.data ? (q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} /> : <Loading label={t('done.loading')} />)
+        : (
+          <>
+            <Bill order={q.data} pharmacy={profile.data} />
+            <Payment order={q.data} />
+            <div className="ws-actions sale-noprint">
+              <Button variant="secondary" onClick={() => window.print()}>{t('done.print')}</Button>
+              <Link to={`/pharmacy/orders/${q.data._id}`}>{t('done.openOrder')}</Link>
+              <Link to="/pharmacy/sale">{t('done.new')}</Link>
+            </div>
+          </>
+        )}
     </>
   );
 }
 
-function Bill({ order: o, customer }: { order: PharmacyOrder; customer: string | null }) {
+const PAYMENT_WORDS: Readonly<Record<string, () => string>> = { cash: () => t('payment.cash'), upi: () => t('payment.upi') };
+
+function Bill({ order: o, pharmacy }: { order: PharmacyOrder; pharmacy?: { name?: string; address?: string; city?: string; state?: string; pincode?: string; gstNumber?: string } }) {
   const paid = o.paymentStatus === 'paid';
+  const address = pharmacy ? [pharmacy.address, pharmacy.city, pharmacy.state, pharmacy.pincode].filter(Boolean).join(', ') : '';
+  const how = o.paymentSource ? PAYMENT_WORDS[o.paymentSource]?.() ?? o.paymentSource : null;
   return (
     <section className="ws-section sale-bill" aria-labelledby="sale-bill-h">
+      {pharmacy?.name && <p className="sale-bill-head"><strong>{pharmacy.name}</strong>{address ? <><br />{address}</> : null}
+        {pharmacy.gstNumber ? <><br />{t('bill.gstin', { gstin: pharmacy.gstNumber })}</> : null}</p>}
       <h2 id="sale-bill-h">{t('bill.title', { order: orderLabel(o) })}</h2>
-      <p>{formatDateTime(o.createdAt)}{customer ? ` · ${customer}` : ''}</p>
+      <p>{formatDateTime(o.createdAt)}{o.isWalkIn ? ` · ${t('bill.walkIn')}` : ''}</p>
       <div className="ws-table-wrap">
         <table className="j-table">
           <caption className="j-sr-only">{t('bill.caption')}</caption>
-          <thead><tr><th scope={'col'}>{t('lines.medicine')}</th><th scope={'col'}>{t('lines.qty')}</th><th scope={'col'}>{t('bill.unit')}</th><th scope={'col'}>{t('bill.amount')}</th></tr></thead>
+          <thead><tr><th scope={'col'}>{t('lines.medicine')}</th><th scope={'col'}>{t('bill.batch')}</th><th scope={'col'}>{t('lines.qty')}</th>
+            <th scope={'col'}>{t('bill.unit')}</th><th scope={'col'}>{t('bill.amount')}</th></tr></thead>
           <tbody>
             {o.items.map((it, i) => (
               <tr key={`${it.medicineId}-${i}`}>
                 <td>{it.medicineName ?? it.medicineId}{it.prescriptionRequired && <> <Badge tone="warn">{t('bill.rx')}</Badge></>}</td>
+                <td>{it.batchAllocations?.length
+                  ? it.batchAllocations.map((b) => t('bill.batchLine', { batch: b.batchNumber, expiry: formatExpiry(b.expiryDate) })).join('; ') : '—'}</td>
                 <td>{it.orderedQty}</td><td>{formatRupees(it.unitPrice)}</td><td>{formatRupees(it.lineTotal)}</td>
               </tr>
             ))}
@@ -377,11 +416,11 @@ function Bill({ order: o, customer }: { order: PharmacyOrder; customer: string |
         </table>
       </div>
       <dl className="ws-dl">
-        {typeof o.subtotal === 'number' && <><dt>{t('bill.subtotal')}</dt><dd>{formatRupees(o.subtotal)}</dd></>}
         {typeof o.discountTotal === 'number' && o.discountTotal > 0 && <><dt>{t('bill.discount')}</dt><dd>{formatRupees(o.discountTotal)}</dd></>}
-        {typeof o.taxTotal === 'number' && <><dt>{t('bill.tax')}</dt><dd>{formatRupees(o.taxTotal)}</dd></>}
         <dt>{t('bill.total')}</dt><dd><strong>{formatRupees(o.grandTotal)}</strong></dd>
-        <dt>{t('bill.payment')}</dt><dd>{paid ? t('bill.paid') : t('bill.unpaid')}</dd>
+        {/* Prices include GST: the tax is part of the total, never added to it. */}
+        {typeof o.taxTotal === 'number' && <><dt>{t('bill.gstIncluded')}</dt><dd>{t('bill.ofWhichGst', { amount: formatRupees(o.taxTotal) })}</dd></>}
+        <dt>{t('bill.payment')}</dt><dd>{paid ? (how ? t('bill.paidBy', { how }) : t('bill.paid')) : t('bill.unpaid')}</dd>
       </dl>
     </section>
   );
@@ -391,12 +430,10 @@ function Payment({ order: o }: { order: PharmacyOrder }) {
   const { api } = useSession();
   const queryClient = useQueryClient();
   const [how, setHow] = useState<CounterPayment>('cash');
-  if (o.paymentStatus === 'paid') return null;
-  // P9: an order with a prescription medicine is paid only after the pharmacist approved it.
-  const waits = o.prescriptionStatus === 'pending' || o.prescriptionStatus === 'rejected';
+  if (!canMarkPaid(o)) return null;
   async function markPaid() {
     try {
-      await pharmacySaleApi(api).markPaid(o._id, how);
+      await pharmacyOrdersApi(api).markPaid(o._id, { paymentSource: how });
     } catch (err) {
       // Already paid (an earlier answer was lost): the order read again shows it.
       if (codeOf(err) === 'ORDER_ALREADY_PAID') return;
@@ -409,9 +446,9 @@ function Payment({ order: o }: { order: PharmacyOrder }) {
   return (
     <section className="ws-section sale-noprint" aria-labelledby="sale-pay-h">
       <h2 id="sale-pay-h">{t('payment.title')}</h2>
-      {waits ? (
+      {paymentWaitsForPharmacist(o) ? (
         <Alert tone="warn">{o.prescriptionStatus === 'rejected' ? t('payment.rejected') : t('payment.waitsForPharmacist')}{' '}
-          {o.prescriptionStatus === 'pending' && <Link to={`/pharmacy/prescriptions/${o._id}`}>{t('payment.review')}</Link>}</Alert>
+          {o.prescriptionStatus !== 'rejected' && <Link to={`/pharmacy/prescriptions/${o._id}?from=sale`}>{t('payment.review')}</Link>}</Alert>
       ) : (
         <>
           <fieldset className="ws-checks">
@@ -427,3 +464,4 @@ function Payment({ order: o }: { order: PharmacyOrder }) {
     </section>
   );
 }
+

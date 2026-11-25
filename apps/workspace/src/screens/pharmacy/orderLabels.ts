@@ -38,6 +38,17 @@ export const TERMINAL: readonly OrderStatus[] = ['completed', 'abandoned', 'canc
 
 export const orderLabel = (o: PharmacyOrder) => o.orderNumber ?? o._id.slice(-8);
 
+/** WQ50b: an in-store or cash-on-delivery order can be marked paid here (the Order page and New sale share this). */
+export const canMarkPaid = (o: PharmacyOrder) => (o.paymentMode === 'in_store_payment' || o.paymentMode === 'cash_on_delivery')
+  && o.paymentStatus !== 'paid' && !TERMINAL.includes(o.status) && o.status !== 'pending_cancel';
+/**
+ * WQ50b (P9, `markPaid` in pharmacyOrders services): an order with a prescription medicine is paid only once the
+ * pharmacist approved it; the server refuses otherwise (409 PRESCRIPTION_REVIEW_REQUIRED).
+ */
+export const paymentWaitsForPharmacist = (o: PharmacyOrder) =>
+  ((o.prescriptionStatus ?? 'not_required') !== 'not_required' || o.items.some((i) => i.prescriptionRequired === true))
+  && !(o.prescriptionStatus === 'approved' && o.prescriptionReview?.decision === 'approved');
+
 const PRESCRIPTION_GATED: readonly OrderStatus[] = ['packed', 'ready_for_pickup', 'out_for_delivery', 'completed'];
 
 /**

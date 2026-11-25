@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router';
+import { Link, useParams, useSearchParams } from 'react-router';
 import { ArrowLeft, FileText } from 'lucide-react';
 import {
   ApiError, orderStatusLabel, paymentStatusLabel, pharmacyOrdersApi, pharmacyProfileApi, PRESCRIPTION_REVIEWABLE_STATUSES, refId,
@@ -13,6 +13,7 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 import { sniffDocument, type DocumentKind } from './documents.ts';
 import { t } from '../../i18n/pharmacy/index.ts';
+import { t as ts } from '../../i18n/sale/index.ts';
 
 /** P9: the pharmacy's registered pharmacist (Settings), recorded on every decision. */
 export const PHARMACY_PROFILE_KEY = ['pharmacy', 'me'] as const;
@@ -27,6 +28,8 @@ export function RxReviewScreen() {
 
 function RxReview({ orderId }: { orderId: string }) {
   const { api } = useSession();
+  // WQ50b: opened from a counter sale (New sale): a way straight back to it.
+  const fromSale = useSearchParams()[0].get('from') === 'sale';
   const queryClient = useQueryClient();
   const q = useQuery({
     queryKey: ['pharmacy-orders', 'detail', orderId],
@@ -35,7 +38,8 @@ function RxReview({ orderId }: { orderId: string }) {
 
   return (
     <>
-      <Link to="/pharmacy/prescriptions" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{` ${t('rxReview.prescriptionReview')}`}</Link>
+      {fromSale ? <Link to={`/pharmacy/sale/${orderId}`} className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{` ${ts('done.backToSale')}`}</Link>
+        : <Link to="/pharmacy/prescriptions" className="ws-back"><ArrowLeft size={16} aria-hidden="true" />{` ${t('rxReview.prescriptionReview')}`}</Link>}
       {q.isPending ? <Loading label={t('common.loadingOrder')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : <OrderReview order={q.data} onChanged={() => {

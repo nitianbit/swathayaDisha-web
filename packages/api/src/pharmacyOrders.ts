@@ -86,6 +86,9 @@ export interface PharmacyOrder {
   discountTotal?: number;
   taxTotal?: number;
   isWalkIn?: boolean;
+  /** How a counter payment was made, as marked paid (`cash`, `upi`, …). */
+  paymentSource?: string;
+  paidAt?: string;
   paymentStatus?: PaymentStatus;
   paymentMode?: PaymentMode;
   /** The online payment's record (customers check it with /payments/reconcile). */
@@ -104,6 +107,9 @@ export interface PharmacyOrder {
 }
 
 export interface OrderQuery {
+  /** WQ50b: one customer's orders (an id), and one channel. */
+  customerId?: string;
+  orderType?: 'in_store' | 'online';
   status?: OrderStatus;
   paymentStatus?: PaymentStatus;
   prescriptionStatus?: PrescriptionStatus;
@@ -255,7 +261,7 @@ export function fetchableFileUrl(stored: string): string {
 /** Backend rule (prescriptionReviewSchema). */
 export const REGISTRATION_NUMBER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9/\-. ]{2,59}$/;
 
-const idPath = (id: string) => {
+export const orderIdPath = (id: string) => {
   if (!/^[0-9a-fA-F]{24}$/.test(id)) throw new Error('Invalid order id'); // i18n-ignore: a programming error, not shown
   return `/pharmacy-orders/${id}`;
 };
@@ -263,10 +269,16 @@ const idPath = (id: string) => {
 /** P9: the pharmacy's registered pharmacist, recorded on one-button prescription approvals. */
 export interface Pharmacist { name: string; registrationNumber: string; updatedAt?: string }
 
+/** The signed-in pharmacy's own profile (only what the workspace needs; WQ50b: what a bill heads with). */
+export interface PharmacyOwnProfile {
+  _id: string; name?: string; pharmacist?: Pharmacist | null;
+  address?: string; city?: string; state?: string; pincode?: string; gstNumber?: string;
+}
+
 /** P9: the signed-in pharmacy's own profile (only what the workspace needs). */
 export function pharmacyProfileApi(c: ApiClient) {
   return {
-    me: () => c.get<{ _id: string; name?: string; pharmacist?: Pharmacist | null }>('/pharmacies/me/profile'),
+    me: () => c.get<PharmacyOwnProfile>('/pharmacies/me/profile'),
     setPharmacist: (p: { name: string; registrationNumber: string }) =>
       c.put<{ pharmacist: Pharmacist | null }>('/pharmacies/me/pharmacist', { body: p }),
   };
@@ -278,36 +290,36 @@ export function pharmacyOrdersApi(c: ApiClient) {
     /** Pharmacist work queue: orders this pharmacy sells whose prescription can be reviewed now; oldest first. */
     reviewQueue: (q: { page?: number; limit?: number } = {}) =>
       c.page<PharmacyOrder>('/pharmacy-orders/prescription-reviews', { query: { ...q } }),
-    get: (id: string) => c.get<PharmacyOrder>(idPath(id)),
+    get: (id: string) => c.get<PharmacyOrder>(orderIdPath(id)),
     reviewPrescription: (id: string, body: PrescriptionReviewRequest) =>
-      c.post<PharmacyOrder>(`${idPath(id)}/prescription-review`, { body }),
+      c.post<PharmacyOrder>(`${orderIdPath(id)}/prescription-review`, { body }),
     updateStatus: (id: string, status: OrderStatus, notes?: string) =>
-      c.post<PharmacyOrder>(`${idPath(id)}/status`, { body: { status, ...(notes ? { notes } : {}) } }),
+      c.post<PharmacyOrder>(`${orderIdPath(id)}/status`, { body: { status, ...(notes ? { notes } : {}) } }),
     /** Only for in-store / cash-on-delivery orders. */
     markPaid: (id: string, body: { paymentSource?: string; notes?: string } = {}) =>
-      c.post<PharmacyOrder>(`${idPath(id)}/mark-paid`, { body }),
+      c.post<PharmacyOrder>(`${orderIdPath(id)}/mark-paid`, { body }),
     deliveryException: (id: string, type: DeliveryExceptionType, reason?: string) =>
-      c.post<PharmacyOrder>(`${idPath(id)}/delivery-exception`, { body: { type, ...(reason ? { reason } : {}) } }),
+      c.post<PharmacyOrder>(`${orderIdPath(id)}/delivery-exception`, { body: { type, ...(reason ? { reason } : {}) } }),
     /** Re-attempts a `wallet_pending` refund. */
-    retryRefund: (id: string) => c.post<PharmacyOrder>(`${idPath(id)}/prescription-refund/retry`),
+    retryRefund: (id: string) => c.post<PharmacyOrder>(`${orderIdPath(id)}/prescription-refund/retry`),
     /** Moves this order's units off held (quarantined/recalled/expired) batches onto sellable ones. */
-    reallocateHeldStock: (id: string) => c.post<{ order: PharmacyOrder; moves: unknown[] }>(`${idPath(id)}/reallocate-held-stock`),
+    reallocateHeldStock: (id: string) => c.post<{ order: PharmacyOrder; moves: unknown[] }>(`${orderIdPath(id)}/reallocate-held-stock`),
     /** Cancels an order that holds units of a held batch; releases its stock and refunds it if paid. */
-    stockHoldCancel: (id: string, reason: string) => c.post<PharmacyOrder>(`${idPath(id)}/stock-hold-cancel`, { body: { reason } }),
+    stockHoldCancel: (id: string, reason: string) => c.post<PharmacyOrder>(`${orderIdPath(id)}/stock-hold-cancel`, { body: { reason } }),
     /** D3: an unpaid order is cancelled at once; a paid one becomes pending_cancel until decided. */
     requestCancel: (id: string, reason?: string) =>
-      c.post<PharmacyOrder>(`${idPath(id)}/cancel-request`, { body: reason ? { reason } : {} }),
+      c.post<PharmacyOrder>(`${orderIdPath(id)}/cancel-request`, { body: reason ? { reason } : {} }),
     approveCancel: (id: string, requestId: string, note?: string) =>
-      c.post<PharmacyOrder>(`${idPath(id)}/cancel-request/approve`, { body: { requestId, ...(note ? { note } : {}) } }),
+      c.post<PharmacyOrder>(`${orderIdPath(id)}/cancel-request/approve`, { body: { requestId, ...(note ? { note } : {}) } }),
     rejectCancel: (id: string, requestId: string, note: string) =>
-      c.post<PharmacyOrder>(`${idPath(id)}/cancel-request/reject`, { body: { requestId, note } }),
+      c.post<PharmacyOrder>(`${orderIdPath(id)}/cancel-request/reject`, { body: { requestId, note } }),
     /** Returns already recorded for this order (newest first). */
     customerReturnsFor: (id: string, limit = 50, page = 1) => {
-      idPath(id);
+      orderIdPath(id);
       return c.page<CustomerReturn>('/pharmacy-inventory/customer-returns', { query: { orderId: id, limit, page } });
     },
     customerReturn: (id: string, body: CustomerReturnRequest) =>
-      c.post<CustomerReturn & { duplicate?: boolean }>(`${idPath(id)}/customer-returns`, { body }),
+      c.post<CustomerReturn & { duplicate?: boolean }>(`${orderIdPath(id)}/customer-returns`, { body }),
     /** A prescription file, fetched with the staff token (`GET /file/fetch?url=`). */
     prescriptionFile: (storedUrl: string, signal?: AbortSignal) =>
       c.blob('/file/fetch', { query: { url: fetchableFileUrl(storedUrl) }, signal }),

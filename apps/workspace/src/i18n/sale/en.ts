@@ -27,7 +27,8 @@ export default {
 
   'walkIn.name': 'Customer’s name',
   'walkIn.phone': 'Mobile number (10 digits)',
-  'walkIn.consent': 'The customer agreed to be added to your pharmacy’s customers',
+  /** WQ50b: what the agreement covers: the pharmacy's customers, and a Jansetu account for that phone when there is none. */
+  'walkIn.consent': 'The customer agreed to be added to your pharmacy’s customers, and to a Jansetu account being made for this phone if they have none',
   'walkIn.nameError': 'Enter the customer’s name (at most {max} characters).',
   'walkIn.phoneError': 'Enter a 10-digit mobile number.',
   'walkIn.consentError': 'Ask the customer first; tick this only when they agree.',
@@ -65,8 +66,9 @@ export default {
 
   'total.title': 'Total',
   'total.estimate': 'About {amount}',
-  'total.taxNote': 'From your selling prices, before tax. The bill shows the final amount.',
-  'total.unpriced': 'A medicine has no selling price yet; set it in Stock first, or the sale is refused.',
+  'total.taxNote': 'From your selling prices. Prices include tax. The bill shows the final amount.',
+  /** WQ50b: the server then uses the stock's wholesale price, if it has one. */
+  'total.unpriced': 'A medicine has no selling price set: the sale uses its wholesale price, or is refused when there is none. Set the selling price in Stock.',
 
   'review.title': 'Check the sale',
   /** {count}: how many different medicines. */
@@ -74,7 +76,7 @@ export default {
     one: 'Sell {count} medicine to {customer}, about {amount}? It is taken from your stock now.',
     other: 'Sell {count} medicines to {customer}, about {amount}? They are taken from your stock now.',
   },
-  'review.walkIn': 'The walk-in customer is added to your pharmacy’s customers first.',
+  'review.walkIn': 'The walk-in customer is added to your pharmacy’s customers first (and gets a Jansetu account for this phone if they have none).',
   'review.create': 'Create sale',
 
   'unconfirmed.panel': 'Unconfirmed sale',
@@ -82,6 +84,8 @@ export default {
   'unconfirmed.text': 'The outcome of this sale is not known yet ({error}). It may already be recorded, so it is not sent again. Check whether it was recorded.',
   'unconfirmed.restored': 'A sale started on this device earlier was not confirmed. Its details are not kept here. Look for it in Orders before selling again.',
   'unconfirmed.lookInOrders': 'Look for it in Orders (newest first). Forget it here only once you know.',
+  /** In place of the reason when none was given. */
+  'unconfirmed.noAnswer': 'no answer came back',
   'unconfirmed.notFound': 'Not recorded so far. It may still be on its way: check again in a moment.',
   'unconfirmed.several': 'Several sales like this one were found. Look in Orders.',
   'unconfirmed.forget': 'Forget it',
@@ -104,25 +108,37 @@ export default {
   'refusal.ORDER_CANCEL_PENDING': 'A cancellation of this sale waits for a decision. Decide it in Orders first.',
   'refusal.ORDER_ALREADY_REFUNDED': 'This sale was refunded, so it cannot be marked paid.',
 
-  /** {order}: the order number. */
-  'done.created': 'Sale {order} created.',
+  'done.intro': 'The bill of this sale, and its payment at the counter.',
   'done.loading': 'Loading the sale…',
+  'done.notFound': 'Sale not found',
+  /** WQ50b: from the prescription review back to the sale it was opened from. */
+  'done.backToSale': 'Back to the sale',
   'done.print': 'Print the bill',
   'done.openOrder': 'Open the order',
   'done.new': 'Start a new sale',
 
+  /** {order}: the order number. */
   'bill.title': 'Bill {order}',
+  /** {gstin}: the pharmacy's GST number. */
+  'bill.gstin': 'GSTIN {gstin}',
+  'bill.walkIn': 'Walk-in customer',
+  'bill.batch': 'Batch and expiry',
+  /** {batch}: batch number; {expiry}: its expiry date. */
+  'bill.batchLine': '{batch}, expires {expiry}',
   'bill.caption': 'The bill’s medicines',
   'bill.unit': 'Price each',
   'bill.amount': 'Amount',
   /** A prescription medicine. */
   'bill.rx': 'Prescription',
-  'bill.subtotal': 'Subtotal',
   'bill.discount': 'Discount',
-  'bill.tax': 'Tax',
   'bill.total': 'Total',
+  /** Prices include GST; this line says how much of the total it is. */
+  'bill.gstIncluded': 'GST',
+  'bill.ofWhichGst': 'of which GST {amount}',
   'bill.payment': 'Payment',
   'bill.paid': 'Paid',
+  /** {how}: Cash or UPI. */
+  'bill.paidBy': 'Paid by {how}',
   'bill.unpaid': 'Not paid yet',
 
   'payment.title': 'Payment at the counter',

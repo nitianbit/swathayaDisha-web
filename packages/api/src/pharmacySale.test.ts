@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createApiClient } from './client.ts';
-import { pharmacySaleApi, sameSale, walkInProblems, type SaleBody } from './pharmacySale.ts';
+import { pharmacySaleApi, saleCandidates, saleRequestBody, usableCustomers, walkInProblems, type SaleBody } from './pharmacySale.ts';
+import { pharmacyOrdersApi } from './pharmacyOrders.ts';
 import type { PharmacyOrder } from './pharmacyOrders.ts';
 
 // WQ50: the pharmacy's counter sale (backend stage 43f46f57).
@@ -25,11 +26,11 @@ describe('WQ50 counter sale', () => {
     await s.customers('');
     await s.customers(' ravi ');
     await s.linkWalkIn({ name: '  Meena   Shah ', phone: '9123456780' });
-    await s.create({ customerId: CUST, items: [{ medicineId: MED, orderedQty: 2 }], isWalkIn: true, prescriptionUrls: [] });
-    await s.create({ customerId: CUST, items: [{ medicineId: MED, orderedQty: 1 }], isWalkIn: false, prescriptionUrls: ['/api/static/x.pdf'] });
+    await s.create(saleRequestBody({ customerId: CUST, items: [{ medicineId: MED, orderedQty: 2 }], isWalkIn: true, prescriptionUrls: [] }));
+    await s.create(saleRequestBody({ customerId: CUST, items: [{ medicineId: MED, orderedQty: 1 }], isWalkIn: false, prescriptionUrls: ['/api/static/x.pdf'] }));
     await s.recentFor(CUST);
-    await s.order(ORDER);
-    await s.markPaid(ORDER, 'upi');
+    await pharmacyOrdersApi(c).get(ORDER);
+    await pharmacyOrdersApi(c).markPaid(ORDER, { paymentSource: 'upi' });
     await s.uploadPrescription(new File(['%PDF'], 'rx.pdf'));
     expect(calls.map((x) => `${x.method} ${x.url}`)).toEqual([
       'GET /api/v1/pharmacy-customers?page=1&limit=20',
@@ -47,7 +48,9 @@ describe('WQ50 counter sale', () => {
       deliveryMode: 'pickup', isWalkIn: true });
     expect(calls[4]!.body).toMatchObject({ prescriptionUrls: ['/api/static/x.pdf'] });
     expect(calls[7]!.body).toEqual({ paymentSource: 'upi' });
-    expect(() => s.create({ customerId: 'nope', items: [], isWalkIn: false, prescriptionUrls: [] })).toThrow();
+    // A bad id is a throw while the body is built, before any owned request is sent.
+    expect(() => saleRequestBody({ customerId: 'nope', items: [], isWalkIn: false, prescriptionUrls: [] })).toThrow();
+    expect(usableCustomers([{ _id: 'x', userId: null }, { _id: 'y', userId: { name: 'A' } }, { _id: 'z', userId: { _id: CUST } }]).map((r) => r._id)).toEqual(['z']);
   });
 
   it('a walk-in is checked as the server checks it', () => {
@@ -56,15 +59,18 @@ describe('WQ50 counter sale', () => {
     expect(walkInProblems({ name: 'x'.repeat(201), phone: '9123456780', consent: true })).toEqual({ name: true });
   });
 
-  it('a lost sale is this customer’s in-store order with the same lines, made since the attempt', () => {
+  it('a lost sale is an open in-store order of this customer with the same lines that did not exist before it was sent', () => {
     const body: SaleBody = { customerId: CUST, items: [{ medicineId: MED, orderedQty: 2 }], isWalkIn: false, prescriptionUrls: [] };
-    const at = Date.parse('2026-11-26T05:30:00.000Z');
     const order = (o: Partial<PharmacyOrder>) => ({ _id: ORDER, pharmacyId: 'p', customerId: CUST.toUpperCase(), orderType: 'in_store', status: 'placed',
       items: [{ medicineId: MED, orderedQty: 2, unitPrice: 20, lineTotal: 40 }], createdAt: '2026-11-26T05:29:30.000Z', ...o }) as PharmacyOrder;
-    expect(sameSale(order({}), body, at)).toBe(true);
-    expect(sameSale(order({ customerId: { _id: CUST, name: 'R' } }), body, at)).toBe(true);
-    expect(sameSale(order({ orderType: 'online' }), body, at)).toBe(false);
-    expect(sameSale(order({ createdAt: '2026-11-26T05:20:00.000Z' }), body, at)).toBe(false);
-    expect(sameSale(order({ items: [{ medicineId: MED, orderedQty: 3, unitPrice: 20, lineTotal: 60 }] }), body, at)).toBe(false);
+    const OLD = 'd1'.repeat(12);
+    expect(saleCandidates([order({})], body, []).length).toBe(1);
+    expect(saleCandidates([order({ customerId: { _id: CUST, name: 'R' } })], body, []).length).toBe(1);
+    // An identical sale made before this one, a cancelled, rejected or abandoned one, another channel or other lines: never.
+    expect(saleCandidates([order({ _id: OLD })], body, [OLD.toUpperCase()])).toEqual([]);
+    for (const status of ['cancelled', 'rejected', 'abandoned'] as const) expect(saleCandidates([order({ status })], body, [])).toEqual([]);
+    expect(saleCandidates([order({ orderType: 'online' })], body, [])).toEqual([]);
+    expect(saleCandidates([order({ items: [{ medicineId: MED, orderedQty: 3, unitPrice: 20, lineTotal: 60 }] })], body, [])).toEqual([]);
+    expect(saleCandidates([order({}), order({ _id: 'e1'.repeat(12) })], body, []).length).toBe(2);
   });
 });

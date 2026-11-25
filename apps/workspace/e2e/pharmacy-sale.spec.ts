@@ -21,6 +21,12 @@ interface Backend {
   stock: Record<string, number>;
   /** The next create is recorded, then its answer is lost. */
   loseNextCreate: boolean;
+  /** WQ50b: the next create is lost before anything is recorded. */
+  dropNextCreate: boolean;
+  /** WQ50b: the server's prescription gate is down (503 PRESCRIPTION_CHECKOUT_UNAVAILABLE, nothing written). */
+  rxGateDown: boolean;
+  /** WQ50b: the prescription upload answers only once this is resolved. */
+  holdUpload: Promise<void> | null;
 }
 const MEDICINES: Record<string, { name: string; price: number; rx: boolean; gst: number }> = {
   [PARA]: { name: 'Paracetamol 500mg', price: 20, rx: false, gst: 5 },
@@ -29,7 +35,7 @@ const MEDICINES: Record<string, { name: string; price: number; rx: boolean; gst:
 
 async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
-  const b: Backend = { calls: [], orders: [], stock: { [PARA]: 30, [AMOX]: 5 }, loseNextCreate: false, ...init };
+  const b: Backend = { calls: [], orders: [], stock: { [PARA]: 30, [AMOX]: 5 }, loseNextCreate: false, dropNextCreate: false, rxGateDown: false, holdUpload: null, ...init };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const ok = (route: Route, data: unknown, status = 200, extra: Json = {}) => json(route, status, { success: true, data, ...extra });
   const refuse = (route: Route, status: number, code: string) => json(route, status, { error: status, code, message: code });
@@ -66,7 +72,13 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
         retailPrice: m.price, batches: [{ _id: `f${i}`.padStart(24, '0'), batchNumber: `B${i}`, expiryDate: '20281231', availableQty: b.stock[id], reservedQty: 0, status: 'active' }] }));
       return ok(route, items, 200, { pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
     }
-    if (path === '/file/upload/pharmacy-order-prescription') return ok(route, { files: [{ url: '/api/static/pharmacy-order-prescription/rx-1.pdf' }] });
+    if (path === '/file/upload/pharmacy-order-prescription') {
+      if (b.holdUpload) await b.holdUpload;
+      return ok(route, { files: [{ url: '/api/static/pharmacy-order-prescription/rx-1.pdf' }] });
+    }
+    if (path === '/pharmacies/me/profile') {
+      return ok(route, { _id: PH, name: 'Asha Medicals', address: '12 MG Road', city: 'Pune', state: 'Maharashtra', pincode: '411001', gstNumber: '27ABCDE1234F1Z5', pharmacist: null });
+    }
 
     if (path === '/pharmacy-orders' && method === 'POST') {
       const x = body!;
@@ -74,17 +86,21 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
         return refuse(route, 400, 'VALIDATION_ERROR');
       }
       const lines = (x.items as { medicineId: string; orderedQty: number }[]);
+      if (b.rxGateDown) return refuse(route, 503, 'PRESCRIPTION_CHECKOUT_UNAVAILABLE');
+      if (b.dropNextCreate) { b.dropNextCreate = false; return route.abort('connectionreset'); }
       if (lines.some((l) => l.orderedQty > b.stock[l.medicineId]!)) return refuse(route, 409, 'INSUFFICIENT_BATCH_STOCK');
       const items = lines.map((l) => {
         const m = MEDICINES[l.medicineId]!;
-        return { medicineId: l.medicineId, medicineName: m.name, orderedQty: l.orderedQty, unitPrice: m.price, lineTotal: m.price * l.orderedQty * (1 + m.gst / 100),
-          prescriptionRequired: m.rx, gstPercent: m.gst, itemStatus: 'active' };
+        // Prices include GST (computeTotals): the line total is price × quantity; the tax is the part of it that is GST.
+        const lineTotal = m.price * l.orderedQty;
+        return { medicineId: l.medicineId, medicineName: m.name, orderedQty: l.orderedQty, unitPrice: m.price, lineTotal, taxAmount: Math.round(lineTotal * m.gst / (100 + m.gst) * 100) / 100,
+          prescriptionRequired: m.rx, gstPercent: m.gst, itemStatus: 'active', batchAllocations: [{ batchId: 'f'.repeat(24), batchNumber: 'B7', expiryDate: '20281231', quantity: l.orderedQty }] };
       });
       for (const l of lines) b.stock[l.medicineId]! -= l.orderedQty;
-      const subtotal = lines.reduce((a, l) => a + MEDICINES[l.medicineId]!.price * l.orderedQty, 0);
-      const grandTotal = items.reduce((a, l) => a + l.lineTotal, 0);
+      const subtotal = items.reduce((a, l) => a + l.lineTotal, 0);
+      const grandTotal = subtotal;
       const order = { _id: `9${b.orders.length}`.padStart(24, '0'), orderNumber: `PO-${100 + b.orders.length}`, pharmacyId: PH, customerId: x.customerId, orderType: 'in_store',
-        status: 'placed', items, subtotal, discountTotal: 0, taxTotal: grandTotal - subtotal, grandTotal, paymentMode: 'in_store_payment', paymentStatus: 'pending',
+        status: 'placed', items, subtotal, discountTotal: 0, taxTotal: items.reduce((a, l) => a + l.taxAmount, 0), grandTotal, paymentMode: 'in_store_payment', paymentStatus: 'pending',
         deliveryMode: 'pickup', isWalkIn: x.isWalkIn, prescriptionUrls: x.prescriptionUrls ?? [], prescriptionStatus: items.some((i) => i.prescriptionRequired) ? 'pending' : 'not_required',
         createdAt: NOW.toISOString() };
       b.orders.unshift(order);
@@ -130,7 +146,23 @@ async function addMedicine(page: Page, search: string, name: string, qty: string
   await lines.getByLabel(`Quantity of ${name}`).fill(qty);
 }
 
-test('a walk-in cash sale: linked by name and phone, priced with tax by the server, marked paid, its bill printed', async ({ page }) => {
+const ORDER0 = '90'.padStart(24, '0');
+const existingOrder = (o: Json = {}): Json => ({ _id: '80'.padStart(24, '0'), orderNumber: 'PO-9', pharmacyId: PH, customerId: KNOWN, orderType: 'in_store', status: 'completed',
+  items: [{ medicineId: PARA, medicineName: 'Paracetamol 500mg', orderedQty: 2, unitPrice: 20, lineTotal: 40 }], grandTotal: 40, paymentMode: 'in_store_payment',
+  paymentStatus: 'paid', prescriptionStatus: 'not_required', createdAt: '2026-11-20T05:00:00.000Z', ...o });
+
+async function chooseKnown(page: Page) {
+  const customer = page.getByRole('region', { name: 'Customer' });
+  await customer.getByLabel('Search by name or phone').fill('ravi');
+  await customer.getByRole('button', { name: 'Search' }).click();
+  await customer.getByRole('button', { name: 'Choose Ravi Kumar · 9876500001' }).click();
+}
+async function createSale(page: Page) {
+  await page.getByRole('button', { name: 'Next: check the sale' }).click();
+  await page.getByRole('group', { name: 'Check the sale' }).getByRole('button', { name: 'Create sale' }).click();
+}
+
+test('a walk-in cash sale: linked by name and phone, prices with GST inside, marked paid, its bill (pharmacy, batches, GST) printed', async ({ page }) => {
   const b = await mockBackend(page);
   await signIn(page);
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'New sale' }).click();
@@ -139,70 +171,85 @@ test('a walk-in cash sale: linked by name and phone, priced with tax by the serv
   await customer.getByLabel('Walk-in customer').check();
   await customer.getByLabel('Customer’s name').fill('Meena Shah');
   await customer.getByLabel('Mobile number (10 digits)').fill('9123456780');
-  await customer.getByLabel('The customer agreed to be added to your pharmacy’s customers').check();
+  await expect(customer.getByRole('checkbox')).toHaveAccessibleName(/The customer agreed to be added to your pharmacy’s customers, and to a Jansetu account being made/);
+  await customer.getByRole('checkbox').check();
   await addMedicine(page, 'para', 'Paracetamol 500mg', '2');
   await expect(page.getByText('About ₹40.00')).toBeVisible();
+  await expect(page.getByText('Prices include tax.', { exact: false })).toBeVisible();
   await page.getByRole('button', { name: 'Next: check the sale' }).click();
   const check = page.getByRole('group', { name: 'Check the sale' });
   await expect(check).toContainText('Sell 1 medicine to Meena Shah · 9123456780, about ₹40.00?');
   await check.getByRole('button', { name: 'Create sale' }).click();
 
-  await expect(page.getByText('Sale PO-100 created.')).toBeVisible();
+  // WQ50b: the sale's own page (a reload shows it again).
+  await expect(page).toHaveURL(new RegExp(`/pharmacy/sale/${ORDER0}$`));
   const bill = page.getByRole('region', { name: 'Bill PO-100' });
-  await expect(bill).toContainText('Paracetamol 500mg2₹20.00₹42.00');
-  await expect(bill).toContainText('Tax₹2.00');
-  await expect(bill).toContainText('Total₹42.00');
+  await expect(bill).toContainText('Asha Medicals');
+  await expect(bill).toContainText('12 MG Road, Pune, Maharashtra, 411001');
+  await expect(bill).toContainText('GSTIN 27ABCDE1234F1Z5');
+  await expect(bill).toContainText('Walk-in customer');
+  await expect(bill).toContainText('Paracetamol 500mgB7, expires 31 Dec 20282₹20.00₹40.00');
+  await expect(bill).toContainText('Total₹40.00');
+  await expect(bill).toContainText('of which GST ₹1.90');
   await expect(bill).toContainText('Not paid yet');
+  await page.reload();
+  await expect(bill).toContainText('Total₹40.00');
   const pay = page.getByRole('region', { name: 'Payment at the counter' });
   await pay.getByLabel('Cash').check();
   await pay.getByRole('button', { name: 'Mark paid' }).click();
-  await expect(pay).toContainText('Record ₹42.00 received at the counter by Cash?');
+  await expect(pay).toContainText('Record ₹40.00 received at the counter by Cash?');
   await pay.getByRole('button', { name: 'Yes, it is paid' }).click();
-  await expect(bill).toContainText('PaymentPaid');
+  await expect(bill).toContainText('PaymentPaid by Cash');
   await expect(page.getByRole('region', { name: 'Payment at the counter' })).toHaveCount(0);
   await page.evaluate(() => { (window as unknown as { printed: number }).printed = 0; window.print = () => { (window as unknown as { printed: number }).printed += 1; }; });
   await page.getByRole('button', { name: 'Print the bill' }).click();
   expect(await page.evaluate(() => (window as unknown as { printed: number }).printed)).toBe(1);
 
-  expect(writes(b).map((c) => c.path)).toEqual(['/pharmacy-customers', '/pharmacy-orders', `/pharmacy-orders/${'90'.padStart(24, '0')}/mark-paid`]);
+  expect(writes(b).map((c) => c.path)).toEqual(['/pharmacy-customers', '/pharmacy-orders', `/pharmacy-orders/${ORDER0}/mark-paid`]);
   expect(writes(b)[0]!.body).toEqual({ name: 'Meena Shah', phone: '9123456780', consent: true });
   expect(writes(b)[1]!.body).toEqual({ orderType: 'in_store', customerId: NEW_USER, items: [{ medicineId: PARA, orderedQty: 2 }], paymentMode: 'in_store_payment',
     deliveryMode: 'pickup', isWalkIn: true });
   expect(writes(b)[2]!.body).toEqual({ paymentSource: 'cash' });
+  // The customer's in-store orders are read before the sale is sent (so a lost answer is never matched to one of them).
+  const create = b.calls.findIndex((c) => c.method === 'POST' && c.path === '/pharmacy-orders');
+  expect(b.calls.slice(0, create).some((c) => c.path === `/pharmacy-orders?customerId=${NEW_USER}&orderType=in_store&limit=20`)).toBe(true);
   // No customer details are kept on this device or put in the address.
   expect(await stored(page)).not.toMatch(/Meena|9123456780/);
-  await page.getByRole('button', { name: 'Start a new sale' }).click();
+  await page.getByRole('link', { name: 'Start a new sale' }).click();
   await expect(page.getByRole('region', { name: 'Customer' }).getByLabel('Walk-in customer')).not.toBeChecked();
 });
 
-test('a known customer with a prescription medicine and its prescription: paid only after the pharmacist approves', async ({ page }) => {
-  const b = await mockBackend(page);
+test('a known customer with a prescription medicine and its prescription: paid only after the pharmacist approves; Create waits for the upload', async ({ page }) => {
+  let release = () => {};
+  const b = await mockBackend(page, { holdUpload: new Promise<void>((r) => { release = r; }) });
   await signIn(page);
   await page.goto('/#/pharmacy/sale');
-  const customer = page.getByRole('region', { name: 'Customer' });
-  await customer.getByLabel('Search by name or phone').fill('ravi');
-  await customer.getByRole('button', { name: 'Search' }).click();
-  await customer.getByRole('button', { name: 'Choose Ravi Kumar · 9876500001' }).click();
-  await expect(customer).toContainText('Customer: Ravi Kumar · 9876500001.');
+  await chooseKnown(page);
+  await expect(page.getByRole('region', { name: 'Customer' })).toContainText('Customer: Ravi Kumar · 9876500001.');
   await addMedicine(page, 'amox', 'Amoxicillin 250mg', '1');
   const rx = page.getByRole('region', { name: 'Prescription (optional)' });
   await rx.getByLabel('Attach a prescription (photo or PDF)').setInputFiles({ name: 'rx.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') });
+  // WQ50b: while the file is on its way, the sale cannot be checked or created (it would go without it).
+  await expect(page.getByRole('button', { name: 'Next: check the sale' })).toBeDisabled();
+  release();
   await expect(rx).toContainText('Prescription 1 attached.');
-  await page.getByRole('button', { name: 'Next: check the sale' }).click();
-  await page.getByRole('button', { name: 'Create sale' }).click();
+  await createSale(page);
   const bill = page.getByRole('region', { name: 'Bill PO-100' });
   await expect(bill).toContainText('Amoxicillin 250mg Prescription');
   const pay = page.getByRole('region', { name: 'Payment at the counter' });
   await expect(pay).toContainText('your pharmacist approves the prescription before it is paid');
   await expect(pay.getByRole('button', { name: 'Mark paid' })).toHaveCount(0);
-  await expect(pay.getByRole('link', { name: 'Review the prescription' })).toHaveAttribute('href', `#/pharmacy/prescriptions/${'90'.padStart(24, '0')}`);
+  await expect(pay.getByRole('link', { name: 'Review the prescription' })).toHaveAttribute('href', `#/pharmacy/prescriptions/${ORDER0}?from=sale`);
+  await pay.getByRole('link', { name: 'Review the prescription' }).click();
+  await page.getByRole('link', { name: 'Back to the sale' }).click();
+  await expect(page).toHaveURL(new RegExp(`/pharmacy/sale/${ORDER0}$`));
   const create = writes(b).find((c) => c.path === '/pharmacy-orders')!;
   expect(create.body).toMatchObject({ customerId: KNOWN, isWalkIn: false, items: [{ medicineId: AMOX, orderedQty: 1 }],
     prescriptionUrls: ['/api/static/pharmacy-order-prescription/rx-1.pdf'] });
   expect(writes(b).some((c) => c.path === '/pharmacy-customers')).toBe(false);
 });
 
-test('refusals: checked before asking, the server’s stock refusal in words, nothing sold', async ({ page }) => {
+test('refusals: checked before asking, the server’s stock refusal and its prescription gate in words, nothing sold', async ({ page }) => {
   const b = await mockBackend(page, { stock: { [PARA]: 3, [AMOX]: 5 } });
   await signIn(page);
   await page.goto('/#/pharmacy/sale');
@@ -223,31 +270,55 @@ test('refusals: checked before asking, the server’s stock refusal in words, no
   // Someone else sold some meanwhile: the server refuses, in words; nothing was sold.
   await customer.getByLabel('Customer’s name').fill('Meena Shah');
   await customer.getByLabel('Mobile number (10 digits)').fill('9123456780');
-  await customer.getByLabel('The customer agreed to be added to your pharmacy’s customers').check();
+  await customer.getByRole('checkbox').check();
   await page.getByLabel('Quantity of Paracetamol 500mg').fill('3');
   b.stock[PARA] = 1;
-  await page.getByRole('button', { name: 'Next: check the sale' }).click();
-  await page.getByRole('button', { name: 'Create sale' }).click();
+  await createSale(page);
   await expect(page.getByText('Not enough of a medicine is in stock now. Search it again and lower the quantity.')).toBeVisible();
+  // WQ50b: the prescription gate down (503, decided before anything is written) is a refusal in words, not an unknown outcome.
+  b.stock[PARA] = 3;
+  b.rxGateDown = true;
+  await createSale(page);
+  await expect(page.getByText('Sales with prescriptions are not available right now. Try again later.')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Unconfirmed sale' })).toHaveCount(0);
   expect(b.orders).toHaveLength(0);
   await expect(page.getByRole('button', { name: 'Next: check the sale' })).toBeVisible();
 });
 
-test('a lost answer: the sale is never sent again; Check finds it among the customer’s in-store orders', async ({ page }) => {
-  const b = await mockBackend(page, { loseNextCreate: true });
+test('a lost answer: never sent again; Check ignores the customer’s earlier and cancelled sales of the same medicines and finds the new one', async ({ page }) => {
+  const b = await mockBackend(page, { loseNextCreate: true,
+    orders: [existingOrder(), existingOrder({ _id: '81'.padStart(24, '0'), status: 'placed' }), existingOrder({ _id: '82'.padStart(24, '0'), status: 'cancelled', createdAt: NOW.toISOString() })] });
   await signIn(page);
   await page.goto('/#/pharmacy/sale');
-  const customer = page.getByRole('region', { name: 'Customer' });
-  await customer.getByRole('button', { name: 'Search' }).click();
-  await customer.getByRole('button', { name: 'Choose Ravi Kumar · 9876500001' }).click();
+  await chooseKnown(page);
   await addMedicine(page, 'para', 'Paracetamol 500mg', '2');
-  await page.getByRole('button', { name: 'Next: check the sale' }).click();
-  await page.getByRole('button', { name: 'Create sale' }).click();
+  await createSale(page);
   const panel = page.getByRole('group', { name: 'Unconfirmed sale' });
   await expect(panel).toContainText('It may already be recorded, so it is not sent again.');
   await expect(panel.getByRole('button', { name: /Send/ })).toHaveCount(0);
   await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
-  await expect(page.getByText('Sale PO-100 created.')).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/pharmacy/sale/${'93'.padStart(24, '0')}$`));
+  await expect(page.getByRole('region', { name: 'Bill PO-103' })).toBeVisible();
   expect(writes(b).filter((c) => c.path === '/pharmacy-orders')).toHaveLength(1);
-  expect(b.calls.some((c) => c.path === `/pharmacy-orders?customerId=${KNOWN}&orderType=in_store&limit=20`)).toBe(true);
+});
+
+test('a lost answer that recorded nothing: Forget only after a second check at least 30 s after the attempt', async ({ page }) => {
+  const b = await mockBackend(page, { dropNextCreate: true });
+  await signIn(page);
+  await page.goto('/#/pharmacy/sale');
+  await chooseKnown(page);
+  await addMedicine(page, 'para', 'Paracetamol 500mg', '2');
+  await createSale(page);
+  const panel = page.getByRole('group', { name: 'Unconfirmed sale' });
+  await expect(panel).toContainText(/The outcome of this sale is not known yet \(.+\)/);
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panel).toContainText('Not recorded so far.');
+  await expect(panel.getByRole('button', { name: 'Forget it' })).toHaveCount(0);
+  await page.clock.setFixedTime(new Date(NOW.getTime() + 31_000));
+  await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(panel.getByRole('button', { name: 'Forget it' })).toBeVisible();
+  await panel.getByRole('button', { name: 'Forget it' }).click();
+  await panel.getByRole('button', { name: 'Yes, forget it' }).click();
+  await expect(page.getByRole('button', { name: 'Next: check the sale' })).toBeVisible();
+  expect(b.orders).toHaveLength(0);
 });

@@ -71,7 +71,7 @@ import { BookedConsultationsScreen } from './screens/pharmacy/BookedConsultation
 import { WalletScreen } from './screens/pharmacy/WalletScreen.tsx';
 import { LabReferralEarningsScreen } from './screens/finance/ReferralEarningsScreen.tsx';
 import { PharmacyFinanceScreen } from './screens/pharmacy/FinanceScreen.tsx';
-import { SaleScreen } from './screens/pharmacy/SaleScreen.tsx';
+import { SaleBillScreen, SaleScreen } from './screens/pharmacy/SaleScreen.tsx';
 import { WalletDisputesScreen } from './screens/admin/WalletDisputesScreen.tsx';
 import { Truck } from 'lucide-react';
 import { PartnerFinanceScreen } from './screens/finance/PartnerFinanceScreen.tsx';
@@ -208,6 +208,8 @@ export const PAGES: readonly WorkspacePage[] = [
     path: '/pharmacy/sale', roles: ['pharmacy'], element: <SaleScreen />,
     nav: { labelKey: 'nav.newSale', icon: ShoppingCart, sectionKey: 'nav.section.pharmacy' },
   },
+  // WQ50b: a created sale's own page (its bill and the counter payment), so a reload shows it.
+  { path: '/pharmacy/sale/:orderId', roles: ['pharmacy'], element: <SaleBillScreen /> },
   {
     path: '/pharmacy/orders', roles: ['pharmacy'], element: <OrdersScreen />,
     nav: { labelKey: 'nav.orders', icon: Package, sectionKey: 'nav.section.pharmacy' },

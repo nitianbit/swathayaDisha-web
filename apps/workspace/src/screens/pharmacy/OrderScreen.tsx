@@ -13,7 +13,7 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 import { CustomerReturnForm } from './CustomerReturnForm.tsx';
 import {
-  blockedReason, DELIVERY_EXCEPTION_LABEL, FORWARD_LABEL, ORDER_STATUS_LABEL, orderLabel,
+  blockedReason, canMarkPaid, DELIVERY_EXCEPTION_LABEL, FORWARD_LABEL, ORDER_STATUS_LABEL, orderLabel,
   PAYMENT_STATUS_LABEL, REFUND_STATUS_LABEL, TERMINAL,
 } from './orderLabels.ts';
 import { t } from '../../i18n/pharmacy/index.ts';
@@ -59,8 +59,7 @@ function OrderView({ order }: { order: PharmacyOrder }) {
   const forward = ORDER_TRANSITIONS[order.status].filter((s) => FORWARD_LABEL()[s]);
   const exceptions = (Object.keys(DELIVERY_EXCEPTION_FROM) as DeliveryExceptionType[])
     .filter((ex) => DELIVERY_EXCEPTION_FROM[ex].includes(order.status));
-  const canMarkPaid = (order.paymentMode === 'in_store_payment' || order.paymentMode === 'cash_on_delivery')
-    && order.paymentStatus !== 'paid' && !terminal && order.status !== 'pending_cancel';
+  const markable = canMarkPaid(order);
   const unpaid = !order.paymentStatus || order.paymentStatus === 'pending' || order.paymentStatus === 'failed';
   // D3 (`requestCancel`): Placed, Accepted or Packed; unpaid → cancelled at once, money held → waits for a decision.
   // The generic status update refuses to close a paid order (ORDER_PAID_USE_CANCEL_REQUEST), so this is the only way.
@@ -134,7 +133,7 @@ function OrderView({ order }: { order: PharmacyOrder }) {
                 </div>
               );
             })}
-            {canMarkPaid && (
+            {markable && (
               <ConfirmAction label={t('order.recordPayment')} confirmLabel={t('order.yesPaymentReceived')}
                 consequence={t(order.paymentMode === 'cash_on_delivery' ? 'order.receivedOnDelivery' : 'order.receivedAtCounter', { amount: formatRupees(order.grandTotal) })}
                 reason={'optional'} reasonLabel={t('common.note')}
@@ -147,7 +146,7 @@ function OrderView({ order }: { order: PharmacyOrder }) {
                   : t('order.theOrderHoldsAPayment')}
                 onConfirm={(reason) => act(() => orders.requestCancel(order._id, reason))} />
             )}
-            {forward.length === 0 && exceptions.length === 0 && !canMarkPaid && !canRequestCancel && cancelBlock !== 'payment' && (
+            {forward.length === 0 && exceptions.length === 0 && !markable && !canRequestCancel && cancelBlock !== 'payment' && (
               <span className="ws-muted">{t('order.nothingToDoFrom')}{ORDER_STATUS_LABEL[order.status]}{t('order.here')}</span>
             )}
           </div>

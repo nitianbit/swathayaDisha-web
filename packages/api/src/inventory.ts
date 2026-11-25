@@ -1,5 +1,6 @@
 import { formatYmd } from '@jansetu/i18n';
 import type { ApiClient, Page } from './client.ts';
+import { istDateOf } from './partnerLabs.ts';
 import type { OrderStatus } from './pharmacyOrders.ts';
 
 /** Mirrors src1/modules/pharmacyInventory (model, batchQuality.ts, sellable.ts); only fields the screens read. */
@@ -92,7 +93,8 @@ export const BATCH_ACTION_FROM = {
 /** Orders whose held units can still move to another batch (batchQuality.ts REALLOCATABLE_ORDER_STATUSES). */
 export const REALLOCATABLE_ORDER_STATUSES: readonly OrderStatus[] = ['placed', 'accepted', 'packed', 'ready_for_pickup', 'delivery_failed'];
 
-export const todayYyyymmdd = (now = new Date()) => now.toISOString().slice(0, 10).replace(/-/g, '');
+/** Today in India as YYYYMMDD (the server's `istTodayYyyymmdd`: a batch expiring today still sells today in India). */
+export const todayYyyymmdd = (now = new Date()) => istDateOf(now).replace(/-/g, '');
 
 /** Sellable stock, the backend's rule (sellable.ts): active, unexpired batch units; legacy items without batches use availableQty. */
 export function sellableQty(item: Pick<InventoryItem, 'availableQty' | 'batches'>, today = todayYyyymmdd()): number {
@@ -110,7 +112,7 @@ const batchPath = (itemId: string, batchId: string) => {
 export function inventoryApi(c: ApiClient) {
   return {
     list: (q: { search?: string; page?: number; limit?: number; isActive?: boolean } = {}): Promise<Page<InventoryItem>> =>
-      c.page<InventoryItem>('/pharmacy-inventory', { query: { ...q, isActive: q.isActive === undefined ? undefined : String(q.isActive), includeBatches: 'true' } }),
+      c.page<InventoryItem>('/pharmacy-inventory', { query: { ...q, includeBatches: 'true' } }),
     lowStock: (q: { page?: number; limit?: number } = {}) =>
       c.page<InventoryItem>('/pharmacy-inventory/low-stock', { query: { ...q, includeBatches: 'true' } }),
     qualityHolds: (q: { qualityStatus?: 'recalled' | 'quarantined' | 'expired'; page?: number; limit?: number } = {}) =>
