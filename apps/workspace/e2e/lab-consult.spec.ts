@@ -619,4 +619,9 @@ test('WQ24b re-check: a held card booking stays on screen when a background doct
   await page.evaluate(() => { (window as unknown as { __rzClose: boolean }).__rzClose = false; });
   await page.getByRole('button', { name: 'Pay now ₹500.00' }).click();
   await expect(page.getByRole('heading', { name: 'Booked', exact: true })).toBeVisible();
+  // The next booking starts afresh: the 503 of the last one is not kept as "switched off".
+  b.doctorsDown = false;
+  await page.getByRole('button', { name: 'Book another consultation' }).click();
+  await expect(page.getByLabel('Patient’s mobile number')).toBeVisible();
+  await expect(page.getByText(/not switched on yet/)).toHaveCount(0);
 });

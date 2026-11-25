@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
   ASSISTED_MODE_LABEL, isCardAnswer, routeCardAnswer, CONSENT_STATEMENT_LANGUAGE,
@@ -105,6 +105,7 @@ function nextWords(d: AssistedDoctor, modeFilter: AssistedMode | ''): string {
 /** The booking flow, for a pharmacy or (WQ24) a lab member: `booker` gives the routes, keys, wallet and words. */
 export function BookConsultation({ booker }: { booker: ConsultBooker }) {
   const { api } = useSession();
+  const queryClient = useQueryClient();
   const assisted = booker.api;
   const org = booker.kind;
   const pharmacyId = booker.id;
@@ -176,6 +177,10 @@ export function BookConsultation({ booker }: { booker: ConsultBooker }) {
     pt.reset(); setDoctorId(null); setSlotId(null); setMode(''); setJoin(EMPTY_JOIN); setExtras(EMPTY_EXTRAS);
     setVisitErrors({}); setReview(null); setRefused(null); setDone(null); setNotice(null);
     setCardDue(null); setEnded(null); setMethod('wallet');
+    // A transient 503 while a booking was held must not stay as "switched off": the doctor reads' kept errors are cleared
+    // too, so only the next doctor read says it again if the service really is off.
+    setOff(false);
+    void queryClient.resetQueries({ queryKey: booker.doctorsKey });
   }
 
   // The doctor list: nearby first (the pharmacy's pincode, then its city; a lab's branch); that day's free times.
