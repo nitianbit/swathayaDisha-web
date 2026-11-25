@@ -9,6 +9,7 @@ import {
 import { Alert, ErrorState, Loading } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
@@ -25,7 +26,11 @@ import { DoctorBadges } from './DoctorsScreen.tsx';
 export function DoctorScreen() {
   const { doctorId = '' } = useParams();
   const scope = useAdminScope('doctors');
-  if (!OBJECT_ID_PATTERN.test(doctorId)) return <NoSuchRecord back="/admin/doctors" backLabel="Back to doctors" title="Doctor">Open it from the doctor list.</NoSuchRecord>;
+  if (!OBJECT_ID_PATTERN.test(doctorId)) return (
+    <NoSuchRecord back="/admin/doctors" backLabel={t('common.backToDoctors')} title={t('doctor.title')} missing={t('doctor.noSuch')}>
+      {t('doctor.openFromList')}
+    </NoSuchRecord>
+  );
   // One subtree per admin and doctor: an open confirmation never follows the admin to another doctor.
   return <DoctorDetail key={`${scope.identity}:${doctorId}`} doctorId={doctorId} scopeKey={scope.key} />;
 }
@@ -51,20 +56,20 @@ function DoctorDetail({ doctorId, scopeKey }: { doctorId: string; scopeKey: read
   const d = q.data;
   return (
     <>
-      <Link className="ws-back" to="/admin/doctors"><ArrowLeft size={16} aria-hidden="true" /> Back to doctors</Link>
-      <PageHeading title={d?.name || 'Doctor'}>{d ? [d.specialization, d.city].filter(Boolean).join(' · ') || null : null}</PageHeading>
-      {q.isPending ? <Loading label="Loading doctor…" />
+      <Link className="ws-back" to="/admin/doctors"><ArrowLeft size={16} aria-hidden="true" /> {t('common.backToDoctors')}</Link>
+      <PageHeading title={d?.name || t('doctor.title')}>{d ? [d.specialization, d.city].filter(Boolean).join(' · ') || null : null}</PageHeading>
+      {q.isPending ? <Loading label={t('doctor.loading')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : (
           <>
             <VerificationSection d={q.data} doctorId={doctorId} perform={guard.perform} busy={guard.busy || q.isFetching} reread={reread} readNow={readNow} />
             {/* The doctor's open consultations are the Consultations list filtered by doctor and status (closed there, S5c). */}
-            <p><Link to={`/admin/doctors/${doctorId}/wallet`}>Wallet</Link></p>
+            <p><Link to={`/admin/doctors/${doctorId}/wallet`}>{t('doctor.wallet')}</Link></p>
             <p>
-              Consultations with this doctor:{' '}
-              <Link to={`/admin/consultations?doctor=${doctorId}&status=pending`}>Waiting</Link>{' · '}
-              <Link to={`/admin/consultations?doctor=${doctorId}&status=confirmed`}>Confirmed</Link>
-              {!doctorEligibility(q.data).eligible && <span className="ws-muted"> (this doctor cannot attend them: open one to close it with a full refund)</span>}
+              {t('doctor.consultationsLead')}{' '}
+              <Link to={`/admin/consultations?doctor=${doctorId}&status=pending`}>{t('doctor.waiting')}</Link>{' · '}
+              <Link to={`/admin/consultations?doctor=${doctorId}&status=confirmed`}>{t('doctor.confirmed')}</Link>
+              {!doctorEligibility(q.data).eligible && <span className="ws-muted"> {t('doctor.cannotAttend')}</span>}
             </p>
           </>
         )}
@@ -100,8 +105,8 @@ function VerificationSection({ d, doctorId, perform, busy, reread, readNow }: {
   const fence = verifyFenceOf(d);
   const holds = (now: AdminDoctor, to: StateChange['to']) => (to === 'verify' ? now.isVerified === true : now.isVerified !== true);
   const doneWords = (c: StateChange, active: boolean) => (c.to === 'verify'
-    ? `${c.name} is verified.${active ? ' Patients can now find and book them.' : ' They are inactive, so patients still cannot book them.'}`
-    : `${c.name} is no longer verified: patients cannot find or book them, and they cannot take consultations or prescribe.`);
+    ? t(active ? 'doctor.done.verifiedActive' : 'doctor.done.verifiedInactive', { name: c.name })
+    : t('doctor.done.unverified', { name: c.name }));
 
   async function change(p: PendingOp<StateChange>) {
     setOutcome(null);
@@ -121,9 +126,9 @@ function VerificationSection({ d, doctorId, perform, busy, reread, readNow }: {
       if (isFenceMismatch(r.error) && p.body.fence) {
         const now = await readNow().catch(() => null);
         if (live.current) setMismatch({ reviewed: p.body.fence, now });
-        say('warn', `${p.body.name} was not verified: ${doctorStateRefusal(r.error)} The doctor was read again: review what is saved now before verifying.`);
+        say('warn', t('doctor.fenceRefused', { name: p.body.name, reason: doctorStateRefusal(r.error) }));
       } else {
-        say('error', `Not changed: ${doctorStateRefusal(r.error)}`);
+        say('error', t('common.notChanged', { reason: doctorStateRefusal(r.error) }));
       }
     }
     void reread();
@@ -133,33 +138,35 @@ function VerificationSection({ d, doctorId, perform, busy, reread, readNow }: {
     const restored = !!op.restored || !op.body;
     return (
       <section className="ws-section" aria-labelledby="dr-state-h">
-        <h2 id="dr-state-h">Verification</h2>
-        <dl className="ws-dl"><dt>Status</dt><dd><DoctorBadges d={d} /></dd></dl>
+        <h2 id="dr-state-h">{t('doctor.verification')}</h2>
+        <dl className="ws-dl"><dt>{t('common.status')}</dt><dd><DoctorBadges d={d} /></dd></dl>
         {resendError && <Alert>{resendError}</Alert>}
-        <CheckPanel label="Unconfirmed change"
+        <CheckPanel label={t('doctor.unconfirmed')}
           onCheck={async () => {
             const now = await readNow();
             void reread();
             if (restored) {
-              return `Read again: ${now.name} is ${now.isVerified === true ? 'verified' : 'not verified'} now. The earlier change is not kept on this device, so whether it went through cannot be told. If this is not what you wanted, forget it and make the change again.`;
+              return t(now.isVerified === true ? 'doctor.check.restoredVerified' : 'doctor.check.restoredNotVerified', { name: now.name });
             }
             if (holds(now, op.body.to)) {
               settle(op.requestKey);
               say('ok', doneWords(op.body, now.isActive === true));
               return null;
             }
-            return `Not changed so far: ${now.name} is ${now.isVerified === true ? 'verified' : 'not verified'} now. It may still be on its way. Sending the same request again is safe.`;
+            return t(now.isVerified === true ? 'doctor.check.notYetVerified' : 'doctor.check.notYetNotVerified', { name: now.name });
           }}
           resend={restored ? undefined : {
-            label: 'Send the same request again', busy,
+            label: t('doctor.resend'), busy,
             onClick: () => { void change(op).catch((err: unknown) => setResendError(messageOf(err))); },
           }}
-          forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget: () => settle(op.requestKey),
-            consequence: 'The change may already have gone through, or may still go through. Forgetting it does not undo that. The status shown is what is saved now.' }}>
+          forget={{ label: t('doctor.forget'), confirmLabel: t('doctor.forgetConfirm'), onForget: () => settle(op.requestKey),
+            consequence: t('doctor.forgetConsequence') }}>
           <Alert tone="warn">
             {restored
-              ? 'A verification change made earlier on this device (before the page was reloaded) was not confirmed. Its details are not kept here. Check the doctor’s status.'
-              : `The outcome of this request is not known yet${op.error ? ` (${op.error})` : ''}: ${op.body.to === 'verify' ? `verify ${op.body.name}` : `take ${op.body.name}’s verification away`}. Sending the same request again is safe.`}
+              ? t('doctor.restored')
+              : op.error
+                ? t(op.body.to === 'verify' ? 'doctor.unknown.verifyError' : 'doctor.unknown.unverifyError', { name: op.body.name, error: op.error })
+                : t(op.body.to === 'verify' ? 'doctor.unknown.verify' : 'doctor.unknown.unverify', { name: op.body.name })}
           </Alert>
         </CheckPanel>
       </section>
@@ -169,54 +176,59 @@ function VerificationSection({ d, doctorId, perform, busy, reread, readNow }: {
   const noNumber = !fence.expectedRegistrationNumber;
   return (
     <section className="ws-section" aria-labelledby="dr-state-h">
-      <h2 id="dr-state-h">Verification</h2>
+      <h2 id="dr-state-h">{t('doctor.verification')}</h2>
       {outcome && <Alert tone={outcome.tone}>{outcome.text}</Alert>}
       {mismatch && (
-        <div role="group" aria-label="What changed">
+        <div role="group" aria-label={t('doctor.mismatch.label')}>
           <ul className="ws-list">
-            <li>You reviewed: name <strong>{mismatch.reviewed.expectedName || '(none)'}</strong>, registration number <strong>{mismatch.reviewed.expectedRegistrationNumber || '(none)'}</strong>.</li>
+            <li>{t.rich('doctor.mismatch.reviewed', {
+              name: <strong key="name">{mismatch.reviewed.expectedName || t('doctor.mismatch.none')}</strong>,
+              number: <strong key="number">{mismatch.reviewed.expectedRegistrationNumber || t('doctor.mismatch.none')}</strong>,
+            })}</li>
             {mismatch.now
-              ? <li>Saved now: name <strong>{none(mismatch.now.name)}</strong>, registration number <strong>{none(mismatch.now.medicalRegistrationNumber)}</strong>{mismatch.now.isVerified === true ? ' (and the doctor is verified now)' : ''}.</li>
-              : <li>The doctor could not be read again: use Try again below or reload the page before verifying.</li>}
+              ? <li>{t.rich(mismatch.now.isVerified === true ? 'doctor.mismatch.savedVerified' : 'doctor.mismatch.saved', {
+                name: <strong key="name">{none(mismatch.now.name)}</strong>,
+                number: <strong key="number">{none(mismatch.now.medicalRegistrationNumber)}</strong>,
+              })}</li>
+              : <li>{t('doctor.mismatch.unread')}</li>}
           </ul>
         </div>
       )}
       <dl className="ws-dl">
-        <dt>Status</dt><dd><DoctorBadges d={d} /></dd>
-        <dt>Name</dt><dd>{none(d.name)}</dd>
-        <dt>Registration number</dt><dd>{none(d.medicalRegistrationNumber)}</dd>
-        <dt>Speciality</dt><dd>{none(d.specialization)}</dd>
-        <dt>Degree</dt><dd>{none(d.degree)}</dd>
-        <dt>Signs in with</dt><dd>{[d.phone, d.email].filter(Boolean).join(' · ') || '—'}</dd>
+        <dt>{t('common.status')}</dt><dd><DoctorBadges d={d} /></dd>
+        <dt>{t('common.name')}</dt><dd>{none(d.name)}</dd>
+        <dt>{t('doctor.registrationNumber')}</dt><dd>{none(d.medicalRegistrationNumber)}</dd>
+        <dt>{t('doctor.speciality')}</dt><dd>{none(d.specialization)}</dd>
+        <dt>{t('doctor.degree')}</dt><dd>{none(d.degree)}</dd>
+        <dt>{t('doctor.signsInWith')}</dt><dd>{[d.phone, d.email].filter(Boolean).join(' · ') || '—'}</dd>
       </dl>
-      {!s.active && <p className="ws-muted">This doctor is inactive: patients cannot book them even when verified. Making a doctor active again is not done here.</p>}
+      {!s.active && <p className="ws-muted">{t('doctor.inactive')}</p>}
       <div className="ws-actions">
-        {!s.verified && !fence.expectedName && <p className="ws-muted">No name is on record, so this doctor cannot be verified until they add one.</p>}
+        {!s.verified && !fence.expectedName && <p className="ws-muted">{t('doctor.noNameToVerify')}</p>}
         {!s.verified && !!fence.expectedName && (
-          <ConfirmAction key="verify" label="Verify" confirmLabel={`Verify ${d.name}`} disabled={busy} version={d.updatedAt}
+          <ConfirmAction key="verify" label={t('common.verify')} confirmLabel={t('common.verifyNamed', { name: d.name })} disabled={busy} version={d.updatedAt}
             consequence={(
               <>
-                <p>Verify <strong>{d.name}</strong> with exactly what you reviewed:</p>
+                <p>{t.rich('doctor.verify.lead', { name: <strong key="name">{d.name}</strong> })}</p>
                 <ul className="ws-list">
-                  <li>Name: <strong>{fence.expectedName}</strong></li>
-                  <li>Registration number: <strong>{fence.expectedRegistrationNumber || 'none on record'}</strong></li>
+                  <li>{t.rich('doctor.verify.name', { name: <strong key="name">{fence.expectedName}</strong> })}</li>
+                  <li>{t.rich('doctor.verify.number', { number: <strong key="number">{fence.expectedRegistrationNumber || t('doctor.verify.noneOnRecord')}</strong> })}</li>
                 </ul>
-                {noNumber && <Alert tone="warn">No medical registration number is on record for this doctor.</Alert>}
+                {noNumber && <Alert tone="warn">{t('doctor.verify.noNumber')}</Alert>}
                 <p>
-                  {s.active ? 'Patients can then find and book them; they can open times, take consultations and prescribe.' : 'They are inactive, so patients still cannot book them until they are active.'}
-                  {' '}After verification only the Jansetu team can change their name, registration number, speciality, degree, mobile number and email.
-                  If the name or registration number changes before you confirm, nothing is verified.
+                  {s.active ? t('doctor.verify.thenActive') : t('doctor.verify.thenInactive')}
+                  {' '}{t('doctor.verify.locked')}
                 </p>
               </>
             )}
             onConfirm={() => change(startOp(newRequestKey(), { to: 'verify', name: d.name, fence }))} />
         )}
         {s.verified && (
-          <ConfirmAction key="unverify" label="Unverify" danger confirmLabel={`Unverify ${d.name}`} disabled={busy} version={d.updatedAt}
+          <ConfirmAction key="unverify" label={t('doctor.unverify.label')} danger confirmLabel={t('doctor.unverify.confirm', { name: d.name })} disabled={busy} version={d.updatedAt}
             consequence={(
               <>
-                <p><strong>{d.name}</strong> is no longer verified: patients cannot find or book them, and they cannot open times, take consultations or prescribe. They no longer see their patients’ contact details.</p>
-                <p>Their bookings stay as they are. Close each open one with a full refund from its consultation page (linked below).</p>
+                <p>{t.rich('doctor.unverify.consequence', { name: <strong key="name">{d.name}</strong> })}</p>
+                <p>{t('doctor.unverify.bookings')}</p>
               </>
             )}
             onConfirm={() => change(startOp(newRequestKey(), { to: 'unverify', name: d.name }))} />

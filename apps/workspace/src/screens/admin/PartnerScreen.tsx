@@ -9,6 +9,7 @@ import {
 import { Alert, Badge, Button, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
 import { changedFields, isRecordChanged, RECORD_CHANGED_MESSAGE, staleMessage, useDraft } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { NoSuchPartner } from '../partner/scope.tsx';
@@ -32,43 +33,43 @@ function PartnerDetail({ partnerId }: { partnerId: string }) {
   const root = `/admin/partners/${partnerId}`;
   return (
     <>
-      <Link className="ws-back" to="/admin/partners"><ArrowLeft size={16} aria-hidden="true" /> Back to labs and clinics</Link>
-      <PageHeading title={p?.name ?? 'Lab or clinic'}>{p ? `${PARTNER_KIND_LABEL[p.kind] ?? p.kind}${p.solo ? ' · single-doctor practice' : ''}` : null}</PageHeading>
-      {p?.kind === 'lab' && <div><Link to={`${root}/referral-cuts`}>Referral cuts</Link></div>}
-      {q.isPending ? <Loading label="Loading partner…" />
+      <Link className="ws-back" to="/admin/partners"><ArrowLeft size={16} aria-hidden="true" /> {t('common.backToPartners')}</Link>
+      <PageHeading title={p?.name ?? t('partner.title')}>{p ? kindLine(p) : null}</PageHeading>
+      {p?.kind === 'lab' && <div><Link to={`${root}/referral-cuts`}>{t('partner.referralCuts')}</Link></div>}
+      {q.isPending ? <Loading label={t('partner.loading')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : (
           <>
             <section className="ws-section" aria-labelledby="state-h">
-              <h2 id="state-h">Status</h2>
+              <h2 id="state-h">{t('common.status')}</h2>
               <dl className="ws-dl">
-                <dt>Verification</dt><dd><Badge tone={stateTone(p!.verification?.state)}>{VERIFICATION_LABEL[p!.verification?.state] ?? p!.verification?.state}</Badge></dd>
-                {p!.verification?.verifiedAt && <><dt>Verified</dt><dd>{formatDateTime(p!.verification.verifiedAt)}</dd></>}
-                <dt>Active</dt><dd>{p!.isActive ? 'Yes' : 'No'}</dd>
-                <dt>Owners</dt><dd>{p!.activeOwnerCount}</dd>
-                <dt>Contact</dt><dd>{p!.contact?.phone}{p!.contact?.email ? ` · ${p!.contact.email}` : ''}</dd>
-                <dt>Legal name</dt><dd>{p!.legalName || '—'}</dd>
-                <dt>Added</dt><dd>{formatDateTime(p!.createdAt)}</dd>
+                <dt>{t('common.verification')}</dt><dd><Badge tone={stateTone(p!.verification?.state)}>{VERIFICATION_LABEL[p!.verification?.state] ?? p!.verification?.state}</Badge></dd>
+                {p!.verification?.verifiedAt && <><dt>{t('common.verified')}</dt><dd>{formatDateTime(p!.verification.verifiedAt)}</dd></>}
+                <dt>{t('common.active')}</dt><dd>{p!.isActive ? t('partner.yes') : t('partner.no')}</dd>
+                <dt>{t('partner.owners')}</dt><dd>{p!.activeOwnerCount}</dd>
+                <dt>{t('partners.contact')}</dt><dd>{p!.contact?.phone}{p!.contact?.email ? ` · ${p!.contact.email}` : ''}</dd>
+                <dt>{t('partner.legalName')}</dt><dd>{p!.legalName || '—'}</dd>
+                <dt>{t('common.added')}</dt><dd>{formatDateTime(p!.createdAt)}</dd>
               </dl>
               <PartnerStateActions partner={p!} />
             </section>
             <section className="ws-section" aria-labelledby="manage-h">
-              <h2 id="manage-h">Manage as owner</h2>
-              <p className="ws-muted">Everything an owner of {p!.name} can do. Your changes are recorded as a Jansetu admin in its activity log.</p>
+              <h2 id="manage-h">{t('partner.manage.title')}</h2>
+              <p className="ws-muted">{t('partner.manage.intro', { name: p!.name })}</p>
               <ul className="home-links">
-                <li><Link className="home-link" to={`${root}/profile`}><Building2 size={22} aria-hidden="true" /><span>Profile</span></Link></li>
-                <li><Link className="home-link" to={`${root}/staff`}><Users size={22} aria-hidden="true" /><span>Staff</span></Link></li>
-                <li><Link className="home-link" to={`${root}/branches`}><MapPin size={22} aria-hidden="true" /><span>Branches</span></Link></li>
-                <li><Link className="home-link" to={`${root}/audit`}><History size={22} aria-hidden="true" /><span>Activity log</span></Link></li>
-                <li><Link className="home-link" to={`${root}/catalogue`}><ClipboardList size={22} aria-hidden="true" /><span>{p!.kind === 'clinic' ? 'Services and prices' : 'Tests and prices'}</span></Link></li>
-                <li><Link className="home-link" to={`${root}/invoices`}><Receipt size={22} aria-hidden="true" /><span>Bills</span></Link></li>
-                {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/lab-bookings`}><FlaskConical size={22} aria-hidden="true" /><span>Lab bookings</span></Link></li>}
-                {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/slots`}><CalendarClock size={22} aria-hidden="true" /><span>Slots</span></Link></li>}
-                {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/lab-desk`}><CalendarPlus size={22} aria-hidden="true" /><span>Front desk</span></Link></li>}
-                {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/wallet`}><Wallet size={22} aria-hidden="true" /><span>Wallet</span></Link></li>}
-                <li><Link className="home-link" to={`${root}/finance`}><Wallet size={22} aria-hidden="true" /><span>Finance</span></Link></li>
-                {p!.kind === 'clinic' && <li><Link className="home-link" to={`${root}/desk`}><CalendarCheck size={22} aria-hidden="true" /><span>Front desk</span></Link></li>}
-                {p!.kind === 'clinic' && <li><Link className="home-link" to={`${root}/clinic-doctors`}><Stethoscope size={22} aria-hidden="true" /><span>Doctors</span></Link></li>}
+                <li><Link className="home-link" to={`${root}/profile`}><Building2 size={22} aria-hidden="true" /><span>{t('partner.manage.profile')}</span></Link></li>
+                <li><Link className="home-link" to={`${root}/staff`}><Users size={22} aria-hidden="true" /><span>{t('partner.manage.staff')}</span></Link></li>
+                <li><Link className="home-link" to={`${root}/branches`}><MapPin size={22} aria-hidden="true" /><span>{t('partner.manage.branches')}</span></Link></li>
+                <li><Link className="home-link" to={`${root}/audit`}><History size={22} aria-hidden="true" /><span>{t('partner.manage.audit')}</span></Link></li>
+                <li><Link className="home-link" to={`${root}/catalogue`}><ClipboardList size={22} aria-hidden="true" /><span>{p!.kind === 'clinic' ? t('partner.manage.clinicCatalogue') : t('partner.manage.labCatalogue')}</span></Link></li>
+                <li><Link className="home-link" to={`${root}/invoices`}><Receipt size={22} aria-hidden="true" /><span>{t('partner.manage.bills')}</span></Link></li>
+                {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/lab-bookings`}><FlaskConical size={22} aria-hidden="true" /><span>{t('partner.manage.labBookings')}</span></Link></li>}
+                {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/slots`}><CalendarClock size={22} aria-hidden="true" /><span>{t('partner.manage.slots')}</span></Link></li>}
+                {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/lab-desk`}><CalendarPlus size={22} aria-hidden="true" /><span>{t('partner.manage.frontDesk')}</span></Link></li>}
+                {p!.kind === 'lab' && <li><Link className="home-link" to={`${root}/wallet`}><Wallet size={22} aria-hidden="true" /><span>{t('partner.manage.wallet')}</span></Link></li>}
+                <li><Link className="home-link" to={`${root}/finance`}><Wallet size={22} aria-hidden="true" /><span>{t('partner.manage.finance')}</span></Link></li>
+                {p!.kind === 'clinic' && <li><Link className="home-link" to={`${root}/desk`}><CalendarCheck size={22} aria-hidden="true" /><span>{t('partner.manage.frontDesk')}</span></Link></li>}
+                {p!.kind === 'clinic' && <li><Link className="home-link" to={`${root}/clinic-doctors`}><Stethoscope size={22} aria-hidden="true" /><span>{t('partner.manage.doctors')}</span></Link></li>}
               </ul>
             </section>
             <TaxForm partner={p!} />
@@ -78,9 +79,17 @@ function PartnerDetail({ partnerId }: { partnerId: string }) {
   );
 }
 
+/** Under the title: the kind ("Lab", "Clinic"), and a clinic run by one doctor says so. */
+function kindLine(p: Partner): string {
+  const kind = PARTNER_KIND_LABEL[p.kind] ?? p.kind;
+  return p.solo ? t('partner.kindSolo', { kind }) : kind;
+}
+
 type Tax = { gstin: string; pan: string; taxRegime: TaxRegime; prefix: string };
 const taxOf = (p: Partner): Tax => ({ gstin: p.gstin ?? '', pan: p.pan ?? '', taxRegime: p.taxRegime ?? 'unregistered', prefix: p.invoiceSeries?.prefix ?? '' });
-const TAX_LABEL: Record<keyof Tax, string> = { gstin: 'GSTIN', pan: 'PAN', taxRegime: 'tax regime', prefix: 'invoice prefix' };
+/** Each field's name in "Someone else changed the …" (keys; worded when shown). */
+const TAX_LABEL = { gstin: 'partners.gstin', pan: 'partners.pan', taxRegime: 'partner.tax.fieldRegime', prefix: 'partner.tax.fieldPrefix' } as const satisfies Record<keyof Tax, string>;
+const taxStale = (fields: readonly (keyof Tax)[]) => staleMessage(fields.map((k) => t(TAX_LABEL[k])));
 
 /** The changed tax fields, checked against `updatePartnerSchema` (a set GSTIN or PAN cannot be cleared). */
 function taxChanges(changed: Partial<Tax>): { body: PartnerUpdate; errors: Partial<Record<keyof Tax, string>> } {
@@ -88,19 +97,19 @@ function taxChanges(changed: Partial<Tax>): { body: PartnerUpdate; errors: Parti
   const body: PartnerUpdate = {};
   if (changed.gstin !== undefined) {
     const v = changed.gstin.trim().toUpperCase();
-    if (!v) errors.gstin = 'A GSTIN cannot be removed here. Enter a new one.';
-    else if (!GSTIN_PATTERN.test(v)) errors.gstin = 'Enter a valid 15-character GSTIN.';
+    if (!v) errors.gstin = t('partner.tax.gstinRemove');
+    else if (!GSTIN_PATTERN.test(v)) errors.gstin = t('partners.gstinInvalid');
     else body.gstin = v;
   }
   if (changed.pan !== undefined) {
     const v = changed.pan.trim().toUpperCase();
-    if (!v) errors.pan = 'A PAN cannot be removed here. Enter a new one.';
-    else if (!PAN_PATTERN.test(v)) errors.pan = 'Enter a valid 10-character PAN.';
+    if (!v) errors.pan = t('partner.tax.panRemove');
+    else if (!PAN_PATTERN.test(v)) errors.pan = t('partners.panInvalid');
     else body.pan = v;
   }
   if (changed.prefix !== undefined) {
     const v = changed.prefix.trim().toUpperCase();
-    if (!INVOICE_PREFIX_PATTERN.test(v)) errors.prefix = 'Use 1 to 6 letters or digits.';
+    if (!INVOICE_PREFIX_PATTERN.test(v)) errors.prefix = t('partners.prefixInvalid');
     else body.invoiceSeriesPrefix = v;
   }
   if (changed.taxRegime !== undefined) body.taxRegime = changed.taxRegime;
@@ -124,7 +133,7 @@ function TaxForm({ partner }: { partner: Partner }) {
   const serverValue = JSON.stringify(taxOf(partner));
   useEffect(() => {
     const c = rebaseTo(JSON.parse(serverValue) as Tax);
-    if (c.length) setStale(staleMessage(c.map((k) => TAX_LABEL[k])));
+    if (c.length) setStale(taxStale(c));
   }, [serverValue, rebaseTo]);
 
   async function save(e: FormEvent) {
@@ -133,23 +142,23 @@ function TaxForm({ partner }: { partner: Partner }) {
     const first = taxChanges(changedFields(d.current()));
     setErrors(first.errors);
     if (Object.keys(first.errors).length) return;
-    if (Object.keys(first.body).length === 0) { setNotice('Nothing has changed.'); return; }
+    if (Object.keys(first.body).length === 0) { setNotice(t('partner.tax.unchanged')); return; }
     setBusy(true);
     try {
       const admin = partnerAdminApi(api);
       const fresh = await admin.get(partner._id);
       const conflicts = rebaseTo(taxOf(fresh));
-      if (conflicts.length) { setStale(staleMessage(conflicts.map((k) => TAX_LABEL[k]))); return; }
+      if (conflicts.length) { setStale(taxStale(conflicts)); return; }
       const { body } = taxChanges(changedFields(d.current()));
-      if (Object.keys(body).length === 0) { setNotice('Nothing has changed.'); return; }
+      if (Object.keys(body).length === 0) { setNotice(t('partner.tax.unchanged')); return; }
       try {
         // Q10: refused (409 RECORD_CHANGED) if the partner moved after the read above.
         await admin.update(partner._id, body, fresh.updatedAt);
-        setNotice('Saved.');
+        setNotice(t('partner.tax.saved'));
       } catch (err) {
         if (!isRecordChanged(err)) throw err;
         const c = rebaseTo(taxOf(await admin.get(partner._id)));
-        setStale(c.length ? staleMessage(c.map((k) => TAX_LABEL[k])) : RECORD_CHANGED_MESSAGE);
+        setStale(c.length ? taxStale(c) : RECORD_CHANGED_MESSAGE);
       }
     } catch (err) {
       setError(messageOf(err));
@@ -160,29 +169,29 @@ function TaxForm({ partner }: { partner: Partner }) {
     }
   }
 
-  const t = d.draft;
-  const text = (k: Exclude<keyof Tax, 'taxRegime'>) => ({ value: t[k], error: errors[k], onChange: (e: { target: { value: string } }) => d.set(k, e.target.value) });
+  const draft = d.draft;
+  const text = (k: Exclude<keyof Tax, 'taxRegime'>) => ({ value: draft[k], error: errors[k], onChange: (e: { target: { value: string } }) => d.set(k, e.target.value) });
   return (
     <section className="ws-section" aria-labelledby="tax-h">
-      <h2 id="tax-h">Tax and invoicing</h2>
+      <h2 id="tax-h">{t('partner.tax.title')}</h2>
       <form className="rx-form" noValidate onSubmit={(e) => void save(e)}>
         <fieldset className="ws-frozen" disabled={busy}>
         <div className="rx-form-row">
-          <TextField label="GSTIN" maxLength={15} {...text('gstin')} />
-          <TextField label="PAN" maxLength={10} {...text('pan')} />
+          <TextField label={t('partners.gstin')} maxLength={15} {...text('gstin')} />
+          <TextField label={t('partners.pan')} maxLength={10} {...text('pan')} />
           <div className="j-field">
-            <label htmlFor="tax-regime">Tax</label>
-            <select id="tax-regime" value={t.taxRegime} onChange={(e) => d.set('taxRegime', e.target.value as TaxRegime)}>
+            <label htmlFor="tax-regime">{t('partners.taxLabel')}</label>
+            <select id="tax-regime" value={draft.taxRegime} onChange={(e) => d.set('taxRegime', e.target.value as TaxRegime)}>
               {REGIMES.map((r) => <option key={r} value={r}>{TAX_REGIME_LABEL[r]}</option>)}
             </select>
           </div>
-          <TextField label="Invoice prefix" maxLength={6} {...text('prefix')} />
+          <TextField label={t('partners.invoicePrefix')} maxLength={6} {...text('prefix')} />
         </div>
         </fieldset>
         {stale && <Alert tone="warn">{stale}</Alert>}
         {notice && <Alert tone="ok">{notice}</Alert>}
         {error && <Alert>{error}</Alert>}
-        <div><Button type="submit" busy={busy}>Save tax details</Button></div>
+        <div><Button type="submit" busy={busy}>{t('partner.tax.save')}</Button></div>
       </form>
     </section>
   );

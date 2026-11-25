@@ -7,6 +7,7 @@ import {
 } from '@jansetu/api';
 import { Badge, Button, Empty, ErrorState, formatDateTime, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { labStatusTone, slotLabel } from '../partner/labs.tsx';
@@ -45,50 +46,55 @@ export function AdminLabBookingsScreen() {
 
   return (
     <>
-      <PageHeading title="Lab bookings">Online bookings at every partner lab, newest booked first. Open one to act on it as the lab’s owner.</PageHeading>
+      <PageHeading title={t('labBookings.title')}>{t('labBookings.intro')}</PageHeading>
       <div className="ws-search">
         <div className="j-field ws-filter">
-          <label htmlFor="alb-lab">Lab</label>
+          <label htmlFor="alb-lab">{t('labBookings.lab')}</label>
           <select id="alb-lab" value={partnerId} onChange={(e) => setPartnerId(e.target.value)}>
-            <option value="">All labs</option>
+            <option value="">{t('labBookings.allLabs')}</option>
             {(labs.data?.items ?? []).map((p) => <option key={p._id} value={p._id}>{p.name}</option>)}
           </select>
-          {labs.isError && <span className="j-field__hint">Lab names could not be loaded: {messageOf(labs.error)}</span>}
+          {labs.isError && <span className="j-field__hint">{t('labBookings.labsFailed', { error: messageOf(labs.error) })}</span>}
         </div>
         <div className="j-field ws-filter">
-          <label htmlFor="alb-status">Status</label>
+          <label htmlFor="alb-status">{t('common.status')}</label>
           <select id="alb-status" value={status} onChange={(e) => setStatus(e.target.value as '' | LabBookingStatus)}>
-            <option value="">All</option>
+            <option value="">{t('labBookings.allStatuses')}</option>
             {LAB_BOOKING_STATUSES.map((s) => <option key={s} value={s}>{LAB_BOOKING_STATUS_LABEL[s]}</option>)}
           </select>
         </div>
       </div>
-      {list.isPending ? <Loading label="Loading lab bookings…" />
+      {list.isPending ? <Loading label={t('labBookings.loading')} />
         : list.isError && !list.data ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
-        : rows.length === 0 ? <Empty title="No lab bookings">{partnerId || status ? 'No booking matches these filters.' : 'Bookings made in the app appear here.'}</Empty>
+        : rows.length === 0 ? <Empty title={t('labBookings.none')}>{partnerId || status ? t('labBookings.noneMatch') : t('labBookings.noneYet')}</Empty>
         : (
           <>
             <p className="ws-count" aria-live="polite">
-              {total === undefined ? `${rows.length} ${rows.length === 1 ? 'booking' : 'bookings'}`
-                : `${total} ${total === 1 ? 'booking' : 'bookings'}${list.hasNextPage ? ` · showing the newest ${rows.length}` : ''}`}
+              {total === undefined ? t('labBookings.count', { count: rows.length })
+                : list.hasNextPage ? t('labBookings.countShowing', { count: total, shown: rows.length })
+                : t('labBookings.count', { count: total })}
             </p>
             <div className="ws-table-wrap">
               <table className="j-table">
-                <caption className="j-sr-only">Lab bookings of every lab</caption>
+                <caption className="j-sr-only">{t('labBookings.caption')}</caption>
                 <thead>
-                  <tr><th scope="col">Booked</th><th scope="col">Lab</th><th scope="col">Slot</th><th scope="col">Patient</th><th scope="col">Visit</th><th scope="col">Status</th><th scope="col">Payment</th></tr>
+                  <tr>
+                    <th scope="col">{t('labBookings.booked')}</th><th scope="col">{t('labBookings.lab')}</th><th scope="col">{t('labBookings.slot')}</th>
+                    <th scope="col">{t('labBookings.patient')}</th><th scope="col">{t('labBookings.visit')}</th><th scope="col">{t('common.status')}</th>
+                    <th scope="col">{t('labBookings.payment')}</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {rows.map((b) => (
                     <tr key={b._id}>
                       <td><Link to={`/admin/partners/${b.partnerId}/lab-bookings/${b._id}`}>{formatDateTime(b.createdAt)}</Link></td>
-                      <td>{names.get(b.partnerId) ?? `Lab …${b.partnerId.slice(-6)}`}</td>
+                      <td>{names.get(b.partnerId) ?? t('labBookings.unknownLab', { id: b.partnerId.slice(-6) })}</td>
                       <td>{b.slot ? slotLabel(b.slot) : '—'}</td>
                       <td>{b.patient?.name}</td>
                       <td>{LAB_VISIT_MODE_LABEL[b.visitMode] ?? b.visitMode}</td>
                       <td>
                         <Badge tone={labStatusTone(b.status)}>{LAB_BOOKING_STATUS_LABEL[b.status] ?? b.status}</Badge>
-                        {b.reschedule?.pending && <> <Badge tone="warn">New time proposed</Badge></>}
+                        {b.reschedule?.pending && <> <Badge tone="warn">{t('labBookings.newTimeProposed')}</Badge></>}
                       </td>
                       <td>{LAB_PAYMENT_STATUS_LABEL[b.paymentStatus] ?? b.paymentStatus}</td>
                     </tr>
@@ -96,11 +102,11 @@ export function AdminLabBookingsScreen() {
                 </tbody>
               </table>
             </div>
-            {list.isFetchNextPageError && <ErrorState message={`Could not load more bookings: ${messageOf(list.error)}`} onRetry={() => void list.fetchNextPage()} />}
+            {list.isFetchNextPageError && <ErrorState message={t('labBookings.moreFailed', { error: messageOf(list.error) })} onRetry={() => void list.fetchNextPage()} />}
             {list.hasNextPage && (
               <div>
                 <Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
-                  Show more{total !== undefined ? ` (${Math.max(0, total - rows.length)} more)` : ''}
+                  {total !== undefined ? t('labBookings.showMoreLeft', { left: Math.max(0, total - rows.length) }) : t('labBookings.showMore')}
                 </Button>
               </div>
             )}

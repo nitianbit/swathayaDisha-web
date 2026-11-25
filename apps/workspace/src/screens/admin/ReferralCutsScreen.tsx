@@ -11,6 +11,7 @@ import { Alert, Button, Empty, ErrorState, formatDateTime, Loading, TextField } 
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { isRecordChanged } from '../../draft.ts';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
@@ -28,7 +29,11 @@ import { useAdminScope } from './adminScope.ts';
 export function PharmacyReferralCutsScreen() {
   const { pharmacyId = '' } = useParams();
   const scope = useAdminScope('referral-cuts');
-  if (!OBJECT_ID_PATTERN.test(pharmacyId)) return <NoSuchRecord back="/admin/pharmacies" backLabel="Back to pharmacies" title="Referral cuts">Open it from the pharmacy’s page.</NoSuchRecord>;
+  if (!OBJECT_ID_PATTERN.test(pharmacyId)) return (
+    <NoSuchRecord back="/admin/pharmacies" backLabel={t('common.backToPharmacies')} title={t('referralCuts.title')} missing={t('referralCuts.noSuch')}>
+      {t('referralCuts.noSuchPharmacyHint')}
+    </NoSuchRecord>
+  );
   return <ReferralCuts key={`${scope.identity}:pharmacy:${pharmacyId}`} kind="pharmacy" bookerId={pharmacyId.toLowerCase()} scopeKey={scope.key} />;
 }
 
@@ -36,7 +41,11 @@ export function PharmacyReferralCutsScreen() {
 export function LabReferralCutsScreen() {
   const { partnerId = '' } = useParams();
   const scope = useAdminScope('referral-cuts');
-  if (!OBJECT_ID_PATTERN.test(partnerId)) return <NoSuchRecord back="/admin/partners" backLabel="Back to labs and clinics" title="Referral cuts">Open it from the lab’s page.</NoSuchRecord>;
+  if (!OBJECT_ID_PATTERN.test(partnerId)) return (
+    <NoSuchRecord back="/admin/partners" backLabel={t('common.backToPartners')} title={t('referralCuts.title')} missing={t('referralCuts.noSuch')}>
+      {t('referralCuts.noSuchLabHint')}
+    </NoSuchRecord>
+  );
   return <ReferralCuts key={`${scope.identity}:lab:${partnerId}`} kind="lab" bookerId={partnerId.toLowerCase()} scopeKey={scope.key} />;
 }
 
@@ -55,15 +64,17 @@ function ReferralCuts({ kind, bookerId, scopeKey }: { kind: ReferralBookerKind; 
   });
   const name = booker.data?.name;
   const back = kind === 'pharmacy' ? `/admin/pharmacies/${bookerId}` : `/admin/partners/${bookerId}`;
+  const backLabel = name !== undefined ? t('referralCuts.backTo', { name })
+    : kind === 'pharmacy' ? t('referralCuts.backToPharmacy') : t('referralCuts.backToLab');
   return (
     <>
-      <Link className="ws-back" to={back}><ArrowLeft size={16} aria-hidden="true" /> Back to {name ?? (kind === 'pharmacy' ? 'the pharmacy' : 'the lab')}</Link>
-      <PageHeading title={name ? `Referral cuts: ${name}` : 'Referral cuts'}>
-        What {name ?? 'this partner'} earns for each booking it makes for a patient. The cut is taken from the doctor’s or the lab’s earning, after any coupon.
+      <Link className="ws-back" to={back}><ArrowLeft size={16} aria-hidden="true" /> {backLabel}</Link>
+      <PageHeading title={name ? t('referralCuts.titleFor', { name }) : t('referralCuts.title')}>
+        {name !== undefined ? t('referralCuts.intro', { name }) : t('referralCuts.introNoName')}
       </PageHeading>
-      {booker.isPending ? <Loading label="Loading…" />
+      {booker.isPending ? <Loading label={t('referralCuts.loading')} />
         : booker.isError ? <ErrorState message={messageOf(booker.error)} onRetry={() => void booker.refetch()} />
-        : !booker.data.cuts ? <Empty title="No referral cuts for clinics">Referral cuts are set for pharmacies and labs, the partners that book for patients.</Empty>
+        : !booker.data.cuts ? <Empty title={t('referralCuts.noClinics')}>{t('referralCuts.noClinicsHint')}</Empty>
         : (
           <>
             <Rules kind={kind} bookerId={bookerId} name={booker.data.name} pageKey={key} />
@@ -77,8 +88,11 @@ function ReferralCuts({ kind, bookerId, scopeKey }: { kind: ReferralBookerKind; 
 /** A rule change kept until its answer is known (`terms` and `expectedVersion` are what the admin confirmed). */
 interface RuleChange { category: ReferralCategory; terms: ReferralTerms; expectedVersion: number; reason: string }
 
-const catWord = (c: ReferralCategory) => REFERRAL_CATEGORY_LABEL[c].toLowerCase();
-const providerWord = (c: ReferralCategory) => (c === 'consultation' ? 'doctor’s' : 'lab’s');
+/** A category inside a sentence ("the lab test cut"): keys, worded when shown. */
+const CATEGORY_WORD = {
+  consultation: 'referralCuts.catConsultation', lab_test: 'referralCuts.catLabTest', lab_package: 'referralCuts.catLabPackage',
+} as const satisfies Record<ReferralCategory, string>;
+const catWord = (c: ReferralCategory) => t(CATEGORY_WORD[c]);
 
 /**
  * The rules table and one editor at a time, sent with an owned PendingOp (stored before sending; an answer settles it only
@@ -110,13 +124,15 @@ function Rules({ kind, bookerId, name, pageKey }: { kind: ReferralBookerKind; bo
   };
   const ruleOf = (list: readonly ReferralRule[] | undefined, c: ReferralCategory) => list?.find((r) => r.category === c) ?? null;
   const savedWords = (c: ReferralCategory, r: ReferralRule | null) => {
-    const t = referralRuleText(r);
-    return `Saved: the ${catWord(c)} cut of ${name} is ${t === 'Off' ? 'off' : t} (version ${r?.version ?? 0}).`;
+    const words = { category: catWord(c), name, version: r?.version ?? 0 };
+    // Off (no rule, or switched off) is said in the sentence itself; `referralRuleText` words the terms otherwise.
+    return !r || r.isActive !== true ? t('referralCuts.savedOff', words) : t('referralCuts.saved', { ...words, terms: referralRuleText(r) });
   };
   /** `sentBefore`: an earlier attempt may have been saved and then changed again, so it is not said that it was not saved. */
-  const overtakenWords = (c: ReferralCategory, r: ReferralRule | null, sentBefore = false) => (sentBefore
-    ? `The ${catWord(c)} cut is not what you sent: it was changed since. Saved now: ${referralRuleText(r)} (version ${r?.version ?? 0}). Check it, then make your change again if it is still needed.`
-    : `The ${catWord(c)} cut was changed by someone else meanwhile, so your change was not saved. Saved now: ${referralRuleText(r)} (version ${r?.version ?? 0}). Check it, then save again if your change is still needed.`);
+  const overtakenWords = (c: ReferralCategory, r: ReferralRule | null, sentBefore = false) => {
+    const words = { category: catWord(c), terms: referralRuleText(r), version: r?.version ?? 0 };
+    return sentBefore ? t('referralCuts.overtakenSentBefore', words) : t('referralCuts.overtaken', words);
+  };
 
   /**
    * 409 RECORD_CHANGED: this attempt wrote nothing. The rules as read now tell the rest: for a change already sent before
@@ -126,7 +142,7 @@ function Rules({ kind, bookerId, name, pageKey }: { kind: ReferralBookerKind; bo
     const now = await readNow().catch(() => null);
     if (!now) {
       // Uncertain: it stays unconfirmed (below) until a check can read the cuts.
-      if (!uncertain) say('warn', `${REFERRAL_RULE_REFUSAL.RECORD_CHANGED} The cuts could not be read again: reload the page before saving again.`);
+      if (!uncertain) say('warn', `${REFERRAL_RULE_REFUSAL.RECORD_CHANGED} ${t('referralCuts.rereadFailed')}`);
       return;
     }
     const r = ruleOf(now, p.body.category);
@@ -155,7 +171,7 @@ function Rules({ kind, bookerId, name, pageKey }: { kind: ReferralBookerKind; bo
     } else if (r.kind === 'refused' || (sole && referralRuleRefusedBeforeWriting(r.error))) {
       // The only attempt was refused, or refused before anything was written (switch off, indexes): nothing was saved.
       if (r.kind === 'unknown') settle(p.requestKey);
-      say('error', `Not saved: ${referralRuleRefusal(r.error)}`);
+      say('error', t('referralCuts.notSaved', { reason: referralRuleRefusal(r.error) }));
     } else if (live.current) {
       // No answer: the change is kept as unconfirmed (below) until it is checked.
       setEditing(null);
@@ -164,23 +180,26 @@ function Rules({ kind, bookerId, name, pageKey }: { kind: ReferralBookerKind; bo
   }
 
   const pending = op && !(guard.busy && op.attempts === 1 && !op.uncertain) ? op : undefined;
+  const pendingWords = (b: RuleChange) => ({ category: catWord(b.category), terms: referralRuleText(b.terms) });
   const on = rules.data ? referralCutsOn(rules.data) : null;
   return (
     <section className="ws-section" aria-labelledby="rc-h">
-      <h2 id="rc-h">Cuts by category</h2>
-      <p className="ws-muted">
-        A percent is of each line (0.01% to 50%, with an optional cap per line); a fixed amount is per line, with no upper limit. A change applies to bookings
-        made after it; bookings already made keep their cut. Payouts of these earnings are paused until Jansetu switches them on.
-      </p>
-      {on === false && <Alert tone="warn">Referral cuts are switched off; rules are saved but not applied.</Alert>}
+      <h2 id="rc-h">{t('referralCuts.byCategory')}</h2>
+      <p className="ws-muted">{t('referralCuts.byCategoryHint')}</p>
+      {on === false && <Alert tone="warn">{t('referralCuts.switchedOff')}</Alert>}
       {outcome && <Alert tone={outcome.tone}>{outcome.text}</Alert>}
-      {rules.isPending ? <Loading label="Loading the cuts…" />
+      {rules.isPending ? <Loading label={t('referralCuts.loadingCuts')} />
         : rules.isError && !rules.data ? <ErrorState message={messageOf(rules.error)} onRetry={() => void rules.refetch()} />
         : (
           <div className="ws-table-wrap">
             <table className="j-table">
-              <caption className="j-sr-only">Referral cuts by category</caption>
-              <thead><tr><th scope="col">Category</th><th scope="col">Cut</th><th scope="col">Last changed</th><th scope="col">Actions</th></tr></thead>
+              <caption className="j-sr-only">{t('referralCuts.caption')}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">{t('referralCuts.category')}</th><th scope="col">{t('referralCuts.cut')}</th>
+                  <th scope="col">{t('referralCuts.lastChanged')}</th><th scope="col">{t('common.actions')}</th>
+                </tr>
+              </thead>
               <tbody>
                 {REFERRAL_CATEGORIES.map((c) => {
                   const r = ruleOf(rules.data, c);
@@ -189,12 +208,12 @@ function Rules({ kind, bookerId, name, pageKey }: { kind: ReferralBookerKind; bo
                       <th scope="row">{REFERRAL_CATEGORY_LABEL[c]}</th>
                       <td>
                         {referralRuleText(r)}
-                        {r && !r.isActive && <div className="ws-muted">Kept but not used: {referralTermsText(r)}</div>}
+                        {r && !r.isActive && <div className="ws-muted">{t('referralCuts.keptNotUsed', { terms: referralTermsText(r) })}</div>}
                       </td>
-                      <td>{r ? `${formatDateTime(r.updatedAt)} · version ${r.version}` : 'Never set'}</td>
+                      <td>{r ? t('referralCuts.changedAt', { when: formatDateTime(r.updatedAt), version: r.version }) : t('referralCuts.neverSet')}</td>
                       <td>
-                        <Button variant="secondary" aria-label={`Edit the ${catWord(c)} cut`} disabled={!!pending || guard.busy || !!editing}
-                          onClick={() => { setOutcome(null); setEditing({ category: c, base: r }); }}>Edit</Button>
+                        <Button variant="secondary" aria-label={t('referralCuts.editLabel', { category: catWord(c) })} disabled={!!pending || guard.busy || !!editing}
+                          onClick={() => { setOutcome(null); setEditing({ category: c, base: r }); }}>{t('referralCuts.edit')}</Button>
                       </td>
                     </tr>
                   );
@@ -206,12 +225,12 @@ function Rules({ kind, bookerId, name, pageKey }: { kind: ReferralBookerKind; bo
       {pending ? (
         <>
           {resendError && <Alert>{resendError}</Alert>}
-          <CheckPanel label="Unconfirmed change"
+          <CheckPanel label={t('referralCuts.unconfirmed')}
             onCheck={async () => {
               const now = await readNow();
               void reread();
               if (pending.restored || !pending.body) {
-                return 'Read again: the cuts shown are what is saved now. The earlier change is not kept on this device, so whether it went through cannot be told. If the cuts are not what you wanted, forget it and make the change again.';
+                return t('referralCuts.checkUnknown');
               }
               const r = ruleOf(now, pending.body.category);
               if (r && r.version > pending.body.expectedVersion) {
@@ -220,18 +239,18 @@ function Rules({ kind, bookerId, name, pageKey }: { kind: ReferralBookerKind; bo
                 else say('warn', overtakenWords(pending.body.category, r, true));
                 return null;
               }
-              return `Not saved so far: the ${catWord(pending.body.category)} cut is ${referralRuleText(r)} now (version ${r?.version ?? 0}). It may still be on its way. Sending the same request again is safe: it is saved at most once.`;
+              return t('referralCuts.checkNotYet', { category: catWord(pending.body.category), terms: referralRuleText(r), version: r?.version ?? 0 });
             }}
             resend={pending.restored || !pending.body ? undefined : {
-              label: 'Send the same request again', busy: guard.busy,
+              label: t('referralCuts.sendAgain'), busy: guard.busy,
               onClick: () => { void change(pending).catch((err: unknown) => setResendError(messageOf(err))); },
             }}
-            forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget: () => settle(pending.requestKey),
-              consequence: 'The change may already have been saved, or may still be. Forgetting it does not undo that. The cuts shown are what is saved now.' }}>
+            forget={{ label: t('referralCuts.forget'), confirmLabel: t('referralCuts.forgetConfirm'), onForget: () => settle(pending.requestKey),
+              consequence: t('referralCuts.forgetConsequence') }}>
             <Alert tone="warn">
-              {pending.restored || !pending.body
-                ? 'A change to these cuts made earlier on this device (before the page was reloaded) was not confirmed. Its details are not kept here. Check the cuts.'
-                : `The outcome of this change is not known yet${pending.error ? ` (${pending.error})` : ''}: the ${catWord(pending.body.category)} cut to ${referralRuleText(pending.body.terms)}. Sending the same request again is safe.`}
+              {pending.restored || !pending.body ? t('referralCuts.pendingRestored')
+                : pending.error ? t('referralCuts.pendingUnknownWithError', { error: pending.error, ...pendingWords(pending.body) })
+                : t('referralCuts.pendingUnknown', pendingWords(pending.body))}
             </Alert>
           </CheckPanel>
         </>
@@ -262,50 +281,52 @@ function RuleEditor({ category, base, name, busy, onSave, onCancel }: {
   const cat = catWord(category);
   const id = `rc-${category}`;
   return (
-    <div className="rx-form" role="group" aria-label={`Change the ${cat} cut`}>
-      <h3>Change the {cat} cut</h3>
+    <div className="rx-form" role="group" aria-label={t('referralCuts.editorTitle', { category: cat })}>
+      <h3>{t('referralCuts.editorTitle', { category: cat })}</h3>
       <fieldset className="ws-frozen" disabled={busy}>
         <div className="rx-form-row">
           <div className="j-field">
-            <label htmlFor={`${id}-mode`}>Cut</label>
+            <label htmlFor={`${id}-mode`}>{t('referralCuts.cut')}</label>
             <select id={`${id}-mode`} value={d.mode} onChange={(e) => set('mode', e.target.value as ReferralDraft['mode'])}>
-              <option value="off">Off</option>
-              <option value="percent">Percent of each line</option>
-              <option value="fixed">Fixed amount per line</option>
+              <option value="off">{t('referralCuts.modeOff')}</option>
+              <option value="percent">{t('referralCuts.modePercent')}</option>
+              <option value="fixed">{t('referralCuts.modeFixed')}</option>
             </select>
           </div>
           {d.mode === 'percent' && (
             <>
-              <TextField label="Percent" inputMode="decimal" value={d.percent} hint="0.01 to 50, for example 10 or 2.5."
+              <TextField label={t('referralCuts.percent')} inputMode="decimal" value={d.percent} hint={t('referralCuts.percentHint')}
                 error={d.percent.trim() ? errors.percent : undefined} onChange={(e) => set('percent', e.target.value)} />
-              <TextField label="Cap per line in ₹ (optional)" inputMode="decimal" value={d.cap} hint="The most one line can earn."
+              <TextField label={t('referralCuts.cap')} inputMode="decimal" value={d.cap} hint={t('referralCuts.capHint')}
                 error={errors.cap} onChange={(e) => set('cap', e.target.value)} />
             </>
           )}
           {d.mode === 'fixed' && (
-            <TextField label="Amount per line in ₹" inputMode="decimal" value={d.fixed} hint="At least ₹0.01; no upper limit."
+            <TextField label={t('referralCuts.fixed')} inputMode="decimal" value={d.fixed} hint={t('referralCuts.fixedHint')}
               error={d.fixed.trim() ? errors.fixed : undefined} onChange={(e) => set('fixed', e.target.value)} />
           )}
         </div>
       </fieldset>
       {unchanged && !errors.percent && !errors.fixed && !errors.cap && (
-        <p className="ws-muted">{d.mode === 'off' && !base ? 'No cut is set, so there is nothing to switch off.' : 'Nothing has changed yet.'}</p>
+        <p className="ws-muted">{d.mode === 'off' && !base ? t('referralCuts.nothingToSwitchOff') : t('referralCuts.unchanged')}</p>
       )}
       <div className="ws-actions">
-        <ConfirmAction label="Save" confirmLabel={`Save the ${cat} cut`} reason reasonLabel="Reason (kept in the history)" maxReason={MAX_REFERRAL_REASON}
+        <ConfirmAction label={t('referralCuts.save')} confirmLabel={t('referralCuts.saveConfirm', { category: cat })} reason reasonLabel={t('referralCuts.reasonLabel')}
+          maxReason={MAX_REFERRAL_REASON}
           disabled={busy || unchanged} version={`${version}:${JSON.stringify(terms)}`}
           consequence={terms && (
             <>
               <p>
                 {terms.isActive
-                  ? <>New {cat} bookings that {name} makes: <strong>{referralTermsText(terms)}</strong> goes to {name}, taken from the {providerWord(category)} earning.</>
-                  : <>New {cat} bookings that {name} makes earn it no cut.</>}
+                  ? t.rich(category === 'consultation' ? 'referralCuts.confirmActiveDoctor' : 'referralCuts.confirmActiveLab',
+                    { category: cat, name, terms: <strong key="terms">{referralTermsText(terms)}</strong> })
+                  : t('referralCuts.confirmInactive', { category: cat, name })}
               </p>
-              <p>Bookings already made keep their cut. If someone else changes this cut before you confirm, nothing is saved.</p>
+              <p>{t('referralCuts.confirmKeep')}</p>
             </>
           )}
           onConfirm={(reason) => (terms ? onSave(terms, version, reason) : Promise.resolve())} />
-        <Button variant="ghost" disabled={busy} onClick={onCancel}>Cancel</Button>
+        <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('referralCuts.cancel')}</Button>
       </div>
     </div>
   );
@@ -326,23 +347,28 @@ function History({ kind, bookerId, queryKey }: { kind: ReferralBookerKind; booke
   });
   return (
     <section className="ws-section" aria-labelledby="rc-hist-h">
-      <h2 id="rc-hist-h">History</h2>
-      {q.isPending ? <Loading label="Loading the history…" />
+      <h2 id="rc-hist-h">{t('referralCuts.history')}</h2>
+      {q.isPending ? <Loading label={t('referralCuts.loadingHistory')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : q.data.length === 0 ? <Empty title="No changes yet">Every change to these cuts is listed here, with its reason.</Empty>
+        : q.data.length === 0 ? <Empty title={t('referralCuts.noChanges')}>{t('referralCuts.noChangesHint')}</Empty>
         : (
           <div className="ws-table-wrap">
             <table className="j-table">
-              <caption className="j-sr-only">Changes to the referral cuts, newest first</caption>
-              <thead><tr><th scope="col">When</th><th scope="col">Category</th><th scope="col">Change</th><th scope="col">Reason</th><th scope="col">By</th></tr></thead>
+              <caption className="j-sr-only">{t('referralCuts.historyCaption')}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">{t('referralCuts.when')}</th><th scope="col">{t('referralCuts.category')}</th>
+                  <th scope="col">{t('referralCuts.change')}</th><th scope="col">{t('referralCuts.reason')}</th><th scope="col">{t('referralCuts.by')}</th>
+                </tr>
+              </thead>
               <tbody>
                 {q.data.map((e) => (
                   <tr key={`${e.category}:${e.version}`}>
                     <td>{formatDateTime(e.at)}</td>
                     <td>{REFERRAL_CATEGORY_LABEL[e.category]}</td>
-                    <td>{referralRuleText(e.before)} → {referralRuleText(e.after)}<div className="ws-muted">Version {e.version}</div></td>
+                    <td>{referralRuleText(e.before)} → {referralRuleText(e.after)}<div className="ws-muted">{t('referralCuts.version', { version: e.version })}</div></td>
                     <td>{e.reason}</td>
-                    <td>{e.by === admin.id ? 'You' : 'Jansetu admin'}</td>
+                    <td>{e.by === admin.id ? t('referralCuts.byYou') : t('referralCuts.byAdmin')}</td>
                   </tr>
                 ))}
               </tbody>

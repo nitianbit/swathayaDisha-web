@@ -9,6 +9,7 @@ import {
 import { Alert, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/admin/index.ts';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
 import { formatYmd } from '../doctor/doctor.tsx';
@@ -21,7 +22,6 @@ interface PendingClose { reason: string; expectedUpdatedAt?: string; when: strin
 
 type Booking = AdminConsultation & { assisted?: unknown };
 const when = (b: Pick<AdminConsultation, 'bookingDate' | 'bookingTime'>) => `${formatYmd(b.bookingDate)}, ${b.bookingTime}`;
-const PATIENT_NOTICE = 'The patient is told “Your consultation was cancelled by Jansetu.”';
 
 /**
  * WQ18 (backend S5c–S5f, `bookings/adminClose.ts`): "Close and refund" for a consultation stuck with a doctor who is not
@@ -63,14 +63,14 @@ export function BookingCloseSection({ b, bookingId, scopeKey, perform, busy, rea
     : doctor.data ? (doctorEligibility(doctor.data).eligible ? 'eligible' : 'ineligible')
     : doctor.error instanceof ApiError && doctor.error.status === 404 ? 'missing' : 'unknown';
 
-  const closedWords = (refunded: number, to: CloseRefundTarget) => `${closeRefundWords(refunded, to, formatRupees)} ${PATIENT_NOTICE}`;
+  const closedWords = (refunded: number, to: CloseRefundTarget) => `${closeRefundWords(refunded, to, formatRupees)} ${t('bookingClose.patientNotice')}`;
   /** `how`: answered to the first send, to a resend of the same request, or found by a check. */
   const closed = (a: { refunded: number; replayed?: boolean; to: CloseRefundTarget }, whenText: string, how: 'sent' | 'resent' | 'checked') => {
     if (!live.current) return;
     setRefused(null);
-    setDone(how === 'checked' ? `It was closed: the appointment on ${whenText} is cancelled. ${closedWords(a.refunded, a.to)}`
-      : a.replayed ? `This close was already recorded: the appointment on ${whenText} is cancelled. ${closeRefundWords(a.refunded, a.to, formatRupees)} Nothing more was changed.`
-      : `Closed: the appointment on ${whenText} is cancelled. ${closedWords(a.refunded, a.to)}${how === 'resent' ? ' It was closed once, even though it was sent more than once.' : ''}`);
+    setDone(how === 'checked' ? t('bookingClose.done.checked', { when: whenText, refund: closedWords(a.refunded, a.to) })
+      : a.replayed ? t('bookingClose.done.replayed', { when: whenText, refund: closeRefundWords(a.refunded, a.to, formatRupees) })
+      : t(how === 'resent' ? 'bookingClose.done.resent' : 'bookingClose.done.sent', { when: whenText, refund: closedWords(a.refunded, a.to) }));
     reread();
   };
   const refuse = (text: string) => { if (live.current) { setDone(null); setRefused(text); } reread(); };
@@ -84,7 +84,7 @@ export function BookingCloseSection({ b, bookingId, scopeKey, perform, busy, rea
     if (mine) { settle(p.requestKey); closed({ refunded: mine.refunded, to: target }, p.body.when, 'checked'); return true; }
     if (rows || sole) {
       settle(p.requestKey);
-      refuse(`Not closed by this request: ${BOOKING_CLOSE_REFUSAL.ALREADY_CANCELLED} Its cancellation is shown on this page.`);
+      refuse(t('bookingClose.refused.alreadyCancelled', { reason: BOOKING_CLOSE_REFUSAL.ALREADY_CANCELLED ?? '' }));
       return true;
     }
     return false;
@@ -110,7 +110,7 @@ export function BookingCloseSection({ b, bookingId, scopeKey, perform, busy, rea
     // Refused before anything was written (a sole first attempt), or a state this booking never leaves (any attempt).
     if (r.kind === 'refused' || (r.kind === 'unknown' && ((sole && bookingCloseRefusedBeforeWriting(r.error)) || (bookingCloseFinal(r.error) && !isAlreadyCancelled(r.error))))) {
       if (r.kind === 'unknown') settle(p.requestKey);
-      refuse(`Not closed: ${bookingCloseRefusal(r.error)}`);
+      refuse(t('bookingClose.refused.server', { reason: bookingCloseRefusal(r.error) }));
       if (r.error instanceof ApiError && r.error.code === 'BOOKING_CHANGED') void readNow().catch(() => null);
       return;
     }
@@ -123,17 +123,17 @@ export function BookingCloseSection({ b, bookingId, scopeKey, perform, busy, rea
 
   return (
     <section className="ws-section" aria-labelledby="close-h">
-      <h2 id="close-h">Close and refund</h2>
+      <h2 id="close-h">{t('bookingClose.title')}</h2>
       {done && <Alert tone="ok">{done}</Alert>}
       {refused && <Alert>{refused}</Alert>}
       <dl className="ws-dl">
-        <dt>Doctor’s status</dt>
+        <dt>{t('bookingClose.doctorStatus')}</dt>
         <dd>
-          {!doctorId ? 'No doctor on this booking'
-            : doctor.isPending ? 'Reading…'
-            : doctor.data ? <><DoctorBadges d={doctor.data} /> <Link to={`/admin/doctors/${doctorId}`}>Open the doctor</Link></>
-            : doctorState === 'missing' ? 'This doctor no longer exists'
-            : 'Could not be read'}
+          {!doctorId ? t('bookingClose.noDoctor')
+            : doctor.isPending ? t('bookingClose.reading')
+            : doctor.data ? <><DoctorBadges d={doctor.data} /> <Link to={`/admin/doctors/${doctorId}`}>{t('bookingClose.openDoctor')}</Link></>
+            : doctorState === 'missing' ? t('bookingClose.doctorGone')
+            : t('bookingClose.unreadable')}
         </dd>
       </dl>
       {doctorId && doctor.isError && doctorState === 'unknown' && <ErrorState message={messageOf(doctor.error)} onRetry={() => void doctor.refetch()} />}
@@ -152,30 +152,32 @@ export function BookingCloseSection({ b, bookingId, scopeKey, perform, busy, rea
               if (mine) { settle(op.requestKey); closed({ refunded: mine.refunded, to: closeRefundTarget(now) }, whenText, 'checked'); return null; }
               if (now.status === 'cancelled' || now.status === 'completed' || now.status === 'no_show') {
                 settle(op.requestKey);
-                refuse(now.status === 'cancelled'
-                  ? 'Not closed by this request: the booking was cancelled another way (its cancellation is shown on this page). This request refunded nothing.'
-                  : `Not closed: the booking is ${now.status === 'completed' ? 'completed' : 'a no-show'} now, so it can no longer be closed. This request changed nothing.`);
+                refuse(t(now.status === 'cancelled' ? 'bookingClose.refused.cancelledOtherWay'
+                  : now.status === 'completed' ? 'bookingClose.refused.completed' : 'bookingClose.refused.noShow'));
                 return null;
               }
-              return op.restored || !op.body
-                ? 'Not closed so far. It may still be on its way. Check again in a minute before closing it again.'
-                : 'Not closed so far. It may still be on its way. Sending the same request again is safe: it is closed only once.';
+              return t(op.restored || !op.body ? 'bookingClose.check.wait' : 'bookingClose.check.resend');
             }}
             onResend={() => { setResendError(null); void sendClose(op).catch((err: unknown) => setResendError(bookingCloseRefusal(err))); }}
             onForget={() => settle(op.requestKey)} />
         </>
       ) : showClose ? (
         <>
-          <p className="ws-muted">{doctorState === 'missing' ? 'Its doctor no longer exists' : 'Its doctor is not verified or not active'}: the Jansetu team closes it with a full refund.</p>
-          <ConfirmAction key="close" label="Close and refund" danger confirmLabel="Yes, close and refund" reason reasonLabel="Reason (only the Jansetu team sees it)"
+          <p className="ws-muted">{t(doctorState === 'missing' ? 'bookingClose.offer.doctorGone' : 'bookingClose.offer.ineligible')}</p>
+          <ConfirmAction key="close" label={t('bookingClose.button')} danger confirmLabel={t('bookingClose.confirmLabel')} reason
+            reasonLabel={t('bookingClose.reasonLabel')}
             maxReason={MAX_ADMIN_CANCEL_REASON} disabled={busy} version={b.updatedAt}
             consequence={(
               <>
-                <p>Close the appointment on <strong>{when(b)}</strong>{b.doctorName ? ` with ${b.doctorName}` : ''} and refund it in full?</p>
+                <p>
+                  {b.doctorName
+                    ? t.rich('bookingClose.confirm.questionWithDoctor', { when: <strong key="when">{when(b)}</strong>, doctor: b.doctorName })
+                    : t.rich('bookingClose.confirm.question', { when: <strong key="when">{when(b)}</strong> })}
+                </p>
                 <ul className="ws-list">
-                  <li>It is cancelled at once, whatever the time: the seat and the doctor’s time are freed. This cannot be undone.</li>
-                  <li>Everything paid through Jansetu goes back in full: to the patient’s Jansetu wallet, or to the pharmacy if a pharmacy booked it.</li>
-                  <li>{PATIENT_NOTICE} Your reason is not shown to them.</li>
+                  <li>{t('bookingClose.confirm.atOnce')}</li>
+                  <li>{t('bookingClose.confirm.refund')}</li>
+                  <li>{t('bookingClose.patientNotice')} {t('bookingClose.confirm.reasonHidden')}</li>
                 </ul>
               </>
             )}
@@ -184,13 +186,13 @@ export function BookingCloseSection({ b, bookingId, scopeKey, perform, busy, rea
             }))} />
         </>
       ) : open && doctorState === 'eligible' ? (
-        <p className="ws-muted">Its doctor is verified and active, so it is not closed here. Close and refund is for consultations whose doctor is not verified or not active.</p>
+        <p className="ws-muted">{t('bookingClose.eligible')}</p>
       ) : open && b.bookingKind === 'instant' ? (
-        <p className="ws-muted">An instant consultation is cancelled with its own admin cancel, not here.</p>
+        <p className="ws-muted">{t('bookingClose.instant')}</p>
       ) : open && !offered && doctorState !== 'unknown' ? (
-        <p className="ws-muted">This booking was moved after a no-show: use “Cancel (admin)” in its no-show section.</p>
+        <p className="ws-muted">{t('bookingClose.movedNoShow')}</p>
       ) : !open && b.status !== 'cancelled' ? (
-        <p className="ws-muted">Only a waiting or confirmed consultation can be closed.</p>
+        <p className="ws-muted">{t('bookingClose.notOpen')}</p>
       ) : null}
     </section>
   );
@@ -198,16 +200,18 @@ export function BookingCloseSection({ b, bookingId, scopeKey, perform, busy, rea
 
 /** The closes recorded for this booking (S5e), each with its refund and the admin's internal reason. */
 function ClosesList({ q, to }: { q: { isPending: boolean; isError: boolean; error: unknown; data?: BookingClose[]; refetch: () => unknown }; to: CloseRefundTarget }) {
-  if (q.isPending) return <Loading label="Reading how it was closed…" />;
+  if (q.isPending) return <Loading label={t('bookingClose.closes.loading')} />;
   if (q.isError) return <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />;
   const rows = q.data ?? [];
-  if (rows.length === 0) return <p className="ws-muted">Cancelled, but not with Close and refund.</p>;
+  if (rows.length === 0) return <p className="ws-muted">{t('bookingClose.closes.none')}</p>;
   return (
-    <ul className="ws-list" aria-label="Closes by the Jansetu team">
+    <ul className="ws-list" aria-label={t('bookingClose.closes.label')}>
       {rows.map((r) => (
         <li key={r.auditId}>
-          Closed by the Jansetu team on {formatDateTime(r.closedAt)}: {closeRefundWords(r.refunded, to, formatRupees)}
-          {' '}It was {r.statusBefore === 'pending' ? 'waiting' : r.statusBefore}, payment {r.paymentStatusBefore}. Reason (internal): {r.reason}
+          {t('bookingClose.closes.row', {
+            date: formatDateTime(r.closedAt), refund: closeRefundWords(r.refunded, to, formatRupees),
+            status: r.statusBefore === 'pending' ? t('bookingClose.closes.waiting') : r.statusBefore, payment: r.paymentStatusBefore, reason: r.reason,
+          })}
         </li>
       ))}
     </ul>
@@ -219,14 +223,14 @@ function PendingClosePanel({ op, busy, onCheck, onResend, onForget }: {
 }) {
   const restored = !!op.restored || !op.body;
   return (
-    <CheckPanel label="Unconfirmed close" onCheck={onCheck}
-      resend={restored ? undefined : { label: 'Send the same request again', busy, onClick: onResend }}
-      forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget,
-        consequence: 'The booking may already be closed, or may still be closed by this request. Forgetting it does not undo that. Read the booking again before closing it again: a booking already cancelled is never refunded twice.' }}>
+    <CheckPanel label={t('bookingClose.pending.label')} onCheck={onCheck}
+      resend={restored ? undefined : { label: t('bookingClose.pending.resend'), busy, onClick: onResend }}
+      forget={{ label: t('bookingClose.pending.forget'), confirmLabel: t('bookingClose.pending.forgetConfirm'), onForget,
+        consequence: t('bookingClose.pending.forgetConsequence') }}>
       <Alert tone="warn">
-        {restored
-          ? 'A close made earlier on this device (before the page was reloaded) was not confirmed. Its details are not kept here. Check whether it was recorded.'
-          : `The outcome of this close is not known yet${op.error ? ` (${op.error})` : ''}. The appointment on ${op.body.when} may already be closed and refunded. Sending the same request again is safe: it is closed only once.`}
+        {restored ? t('bookingClose.pending.restored')
+          : op.error ? t('bookingClose.pending.unknownError', { error: op.error, when: op.body.when })
+          : t('bookingClose.pending.unknown', { when: op.body.when })}
       </Alert>
     </CheckPanel>
   );

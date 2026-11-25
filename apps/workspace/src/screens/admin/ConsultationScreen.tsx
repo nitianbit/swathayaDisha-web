@@ -11,6 +11,7 @@ import { FOCUS_HOST_STYLE, usePanelFocus } from '../../components/focus.ts';
 import { definitelyNotRecorded } from '../../requests.ts';
 import { NoShowMove, noShowMoveSlot, type NoShowTarget } from '../../components/NoShowMove.tsx';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { formatYmd, useTicker } from '../doctor/doctor.tsx';
@@ -32,9 +33,9 @@ export function ConsultationScreen() {
 function NoSuchConsultation() {
   return (
     <>
-      <Link className="ws-back" to="/admin/consultations"><ArrowLeft size={16} aria-hidden="true" /> Back to consultations</Link>
-      <PageHeading title="Consultation" />
-      <Empty title="No such consultation">Open it from the consultation list.</Empty>
+      <Link className="ws-back" to="/admin/consultations"><ArrowLeft size={16} aria-hidden="true" /> {t('consultation.back')}</Link>
+      <PageHeading title={t('consultation.title')} />
+      <Empty title={t('consultation.noSuch')}>{t('consultation.openFromList')}</Empty>
     </>
   );
 }
@@ -59,30 +60,32 @@ function Consultation({ bookingId, identity, scopeKey }: { bookingId: string; id
   const showMove = !!b && (move === 'offer' || move === 'used' || (b.bookingKind !== 'instant' && !b.clinicDesk && !!memory.get(slot)));
   return (
     <>
-      <Link className="ws-back" to="/admin/consultations"><ArrowLeft size={16} aria-hidden="true" /> Back to consultations</Link>
-      <PageHeading title={b ? `Consultation on ${when(b)}` : 'Consultation'}>{b?.doctorName ? `With ${b.doctorName}` : null}</PageHeading>
+      <Link className="ws-back" to="/admin/consultations"><ArrowLeft size={16} aria-hidden="true" /> {t('consultation.back')}</Link>
+      <PageHeading title={b ? t('consultation.titleOn', { when: when(b) }) : t('consultation.title')}>
+        {b?.doctorName ? t('consultation.withDoctor', { doctor: b.doctorName }) : null}
+      </PageHeading>
       {notice && <Alert tone="ok">{notice}</Alert>}
       {failure && <Alert>{failure}</Alert>}
-      {q.isPending ? <Loading label="Loading consultation…" />
+      {q.isPending ? <Loading label={t('consultation.loading')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : (
           <>
             <section className="ws-section" aria-labelledby="cs-h">
-              <h2 id="cs-h">Booking</h2>
+              <h2 id="cs-h">{t('consultation.booking')}</h2>
               <dl className="ws-dl">
-                <dt>Status</dt><dd><Badge tone={consultationTone(q.data.status)}>{CONSULTATION_STATUS_LABEL[q.data.status] ?? q.data.status}</Badge></dd>
-                <dt>Appointment</dt><dd>{when(q.data)}</dd>
-                <dt>Doctor</dt><dd>{q.data.doctorName || '—'}</dd>
-                <dt>Kind</dt><dd>{consultationKind(q.data)}</dd>
-                <dt>Patient</dt>
+                <dt>{t('common.status')}</dt><dd><Badge tone={consultationTone(q.data.status)}>{CONSULTATION_STATUS_LABEL[q.data.status] ?? q.data.status}</Badge></dd>
+                <dt>{t('consultation.field.appointment')}</dt><dd>{when(q.data)}</dd>
+                <dt>{t('consultation.field.doctor')}</dt><dd>{q.data.doctorName || '—'}</dd>
+                <dt>{t('consultation.field.kind')}</dt><dd>{consultationKind(q.data)}</dd>
+                <dt>{t('consultation.field.patient')}</dt>
                 <dd>
                   {q.data.patientName?.trim()
-                    ? <>{q.data.patientName.trim()} <span className="ws-muted">({q.data.dependentId ? 'a family member of the account holder' : 'the account holder'})</span></>
-                    : q.data.dependentId ? 'A family member of the account holder' : 'The account holder'}
+                    ? <>{q.data.patientName.trim()} <span className="ws-muted">{t(q.data.dependentId ? 'consultation.patient.familyNote' : 'consultation.patient.holderNote')}</span></>
+                    : t(q.data.dependentId ? 'consultation.patient.family' : 'consultation.patient.holder')}
                 </dd>
-                <dt>Payment</dt><dd>{paymentLabel(q.data)}{typeof q.data.price === 'number' && q.data.paymentStatus === 'paid' ? ` · ${formatRupees(q.data.price)}` : ''}</dd>
-                {q.data.cancellationReason && <><dt>Cancellation reason</dt><dd>{q.data.cancellationReason}</dd></>}
-                {q.data.createdAt && <><dt>Booked</dt><dd>{formatDateTime(q.data.createdAt)}</dd></>}
+                <dt>{t('consultation.field.payment')}</dt><dd>{paymentLabel(q.data)}{typeof q.data.price === 'number' && q.data.paymentStatus === 'paid' ? ` · ${formatRupees(q.data.price)}` : ''}</dd>
+                {q.data.cancellationReason && <><dt>{t('consultation.cancellationReason')}</dt><dd>{q.data.cancellationReason}</dd></>}
+                {q.data.createdAt && <><dt>{t('consultation.booked')}</dt><dd>{formatDateTime(q.data.createdAt)}</dd></>}
               </dl>
             </section>
             {/* WQ18 (S5c): close and refund a consultation whose doctor is not verified and active. */}
@@ -90,17 +93,19 @@ function Consultation({ bookingId, identity, scopeKey }: { bookingId: string; id
               readNow={async () => { const fresh = await consultationAdminApi(api).get(bookingId); queryClient.setQueryData(key, fresh); return fresh; }}
               reread={reread} />
             <section className="ws-section" aria-labelledby="ns-h">
-              <h2 id="ns-h">No-show</h2>
+              <h2 id="ns-h">{t('consultation.noShow')}</h2>
               <NoShowHistory b={q.data} />
               {q.data.status === 'no_show' && (
-                <p className="ws-muted">A no-show is not refunded and the doctor earns nothing for it. It may be moved once to a later time at the same price.</p>
+                <p className="ws-muted">{t('consultation.noShowRules')}</p>
               )}
-              {move === 'instant' && <p className="ws-muted">An instant consultation is never moved to a new time.</p>}
-              {move === 'clinic' && <p className="ws-muted">The clinic moves this appointment: it was booked at its front desk.</p>}
+              {move === 'instant' && <p className="ws-muted">{t('consultation.instantNeverMoved')}</p>}
+              {move === 'clinic' && <p className="ws-muted">{t('consultation.clinicMoves')}</p>}
               {q.data.noShowCancel && q.data.status === 'cancelled' && (
                 <p className="ws-muted">
-                  Cancelled by the Jansetu team after its move{q.data.noShowCancel.at ? ` (${formatDateTime(q.data.noShowCancel.at)})` : ''}:
-                  {q.data.noShowCancel.refund ? ' the patient was refunded to their Jansetu wallet.' : ' not refunded; the payment stays and nobody earns it.'}
+                  {q.data.noShowCancel.at
+                    ? t(q.data.noShowCancel.refund ? 'consultation.noShowCancel.refundedAt' : 'consultation.noShowCancel.notRefundedAt',
+                      { at: formatDateTime(q.data.noShowCancel.at) })
+                    : t(q.data.noShowCancel.refund ? 'consultation.noShowCancel.refunded' : 'consultation.noShowCancel.notRefunded')}
                 </p>
               )}
               {canAdminCancelMovedNoShow(q.data) && (
@@ -112,9 +117,9 @@ function Consultation({ bookingId, identity, scopeKey }: { bookingId: string; id
                   onFailure={(t) => { setNotice(null); setFailure(t); }} />
               )}
               {showMove && (
-                <NoShowMove slot={slot} who="The patient" missed={when(q.data)} state={move === 'used' ? 'used' : 'offer'} status={q.data.status}
+                <NoShowMove slot={slot} who={t('consultation.move.who')} missed={when(q.data)} state={move === 'used' ? 'used' : 'offer'} status={q.data.status}
                   readAt={q.dataUpdatedAt} reading={q.isFetching} disabled={guard.busy || q.isFetching} version={q.data.updatedAt}
-                  consequence={<>The patient and the doctor are told the new time. The doctor earns for it only once it is completed.</>}
+                  consequence={t('consultation.move.consequence')}
                   picker={(choose) => <AdminSlotPicker b={q.data} now={now} scopeKey={scopeKey} onChoose={choose} />}
                   send={(t: NoShowTarget, requestKey) => guard.perform(() =>
                     doctorAdminApi(api).rescheduleNoShow(bookingId, t.slotId, requestKey, typeof t.version === 'string' ? t.version : undefined))}
@@ -134,17 +139,31 @@ function Consultation({ bookingId, identity, scopeKey }: { bookingId: string; id
 function NoShowHistory({ b }: { b: AdminConsultation }) {
   const events: { at: string; text: string }[] = [];
   const moved = b.noShows?.[0];
-  if (moved?.at) events.push({ at: moved.at, text: `Marked as a no-show${moved.fromDate ? ` (missed ${formatYmd(moved.fromDate)}${moved.fromTime ? `, ${moved.fromTime}` : ''})` : ''}` });
-  if (moved?.rescheduledAt) events.push({ at: moved.rescheduledAt, text: `Moved once to a new time${b.noShows!.length === 1 ? ` (now ${when(b)})` : ''}. A second no-show is final.` });
-  if (b.status === 'no_show' && b.noShow?.at) events.push({ at: b.noShow.at, text: `Marked as a no-show (${when(b)})${moved ? ': final, it was already moved once' : ''}` });
-  if (events.length === 0) return <p className="ws-muted">{b.status === 'no_show' ? 'Marked as a no-show.' : 'This booking has no no-show.'}</p>;
+  if (moved?.at) {
+    events.push({ at: moved.at, text: moved.fromDate
+      ? t('consultation.history.markedMissed', { when: `${formatYmd(moved.fromDate)}${moved.fromTime ? `, ${moved.fromTime}` : ''}` })
+      : t('consultation.history.marked') });
+  }
+  if (moved?.rescheduledAt) {
+    events.push({ at: moved.rescheduledAt, text: b.noShows!.length === 1 ? t('consultation.history.movedNow', { when: when(b) }) : t('consultation.history.moved') });
+  }
+  if (b.status === 'no_show' && b.noShow?.at) {
+    events.push({ at: b.noShow.at, text: t(moved ? 'consultation.history.markedFinal' : 'consultation.history.markedAt', { when: when(b) }) });
+  }
+  if (events.length === 0) return <p className="ws-muted">{t(b.status === 'no_show' ? 'consultation.history.markedOnly' : 'consultation.history.none')}</p>;
   events.sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
   return (
-    <ol className="ws-timeline" aria-label="No-show history">
+    <ol className="ws-timeline" aria-label={t('consultation.history.label')}>
       {events.map((e, i) => <li key={i}><time dateTime={e.at}>{formatDateTime(e.at)}</time><span>{e.text}</span></li>)}
     </ol>
   );
 }
+
+/** The line above the times offered: where they are, and for which consultation type when it is known. */
+const TIMES = { clinic: 'consultation.slot.timesClinic', ownPlace: 'consultation.slot.timesOwnPlace', online: 'consultation.slot.timesOnline' } as const;
+const TIMES_FOR = {
+  clinic: 'consultation.slot.timesClinicFor', ownPlace: 'consultation.slot.timesOwnPlaceFor', online: 'consultation.slot.timesOnlineFor',
+} as const;
 
 /**
  * The booking's own doctor's open, not-yet-started slots on a chosen day, offered for its consultation type
@@ -163,34 +182,40 @@ function AdminSlotPicker({ b, now, scopeKey, onChoose }: { b: AdminConsultation;
     queryFn: () => consultationAdminApi(api).freeSlots(doctor!, day, b.consultationMode),
     enabled: ok && !!doctor,
   });
-  if (!doctor) return <p className="ws-muted">This booking names no doctor, so it cannot be moved here.</p>;
+  if (!doctor) return <p className="ws-muted">{t('consultation.slot.noDoctor')}</p>;
   const inPerson = b.consultationMode === 'in-person';
   // WQ11d: as the doctor's own picker (`noShowSlotFits`): the booking's consultation type and place; each time names it.
   const choices = (slots.data ?? []).filter((s) => s._id !== b.slotId && movableSlot(s, now) && noShowSlotFits(s, b)
     && (!s.specialistId || s.specialistId === doctor));
-  const where = (s: { branchId?: string }) => (!s.branchId ? (inPerson ? 'the doctor’s own place' : 'online') : 'the clinic it was booked at');
+  const where = (s: { branchId?: string }) => t(!s.branchId ? (inPerson ? 'consultation.slot.ownPlace' : 'consultation.slot.online') : 'consultation.slot.bookedClinic');
   const mode = b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode] ?? b.consultationMode : null;
+  const place = inPerson ? (b.clinicVisit?.branchId ? 'clinic' : 'ownPlace') : 'online';
   return (
     <>
       <p className="ws-muted">
-        Times {mode ? `for ${mode.toLowerCase()} consultations ` : ''}at {inPerson ? (b.clinicVisit?.branchId ? 'the clinic it was booked at' : 'the doctor’s own place') : 'no clinic (online)'}, as booked.
+        {mode ? t(TIMES_FOR[place], { mode: mode.toLowerCase() }) : t(TIMES[place])}
       </p>
-      <TextField label="New day" type="date" value={day} min={istDateOf(now)} error={ok ? undefined : 'Enter a real date.'}
+      <TextField label={t('consultation.slot.newDay')} type="date" value={day} min={istDateOf(now)} error={ok ? undefined : t('consultation.slot.realDate')}
         onChange={(e) => { setDay(e.target.value); setSlotId(''); onChoose(null); }} />
       {!ok ? null
-        : slots.isPending ? <Loading label="Loading the doctor’s free times…" />
+        : slots.isPending ? <Loading label={t('consultation.slot.loading')} />
         : slots.isError ? <ErrorState message={messageOf(slots.error)} onRetry={() => void slots.refetch()} />
-        : choices.length === 0 ? <p className="ws-muted">{b.doctorName || 'The doctor'} has no free time that day{inPerson ? ' at a clinic' : ''}. Choose another day.</p>
+        : choices.length === 0 ? (
+          <p className="ws-muted">
+            {b.doctorName ? t(inPerson ? 'consultation.slot.noneNamedClinic' : 'consultation.slot.noneNamed', { doctor: b.doctorName })
+              : t(inPerson ? 'consultation.slot.noneClinic' : 'consultation.slot.none')}
+          </p>
+        )
         : (
           <div className="j-field">
-            <label htmlFor={`admin-noshow-slot-${b._id}`}>New time</label>
+            <label htmlFor={`admin-noshow-slot-${b._id}`}>{t('consultation.slot.newTime')}</label>
             <select id={`admin-noshow-slot-${b._id}`} value={slotId} onChange={(e) => {
               setSlotId(e.target.value);
               const s = choices.find((x) => x._id === e.target.value);
               const iso = s ? fromYmd(s.date) : null;
               onChoose(s ? { slotId: s._id, label: `${iso ? formatDay(iso) : s.date}, ${s.startTime} (${where(s)})` } : null);
             }}>
-              <option value="">Choose a time</option>
+              <option value="">{t('consultation.slot.choose')}</option>
               {choices.map((s) => <option key={s._id} value={s._id}>{s.startTime}–{s.endTime} · {where(s)}</option>)}
             </select>
           </div>
@@ -224,17 +249,17 @@ function AdminCancel({ b, perform, busy, cancel, readNow, reread, onNotice, onFa
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const host = usePanelFocus<HTMLSpanElement>(open ? 'open' : 'closed');
-  const paid = typeof b.price === 'number' && b.paymentStatus === 'paid' ? formatRupees(b.price) : 'what the patient paid';
-  const done = (refunded: boolean, amount?: number) => `The appointment was cancelled${refunded
-    ? `; ${typeof amount === 'number' && amount > 0 ? formatRupees(amount) : 'the payment'} is back in the patient’s Jansetu wallet`
-    : ' without a refund: the payment stays with Jansetu and nobody earns it'}. The patient and the doctor are told.`;
+  const paid = typeof b.price === 'number' && b.paymentStatus === 'paid' ? formatRupees(b.price) : null;
+  const done = (refunded: boolean, amount?: number) => (!refunded ? t('consultation.cancel.doneNotRefunded')
+    : typeof amount === 'number' && amount > 0 ? t('consultation.cancel.doneRefundedAmount', { amount: formatRupees(amount) })
+    : t('consultation.cancel.doneRefunded'));
 
   async function submit() {
     const r = reason.trim();
     const errs: { reason?: string; refund?: string } = {};
-    if (r.length < MIN_ADMIN_CANCEL_REASON) errs.reason = `Give a reason (at least ${MIN_ADMIN_CANCEL_REASON} characters).`;
-    else if (r.length > MAX_ADMIN_CANCEL_REASON) errs.reason = `Use at most ${MAX_ADMIN_CANCEL_REASON} characters.`;
-    if (!refund) errs.refund = 'Choose whether the patient is refunded.';
+    if (r.length < MIN_ADMIN_CANCEL_REASON) errs.reason = t('consultation.cancel.reasonShort', { min: MIN_ADMIN_CANCEL_REASON });
+    else if (r.length > MAX_ADMIN_CANCEL_REASON) errs.reason = t('consultation.cancel.reasonLong', { max: MAX_ADMIN_CANCEL_REASON });
+    if (!refund) errs.refund = t('consultation.cancel.chooseRefund');
     setErrors(errs);
     if (Object.keys(errs).length) return;
     const choice = refund === 'yes';
@@ -250,20 +275,22 @@ function AdminCancel({ b, perform, busy, cancel, readNow, reread, onNotice, onFa
           if (err instanceof ApiError && err.code === 'ALREADY_CANCELLED') {
             // An earlier try of this admin (its answer lost) or another admin cancelled it: nothing more was done.
             const now = await readNow().catch(() => null);
-            const how = now?.noShowCancel ? (now.noShowCancel.refund ? ', with a refund to the patient’s Jansetu wallet' : ', without a refund') : '';
-            onNotice(`This appointment was already cancelled${how}: nothing more was done.`);
+            onNotice(t(!now?.noShowCancel ? 'consultation.cancel.already'
+              : now.noShowCancel.refund ? 'consultation.cancel.alreadyRefunded' : 'consultation.cancel.alreadyNotRefunded'));
             if (live.current) setOpen(false);
             return;
           }
           if (definitelyNotRecorded(err)) {
-            onFailure(`Not cancelled: ${(err instanceof ApiError && err.code && ADMIN_CANCEL_REFUSAL[err.code]) || (err instanceof Error ? err.message : String(err))}`);
+            onFailure(t('consultation.cancel.notCancelled', {
+              reason: (err instanceof ApiError && err.code && ADMIN_CANCEL_REFUSAL[err.code]) || (err instanceof Error ? err.message : String(err)),
+            }));
             if (live.current) setOpen(false);
             return;
           }
           // The answer was lost: the booking as read now tells whether it was cancelled.
           const now = await readNow().catch(() => null);
           if (now?.status === 'cancelled') { onNotice(done(now.noShowCancel ? now.noShowCancel.refund : choice)); if (live.current) setOpen(false); return; }
-          onFailure(`Not confirmed: ${err instanceof Error ? err.message : String(err)} The booking is shown as saved now; cancel it again if it still has to be cancelled (it is never cancelled or refunded twice).`);
+          onFailure(t('consultation.cancel.notConfirmed', { error: err instanceof Error ? err.message : String(err) }));
         } finally {
           reread();
         }
@@ -279,33 +306,32 @@ function AdminCancel({ b, perform, busy, cancel, readNow, reread, onNotice, onFa
     <span ref={host} style={FOCUS_HOST_STYLE}>
       {!open ? (
         <div className="ws-actions">
-          <Button variant="secondary" disabled={busy} onClick={() => { setOpen(true); setError(null); setErrors({}); }}>Cancel (admin)</Button>
-          <span className="ws-muted">Moved once after a no-show: only the Jansetu team cancels it, for example when the doctor cannot attend.</span>
+          <Button variant="secondary" disabled={busy} onClick={() => { setOpen(true); setError(null); setErrors({}); }}>{t('consultation.cancel.button')}</Button>
+          <span className="ws-muted">{t('consultation.cancel.hint')}</span>
         </div>
       ) : (
-        <div className="confirm" role="group" aria-label="Cancel (admin)">
+        <div className="confirm" role="group" aria-label={t('consultation.cancel.button')}>
           <div className="confirm-text">
-            Cancel the patient’s appointment on {formatYmd(b.bookingDate)}, {b.bookingTime}{b.doctorName ? ` with ${b.doctorName}` : ''}? Its seat and the
-            doctor’s time are freed at once, and the patient and the doctor are told. This cannot be undone.
+            {b.doctorName ? t('consultation.cancel.confirmWithDoctor', { when: when(b), doctor: b.doctorName }) : t('consultation.cancel.confirm', { when: when(b) })}
           </div>
-          <TextArea label="Reason (the patient sees this)" value={reason} maxLength={MAX_ADMIN_CANCEL_REASON} error={errors.reason}
+          <TextArea label={t('consultation.cancel.reason')} value={reason} maxLength={MAX_ADMIN_CANCEL_REASON} error={errors.reason}
             onChange={(e) => setReason(e.target.value)} />
           <fieldset className="ws-checks" aria-describedby={errors.refund ? 'admin-cancel-refund-err' : undefined}>
-            <legend>Refund the patient?</legend>
+            <legend>{t('consultation.cancel.refundQuestion')}</legend>
             <label className="ws-check">
               <input type="radio" name="admin-cancel-refund" checked={refund === 'yes'} onChange={() => setRefund('yes')} />
-              {' '}Yes: {paid} goes back to the patient’s Jansetu wallet (as when a doctor cancels).
+              {' '}{paid ? t('consultation.cancel.refundYesAmount', { amount: paid }) : t('consultation.cancel.refundYes')}
             </label>
             <label className="ws-check">
               <input type="radio" name="admin-cancel-refund" checked={refund === 'no'} onChange={() => setRefund('no')} />
-              {' '}No: the payment stays with Jansetu, as for a no-show, and nobody earns it.
+              {' '}{t('consultation.cancel.refundNo')}
             </label>
             {errors.refund && <span id="admin-cancel-refund-err" className="j-field__error">{errors.refund}</span>}
           </fieldset>
           {error && <Alert>{error}</Alert>}
           <div className="confirm-actions">
-            <Button variant="danger" busy={sending} disabled={busy && !sending} onClick={() => void submit()}>Cancel the appointment</Button>
-            <Button variant="ghost" data-focus-back disabled={sending} onClick={() => { setOpen(false); setError(null); }}>Back</Button>
+            <Button variant="danger" busy={sending} disabled={busy && !sending} onClick={() => void submit()}>{t('consultation.cancel.submit')}</Button>
+            <Button variant="ghost" data-focus-back disabled={sending} onClick={() => { setOpen(false); setError(null); }}>{t('consultation.cancel.back')}</Button>
           </div>
         </div>
       )}

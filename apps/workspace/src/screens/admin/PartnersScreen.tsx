@@ -6,6 +6,7 @@ import {
 } from '@jansetu/api';
 import { Badge, Button, Empty, ErrorState, formatDateTime, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { PartnerStateActions } from './PartnerStateActions.tsx';
@@ -68,46 +69,46 @@ export function PartnersScreen() {
 
   return (
     <>
-      <PageHeading title="Labs and clinics">Partner accounts: verify new ones, manage them as their owner, or suspend them.</PageHeading>
-      <div><Link className="j-btn j-btn--primary" to="/admin/partners/new">Add a lab or clinic</Link></div>
+      <PageHeading title={t('partners.title')}>{t('partners.intro')}</PageHeading>
+      <div><Link className="j-btn j-btn--primary" to="/admin/partners/new">{t('partners.add')}</Link></div>
       <form className="ws-search" role="search" onSubmit={submitSearch}>
-        <TextField label="Search by name" value={search} maxLength={100} onChange={(e) => setSearch(e.target.value)} />
-        <Button type="submit" variant="secondary">Search</Button>
+        <TextField label={t('common.searchByName')} value={search} maxLength={100} onChange={(e) => setSearch(e.target.value)} />
+        <Button type="submit" variant="secondary">{t('common.search')}</Button>
       </form>
-      <div className="ws-search" role="group" aria-label="Filters">
+      <div className="ws-search" role="group" aria-label={t('common.filters')}>
         <div className="j-field ws-filter">
-          <label htmlFor="pf-kind">Type</label>
+          <label htmlFor="pf-kind">{t('common.type')}</label>
           <select id="pf-kind" value={q.kind ?? ''} onChange={(e) => setFilter('kind', e.target.value)}>
-            <option value="">Labs and clinics</option>
+            <option value="">{t('partners.anyKind')}</option>
             {KINDS.map((k) => <option key={k} value={k}>{PARTNER_KIND_LABEL[k]}</option>)}
           </select>
         </div>
         <div className="j-field ws-filter">
-          <label htmlFor="pf-state">Status</label>
+          <label htmlFor="pf-state">{t('common.status')}</label>
           <select id="pf-state" value={q.verificationState ?? ''} onChange={(e) => setFilter('verificationState', e.target.value)}>
-            <option value="">Any status</option>
+            <option value="">{t('partners.anyStatus')}</option>
             {STATES.map((s) => <option key={s} value={s}>{VERIFICATION_LABEL[s]}</option>)}
           </select>
         </div>
         <div className="j-field ws-filter">
-          <label htmlFor="pf-active">Active</label>
+          <label htmlFor="pf-active">{t('common.active')}</label>
           <select id="pf-active" value={q.isActive ?? ''} onChange={(e) => setFilter('isActive', e.target.value)}>
-            <option value="">Active or not</option>
-            <option value="true">Active</option>
-            <option value="false">Inactive</option>
+            <option value="">{t('common.activeOrNot')}</option>
+            <option value="true">{t('common.active')}</option>
+            <option value="false">{t('common.inactive')}</option>
           </select>
         </div>
       </div>
-      {list.isPending ? <Loading label="Loading partners…" />
+      {list.isPending ? <Loading label={t('partners.loading')} />
         : list.isError ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
-        : list.data.items.length === 0 && page === 1 ? <Empty title="No labs or clinics match">Change the search or filters, or add one.</Empty>
+        : list.data.items.length === 0 && page === 1 ? <Empty title={t('partners.noneMatch')}>{t('partners.noneMatchHint')}</Empty>
         : (
           <>
-            <p className="ws-count" aria-live="polite">{list.data.total} {list.data.total === 1 ? 'partner' : 'partners'}</p>
+            <p className="ws-count" aria-live="polite">{t('partners.count', { count: list.data.total })}</p>
             <div className="ws-table-wrap">
               <table className="j-table">
-                <caption className="j-sr-only">Labs and clinics</caption>
-                <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Contact</th><th scope="col">Added</th><th scope="col">Actions</th></tr></thead>
+                <caption className="j-sr-only">{t('partners.title')}</caption>
+                <thead><tr><th scope="col">{t('common.name')}</th><th scope="col">{t('common.type')}</th><th scope="col">{t('common.status')}</th><th scope="col">{t('partners.contact')}</th><th scope="col">{t('common.added')}</th><th scope="col">{t('common.actions')}</th></tr></thead>
                 <tbody>
                   {list.data.items.map((p) => (
                     <tr key={p._id}>
@@ -115,7 +116,7 @@ export function PartnersScreen() {
                       <td>{PARTNER_KIND_LABEL[p.kind] ?? p.kind}</td>
                       <td>
                         <Badge tone={stateTone(p.verification?.state)}>{VERIFICATION_LABEL[p.verification?.state] ?? p.verification?.state}</Badge>
-                        {!p.isActive && p.verification?.state !== 'suspended' && <> <Badge tone="danger">Inactive</Badge></>}
+                        {!p.isActive && p.verification?.state !== 'suspended' && <> <Badge tone="danger">{t('common.inactive')}</Badge></>}
                       </td>
                       <td>{p.contact?.phone}{p.contact?.email ? ` · ${p.contact.email}` : ''}</td>
                       <td>{formatDateTime(p.createdAt)}</td>
@@ -126,10 +127,10 @@ export function PartnersScreen() {
               </table>
             </div>
             {(lastPage > 1 || page > 1) && (
-              <nav className="ws-pager" aria-label="Pages">
-                <Button variant="secondary" disabled={page <= 1} onClick={() => setFilter('page', page - 1 > 1 ? String(page - 1) : '')}>Previous</Button>
-                <span>Page {page} of {lastPage}</span>
-                <Button variant="secondary" disabled={page >= lastPage} onClick={() => setFilter('page', String(page + 1))}>Next</Button>
+              <nav className="ws-pager" aria-label={t('common.pages')}>
+                <Button variant="secondary" disabled={page <= 1} onClick={() => setFilter('page', page - 1 > 1 ? String(page - 1) : '')}>{t('common.previous')}</Button>
+                <span>{t('common.pageOf', { page, lastPage })}</span>
+                <Button variant="secondary" disabled={page >= lastPage} onClick={() => setFilter('page', String(page + 1))}>{t('common.next')}</Button>
               </nav>
             )}
           </>

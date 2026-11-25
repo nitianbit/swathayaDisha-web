@@ -4,9 +4,10 @@ import { Link } from 'react-router';
 import {
   adminCardRefundsApi, adminWalletReadError, agreementProblem, isSwitchedOff, cardRefundCauseLabel, CARD_REFUND_STATE_LABEL, findMarkedFailed, findMovedRefund,
   markFailedFinal, markFailedRefusal, markFailedRefusedBeforeWriting, MAX_REFUND_AGREEMENT, moveRefundFinal, moveRefundRefusal, moveRefusedBeforeWriting,
-  payerNameOf, payerWord, recheckRefusal, recheckWords, type AdminCardRefund, type CardRefund, type CardRefundPayerKind,
+  payerNameOf, payerWord, recheckRefusal, recheckWords, type AdminCardRefund, type CardRefund,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, formatDateTime, formatRupees, Loading, TextArea } from '@jansetu/ui';
+import { t } from '../../i18n/admin/index.ts';
 import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
@@ -25,24 +26,24 @@ import { humanCode } from './RefundsScreen.tsx';
  * WQ24b (r21): a row is paid by a pharmacy, a lab or a doctor (`payerKind`, `payerName`; an older answer is a pharmacy's,
  * named by `pharmacyName`): the words and the wallet named are the payer's.
  */
-const refundWords = (r: CardRefund) => `${formatRupees(r.amountMinor / 100)} card refund of ${formatDateTime(r.createdAt)}`;
-const payerOf = (r: AdminCardRefund) => payerNameOf(r) ?? `the ${payerWord(r.payerKind)}`;
+const refundWords = (r: CardRefund) => t('cardRefunds.refund', { amount: formatRupees(r.amountMinor / 100), date: formatDateTime(r.createdAt) });
+/** Who paid for the row's booking: "pharmacy", "lab" or "doctor" (WQ24b). */
+const payerOf = (r: AdminCardRefund) => payerWord(r.payerKind);
+const nameOf = (r: AdminCardRefund) => payerNameOf(r) ?? t('cardRefunds.thePayer', { payer: payerOf(r) });
+/** The first sentence of an unconfirmed request's notice (shared with the wallet pages). */
+export const notKnownYet = (error?: string | null) => (error ? t('adminWallet.unknownWith', { error }) : t('adminWallet.unknown'));
 const movable = (r: CardRefund) => (r.state === 'failed' || r.state === 'manual_review') && r.lastError !== 'CHARGEBACK_RECORDED';
 const markable = (r: CardRefund) => r.state === 'pending' && r.method === 'card';
 
 type Action = 'move' | 'mark';
 interface PendingAction { action: Action; row: AdminCardRefund; text: string }
-/** The words of each change, for the row's payer (`w`: "pharmacy", "lab" or "doctor"). */
-const wordsFor = (action: Action, w: CardRefundPayerKind) => (action === 'move' ? {
-  button: 'Move to wallet', field: `The ${w}’s agreement`, hint: `Required. Who at the ${w} agreed, how and when. Kept with the refund.`,
-  next: 'Next: check before moving', confirm: 'Yes, move to wallet', label: 'Unconfirmed move to wallet',
-  explain: `Only when the card refund cannot go through and the ${w} agreed to take the money in its Jansetu wallet instead. The money is added to its wallet at once (it cannot be withdrawn), and the card refund is closed.`,
-} : {
-  button: 'Mark failed', field: 'Why is it marked failed?', hint: 'Required. For example what Razorpay support said. Kept with the refund.',
-  next: 'Next: check before marking', confirm: 'Yes, mark failed', label: 'Unconfirmed mark failed',
-  explain: `Only when Razorpay cannot complete this card refund. Jansetu reads Razorpay first and refuses while it holds a refund of this payment. Afterwards the refund can be moved to the ${w}’s wallet, with its agreement.`,
-});
-const WORDS = (action: Action, row: AdminCardRefund) => wordsFor(action, payerWord(row.payerKind));
+/** Each action's words (catalogue keys, worded at render). */
+const WORDS = {
+  move: { button: 'cardRefunds.move.button', field: 'cardRefunds.move.field', fieldHint: 'cardRefunds.move.hint', next: 'cardRefunds.move.next',
+    confirm: 'cardRefunds.move.confirm', explain: 'cardRefunds.move.explain', unconfirmed: 'cardRefunds.move.unconfirmed' },
+  mark: { button: 'cardRefunds.mark.button', field: 'cardRefunds.mark.field', fieldHint: 'cardRefunds.mark.hint', next: 'cardRefunds.mark.next',
+    confirm: 'cardRefunds.mark.confirm', explain: 'cardRefunds.mark.explain', unconfirmed: 'cardRefunds.mark.unconfirmed' },
+} as const satisfies Record<Action, Record<string, Parameters<typeof t>[0]>>;
 
 export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) {
   const { api } = useSession();
@@ -67,19 +68,17 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
     setChosen(null);
     setReview(null);
     setText('');
-    const what = `the ${refundWords(p.row)} of ${payerOf(p.row)}`;
-    const w = payerWord(p.row.payerKind);
+    const what = { refund: refundWords(p.row), name: nameOf(p.row), payer: payerOf(p.row) };
     if (p.action === 'mark') {
-      setDone(how === 'checked' ? `It was marked failed: ${what}. It can now be moved to the ${w}’s wallet.`
-        : `Marked failed: ${what}. It can now be moved to the ${w}’s wallet, with its agreement.`);
+      setDone(how === 'checked' ? t('cardRefunds.done.markedChecked', what) : t('cardRefunds.done.marked', what));
     } else {
-      setDone(how === 'checked' ? `It was moved: ${what} is in the ${w}’s Jansetu wallet.`
-        : replayed ? `This refund was already moved to the ${w}’s wallet: ${what}. Nothing more was changed.`
-        : `Moved to the ${w}’s wallet: ${what}.${how === 'resent' ? ' It was moved once, even though it was sent more than once.' : ''}`);
+      setDone(how === 'checked' ? t('cardRefunds.done.movedChecked', what)
+        : replayed ? t('cardRefunds.done.alreadyMoved', what)
+        : `${t('cardRefunds.done.moved', what)}${how === 'resent' ? ` ${t('cardRefunds.done.movedOnce')}` : ''}`);
     }
     void reread();
   };
-  const refuse = (action: Action, err: unknown) => { setChosen(null); setReview(null); setRefused(`Not done: ${refusalOf(action, err)}`); void reread(); };
+  const refuse = (action: Action, err: unknown) => { setChosen(null); setReview(null); setRefused(t('cardRefunds.notDone', { reason: refusalOf(action, err) })); void reread(); };
 
   function start(action: Action, row: AdminCardRefund) {
     setDone(null); setRefused(null); setReview(null); setText(''); setTextError(undefined); setChosen({ action, row });
@@ -88,8 +87,8 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
   function check(e: FormEvent) {
     e.preventDefault();
     if (!chosen) return;
-    const problem = chosen.action === 'move' ? agreementProblem(text, payerWord(chosen.row.payerKind))
-      : !text.trim() ? 'Write why it is marked failed.' : text.trim().length > MAX_REFUND_AGREEMENT ? `Use at most ${MAX_REFUND_AGREEMENT} characters.` : undefined;
+    const problem = chosen.action === 'move' ? agreementProblem(text, payerOf(chosen.row))
+      : !text.trim() ? t('cardRefunds.writeWhy') : text.trim().length > MAX_REFUND_AGREEMENT ? t('cardRefunds.atMost', { max: MAX_REFUND_AGREEMENT }) : undefined;
     setTextError(problem);
     if (problem) return;
     setReview({ requestKey: newRequestKey(), ...chosen, text: text.trim().replace(/\s+/g, ' ') });
@@ -114,7 +113,7 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
     setDone(null); setRefused(null); setRechecking(row.refundId);
     try {
       const r = await perform(() => refunds.recheck(row.refundId));
-      setDone(`${refundWords(row)} of ${payerOf(row)}. ${recheckWords(r)}`);
+      setDone(`${t('cardRefunds.recheckedOf', { refund: refundWords(row), name: nameOf(row) })} ${recheckWords(r)}`);
     } catch (err) {
       setRefused(recheckRefusal(err));
     } finally {
@@ -125,31 +124,31 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
 
   if (op && !(busy && op.attempts === 1 && !op.uncertain)) {
     const restored = !!op.restored || !op.body;
-    const w = restored ? null : WORDS(op.body.action, op.body.row);
+    const w = WORDS[restored ? 'move' : op.body.action];
     return (
       <>
-        {w && <p>{w.explain}</p>}
+        {!restored && <p>{t(w.explain, { payer: payerOf(op.body.row) })}</p>}
         {resendError && <Alert>{resendError}</Alert>}
-        <CheckPanel label={w ? w.label : 'Unconfirmed refund change'}
+        <CheckPanel label={restored ? t('cardRefunds.unconfirmed') : t(w.unconfirmed)}
           onCheck={async () => {
-            if (restored) return 'Its details are not kept on this device after a reload. Read the list again to see where the refund is.';
+            if (restored) return t('cardRefunds.check.restored');
             // The row is read by id (r10e `GET …/card-refunds/:id`); never the 200-row list, never recheck (it can send the
             // refund). A server without the route fails the check: the outcome stays unknown.
             const found = op.body.action === 'move' ? await findMovedRefund(api, op.body.row.refundId) : await findMarkedFailed(api, op.body.row.refundId);
             void reread();
             if (found) { settle(op.requestKey); finished(op.body, 'checked'); return null; }
-            return 'Not done so far. It may still be on its way. Sending the same request again is safe: it is done only once.';
+            return t('cardRefunds.check.notYet');
           }}
           resend={restored ? undefined : {
-            label: 'Send the same request again', busy,
+            label: t('adminWallet.sendAgain'), busy,
             onClick: () => { setResendError(null); void sendAction(op).catch((err: unknown) => setResendError(refusalOf(op.body.action, err))); },
           }}
-          forget={{ label: 'Forget it', confirmLabel: 'Yes, forget it', onForget: () => { settle(op.requestKey); setReview(null); setChosen(null); setText(''); },
-            consequence: 'The change may already be done, or may still be. Forgetting it does not undo that. Read the list again before doing it again: a refund is never moved twice.' }}>
+          forget={{ label: t('adminWallet.forget'), confirmLabel: t('adminWallet.forgetConfirm'), onForget: () => { settle(op.requestKey); setReview(null); setChosen(null); setText(''); },
+            consequence: t('cardRefunds.forget') }}>
           <Alert tone="warn">
             {restored
-              ? 'A change to a card refund made earlier on this device (before the page was reloaded) was not confirmed. Its details are not kept here.'
-              : `The outcome of this request is not known yet${op.error ? ` (${op.error})` : ''}. The ${refundWords(op.body.row)} of ${payerOf(op.body.row)} may already be ${op.body.action === 'move' ? 'in its wallet' : 'marked failed'}. Sending the same request again is safe.`}
+              ? t('cardRefunds.restored')
+              : `${notKnownYet(op.error)} ${t(op.body.action === 'move' ? 'cardRefunds.mayBe.move' : 'cardRefunds.mayBe.mark', { refund: refundWords(op.body.row), name: nameOf(op.body.row) })}`}
           </Alert>
         </CheckPanel>
       </>
@@ -159,18 +158,24 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
   const rows = list.data ?? [];
   return (
     <>
-      <p className="ws-muted">Card and UPI refunds of bookings made for patients (by a pharmacy, a lab or a doctor) that did not go through on their own. One still in progress is listed after 20 failures or a day.</p>
+      <p className="ws-muted">{t('cardRefunds.intro')}</p>
       {done && <Alert tone="ok">{done}</Alert>}
       {refused && <Alert>{refused}</Alert>}
-      {list.isPending ? <Loading label="Loading card refunds…" />
-        : list.isError ? (isSwitchedOff(list.error) ? <p className="ws-muted">Card refunds of bookings are not available on this server yet.</p>
+      {list.isPending ? <Loading label={t('cardRefunds.loading')} />
+        : list.isError ? (isSwitchedOff(list.error) ? <p className="ws-muted">{t('cardRefunds.unavailable')}</p>
           : <ErrorState message={adminWalletReadError(list.error)} onRetry={() => void list.refetch()} />)
-        : rows.length === 0 ? <Empty title="No card refunds need a person">Card refunds that fail or get stuck are listed here.</Empty>
+        : rows.length === 0 ? <Empty title={t('cardRefunds.empty')}>{t('cardRefunds.emptyText')}</Empty>
         : (
           <div className="ws-table-wrap">
             <table className="j-table">
-              <caption className="j-sr-only">Card refunds that need a person, oldest change first</caption>
-              <thead><tr><th scope="col">When</th><th scope="col">Paid by</th><th scope="col">Amount</th><th scope="col">Why</th><th scope="col">State</th><th scope="col">Booking</th><th scope="col"><span className="j-sr-only">Actions</span></th></tr></thead>
+              <caption className="j-sr-only">{t('cardRefunds.caption')}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">{t('adminWallet.col.when')}</th><th scope="col">{t('cardRefunds.col.paidBy')}</th><th scope="col">{t('common.amount')}</th>
+                  <th scope="col">{t('cardRefunds.col.why')}</th><th scope="col">{t('adminWallet.col.state')}</th><th scope="col">{t('cardRefunds.col.booking')}</th>
+                  <th scope="col"><span className="j-sr-only">{t('common.actions')}</span></th>
+                </tr>
+              </thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.refundId}>
@@ -180,24 +185,24 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
                     <td>{cardRefundCauseLabel(r.cause, r.payerKind) ?? humanCode(r.cause)}</td>
                     <td>
                       <Badge tone={r.state === 'pending' ? undefined : 'warn'}>{CARD_REFUND_STATE_LABEL[r.state] ?? humanCode(r.state)}</Badge>
-                      {r.lastError === 'CHARGEBACK_RECORDED' ? <div className="ws-muted">A card dispute was recorded: never refunded</div>
+                      {r.lastError === 'CHARGEBACK_RECORDED' ? <div className="ws-muted">{t('cardRefunds.chargeback')}</div>
                         : r.lastError ? <div className="ws-muted">{humanCode(r.lastError)}</div> : null}
-                      <div className="ws-muted">{r.attempts} {r.attempts === 1 ? 'failure' : 'failures'}</div>
+                      <div className="ws-muted">{t('cardRefunds.failures', { count: r.attempts })}</div>
                     </td>
-                    <td><Link to={`/admin/consultations/${r.bookingId}`}>Open the booking</Link></td>
+                    <td><Link to={`/admin/consultations/${r.bookingId}`}>{t('cardRefunds.openBooking')}</Link></td>
                     <td>
                       <div className="ws-actions">
                         {r.state !== 'processed' && (
                           <Button variant="ghost" busy={rechecking === r.refundId} disabled={busy && rechecking !== r.refundId}
-                            aria-label={`Recheck the ${refundWords(r)} with Razorpay`} onClick={() => void recheck(r)}>Recheck</Button>
+                            aria-label={t('cardRefunds.recheckAria', { refund: refundWords(r) })} onClick={() => void recheck(r)}>{t('cardRefunds.recheck')}</Button>
                         )}
                         {markable(r) && (
                           <Button variant="secondary" disabled={busy || (!!review && chosen?.row.refundId !== r.refundId)}
-                            aria-label={`Mark the ${refundWords(r)} failed`} onClick={() => start('mark', r)}>Mark failed</Button>
+                            aria-label={t('cardRefunds.markAria', { refund: refundWords(r) })} onClick={() => start('mark', r)}>{t('cardRefunds.mark.button')}</Button>
                         )}
                         {movable(r) && (
                           <Button variant="secondary" disabled={busy || (!!review && chosen?.row.refundId !== r.refundId)}
-                            aria-label={`Move the ${refundWords(r)} to the ${payerWord(r.payerKind)}’s wallet`} onClick={() => start('move', r)}>Move to wallet</Button>
+                            aria-label={t('cardRefunds.moveAria', { refund: refundWords(r), payer: payerOf(r) })} onClick={() => start('move', r)}>{t('cardRefunds.move.button')}</Button>
                         )}
                       </div>
                     </td>
@@ -208,34 +213,40 @@ export function CardRefundsQueue({ scopeKey }: { scopeKey: readonly string[] }) 
           </div>
         )}
       {chosen && (
-        <form className="rx-form" noValidate onSubmit={check} aria-label={WORDS(chosen.action, chosen.row).button}>
-          <p>The <strong>{refundWords(chosen.row)}</strong> of <strong>{payerOf(chosen.row)}</strong>. {WORDS(chosen.action, chosen.row).explain}</p>
+        <form className="rx-form" noValidate onSubmit={check} aria-label={t(WORDS[chosen.action].button)}>
+          <p>
+            {t.rich('cardRefunds.chosen', { refund: <strong key="r">{refundWords(chosen.row)}</strong>, name: <strong key="p">{nameOf(chosen.row)}</strong> })}
+            {' '}{t(WORDS[chosen.action].explain, { payer: payerOf(chosen.row) })}
+          </p>
           <fieldset className="ws-frozen" disabled={!!review || busy}>
-            <TextArea label={WORDS(chosen.action, chosen.row).field} value={text} maxLength={MAX_REFUND_AGREEMENT} error={textError}
-              hint={WORDS(chosen.action, chosen.row).hint} onChange={(e) => setText(e.target.value)} />
+            <TextArea label={t(WORDS[chosen.action].field, { payer: payerOf(chosen.row) })} value={text} maxLength={MAX_REFUND_AGREEMENT} error={textError}
+              hint={t(WORDS[chosen.action].fieldHint, { payer: payerOf(chosen.row) })} onChange={(e) => setText(e.target.value)} />
           </fieldset>
           {!review ? (
             <div className="confirm-actions">
-              <Button type="submit">{WORDS(chosen.action, chosen.row).next}</Button>
-              <Button variant="ghost" onClick={() => setChosen(null)}>Cancel</Button>
+              <Button type="submit">{t(WORDS[chosen.action].next)}</Button>
+              <Button variant="ghost" onClick={() => setChosen(null)}>{t('adminWallet.cancel')}</Button>
             </div>
           ) : (
-            <div className="confirm" role="group" aria-label={review.action === 'move' ? 'Move this refund to the wallet' : 'Mark this refund failed'}>
+            <div className="confirm" role="group" aria-label={t(review.action === 'move' ? 'cardRefunds.review.move' : 'cardRefunds.review.mark')}>
               <div className="confirm-text">
-                {review.action === 'move'
-                  ? <>Move the <strong>{refundWords(review.row)}</strong> to the Jansetu wallet of <strong>{payerOf(review.row)}</strong>?</>
-                  : <>Mark the <strong>{refundWords(review.row)}</strong> of <strong>{payerOf(review.row)}</strong> failed?</>}
+                {t.rich(review.action === 'move' ? 'cardRefunds.question.move' : 'cardRefunds.question.mark', {
+                  refund: <strong key="r">{refundWords(review.row)}</strong>, name: <strong key="p">{nameOf(review.row)}</strong>,
+                })}
               </div>
               <ul className="ws-list">
-                <li>{review.action === 'move' ? 'Agreement' : 'Reason'}: <strong>{review.text}</strong></li>
-                <li>{WORDS(review.action, review.row).explain}</li>
+                <li>
+                  {review.action === 'move' ? t.rich('cardRefunds.agreementIs', { text: <strong key="t">{review.text}</strong> })
+                    : t.rich('adminWallet.reasonIs', { reason: <strong key="t">{review.text}</strong> })}
+                </li>
+                <li>{t(WORDS[review.action].explain, { payer: payerOf(review.row) })}</li>
               </ul>
               <div className="confirm-actions">
                 <Button busy={busy} onClick={() => {
                   const { requestKey, ...pending } = review;
                   void sendAction(startOp(requestKey, pending)).catch((err: unknown) => refuse(pending.action, err));
-                }}>{WORDS(review.action, review.row).confirm}</Button>
-                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>Back</Button>
+                }}>{t(WORDS[review.action].confirm)}</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => setReview(null)}>{t('adminWallet.back')}</Button>
               </div>
             </div>
           )}

@@ -12,28 +12,18 @@ apps/workspace/src/main.tsx
 apps/workspace/src/modules.tsx
 apps/workspace/src/screens/HomeScreen.tsx
 apps/workspace/src/screens/LoginScreen.tsx
+# WQ43: the admin files below hold no English left; only `scope="col"` / `scope="row"` still trips the scan here. Drop
+# them once `scope` is a technical attribute in literals.test.ts (WQ44 adds it; the stale-entry check then names them).
 apps/workspace/src/screens/admin/AdminLabBookingsScreen.tsx
-apps/workspace/src/screens/admin/BookingClose.tsx
 apps/workspace/src/screens/admin/CardRefunds.tsx
-apps/workspace/src/screens/admin/ConsultationScreen.tsx
 apps/workspace/src/screens/admin/ConsultationsScreen.tsx
-apps/workspace/src/screens/admin/DoctorScreen.tsx
 apps/workspace/src/screens/admin/DoctorsScreen.tsx
-apps/workspace/src/screens/admin/ExternalCancellationsScreen.tsx
 apps/workspace/src/screens/admin/LabWalletAdminScreen.tsx
-apps/workspace/src/screens/admin/NewPartnerScreen.tsx
-apps/workspace/src/screens/admin/NewPharmacyScreen.tsx
-apps/workspace/src/screens/admin/OrderCancellationsScreen.tsx
-apps/workspace/src/screens/admin/PartnerScreen.tsx
-apps/workspace/src/screens/admin/PartnerStateActions.tsx
 apps/workspace/src/screens/admin/PartnersScreen.tsx
 apps/workspace/src/screens/admin/PharmaciesScreen.tsx
-apps/workspace/src/screens/admin/PharmacyScreen.tsx
 apps/workspace/src/screens/admin/PharmacyWalletsScreen.tsx
 apps/workspace/src/screens/admin/ReferralCutsScreen.tsx
 apps/workspace/src/screens/admin/RefundsScreen.tsx
-apps/workspace/src/screens/admin/accountList.tsx
-apps/workspace/src/screens/admin/pharmacyFields.tsx
 apps/workspace/src/screens/doctor/AppointmentsScreen.tsx
 apps/workspace/src/screens/doctor/ClinicsScreen.tsx
 apps/workspace/src/screens/doctor/ConsultNowScreen.tsx

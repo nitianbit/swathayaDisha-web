@@ -8,6 +8,7 @@ import {
 } from '@jansetu/api';
 import { Alert, Badge, ErrorState, formatDateTime, formatRupees, Loading } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
+import { t } from '../../i18n/admin/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
@@ -28,7 +29,11 @@ import { AddMoney, Balance, UncreditedTopups, type AdminTopupTarget } from './Ph
 export function LabWalletAdminScreen() {
   const { partnerId = '' } = useParams();
   const scope = useAdminScope('lab-wallets');
-  if (!OBJECT_ID_PATTERN.test(partnerId)) return <NoSuchRecord back="/admin/partners" backLabel="Back to labs and clinics" title="Lab">Open it from the list of labs and clinics.</NoSuchRecord>;
+  if (!OBJECT_ID_PATTERN.test(partnerId)) return (
+    <NoSuchRecord back="/admin/partners" backLabel={t('common.backToPartners')} title={t('labWallet.lab')} missing={t('labWallet.noSuchLab')}>
+      {t('labWallet.openFromList')}
+    </NoSuchRecord>
+  );
   return <OwnerWallet key={`${scope.identity}:${partnerId}`} kind="lab" scopeKey={scope.key} ownerId={partnerId.toLowerCase()} />;
 }
 
@@ -36,7 +41,11 @@ export function LabWalletAdminScreen() {
 export function DoctorWalletAdminScreen() {
   const { doctorId = '' } = useParams();
   const scope = useAdminScope('doctor-wallets');
-  if (!OBJECT_ID_PATTERN.test(doctorId)) return <NoSuchRecord back="/admin/doctors" backLabel="Back to doctors" title="Doctor">Open it from the doctor list.</NoSuchRecord>;
+  if (!OBJECT_ID_PATTERN.test(doctorId)) return (
+    <NoSuchRecord back="/admin/doctors" backLabel={t('common.backToDoctors')} title={t('doctorWallet.doctor')} missing={t('doctorWallet.noSuchDoctor')}>
+      {t('doctorWallet.openFromList')}
+    </NoSuchRecord>
+  );
   return <OwnerWallet key={`${scope.identity}:${doctorId}`} kind="doctor" scopeKey={scope.key} ownerId={doctorId.toLowerCase()} />;
 }
 
@@ -67,16 +76,18 @@ function OwnerWallet({ kind, scopeKey, ownerId }: { kind: WalletOwnerKind; scope
   const wallet = useQuery({ queryKey: [...scopeKey, ownerId, 'wallet'], queryFn: () => w.wallet(ownerId) });
   const history = useCursorPages();
   const entries = useQuery({ queryKey: [...scopeKey, ownerId, 'entries', history.cursor], queryFn: () => w.entries(ownerId, history.cursor || undefined) });
-  const name = owner.data?.name ?? `this ${kind}`;
+  const name = owner.data?.name ?? (kind === 'lab' ? t('labWallet.thisLab') : t('doctorWallet.thisDoctor'));
   const view = wallet.data ? asPharmacyWallet(wallet.data) : null;
   const back = kind === 'lab' ? `/admin/partners/${ownerId}` : `/admin/doctors/${ownerId}`;
   return (
     <>
-      <Link className="ws-back" to={back}><ArrowLeft size={16} aria-hidden="true" /> Back to {owner.data?.name ?? `the ${kind}`}</Link>
-      <PageHeading title={owner.data ? `Wallet: ${owner.data.name}` : kind === 'lab' ? 'Lab wallet' : 'Doctor wallet'} />
+      <Link className="ws-back" to={back}><ArrowLeft size={16} aria-hidden="true" />{' '}
+        {owner.data?.name != null ? t('labWallet.backTo', { name: owner.data.name }) : kind === 'lab' ? t('labWallet.backToLab') : t('doctorWallet.backToDoctor')}
+      </Link>
+      <PageHeading title={owner.data ? t('adminWallet.titleNamed', { name: owner.data.name }) : kind === 'lab' ? t('labWallet.title') : t('doctorWallet.title')} />
       <section className="ws-section" aria-labelledby="bal-h">
-        <h2 id="bal-h">Balance</h2>
-        {wallet.isPending ? <Loading label="Loading the wallet…" />
+        <h2 id="bal-h">{t('adminWallet.balance')}</h2>
+        {wallet.isPending ? <Loading label={t('adminWallet.loadingWallet')} />
           : wallet.isError ? <ErrorState message={tools.refusal(wallet.error).message} onRetry={() => void wallet.refetch()} />
           : (
             <>
@@ -86,15 +97,15 @@ function OwnerWallet({ kind, scopeKey, ownerId }: { kind: WalletOwnerKind; scope
           )}
       </section>
       <section className="ws-section" aria-labelledby="add-h">
-        <h2 id="add-h">Add money</h2>
+        <h2 id="add-h">{t('adminWallet.addMoney')}</h2>
         {owner.data && wallet.isSuccess ? <AddMoney target={ownerTarget(tools, kind, scopeKey, ownerId, owner.data.name)} wallet={view} />
-          : owner.isPending || wallet.isPending ? <Loading label="Loading…" /> : <p className="ws-muted">The {kind} and its wallet must load first.</p>}
+          : owner.isPending || wallet.isPending ? <Loading label={t('adminWallet.loading')} /> : <p className="ws-muted">{t(`adminWallet.mustLoad.${kind}`)}</p>}
       </section>
-      <WalletHistory q={entries} notes empty={`Top-ups, admin credits and bookings of ${name} are listed here.`} first={history.page === 1}
-        pager={<CursorPager pages={history} nextCursor={entries.data?.nextCursor} label="Wallet history pages" />} />
+      <WalletHistory q={entries} notes empty={t('labWallet.historyEmpty', { name })} first={history.page === 1}
+        pager={<CursorPager pages={history} nextCursor={entries.data?.nextCursor} label={t('adminWallet.historyPages')} />} />
       <Lots tools={tools} scopeKey={scopeKey} ownerId={ownerId} />
       <section className="ws-section" aria-labelledby="uncredited-h">
-        <h2 id="uncredited-h">Card top-ups not credited</h2>
+        <h2 id="uncredited-h">{t('adminWallet.uncredited')}</h2>
         <UncreditedTopups scopeKey={scopeKey} ownerId={ownerId} ownerName={name} owner={kind} />
       </section>
     </>
@@ -114,16 +125,16 @@ function Hold({ tools: { w, refusal }, scopeKey, ownerId, name, frozen }: { tool
   const say = (tone: 'ok' | 'warn' | 'error', text: string) => { if (live.current) setOutcome({ tone, text }); };
   const act = (to: boolean, reason: string) => perform(async () => {
     setOutcome(null);
-    const done = to ? `The wallet of ${name} is on hold: it cannot pay for bookings; money can still be added.` : `The wallet of ${name} is released.`;
+    const done = to ? t('labWallet.hold.on', { name }) : t('labWallet.hold.released', { name });
     try {
       await w.freeze(ownerId, to, reason);
       say('ok', done);
     } catch (err) {
-      if (definitelyNotRecorded(err)) say('error', `Not changed: ${refusal(err).message}`);
+      if (definitelyNotRecorded(err)) say('error', t('labWallet.hold.notChanged', { message: refusal(err).message }));
       else {
         const now = await w.wallet(ownerId).catch(() => null);
         if (now && now.frozen === to) say('ok', done);
-        else say('warn', `Not confirmed: ${refusal(err).message} The hold shown is what is saved now; try again if it is still needed.`);
+        else say('warn', t('labWallet.hold.notConfirmed', { message: refusal(err).message }));
       }
     } finally {
       await queryClient.invalidateQueries({ queryKey: [...scopeKey, ownerId] });
@@ -134,18 +145,21 @@ function Hold({ tools: { w, refusal }, scopeKey, ownerId, name, frozen }: { tool
       {outcome && <Alert tone={outcome.tone}>{outcome.text}</Alert>}
       <div className="ws-actions">
         {frozen ? (
-          <ConfirmAction key="release" label="Release the hold" confirmLabel="Yes, release it" reason reasonLabel="Why is the hold released?" disabled={busy}
-            consequence={`The wallet of ${name} can pay for bookings again.`} onConfirm={(reason) => act(false, reason)} />
+          <ConfirmAction key="release" label={t('labWallet.hold.release')} confirmLabel={t('labWallet.hold.releaseConfirm')} reason
+            reasonLabel={t('labWallet.hold.releaseWhy')} disabled={busy}
+            consequence={t('labWallet.hold.releaseConsequence', { name })} onConfirm={(reason) => act(false, reason)} />
         ) : (
-          <ConfirmAction key="hold" label="Put on hold" danger confirmLabel="Yes, put it on hold" reason reasonLabel="Why is the wallet put on hold?" disabled={busy}
-            consequence={`The wallet of ${name} cannot pay for bookings until the hold is released. Money can still be added.`} onConfirm={(reason) => act(true, reason)} />
+          <ConfirmAction key="hold" label={t('labWallet.hold.put')} danger confirmLabel={t('labWallet.hold.putConfirm')} reason
+            reasonLabel={t('labWallet.hold.putWhy')} disabled={busy}
+            consequence={t('labWallet.hold.putConsequence', { name })} onConfirm={(reason) => act(true, reason)} />
         )}
       </div>
     </>
   );
 }
 
-const DISPUTE_LABEL: Readonly<Record<string, string>> = { lost: 'Card dispute recorded' };
+/** A lot's dispute state in words (`labWallet.dispute.<state>`), or nothing for a state without words. */
+const disputeWords = (state: string) => { const key = `labWallet.dispute.${state}`; return t.has(key) ? t(key) : null; };
 
 /**
  * The card top-ups as lots (newest first, at most 200). The existing chargeback of a lot
@@ -161,38 +175,44 @@ function Lots({ tools: { w, refusal }, scopeKey, ownerId }: { tools: OwnerTools;
     setNotice(null);
     try {
       const r = await w.chargebackLot(lot._id, reason);
-      setNotice({ tone: 'ok', text: r.replayed ? 'This card dispute was already recorded. Nothing more was changed.'
-        : `Card dispute recorded on the ${formatRupees(lot.amountMinor / 100)} top-up. No money was taken from the wallet; that money is no longer withdrawable.` });
+      setNotice({ tone: 'ok', text: r.replayed ? t('labWallet.lots.replayed')
+        : t('labWallet.lots.recorded', { amount: formatRupees(lot.amountMinor / 100) }) });
     } catch (err) {
-      if (definitelyNotRecorded(err)) setNotice({ tone: 'error', text: `Not recorded: ${refusal(err).message}` });
-      else setNotice({ tone: 'warn', text: `Not confirmed: ${refusal(err).message} The list shows what is saved now; recording it again is safe.` });
+      if (definitelyNotRecorded(err)) setNotice({ tone: 'error', text: t('labWallet.lots.notRecorded', { message: refusal(err).message }) });
+      else setNotice({ tone: 'warn', text: t('labWallet.lots.notConfirmed', { message: refusal(err).message }) });
     } finally {
       await queryClient.invalidateQueries({ queryKey: [...scopeKey, ownerId] });
     }
   });
   return (
     <section className="ws-section" aria-labelledby="lots-h">
-      <h2 id="lots-h">Card top-ups</h2>
+      <h2 id="lots-h">{t('labWallet.lots.title')}</h2>
       {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
-      {lots.isPending ? <Loading label="Loading card top-ups…" />
+      {lots.isPending ? <Loading label={t('adminWallet.loadingTopups')} />
         : lots.isError ? <ErrorState message={refusal(lots.error).message} onRetry={() => void lots.refetch()} />
-        : lots.data.length === 0 ? <p className="ws-muted">No card top-ups yet.</p>
+        : lots.data.length === 0 ? <p className="ws-muted">{t('labWallet.lots.empty')}</p>
         : (
           <div className="ws-table-wrap">
             <table className="j-table">
-              <caption className="j-sr-only">Card top-ups, newest first</caption>
-              <thead><tr><th scope="col">Paid</th><th scope="col">Amount</th><th scope="col">Left</th><th scope="col">State</th><th scope="col"><span className="j-sr-only">Dispute</span></th></tr></thead>
+              <caption className="j-sr-only">{t('labWallet.lots.caption')}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">{t('labWallet.lots.col.paid')}</th><th scope="col">{t('common.amount')}</th><th scope="col">{t('labWallet.lots.col.left')}</th>
+                  <th scope="col">{t('adminWallet.col.state')}</th><th scope="col"><span className="j-sr-only">{t('labWallet.lots.col.dispute')}</span></th>
+                </tr>
+              </thead>
               <tbody>
                 {lots.data.map((l) => (
                   <tr key={l._id}>
                     <td>{formatDateTime(l.createdAt)}</td>
                     <td>{formatRupees(l.amountMinor / 100)}</td>
                     <td>{formatRupees(l.remainingMinor / 100)}</td>
-                    <td>{l.disputeState && DISPUTE_LABEL[l.disputeState] ? <Badge tone="danger">{DISPUTE_LABEL[l.disputeState]}</Badge> : l.closed ? 'Used up' : '—'}</td>
+                    <td>{l.disputeState && disputeWords(l.disputeState) ? <Badge tone="danger">{disputeWords(l.disputeState)}</Badge> : l.closed ? t('labWallet.lots.usedUp') : '—'}</td>
                     <td>
                       {l.disputeState !== 'lost' && (
-                        <ConfirmAction label="Record a card dispute" danger reason reasonLabel="What did the bank say?" confirmLabel="Yes, record it" disabled={busy}
-                          consequence={`Record that the ${formatRupees(l.amountMinor / 100)} card top-up of ${formatDateTime(l.createdAt)} was disputed and lost? Nothing is taken from the wallet; the money stops being withdrawable. This cannot be undone here.`}
+                        <ConfirmAction label={t('labWallet.lots.record')} danger reason reasonLabel={t('labWallet.lots.recordWhy')}
+                          confirmLabel={t('labWallet.lots.recordConfirm')} disabled={busy}
+                          consequence={t('labWallet.lots.recordConsequence', { amount: formatRupees(l.amountMinor / 100), date: formatDateTime(l.createdAt) })}
                           onConfirm={(reason) => dispute(l, reason)} />
                       )}
                     </td>
