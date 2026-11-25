@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createApiClient } from './client.ts';
 import { pharmacySaleApi, saleRequestBody, usableCustomers, walkInProblems } from './pharmacySale.ts';
+import { isRxMedicine } from './inventory.ts';
 import { pharmacyOrdersApi } from './pharmacyOrders.ts';
 
 // WQ50 / WQ50b: the pharmacy's counter sale (backend r36, stage 135b5639).
@@ -55,8 +56,18 @@ describe('WQ50 counter sale', () => {
     // A bad id or key is a throw before anything is sent.
     expect(() => saleRequestBody({ customerId: 'nope', items: [], isWalkIn: false, prescriptionUrls: [] })).toThrow();
     expect(() => s.byKey('bad key')).toThrow();
+    // r36b: a keyed sale is never online and never without a customer (400 REQUEST_KEY_UNSUPPORTED otherwise).
+    expect(saleRequestBody({ customerId: CUST, items: [], isWalkIn: true, prescriptionUrls: [] })).toMatchObject({ paymentMode: 'in_store_payment', customerId: CUST });
+    expect(() => saleRequestBody({ customerId: '', items: [], isWalkIn: true, prescriptionUrls: [] })).toThrow();
     expect(calls).toHaveLength(10);
     expect(usableCustomers([{ _id: 'x', userId: null }, { _id: 'y', userId: { name: 'A' } }, { _id: 'z', userId: { _id: CUST } }]).map((r) => r._id)).toEqual(['z']);
+  });
+
+  it('r36b: a stock row\'s prescription flag is `rx`', () => {
+    expect(isRxMedicine({ _id: MED, rx: true })).toBe(true);
+    expect(isRxMedicine({ _id: MED, rx: false })).toBe(false);
+    expect(isRxMedicine({ _id: MED, prescriptionRequired: true } as never)).toBe(false);
+    expect(isRxMedicine(MED)).toBe(false);
   });
 
   it('a walk-in is checked as the server checks it', () => {

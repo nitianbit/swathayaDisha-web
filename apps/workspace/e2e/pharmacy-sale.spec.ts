@@ -80,7 +80,7 @@ async function mockBackend(page: Page, init: Partial<Backend> = {}): Promise<Bac
       if (url.searchParams.get('isActive') !== 'true') return refuse(route, 400, 'EXPECTED_ACTIVE_ONLY');
       const s = (url.searchParams.get('search') ?? '').toLowerCase();
       const items = Object.entries(MEDICINES).filter(([, m]) => m.name.toLowerCase().includes(s)).map(([id, m], i) => ({
-        _id: `e${i}`.padStart(24, '0'), medicineId: { _id: id, name: m.name, prescriptionRequired: m.rx }, availableQty: b.stock[id], reservedQty: 0, reorderThreshold: 5, isActive: true,
+        _id: `e${i}`.padStart(24, '0'), medicineId: { _id: id, name: m.name, rx: m.rx }, availableQty: b.stock[id], reservedQty: 0, reorderThreshold: 5, isActive: true,
         retailPrice: m.price, batches: [{ _id: `f${i}`.padStart(24, '0'), batchNumber: `B${i}`, expiryDate: '20281231', availableQty: b.stock[id], reservedQty: 0, status: 'active' }] }));
       return ok(route, items, 200, { pagination: { page: 1, limit: 20, total: items.length, totalPages: 1 } });
     }

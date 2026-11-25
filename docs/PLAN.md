@@ -2528,11 +2528,20 @@ stock list, the names rule on the order read (all done in part 2). Part 1's full
   503 prescription gate, ends a sole first attempt: nothing was written).
 - **A replay answers the order as it is now:** the sale page shows a cancelled, abandoned or rejected sale as such, with no
   bill and nothing to print.
-- **Prescription medicines before the sale:** the stock list's flag (r36 `medicineId.prescriptionRequired`; r36b renames it,
-  probably `rx`) is read by one helper, `isRxMedicine` (both names), and marks the line and says the pharmacist's step.
+- **Prescription medicines before the sale:** the stock list's flag (r36b `medicineId.rx`, WQ50c) is read by one helper,
+  `isRxMedicine`, and marks the line and says the pharmacist's step.
 - **Customer search** is `POST /pharmacy-customers/search` (no name or phone in an address).
 - **The bill** is r36's `bill` on the order read: the selling pharmacy's name, address, GSTIN and drug licence, how and when
   it was paid; the customer as this pharmacy may name them (the order read applies the list's rule); each line's batches.
+
+### WQ50c r36b (backend stage 68840c92; branch `wq50c/rx-flag` from stage c512942)
+
+1. The stock list's prescription flag is `medicineId.rx` only (r36b; `prescriptionRequired` is gone from inventory rows):
+   `isRxMedicine` reads `rx` and nothing else. (Order lines keep their own `prescriptionRequired`, unchanged.)
+2. A keyed in-store sale that is online with no customer is 400 `REQUEST_KEY_UNSUPPORTED` on r36b: the counter sale never
+   sends it (`saleRequestBody` always sends `paymentMode: 'in_store_payment'` and refuses a missing customer id; tested).
+3. 409 `ORDER_CHECKOUT_PARTY_LOCKED` (a party change on a keyed sale) cannot be triggered from the web: no screen changes an
+   order's party (the web has no `PUT /pharmacy-orders/:id`), so it is not worded.
 
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
@@ -2924,6 +2933,7 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-26 | WQ50c r36b rx flag (on stage c512942) | typecheck clean; Vitest 529/529 (+1: `isRxMedicine` reads `rx` only; the keyed sale body is always in-store with a customer); Playwright pharmacy-sale 14/14 (the mock's stock rows carry `rx`) on a temporary config (port 5564, deleted). |
 | 2026-11-26 | WQ50b part 2 (r36 135b5639 shapes, on ff743be) | typecheck clean; Vitest 528/528 (pharmacySale.test.ts: the POST search, the keyed create, by-key and abandon routes, a bad key refused before sending); Playwright pharmacy-sale 14/14 (7 journeys x 2: walk-in cash sale with the r36 bill; Rx marked before the sale; refusals incl. INDEXES_OUTDATED; a resend under the same key answers the first sale; checked by key then given up; a replay of a sale cancelled meanwhile prints no bill; a resend refused as another body reads the key) + orders, stock, stock-supply, prescription-review, pharmacy-extras 254/254 on a temporary config (port 5564); the full suite via pw-slot.sh runs on this commit (result in the report). |
 | 2026-11-26 | WQ50b part 1 (on stage 06c2080) | typecheck clean; Vitest 529/529 (pharmacySale.test.ts: the body built before sending, rows without a holder left out, a lost sale never matched to an order that existed before or is closed); Playwright pharmacy-sale 10/10 (5 journeys x 2: walk-in cash sale with the GST-inclusive bill, its own page after a reload; Rx sale with Create waiting for the upload and back from the review; refusals incl. the 503 prescription gate; a lost answer ignoring earlier and cancelled sales; Forget only after a late second check) + orders, stock, stock-supply, prescription-review, pharmacy-extras 254/254 on a temporary config (port 5564); the full suite via pw-slot.sh 1146/1146 (15.9 min). |
 | 2026-11-26 | WQ50 Pharmacy › New sale (on stage ebcbfd7) | Against backend 43f46f57 (mocked API). typecheck clean; Vitest 529/529 (+3 in pharmacySale.test.ts: the routes and bodies with no price and no request key, the walk-in checks, the lost-sale match); Playwright pharmacy-sale 8/8 (4 journeys x desktop and tablet: a walk-in cash sale with its bill printed; a known customer with a prescription medicine and its file, not payable before the pharmacist; refusals checked before asking and the server's stock refusal; a lost answer found by Check, never resent) + orders, stock, prescription-review, pharmacy-extras 172/172 on a temporary config (port 5564, deleted); the full suite via pw-slot.sh runs on this commit (result in the report). |
