@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
@@ -12,6 +12,7 @@ import { useSession } from '../../session.tsx';
 import type { Perform } from '../finance/finance.tsx';
 import type { ConsultBooker } from './consultBooker.ts';
 import { t } from '../../i18n/pharmacy/index.ts';
+import { useVisitPreset } from './visitPatient.ts';
 
 /**
  * WQ17: the patient step of an assisted booking (WQ12, moved here unchanged from Book consultation so that Book lab test
@@ -60,16 +61,31 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
     setPatientDone(false);
   }
 
+  // WQ54: opened from + New: the visit's patient (phone and name) is filled in and looked up once, so it is typed once.
+  const preset = useVisitPreset(pharmacyId);
+  const presetDone = useRef(false);
+  useEffect(() => {
+    if (!preset || presetDone.current) return;
+    presetDone.current = true;
+    setPhoneText(preset.phone);
+    void lookupPhone(preset.phone);
+  }, []);
+
   async function find(e: FormEvent) {
     e.preventDefault();
+    await lookupPhone(phoneText);
+  }
+
+  async function lookupPhone(raw: string) {
     onFind?.();
-    const phone = canonicalPhone(phoneText);
+    const phone = canonicalPhone(raw);
     if (!phone) { setPhoneError(t('patientStep.enterAValid10Digit')); return; }
     setPhoneError(null);
     try {
       const result = await perform(() => (lookupPatient ?? assisted.lookup)(phone));
       setLookup({ phone, result });
-      setPatient({ ...EMPTY_PATIENT, phone });
+      // WQ54: the + New patient: its name, and the number already typed once on + New (not asked for a second time).
+      setPatient({ ...EMPTY_PATIENT, phone, ...(preset && canonicalPhone(preset.phone) === phone ? { name: preset.name, phoneAgain: phone } : {}) });
       setPatientErrors({});
     } catch (err) {
       if (isSwitchedOff(err)) { onSwitchedOff(); return; }

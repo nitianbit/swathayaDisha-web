@@ -18,6 +18,7 @@ import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { canMarkPaid, ORDER_STATUS_LABEL, orderLabel, paymentWaitsForPharmacist } from './orderLabels.ts';
 import { CheckPanel, useKeyedCheck, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
+import { useVisitPreset } from './visitPatient.ts';
 
 /**
  * WQ50: Pharmacy › New sale, one screen for a counter sale: the customer (one this pharmacy already has, or a walk-in by
@@ -68,8 +69,10 @@ function SaleForm({ pharmacyId }: { pharmacyId: string }) {
   const queryClient = useQueryClient();
   const { perform, busy } = useOneAtATime('order');
   const { op, send, settle } = useOwnedOp<SaleBody>(`pharmacy-sale:${pharmacyId}`);
-  const [customer, setCustomer] = useState<Customer | null>(null);
-  const [walkIn, setWalkIn] = useState({ name: '', phone: '', consent: false });
+  // WQ54: opened from + New, the visit's patient is the customer (linked by phone: found or made, as for any walk-in).
+  const preset = useVisitPreset(pharmacyId);
+  const [customer, setCustomer] = useState<Customer | null>(() => (preset ? { kind: 'walkin' } : null));
+  const [walkIn, setWalkIn] = useState(() => ({ name: preset?.name ?? '', phone: preset?.phone ?? '', consent: false }));
   const [lines, setLines] = useState<Line[]>([]);
   const [prescriptions, setPrescriptions] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);

@@ -117,6 +117,17 @@
 .ws-hours > .ws-muted { align-self: center; }
 @media (max-width: 760px) { .ws-hours { grid-template-columns: 1fr; } }
 
+/* WQ54: the phone's "More" button; the menu is always there from a tablet up. */
+.ws-more { display: none; }
+.ws-menu { display: contents; }
+@media (max-width: 600px) {
+  .ws-more { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 48px; padding: 0 var(--space-3); font-size: 1.0625rem;
+    border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
+  .ws-side { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+  .ws-menu { display: none; width: 100%; }
+  .ws-menu--open { display: grid; gap: var(--space-4); }
+}
+
 @media (max-width: 760px) {
   .ws { grid-template-columns: 1fr; }
   .ws-side { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }

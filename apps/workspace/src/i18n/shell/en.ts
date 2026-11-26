@@ -30,6 +30,11 @@ export default {
   'nav.orders': 'Orders',
   /** WQ50: a sale at the pharmacy's counter. */
   'nav.newSale': 'New sale',
+  /** WQ54: the day's register. */
+  'nav.today': 'Today',
+  /** WQ54: on a phone, the menu behind one button. */
+  'shell.more': 'More',
+  'shell.close': 'Close the menu',
   'nav.payouts': 'Payouts',
   'nav.pharmacies': 'Pharmacies',
   'nav.pharmacyWallets': 'Pharmacy wallets',

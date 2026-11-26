@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { NavLink } from 'react-router';
-import { LogOut } from 'lucide-react';
+import { LogOut, Menu } from 'lucide-react';
 import { Button, LanguageScope, LanguageSwitcher, useLanguage } from '@jansetu/ui';
 import { navLabelKey, pagesFor } from './modules.tsx';
 import { t } from './i18n/shell/index.ts';
@@ -16,12 +16,18 @@ export function Shell({ children }: { children: ReactNode }) {
   useLanguage(); // the navigation follows a language change; the page itself is mounted again (LanguageScope)
   const nav = pagesFor(user).filter((p) => p.nav);
   const sections = [...new Set(nav.map((p) => p.nav!.sectionKey))];
+  // WQ54: on a phone the menu sits behind one "More" button (the page comes first); a tablet and a desktop show it always.
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <div className="ws">
       <a className="ws-skip" href="#main">{t('shell.skip')}</a>
       <aside className="ws-side">
         <div className="ws-brand">{BRAND} <span>{t('shell.workspace')}</span></div>
+        <button type="button" className="ws-more" aria-expanded={menuOpen} aria-controls="ws-menu" onClick={() => setMenuOpen((o) => !o)}>
+          <Menu size={20} aria-hidden="true" /> {menuOpen ? t('shell.close') : t('shell.more')}
+        </button>
+        <div id="ws-menu" className={menuOpen ? 'ws-menu ws-menu--open' : 'ws-menu'}>
         <nav aria-label={t('shell.nav')}>
           {sections.map((section) => (
             <div key={section || 'top'} className="ws-nav-group">
@@ -29,7 +35,7 @@ export function Shell({ children }: { children: ReactNode }) {
               {nav.filter((p) => p.nav!.sectionKey === section).map((p) => {
                 const Icon = p.nav!.icon;
                 return (
-                  <NavLink key={p.path} to={p.path} end={p.path === '/'} className="ws-nav-link">
+                  <NavLink key={p.path} to={p.path} end={p.path === '/'} className="ws-nav-link" onClick={() => setMenuOpen(false)}>
                     <Icon size={18} aria-hidden="true" />
                     {t(navLabelKey(p, user))}
                   </NavLink>
@@ -51,6 +57,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <Button variant="ghost" onClick={() => { window.history.replaceState(null, '', '#/'); signOut(); }}>
             <LogOut size={18} aria-hidden="true" /> {t('shell.signOut')}
           </Button>
+        </div>
         </div>
       </aside>
       {/* WQ4: a doctor's "available now" (and its heartbeat) lives as long as the signed-in shell, across pages. */}

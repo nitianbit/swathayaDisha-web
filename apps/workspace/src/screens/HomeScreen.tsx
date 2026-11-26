@@ -5,6 +5,7 @@ import { PageHeading } from '../PageHeading.tsx';
 import { useStaff } from '../session.tsx';
 import { t } from '../i18n/shell/index.ts';
 import { DoctorHome } from './doctor/DoctorHome.tsx';
+import { PharmacyHome } from './pharmacy/home.tsx';
 
 export function HomeScreen() {
   const user = useStaff();
@@ -22,7 +23,8 @@ export function HomeScreen() {
         </Alert>
       )}
       {user.role === 'specialist' && <DoctorHome />}
-      {pages.length === 0 ? (
+      {/* WQ54 (P1): a pharmacy's home is its big buttons, today's register and to-dos; the menu stays for the long way. */}
+      {user.role === 'pharmacy' ? <PharmacyHome /> : pages.length === 0 ? (
         <Empty title={t('home.empty.title')}>{t('home.empty.body')}</Empty>
       ) : (
         <ul className="home-links">

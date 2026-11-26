@@ -1,0 +1,37 @@
+/* WQ54 (P1) the simple pharmacy home and + New: big type and 48 px targets for a clerk used to a paper register. Tokens only. */
+.simple { font-size: 1.0625rem; line-height: 1.55; }
+.simple .j-button, .simple button, .simple input, .simple select { min-height: 48px; font-size: 1.0625rem; }
+.simple a { min-height: 48px; }
+.big-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); margin: var(--space-3) 0 var(--space-4); }
+.big-action {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); text-align: center;
+  min-height: 96px; padding: var(--space-3); border: 2px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  color: var(--ink); text-decoration: none; font-weight: 700; font-size: 1.25rem;
+}
+.big-action:hover, .big-action:focus-visible { border-color: var(--brand); }
+.big-action--main { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.big-action-text { font-weight: 400; font-size: 1rem; color: var(--muted); }
+.big-action--main .big-action-text { color: var(--brand-ink); }
+.money-line { font-size: 1.125rem; margin: 0 0 var(--space-3); }
+.pending-strip { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
+.pending-item { display: inline-flex; align-items: center; min-height: 48px; padding: 0 var(--space-3); border-radius: var(--radius); background: var(--brand-soft); color: var(--brand-strong); font-weight: 600; }
+.register { list-style: none; padding: 0; margin: 0; display: grid; gap: 0; }
+.register-row { display: grid; grid-template-columns: 9rem minmax(0, 1fr) 7rem auto; gap: var(--space-3); align-items: center; min-height: 48px; border-bottom: 1px solid var(--line); padding: var(--space-2) 0; }
+.register-amount { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.register-item a { display: inline-flex; align-items: center; min-height: 48px; }
+.todo-add { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
+.todo-add .j-field { flex: 1 1 18rem; }
+.todo-list { list-style: none; padding: 0; margin: var(--space-3) 0 0; display: grid; gap: var(--space-2); }
+.todo { display: flex; align-items: center; gap: var(--space-3); min-height: 48px; }
+.todo input { width: 28px; height: 28px; min-height: 28px; accent-color: var(--brand); }
+.todo--done span { text-decoration: line-through; color: var(--muted); }
+.simple-failed { display: grid; gap: var(--space-2); justify-items: start; padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius); }
+.simple-row { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
+.simple-row .j-field { flex: 1 1 18rem; }
+.simple-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.simple-choices { list-style: none; padding: 0; margin: var(--space-3) 0 0; display: grid; gap: var(--space-2); }
+@media (max-width: 760px) {
+  .big-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .register-row { grid-template-columns: 1fr auto; }
+  .register-time { grid-column: 1 / -1; color: var(--muted); font-size: 1rem; }
+}

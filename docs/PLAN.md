@@ -2543,6 +2543,38 @@ stock list, the names rule on the order read (all done in part 2). Part 1's full
 3. 409 `ORDER_CHECKOUT_PARTY_LOCKED` (a party change on a keyed sale) cannot be triggered from the web: no screen changes an
    order's party (the web has no `PUT /pharmacy-orders/:id`), so it is not worded.
 
+## WQ54 the simple pharmacy home, P1 (2026-11-26, branch `wq54/pharmacy-home` from stage 9b80676)
+
+For an older counter clerk used to a paper register, on any device (`SIMPLE_DESIGN_PLAN_2026-11-26.md`, example 1). Built to
+backend r37's draft shapes (in parallel; mocked in e2e until its final shapes come).
+
+- **Home (pharmacy):** four big buttons, **+ New**, **Find patient**, **Sell medicines** (the existing New sale) and **Today**;
+  today's register (the latest 10, each row opening its existing page) with the money line ("Collected ₹x: cash ₹a · UPI ₹b ·
+  wallet ₹c · unpaid ₹d"; card, online and other only when they have money); a pending strip (each item a link); the
+  pharmacy's to-dos (add once per request key, a lost answer sent again with the same key and the text kept; tick fenced by
+  the version, shown at once and read again). Other roles' home is unchanged.
+- **+ New** (`/pharmacy/new`): step 1 the patient: the same patient as the last visit ("Continue with Asha"), one found by
+  phone or name (the POST customer search: nothing in an address), or a new one by phone and name; step 2 what: **Doctor**,
+  **Doctor now (video)**, **Lab test**, **Medicines**, each the EXISTING flow (Book consultation, Consult now, Book lab test, New
+  sale) opened with `?visit=1`. The patient is held in this session's memory only (`visitPatient.ts`, a plain map, never
+  storage or the address) and filled in by the shared patient step (phone looked up once, name and the number-again field
+  filled) and by New sale (the walk-in's name and phone). The flows' own steps are when, pay and done (print in New sale, the
+  booking's own done panel). **Find patient** opens the same step 1 searching.
+- **Today** (`/pharmacy/today`, also in the menu): any India day (date picker, up to today), searched by name, ref or what
+  (the r37 rows carry no phone: a phone search needs the server), with the money line and what waits. Read again whenever a
+  page shows it (a sale or booking on another page has just changed it). An answer of another shape is shown empty, never a
+  crash (`todayOf`).
+- **Any device:** big type (17 px) and 48 px targets on the home, + New and Today (`home.css`); on a phone (≤ 600 px) the menu
+  is behind one **More** button (tablet and desktop unchanged).
+- **No internet:** "No internet connection. Check it, then tap Try again. Nothing you typed is lost." with Try again; what was
+  typed stays.
+- Decisions (owner away): Find patient is + New's step 1 in search mode (one way to pick a patient); the visit's patient
+  stays until another is chosen or the session ends; the phone menu breakpoint is 600 px so tablets keep the side menu; the
+  pending strip knows `prescriptions`, `unpaidSales`, `labReports` and `consultations` (others are left out until r37 says).
+
+API gaps / waiting for r37's final shapes: the register's phone search; the pending keys; whether `link` paths are app paths;
+the to-do delete is in the api module but not offered (only add and tick were asked).
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -2933,6 +2965,7 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-26 | WQ54 simple pharmacy home P1 (on stage 9b80676) | Against r37's draft shapes (mocked). typecheck clean; Vitest 532/532 (+3 in pharmacyToday.test.ts: routes and bodies with checks before sending, the money line's parts, an answer of another shape shown empty); Playwright pharmacy-home 7/7 + 1 skipped (example 1 on desktop, tablet and a phone (More menu, 48 px buttons): a new patient, a video consult from the wallet, medicines in cash, Today with both and the money split, a to-do added and ticked; no internet with Try again keeping the to-do's text and key; Find patient by a POST search) + consult-now, assisted-booking, lab-booking, pharmacy-sale, orders, session, i18n on a temporary config (port 5566, deleted); the full suite via pw-slot.sh runs on this commit (result in the report). |
 | 2026-11-26 | WQ50c r36b rx flag (on stage c512942) | typecheck clean; Vitest 529/529 (+1: `isRxMedicine` reads `rx` only; the keyed sale body is always in-store with a customer); Playwright pharmacy-sale 14/14 (the mock's stock rows carry `rx`) on a temporary config (port 5564, deleted). |
 | 2026-11-26 | WQ50b part 2 (r36 135b5639 shapes, on ff743be) | typecheck clean; Vitest 528/528 (pharmacySale.test.ts: the POST search, the keyed create, by-key and abandon routes, a bad key refused before sending); Playwright pharmacy-sale 14/14 (7 journeys x 2: walk-in cash sale with the r36 bill; Rx marked before the sale; refusals incl. INDEXES_OUTDATED; a resend under the same key answers the first sale; checked by key then given up; a replay of a sale cancelled meanwhile prints no bill; a resend refused as another body reads the key) + orders, stock, stock-supply, prescription-review, pharmacy-extras 254/254 on a temporary config (port 5564); the full suite via pw-slot.sh runs on this commit (result in the report). |
 | 2026-11-26 | WQ50b part 1 (on stage 06c2080) | typecheck clean; Vitest 529/529 (pharmacySale.test.ts: the body built before sending, rows without a holder left out, a lost sale never matched to an order that existed before or is closed); Playwright pharmacy-sale 10/10 (5 journeys x 2: walk-in cash sale with the GST-inclusive bill, its own page after a reload; Rx sale with Create waiting for the upload and back from the review; refusals incl. the 503 prescription gate; a lost answer ignoring earlier and cancelled sales; Forget only after a late second check) + orders, stock, stock-supply, prescription-review, pharmacy-extras 254/254 on a temporary config (port 5564); the full suite via pw-slot.sh 1146/1146 (15.9 min). |

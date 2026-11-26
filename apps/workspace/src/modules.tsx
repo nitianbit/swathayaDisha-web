@@ -72,6 +72,8 @@ import { WalletScreen } from './screens/pharmacy/WalletScreen.tsx';
 import { LabReferralEarningsScreen } from './screens/finance/ReferralEarningsScreen.tsx';
 import { PharmacyFinanceScreen } from './screens/pharmacy/FinanceScreen.tsx';
 import { SaleBillScreen, SaleScreen } from './screens/pharmacy/SaleScreen.tsx';
+import { NewVisitScreen } from './screens/pharmacy/NewVisitScreen.tsx';
+import { TodayScreen } from './screens/pharmacy/home.tsx';
 import { WalletDisputesScreen } from './screens/admin/WalletDisputesScreen.tsx';
 import { Truck } from 'lucide-react';
 import { PartnerFinanceScreen } from './screens/finance/PartnerFinanceScreen.tsx';
@@ -203,6 +205,12 @@ export const PAGES: readonly WorkspacePage[] = [
   },
   // WQ26's "Referral earnings" page is part of Finance now (WQ48); old links land there.
   { path: '/pharmacy/referral', roles: ['pharmacy'], element: <Navigate to="/pharmacy/finance" replace /> },
+  // WQ54 (P1): + New (the patient, then what: the existing flows opened with that patient) and Today (the day's register).
+  { path: '/pharmacy/new', roles: ['pharmacy'], element: <NewVisitScreen /> },
+  {
+    path: '/pharmacy/today', roles: ['pharmacy'], element: <TodayScreen />,
+    nav: { labelKey: 'nav.today', icon: CalendarDays, sectionKey: 'nav.section.pharmacy' },
+  },
   // WQ50: a counter sale (a linked or walk-in customer, stock, an optional prescription, paid at the counter, its bill).
   {
     path: '/pharmacy/sale', roles: ['pharmacy'], element: <SaleScreen />,

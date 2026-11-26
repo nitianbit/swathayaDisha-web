@@ -280,3 +280,6 @@ export type {
 // WQ50: the pharmacy's counter sale (a linked or walk-in customer, its stock, an optional prescription, paid at the counter).
 export { COUNTER_PAYMENTS, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, pharmacySaleApi, SALE_KEY_PATTERN, saleRequestBody, usableCustomers, walkInProblems } from './pharmacySale.ts';
 export type { CounterPayment, SaleAnswer, SaleBody, SaleByKey, SaleCustomer, SaleLine } from './pharmacySale.ts';
+// WQ54 (P1): the simple pharmacy home: the day's register and the pharmacy's to-dos (backend r37).
+export { MAX_TODO_TEXT, moneyParts, PAYMENT_METHOD_KEYS, PENDING_KEYS, pharmacyTodayApi, todayOf, todoText } from './pharmacyToday.ts';
+export type { PaymentMethodKey, TodayAnswer, TodayItem, TodayKind, TodayPending, TodayTotals, Todo } from './pharmacyToday.ts';
