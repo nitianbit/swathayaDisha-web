@@ -1,12 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, doctorStanding, VERIFICATION_LABEL } from '@jansetu/api';
+import { CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, doctorStanding, ownedClinic, VERIFICATION_LABEL } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { practiceKey } from './ClinicsScreen.tsx';
-import { NotADoctor, useDoctor, useDoctorProfile, type DoctorContext } from './doctor.tsx';
+import { NotADoctor, useClinics, useDoctor, useDoctorProfile, type DoctorContext } from './doctor.tsx';
+import { CatalogueScreen } from '../partner/CatalogueScreen.tsx';
+import { InvoicesScreen } from '../partner/InvoicesScreen.tsx';
 import { t } from '../../i18n/doctor/index.ts';
 
 /**
@@ -15,6 +17,8 @@ import { t } from '../../i18n/doctor/index.ts';
  * the only way into a partner workspace is the workspace choice after a sign-in code (`POST /auth/partner/select` takes
  * the one-use ticket of that code). So (option b) the page says where they are in one line and starts that sign-in: it
  * signs out with the `toClinicWorkspace` notice, which opens the sign-in on "Lab or clinic staff".
+ * WQ56 (r39): a verified, active doctor who owns one verified clinic bills it here (`/specialists/me/clinic`, the same
+ * bill and catalogue screens as its workspace); the way through the clinic workspace stays for anyone else.
  */
 export function DoctorBillsScreen() {
   return <ClinicPage kind="bills" />;
@@ -42,6 +46,8 @@ function ClinicPageFor({ d, page }: { d: DoctorContext; page: Page }) {
   const profile = useDoctorProfile(d);
   const active = profile.data ? doctorStanding(profile.data) === 'active' : null;
   const state = q.data?.partner.verification?.state ?? 'pending';
+  const clinics = useClinics(d);
+  if (active && ownedClinic(clinics.data)) return page === 'bills' ? <InvoicesScreen /> : <CatalogueScreen />;
   return (
     <>
       <PageHeading title={t(`clinicPage.${page}.title`)} />

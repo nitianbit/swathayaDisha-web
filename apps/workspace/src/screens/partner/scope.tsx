@@ -47,6 +47,17 @@ export function usePartnerScope(): ScopeContext | null {
       link: (s) => `${root}/${s}`,
     };
   }
+  if (user.role === 'specialist') {
+    // WQ56 (r39): a doctor bills the clinic he owns from his dashboard (`/doctor/clinic/...`): its catalogue and bills
+    // with his owner authority; its name and branches come from his clinic read. He is its only doctor on a bill.
+    const scope: PartnerScope = { kind: 'doctor' };
+    const billing = partnerBillingApi(api, scope);
+    return {
+      scope, actor: ADMIN_ACTOR, key: ['partner-ws', 'doctor', user.id], api: partnerWorkspaceApi(api, scope), labs: partnerLabsApi(api, scope),
+      billing: { ...billing, clinicDoctors: async () => [{ memberId: '', doctorId: user.id, role: 'owner' as const, branchIds: [], name: user.name, active: true }] },
+      link: (s) => (s === 'invoices' || s === 'catalogue' ? `/doctor/clinic/${s}` : '/doctor'),
+    };
+  }
   const m = user.partner?.member;
   if (user.role !== 'partner' || !m || !user.partner) return null;
   const scope: PartnerScope = { kind: 'member' };

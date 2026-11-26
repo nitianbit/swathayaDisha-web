@@ -3220,6 +3220,51 @@ admin guide lists them all. Labels from the catalogues; example names from the b
   sale bill is described generally.
 - The clinic Home tile wording mismatch found here is fixed by WQ51b.
 
+## WQ56 the doctor's single dashboard, P2 (2026-11-27, branch `wq56/doctor-dashboard` from web stage 85b3815, merged with 7b76939; backend r39 fe9c21f2)
+
+SIMPLE_DESIGN_PLAN_2026-11-26 "Your answers (26 Nov, later)". Built on the shared `front/` desk (WQ54/55/57): `useFrontDesk()`
+gains a doctor (`kind: 'doctor'`, `todayApi(c, 'doctor')` on `/specialists/me/today|todos`), so + New's patient step (This
+person / Someone else), the one-shot visit handover, the pending strip, the money line, Today and the to-dos are the same
+code; `BigActions` is now one component for every home.
+
+- **Home** (`doctor/DoctorHome.tsx`): + New, Find patient, Today, and Bills only when he owns one verified clinic
+  (`ownedClinic`); today's appointments from `GET /me/appointments/list` in time order, names from the day register, chips
+  All · each clinic (his clinics, and any other on the list) · Online (`channel`) · Booked by partners (pharmacy or lab);
+  what waits (prescriptions to write, appointments waiting, lab reports ready, unpaid bills); "Earned today" (`earnedMinor`);
+  his clinic's money line only when it has bills or money that day; his status; his private to-dos (no "Added by").
+  An unverified or inactive doctor sees his status and to-dos only (r39 reads need a verified, active doctor).
+- **+ New** (`doctor/DoctorVisitScreens.tsx`): Clinic appointment (the clinic, skipped when there is one; a day; his free
+  times at that clinic's branches from `/me/slots`; `POST /me/clinic-appointments`; it is that clinic's desk appointment);
+  Online consultation (video or call, none chosen for him; his times with no branch; "The patient pays in the Jansetu app
+  within 30 minutes", then the pay-by time from the answer); Lab test (the existing doctor Book lab test with the visit);
+  Follow-up (from + New: his completed consultations of that number in the last 14 days, found by the day register's search
+  for each day; from an Appointments row: "Book follow-up"). Each create keeps its request key until the server answers for
+  sure (Send again resends it).
+- **Billing his own clinic** with the `{ kind: 'doctor' }` workspace scope (`/specialists/me/clinic/catalogue|invoices`, the
+  same bill screens; name and branches from `GET /me/clinic`; he is the bill's only doctor): a row of his clinic's desk
+  appointment has Bill (WQ57's short bill with his fee line); after booking at his own clinic, "Make the bill" uses WQ57's
+  `visitBillPrefill`. Doctor › Bills and › Services and prices show the bills and catalogue for an owner who can bill; the
+  WQ51 sign-out way stays for everyone else.
+- **Earnings**: "Where your earnings came from" (r39 `breakdown`): chips All · Online · each clinic · Booked by partners ·
+  Referral cuts (· Other when any), for a period sent whole (empty dates: the 1st of this month to today), as r39b may make
+  the breakdown on demand or default it.
+
+Decided (owner away, reversible):
+- The home list reads `/appointments/list` (sources, clinic, branch for the bill) and the Today register (names, money,
+  waiting work); chips filter on the page (one read for the day).
+- A family member's appointment billed from the home row leaves the bill's name empty (the bill is the account holder's,
+  Q14); the phone is asked on the bill (the list has no phone).
+- No booking of an in-person visit at his own place outside a clinic (r39: in person = a clinic appointment).
+- Follow-up from + New searches 15 days of the day register by phone (no other read lists his consultations by patient).
+- r39b (379b1a50): `breakdown=1` is sent (the breakdown comes only when asked); a part with no clinic (`clinicId: null`) is
+  "In person, no clinic"; `channel` is by mode only (in person: clinic), which the Online chip follows.
+- Doctor › Today is in the menu (the long way).
+- The patient's desk request from + New is `visitDeskRequest` (`front/visitPatient.ts`); WQ57's desk keeps its own
+  `patientOf`/`requestOf` (its form has more fields): one candidate to fold together later.
+
+Named e2e changes: `doctor-tools.spec.ts`'s first journey counts 12 menu items (+ Today) and no longer looks for the "Next
+appointments" list (the home's list is today's appointments, `doctor-dashboard.spec.ts`).
+
 ## Follow-ups
 
 
@@ -3395,3 +3440,4 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 | 2026-11-26 | WQ52 statement date fields (on stage 06daf52) | typecheck clean; Vitest 526/526 (the stricter literal scan included); Playwright `finance.spec.ts`, `finance-4f.spec.ts`, `referral-cuts.spec.ts` and `doctor-tools.spec.ts` 132/132 through `pw-slot.sh` with 2 workers on temporary port 5563 (config deleted; the doctor's statement on the shared period fields and CSV; a year typed 0002 → 0020 → 0202 → 2026 read once). |
 | 2026-11-26 | WQ51 Doctor › Bills / Services and prices, "Price list" renamed (branch `wq51/doctor-bills-names`, merged with stage ebcbfd7) | Option (b). typecheck clean; Vitest 526/526 (literal scan and catalogue checks pass); Playwright workspace 1136/1136 on temporary port 5571 through `pw-slot.sh` with 2 workers (`reuseExistingServer: false`, config deleted; +6 = 3 journeys x 2 devices in `doctor-tools.spec.ts`: no clinic, unverified clinic, verified clinic with the sign-out switch and nothing in the URL or storage). |
 | 2026-11-26 | WQ51b doctor Bills review fixes (on stage 06c2080) | typecheck clean; Vitest 529/529; Playwright `doctor-tools.spec.ts` + `partner-invoices.spec.ts` 140/140 through `pw-slot.sh` with 2 workers on temporary port 5563 (config deleted; +8 = 4 journeys x 2 devices: Bills and Services and prices each sign out and, after a clinic staff sign-in with no address typed, open `#/partner/invoices` / `#/partner/catalogue`; a doctor not verified gets the closed-workspace words and no button, a suspended clinic its own words on Bills and Clinics; a clinic's Home tile has the menu's words — this one fails without the fix). |
+| 2026-11-27 | WQ56 doctor dashboard P2 (branch `wq56/doctor-dashboard`, merged with web stage 6bc8c1d; backend r39b 379b1a50) | typecheck clean; Vitest 545/545 (+7 in doctorDashboard.test.ts: the r39 routes and bodies, `breakdown=1`, ids/keys/dates checked first, his Today and private to-dos, the `{ kind: 'doctor' }` bill scope and his clinic read, free slots by place and mode, bookable and owned clinics); Playwright workspace 1215 passed, 9 skipped, 2 failed on temporary port 5576 through `pw-slot.sh` with 2 workers (config deleted): +15 in doctor-dashboard.spec.ts (one list with chips, + New clinic appointment at Demo Care, online consultation awaiting app payment, billing his own clinic, a non-owner without Bills, private to-dos, earnings by source, a 390 px phone). The 2 failures are `clinic-desk.spec.ts:702` (desktop and tablet), WQ57b's: the receipt now names the patient ("Meena with Dr Mehta…") where the test expects "The patient with Dr Mehta…"; not touched by WQ56. An earlier full run's 3 timeouts (`orders.spec.ts:396,419`, `records-access.spec.ts:158`) passed when run again (60/60). Screenshots in /tmp/wq56-shots. |

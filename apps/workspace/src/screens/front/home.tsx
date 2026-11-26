@@ -77,11 +77,7 @@ export function FrontDeskHome({ desk }: { desk: FrontDesk }) {
   const q = useToday(desk, day, desk.register);
   return (
     <div className="simple">
-      <nav className="big-actions" aria-label={t('big.label')}>
-        {desk.big.map(({ to, label, Icon }, i) => (
-          <Link key={to} className={i === 0 ? 'big-action big-action--main' : 'big-action'} to={to}><Icon size={28} aria-hidden="true" />{label}</Link>
-        ))}
-      </nav>
+      <BigActions desk={desk} />
       {/* WQ55: a member allowed none of the visits says so (never a blank home). */}
       {desk.choices.length === 0 && <Alert tone="warn">{desk.noVisits}</Alert>}
       {/* WQ57: a clinic's reception sees each doctor's next appointments and busy times. */}
@@ -101,6 +97,17 @@ export function FrontDeskHome({ desk }: { desk: FrontDesk }) {
       </section>}
       <Todos desk={desk} />
     </div>
+  );
+}
+
+/** The home's big buttons (the first is the main one); WQ56 the doctor's home too. */
+export function BigActions({ desk }: { desk: FrontDesk }) {
+  return (
+    <nav className="big-actions" aria-label={t('big.label')}>
+      {desk.big.map(({ to, label, Icon }, i) => (
+        <Link key={to} className={i === 0 ? 'big-action big-action--main' : 'big-action'} to={to}><Icon size={28} aria-hidden="true" />{label}</Link>
+      ))}
+    </nav>
   );
 }
 
@@ -354,7 +361,7 @@ export function Todos({ desk }: { desk: FrontDesk }) {
     <section className="ws-section" aria-labelledby="todo-h">
       <h2 id="todo-h">{t('todos.title')}</h2>
       <form className="todo-add" noValidate onSubmit={(e) => void add(e)}>
-        <TextField label={t('todos.new')} hint={desk.kind === 'lab' ? t('todos.newHintLab') : desk.kind === 'clinic' ? t('todos.newHintClinic') : t('todos.newHint')} value={text} maxLength={MAX_TODO_TEXT} autoComplete="off" error={error}
+        <TextField label={t('todos.new')} hint={desk.kind === 'lab' ? t('todos.newHintLab') : desk.kind === 'clinic' ? t('todos.newHintClinic') : desk.kind === 'doctor' ? t('todos.newHintDoctor') : t('todos.newHint')} value={text} maxLength={MAX_TODO_TEXT} autoComplete="off" error={error}
           onChange={(e) => { setText(e.target.value); setRequestKey(null); }} />
         <Button type="submit" busy={busy}>{error && requestKey ? t('tryAgain') : t('todos.add')}</Button>
       </form>
@@ -369,7 +376,8 @@ export function Todos({ desk }: { desk: FrontDesk }) {
                   <input type="checkbox" checked={ticked[x._id] ?? x.done} onChange={(e) => void tick(x, e.target.checked)} />
                   <span>{x.text}</span>
                 </label>
-                {x.createdBy?.name && <span className="ws-muted">{t('todos.by', { who: x.createdBy.name })}</span>}
+                {/* WQ56: a doctor's to-dos are his own: no "added by". */}
+                {x.createdBy?.name && desk.kind !== 'doctor' && <span className="ws-muted">{t('todos.by', { who: x.createdBy.name })}</span>}
               </li>
             ))}
           </ul>

@@ -2,8 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { formatClock } from '@jansetu/i18n';
 import { CalendarDays, Pill, Plus, Receipt, Search, type LucideIcon } from 'lucide-react';
 import {
-  ApiError, appointmentAt, canonicalPhone, CLINIC_PENDING_KEYS, hasGlobalScope, holdsAny, istToday, labAssistedApi, labDeskApi, LAB_PENDING_KEYS, OBJECT_ID_PATTERN, partnerClinicApi, partnerWorkspaceApi, PENDING_KEYS, pharmacyAssistedApi, pharmacySaleApi, todayApi,
-  type ClinicPendingKey, type LabPendingKey, type PatientLookup, type PendingKey, type SaleCustomer, type TodayApi, type TodayDesk,
+  ApiError, appointmentAt, canonicalPhone, CLINIC_PENDING_KEYS, doctorDashboardApi, doctorToolsApi, DOCTOR_PENDING_KEYS, hasGlobalScope, holdsAny, istToday,
+  labAssistedApi, labDeskApi, LAB_PENDING_KEYS, OBJECT_ID_PATTERN, ownedClinic, partnerClinicApi, partnerWorkspaceApi, PENDING_KEYS, pharmacyAssistedApi,
+  pharmacySaleApi, todayApi,
+  type ClinicPendingKey, type DoctorPendingKey, type LabPendingKey, type PatientLookup, type PendingKey, type SaleCustomer, type TodayApi, type TodayDesk,
 } from '@jansetu/api';
 import { t } from '../../i18n/home/index.ts';
 import type { BillPrefill } from '../partner/billing.tsx';
@@ -33,8 +35,8 @@ export interface FrontDesk {
   /** This desk's own patients searched by name or phone (a pharmacy's customers); null: + New takes a phone only. */
   customers: ((search: string) => Promise<SaleCustomer[]>) | null;
   /** The waiting work, in the strip's order, and where each is done (null: shown, but not a link for this person). */
-  pending: readonly (PendingKey | LabPendingKey | ClinicPendingKey)[];
-  pendingTo: (key: PendingKey | LabPendingKey | ClinicPendingKey, ids: readonly string[] | undefined, count: number) => string | null;
+  pending: readonly (PendingKey | LabPendingKey | ClinicPendingKey | DoctorPendingKey)[];
+  pendingTo: (key: PendingKey | LabPendingKey | ClinicPendingKey | DoctorPendingKey, ids: readonly string[] | undefined, count: number) => string | null;
   /** A pharmacy's bookings waiting for payment, by kind (r37c `bookingsAwaiting`); a lab has its own queues instead. */
   bookingTo?: { consultations: (ids: readonly string[] | undefined, count: number) => string | null; labBookings: (ids: readonly string[] | undefined, count: number) => string | null };
   /** A read this person is not allowed: said plainly (a lab member: ask the owner). */
@@ -68,6 +70,31 @@ export function useFrontDesk(): FrontDesk | null {
     queryKey: ['partner-ws', 'member', labPartner?.partner.id ?? 'none', 'branches'], queryFn: () => partnerWorkspaceApi(api, { kind: 'member' }).branches(),
     enabled: !!labPartner,
   });
+  // WQ56: a doctor's clinics (the Clinics page's read), for Bills when he owns one.
+  const clinics = useQuery({ queryKey: ['doctor', user.id, 'clinics'], queryFn: () => doctorToolsApi(api).clinics(), enabled: user.role === 'specialist' });
+  if (user.role === 'specialist') {
+    // WQ56 (P2): the doctor's own day: + New (his clinic appointment, an online consultation, a lab test, a follow-up),
+    // Find patient, Today, and Bills only when he owns a clinic he can bill. His to-dos are private (r39).
+    const owns = !!ownedClinic(clinics.data);
+    const page = (path: string, one?: (id: string) => string) => (ids: readonly string[] | undefined, n: number) => (one ? oneOr(ids, n, one, path) : path);
+    return {
+      kind: 'doctor', id: user.id, today: todayApi(api, 'doctor'), newPath: '/doctor/new', todayPath: '/doctor/today',
+      big: [
+        { to: '/doctor/new', label: t('big.new'), Icon: Plus }, { to: '/doctor/new?find=1', label: t('big.find'), Icon: Search },
+        { to: '/doctor/today', label: t('big.today'), Icon: CalendarDays }, ...(owns ? [{ to: '/doctor/bills', label: t('big.bills'), Icon: Receipt }] : []),
+      ],
+      choices: [
+        { to: visitPath('/doctor/new/clinic'), label: t('new.clinicAppointment') }, { to: visitPath('/doctor/new/online'), label: t('new.online') },
+        { to: visitPath('/doctor/lab-book'), label: t('new.lab') }, { to: visitPath('/doctor/new/follow-up'), label: t('new.followUp') },
+      ],
+      lookup: (phone) => doctorDashboardApi(api).lookup(phone), customers: null,
+      pending: DOCTOR_PENDING_KEYS,
+      pendingTo: (k, ids, n) => (k === 'reportsReady' ? page('/doctor/lab-tests', (id) => `/doctor/lab-tests/${id}`)(ids, n)
+        : k === 'unpaidBills' ? page('/doctor/clinic/invoices', (id) => `/doctor/clinic/invoices/${id}`)(ids, n)
+        : k === 'prescriptionsToWrite' || k === 'appointmentsToConfirm' ? '/doctor/appointments' : null),
+      forbidden: null, register: true, noVisits: '',
+    };
+  }
   if (user.role === 'pharmacy') {
     const assisted = pharmacyAssistedApi(api);
     return {
@@ -109,7 +136,7 @@ export function useFrontDesk(): FrontDesk | null {
   ];
   if (kind === 'clinic') {
     // WQ57 (P3): a clinic's reception: an appointment now (a walk-in) or later (`bookings.manage`), a bill
-    // (`invoices.create`); the clinic desk has no number lookup (the number is typed twice on + New).
+    // (`invoices.create`); WQ57b the clinic's own number lookup (r40d) for members who book.
     const book = holdsAny(m, ['bookings.manage']);
     const desk = page('/partner/desk');
     const choices = [

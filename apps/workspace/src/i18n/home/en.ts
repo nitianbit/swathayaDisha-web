@@ -12,6 +12,12 @@ export default {
   /** WQ55: a lab's "New bill" (an in-house bill). */
   'big.bill': 'New bill',
   'big.label': 'What do you want to do?',
+  /** WQ56: a doctor who owns a clinic: its bills. */
+  'big.bills': 'Bills',
+  /** WQ56: a doctor's + New choices. */
+  'new.clinicAppointment': 'Clinic appointment',
+  'new.online': 'Online consultation (video or call)',
+  'new.followUp': 'Follow-up',
 
   /** The day's money: {amount}s are formatted. r37b: money received that day. */
   'money.collectedToday': 'Collected today {amount}',
@@ -107,6 +113,13 @@ export default {
   'pending.failed.bookingsAwaiting': 'Bookings waiting for payment: couldn’t load',
   'pending.failed.labReportsReady': 'Lab reports ready: couldn’t load',
   'pending.failed.lowStock': 'Low stock: couldn’t load',
+  /** WQ56 (r39): a doctor's waiting work. */
+  'pending.prescriptionsToWrite': { one: '{count} prescription to write', other: '{count} prescriptions to write' },
+  'pending.appointmentsToConfirm': { one: '{count} appointment waiting', other: '{count} appointments waiting' },
+  'pending.reportsReady': { one: '{count} lab report ready', other: '{count} lab reports ready' },
+  'pending.failed.prescriptionsToWrite': 'Prescriptions to write: couldn’t load',
+  'pending.failed.appointmentsToConfirm': 'Appointments waiting: couldn’t load',
+  'pending.failed.reportsReady': 'Lab reports ready: couldn’t load',
 
   /** WQ57: a clinic reception's doctors today. */
   'doctors.title': 'Doctors today',
@@ -126,6 +139,8 @@ export default {
   'todos.newHintLab': 'For example: Call the courier for the home samples',
   /** WQ57: a clinic's example. */
   'todos.newHintClinic': 'For example: Call Mrs Shah about tomorrow’s time',
+  /** WQ56: a doctor's own to-dos (only he sees them). */
+  'todos.newHintDoctor': 'Only you see these. For example: Call Ravi about his report',
   'todos.none': 'No to-dos. Add one above.',
   'todos.textError': 'Write the to-do (at most {max} characters).',
   /** {who}: who added it. */

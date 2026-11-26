@@ -74,6 +74,6 @@ export const prefillOf = (a: ClinicAppointment): BillPrefill => ({
   ...(a.fee ? { handLines: [feeLine(a.doctorName, a.fee)] } : {}),
 });
 /** WQ57: the doctor's fee (rupees) as a bill line. */
-const feeLine = (doctor: string | undefined, fee: number) => ({
+export const feeLine = (doctor: string | undefined, fee: number) => ({
   description: t('desk.feeLine', { doctor: doctor ?? t('desk.theDoctor') }), priceMinor: Math.round(fee * 100), ...(doctor ? { doctor } : {}),
 });

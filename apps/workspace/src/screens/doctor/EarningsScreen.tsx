@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ApiError, DOCTOR_LEDGER_KIND_LABEL as LEDGER_KIND_LABEL, doctorPayoutDetailsProblems as payoutDetailsProblems,
+  ApiError, doctorDashboardApi, DOCTOR_LEDGER_KIND_LABEL as LEDGER_KIND_LABEL, istToday, type EarningSum, doctorPayoutDetailsProblems as payoutDetailsProblems,
   type DoctorFinanceSummary as FinanceSummary, type Page,
   type DoctorPayoutDetailsInput as PayoutDetailsInput, type DoctorPayoutDetailsView as PayoutDetailsView, type SettlementAccountView,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, shared, TextField, formatDateTime } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
+import { useSession } from '../../session.tsx';
 import { definitelyNotRecorded } from '../../requests.ts';
 import { formatDay } from '../partner/labs.tsx';
 import { OwnerFinanceTiles } from '../finance/financeTiles.tsx';
 import { StatementPeriodFields, useStatementPeriod } from '../finance/finance.tsx';
-import { NotADoctor, rupeesOf, useDoctor, type DoctorContext } from './doctor.tsx';
+import { NotADoctor, rupeesOf, useClinics, useDoctor, type DoctorContext } from './doctor.tsx';
+import './doctor.css';
 import { t } from '../../i18n/doctor/index.ts';
 import { t as wt } from '../../i18n/withdrawals/index.ts';
 
@@ -54,6 +56,7 @@ function Earnings({ d }: { d: DoctorContext }) {
             <PayoutDestination d={d} account={finance.data.account} />
           </>
         )}
+      <Breakdown d={d} />
       <Statement d={d} />
       <Payouts d={d} />
       <History d={d} />
@@ -365,6 +368,65 @@ function Events({ d }: { d: DoctorContext }) {
             ))}
           </ul>
           <MoreButton q={q} label={t('earnings.showOlderActivity')} />
+          </>
+        )}
+    </section>
+  );
+}
+
+/**
+ * WQ56 (r39 `breakdown`): one combined view of what he earned, by where it came from: online, each clinic, bookings
+ * made by pharmacies and labs, referral cuts. Chips show one part; the period is sent whole (from the 1st of this month
+ * to today when a date is left empty); r39b answers the breakdown only when asked (`breakdown=1`).
+ */
+function Breakdown({ d }: { d: DoctorContext }) {
+  const { api } = useSession();
+  const p = useStatementPeriod();
+  const clinics = useClinics(d);
+  const today = istToday();
+  const period = p.period ? { from: p.period.from ?? `${today.slice(0, 8)}01`, to: p.period.to ?? today } : null;
+  const q = useQuery({ queryKey: [...d.key, 'breakdown', period], queryFn: () => doctorDashboardApi(api).finance(period!), enabled: !!period });
+  const [chip, setChip] = useState('all');
+  const b = q.data?.breakdown;
+  const names = new Map((clinics.data?.clinics ?? []).map((c) => [c.partnerId.toLowerCase(), c.name]));
+  const parts: { id: string; label: string; sum: EarningSum }[] = b ? [
+    { id: 'online', label: t('earn.online'), sum: b.online },
+    // r39b: in-person visits with no clinic (older ones) are a part of their own.
+    ...b.clinics.map((c) => ({ id: `clinic:${c.clinicId ?? 'none'}`, sum: c,
+      label: c.clinicId === null ? t('earn.noClinic') : c.name ?? names.get(c.clinicId.toLowerCase()) ?? t('dash.clinicUnnamed') })),
+    { id: 'partner', label: t('earn.partner'), sum: b.partner },
+    { id: 'referral', label: t('earn.referral'), sum: b.referral },
+    ...(b.other.count || b.other.netMinor ? [{ id: 'other', label: t('earn.other'), sum: b.other }] : []),
+  ] : [];
+  const shown = chip === 'all' ? parts : parts.filter((x) => x.id === chip);
+  return (
+    <section className="ws-section" aria-labelledby="earn-h">
+      <h2 id="earn-h">{t('earn.title')}</h2>
+      <p className="ws-muted">{t('earn.intro')}</p>
+      <div className="ws-search" role="group" aria-label={t('earn.period')}>
+        <TextField label={t('earn.from')} type="date" value={p.from} onChange={(e) => p.setFrom(e.target.value)} error={p.bad} hint={p.from ? undefined : t('earn.fromHint')} />
+        <TextField label={t('earn.to')} type="date" value={p.to} onChange={(e) => p.setTo(e.target.value)} hint={p.to ? undefined : t('earn.toHint')} />
+      </div>
+      {!period ? null : q.isPending ? <Loading label={t('earn.loading')} />
+        : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
+        : !b ? <p className="ws-muted">{t('earn.notYet')}</p>
+        : (
+          <>
+            <div className="chips" role="group" aria-label={t('earn.show')}>
+              {[{ id: 'all', label: t('dash.chip.all') }, ...parts].map((x) => (
+                <button key={x.id} type="button" className="chip" aria-pressed={chip === x.id} onClick={() => setChip(x.id)}>{x.label}</button>
+              ))}
+            </div>
+            {chip === 'all' && <p className="earned-line">{t('earn.total', { amount: rupeesOf(b.totals.netMinor) })}</p>}
+            <div className="earn-sums">
+              {shown.map((x) => (
+                <div key={x.id} className="earn-sum">
+                  <span>{x.label}</span>
+                  <strong>{rupeesOf(x.sum.netMinor)}</strong>
+                  <span className="ws-muted">{t('earn.line', { count: x.sum.count, reversed: rupeesOf(x.sum.reversedMinor) })}</span>
+                </div>
+              ))}
+            </div>
           </>
         )}
     </section>
