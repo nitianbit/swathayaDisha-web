@@ -121,6 +121,8 @@ export default {
   'done.closed': 'Sale {order}: {state}. It has no bill to print.',
   /** WQ50b: from the prescription review back to the sale it was opened from. */
   'done.backToSale': 'Back to the sale',
+  /** WQ54c: after a visit's sale: back to the home. */
+  'done.done': 'Done',
   'done.print': 'Print the bill',
   'done.openOrder': 'Open the order',
   'done.new': 'Start a new sale',
@@ -160,6 +162,8 @@ export default {
   'payment.upi': 'UPI',
   /** WQ54: a card machine at the counter. */
   'payment.card': 'Card',
+  /** WQ54c: an order has a customer, not a patient. */
+  'visit.familySale': 'The sale is in the phone owner’s name (a sale has no separate patient).',
   /** WQ54b: nothing is chosen at first. */
   'payment.chooseFirst': 'Tap cash, UPI or card first.',
   'payment.markPaid': 'Mark paid',

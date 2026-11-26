@@ -1,7 +1,7 @@
 import './sale.css';
 import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import {
   ApiError, formatExpiry, inventoryApi, isRxMedicine, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, medicineName, OBJECT_ID_PATTERN, pharmacyOrdersApi,
   pharmacySaleApi, saleRequestBody, sellableQty, usableCustomers, walkInProblems,
@@ -18,9 +18,9 @@ import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { canMarkPaid, ORDER_STATUS_LABEL, orderLabel, paymentWaitsForPharmacist } from './orderLabels.ts';
 import { CheckPanel, useKeyedCheck, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
-import { useVisitPreset, type VisitPatient } from './visitPatient.ts';
+import { useVisitMode, useVisitPreset, type VisitPatient } from './visitPatient.ts';
 import { methodWords, PaymentMethodPicker, paymentWords } from './paymentPicker.tsx';
-import { VisitPatientLine } from './visitBar.tsx';
+import { VisitPatientLine, visitWho } from './visitBar.tsx';
 
 /**
  * WQ50: Pharmacy › New sale, one screen for a counter sale: the customer (one this pharmacy already has, or a walk-in by
@@ -75,8 +75,9 @@ function SaleForm({ pharmacyId }: { pharmacyId: string }) {
   // walk-in by that phone and name (linked by phone: found or made, as for any walk-in).
   const preset = useVisitPreset(pharmacyId);
   const [customer, setCustomer] = useState<Customer | null>(() => (!preset ? null : preset.customerId
-    ? { kind: 'existing', id: preset.customerId, label: preset.name ? `${preset.name} · ${preset.phone}` : preset.phone } : { kind: 'walkin' }));
-  const [walkIn, setWalkIn] = useState(() => ({ name: preset?.name ?? '', phone: preset?.phone ?? '', consent: false }));
+    ? { kind: 'existing', id: preset.customerId, label: visitWho(preset) } : { kind: 'walkin' }));
+  // WQ54c: an order has a customer, not a patient: a family member's medicines are sold to the phone's owner.
+  const [walkIn, setWalkIn] = useState(() => ({ name: (preset?.family ? preset.family.holderName : preset?.name) ?? '', phone: preset?.phone ?? '', consent: false }));
   const [lines, setLines] = useState<Line[]>([]);
   const [prescriptions, setPrescriptions] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -88,7 +89,8 @@ function SaleForm({ pharmacyId }: { pharmacyId: string }) {
   const estimate = lines.reduce((a, l) => a + (Number.isFinite(qtyOf(l)) && l.price !== null ? qtyOf(l) * l.price : 0), 0);
   const unpriced = lines.some((l) => l.price === null);
   const shownCustomer = customer?.kind === 'existing' ? customer.label : customer?.kind === 'walkin' ? `${walkIn.name.trim()} · ${walkIn.phone.trim()}` : '';
-  const done = (orderId: string) => navigate(`/pharmacy/sale/${orderId}`, { replace: true });
+  // WQ54c: a sale opened from + New keeps the big type on its bill (only that it was a visit, no patient, is in the history).
+  const done = (orderId: string) => navigate(`/pharmacy/sale/${orderId}`, { replace: true, ...(preset ? { state: { visit: true } } : {}) });
   const keyed = useKeyedCheck(settle, { byKey: sale.byKey, abandon: sale.abandon }, {
     found: async (r) => { await queryClient.invalidateQueries({ queryKey: ['pharmacy-orders'] }); done(r.order._id); },
     givenUp: () => { setReview(false); setNote(t('unconfirmed.givenUp')); },
@@ -213,9 +215,10 @@ function VisitCustomer({ visit, customer, walkIn, errors, disabled, onWalkIn }: 
     <section className="ws-section" aria-labelledby="sale-customer-h">
       <h2 id="sale-customer-h">{t('customer.title')}</h2>
       <VisitPatientLine patient={visit} canChange={!disabled} />
+      {visit.family && <p className="ws-muted">{t('visit.familySale')}</p>}
       {customer?.kind === 'walkin' && (
         <>
-          {(!visit.name || errors.name) && (
+          {((visit.family ? !visit.family.holderName : !visit.name) || errors.name) && (
             <TextField label={t('walkIn.name')} value={walkIn.name} maxLength={MAX_CUSTOMER_NAME} autoComplete="off" disabled={disabled} error={errors.name}
               onChange={(e) => onWalkIn({ ...walkIn, name: e.target.value })} />
           )}
@@ -413,6 +416,8 @@ export function SaleBillScreen() {
 
 function SaleDone({ orderId }: { orderId: string }) {
   const { api } = useSession();
+  const visit = (useLocation().state as { visit?: unknown } | null)?.visit === true;
+  useVisitMode(visit);
   const q = useQuery({ queryKey: ['pharmacy-orders', 'detail', orderId], queryFn: () => pharmacyOrdersApi(api).get(orderId) });
   return (
     <>
@@ -426,11 +431,20 @@ function SaleDone({ orderId }: { orderId: string }) {
           <>
             <Bill order={q.data} />
             <Payment order={q.data} />
-            <div className="ws-actions sale-noprint">
-              <Button variant="secondary" onClick={() => window.print()}>{t('done.print')}</Button>
-              <Link to={`/pharmacy/orders/${q.data._id}`}>{t('done.openOrder')}</Link>
-              <Link to="/pharmacy/sale">{t('done.new')}</Link>
-            </div>
+            {visit ? (
+              // WQ54c: one obvious next step after a visit's sale; the rest small.
+              <div className="ws-actions sale-noprint">
+                <Link className="j-btn j-btn--primary" to="/">{t('done.done')}</Link>
+                <Button variant="ghost" onClick={() => window.print()}>{t('done.print')}</Button>
+                <Link className="ws-muted" to={`/pharmacy/orders/${q.data._id}`}>{t('done.openOrder')}</Link>
+              </div>
+            ) : (
+              <div className="ws-actions sale-noprint">
+                <Button variant="secondary" onClick={() => window.print()}>{t('done.print')}</Button>
+                <Link to={`/pharmacy/orders/${q.data._id}`}>{t('done.openOrder')}</Link>
+                <Link to="/pharmacy/sale">{t('done.new')}</Link>
+              </div>
+            )}
           </>
         )}
     </>

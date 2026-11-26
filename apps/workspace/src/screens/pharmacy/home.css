@@ -48,12 +48,16 @@
 .visit-line .j-btn { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 48px; text-decoration: none; }
 .visit-consent { display: flex; align-items: center; gap: var(--space-3); min-height: 48px; font-size: 1.125rem; font-weight: 600; }
 .visit-consent input { width: 28px; height: 28px; flex: none; accent-color: var(--brand); }
+/* WQ54c: a flow (and a sale's payment and bill) opened from + New: 17 px type on any screen. */
+body.visit-mode .ws-main { font-size: 1.0625rem; }
+.consent-more summary { cursor: pointer; min-height: 32px; color: var(--brand-strong); }
+.who-step { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
+.big-action[aria-pressed='true'] { border-color: var(--brand); background: var(--brand-soft); }
 @media (max-width: 760px) {
   .big-actions, .big-actions--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   /* The phone's header has Home. */
   a.j-btn.home-button { display: none; }
-  /* A flow opened from + New on a phone: 17 px type and 48 px targets, nothing wider than the screen. */
-  body.visit-mode .ws-main { font-size: 1.0625rem; }
+  /* A flow opened from + New on a phone: 48 px targets, nothing wider than the screen. */
   body.visit-mode .ws-main .j-btn, body.visit-mode .ws-main select,
   body.visit-mode .ws-main input:not([type='checkbox']):not([type='radio']) { min-height: 48px; font-size: 1.0625rem; }
   body.visit-mode .ws-main .ws-check, body.visit-mode .ws-main .rx-ack { min-height: 48px; }

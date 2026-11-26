@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink, useLocation } from 'react-router';
-import { House, LogOut, Menu } from 'lucide-react';
+import { House, LogOut, Menu, X } from 'lucide-react';
 import { Button, LanguageScope, LanguageSwitcher, useLanguage } from '@jansetu/ui';
 import { navLabelKey, pagesFor } from './modules.tsx';
 import { t } from './i18n/shell/index.ts';
@@ -28,9 +28,11 @@ export function Shell({ children }: { children: ReactNode }) {
       <aside className="ws-side">
         <div className="ws-brand">{BRAND} <span>{t('shell.workspace')}</span></div>
         <div className="ws-phone-bar">
-          <Link className="ws-phone-home" to="/"><House size={20} aria-hidden="true" /> {t('nav.home')}</Link>
+          {/* WQ54c: icon buttons on one row; their words for screen readers. */}
+          <Link className="ws-phone-home" to="/"><House size={24} aria-hidden="true" /><span className="j-sr-only">{t('nav.home')}</span></Link>
           <button type="button" className="ws-more" aria-expanded={menuOpen} aria-controls="ws-menu" onClick={() => setMenuOpen((o) => !o)}>
-            <Menu size={20} aria-hidden="true" /> {menuOpen ? t('shell.close') : t('shell.more')}
+            {menuOpen ? <X size={24} aria-hidden="true" /> : <Menu size={24} aria-hidden="true" />}
+            <span className="j-sr-only">{menuOpen ? t('shell.close') : t('shell.more')}</span>
           </button>
         </div>
         <div id="ws-menu" className={menuOpen ? 'ws-menu ws-menu--open' : 'ws-menu'}>

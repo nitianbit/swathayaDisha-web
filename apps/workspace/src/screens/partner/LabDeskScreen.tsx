@@ -241,7 +241,7 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
       <PatientSection step={pt} busy={busy} frozen={patientDone || frozen} locked={frozen} nextLabel={t('labDesk.next')}
         // i18n-ignore: a code, not words
         booker="lab"
-        consent={LAB_DESK_CONSENT_STATEMENT} />
+        consent={LAB_DESK_CONSENT_STATEMENT} forTest />
 
       {patientDone && (
         <section className="ws-section" aria-labelledby="desk-h">

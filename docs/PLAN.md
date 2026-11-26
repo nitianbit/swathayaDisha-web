@@ -2654,6 +2654,33 @@ Review of WQ54: the right patient every time, correct day data, and fewer things
   Playwright tablet project is now a Galaxy Tab S4 held sideways (1138 px), since up to 760 px is the phone layout, which
   three 390 px journeys cover (example 1, Back after a visit, a masked name).
 
+## WQ54c who the patient is, asked once on + New (2026-11-26, branch `wq54c/visit-who` from web stage 7e2bb7a)
+
+The WQ54b re-check's blocker: visit mode dropped "Who is the patient?", so a mother on her son's phone, or a mother's child,
+was booked as the phone's owner. + New's step 1 is now the one place the patient is chosen.
+
+- **Who, on + New:** after Find, the number's lookup (`POST /pharmacy-assisted/patients/lookup`) says "This number is on
+  Jansetu: R*** K***" (or "This number is new to Jansetu."), then two big buttons, **This person** (their name; the name
+  this pharmacy typed is offered, a masked one never) and **Someone else (family member)** (name, relation, sex, date of
+  birth and the phone owner's name, the full step's own fields: `PatientFields`, shared, not copied). A new number is typed
+  twice there. Checked with the flows' own rule (`patientProblems`).
+- **Handed over once** with who it is and the lookup (`VisitPatient.family`, `.lookup`): the flow draws its draft from it
+  (relation and details for a family member) and does not look the number up again; it shows "Patient: Ravi (son of S***
+  D***) [Change]". **Change** goes back to + New's step 1 with the number kept (a one-shot memory slot) and asked again.
+- **Counter sale:** an order has a customer, not a patient, so a family member's medicines are sold to the phone's owner
+  (the found customer, or a walk-in by the owner's name); the page says so. The sale has no patient name, so the bill is
+  unchanged.
+- **Polish:** step 1 has one box (digits: the phone; letters: a name, this pharmacy's patients by the same POST search);
+  every Find asks the server (no cache); Find patient says "Find a patient to see or start a visit." and lists the number's
+  visits of today (r37c's day search by phone). The agreement is one plain sentence ("…for this visit", or "…for this test"
+  on Book lab test, a lab booking from a consultation and the lab desk) with the full statement behind **Read more**. A
+  sale's payment and bill opened from + New keep the 17 px type, with one obvious next step (**Done**, to the home) and
+  the rest small. The phone header is one row at 390 px: the short brand and Home and More as 48 px icon buttons, named
+  for screen readers.
+- Decisions (owner away): the who question is asked for new numbers too (a child on a mother's new number is a family
+  member, with the owner's name optional, as in the full step); the family members booked here before are not offered on
+  + New (the server reuses a same-name, same-relation member); the bill shows no patient name (the sale has none).
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -3044,6 +3071,7 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-26 | WQ54c who the patient is, asked once on + New (from 7e2bb7a) | typecheck clean; Vitest 534/534; the full suite via pw-slot.sh 1173/1173 + 3 skipped (the 390 px journeys run once) (13.9 min) on a temporary config (port 5566, deleted): who journeys (someone else on a phone, a mother’s child, the owner) on desktop, tablet and 390 px; Find patient by name, every Find asking again, today’s visits; lab specs open Read more for the full consent; 390 px screenshots in /tmp/wq54c-shots. |
 | 2026-11-26 | WQ54b the simpler pharmacy home (r37c 7f4ff46b, from 662e9f1) | typecheck clean; Vitest 534/534; the full suite via pw-slot.sh 1171/1171 + 3 skipped (the 390 px journeys run once) (13.5 min) on a temporary config (port 5566, deleted), with the tablet project now a Galaxy Tab S4 held sideways; after a last patient-step fix (visit mode off after a reset or a changed number) pharmacy-home, consult-now, assisted-booking, lab-booking, lab-desk, card-booking, pharmacy-sale and orders again 253/253 + 3 skipped; 390 px screenshots of the home, + New and Today. |
 | 2026-11-26 | WQ54 r37b final (6de072f2, on 8d4b33f) | typecheck clean; Vitest 533/533; Playwright pharmacy-home 9/9 + 1 skipped (card payments waiting with r37b's items; TODO_LIMIT said with the text kept) on a temporary config (port 5566, deleted). |
 | 2026-11-26 | WQ54 r37 review items (on ac804db) | typecheck clean; Vitest 533/533; Playwright pharmacy-home 9/9 + 1 skipped (the what-waits journey adds a row paid today and made earlier, a queue that could not load, card payments waiting), orders (the cash-on-delivery journey sends `paymentSource: 'upi'` from the picker), pharmacy-sale: 73/73 on a temporary config (port 5566); the full suite via pw-slot.sh 1167/1167 + 1 skipped (14.8 min). |

@@ -12,7 +12,7 @@ import { useSession } from '../../session.tsx';
 import type { Perform } from '../finance/finance.tsx';
 import type { ConsultBooker } from './consultBooker.ts';
 import { t } from '../../i18n/pharmacy/index.ts';
-import { useVisitPreset } from './visitPatient.ts';
+import { useVisitPreset, type VisitPatient } from './visitPatient.ts';
 import { VisitPatientLine } from './visitBar.tsx';
 
 /**
@@ -72,6 +72,9 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
     if (!preset || presetDone.current) return;
     presetDone.current = true;
     setPhoneText(preset.phone);
+    // WQ54c: + New looked the number up: it is not looked up (or counted) again.
+    const phone = canonicalPhone(preset.phone);
+    if (preset.lookup && phone) { setLookup({ phone, result: preset.lookup }); setPatient(visitDraft(preset, phone)); return; }
     void lookupPhone(preset.phone);
   }, []);
 
@@ -90,7 +93,7 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
       setLookup({ phone, result });
       // WQ54b: the + New patient's name (none when + New had only a masked one: asked here), and the number counted as typed
       // twice only when it came from + New's search results (or was typed twice there).
-      setPatient({ ...EMPTY_PATIENT, phone, ...(preset && canonicalPhone(preset.phone) === phone ? { name: preset.name, phoneAgain: preset.confirmed ? phone : '' } : {}) });
+      setPatient(preset && canonicalPhone(preset.phone) === phone ? visitDraft(preset, phone) : { ...EMPTY_PATIENT, phone });
       setPatientErrors({});
     } catch (err) {
       if (isSwitchedOff(err)) { onSwitchedOff(); return; }
@@ -145,18 +148,30 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
 export type PatientStep = ReturnType<typeof usePatientStep>;
 
 /**
+ * WQ54b/WQ54c: the + New patient as the step's draft: who they are (the owner, or a family member with their details), the
+ * name (none when + New had only a masked one: asked here), and the number counted as typed twice only when it came from
+ * + New's search results (or was typed twice there).
+ */
+function visitDraft(p: VisitPatient, phone: string): PatientDraft {
+  return { ...EMPTY_PATIENT, phone, name: p.name, phoneAgain: p.confirmed ? phone : '',
+    ...(p.family ? { who: 'family' as const, relation: p.family.relation, gender: p.family.gender, dateOfBirth: p.family.dateOfBirth, holderName: p.family.holderName } : {}) };
+}
+
+/**
  * Step 1 of an assisted booking. `frozen`: the step cannot change now; `locked`: "Change patient details" is off.
  * WQ19: `booker` names who books ("pharmacy" or "lab"; WQ25 "doctor": you) and `consent` the statement the tick attests.
  */
-export function PatientSection({ step, busy, frozen, locked, nextLabel = t('common.nextChooseTheDoctor'), booker = 'pharmacy', consent = CONSENT_STATEMENT }: {
+export function PatientSection({ step, busy, frozen, locked, nextLabel = t('common.nextChooseTheDoctor'), booker = 'pharmacy', consent = CONSENT_STATEMENT, forTest = false }: {
   step: PatientStep; busy: boolean; frozen: boolean; locked: boolean; nextLabel?: string; booker?: 'pharmacy' | 'lab' | 'doctor'; consent?: string;
+  /** WQ54c: the booking is a lab test (the agreement says so). */
+  forTest?: boolean;
 }) {
   const {
     phoneText, setPhoneText, phoneError, lookup, patient, setPatient, set, patientErrors, agreed, setAgreed, agreeError, setAgreeError,
     patientDone, setPatientDone, knownFamily, familyLoading, find, changePhone, patientNext,
   } = step;
   const frozenPatient = frozen;
-  if (step.visit && (lookup || !phoneError)) return <VisitPatientSection step={step} frozen={frozen} locked={locked} nextLabel={nextLabel} consent={consent} />;
+  if (step.visit && (lookup || !phoneError)) return <VisitPatientSection step={step} frozen={frozen} locked={locked} nextLabel={nextLabel} consent={consent} forTest={forTest} />;
   return (
     <section className="ws-section" aria-labelledby="pt-h">
       <h2 id="pt-h">{t('patientStep.n1Patient')}</h2>
@@ -201,47 +216,9 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = t('comm
             </fieldset>
             {familyLoading && <span className="ws-muted">{t('patientStep.lookingForFamilyMembersYou')}</span>}
 
-            {patient.who === 'self' && (
-              <TextField label={t('patientStep.patientSFullName')} autoComplete="off" value={patient.name} maxLength={MAX_PERSON_NAME} error={patientErrors.name}
-                hint={t('patientStep.typeTheNameThePatient')} onChange={(e) => set('name', e.target.value)} />
-            )}
-            {patient.who === 'family' && (
-              <>
-                <div className="rx-form-row">
-                  <TextField label={t('patientStep.familyMemberSFullName')} autoComplete="off" value={patient.name} maxLength={MAX_PERSON_NAME} error={patientErrors.name}
-                    onChange={(e) => set('name', e.target.value)} />
-                  <div className="j-field">
-                    <label htmlFor="pt-relation">{t('patientStep.relationToThePhoneS')}</label>
-                    <select id="pt-relation" value={patient.relation} aria-invalid={patientErrors.relation ? true : undefined}
-                      aria-describedby={patientErrors.relation ? 'pt-relation-err' : undefined}
-                      onChange={(e) => set('relation', e.target.value as AssistedRelation | '')}>
-                      <option value="">{t('common.choose3')}</option>
-                      {ASSISTED_RELATIONS.map((r) => <option key={r} value={r}>{r}</option>)}
-                    </select>
-                    {patientErrors.relation && <span id="pt-relation-err" className="j-field__error" role="alert">{patientErrors.relation}</span>}
-                  </div>
-                </div>
-                <div className="rx-form-row">
-                  <div className="j-field">
-                    <label htmlFor="pt-gender">{t('patientStep.genderOptional')}</label>
-                    <select id="pt-gender" value={patient.gender} onChange={(e) => set('gender', e.target.value as AssistedGender | '')}>
-                      <option value="">{t('common.notSaid')}</option>
-                      {ASSISTED_GENDERS.map((g) => <option key={g} value={g}>{g}</option>)}
-                    </select>
-                  </div>
-                  <TextField label={t('patientStep.dateOfBirthOptional')} type="date" value={patient.dateOfBirth} max={istToday()} error={patientErrors.dateOfBirth}
-                    onChange={(e) => set('dateOfBirth', e.target.value)} />
-                </div>
-                <p className="ws-muted">{t('patientStep.ifThisFamilyMemberIs')}</p>
-              </>
-            )}
-            {patient.who !== 'self' && (
-              <TextField label={t('patientStep.phoneOwnerSNameOptional')} autoComplete="off" value={patient.holderName} maxLength={MAX_PERSON_NAME} error={patientErrors.holderName}
-                hint={booker === 'doctor' ? t('patientStep.onlyUsedTheFirstTime') : t(`patientStep.onlyUsedTheFirstTime.${booker}`)}
-                onChange={(e) => set('holderName', e.target.value)} />
-            )}
+            <PatientFields patient={patient} set={set} errors={patientErrors} booker={booker} />
 
-            <AgreedTick agreed={agreed} setAgreed={setAgreed} agreeError={agreeError} setAgreeError={setAgreeError} consent={consent} />
+            <AgreedTick agreed={agreed} setAgreed={setAgreed} agreeError={agreeError} setAgreeError={setAgreeError} consent={consent} forTest={forTest} />
           </fieldset>
           {patientDone ? (
             <div className="ws-actions">
@@ -258,16 +235,77 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = t('comm
   );
 }
 
-/** The "patient agreed" tick with the statement it attests (WQ54b: `large` in a flow opened from + New). */
-function AgreedTick({ agreed, setAgreed, agreeError, setAgreeError, consent, large }: {
+/**
+ * The patient's own fields for who they are (WQ54c: shared by the full step and + New): the owner's name, or a family
+ * member's name, relation, sex and date of birth, and the phone owner's name (only used the first time).
+ */
+export function PatientFields({ patient, set, errors: patientErrors, booker = 'pharmacy' }: {
+  patient: PatientDraft; set: <K extends keyof PatientDraft>(k: K, v: PatientDraft[K]) => void; errors: Partial<Record<keyof PatientDraft, string>>;
+  booker?: 'pharmacy' | 'lab' | 'doctor';
+}) {
+  return (
+    <>
+      {patient.who === 'self' && (
+        <TextField label={t('patientStep.patientSFullName')} autoComplete="off" value={patient.name} maxLength={MAX_PERSON_NAME} error={patientErrors.name}
+          hint={t('patientStep.typeTheNameThePatient')} onChange={(e) => set('name', e.target.value)} />
+      )}
+      {patient.who === 'family' && (
+        <>
+          <div className="rx-form-row">
+            <TextField label={t('patientStep.familyMemberSFullName')} autoComplete="off" value={patient.name} maxLength={MAX_PERSON_NAME} error={patientErrors.name}
+              onChange={(e) => set('name', e.target.value)} />
+            <div className="j-field">
+              <label htmlFor="pt-relation">{t('patientStep.relationToThePhoneS')}</label>
+              <select id="pt-relation" value={patient.relation} aria-invalid={patientErrors.relation ? true : undefined}
+                aria-describedby={patientErrors.relation ? 'pt-relation-err' : undefined}
+                onChange={(e) => set('relation', e.target.value as AssistedRelation | '')}>
+                <option value="">{t('common.choose3')}</option>
+                {ASSISTED_RELATIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+              {patientErrors.relation && <span id="pt-relation-err" className="j-field__error" role="alert">{patientErrors.relation}</span>}
+            </div>
+          </div>
+          <div className="rx-form-row">
+            <div className="j-field">
+              <label htmlFor="pt-gender">{t('patientStep.genderOptional')}</label>
+              <select id="pt-gender" value={patient.gender} onChange={(e) => set('gender', e.target.value as AssistedGender | '')}>
+                <option value="">{t('common.notSaid')}</option>
+                {ASSISTED_GENDERS.map((g) => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+            <TextField label={t('patientStep.dateOfBirthOptional')} type="date" value={patient.dateOfBirth} max={istToday()} error={patientErrors.dateOfBirth}
+              onChange={(e) => set('dateOfBirth', e.target.value)} />
+          </div>
+          <p className="ws-muted">{t('patientStep.ifThisFamilyMemberIs')}</p>
+        </>
+      )}
+      {patient.who !== 'self' && (
+        <TextField label={t('patientStep.phoneOwnerSNameOptional')} autoComplete="off" value={patient.holderName} maxLength={MAX_PERSON_NAME} error={patientErrors.holderName}
+          hint={booker === 'doctor' ? t('patientStep.onlyUsedTheFirstTime') : t(`patientStep.onlyUsedTheFirstTime.${booker}`)}
+          onChange={(e) => set('holderName', e.target.value)} />
+      )}
+    </>
+  );
+}
+
+/**
+ * The "patient agreed" tick: one short plain sentence, the full statement it attests behind "Read more" (WQ54c; a lab
+ * test's own sentence with `forTest`). `large` in a flow opened from + New.
+ */
+function AgreedTick({ agreed, setAgreed, agreeError, setAgreeError, consent, large, forTest }: {
   agreed: boolean; setAgreed: (b: boolean) => void; agreeError: string | null; setAgreeError: (e: string | null) => void; consent: string; large?: boolean;
+  forTest?: boolean;
 }) {
   return (
     <>
       <label className={large ? 'rx-ack visit-consent' : 'rx-ack'}>
         <input type="checkbox" checked={agreed} aria-describedby={agreeError ? 'agree-err' : 'agree-text'}
           onChange={(e) => { setAgreed(e.target.checked); if (e.target.checked) setAgreeError(null); }} />{t('patientStep.patientAgreedToThisBooking')}</label>
-      <span id="agree-text" className="j-field__hint">{consent}</span>
+      <span id="agree-text" className="j-field__hint">{forTest ? t('patientStep.consentShortTest') : t('patientStep.consentShort')}</span>
+      <details className="consent-more">
+        <summary>{t('patientStep.consentReadMore')}</summary>
+        <p className="j-field__hint">{consent}</p>
+      </details>
       {agreeError && <span id="agree-err" className="j-field__error" role="alert">{agreeError}</span>}
     </>
   );
@@ -277,7 +315,9 @@ function AgreedTick({ agreed, setAgreed, agreeError, setAgreeError, consent, lar
  * WQ54b: the patient step of a flow opened from + New: "Patient: Asha [Change]" (no "Who is the patient?", no second
  * number), the name only when + New had none, and the agreement tick, large. A lookup that fails shows the usual step.
  */
-function VisitPatientSection({ step, frozen, locked, nextLabel, consent }: { step: PatientStep; frozen: boolean; locked: boolean; nextLabel: string; consent: string }) {
+function VisitPatientSection({ step, frozen, locked, nextLabel, consent, forTest }: {
+  step: PatientStep; frozen: boolean; locked: boolean; nextLabel: string; consent: string; forTest: boolean;
+}) {
   const { visit, lookup, patient, set, patientErrors, agreed, setAgreed, agreeError, setAgreeError, patientDone, setPatientDone, patientNext } = step;
   if (!visit) return null;
   return (
@@ -295,7 +335,7 @@ function VisitPatientSection({ step, frozen, locked, nextLabel, consent }: { ste
               <TextField label={t('patientStep.typeTheNumberAgain')} inputMode="tel" autoComplete="off" value={patient.phoneAgain} error={patientErrors.phoneAgain}
                 onChange={(e) => set('phoneAgain', e.target.value)} />
             )}
-            <AgreedTick agreed={agreed} setAgreed={setAgreed} agreeError={agreeError} setAgreeError={setAgreeError} consent={consent} large />
+            <AgreedTick agreed={agreed} setAgreed={setAgreed} agreeError={agreeError} setAgreeError={setAgreeError} consent={consent} large forTest={forTest} />
           </fieldset>
           {patientDone ? (
             <div className="ws-actions">
@@ -377,7 +417,7 @@ export function ConsultationPatientSection({ step, frozen, locked, consent, walk
             <TextField label={t('patientStep.patientSFullName')} autoComplete="off" value={name} maxLength={MAX_PERSON_NAME} error={nameError}
               hint={b?.family ? t('patientStep.typeTheNameThePatient2') : t('patientStep.typeTheNameThePatient')}
               onChange={(e) => setName(e.target.value)} />
-            <AgreedTick agreed={agreed} setAgreed={setAgreed} agreeError={agreeError} setAgreeError={setAgreeError} consent={consent} />
+            <AgreedTick agreed={agreed} setAgreed={setAgreed} agreeError={agreeError} setAgreeError={setAgreeError} consent={consent} forTest />
           </fieldset>
           {done ? (
             <div className="ws-actions">

@@ -90,30 +90,41 @@ export default {
   /** A flow opened from + New names its patient; {who}: name and phone (or the phone). */
   'visit.patient': 'Patient: {who}',
   'visit.change': 'Change',
+  /** WQ54c: a family member of the phone's owner; {relation}: son, mother…; {holder}: the owner's (masked) name. */
+  'visit.family': '{name} ({relation} of {holder})',
 
   'new.title': 'New',
   'new.findTitle': 'Find patient',
+  'new.findIntro': 'Find a patient to see or start a visit.',
   'new.step1': 'Step 1 of 2: who is the patient?',
   /** {name}: the patient's name. */
   'new.step2': 'Step 2 of 2: what does {name} need?',
   'new.step2NoName': 'Step 2 of 2: what does the patient need?',
-  'new.phone': 'Patient’s mobile number',
-  'new.phoneHint': 'Type the 10-digit number, then tap Find.',
+  /** WQ54c: one box: digits are a phone number, letters a name. */
+  'new.search': 'Phone number or name',
+  'new.searchHint': 'Type the 10-digit number or the name, then tap Find.',
+  'new.searchError': 'Type a 10-digit mobile number or at least 2 letters of the name.',
   'new.find': 'Find',
-  'new.results': 'Patients with this number',
-  /** A patient found whose name this pharmacy may not show. */
+  'new.results': 'Patients found',
+  'new.noneByName': 'No patient with this name here. Find them by their phone number.',
+  /** A patient whose name this pharmacy may not show. */
   'new.noName': 'Name not given',
-  'new.notFound': 'No patient with this number yet. Type their name to add them.',
-  'new.name': 'Patient’s name',
+  /** WQ54c: {name}: the account holder's masked name. */
+  'new.onJansetu': 'This number is on Jansetu: {name}',
+  'new.newNumber': 'This number is new to Jansetu.',
+  'new.whoIs': 'Who is the patient?',
+  'new.thisPerson': 'This person',
+  'new.someoneElse': 'Someone else (family member)',
   'new.again': 'Type the number again',
   'new.phoneError': 'Enter a 10-digit mobile number.',
-  'new.nameError': 'Enter the patient’s name (at most {max} characters).',
-  'new.againError': 'The two numbers are not the same. Type the number again.',
   'new.next': 'Next',
   /** WQ54b: a small second choice, for 30 minutes after that patient's visit; {name}: name (or phone). */
   'new.sameAgain': 'Same patient again: {name}',
   'new.changePatient': 'Change patient',
   'new.what': 'What does the patient need?',
+  /** WQ54c: Find patient lists the number's visits of today. */
+  'new.todayVisits': 'Visits today',
+  'new.noVisits': 'No visits today.',
   /** The four kinds of visit, in plain words. */
   'new.video': 'See a doctor now (video)',
   'new.doctor': 'Book a doctor for later',

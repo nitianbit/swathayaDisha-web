@@ -252,6 +252,9 @@ test('walk-in now: the patient, the tests and the total; booked with no time, th
   await page.getByLabel('Patient’s mobile number').fill(PHONE);
   await page.getByRole('button', { name: 'Find' }).click();
   await expect(page.getByText('Account holder: R*** K***', { exact: false })).toBeVisible();
+  // WQ54c: one plain sentence for a test; the full statement behind Read more.
+  await expect(page.getByText('The patient agrees to share their details with Jansetu for this test.')).toBeVisible();
+  await page.getByText('Read more').click();
   await expect(page.getByText('this lab books these tests for them on Jansetu', { exact: false })).toBeVisible();
   await page.getByRole('radio', { name: /^The phone’s owner/ }).check();
   await page.getByLabel('Patient’s full name').fill('Ravi Kumar');

@@ -274,6 +274,8 @@ async function patient(page: Page) {
   await page.getByLabel('Patient’s mobile number').fill(PHONE);
   await page.getByRole('button', { name: 'Find' }).click();
   await page.getByLabel('Patient’s full name').fill('Rina Kumari');
+  // WQ54c: the full statement behind Read more.
+  await page.getByText('Read more').click();
   await expect(page.getByText(/this lab books this consultation for them on Jansetu/)).toBeVisible();
   await page.getByLabel('Patient agreed to this booking').check();
   await page.getByRole('button', { name: 'Next: choose the doctor' }).click();

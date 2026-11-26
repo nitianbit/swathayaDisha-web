@@ -1069,6 +1069,10 @@ export default {
   'patientStep.phoneOwnerSNameOptional': 'Phone owner’s name (optional)',
   'patientStep.onlyUsedTheFirstTime': 'Only used the first time you book on this number.',
   'patientStep.patientAgreedToThisBooking': 'Patient agreed to this booking',
+  /** WQ54c: the agreement in one plain sentence; the full statement follows behind "Read more". */
+  'patientStep.consentShort': 'The patient agrees to share their details with Jansetu for this visit.',
+  'patientStep.consentShortTest': 'The patient agrees to share their details with Jansetu for this test.',
+  'patientStep.consentReadMore': 'Read more',
   'patientStep.patientReady': 'Patient ready',
   'patientStep.changePatientDetails': 'Change patient details',
   'patientStep.typeThePatientSName': 'Type the patient’s name.',

@@ -304,7 +304,7 @@ export function BookLabTest({ booker, fromBookingId }: { booker: LabBooker; from
       {notice && <Alert tone="ok">{notice}</Alert>}
       {fromConsultation ? <ConsultationPatientSection step={cs} frozen={patientDone || frozen} locked={frozen} consent={booker.consent.statement} walkInPath={booker.paths.book} />
         : <PatientSection step={pt} busy={busy} frozen={patientDone || frozen} locked={frozen} nextLabel={t('common.nextChooseTheLab')} booker={booker.kind}
-          consent={booker.consent.statement} />}
+          consent={booker.consent.statement} forTest />}
 
       {patientDone && (
         <section className="ws-section" aria-labelledby="lab-h">
