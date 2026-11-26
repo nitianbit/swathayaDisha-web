@@ -9,5 +9,7 @@ describe('wholeWords', () => {
     expect(wholeWords('Dr Rao').test('Consultation · Dr Raoul')).toBe(false);
     expect(wholeWords('Dr Rao').test('Consultation')).toBe(false);
     expect(wholeWords('Dr K. (ENT)').test('Visit Dr K. (ENT)')).toBe(true);
+    expect(wholeWords('राव').test('Consultation · रावि')).toBe(false);
+    expect(wholeWords('Cafe\u0301').test('Consultation · Café')).toBe(true);
   });
 });

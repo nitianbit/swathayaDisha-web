@@ -2854,13 +2854,15 @@ desk; nothing copied).
 
 - **Blocker: a server without r40d's lookup.** The clinic's lookup answers a 404 with no code as "not known" (null): + New goes
   on and the number is typed twice. A 403 or 429 is said as before.
-- **The fee stays on the bill.** A clinic consultation item replaces the hand-written fee only at the fee, and only when its name
-  has the doctor's name as whole words ("Dr Rao" is not "Dr Raoul"), or it is the only consultation at the fee.
+- **The fee stays on the bill.** A clinic consultation item replaces the hand-written fee only when its price matches
+  and it contains the doctor's full name as whole words. This also applies when the catalogue lists a single consultation.
 - **The receipt's name** is the server's (clinic-desk's lost-booking check now expects "Meena with Dr Mehta").
 - **No dead end after booking in a visit.** When the booked row cannot be read back, the error with Try again; when it is not
   there yet, "The appointment is booked. Its details could not be read yet." and "Make the bill" (reads it again).
 - **Find patient (clinic):** each of today's desk appointments not billed yet has "Bill this appointment" (the short bill,
   linked to the appointment, its fee on it).
+- **Missing mobile number:** a bill linked to an appointment asks for the account holder's mobile number when the server omits it.
+  Known numbers stay read-only, and the server checks that the number belongs to the appointment's account holder.
 - **Menu:** a clinic's Today needs a clinic register reader (`partnerPermissionsByKind`: its bookings or its bills).
 
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)

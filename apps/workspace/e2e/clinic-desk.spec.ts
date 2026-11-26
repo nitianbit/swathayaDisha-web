@@ -748,7 +748,7 @@ test('a lost booking answer locks the form; the key finds it (also after a reloa
   // WQ8 review: the receipt's bill is prefilled from the appointment as the server lists it (the details on this device
   // are gone after the reload): the account holder's mobile is there, so issuing is not refused for the customer.
   await page.getByText('This booking had already been made', { exact: false }).getByRole('link', { name: 'Make a bill for this visit' }).click();
-  await expect(page.getByLabel('Mobile number (optional)')).toHaveValue('9800000010');
+  await expect(page.getByLabel('Mobile number', { exact: true })).toHaveValue('9800000010');
   await expect(page.getByLabel('Customer name')).toHaveValue('Meena');
 });
 
@@ -1243,13 +1243,13 @@ test('Q14 bill for an appointment: "Create bill" opens the form with the patient
   await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
   await expect(page.getByRole('group', { name: 'Appointment' })).toContainText('For the clinic appointment with Dr Mehta, Tue, 17 Nov, 2026, 09:30.');
   await expect(page.getByLabel('Customer name')).toHaveValue('Asha Rao');
-  await expect(page.getByLabel('Mobile number (optional)')).toHaveValue('9800000001');
+  await expect(page.getByLabel('Mobile number', { exact: true })).toHaveValue('9800000001');
   await expect(page.getByLabel('Branch', { exact: true })).toHaveValue(BR1);
   await expect(page.getByLabel('Branch', { exact: true })).toBeDisabled();
   await expect(page.getByLabel('Doctor (optional)')).toHaveValue(D1);
   // The bill's customer is the appointment's account holder: fixed while linked.
   await expect(page.getByLabel('Customer name')).not.toBeEditable();
-  await expect(page.getByLabel('Mobile number (optional)')).not.toBeEditable();
+  await expect(page.getByLabel('Mobile number', { exact: true })).not.toBeEditable();
   // Nothing about the patient travels in the URL or browser storage.
   expect(page.url()).not.toMatch(/Asha|9800000001|e1e1/);
   expect(await storage(page)).not.toMatch(/Asha|9800000001/);

@@ -284,10 +284,15 @@ test('he bills his own clinic from the dashboard: the short bill with his fee, p
   await expect(list(page).getByRole('button', { name: 'Bill' })).toHaveCount(1);
   await list(page).getByRole('listitem').filter({ hasText: 'Ravi Demo' }).getByRole('button', { name: 'Bill' }).click();
   await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
+  const mobile = page.getByLabel('Mobile number', { exact: true });
+  await expect(mobile).toHaveValue('');
+  await page.getByRole('button', { name: 'Issue bill for ₹700.00' }).click();
+  await expect(page.getByText('Enter a 10-digit mobile number.')).toBeVisible();
+  await mobile.fill('9876543210');
   await page.getByRole('button', { name: 'Issue bill for ₹700.00' }).click();
   await expect(page.getByText(/^Bill DSKIN\/2627\/0001 issued\./)).toBeVisible();
   expect(b.calls.find((c) => c.method === 'POST' && c.path === '/specialists/me/clinic/invoices')!.body).toMatchObject({
-    appointmentId: bid(1), branchId: OWNBR, customer: { name: 'Ravi Demo' }, items: [{ description: 'Consultation · Dr Arjun Demo', unitPriceMinor: 70000, qty: 1 }] });
+    appointmentId: bid(1), branchId: OWNBR, customer: { name: 'Ravi Demo', phone: '9876543210' }, items: [{ description: 'Consultation · Dr Arjun Demo', unitPriceMinor: 70000, qty: 1 }] });
   const pay = page.getByRole('group', { name: 'Record payment' });
   await pay.getByRole('button', { name: 'Cash', exact: true }).click();
   await pay.getByRole('button', { name: 'Record ₹700.00 paid' }).click();
