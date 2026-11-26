@@ -158,6 +158,8 @@ export default {
   'payment.how': 'Paid by',
   'payment.cash': 'Cash',
   'payment.upi': 'UPI',
+  /** WQ54: a card machine at the counter. */
+  'payment.card': 'Card',
   'payment.markPaid': 'Mark paid',
   'payment.confirm': 'Yes, it is paid',
   /** {how}: Cash or UPI. */

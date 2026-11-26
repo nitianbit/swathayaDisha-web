@@ -7,7 +7,7 @@ import {
   ApiError, istToday, MAX_TODO_TEXT, moneyParts, PENDING_KEYS, pendingCount, pharmacyTodayApi, TODAY_PAGE_MAX, todayLink, todoText,
   type PendingKey, type TodayAnswer, type TodayItem, type Todo,
 } from '@jansetu/api';
-import { formatPaise } from '@jansetu/i18n';
+import { CALENDAR_DATE, formatDateWith, formatPaise } from '@jansetu/i18n';
 import { Alert, Badge, Button, Empty, formatDateTime, Loading, TextField } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { t } from '../../i18n/home/index.ts';
@@ -96,6 +96,7 @@ function pendingLink(day: TodayAnswer, k: PendingKey): string {
     case 'unpaidCounterSales': return ids.length === 1 && /^[0-9a-fA-F]{24}$/.test(ids[0]!) ? `/pharmacy/sale/${ids[0]}` : '/pharmacy/orders';
     case 'bookingsAwaiting': return '/pharmacy/consultations';
     case 'labReportsReady': return '/pharmacy/lab-tests';
+    case 'cardPaymentsWaiting': return '/pharmacy/consultations';
     default: return '/pharmacy/low-stock';
   }
 }
@@ -103,15 +104,20 @@ function pendingLink(day: TodayAnswer, k: PendingKey): string {
 /** What is waiting, each a link to where it is done. */
 export function PendingStrip({ day }: { day: TodayAnswer }) {
   if (!day.pending) return null;
-  const items = PENDING_KEYS.map((k) => ({ k, n: pendingCount(day.pending, k) })).filter((x) => x.n > 0);
+  const items = PENDING_KEYS.map((k) => ({ k, n: pendingCount(day.pending, k) })).filter((x) => x.n === null || x.n > 0);
   return (
     <div className="pending-strip" aria-label={t('pending.title')} role="group">
       {items.length === 0 ? <span className="ws-muted">{t('pending.none')}</span>
-        : items.map((x) => <Link key={x.k} className="pending-item" to={pendingLink(day, x.k)}>{t(`pending.${x.k}`, { count: x.n })}</Link>)}
+        : items.map((x) => (x.n === null
+          // r37b: that queue could not be read: said for that line only.
+          ? <span key={x.k} className="pending-item pending-item--failed">{t(`pending.failed.${x.k}`)}</span>
+          : <Link key={x.k} className="pending-item" to={pendingLink(day, x.k)}>{t(`pending.${x.k}`, { count: x.n })}</Link>))}
     </div>
   );
 }
 
+/** An India date (YYYY-MM-DD) as people read it ("24 Nov 2026"). */
+const formatDay = (d: string) => (/^\d{4}-\d{2}-\d{2}$/.test(d) ? formatDateWith(Date.parse(`${d}T00:00:00Z`), CALENDAR_DATE) : d);
 const METHOD_KEYS = ['cash', 'upi', 'card', 'wallet', 'online', 'other'] as const;
 const methodWords = (m: string | null) => (m && (METHOD_KEYS as readonly string[]).includes(m) ? t(`method.${m as (typeof METHOD_KEYS)[number]}`) : m);
 
@@ -127,7 +133,8 @@ export function Register({ items }: { items: readonly TodayItem[] }) {
           <li key={`${i.kind}:${i.id}`} className="register-row">
             <span className="register-time">{formatDateTime(i.at)}</span>
             <span className="register-item">{to ? <Link to={to}>{words}</Link> : words}</span>
-            <span className="register-amount">{formatPaise(i.amountMinor)}</span>
+            <span className="register-amount">{formatPaise(i.amountMinor)}
+              {i.paidToday && i.madeOn && <span className="register-note">{t('register.paidTodayMade', { date: formatDay(i.madeOn) })}</span>}</span>
             <span>{i.paid ? <Badge tone="ok">{i.method ? t('register.paidBy', { method: methodWords(i.method) ?? '' }) : t('register.paid')}</Badge>
               : <Badge tone="warn">{t('register.unpaid')}</Badge>}</span>
           </li>

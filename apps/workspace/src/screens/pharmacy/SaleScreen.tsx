@@ -3,7 +3,7 @@ import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
-  ApiError, COUNTER_PAYMENTS, formatExpiry, inventoryApi, isRxMedicine, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, medicineName, pharmacyOrdersApi,
+  ApiError, formatExpiry, inventoryApi, isRxMedicine, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, medicineName, pharmacyOrdersApi,
   pharmacySaleApi, saleRequestBody, sellableQty, usableCustomers, walkInProblems,
   type CounterPayment, type InventoryItem, type PharmacyOrder, type SaleBody,
 } from '@jansetu/api';
@@ -19,6 +19,7 @@ import { useOneAtATime } from '../finance/finance.tsx';
 import { canMarkPaid, ORDER_STATUS_LABEL, orderLabel, paymentWaitsForPharmacist } from './orderLabels.ts';
 import { CheckPanel, useKeyedCheck, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
 import { useVisitPreset } from './visitPatient.ts';
+import { PaymentMethodPicker, paymentWords } from './paymentPicker.tsx';
 
 /**
  * WQ50: Pharmacy › New sale, one screen for a counter sale: the customer (one this pharmacy already has, or a walk-in by
@@ -407,7 +408,7 @@ function SaleDone({ orderId }: { orderId: string }) {
 }
 
 const PAYMENT_WORDS: Readonly<Record<string, () => string>> = {
-  cash: () => t('payment.cash'), upi: () => t('payment.upi'), in_store_payment: () => t('bill.atCounter'), cash_on_delivery: () => t('bill.onDelivery'),
+  cash: () => t('payment.cash'), upi: () => t('payment.upi'), card: () => t('payment.card'), in_store_payment: () => t('bill.atCounter'), cash_on_delivery: () => t('bill.onDelivery'),
 };
 
 /**
@@ -485,14 +486,9 @@ function Payment({ order: o }: { order: PharmacyOrder }) {
           {o.prescriptionStatus !== 'rejected' && <Link to={`/pharmacy/prescriptions/${o._id}?from=sale`}>{t('payment.review')}</Link>}</Alert>
       ) : (
         <>
-          <fieldset className="ws-checks">
-            <legend>{t('payment.how')}</legend>
-            {COUNTER_PAYMENTS.map((p) => (
-              <label key={p} className="ws-check"><input type="radio" name="sale-pay" checked={how === p} onChange={() => setHow(p)} /> {t(`payment.${p}`)}</label>
-            ))}
-          </fieldset>
+          <PaymentMethodPicker value={how} onChange={setHow} name="sale-pay" />
           <ConfirmAction label={t('payment.markPaid')} confirmLabel={t('payment.confirm')}
-            consequence={t('payment.consequence', { amount: formatRupees(o.grandTotal), how: t(`payment.${how}`) })} onConfirm={() => markPaid()} />
+            consequence={t('payment.consequence', { amount: formatRupees(o.grandTotal), how: paymentWords(how) })} onConfirm={() => markPaid()} />
         </>
       )}
     </section>

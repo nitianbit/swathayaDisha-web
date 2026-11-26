@@ -234,10 +234,13 @@ test('cash on delivery: the order can go out unpaid, the payment is recorded, th
   await openOrder(page);
   await expect(page.getByRole('button', { name: 'Mark completed' })).toBeDisabled();
   await expect(page.getByText('Record the payment first.')).toBeVisible();
+  // WQ54 (r37 review): how it was paid is chosen and sent exactly (the day's money is split by it).
+  await page.getByRole('group', { name: 'Paid by' }).getByLabel('UPI').check();
   await step(page, 'Record payment', 'Yes, payment received');
   await expect(page.getByRole('button', { name: 'Mark completed' })).toBeEnabled();
   await step(page, 'Mark completed', 'Yes, mark completed');
   expect(backend.calls.map((c) => c.path)).toEqual(['/mark-paid', '/status']);
+  expect(backend.calls[0]!.body).toEqual({ paymentSource: 'upi' });
 });
 
 test('a waiting refund can be retried', async ({ page }) => {

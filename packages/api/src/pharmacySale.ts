@@ -33,8 +33,8 @@ const keyOf = (k: string) => {
   return k;
 };
 /** How the counter was paid (sent as the mark-paid `paymentSource`). */
-export type CounterPayment = 'cash' | 'upi';
-export const COUNTER_PAYMENTS: readonly CounterPayment[] = ['cash', 'upi'];
+export type CounterPayment = 'cash' | 'upi' | 'card';
+export const COUNTER_PAYMENTS: readonly CounterPayment[] = ['cash', 'upi', 'card'];
 
 /** `createPharmacyCustomerSchema`. */
 export const MAX_CUSTOMER_NAME = 200;

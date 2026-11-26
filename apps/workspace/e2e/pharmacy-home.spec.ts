@@ -23,6 +23,8 @@ interface Backend {
   todoKeys: Record<string, string>;
   orders: Json[];
   request: Json | null;
+  /** r37b: more pending queues (null = the server could not read it). */
+  pendingExtra: Json;
   /** Today reads fail as if offline (no answer) while this is set. */
   offline: boolean;
   /** The next to-do add fails as if offline (nothing recorded). */
@@ -31,7 +33,7 @@ interface Backend {
 
 async function mockBackend(page: Page): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
-  const b: Backend = { calls: [], register: [], todos: [], todoKeys: {}, orders: [], offline: false, todoOfflineOnce: false, request: null };
+  const b: Backend = { calls: [], register: [], todos: [], todoKeys: {}, orders: [], offline: false, todoOfflineOnce: false, request: null, pendingExtra: {} };
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const ok = (route: Route, data: unknown, status = 200, extra: Json = {}) => json(route, status, { success: true, data, ...extra });
   const refuse = (route: Route, status: number, code: string) => json(route, status, { error: status, code, message: code });
@@ -63,7 +65,7 @@ async function mockBackend(page: Page): Promise<Backend> {
       return ok(route, { date: url.searchParams.get('date'), items: b.register, nextCursor: null,
         totals: { collectedMinor, byMethod, unpaidMinor: unpaid.reduce((a, r) => a + Number(r.amountMinor), 0), count: b.register.length },
         pending: { prescriptionsToReview: { count: 0, ids: [] }, unpaidCounterSales: { count: sales.length, ids: sales.map((r) => r.id) },
-          bookingsAwaiting: { count: 0, consultationIds: [], labBookingIds: [] }, labReportsReady: { count: 0, ids: [] }, lowStock: { count: 0, ids: [] } } });
+          bookingsAwaiting: { count: 0, consultationIds: [], labBookingIds: [] }, labReportsReady: { count: 0, ids: [] }, lowStock: { count: 0, ids: [] }, ...b.pendingExtra } });
     }
     if (path === '/pharmacy-assisted/todos' && method === 'GET') return ok(route, [...b.todos].reverse(), 200, { pagination: { nextCursor: null } });
     if (path === '/pharmacy-assisted/todos' && method === 'POST') {
@@ -161,7 +163,7 @@ async function exampleOne(page: Page, b: Backend, signedIn = false) {
   const big = bigButtons(page);
   await expect(big.getByRole('link')).toHaveText(['+ New', 'Find patient', 'Sell medicines', 'Today']);
   await expect(page.getByText('Nothing yet today')).toBeVisible();
-  await expect(page.getByLabel('Money of the day')).toHaveText('Collected ₹0.00: cash ₹0.00 · UPI ₹0.00 · wallet ₹0.00 · unpaid ₹0.00');
+  await expect(page.getByLabel('Money of the day')).toHaveText('Collected ₹0.00: cash ₹0.00 · UPI ₹0.00 · wallet ₹0.00 · to collect ₹0.00');
 
   // A to-do: added once, then ticked.
   await page.getByLabel('New to-do').fill('Call supplier for Dolo 650');
@@ -224,7 +226,7 @@ async function exampleOne(page: Page, b: Backend, signedIn = false) {
   // Today shows both, with the money split.
   await page.goto('/#/pharmacy/today');
   await expect(page.getByRole('heading', { name: 'Today', level: 1 })).toBeVisible();
-  await expect(page.getByLabel('Money of the day')).toHaveText('Collected ₹820.00: cash ₹320.00 · UPI ₹0.00 · wallet ₹500.00 · unpaid ₹0.00');
+  await expect(page.getByLabel('Money of the day')).toHaveText('Collected ₹820.00: cash ₹320.00 · UPI ₹0.00 · wallet ₹500.00 · to collect ₹0.00');
   const rows = page.getByRole('list', { name: 'The day’s visits, sales and tests, in the order they were made' }).getByRole('listitem');
   await expect(rows).toHaveCount(2);
   // In the order they were made, as in a register.
@@ -305,8 +307,15 @@ test('what waits: an unpaid counter sale is one tap from its page; each row open
     paid: false, method: 'upi', status: 'credited', link: { kind: 'wallet_transaction', id: 'f1'.padStart(24, '0') } });
   b.register.push({ kind: 'order', id: SALE, at: NOW.toISOString(), shortRef: 'PO-7', patientName: 'Ravi K.', what: 'Dolo 650 +1 more', amountMinor: 12000, paid: false,
     method: null, status: 'placed', link: { kind: 'pharmacy_order', id: SALE } });
+  b.register.push({ kind: 'order', id: '92'.padStart(24, '0'), at: NOW.toISOString(), shortRef: 'PO-6', patientName: 'Meena S.', what: 'ORS', amountMinor: 5000, paid: true,
+    method: 'cash', status: 'completed', paidToday: true, madeOn: '2026-11-24', link: { kind: 'pharmacy_order', id: '92'.padStart(24, '0') } });
+  b.pendingExtra = { labReportsReady: null, cardPaymentsWaiting: { count: 2, ids: [] } };
   await signIn(page);
   await expect(page.getByRole('link', { name: '1 unpaid sale' })).toHaveAttribute('href', `#/pharmacy/sale/${SALE}`);
   await expect(page.getByRole('link', { name: /Ravi K\.\s?: Dolo 650 \+1 more/ })).toHaveAttribute('href', `#/pharmacy/orders/${SALE}`);
   await expect(page.getByRole('link', { name: /Wallet top-up/ })).toHaveAttribute('href', '#/pharmacy/wallet');
+  // r37b: an earlier day's sale paid today says so; a queue the server could not read says so on its own line.
+  await expect(page.getByText('paid today · made 24 Nov 2026')).toBeVisible();
+  await expect(page.getByText('Lab reports ready: couldn’t load')).toBeVisible();
+  await expect(page.getByRole('link', { name: '2 card payments waiting' })).toHaveAttribute('href', '#/pharmacy/consultations');
 });

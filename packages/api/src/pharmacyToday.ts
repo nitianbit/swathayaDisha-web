@@ -24,23 +24,30 @@ export interface TodayItem {
   paid: boolean;
   method: PaymentMethodKey | null;
   status: string;
+  /** r37b: an earlier day's entry paid on this day (`madeOn`: the India date it was made). */
+  paidToday?: boolean;
+  madeOn?: string | null;
   /** The record that shows it. */
   link: { kind: TodayLinkKind | string; id: string } | null;
 }
 export type PaymentMethodKey = 'cash' | 'upi' | 'card' | 'wallet' | 'online' | 'other';
 export const PAYMENT_METHOD_KEYS: readonly PaymentMethodKey[] = ['cash', 'upi', 'card', 'wallet', 'online', 'other'];
-/** The whole day's money (a wallet top-up is listed but not collected). */
+/**
+ * The day's money: r37b, what was RECEIVED that day (by the day it was paid), split by method; `unpaidMinor` is money still to
+ * collect from patients. A wallet top-up is listed but not collected.
+ */
 export interface TodayTotals { collectedMinor: number; byMethod: Partial<Record<PaymentMethodKey, number>>; unpaidMinor: number; count: number }
 interface Counted { count: number }
-/** What waits (the first page only). */
+/** What waits (the first page only). r37b: a queue whose read failed on the server is `null`. */
 export interface TodayPending {
-  prescriptionsToReview?: Counted & { ids?: string[] };
-  unpaidCounterSales?: Counted & { ids?: string[] };
-  bookingsAwaiting?: Counted & { consultationIds?: string[]; labBookingIds?: string[] };
-  labReportsReady?: Counted & { ids?: string[] };
-  lowStock?: Counted & { ids?: string[] };
+  prescriptionsToReview?: (Counted & { ids?: string[] }) | null;
+  unpaidCounterSales?: (Counted & { ids?: string[] }) | null;
+  bookingsAwaiting?: (Counted & { consultationIds?: string[]; labBookingIds?: string[] }) | null;
+  labReportsReady?: (Counted & { ids?: string[] }) | null;
+  lowStock?: (Counted & { ids?: string[] }) | null;
+  cardPaymentsWaiting?: (Counted & { ids?: string[] }) | null;
 }
-export const PENDING_KEYS = ['prescriptionsToReview', 'unpaidCounterSales', 'bookingsAwaiting', 'labReportsReady', 'lowStock'] as const;
+export const PENDING_KEYS = ['prescriptionsToReview', 'unpaidCounterSales', 'cardPaymentsWaiting', 'bookingsAwaiting', 'labReportsReady', 'lowStock'] as const;
 export type PendingKey = (typeof PENDING_KEYS)[number];
 export interface TodayAnswer { date?: string; items: TodayItem[]; totals: TodayTotals; pending?: TodayPending; truncated?: boolean; nextCursor: string | null }
 
@@ -80,8 +87,9 @@ export function todayOf(raw: unknown): TodayAnswer {
   };
 }
 
-/** A waiting kind's count (0 when the server does not say). */
-export const pendingCount = (p: TodayPending | undefined, k: PendingKey) => {
+/** A waiting kind's count (0 when the server does not say); `null` when the server could not read that queue. */
+export const pendingCount = (p: TodayPending | undefined, k: PendingKey): number | null => {
+  if (p && k in p && p[k] === null) return null;
   const n = Number(p?.[k]?.count ?? 0);
   return Number.isInteger(n) && n > 0 ? n : 0;
 };

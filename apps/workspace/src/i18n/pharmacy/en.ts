@@ -760,8 +760,9 @@ export default {
   'order.theOrderMovesToThe': 'The order moves to “{value}”. The customer is notified.',
   'order.recordPayment': 'Record payment',
   'order.yesPaymentReceived': 'Yes, payment received',
-  'order.receivedOnDelivery': 'Record that {amount} was received on delivery.',
-  'order.receivedAtCounter': 'Record that {amount} was received at the counter.',
+  /** WQ54: {how}: Cash, UPI or Card. */
+  'order.receivedOnDeliveryBy': 'Record that {amount} was received on delivery by {how}.',
+  'order.receivedAtCounterBy': 'Record that {amount} was received at the counter by {how}.',
   'order.yesRequestCancellation': 'Yes, request cancellation',
   'order.theOrderIsCancelledNow': 'The order is cancelled now and its stock goes back to inventory. No payment is involved.',
   'order.theOrderHoldsAPayment': 'The order holds a payment, so it waits for a decision (it cannot move meanwhile). Approving it cancels the order, returns its stock and refunds the customer.',

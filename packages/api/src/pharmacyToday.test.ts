@@ -66,5 +66,6 @@ describe('WQ54 pharmacy today and to-dos', () => {
     expect(todayLink({ link: null })).toBeNull();
     expect(pendingCount({ prescriptionsToReview: { count: 3 } }, 'prescriptionsToReview')).toBe(3);
     expect(pendingCount(undefined, 'lowStock')).toBe(0);
+    expect(pendingCount({ labReportsReady: null }, 'labReportsReady')).toBeNull();
   });
 });

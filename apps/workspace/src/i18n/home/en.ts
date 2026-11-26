@@ -12,6 +12,7 @@ export default {
   'big.label': 'What do you want to do?',
 
   /** Money line of a day: {amount}s are formatted. */
+  /** r37b: received that day. */
   'money.collected': 'Collected {amount}',
   'money.cash': 'cash {amount}',
   'money.upi': 'UPI {amount}',
@@ -19,7 +20,8 @@ export default {
   'money.wallet': 'wallet {amount}',
   'money.online': 'online {amount}',
   'money.other': 'other {amount}',
-  'money.unpaid': 'unpaid {amount}',
+  /** r37b: money still to collect from patients. */
+  'money.unpaid': 'to collect {amount}',
   'money.label': 'Money of the day',
 
   'register.title': 'Today’s register',
@@ -34,6 +36,8 @@ export default {
   /** {method}: cash, UPI, wallet… */
   'register.paidBy': 'Paid ({method})',
   'register.unpaid': 'Not paid',
+  /** r37b: an earlier day's entry paid today; {date}: the day it was made. */
+  'register.paidTodayMade': 'paid today · made {date}',
   /** A row without a patient name. */
   'register.noName': 'Customer',
   'register.loading': 'Loading the register…',
@@ -53,6 +57,15 @@ export default {
   'pending.bookingsAwaiting': { one: '{count} booking coming up', other: '{count} bookings coming up' },
   'pending.labReportsReady': { one: '{count} lab report ready', other: '{count} lab reports ready' },
   'pending.lowStock': { one: '{count} medicine low in stock', other: '{count} medicines low in stock' },
+  /** r37b: card payments of bookings not yet confirmed. */
+  'pending.cardPaymentsWaiting': { one: '{count} card payment waiting', other: '{count} card payments waiting' },
+  /** r37b: the server could not read that list just now (only that line). */
+  'pending.failed.prescriptionsToReview': 'Prescriptions to review: couldn’t load',
+  'pending.failed.unpaidCounterSales': 'Unpaid sales: couldn’t load',
+  'pending.failed.cardPaymentsWaiting': 'Card payments waiting: couldn’t load',
+  'pending.failed.bookingsAwaiting': 'Bookings coming up: couldn’t load',
+  'pending.failed.labReportsReady': 'Lab reports ready: couldn’t load',
+  'pending.failed.lowStock': 'Low stock: couldn’t load',
 
   'todos.title': 'My to-dos',
   'todos.add': 'Add',

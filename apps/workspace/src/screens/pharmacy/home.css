@@ -18,6 +18,8 @@
 .register { list-style: none; padding: 0; margin: 0; display: grid; gap: 0; }
 .register-row { display: grid; grid-template-columns: 9rem minmax(0, 1fr) 7rem auto; gap: var(--space-3); align-items: center; min-height: 48px; border-bottom: 1px solid var(--line); padding: var(--space-2) 0; }
 .register-amount { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.register-note { display: block; font-weight: 400; font-size: 0.9375rem; color: var(--muted); }
+.pending-item--failed { background: var(--canvas); color: var(--muted); font-weight: 400; }
 .register-item a { display: inline-flex; align-items: center; min-height: 48px; }
 .todo-add { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
 .todo-add .j-field { flex: 1 1 18rem; }

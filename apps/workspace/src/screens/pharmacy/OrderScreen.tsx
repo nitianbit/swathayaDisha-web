@@ -1,9 +1,10 @@
+import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
   cancelRefusal, DELIVERY_EXCEPTION_FROM, ORDER_TRANSITIONS, pharmacyOrdersApi, refId,
-  type DeliveryExceptionType, type PharmacyOrder,
+  type CounterPayment, type DeliveryExceptionType, type PharmacyOrder,
 } from '@jansetu/api';
 import { Alert, Badge, Empty, ErrorState, formatDateTime, formatRupees, Loading , Parts } from '@jansetu/ui';
 import { CancelRequestPanel } from '../../components/CancelRequestPanel.tsx';
@@ -12,6 +13,7 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 import { CustomerReturnForm } from './CustomerReturnForm.tsx';
+import { PaymentMethodPicker, paymentWords } from './paymentPicker.tsx';
 import {
   blockedReason, canMarkPaid, DELIVERY_EXCEPTION_LABEL, FORWARD_LABEL, ORDER_STATUS_LABEL, orderLabel,
   PAYMENT_STATUS_LABEL, REFUND_STATUS_LABEL, TERMINAL,
@@ -60,6 +62,7 @@ function OrderView({ order }: { order: PharmacyOrder }) {
   const exceptions = (Object.keys(DELIVERY_EXCEPTION_FROM) as DeliveryExceptionType[])
     .filter((ex) => DELIVERY_EXCEPTION_FROM[ex].includes(order.status));
   const markable = canMarkPaid(order);
+  const [how, setHow] = useState<CounterPayment>('cash');
   const unpaid = !order.paymentStatus || order.paymentStatus === 'pending' || order.paymentStatus === 'failed';
   // D3 (`requestCancel`): Placed, Accepted or Packed; unpaid → cancelled at once, money held → waits for a decision.
   // The generic status update refuses to close a paid order (ORDER_PAID_USE_CANCEL_REQUEST), so this is the only way.
@@ -134,10 +137,15 @@ function OrderView({ order }: { order: PharmacyOrder }) {
               );
             })}
             {markable && (
-              <ConfirmAction label={t('order.recordPayment')} confirmLabel={t('order.yesPaymentReceived')}
-                consequence={t(order.paymentMode === 'cash_on_delivery' ? 'order.receivedOnDelivery' : 'order.receivedAtCounter', { amount: formatRupees(order.grandTotal) })}
-                reason={'optional'} reasonLabel={t('common.note')}
-                onConfirm={(note) => act(() => orders.markPaid(order._id, note ? { notes: note } : {}))} />
+              <div className="ws-action">
+                {/* WQ54 (r37 review): how it was paid, sent exactly (cash, UPI or card): the day's money is split by it. */}
+                <PaymentMethodPicker value={how} onChange={setHow} name={`order-pay-${order._id}`} />
+                <ConfirmAction label={t('order.recordPayment')} confirmLabel={t('order.yesPaymentReceived')}
+                  consequence={t(order.paymentMode === 'cash_on_delivery' ? 'order.receivedOnDeliveryBy' : 'order.receivedAtCounterBy',
+                    { amount: formatRupees(order.grandTotal), how: paymentWords(how) })}
+                  reason={'optional'} reasonLabel={t('common.note')}
+                  onConfirm={(note) => act(() => orders.markPaid(order._id, { paymentSource: how, ...(note ? { notes: note } : {}) }))} />
+              </div>
             )}
             {canRequestCancel && (
               <ConfirmAction label={t('common.cancelOrder')} confirmLabel={unpaid ? t('common.yesCancelIt') : t('order.yesRequestCancellation')} danger reason
