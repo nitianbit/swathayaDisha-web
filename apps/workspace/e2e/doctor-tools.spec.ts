@@ -493,17 +493,15 @@ test('a doctor signs in: doctor pages only, a status card on Home, and no partne
   expect(backend.calls.find((c) => c.path === '/auth/specialist/verify')?.body).toMatchObject({ phone: '9000000020', otp: '123456', session: 'cookie' });
   await expect(page.getByRole('heading', { name: 'Welcome, Dr Meera Rao', level: 1 })).toBeVisible();
   await expect(page.getByText('Doctor · Cardiology')).toBeVisible();
-  for (const label of ['Home', 'Consult now', 'Appointments', 'Schedule', 'Clinics', 'Bills', 'Services and prices', 'Earnings', 'Wallet', 'Book lab test', 'Lab tests booked']) {
+  for (const label of ['Home', 'Consult now', 'Appointments', 'Schedule', 'Clinics', 'Today', 'Bills', 'Services and prices', 'Earnings', 'Wallet', 'Book lab test', 'Lab tests booked']) {
     await expect(nav(page).getByRole('link', { name: label, exact: true })).toBeVisible();
   }
-  await expect(nav(page).getByRole('link')).toHaveCount(11); // WQ51: + Bills, Services and prices
+  await expect(nav(page).getByRole('link')).toHaveCount(12); // WQ51: + Bills, Services and prices; WQ56: + Today
   const status = page.getByRole('region', { name: 'Your status' });
   await expect(status).toContainText('Verified');
   await expect(status).toContainText('Off'); // read from the server (Q13 GET /me/presence)
   await expect(status.getByRole('link', { name: '1 open offer' })).toBeVisible();
-  const next = page.getByRole('list', { name: 'Next appointments' });
-  await expect(next.getByRole('listitem')).toHaveCount(3); // 09:50 instant (within 30 min), 11:30 today, 19 Nov waiting
-  await expect(next.getByRole('listitem').first()).toContainText('09:50');
+  // WQ56: the next appointments are today's appointments on the dashboard now (doctor-dashboard.spec.ts).
   for (const path of ['/pharmacy/orders', '/partner', '/partner/staff', '/admin/partners', '/admin/lab-bookings']) {
     await page.goto(`/#${path}`);
     await expect(page.getByText('Page not found')).toBeVisible();

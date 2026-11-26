@@ -474,7 +474,7 @@ export default {
   'dash.earnedToday': 'Earned today {amount}',
   'dash.loading': 'Loading your day…',
   'dash.appointments': 'Today’s appointments',
-  'dash.chip.label': 'Show',
+  'dash.chip.label': 'Which appointments',
   'dash.chip.all': 'All',
   'dash.chip.online': 'Online',
   'dash.chip.partners': 'Booked by partners',
@@ -516,10 +516,10 @@ export default {
   'visit.clinic.none': 'You consult at no verified clinic yet.',
   'visit.clinic.toClinics': 'Open Clinics',
   /** {time}, {day}, {clinic}. */
-  'visit.clinic.book': 'Book {time}, {day} at {clinic}',
+  'visit.clinic.book': 'Book {time} on {day} at {clinic}',
   'visit.clinic.paidAtClinic': 'The patient pays at the clinic.',
   /** {who}: the patient; {clinic}; {time}; {day}. */
-  'visit.clinic.booked': 'Booked: {who} at {clinic}, {day}, {time}',
+  'visit.clinic.booked': 'Booked: {who} at {clinic} on {day} at {time}',
   'visit.clinic.inList': 'It is in {clinic}’s reception list. The patient pays at the clinic.',
   'visit.clinic.inOwnList': 'It is in your clinic’s list. Make the bill when the patient pays.',
   'visit.clinic.bill': 'Make the bill',
@@ -527,9 +527,9 @@ export default {
   'visit.online.how': 'Video or phone call?',
   'visit.online.paysInApp': 'The patient pays in the Jansetu app within 30 minutes.',
   /** {mode}: video or phone call; {time}; {day}. */
-  'visit.online.book': 'Book {mode}, {day}, {time}',
-  /** {who}; {mode}; {when}: date and time. */
-  'visit.online.booked': 'Booked: {who}, {mode}, {when}',
+  'visit.online.book': 'Book {mode} at {time} on {day}',
+  /** {who}; {mode}; {day}; {time}. */
+  'visit.online.booked': 'Booked: {who}, {mode}, on {day} at {time}',
   /** {time}: date and time the payment must be made by. */
   'visit.online.payBy': 'The patient pays in the Jansetu app by {time}. If not paid by then, the booking ends and the time is free again.',
   'visit.online.payInApp': 'The patient pays in the Jansetu app within 30 minutes. If not paid by then, the booking ends and the time is free again.',
@@ -539,12 +539,12 @@ export default {
   /** {days}: how many days back. */
   'visit.followUp.noneEarlier': 'No completed consultation with this number in the last {days} days.',
   'visit.followUp.notFound': 'Consultation not found',
-  /** {when}: date and time; {mode}: how it was held. */
-  'visit.followUp.of': 'Follow-up of the consultation on {when} ({mode})',
+  /** {day}, {time}; {mode}: how it was held. */
+  'visit.followUp.of': 'Follow-up of the consultation on {day} at {time} ({mode})',
   'visit.followUp.free': 'A follow-up is free and is confirmed at once.',
   'visit.followUp.how': 'How?',
-  'visit.followUp.book': 'Book the follow-up, {day}, {time}',
-  'visit.followUp.booked': 'Follow-up booked: {when}',
+  'visit.followUp.book': 'Book the follow-up at {time} on {day}',
+  'visit.followUp.booked': 'Follow-up booked on {day} at {time}',
   /** Refusals he can act on (by the server's code). */
   'visit.refusal.SLOT_NOT_AVAILABLE': 'This time is no longer free. Choose another time.',
   'visit.refusal.CLINIC_NOT_FOUND': 'You no longer consult at this clinic.',
@@ -561,7 +561,7 @@ export default {
   'earn.toHint': 'Empty: today',
   'earn.loading': 'Loading your earnings by source…',
   'earn.notYet': 'This server does not split earnings by source yet.',
-  'earn.show': 'Show',
+  'earn.show': 'Which earnings',
   'earn.online': 'Online',
   'earn.partner': 'Booked by partners',
   'earn.referral': 'Referral cuts',

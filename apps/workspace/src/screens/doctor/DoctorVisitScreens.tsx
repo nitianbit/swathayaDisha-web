@@ -76,7 +76,6 @@ function VisitPage({ title, children }: { title: string; children: ReactNode }) 
   return (
     <div className="simple">
       <PageHeading title={title} />
-      <div className="simple-top"><HomeButton /></div>
       {children}
     </div>
   );
@@ -287,11 +286,11 @@ function OnlineVisit({ d, visit }: { d: DoctorContext; visit: VisitPatient }) {
 function ConsultationDone({ visit, answer }: { visit: VisitPatient | null; answer: DoctorConsultationAnswer }) {
   const b = answer.booking;
   const at = appointmentStart({ bookingDate: b.bookingDate, bookingTime: b.bookingTime });
-  const when = `${formatYmd(b.bookingDate)}, ${at ? formatClock(at.getTime()) : b.bookingTime}`;
+  const when = { day: formatYmd(b.bookingDate), time: at ? formatClock(at.getTime()) : b.bookingTime };
   const mode = b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode as keyof typeof CONSULT_MODE_LABEL] ?? b.consultationMode : '';
   const payBy = answer.payment.payBy && !Number.isNaN(Date.parse(answer.payment.payBy)) ? answer.payment.payBy : null;
   return (
-    <Booked title={b.followUpOf ? t('visit.followUp.booked', { when }) : t('visit.online.booked', { who: visit ? visitWho(visit) : '', mode, when })}>
+    <Booked title={b.followUpOf ? t('visit.followUp.booked', when) : t('visit.online.booked', { who: visit ? visitWho(visit) : '', mode, ...when })}>
       {answer.payment.required
         ? <p>{payBy ? t('visit.online.payBy', { time: formatDateTime(payBy) }) : t('visit.online.payInApp')}</p>
         : <p>{t('visit.online.nothingToPay')}</p>}
@@ -377,7 +376,7 @@ function FollowUp({ d, parentId, visit }: { d: DoctorContext; parentId: string; 
   return (
     <>
       {visit && <VisitPatientLine patient={visit} canChange={!once.locked} />}
-      <p>{t('visit.followUp.of', { when: `${formatYmd(p.bookingDate)}, ${at ? formatClock(at.getTime()) : p.bookingTime}`,
+      <p>{t('visit.followUp.of', { day: formatYmd(p.bookingDate), time: at ? formatClock(at.getTime()) : p.bookingTime,
         mode: p.consultationMode ? CONSULT_MODE_LABEL[p.consultationMode] : t('visit.consultation') })}</p>
       <p className="ws-muted">{t('visit.followUp.free')}</p>
       <section className="ws-section" aria-labelledby="vf-h">

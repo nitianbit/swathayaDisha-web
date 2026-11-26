@@ -142,7 +142,7 @@ function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
         <h2 id="day-h">{t('dash.today')}</h2>
         {reg.data && <p className="earned-line">{t('dash.earnedToday', { amount: formatPaise(reg.data.totals.earnedMinor ?? 0) })}</p>}
         {/* His own clinic's bills of the day: collected and still to collect (only when he owns one). */}
-        {reg.data && owned && <MoneyLine day={reg.data} date={day} />}
+        {reg.data && owned && (reg.data.items.some((i) => i.kind === 'bill') || reg.data.totals.collectedMinor > 0 || reg.data.totals.unpaidMinor > 0) && <MoneyLine day={reg.data} date={day} />}
         {!reg.data ? (reg.isError ? <Failed error={reg.error} onRetry={() => void reg.refetch()} /> : <Loading label={t('dash.loading')} />)
           : <PendingStrip day={reg.data} desk={desk} />}
       </section>
