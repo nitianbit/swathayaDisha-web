@@ -71,6 +71,8 @@ export default {
   'billing.refusal.LAB_BOOKING_NOT_FOUND': 'This lab booking was not found (or is not at one of your branches, or was not booked at the front desk).',
   'billing.refusal.LAB_BOOKING_CUSTOMER_MISMATCH': 'A bill for a lab booking is made out to its account holder: enter the mobile number it was booked with.',
   'billing.refusal.APPOINTMENT_ALREADY_BILLED': 'This appointment already has a bill. Open it from the front desk; cancel it first to issue a new one.',
+  /** WQ56b: a doctor billing his own clinic from his dashboard. */
+  'billing.refusal.APPOINTMENT_ALREADY_BILLED_DOCTOR': 'This appointment already has a bill. Open it from Bills or from its row on your home; cancel it first to issue a new one.',
   'billing.refusal.APPOINTMENT_BRANCH_MISMATCH': 'A bill for an appointment is issued by the branch where the appointment takes place.',
   'billing.refusal.APPOINTMENT_DOCTOR_MISMATCH': 'The bill names a different doctor than the appointment.',
   'billing.refusal.APPOINTMENT_CANCELLED': 'This appointment was cancelled, so it cannot be billed.',
@@ -729,6 +731,7 @@ export default {
   'newInvoice.error.branch': 'Choose the branch issuing the bill.',
   'newInvoice.error.name': 'Enter the customer’s name.',
   'newInvoice.error.phone': 'Enter a 10-digit mobile number.',
+  'newInvoice.error.bookedMobile': 'Enter the mobile number it was booked with.',
   'newInvoice.error.age': 'Enter the age in whole years (0 to 150).',
   'newInvoice.error.placeOfSupply': 'Enter the two-digit GST state code, like 29.',
   'newInvoice.error.noLines': 'Add at least one item.',
@@ -797,6 +800,8 @@ export default {
   'newInvoice.issueFor': 'Issue bill for {total}',
   'newInvoice.mobile': 'Mobile number',
   'newInvoice.mobileOptional': 'Mobile number (optional)',
+  /** WQ56b: a bill for a booking whose account holder's mobile is not known here. */
+  'newInvoice.bookedMobile': 'The mobile it was booked with',
   'newInvoice.age': 'Age (optional)',
   'newInvoice.gender': 'Gender (optional)',
   'newInvoice.gender.none': 'Not given',

@@ -469,7 +469,6 @@ export default {
   'clinicPage.noClinic.body': 'Bills and prices belong to your clinic.',
   'clinicPage.noClinic.create': 'Create your clinic',
   /** WQ56 (P2): the doctor's dashboard. Names, clinic names and times are values. */
-  'dash.today': 'Today',
   /** {amount}: formatted money. What his Jansetu earnings grew by today. */
   'dash.earnedToday': 'Earned today {amount}',
   'dash.loading': 'Loading your day…',
@@ -483,24 +482,28 @@ export default {
   'dash.noneHere': 'None of today’s appointments are here.',
   'dash.noName': 'Patient',
   /** Where an appointment came from. {clinic}: a clinic's name; {name}: the pharmacy or lab that booked it. */
-  'dash.source.clinicDesk': '{clinic} desk',
+  'dash.source.at': 'At {clinic}',
+  'dash.source.youAt': 'Booked by you · at {clinic}',
   'dash.source.bookedBy': 'Booked by {name}',
   'dash.source.pharmacy': 'Booked by a pharmacy',
   'dash.source.lab': 'Booked by a lab',
   'dash.source.you': 'Booked by you',
   'dash.source.instant': 'Consult now',
   'dash.source.app': 'Booked in the app',
-  'dash.source.appAt': 'Booked in the app · {clinic}',
+  'dash.source.appAt': 'Booked in the app · at {clinic}',
   /** An online consultation he booked: the patient has not paid in the app yet. */
   'dash.payInApp': 'Waiting for the patient to pay in the app',
   'dash.bill': 'Bill',
+  /** A bill already made for that appointment (opens it). */
+  'dash.billed': 'Billed',
+  'dash.billPaid': 'Paid',
+  /** No appointment today: the next one. {when}: its day and time; {mode}: how. */
+  'dash.next': 'Next: {when} ({mode})',
   'dash.truncated': 'Not every appointment could be shown. Open Appointments for the full list.',
 
   /** WQ56: + New's visits for a doctor. */
   'visit.noPatient': 'Choose the patient first',
   'visit.startNew': 'Go to + New',
-  'visit.noName': 'Patient',
-  'visit.consultation': 'Consultation',
   'visit.when': 'When?',
   'visit.day': 'Day',
   'visit.times': 'Free times',
@@ -508,10 +511,12 @@ export default {
   /** {day}: a date. */
   'visit.noTimes': 'You have no free time here on {day}. Choose another day.',
   'visit.sendAgain': 'Send again',
+  /** An answer was lost: {reason} says why. */
+  'visit.uncertain': 'It is not known yet whether this was booked ({reason}). Check your appointments before booking anything else, or send the same booking again: it is never booked twice.',
+  'visit.checkAppointments': 'Check your appointments',
   'visit.another': 'Another patient',
   'visit.clinic.title': 'Clinic appointment',
   'visit.clinic.which': 'Which clinic?',
-  'visit.clinic.unnamed': 'Clinic',
   'visit.clinic.at': 'At {clinic}',
   'visit.clinic.none': 'You consult at no verified clinic yet.',
   'visit.clinic.toClinics': 'Open Clinics',
@@ -526,6 +531,9 @@ export default {
   'visit.online.title': 'Online consultation',
   'visit.online.how': 'Video or phone call?',
   'visit.online.paysInApp': 'The patient pays in the Jansetu app within 30 minutes.',
+  /** {fee}: formatted money. */
+  'visit.online.fee': 'Fee {fee}',
+  'visit.online.signInHint': 'The patient signs in to the Jansetu app with this number to pay.',
   /** {mode}: video or phone call; {time}; {day}. */
   'visit.online.book': 'Book {mode} at {time} on {day}',
   /** {who}; {mode}; {day}; {time}. */
@@ -541,7 +549,9 @@ export default {
   'visit.followUp.notFound': 'Consultation not found',
   /** {day}, {time}; {mode}: how it was held. */
   'visit.followUp.of': 'Follow-up of the consultation on {day} at {time} ({mode})',
-  'visit.followUp.free': 'A follow-up is free and is confirmed at once.',
+  /** {day}: the last day it can be on. */
+  'visit.followUp.free': 'A follow-up is free and is confirmed at once. It can be on any day until {day}.',
+  'visit.followUp.notOpen': 'This consultation has no free follow-up now: it must be completed and paid, not a follow-up itself, and its follow-up not used or ended.',
   'visit.followUp.how': 'How?',
   'visit.followUp.book': 'Book the follow-up at {time} on {day}',
   'visit.followUp.booked': 'Follow-up booked on {day} at {time}',
@@ -550,7 +560,19 @@ export default {
   'visit.refusal.CLINIC_NOT_FOUND': 'You no longer consult at this clinic.',
   'visit.refusal.PARTNER_NOT_VERIFIED': 'Jansetu has not verified this clinic yet.',
   'visit.refusal.USE_CLINIC_APPOINTMENT': 'An in-person visit is booked as a clinic appointment.',
-  'visit.refusal.IDEMPOTENCY_KEY_REUSED': 'This booking was changed while it was being sent. Tap the button again.',
+  'visit.refusal.IDEMPOTENCY_KEY_REUSED': 'This booking could not be sent as it was. Choose the time again and book.',
+  'visit.refusal.BRANCH_NOT_FOUND': 'This time is not at that clinic. Choose another time.',
+  'visit.refusal.BOOKING_NOT_FOUND': 'That consultation was not found.',
+  'visit.refusal.PARENT_CONSULTATION_NOT_FOUND': 'That consultation was not found.',
+  'visit.refusal.DEPENDENT_NOT_FOUND': 'That family member was not found for this number. Go back and choose the patient again.',
+  'visit.refusal.ASSISTED_LIMIT_REACHED': 'You have looked up many numbers in the last hour. Try again later.',
+  'visit.refusal.SPECIALIST_NOT_VERIFIED': 'Jansetu has not verified your account yet, so you cannot book for patients.',
+  'visit.refusal.PARENT_CONSULTATION_NOT_PAID': 'Only a paid consultation has a free follow-up.',
+  'visit.refusal.PARENT_CONSULTATION_NOT_COMPLETED': 'Mark the consultation completed before booking its follow-up.',
+  'visit.refusal.FOLLOW_UP_CHAIN_NOT_ALLOWED': 'A follow-up cannot have a follow-up of its own.',
+  'visit.refusal.FOLLOW_UP_EXPIRED': 'The free follow-up of this consultation has ended. Choose an earlier day, or book a new consultation.',
+  'visit.refusal.FOLLOW_UP_ALREADY_USED': 'The free follow-up of this consultation was already booked.',
+  'visit.refusal.FOLLOW_UP_NOT_ENABLED': 'This consultation has no free follow-up.',
   /** WQ56 (r39): his earnings by where they came from. {amount}: formatted money. */
   'earn.title': 'Where your earnings came from',
   'earn.intro': 'Online, at each clinic, from bookings made by pharmacies and labs, and referral cuts. Clinic desk appointments are paid at the clinic and are not here.',
@@ -560,7 +582,7 @@ export default {
   'earn.fromHint': 'Empty: the 1st of this month',
   'earn.toHint': 'Empty: today',
   'earn.loading': 'Loading your earnings by source…',
-  'earn.notYet': 'This server does not split earnings by source yet.',
+  'earn.notYet': 'Earnings by source are not shown yet.',
   'earn.show': 'Which earnings',
   'earn.online': 'Online',
   'earn.partner': 'Booked by partners',

@@ -334,6 +334,8 @@ export interface DoctorAppointment {
   updatedAt?: string;
   /** The slot it holds (Q16d: a session with several seats has its no-show only after the session ends). */
   slotId?: string;
+  /** WQ56b: the follow-up rule's fields (`isFollowUp`: this is one; `benefitUsed`; `eligibilityExpiresAt` YYYYMMDD). */
+  followUp?: { isFollowUp?: boolean; benefitUsed?: boolean; eligibilityExpiresAt?: string | null; parentConsultationId?: string | null };
 }
 
 export type AppointmentAction = 'confirm' | 'complete' | 'cancel' | 'no_show';

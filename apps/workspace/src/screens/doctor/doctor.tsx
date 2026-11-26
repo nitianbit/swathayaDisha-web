@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import {
-  addDays, appointmentStart, CONSULT_MODE_LABEL, doctorToolsApi, fromYmd, istDateOf, meetingLinkState, type ConsultMode, type DoctorAppointment, type DoctorToolsApi,
+  addDays, appointmentStart, CONSULT_MODE_LABEL, doctorDashboardApi, doctorToolsApi, ownedClinic, fromYmd, istDateOf, meetingLinkState, type ConsultMode, type DoctorAppointment, type DoctorToolsApi,
 } from '@jansetu/api';
 import { formatClock } from '@jansetu/i18n';
 import { Button, Empty, formatRupees, shared } from '@jansetu/ui';
@@ -36,6 +36,17 @@ export function NotADoctor() {
 
 export const useDoctorProfile = (d: DoctorContext) => useQuery({ queryKey: [...d.key, 'profile'], queryFn: () => d.api.profile() });
 export const useClinics = (d: DoctorContext) => useQuery({ queryKey: [...d.key, 'clinics'], queryFn: () => d.api.clinics() });
+
+/**
+ * WQ56b: the clinic he bills from his dashboard — the one `GET /me/clinic` answers (r39: his own clinic; r39c: the
+ * clinic he owns), when his clinics say he owns it and it is verified. `pending` while either read is on its way.
+ */
+export function useOwnedClinic(doctorId: string, enabled = true) {
+  const { api } = useSession();
+  const clinics = useQuery({ queryKey: ['doctor', doctorId, 'clinics'], queryFn: () => doctorToolsApi(api).clinics(), enabled });
+  const billed = useQuery({ queryKey: ['doctor', doctorId, 'billed-clinic'], queryFn: () => doctorDashboardApi(api).billedClinic(), enabled });
+  return { owned: ownedClinic(clinics.data, billed.data), pending: enabled && (clinics.isPending || billed.isPending), clinics };
+}
 export const offersKey = (d: DoctorContext) => [...d.key, 'offers'];
 export const appointmentsKey = (d: DoctorContext) => [...d.key, 'appointments'];
 

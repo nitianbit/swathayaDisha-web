@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import type { AssistedGender, AssistedRelation, DoctorPatientRequest, PatientLookup } from '@jansetu/api';
+import type { AssistedGender, AssistedRelation, PatientLookup } from '@jansetu/api';
 import { useSession, useStaff } from '../../session.tsx';
 
 /**
@@ -70,19 +70,6 @@ export function useVisitStore() {
 /** WQ55: where this person's + New is (a flow's [Change] goes back there); WQ56 a doctor's. */
 export const newVisitPath = (role: string) => (role === 'partner' ? '/partner/new' : role === 'specialist' ? '/doctor/new' : '/pharmacy/new');
 
-/**
- * WQ56: the visit's patient in the clinic desk's request shape (r39 takes it for a doctor's clinic appointment and his
- * online consultation): the number's owner (with the name typed on + New), or a new or existing family member of theirs
- * (the server reuses an active one with the same name and relation).
- */
-export function visitDeskRequest(v: VisitPatient): DoctorPatientRequest {
-  if (!v.family) return { customer: { phone: v.phone, ...(v.name ? { name: v.name } : {}) } };
-  const f = v.family;
-  return {
-    customer: { phone: v.phone, ...(f.holderName ? { name: f.holderName } : {}) },
-    patient: { name: v.name, relation: f.relation, ...(f.gender ? { gender: f.gender } : {}), ...(f.dateOfBirth ? { dateOfBirth: f.dateOfBirth } : {}) },
-  };
-}
 
 /**
  * The patient handed to this flow (read once, on the first render), else null. Then the handover is cleared and `?visit=1`

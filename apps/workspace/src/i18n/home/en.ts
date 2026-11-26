@@ -116,10 +116,8 @@ export default {
   /** WQ56 (r39): a doctor's waiting work. */
   'pending.prescriptionsToWrite': { one: '{count} prescription to write', other: '{count} prescriptions to write' },
   'pending.appointmentsToConfirm': { one: '{count} appointment waiting', other: '{count} appointments waiting' },
-  'pending.reportsReady': { one: '{count} lab report ready', other: '{count} lab reports ready' },
   'pending.failed.prescriptionsToWrite': 'Prescriptions to write: couldn’t load',
   'pending.failed.appointmentsToConfirm': 'Appointments waiting: couldn’t load',
-  'pending.failed.reportsReady': 'Lab reports ready: couldn’t load',
 
   /** WQ57: a clinic reception's doctors today. */
   'doctors.title': 'Doctors today',

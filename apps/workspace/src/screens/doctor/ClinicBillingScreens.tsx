@@ -1,12 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, doctorStanding, ownedClinic, VERIFICATION_LABEL } from '@jansetu/api';
+import { CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, doctorStanding, VERIFICATION_LABEL } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession } from '../../session.tsx';
 import { practiceKey } from './ClinicsScreen.tsx';
-import { NotADoctor, useClinics, useDoctor, useDoctorProfile, type DoctorContext } from './doctor.tsx';
+import { NotADoctor, useDoctor, useDoctorProfile, useOwnedClinic, type DoctorContext } from './doctor.tsx';
 import { CatalogueScreen } from '../partner/CatalogueScreen.tsx';
 import { InvoicesScreen } from '../partner/InvoicesScreen.tsx';
 import { t } from '../../i18n/doctor/index.ts';
@@ -46,8 +46,10 @@ function ClinicPageFor({ d, page }: { d: DoctorContext; page: Page }) {
   const profile = useDoctorProfile(d);
   const active = profile.data ? doctorStanding(profile.data) === 'active' : null;
   const state = q.data?.partner.verification?.state ?? 'pending';
-  const clinics = useClinics(d);
-  if (active && ownedClinic(clinics.data)) return page === 'bills' ? <InvoicesScreen /> : <CatalogueScreen />;
+  // WQ56b: nothing is offered until it is known whether he bills here (never the sign-out first, then the bills).
+  const own = useOwnedClinic(d.user.id, active === true);
+  if (profile.isPending || (active && own.pending)) return <Loading label={t('clinics.loadingYourClinic')} />;
+  if (active && own.owned) return page === 'bills' ? <InvoicesScreen /> : <CatalogueScreen />;
   return (
     <>
       <PageHeading title={t(`clinicPage.${page}.title`)} />

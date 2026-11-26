@@ -74,6 +74,8 @@ export function buildInvoice(d: InvoiceDraft, partner: Pick<Partner, 'taxRegime'
   else if (name.length > MAX_NAME) errors.name = tooLongWords(MAX_NAME);
   const phone = d.phone.replace(/[\s-]/g, '');
   if (phone && !INVOICE_PHONE_PATTERN.test(phone)) errors.phone = t('newInvoice.error.phone');
+  // WQ56b: a bill for a booking is its account holder's: without the booked mobile it is refused, so it is asked here.
+  else if (!phone && d.link && !d.link.phoneFixed) errors.phone = t('newInvoice.error.bookedMobile');
   const age = d.age.trim();
   if (age && (!/^\d{1,3}$/.test(age) || Number(age) > 150)) errors.age = t('newInvoice.error.age');
   const gstin = d.gstin.trim().toUpperCase();
@@ -253,7 +255,7 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
       const next = linkingOff ? null : afterFailure(attempt, err, messageOf(err));
       if (mounted.current) {
         setPending(next ?? undefined);
-        if (!next) setRefused((err instanceof ApiError && billLinkRefusal(err.code)) || messageOf(err));
+        if (!next) setRefused((err instanceof ApiError && billLinkRefusal(err.code, ctx)) || messageOf(err));
       } else if (next) memory.set(slot, next); else memory.delete(slot);
     } finally {
       if (mounted.current) setBusy(false);
@@ -493,7 +495,8 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
           <TextField label={simple ? t('newInvoice.nameOnBill') : t('newInvoice.name')} hint={nameAsked ? t('newInvoice.nameOnBillHint') : undefined}
             value={d.name} maxLength={MAX_NAME} error={errors.name} readOnly={!!d.link?.nameFixed}
             onChange={(e) => set({ name: e.target.value })} />
-          <TextField label={d.link?.kind === 'lab_booking' ? t('newInvoice.mobile') : t('newInvoice.mobileOptional')} inputMode="tel" value={d.phone} error={errors.phone} readOnly={d.link?.kind === 'appointment' || !!d.link?.phoneFixed}
+          <TextField label={d.link && !d.link.phoneFixed ? t('newInvoice.bookedMobile') : d.link?.kind === 'lab_booking' ? t('newInvoice.mobile') : t('newInvoice.mobileOptional')}
+            inputMode="tel" value={d.phone} error={errors.phone} readOnly={!!d.link?.phoneFixed}
             onChange={(e) => set({ phone: e.target.value })} />
           {!simple && (
             <>

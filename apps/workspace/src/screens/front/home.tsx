@@ -160,9 +160,11 @@ function pendingLines(day: TodayAnswer, desk: FrontDesk): PendingLine[] {
     if (k !== 'bookingsAwaiting') {
       const q = p?.[k] as { ids?: string[]; visitIds?: string[]; homeIds?: string[] } | null | undefined;
       const ids = k === 'samplesToCollect' ? [...(q?.visitIds ?? []), ...(q?.homeIds ?? [])] : q?.ids;
-      if (n === null) lines.push({ id: k, text: t(`pending.failed.${k}`), to: null, failed: true });
+      // WQ56b: a doctor's lab reports ready are said as the pharmacy's are (one sentence).
+      const w = k === 'reportsReady' ? 'labReportsReady' : k;
+      if (n === null) lines.push({ id: k, text: t(`pending.failed.${w}`), to: null, failed: true });
       // WQ55b: a lab's bookings waiting for payment are doctor bookings.
-      else if (n > 0) lines.push({ id: k, text: k === 'bookingsAwaitingPayment' ? t('pending.doctorPayments', { count: n }) : t(`pending.${k}`, { count: n }), to: desk.pendingTo(k, ids, n) });
+      else if (n > 0) lines.push({ id: k, text: k === 'bookingsAwaitingPayment' ? t('pending.doctorPayments', { count: n }) : t(`pending.${k === 'reportsReady' ? 'labReportsReady' : k}`, { count: n }), to: desk.pendingTo(k, ids, n) });
       continue;
     }
     const b = bookingsWaiting(p);

@@ -607,6 +607,9 @@ function requestOf(patient: Patient, slotId: string): Omit<DeskPendingBody['requ
 }
 
 /** WQ57: + New's patient as the desk's details: the account holder's name (the owner's, for a family member) and who is seen. */
+/** WQ56b: + New's patient as a desk booking's request (a doctor's own clinic appointment and online consultation too). */
+export const visitRequest = (v: VisitPatient, slotId: string) => requestOf(patientOf(v), slotId);
+
 const patientOf = (v: VisitPatient): Patient => ({
   ...NO_PATIENT, phone: v.phone, name: v.family ? v.family.holderName : v.name,
   ...(v.family ? { forFamily: true, familyName: v.name, relation: v.family.relation, gender: v.family.gender, dateOfBirth: v.family.dateOfBirth } : {}),

@@ -1,9 +1,9 @@
 import type { ApiClient } from './client.ts';
 import type { DeskBookingResult, DeskPatientInput } from './clinic.ts';
 import { appointmentInstant } from './cancellationWindow.ts';
-import { movableSlot, type DoctorAppointment, type DoctorSlot, type MyClinics } from './doctorTools.ts';
+import { movableSlot, type DoctorAppointment, type DoctorSlot, type MyClinics, type SoloPractice } from './doctorTools.ts';
 import type { FinanceSummary } from './finance.ts';
-import { isRealDate } from './partnerLabs.ts';
+import { addDays, isRealDate } from './partnerLabs.ts';
 import type { PatientLookup } from './assisted.ts';
 import { OBJECT_ID_PATTERN, REQUEST_KEY_PATTERN } from './partners.ts';
 
@@ -28,6 +28,10 @@ export interface ListedAppointment extends DoctorAppointment {
   channel: 'clinic' | 'online';
   /** r10b view: the partner that booked it (its name), when a partner did. */
   paidBy?: string | null;
+  /** r39c: the account holder (the mobile it was booked with) on rows of the clinic he owns. */
+  customer?: { phone?: string | null; name?: string | null } | null;
+  /** r39c: he booked it himself (a clinic appointment or an online consultation). */
+  bookedByMe?: boolean;
 }
 export interface AppointmentListQuery {
   from?: string; to?: string; source?: AppointmentSource; clinicId?: string; channel?: 'clinic' | 'online';
@@ -76,6 +80,8 @@ export function doctorDashboardApi(c: ApiClient) {
       const answer = await c.getWith<ListedAppointment[], { meta: { truncated?: boolean } }>(`${ME}/appointments/list`, { query: { ...q } });
       return { items: Array.isArray(answer.data) ? answer.data : [], truncated: answer.meta.meta?.truncated === true };
     },
+    /** The clinic he bills (r39 his own clinic, r39c the clinic he owns) with its branches, or null. */
+    billedClinic: () => c.get<SoloPractice | null>(`${ME}/clinic`),
     /** The counted lookup: whether the number is on Jansetu, and its owner's masked name. */
     lookup: (phone: string) => c.post<PatientLookup>(`${ME}/patients/lookup`, { body: { phone } }),
     /** An appointment at a clinic he consults at (his own included): that clinic's desk booking, paid at the clinic. */
@@ -100,12 +106,35 @@ export function doctorDashboardApi(c: ApiClient) {
 }
 export type DoctorDashboardApi = ReturnType<typeof doctorDashboardApi>;
 
+/** The free follow-up's window, in days (the server's follow-up rule). */
+export const FOLLOW_UP_DAYS = 14;
+
+/**
+ * A consultation whose free follow-up can still be offered (the server's rule decides): completed, paid, not itself a
+ * follow-up, its benefit not used, and its window open on `today` (`eligibilityExpiresAt`, else its day + 14).
+ */
+export function followUpOpen(b: Pick<DoctorAppointment, 'status' | 'paymentStatus' | 'followUp' | 'bookingDate' | 'bookingKind'>, today: string): boolean {
+  if (b.status !== 'completed' || b.paymentStatus !== 'paid' || b.followUp?.isFollowUp || b.followUp?.benefitUsed) return false;
+  return followUpLastDay(b) >= today;
+}
+/** The last day (YYYY-MM-DD) a follow-up of this consultation can be on. */
+export function followUpLastDay(b: Pick<DoctorAppointment, 'followUp' | 'bookingDate'>): string {
+  const ymd = /^\d{8}$/.test(b.followUp?.eligibilityExpiresAt ?? '') ? b.followUp!.eligibilityExpiresAt! : null;
+  if (ymd) return `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`;
+  const day = `${b.bookingDate.slice(0, 4)}-${b.bookingDate.slice(4, 6)}-${b.bookingDate.slice(6, 8)}`;
+  return isRealDate(day) ? addDays(day, FOLLOW_UP_DAYS) : day;
+}
+
 /** The verified clinics he consults at (his own included), each with its branches: where a clinic appointment can be. */
 export const bookableClinics = (c: MyClinics | undefined) => (c?.clinics ?? []).filter((m) => m.verified && m.branches.length > 0);
-/** The clinic he owns and can bill (one, verified); null otherwise (none, several, or not verified yet). */
-export function ownedClinic(c: MyClinics | undefined) {
-  const owned = (c?.clinics ?? []).filter((m) => m.role === 'owner');
-  return owned.length === 1 && owned[0]!.verified ? owned[0]! : null;
+/**
+ * The clinic he bills from his dashboard: the one `GET /me/clinic` answers (r39: his own clinic; r39c: the clinic he
+ * owns), when he is its owner and it is verified; null otherwise (none, not verified, or still loading).
+ */
+export function ownedClinic(c: MyClinics | undefined, billed: { partner?: { _id?: string } } | null | undefined) {
+  const id = billed?.partner?._id?.toLowerCase();
+  const m = id ? (c?.clinics ?? []).find((x) => x.partnerId.toLowerCase() === id) : undefined;
+  return m && m.role === 'owner' && m.verified ? m : null;
 }
 
 /**

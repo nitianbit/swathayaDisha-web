@@ -2,14 +2,15 @@ import { useQuery } from '@tanstack/react-query';
 import { formatClock } from '@jansetu/i18n';
 import { CalendarDays, Pill, Plus, Receipt, Search, type LucideIcon } from 'lucide-react';
 import {
-  appointmentAt, canonicalPhone, CLINIC_PENDING_KEYS, doctorDashboardApi, doctorToolsApi, DOCTOR_PENDING_KEYS, hasGlobalScope, holdsAny, istToday, labAssistedApi, labDeskApi,
-  LAB_PENDING_KEYS, OBJECT_ID_PATTERN, ownedClinic, partnerClinicApi, partnerWorkspaceApi, PENDING_KEYS, pharmacyAssistedApi, pharmacySaleApi, todayApi,
+  appointmentAt, canonicalPhone, CLINIC_PENDING_KEYS, doctorDashboardApi, DOCTOR_PENDING_KEYS, hasGlobalScope, holdsAny, istToday, labAssistedApi, labDeskApi,
+  LAB_PENDING_KEYS, OBJECT_ID_PATTERN, partnerClinicApi, partnerWorkspaceApi, PENDING_KEYS, pharmacyAssistedApi, pharmacySaleApi, todayApi,
   type ClinicPendingKey, type DoctorPendingKey, type LabPendingKey, type PatientLookup, type PendingKey, type SaleCustomer, type TodayApi, type TodayDesk,
 } from '@jansetu/api';
 import { t } from '../../i18n/home/index.ts';
 import { CLINIC_REGISTER_READERS, pagesFor, REGISTER_READERS } from '../../modules.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 import { visitPath } from './visitPatient.ts';
+import { useOwnedClinic } from '../doctor/doctor.tsx';
 
 /**
  * WQ55 (P4): one front desk's simple home, + New and Today, for a pharmacy (WQ54) or a lab member (r38): its routes, its
@@ -67,12 +68,12 @@ export function useFrontDesk(): FrontDesk | null {
     queryKey: ['partner-ws', 'member', labPartner?.partner.id ?? 'none', 'branches'], queryFn: () => partnerWorkspaceApi(api, { kind: 'member' }).branches(),
     enabled: !!labPartner,
   });
-  // WQ56: a doctor's clinics (the Clinics page's read), for Bills when he owns one.
-  const clinics = useQuery({ queryKey: ['doctor', user.id, 'clinics'], queryFn: () => doctorToolsApi(api).clinics(), enabled: user.role === 'specialist' });
+  // WQ56: a doctor's clinics, for Bills when he owns the clinic he bills (WQ56b).
+  const own = useOwnedClinic(user.id, user.role === 'specialist');
   if (user.role === 'specialist') {
     // WQ56 (P2): the doctor's own day: + New (his clinic appointment, an online consultation, a lab test, a follow-up),
     // Find patient, Today, and Bills only when he owns a clinic he can bill. His to-dos are private (r39).
-    const owns = !!ownedClinic(clinics.data);
+    const owns = !!own.owned;
     const page = (path: string, one?: (id: string) => string) => (ids: readonly string[] | undefined, n: number) => (one ? oneOr(ids, n, one, path) : path);
     return {
       kind: 'doctor', id: user.id, today: todayApi(api, 'doctor'), newPath: '/doctor/new', todayPath: '/doctor/today',
@@ -88,7 +89,8 @@ export function useFrontDesk(): FrontDesk | null {
       pending: DOCTOR_PENDING_KEYS,
       pendingTo: (k, ids, n) => (k === 'reportsReady' ? page('/doctor/lab-tests', (id) => `/doctor/lab-tests/${id}`)(ids, n)
         : k === 'unpaidBills' ? page('/doctor/clinic/invoices', (id) => `/doctor/clinic/invoices/${id}`)(ids, n)
-        : k === 'prescriptionsToWrite' || k === 'appointmentsToConfirm' ? '/doctor/appointments' : null),
+        // WQ56b: one appointment opens on Appointments (its day, highlighted); several: the list.
+        : k === 'prescriptionsToWrite' || k === 'appointmentsToConfirm' ? page('/doctor/appointments', (id) => `/doctor/appointments?open=${id}`)(ids, n) : null),
       forbidden: null, register: true, noVisits: '',
     };
   }

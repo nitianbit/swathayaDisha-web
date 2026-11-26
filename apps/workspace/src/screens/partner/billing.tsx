@@ -92,7 +92,9 @@ export function takeHandover(stored: BillHandover | undefined, routeState: unkno
 }
 
 /** Q14 / r12 refusals of a bill for an appointment or a lab booking (`BILL_LINKS`), in words staff can act on. */
-export function billLinkRefusal(code: string | undefined): string | undefined {
+export function billLinkRefusal(code: string | undefined, ctx?: Pick<ScopeContext, 'scope'>): string | undefined {
+  // WQ56b: a doctor billing his own clinic opens a bill from Bills or his home, not from a front desk.
+  if (code === 'APPOINTMENT_ALREADY_BILLED' && ctx?.scope.kind === 'doctor') return t('billing.refusal.APPOINTMENT_ALREADY_BILLED_DOCTOR');
   const key = `billing.refusal.${code}`;
   return code && t.has(key) ? t(key) : undefined;
 }

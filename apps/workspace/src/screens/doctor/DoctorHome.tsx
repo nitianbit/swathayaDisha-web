@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
 import {
-  APPOINTMENT_STATUS_LABEL, appointmentStart, byPartner, CONSULT_MODE_LABEL, doctorDashboardApi, doctorStanding, istToday, ownedClinic, TODAY_PAGE_MAX,
+  APPOINTMENT_STATUS_LABEL, appointmentStart, byPartner, CONSULT_MODE_LABEL, doctorDashboardApi, doctorStanding, istToday, TODAY_PAGE_MAX,
   type ListedAppointment, type MyClinics, type TodayAnswer,
 } from '@jansetu/api';
 import { formatClock, formatPaise } from '@jansetu/i18n';
@@ -15,7 +15,8 @@ import { BigActions, Failed, MoneyLine, PendingStrip, todayKey, Todos } from '..
 import { openBill } from '../partner/billing.tsx';
 import { feeLine } from '../partner/DeskScreen.tsx';
 import { usePartnerScope } from '../partner/scope.tsx';
-import { offersKey, rupeesOf, useClinics, useDoctor, useDoctorProfile, type DoctorContext } from './doctor.tsx';
+import { offersKey, rupeesOf, useClinics, useDoctor, useDoctorProfile, useOwnedClinic, useUpcomingAppointments, type DoctorContext } from './doctor.tsx';
+import { appointmentLabel } from './AppointmentsScreen.tsx';
 import { useDoctorPresence } from './presence.tsx';
 import { t } from '../../i18n/doctor/index.ts';
 
@@ -106,86 +107,109 @@ function chipsOf(clinics: MyClinics | undefined, rows: readonly ListedAppointmen
   ];
 }
 
-/** Where an appointment came from, in words (truthful: who booked it, or where it is). */
+/** Where an appointment came from, in words (truthful: who booked it, and where it is). */
 function sourceWords(a: ListedAppointment): string {
   const clinic = a.clinic ? a.clinic.name ?? t('dash.clinicUnnamed') : null;
+  // r39c: he booked it himself (a clinic appointment, or an online consultation).
+  if (a.bookedByMe || a.source === 'doctor_assisted') return clinic ? t('dash.source.youAt', { clinic }) : t('dash.source.you');
   switch (a.source) {
-    case 'clinic_desk': return t('dash.source.clinicDesk', { clinic: clinic ?? t('dash.clinicUnnamed') });
+    case 'clinic_desk': return t('dash.source.at', { clinic: clinic ?? t('dash.clinicUnnamed') });
     case 'pharmacy_assisted': return a.paidBy ? t('dash.source.bookedBy', { name: a.paidBy }) : t('dash.source.pharmacy');
     case 'lab_assisted': return a.paidBy ? t('dash.source.bookedBy', { name: a.paidBy }) : t('dash.source.lab');
-    case 'doctor_assisted': return t('dash.source.you');
     case 'instant': return t('dash.source.instant');
     default: return clinic ? t('dash.source.appAt', { clinic }) : t('dash.source.app');
   }
 }
+
+/** A bill of his clinic for an appointment: its id and whether it is paid. */
+type RowBill = { id: string; paid: boolean };
 
 function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
   const { api, memory } = useSession();
   const dash = useMemo(() => doctorDashboardApi(api), [api]);
   const day = istToday();
   const clinics = useClinics(d);
+  const { owned } = useOwnedClinic(d.user.id);
   const ctx = usePartnerScope();
   const navigate = useNavigate();
   const list = useQuery({ queryKey: [...d.key, 'dash', 'list', day], queryFn: () => dash.appointments({ from: day, to: day }), staleTime: 0, refetchOnMount: 'always' });
   const reg = useQuery({ queryKey: [...todayKey(desk, day), 'doctor-day'], queryFn: () => wholeDay(desk, day), staleTime: 0, refetchOnMount: 'always' });
+  // WQ56b: his clinic's bills made today, so a billed appointment says so (r39c also names it on the register's bills).
+  const bills = useQuery({ queryKey: [...(ctx?.key ?? ['none']), 'invoices', 'dash', day], queryFn: () => ctx!.billing.invoices({ from: day, to: day, limit: 100 }),
+    enabled: !!owned && !!ctx, staleTime: 0, refetchOnMount: 'always' });
+  const next = useUpcomingAppointments(d, 14);
   const [chip, setChip] = useState('all');
   const rows = list.data?.items ?? [];
   const chips = chipsOf(clinics.data, rows);
   const shown = rows.filter((chips.find((c) => c.id === chip) ?? chips[0]!).test);
+  const items = reg.data?.items ?? [];
   // The patient seen at each appointment, from the register (the list has no names).
-  const names = new Map((reg.data?.items ?? []).filter((i) => i.kind === 'appointment').map((i) => [i.id.toLowerCase(), i.patientName]));
-  const owned = ownedClinic(clinics.data);
+  const names = new Map(items.filter((i) => i.kind === 'appointment').map((i) => [i.id.toLowerCase(), i.patientName]));
+  const billOf = new Map<string, RowBill>();
+  for (const inv of bills.data?.items ?? []) {
+    if (inv.appointmentId && inv.lifecycleState !== 'cancelled') billOf.set(inv.appointmentId.toLowerCase(), { id: inv._id, paid: inv.lifecycleState === 'paid' });
+  }
+  for (const i of items) {
+    if (i.kind === 'bill' && i.appointmentId && i.status !== 'cancelled') billOf.set(i.appointmentId.toLowerCase(), { id: i.id, paid: i.paid });
+  }
   const ownId = owned?.partnerId.toLowerCase();
+  const coming = rows.length === 0 && list.data ? next.items.find((b) => (b.status === 'confirmed' || b.status === 'pending') && b.bookingDate > day.replace(/-/g, '')) : undefined;
   return (
-    <>
-      <section className="ws-section" aria-labelledby="day-h">
-        <h2 id="day-h">{t('dash.today')}</h2>
-        {reg.data && <p className="earned-line">{t('dash.earnedToday', { amount: formatPaise(reg.data.totals.earnedMinor ?? 0) })}</p>}
-        {/* His own clinic's bills of the day: collected and still to collect (only when he owns one). */}
-        {reg.data && owned && (reg.data.items.some((i) => i.kind === 'bill') || reg.data.totals.collectedMinor > 0 || reg.data.totals.unpaidMinor > 0) && <MoneyLine day={reg.data} date={day} />}
-        {!reg.data ? (reg.isError ? <Failed error={reg.error} onRetry={() => void reg.refetch()} /> : <Loading label={t('dash.loading')} />)
-          : <PendingStrip day={reg.data} desk={desk} />}
-      </section>
-      <section className="ws-section" aria-labelledby="appts-h">
-        <h2 id="appts-h">{t('dash.appointments')}</h2>
-        <div className="chips" role="group" aria-label={t('dash.chip.label')}>
-          {chips.map((c) => <button key={c.id} type="button" className="chip" aria-pressed={chip === c.id} onClick={() => setChip(c.id)}>{c.label}</button>)}
-        </div>
-        {!list.data ? (list.isError ? <Failed error={list.error} onRetry={() => void list.refetch()} /> : <Loading label={t('common.loadingAppointments')} />)
-          : shown.length === 0 ? <p className="ws-muted">{rows.length === 0 ? t('dash.none') : t('dash.noneHere')}</p>
-          : (
-            <ul className="appt-list" aria-label={t('dash.appointments')}>
-              {shown.map((a) => {
-                const at = appointmentStart(a);
-                const time = at ? formatClock(at.getTime()) : a.bookingTime;
-                const name = names.get(a._id.toLowerCase()) ?? null;
-                const deskRow = a.clinicDesk;
-                // His own clinic's desk appointment: he makes its bill here (the short bill) unless it was cancelled.
-                const billable = !!ctx && !!deskRow && deskRow.partnerId.toLowerCase() === ownId && a.status !== 'cancelled';
-                return (
-                  <li key={a._id} className="appt-row">
-                    <span className="appt-time">{time}</span>
-                    <span className="appt-who">{name ?? t('dash.noName')}</span>
-                    <span>{a.consultationMode ? CONSULT_MODE_LABEL[a.consultationMode] : t('doctorHome.consultation')}</span>
-                    <span className="appt-source">{sourceWords(a)}</span>
-                    <Badge tone={a.status === 'pending' ? 'warn' : a.status === 'confirmed' || a.status === 'completed' ? 'ok' : undefined}>{APPOINTMENT_STATUS_LABEL[a.status] ?? a.status}</Badge>
-                    {a.status === 'pending' && a.paymentStatus !== 'paid' && a.source === 'doctor_assisted' && <span className="ws-muted">{t('dash.payInApp')}</span>}
-                    {billable && deskRow && (
-                      // The bill is the account holder's: a family member's name is not put on it (the bill asks), the fee is.
-                      <Button variant="secondary" onClick={() => openBill(ctx!, memory, { link: { kind: 'appointment', id: a._id }, branchId: deskRow.branchId, doctorId: d.user.id,
-                        name: a.dependentId ? '' : name ?? '', phone: '', label: name ? `${time} · ${name}` : time, simple: true,
-                        ...(a.price ? { handLines: [feeLine(d.user.name, a.price)] } : {}) }, navigate)}>
-                        {t('dash.bill')}
-                      </Button>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        {list.data?.truncated && <Alert tone="warn">{t('dash.truncated')}</Alert>}
-        <p><Link to="/doctor/appointments">{t('doctorHome.allAppointments')}</Link></p>
-      </section>
-    </>
+    <section className="ws-section" aria-labelledby="appts-h">
+      <h2 id="appts-h">{t('dash.appointments')}</h2>
+      {reg.data && <p className="earned-line">{t('dash.earnedToday', { amount: formatPaise(reg.data.totals.earnedMinor ?? 0) })}</p>}
+      {/* His own clinic's bills of the day: collected and still to collect (only when he owns one and it has any). */}
+      {reg.data && owned && (items.some((i) => i.kind === 'bill') || reg.data.totals.collectedMinor > 0 || reg.data.totals.unpaidMinor > 0) && <MoneyLine day={reg.data} date={day} />}
+      {!reg.data ? (reg.isError ? <Failed error={reg.error} onRetry={() => void reg.refetch()} /> : <Loading label={t('dash.loading')} />)
+        : <PendingStrip day={reg.data} desk={desk} />}
+      <div className="chips" role="group" aria-label={t('dash.chip.label')}>
+        {chips.map((c) => <button key={c.id} type="button" className="chip" aria-pressed={chip === c.id} onClick={() => setChip(c.id)}>{c.label}</button>)}
+      </div>
+      {!list.data ? (list.isError ? <Failed error={list.error} onRetry={() => void list.refetch()} /> : <Loading label={t('common.loadingAppointments')} />)
+        : shown.length === 0 ? (
+          <>
+            <p className="ws-muted">{rows.length === 0 ? t('dash.none') : t('dash.noneHere')}</p>
+            {coming && <p>{t('dash.next', { when: appointmentLabel(coming), mode: coming.consultationMode ? CONSULT_MODE_LABEL[coming.consultationMode] : t('doctorHome.consultation') })}</p>}
+          </>
+        )
+        : (
+          <ul className="appt-list" aria-label={t('dash.appointments')}>
+            {shown.map((a) => {
+              const at = appointmentStart(a);
+              const time = at ? formatClock(at.getTime()) : a.bookingTime;
+              const name = names.get(a._id.toLowerCase()) ?? null;
+              const deskRow = a.clinicDesk;
+              const bill = billOf.get(a._id.toLowerCase());
+              // His own clinic's desk appointment: he makes its bill here (the short bill) unless it was cancelled or billed.
+              const billable = !!ctx && !!deskRow && deskRow.partnerId.toLowerCase() === ownId && a.status !== 'cancelled';
+              return (
+                <li key={a._id} className="appt-row">
+                  {/* The row opens the appointment (join, mark done, records) on Appointments. */}
+                  <Link className="appt-open" to={`/doctor/appointments?open=${a._id}`}>
+                    <span className="appt-time">{time}</span> <span className="appt-who">{name ?? t('dash.noName')}</span>
+                  </Link>
+                  <span>{a.consultationMode ? CONSULT_MODE_LABEL[a.consultationMode] : t('doctorHome.consultation')}</span>
+                  <span className="appt-source">{sourceWords(a)}</span>
+                  <Badge tone={a.status === 'pending' ? 'warn' : a.status === 'confirmed' || a.status === 'completed' ? 'ok' : undefined}>{APPOINTMENT_STATUS_LABEL[a.status] ?? a.status}</Badge>
+                  {a.status === 'pending' && a.paymentStatus !== 'paid' && a.source === 'doctor_assisted' && <span className="ws-muted">{t('dash.payInApp')}</span>}
+                  {billable && bill && (
+                    <Link className="j-btn j-btn--secondary" to={`/doctor/clinic/invoices/${bill.id}`}>{bill.paid ? t('dash.billPaid') : t('dash.billed')}</Link>
+                  )}
+                  {billable && !bill && deskRow && (
+                    // The bill is the account holder's (r39c `customer`; until then the bill asks the mobile it was booked with).
+                    <Button variant="secondary" onClick={() => openBill(ctx!, memory, { link: { kind: 'appointment', id: a._id }, branchId: deskRow.branchId, doctorId: d.user.id,
+                      name: a.customer?.name ?? (a.dependentId ? '' : name ?? ''), phone: a.customer?.phone ?? '', label: name ? `${time} · ${name}` : time, simple: true,
+                      ...(a.price ? { handLines: [feeLine(d.user.name, a.price)] } : {}) }, navigate)}>
+                      {t('dash.bill')}
+                    </Button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      {list.data?.truncated && <Alert tone="warn">{t('dash.truncated')}</Alert>}
+      <p><Link to="/doctor/appointments">{t('doctorHome.allAppointments')}</Link></p>
+    </section>
   );
 }

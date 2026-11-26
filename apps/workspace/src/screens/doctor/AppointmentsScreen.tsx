@@ -1,8 +1,9 @@
-import { useState, type ReactNode } from 'react';
+import './doctor.css';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import {
-  appointmentStart, ApiError, APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentInstant, appointmentRefusal, CONSULT_MODE_LABEL, doctorNoShowMove, fromYmd, isRealDate, istDateOf,
+  ApiError, followUpOpen, OBJECT_ID_PATTERN, APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentInstant, appointmentRefusal, CONSULT_MODE_LABEL, doctorNoShowMove, fromYmd, isRealDate, istDateOf,
   labBookableFrom, movableSlot, NO_SHOW_GRACE_MS, noShowSlotFits, schedulableBranches, sessionEndOf, type AppointmentAction, type DoctorAppointment, type DoctorSlot,
 } from '@jansetu/api';
 import { Alert, Badge, Empty, ErrorState, Loading, TextField, formatRupees } from '@jansetu/ui';
@@ -35,6 +36,11 @@ export function AppointmentsScreen() {
 function Appointments({ d }: { d: DoctorContext }) {
   const [view, setView] = useState<View>('today');
   const [day, setDay] = useState(() => istDateOf(new Date()));
+  // WQ56b: `?open=<id>` (from the home's rows and waiting work): that appointment's day, with its row shown and marked.
+  const openId = useSearchParams()[0].get('open');
+  const opened = useQuery({ queryKey: [...appointmentsKey(d), 'open', openId], queryFn: () => d.api.appointment(openId!), enabled: !!openId && OBJECT_ID_PATTERN.test(openId), retry: false });
+  const openDay = opened.data ? fromYmd(opened.data.bookingDate) : null;
+  useEffect(() => { if (openDay) { setView('day'); setDay(openDay); } }, [openDay]);
   return (
     <>
       <PageHeading title={t('common.appointments')}>{t('appointments.yourConsultationsScheduledAndInstant')}</PageHeading>
@@ -49,7 +55,7 @@ function Appointments({ d }: { d: DoctorContext }) {
         </div>
         {view === 'day' && <TextField label={t('appointments.day')} type="date" value={day} onChange={(e) => setDay(e.target.value)} />}
       </div>
-      {view === 'day' ? (isRealDate(day) ? <DayList key={day} d={d} day={day} /> : <Empty title={t('appointments.chooseADay')}>{t('appointments.pickTheDayToShow')}</Empty>)
+      {view === 'day' ? (isRealDate(day) ? <DayList key={day} d={d} day={day} openId={openDay === day ? openId : null} /> : <Empty title={t('appointments.chooseADay')}>{t('appointments.pickTheDayToShow')}</Empty>)
         : <UpcomingList key={view} d={d} days={view === 'today' ? 1 : UPCOMING_DAYS} />}
     </>
   );
@@ -70,7 +76,7 @@ function UpcomingList({ d, days }: { d: DoctorContext; days: number }) {
   );
 }
 
-function DayList({ d, day }: { d: DoctorContext; day: string }) {
+function DayList({ d, day, openId }: { d: DoctorContext; day: string; openId?: string | null }) {
   const meet = useMeetPoll();
   const q = useQuery({ queryKey: [...appointmentsKey(d), 'day', day], queryFn: () => d.api.appointmentsOn(day), refetchInterval: (query) => meet.interval(query.state.data) });
   if (q.isPending) return <Loading label={t('common.loadingAppointments')} />;
@@ -79,7 +85,7 @@ function DayList({ d, day }: { d: DoctorContext; day: string }) {
     <>
       {q.isError && <RefreshFailed error={q.error} readAt={q.dataUpdatedAt} onRetry={q.refetch} />}
       <AppointmentTable d={d} items={sortAppointments(q.data ?? [])} meet={meet} refresh={q.refetch} readAt={q.dataUpdatedAt} reading={q.isFetching}
-        empty={t('appointments.noAppointmentsOn', { when: formatDay(day) })} />
+        empty={t('appointments.noAppointmentsOn', { when: formatDay(day) })} openId={openId} />
     </>
   );
 }
@@ -87,8 +93,8 @@ function DayList({ d, day }: { d: DoctorContext; day: string }) {
 const statusTone = (s: DoctorAppointment['status']) => (s === 'completed' ? 'ok' : s === 'cancelled' || s === 'no_show' ? 'danger' : s === 'pending' ? 'warn' : undefined);
 export const appointmentLabel = (b: DoctorAppointment) => `${formatYmd(b.bookingDate)}, ${b.bookingTime}`;
 
-function AppointmentTable({ d, items, empty, meet, refresh, readAt, reading }: {
-  d: DoctorContext; items: DoctorAppointment[]; empty: string; meet: MeetPoll; refresh: () => Promise<unknown>; readAt: number; reading: boolean;
+function AppointmentTable({ d, items, empty, meet, refresh, readAt, reading, openId }: {
+  d: DoctorContext; items: DoctorAppointment[]; empty: string; meet: MeetPoll; refresh: () => Promise<unknown>; readAt: number; reading: boolean; openId?: string | null;
 }) {
   const queryClient = useQueryClient();
   const now = useTicker(30_000);
@@ -132,7 +138,7 @@ function AppointmentTable({ d, items, empty, meet, refresh, readAt, reading }: {
           <tbody>
             {items.map((b) => (
               // Keyed by status too: once the booking moves on, an open confirmation for its old state is gone.
-              <Row key={`${b._id}:${b.status}:${b.updatedAt ?? ''}`} d={d} b={b} actions={actionsOf(b)} onChanged={changed} move={move}
+              <Row key={`${b._id}:${b.status}:${b.updatedAt ?? ''}`} d={d} b={b} actions={actionsOf(b)} onChanged={changed} move={move} opened={!!openId && b._id.toLowerCase() === openId.toLowerCase()}
                 link={<MeetLink b={b} gaveUp={meet.gaveUp(b._id, now)} onRefresh={() => { meet.restart(b._id); return refresh(); }} />}
                 onRefused={() => void queryClient.invalidateQueries({ queryKey: appointmentsKey(d) })} />
             ))}
@@ -148,9 +154,11 @@ interface MoveProps {
   reread: () => void; onNotice: (text: string) => void; onFailure: (text: string) => void;
 }
 
-function Row({ d, b, actions, link, onChanged, onRefused, move }: {
-  d: DoctorContext; b: DoctorAppointment; actions: AppointmentAction[]; link: ReactNode; onChanged: (m: string) => void; onRefused: () => void; move: MoveProps;
+function Row({ d, b, actions, link, onChanged, onRefused, move, opened = false }: {
+  d: DoctorContext; b: DoctorAppointment; actions: AppointmentAction[]; link: ReactNode; onChanged: (m: string) => void; onRefused: () => void; move: MoveProps; opened?: boolean;
 }) {
+  const row = useRef<HTMLTableRowElement>(null);
+  useEffect(() => { if (opened) row.current?.scrollIntoView({ block: 'center' }); }, [opened]);
   const { memory } = useSession();
   const queryClient = useQueryClient();
   const label = appointmentLabel(b);
@@ -175,7 +183,7 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
   // opens the patient's records.
   const labLink = labBookableFrom(b, move.now);
   return (
-    <tr>
+    <tr ref={row} className={opened ? 'appt-opened' : undefined} aria-current={opened ? 'true' : undefined}>
       <td>{label}</td>
       <td>{b.bookingKind === 'instant' ? t('appointments.kind.instant') : clinic ? t('appointments.atAClinic') : t('appointments.kind.booked')}{b.dependentId ? ` · ${t('appointments.familyMember')}` : ''}</td>
       <td>
@@ -235,19 +243,13 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
           </>
         )}
         {/* WQ56 (r39): a completed, paid consultation of the last 14 days may get its free follow-up (the server decides). */}
-        {followUpOpen(b, move.now) && (
+        {followUpOpen(b, istDateOf(move.now)) && (
           <div><Link to={`/doctor/follow-up/${b._id}`} aria-label={t('appointments.followUpFor', { label })}>{t('appointments.followUp')}</Link></div>
         )}
       </td>
     </tr>
   );
 }
-
-/** WQ56: the follow-up rule's window as offered here (completed, paid, within 14 days of its day); the server decides. */
-const followUpOpen = (b: DoctorAppointment, now: Date) => {
-  const at = appointmentStart(b);
-  return b.status === 'completed' && b.paymentStatus === 'paid' && b.bookingKind !== 'instant' && !!at && now.getTime() - at.getTime() <= 14 * 86_400_000;
-};
 
 /**
  * The place of a slot in words: a clinic branch by its name (the doctor's clinics), or none: the doctor's own place for

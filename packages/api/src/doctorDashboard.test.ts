@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createApiClient } from './client.ts';
-import { bookableClinics, doctorDashboardApi, freeSlots, ownedClinic } from './doctorDashboard.ts';
+import { bookableClinics, doctorDashboardApi, followUpLastDay, followUpOpen, freeSlots, ownedClinic } from './doctorDashboard.ts';
 import type { DoctorSlot, MyClinics } from './doctorTools.ts';
 import { partnerBillingApi, partnerWorkspaceApi } from './index.ts';
 import { todayApi, todayLink, todayOf } from './pharmacyToday.ts';
@@ -105,8 +105,24 @@ describe('WQ56 where a new booking can be', () => {
       { partnerId: OTHER, name: 'Demo Care', solo: false, verified: true, role: 'staff', branches: [{ branchId: OTHER, name: 'Baner' }] },
     ] };
     expect(bookableClinics(mine).map((c) => c.partnerId)).toEqual([CLINIC, OTHER]);
-    expect(ownedClinic(mine)?.partnerId).toBe(CLINIC);
-    expect(ownedClinic({ ...mine, clinics: [{ ...mine.clinics[0]!, verified: false }] })).toBeNull();
-    expect(ownedClinic({ ...mine, clinics: [mine.clinics[0]!, { ...mine.clinics[1]!, role: 'owner' }] })).toBeNull();
+    // WQ56b: the clinic /me/clinic answers, when he owns it and it is verified (r39c: a non-solo clinic he owns too).
+    const own = { partner: { _id: CLINIC.toUpperCase() } };
+    expect(ownedClinic(mine, own)?.partnerId).toBe(CLINIC);
+    expect(ownedClinic(mine, null)).toBeNull();
+    expect(ownedClinic(mine, undefined)).toBeNull();
+    expect(ownedClinic(mine, { partner: { _id: OTHER } })).toBeNull();
+    expect(ownedClinic({ ...mine, clinics: [mine.clinics[0]!, { ...mine.clinics[1]!, role: 'owner' }] }, { partner: { _id: OTHER } })?.partnerId).toBe(OTHER);
+    expect(ownedClinic({ ...mine, clinics: [{ ...mine.clinics[0]!, verified: false }] }, own)).toBeNull();
+  });
+  it('a follow-up is offered for a completed, paid consultation that is not one, until its window ends', () => {
+    const c = { status: 'completed' as const, paymentStatus: 'paid' as const, bookingDate: '20261120', bookingKind: 'scheduled' as const };
+    expect(followUpOpen(c, '2026-11-27')).toBe(true);
+    expect(followUpLastDay(c)).toBe('2026-12-04');
+    expect(followUpOpen(c, '2026-12-05')).toBe(false);
+    expect(followUpLastDay({ ...c, followUp: { eligibilityExpiresAt: '20261201' } })).toBe('2026-12-01');
+    expect(followUpOpen({ ...c, paymentStatus: 'pending' }, '2026-11-27')).toBe(false);
+    expect(followUpOpen({ ...c, followUp: { isFollowUp: true } }, '2026-11-27')).toBe(false);
+    expect(followUpOpen({ ...c, followUp: { benefitUsed: true } }, '2026-11-27')).toBe(false);
+    expect(followUpOpen({ ...c, status: 'confirmed' }, '2026-11-27')).toBe(false);
   });
 });
