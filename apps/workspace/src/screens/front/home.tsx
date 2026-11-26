@@ -35,6 +35,8 @@ export function homeWords(err: unknown, forbidden?: string | null): string {
 
 /** A failed read in plain words, with one big Try again. */
 export function Failed({ error, onRetry, forbidden }: { error: unknown; onRetry: () => void; forbidden?: string | null }) {
+  // WQ55b: a read this person may not make is said once, with nothing to try again.
+  if (forbidden && error instanceof ApiError && error.status === 403) return <p className="simple-forbidden" role="status">{forbidden}</p>;
   return (
     <div className="simple-failed" role="alert">
       <p>{homeWords(error, forbidden)}</p>
@@ -63,15 +65,15 @@ async function latestRows(today: TodayApi['today'], date: string): Promise<Today
   return { ...first, items: [...before, ...page.items].slice(-HOME_ROWS).reverse() };
 }
 
-export function useToday(desk: FrontDesk, date: string) {
+export function useToday(desk: FrontDesk, date: string, enabled = true) {
   // Always read again when a page shows it: a sale or a booking made on another page has just changed the day.
-  return useQuery({ queryKey: [...todayKey(desk, date), 'home'], queryFn: () => latestRows(desk.today.today, date), staleTime: 0, refetchOnMount: 'always' });
+  return useQuery({ queryKey: [...todayKey(desk, date), 'home'], queryFn: () => latestRows(desk.today.today, date), staleTime: 0, refetchOnMount: 'always', enabled });
 }
 
 /** The front desk's home (a pharmacy's or WQ55 a lab member's). */
 export function FrontDeskHome({ desk }: { desk: FrontDesk }) {
   const day = istToday();
-  const q = useToday(desk, day);
+  const q = useToday(desk, day, desk.register);
   return (
     <div className="simple">
       <nav className="big-actions" aria-label={t('big.label')}>
@@ -81,19 +83,19 @@ export function FrontDeskHome({ desk }: { desk: FrontDesk }) {
       </nav>
       {/* WQ55: a member allowed none of the visits says so (never a blank home). */}
       {desk.choices.length === 0 && <Alert tone="warn">{t('askOwnerVisits')}</Alert>}
-      <section className="ws-section" aria-labelledby="reg-h">
+      {desk.register && <section className="ws-section" aria-labelledby="reg-h">
         <h2 id="reg-h">{t('register.title')}</h2>
         {!q.data ? (q.isError ? <Failed error={q.error} forbidden={desk.forbidden} onRetry={() => void q.refetch()} /> : <Loading label={t('register.loading')} />) : (
           <>
             <MoneyLine day={q.data} date={day} />
             <PendingStrip day={q.data} desk={desk} />
-            <Register items={q.data.items} date={day} desk={desk.kind} />
+            <Register items={q.data.items} date={day} desk={desk.kind} unbilled={q.data.pending?.deskUnbilled?.ids} />
             {(q.data.nextCursor || q.data.totals.count > q.data.items.length) && (
               <p><Link className="j-btn j-btn--secondary" to={desk.todayPath}>{t('register.all')}</Link></p>
             )}
           </>
         )}
-      </section>
+      </section>}
       <Todos desk={desk} />
     </div>
   );
@@ -143,10 +145,12 @@ function pendingLines(day: TodayAnswer, desk: FrontDesk): PendingLine[] {
       const q = p?.[k] as { ids?: string[]; visitIds?: string[]; homeIds?: string[] } | null | undefined;
       const ids = k === 'samplesToCollect' ? [...(q?.visitIds ?? []), ...(q?.homeIds ?? [])] : q?.ids;
       if (n === null) lines.push({ id: k, text: t(`pending.failed.${k}`), to: null, failed: true });
-      else if (n > 0) lines.push({ id: k, text: t(`pending.${k}`, { count: n }), to: desk.pendingTo(k, ids, n) });
+      // WQ55b: a lab's bookings waiting for payment are doctor bookings.
+      else if (n > 0) lines.push({ id: k, text: k === 'bookingsAwaitingPayment' ? t('pending.doctorPayments', { count: n }) : t(`pending.${k}`, { count: n }), to: desk.pendingTo(k, ids, n) });
       continue;
     }
     const b = bookingsWaiting(p);
+    if (!desk.bookingTo) continue;
     if (n === null || !b) { lines.push({ id: k, text: t('pending.failed.bookingsAwaiting'), to: null, failed: true }); continue; }
     const ba = p?.bookingsAwaiting;
     if (b.consultations > 0) {
@@ -168,7 +172,8 @@ export function PendingStrip({ day, desk }: { day: TodayAnswer; desk: FrontDesk 
     <div className="pending-strip" aria-label={t('pending.title')} role="group">
       {lines.length === 0 ? <span className="ws-muted">{t('pending.none')}</span>
         : lines.map((x) => (x.to === null
-          ? <span key={x.id} className={x.failed ? 'pending-item pending-item--failed' : 'pending-item'}>{x.text}</span>
+          // WQ55b: a line this person cannot open is plain text, not a pill that looks tappable.
+          ? <span key={x.id} className={x.failed ? 'pending-item pending-item--failed' : 'pending-item pending-item--plain'}>{x.text}</span>
           : <Link key={x.id} className="pending-item" to={x.to}>{x.text}</Link>))}
     </div>
   );
@@ -189,7 +194,8 @@ export function whatWords(i: Pick<TodayItem, 'what' | 'whatParts'>): string {
     case 'order.online': return t('what.online');
     // r38: a lab's own test at home says so.
     case 'lab.tests': return v.visit === 'home' ? `${list(t('what.labTests'))} · ${t('what.home')}` : list(t('what.labTests'));
-    case 'bill.items': return list(t('what.bill'));
+    // WQ55b: a bill on its own says so.
+    case 'bill.items': return present(v.first) ? t('what.billOf', { items: list('') }) : t('what.bill');
     case 'wallet.topup': return t('what.topup');
     case 'consult.scheduled':
     case 'consult.instant': {
@@ -205,25 +211,49 @@ export function whatWords(i: Pick<TodayItem, 'what' | 'whatParts'>): string {
  * The register: the time, who and what (tap to open), the amount, paid or not. `date`: the register's day (an earlier
  * day's entry paid that day says so).
  */
-export function Register({ items, date, desk }: { items: readonly TodayItem[]; date: string; desk: TodayDesk }) {
+const isDeskRow = (i: TodayItem) => i.kind === 'lab_booking' && i.whatParts?.values?.source === 'lab_desk';
+
+/**
+ * WQ55b: one row per desk visit: a bill naming the desk booking it bills (`labBookingId`, asked of the server) is folded
+ * into that booking's row; a bill on its own stays a row ("Bill · …").
+ */
+export function oneRowPerVisit(items: readonly TodayItem[]): { rows: TodayItem[]; billOf: Map<string, TodayItem> } {
+  const desk = new Set(items.filter(isDeskRow).map((i) => i.id));
+  const billOf = new Map<string, TodayItem>();
+  const rows = items.filter((i) => {
+    if (i.kind !== 'bill' || !i.labBookingId || !desk.has(i.labBookingId)) return true;
+    billOf.set(i.labBookingId, i);
+    return false;
+  });
+  return { rows, billOf };
+}
+
+/**
+ * The register: the time, who and what (tap to open), the amount, paid or not. `date`: the register's day (an earlier
+ * day's entry paid that day says so). WQ55b: a desk booking says its bill's state (r38b: paid with its bill; `unbilled`,
+ * the waiting work's desk bookings with no bill yet).
+ */
+export function Register({ items, date, desk, unbilled }: { items: readonly TodayItem[]; date: string; desk: TodayDesk; unbilled?: readonly string[] }) {
   if (items.length === 0) return <Empty title={t('register.none')}>{t('register.noneText')}</Empty>;
+  const { rows, billOf } = oneRowPerVisit(items);
+  const paidBadge = (method: string | null | undefined) => <Badge tone="ok">{method ? t('register.paidBy', { method: methodWords(method) ?? '' }) : t('register.paid')}</Badge>;
   return (
     <ul className="register" aria-label={t('register.caption')}>
-      {items.map((i) => {
+      {rows.map((i) => {
         const to = todayLink(i, desk);
         // A wallet top-up has no patient: no name is said for it.
         const who = i.patientName ?? (i.kind === 'wallet_topup' ? null : t('register.noName'));
         const words = <>{who ? <Parts of={t.rich('register.line', { who: <strong>{who}</strong>, what: whatWords(i) })} /> : whatWords(i)}{i.shortRef ? <span className="ws-muted">{` · ${i.shortRef}`}</span> : null}</>;
         const at = Date.parse(i.at);
+        const bill = billOf.get(i.id);
         return (
           <li key={`${i.kind}:${i.id}`} className="register-row">
             <span className="register-time">{Number.isNaN(at) ? '' : formatClock(at)}</span>{' '}
             <span className="register-item">{to ? <Link to={to}>{words}</Link> : words}</span>
             <span className="register-pay">
               <span className="register-amount">{formatPaise(i.amountMinor)}</span>{' '}
-              {i.paid ? <Badge tone="ok">{i.method ? t('register.paidBy', { method: methodWords(i.method) ?? '' }) : t('register.paid')}</Badge>
-                // r38: a desk booking's money is on its bill (its own row says so, not "Not paid").
-                : i.kind === 'lab_booking' && i.whatParts?.values?.source === 'lab_desk' ? <Badge>{t('register.onBill')}</Badge>
+              {i.paid ? paidBadge(i.method ?? bill?.method)
+                : isDeskRow(i) ? <Badge tone="warn">{unbilled?.includes(i.id) ? t('register.noBill') : bill ? t('register.billUnpaid') : t('register.onBill')}</Badge>
                 : <Badge tone="warn">{t('register.unpaid')}</Badge>}
               {i.paidToday && i.madeOn && i.madeOn !== date && <span className="register-note">{t('register.paidTodayMade', { date: formatDay(i.madeOn) })}</span>}
             </span>
@@ -371,7 +401,7 @@ function DayRegister({ desk }: { desk: FrontDesk }) {
           <p className="ws-muted">{t('today.count', { count: first.totals.count })}</p>
           {first.truncated && <Alert tone="warn">{t('today.truncated')}</Alert>}
           {!list.data ? (list.isError ? <Failed error={list.error} onRetry={() => void list.refetch()} /> : <Loading label={t('register.loading')} />)
-            : searched !== null && items.length === 0 ? <p>{t('today.noMatch')}</p> : <Register items={items} date={date} desk={desk.kind} />}
+            : searched !== null && items.length === 0 ? <p>{t('today.noMatch')}</p> : <Register items={items} date={date} desk={desk.kind} unbilled={first.pending?.deskUnbilled?.ids} />}
           {list.isFetchNextPageError && <Failed error={list.error} onRetry={() => void list.fetchNextPage()} />}
           {list.hasNextPage && <div><Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>{t('today.more')}</Button></div>}
         </>

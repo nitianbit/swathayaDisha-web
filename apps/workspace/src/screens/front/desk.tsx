@@ -1,10 +1,11 @@
+import { useQuery } from '@tanstack/react-query';
 import { CalendarDays, Pill, Plus, Receipt, Search, type LucideIcon } from 'lucide-react';
 import {
-  holdsAny, labAssistedApi, labDeskApi, LAB_PENDING_KEYS, OBJECT_ID_PATTERN, PENDING_KEYS, pharmacyAssistedApi, pharmacySaleApi, todayApi,
+  hasGlobalScope, holdsAny, labAssistedApi, labDeskApi, LAB_PENDING_KEYS, OBJECT_ID_PATTERN, partnerWorkspaceApi, PENDING_KEYS, pharmacyAssistedApi, pharmacySaleApi, todayApi,
   type LabPendingKey, type PatientLookup, type PendingKey, type SaleCustomer, type TodayApi, type TodayDesk,
 } from '@jansetu/api';
 import { t } from '../../i18n/home/index.ts';
-import { pagesFor } from '../../modules.tsx';
+import { pagesFor, REGISTER_READERS } from '../../modules.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 import { visitPath } from './visitPatient.ts';
 
@@ -31,9 +32,12 @@ export interface FrontDesk {
   /** The waiting work, in the strip's order, and where each is done (null: shown, but not a link for this person). */
   pending: readonly (PendingKey | LabPendingKey)[];
   pendingTo: (key: PendingKey | LabPendingKey, ids: readonly string[] | undefined, count: number) => string | null;
-  bookingTo: { consultations: (ids: readonly string[] | undefined, count: number) => string | null; labBookings: (ids: readonly string[] | undefined, count: number) => string | null };
+  /** A pharmacy's bookings waiting for payment, by kind (r37c `bookingsAwaiting`); a lab has its own queues instead. */
+  bookingTo?: { consultations: (ids: readonly string[] | undefined, count: number) => string | null; labBookings: (ids: readonly string[] | undefined, count: number) => string | null };
   /** A read this person is not allowed: said plainly (a lab member: ask the owner). */
   forbidden: string | null;
+  /** WQ55b: this person reads the day register (a lab member: by permission). */
+  register: boolean;
 }
 
 /** The one record's page when the list names exactly one, else the list page. */
@@ -44,6 +48,11 @@ export const oneOr = (ids: readonly string[] | undefined, count: number, one: (i
 export function useFrontDesk(): FrontDesk | null {
   const { api } = useSession();
   const user = useStaff();
+  const lab = user.role === 'partner' && user.partner?.partner.kind === 'lab' ? user.partner : null;
+  // WQ55b: the lab's branches (the same read as the workspace's), so a choice no branch of this member offers is not shown.
+  const branches = useQuery({
+    queryKey: ['partner-ws', 'member', lab?.partner.id ?? 'none', 'branches'], queryFn: () => partnerWorkspaceApi(api, { kind: 'member' }).branches(), enabled: !!lab,
+  });
   if (user.role === 'pharmacy') {
     const assisted = pharmacyAssistedApi(api);
     return {
@@ -67,7 +76,7 @@ export function useFrontDesk(): FrontDesk | null {
         consultations: (ids, n) => oneOr(ids, n, (id) => `/pharmacy/consultations/${id}`, '/pharmacy/consultations'),
         labBookings: (ids, n) => oneOr(ids, n, (id) => `/pharmacy/lab-tests/${id}`, '/pharmacy/lab-tests'),
       },
-      forbidden: null,
+      forbidden: null, register: true,
     };
   }
   const m = user.partner?.member;
@@ -81,8 +90,13 @@ export function useFrontDesk(): FrontDesk | null {
   const page = (path: string, one?: (id: string) => string) => (ids: readonly string[] | undefined, n: number) =>
     (!open.has(path) ? null : one ? oneOr(ids, n, one, path) : path);
   const bookings = page('/partner/lab-bookings', (id) => `/partner/lab-bookings/${id}`);
+  const mine = (branches.data ?? []).filter((x) => x.isActive !== false && (hasGlobalScope(m) || m.branchIds.includes(x._id)));
+  const home = mine.some((x) => x.services?.homeCollection);
+  const register = holdsAny(m, REGISTER_READERS);
   const choices = [
-    ...(desk ? [{ to: visitPath('/partner/lab-desk'), label: t('new.labDesk') }, { to: `${visitPath('/partner/lab-desk')}&home=1`, label: t('new.homeCollection') }] : []),
+    ...(desk ? [{ to: visitPath('/partner/lab-desk'), label: t('new.labDesk') }] : []),
+    // Only when one of this member's branches does home collection.
+    ...(desk && home ? [{ to: `${visitPath('/partner/lab-desk')}&home=1`, label: t('new.homeCollection') }] : []),
     ...(consult ? [{ to: visitPath('/partner/book-consultation'), label: t('new.labDoctor') }] : []),
     ...(bill ? [{ to: visitPath('/partner/invoices/new'), label: t('new.bill') }] : []),
   ];
@@ -91,17 +105,17 @@ export function useFrontDesk(): FrontDesk | null {
     big: [
       ...(choices.length ? [{ to: '/partner/new', label: t('big.new'), Icon: Plus }, { to: '/partner/new?find=1', label: t('big.find'), Icon: Search }] : []),
       ...(bill ? [{ to: '/partner/invoices/new', label: t('big.bill'), Icon: Receipt }] : []),
-      { to: '/partner/today', label: t('big.today'), Icon: CalendarDays },
+      ...(register ? [{ to: '/partner/today', label: t('big.today'), Icon: CalendarDays }] : []),
     ],
     choices,
     lookup: desk ? (phone) => labDeskApi(api, { kind: 'member' }).lookup(phone) : consult ? (phone) => labAssistedApi(api).lookup(phone) : null,
     customers: null,
     pending: LAB_PENDING_KEYS,
     // r38: each queue where it is done (one record: its own page).
+    // r38: each queue where it is done (one record: its own page); bookings waiting for payment are consultations.
     pendingTo: (k, ids, n) => (k === 'unpaidBills' ? page('/partner/invoices', (id) => `/partner/invoices/${id}`)(ids, n)
-      : k === 'consultationsWaiting' ? page('/partner/consultations', (id) => `/partner/consultations/${id}`)(ids, n)
-      : k === 'samplesToCollect' || k === 'reportsDue' || k === 'deskUnbilled' || k === 'bookingsAwaitingPayment' ? bookings(ids, n) : null),
-    bookingTo: { consultations: page('/partner/consultations', (id) => `/partner/consultations/${id}`), labBookings: bookings },
-    forbidden: t('askOwner'),
+      : k === 'consultationsWaiting' || k === 'bookingsAwaitingPayment' ? page('/partner/consultations', (id) => `/partner/consultations/${id}`)(ids, n)
+      : k === 'samplesToCollect' || k === 'reportsDue' || k === 'deskUnbilled' ? bookings(ids, n) : null),
+    forbidden: t('askOwner'), register,
   };
 }

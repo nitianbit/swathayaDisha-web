@@ -1312,6 +1312,10 @@ test('Q14 part payments: the owner allows them (version-fenced); a bill is paid 
   await page.getByRole('button', { name: 'Cancel bill' }).click();
   await expect(page.getByText('The refund recorded is ₹1,008.00, all that was paid.', { exact: false })).toBeVisible();
   await page.getByLabel('Why is this bill cancelled?').fill('Wrong patient');
+  // WQ55b: how the money was returned is chosen (no default), as for a payment.
+  await page.getByRole('button', { name: 'Cancel bill LB/2627/0001' }).click();
+  await expect(page.getByText('Choose how the money was returned.')).toBeVisible();
+  await page.getByLabel('Money returned by').selectOption('cash');
   await page.getByRole('button', { name: 'Cancel bill LB/2627/0001' }).click();
   await expect(page.getByText('· ₹1,008.00 returned')).toBeVisible();
   expect(backend.calls.find((c) => c.path.endsWith('/cancel'))?.body).toEqual({ reason: 'Wrong patient', refund: { mode: 'cash', amountMinor: 100800 } });

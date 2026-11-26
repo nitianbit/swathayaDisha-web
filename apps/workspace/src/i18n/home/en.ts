@@ -46,8 +46,13 @@ export default {
   'register.paidTodayMade': 'paid today · made {date}',
   /** A row: {who} the patient, {what} the line. */
   'register.line': '{who}: {what}',
-  /** r38: a desk booking's money is on its bill (the booking itself is not paid). */
-  'register.onBill': 'Paid on its bill',
+  /**
+   * WQ55b: a desk booking's money is on its bill: not yet paid there (r38b: a paid bill marks the booking paid), no bill yet,
+   * or (the bill not known here) to pay on its bill.
+   */
+  'register.onBill': 'Pay on its bill',
+  'register.billUnpaid': 'Bill not paid',
+  'register.noBill': 'No bill yet',
   /** A row (not a wallet top-up) without a patient name. */
   'register.noName': 'Customer',
   'register.loading': 'Loading the register…',
@@ -70,7 +75,6 @@ export default {
   'pending.bookingsAwaiting': { one: '{count} booking waiting for payment', other: '{count} bookings waiting for payment' },
   'pending.labReportsReady': { one: '{count} lab report ready', other: '{count} lab reports ready' },
   'pending.lowStock': { one: '{count} medicine low in stock', other: '{count} medicines low in stock' },
-  /** r37b: the server could not read that list just now (only that line). */
   /** WQ55 (r38): a lab's waiting work. */
   'pending.samplesToCollect': { one: '{count} sample to collect today', other: '{count} samples to collect today' },
   /** Reports due, by step (the last when the server does not split them). */
@@ -81,12 +85,12 @@ export default {
   /** r38b: desk walk-ins without a bill yet. */
   'pending.deskUnbilled': { one: '{count} walk-in without a bill', other: '{count} walk-ins without a bill' },
   'pending.failed.deskUnbilled': 'Walk-ins without a bill: couldn’t load',
-  'pending.bookingsAwaitingPayment': { one: '{count} booking waiting for payment', other: '{count} bookings waiting for payment' },
   'pending.consultationsWaiting': { one: '{count} consultation waiting', other: '{count} consultations waiting' },
+  /** r37b: the server could not read that list just now (only that line). */
   'pending.failed.samplesToCollect': 'Samples to collect: couldn’t load',
   'pending.failed.reportsDue': 'Reports due: couldn’t load',
   'pending.failed.unpaidBills': 'Unpaid bills: couldn’t load',
-  'pending.failed.bookingsAwaitingPayment': 'Bookings waiting for payment: couldn’t load',
+  'pending.failed.bookingsAwaitingPayment': 'Doctor bookings waiting for payment: couldn’t load',
   'pending.failed.consultationsWaiting': 'Consultations waiting: couldn’t load',
   'pending.failed.prescriptionsToReview': 'Prescriptions to review: couldn’t load',
   'pending.failed.unpaidCounterSales': 'Unpaid sales: couldn’t load',
@@ -197,6 +201,8 @@ export default {
   'what.topup': 'Wallet top-up',
   /** WQ55: a lab's bill without a first line. */
   'what.bill': 'Bill',
+  /** WQ55b: a bill on its own; {items}: its first item (+N more). */
+  'what.billOf': 'Bill · {items}',
   /** r38: a lab test collected at home. */
   'what.home': 'home collection',
 } as const;

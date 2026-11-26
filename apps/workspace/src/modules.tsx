@@ -114,6 +114,10 @@ const INVOICE_READERS: readonly PartnerPermission[] = ['invoices.create', 'invoi
 /** WQ3 (`registerWorkspaceRoutes`): `GET /slots` readers, and `LAB_READERS` of `GET /lab-bookings[/:id]`. */
 const SLOT_READERS: readonly PartnerPermission[] = ['slots.manage', 'bookings.view', 'bookings.manage'];
 const LAB_READERS: readonly PartnerPermission[] = ['bookings.view', 'bookings.manage', 'reports.upload', 'reports.release'];
+/**
+ * WQ55b: who reads a lab's day register (r38: each source by its own permission): lab bookings, bills or consultations.
+ */
+export const REGISTER_READERS: readonly PartnerPermission[] = [...LAB_READERS, ...INVOICE_READERS, 'assisted.book'];
 /** WQ6 (Q6 routes): `GET /clinic/doctors` readers, and `GET /clinic/slots|appointments` readers. */
 const DOCTOR_READERS: readonly PartnerPermission[] = ['staff.manage', 'bookings.view', 'bookings.manage', 'invoices.create'];
 const DESK_READERS: readonly PartnerPermission[] = ['bookings.view', 'bookings.manage'];
@@ -277,7 +281,7 @@ export const PAGES: readonly WorkspacePage[] = [
   // permission; none: the page says to ask the owner) and Today (the day's register; the server scopes it to the member).
   { path: '/partner/new', roles: ['partner'], element: <NewVisitScreen />, partnerKinds: ['lab'] },
   {
-    path: '/partner/today', roles: ['partner'], element: <TodayScreen />, partnerKinds: ['lab'],
+    path: '/partner/today', roles: ['partner'], element: <TodayScreen />, partnerKinds: ['lab'], partnerPermissions: REGISTER_READERS,
     nav: { labelKey: 'nav.today', icon: CalendarDays, sectionKey: 'nav.section.lab' },
   },
   // WQ3: lab slots and online lab bookings (labs only).

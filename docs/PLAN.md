@@ -2741,6 +2741,40 @@ The pharmacy's simple home (WQ54–54e), for a lab member, with the same pieces,
   a desk booking row that carries its bill's paid state shows it like any paid row (else "Paid on its bill"); branch-scoped
   lab to-dos need nothing here (the server scopes them).
 
+## WQ55b the lab desk, shorter and truthful (2026-11-26, branch `wq55b/lab-home-simpler` from web stage 531c3a3; backend r38b f86bf769)
+
+- **Truthful rows.** A desk booking's row (r38b: paid when its bill is) says "Paid (cash)" once its bill is paid; otherwise
+  "No bill yet" (it is in r38b's `deskUnbilled`), "Bill not paid" (its bill is in the list) or "Pay on its bill" (warn), never
+  a claim of payment. Bookings waiting for payment are doctor bookings ("N doctor bookings waiting for payment", to the
+  consultations; one to its page). A waiting line this member cannot open is plain text, not a pill.
+- **One row per visit (Today and the home).** A bill naming its desk booking is folded into that booking's row
+  ("Meena Iyer: CBC · ₹300.00 · Paid (cash)"); a bill on its own says "Bill · …". **Asked of the server:** r38b's bill items
+  do not say their booking (the service reads `labBookingId` but leaves it out of the item); the web reads an optional
+  `labBookingId` on `kind: 'bill'` items. Until it is sent, a desk booking and its bill stay two rows (both truthful).
+- **Access.** Today (the button, the menu and the home's register) only for members holding a register reader permission
+  (lab bookings, bills or `assisted.book`); a refused read says "Ask the lab owner to allow this." once, with no Try again.
+  "Home collection" only when one of the member's branches does home collection.
+- **Shorter walk-in (12 taps at one branch, 13 with two: + New, Find, This person, Next, Lab test at the desk, the
+  agreement, Next, [branch], CBC, Book for ₹300.00, Issue bill for ₹300.00, Cash, Record ₹300.00 paid).** In a visit the desk
+  books at once (the button names the total; the check step only returns after a refusal) and opens its bill; the patient's
+  language starts as the workspace's (else English); the tests come first and a doctor's code is a small link. The bill from a
+  booking starts with its booked tests at today's catalogue price (no API change: the server takes catalogue lines for a
+  desk booking's bill and does not check them against the booking, L10; a test no longer offered is left out). The visit's
+  bill shows name ("Name on the bill", asked when + New had no owner's name; never blank, never a masked name), phone, items
+  and total, with age, sex, GSTIN, state code and the GST lines behind "More details", and is issued at once ("Issue bill for
+  ₹300.00"). Its payment is cash, UPI, card or bank as 48 px buttons and one "Record ₹300.00 paid" (the whole due), with the
+  longer words behind "Read more", a reference and a note behind "Add a note", and "Cancel bill" under "More actions"; once
+  paid, one "Done". Outside a visit the desk's Booked screen makes **Make bill** the main button ("Book for another patient"
+  secondary).
+- **Bill payment rules.** A ₹0 bill keeps "Mark as paid" enabled and says "Choose how it was paid…" without a method; the
+  money returned on cancelling has no default method either ("Choose how the money was returned.").
+- **r38b:** refunds that day ("Refunded today ₹x", collected unchanged); `deskUnbilled`; branch-scoped to-dos (nothing here).
+- Cleanups: the lab's unused `bookingTo` removed (a pharmacy's only); the "server could not read" comment back on its keys;
+  "Walk-in now, Indiranagar" (no "now" twice).
+- Decisions (owner away): a visit's booking and bill skip their check steps (each button names the total; a refusal brings
+  the check back); the short payment records the whole due (part payments stay on the full form); the tap count is from + New
+  to the recorded payment, typing not counted.
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -3131,6 +3165,7 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-26 | WQ55b the lab desk, shorter and truthful (r38b f86bf769, from 531c3a3) | typecheck clean; Vitest 535/535; the full suite via pw-slot.sh 1185/1185 + 5 skipped (14.1 min) on a temporary config (port 5567, deleted): lab-home's walk-in CBC in cash counted at 12 taps for a one-branch clerk (390 px) and 13 with two branches, the booked CBC on the bill, one Today row, truthful desk rows, doctor bookings waiting, plain lines, no Try again on a refusal, no home collection where no branch does it; the refund method chosen; the code link at the desk. Screenshots in /tmp/wq55b-shots. |
 | 2026-11-26 | WQ55 the simple lab front-desk home (r38 85c10c6e, from 47289d6) | typecheck clean; Vitest 535/535; the full suite via pw-slot.sh 1185/1185 + 5 skipped (15.7 min) on a temporary config (port 5567, deleted), with lab-home (walk-in CBC paid in cash in Today with totals, home collection, family member, branch-limited member, member without billing; desktop, tablet, 390 px) and the bill payment specs choosing a method; then the r38b slots: lab-home and pharmacy-home again 27/27 + 5 skipped. Screenshots in /tmp/wq55-shots. |
 | 2026-11-26 | WQ54e one lab-test statement (r37d a6ac7f3f, from 571f5c5) | typecheck clean; Vitest 534/534; Playwright lab-booking, doctor-lab, pharmacy-home 87/87 + 3 skipped (the exact statement behind Read more on both Book lab test pages; `statementVersion: 'web-lab-test-v1'` in both bodies) on a temporary config (port 5566, deleted). |
 | 2026-11-26 | WQ54d before the older-user test (from 95b0f32) | typecheck clean; Vitest 534/534; Playwright pharmacy-home, lab-desk, lab-consult, doctor-lab, lab-booking, consult-now, assisted-booking, card-booking, pharmacy-sale, pharmacy-extras, i18n: 351/351 + 3 skipped on a temporary config (port 5566, deleted). |

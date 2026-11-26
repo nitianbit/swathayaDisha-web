@@ -38,6 +38,11 @@ export interface TodayItem {
   madeOn?: string | null;
   /** The record that shows it. */
   link: { kind: TodayLinkKind | string; id: string } | null;
+  /**
+   * WQ55b (a lab's bill; asked of the server, not sent by r38b): the desk booking it bills, so the register shows the visit as
+   * one row. r38b: a desk booking's own `paid` is its bill's.
+   */
+  labBookingId?: string | null;
 }
 /** r38: a lab's bills add `bank`. */
 export type PaymentMethodKey = 'cash' | 'upi' | 'card' | 'bank' | 'wallet' | 'online' | 'other';

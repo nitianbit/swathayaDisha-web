@@ -150,13 +150,14 @@ export default {
   'labDesk.mode.home': 'Home collection',
   'labDesk.summary.patient': 'Patient: {patient}',
   /** {mode}: walk-in, lab visit or home collection; {when}: the day and time, or "now". */
+  /** WQ55b: a walk-in (no time to say); {mode}: Walk-in now. */
+  'labDesk.summary.walkin': '{mode}, {branch}',
   'labDesk.summary.visit': '{mode}: {when}, {branch}',
   'labDesk.summary.visitAt': '{mode}: {when}, {branch} · at {address}',
   'labDesk.summary.visitAtCollector': '{mode}: {when}, {branch} · at {address} · collector {collector}',
   'labDesk.summary.tests': 'Tests: {tests}',
   'labDesk.summary.total': 'Total: {total}, paid at the lab',
   /** The time of a walk-in booking. */
-  'labDesk.now': 'now',
   'labDesk.error.branch': 'Choose a branch.',
   'labDesk.error.noTests': 'Choose at least one test.',
   'labDesk.error.tooManyTests': 'Choose at most 20 tests.',
@@ -198,6 +199,10 @@ export default {
   'labDesk.collectorName': 'Collector’s name (optional)',
   'labDesk.collectorPhone': 'Collector’s mobile (optional)',
   'labDesk.book': 'Book',
+  /** WQ55b: a visit's one-tap booking; {total}: the total. */
+  'labDesk.bookFor': 'Book for {total}',
+  /** WQ55b: a doctor's test code, a small link under the tests. */
+  'labDesk.haveCode': 'Have a test code from the doctor?',
   'labDesk.step3': '3. Check the total',
   'labDesk.check': 'Check the total',
   'labDesk.confirm': 'Yes, book for {total}',
@@ -654,6 +659,15 @@ export default {
   'invoice.pay.paidBy': 'Paid by',
   /** WQ55: no method is chosen at first. */
   'invoice.pay.choose': 'Choose…',
+  /** WQ55b: a visit's short payment. {amount}: all that is due. */
+  'invoice.pay.howPaid': 'How did they pay {amount}?',
+  'invoice.pay.recordPaid': 'Record {amount} paid',
+  'invoice.pay.addNote': 'Add a note',
+  'invoice.pay.readMore': 'Read more',
+  'invoice.pay.simpleMore': 'The whole amount due is recorded as paid by the method you tap. A recorded payment cannot be removed; if it was wrong, cancel the bill and record how the money was returned.',
+  'invoice.moreActions': 'More actions',
+  'invoice.done': 'Done',
+  'invoice.cancel.chooseReturned': 'Choose how the money was returned.',
   'invoice.pay.chooseMethod': 'Choose how it was paid: cash, UPI, card, bank or other.',
   /** The fields of the 2nd, 3rd… method of a payment split across methods. */
   'invoice.pay.paidByN': 'Paid by (method {n})',
@@ -760,6 +774,14 @@ export default {
   'newInvoice.noDoctorHere': 'No active doctor works at this branch.',
   'newInvoice.doctorsHere': 'Active doctors of this clinic at this branch.',
   'newInvoice.name': 'Customer name',
+  /** WQ55b: a visit's short bill: the customer is the phone's owner (asked here when + New had no name for them). */
+  'newInvoice.nameOnBill': 'Name on the bill',
+  'newInvoice.nameOnBillHint': 'The phone owner’s name',
+  'newInvoice.moreDetails': 'More details',
+  'newInvoice.noGstShort': 'No GST on this bill.',
+  /** {total}: the bill's total. */
+  'newInvoice.totalIs': 'Total {total}',
+  'newInvoice.issueFor': 'Issue bill for {total}',
   'newInvoice.mobile': 'Mobile number',
   'newInvoice.mobileOptional': 'Mobile number (optional)',
   'newInvoice.age': 'Age (optional)',

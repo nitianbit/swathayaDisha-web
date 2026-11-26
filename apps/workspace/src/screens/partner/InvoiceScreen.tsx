@@ -15,6 +15,7 @@ import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { sniffDocument } from '../pharmacy/documents.ts';
 import { genderLabel, money, useClinicDoctors } from './billing.tsx';
 import { stateTone } from './InvoicesScreen.tsx';
+import { useVisitMode } from '../front/visitPatient.ts';
 import { useSession } from '../../session.tsx';
 import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 import { t } from '../../i18n/partner/index.ts';
@@ -99,6 +100,9 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
   const { memory } = useSession();
   const location = useLocation();
   const issued = (location.state as { issued?: unknown } | null)?.issued;
+  // WQ55b: a visit's bill (from + New or its desk booking): the short payment, one Done, big type.
+  const simple = (location.state as { simple?: unknown } | null)?.simple === true;
+  useVisitMode(simple);
   const issuedNotice = isIssuedNotice(issued)
     ? [t(issued.earlier ? 'invoice.issuedEarlier' : 'invoice.issuedNotice', { serial: issued.serial }), ...(issued.linked ? [t('invoice.issuedLinked')] : [])].join(' ')
     : undefined;
@@ -242,7 +246,14 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
                 </ul>
               )}
               <div className="ws-actions">
-                {canPay && takesPayment(inv) && !payOp && (
+                {canPay && takesPayment(inv) && !payOp && simple && inv.totals.totalMinor > 0 && (
+                  <SimplePayment invoice={inv} locked={inFlight === 'cancel'} busy={inFlight === 'pay'} onRecord={async (draft, reviewedVersion) => {
+                    const requestKey = newRequestKey();
+                    await sendPayment(startOp(requestKey, { ...draft, requestKey, expectedLifecycleVersion: reviewedVersion } as PaymentInput));
+                  }} />
+                )}
+                {simple && inv.lifecycleState === 'paid' && <Link className="j-btn j-btn--primary" to="/">{t('invoice.done')}</Link>}
+                {canPay && takesPayment(inv) && !payOp && !(simple && inv.totals.totalMinor > 0) && (
                   <PaymentForm invoice={inv} allowPartPayments={partner.data?.allowPartPayments === true} locked={inFlight === 'cancel'} busy={inFlight === 'pay'}
                     onRecord={async (draft, reviewedVersion) => {
                       // Q14: the server's request key and the bill version this payment was REVIEWED on (captured when
@@ -251,12 +262,21 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
                       await sendPayment(startOp(requestKey, { ...draft, requestKey, expectedLifecycleVersion: reviewedVersion } as PaymentInput));
                     }} />
                 )}
-                {inv.lifecycleState !== 'cancelled' && canCancel && (
+                {inv.lifecycleState !== 'cancelled' && canCancel && !simple && (
                   <CancelForm ctx={ctx} invoice={inv} locked={inFlight === 'pay' || !!payOp} onBusy={(b) => setInFlight(b ? 'cancel' : null)}
                     onDone={(r) => { changed(r); setFailure(null); setNotice(t('invoice.cancelledNotice', { serial: inv.serial })); }}
                     onRefused={reload} />
                 )}
               </div>
+              {/* WQ55b: in a visit, cancelling is away from the main action. */}
+              {inv.lifecycleState !== 'cancelled' && canCancel && simple && (
+                <details className="more-details">
+                  <summary>{t('invoice.moreActions')}</summary>
+                  <CancelForm ctx={ctx} invoice={inv} locked={inFlight === 'pay' || !!payOp} onBusy={(b) => setInFlight(b ? 'cancel' : null)}
+                    onDone={(r) => { changed(r); setFailure(null); setNotice(t('invoice.cancelledNotice', { serial: inv.serial })); }}
+                    onRefused={reload} />
+                </details>
+              )}
               {!canPay && !canCancel && <p className="ws-muted">{t('invoice.viewOnly')}</p>}
             </section>
 
@@ -473,6 +493,7 @@ function PaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }: {
 function ZeroBillPayment({ invoice, locked, busy, onRecord }: { invoice: Invoice; locked: boolean; busy: boolean; onRecord: OnRecord }) {
   const [open, setOpen] = useState<{ version: number } | null>(null);
   const [mode, setMode] = useState<InvoicePaymentMode | ''>('');
+  const [modeError, setModeError] = useState<string | null>(null);
   const guard = useReviewGuard(invoice.lifecycleVersion, !!open, () => setOpen(null));
   if (!open) {
     return (
@@ -486,16 +507,68 @@ function ZeroBillPayment({ invoice, locked, busy, onRecord }: { invoice: Invoice
     <div className="confirm" role="group" aria-label={t('invoice.pay.record')}>
       <div className="j-field">
         <label htmlFor="pay-zero-mode">{t('invoice.pay.paidBy')}</label>
-        <select id="pay-zero-mode" value={mode} onChange={(e) => setMode(e.target.value as InvoicePaymentMode | '')}>
+        <select id="pay-zero-mode" value={mode} aria-invalid={modeError ? true : undefined} aria-describedby={modeError ? 'pay-zero-mode-err' : undefined}
+          onChange={(e) => { setMode(e.target.value as InvoicePaymentMode | ''); setModeError(null); }}>
           <option value="">{t('invoice.pay.choose')}</option>
           {PAYMENT_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
+        {modeError && <span id="pay-zero-mode-err" className="j-field__error" role="alert">{modeError}</span>}
       </div>
       <div className="confirm-text">{t('invoice.pay.zero', { serial: invoice.serial, amount: money(0) })}</div>
       <div className="confirm-actions">
-        <Button busy={busy} disabled={locked || !mode} onClick={() => { if (!mode) return; const v = open.version; setOpen(null); void onRecord({ mode }, v); }}>{t('invoice.pay.markPaid')}</Button>
+        <Button busy={busy} disabled={locked} onClick={() => {
+          // WQ55b: kept enabled; without a method it says what to choose.
+          if (!mode) { setModeError(t('invoice.pay.chooseMethod')); return; }
+          const v = open.version; setOpen(null); void onRecord({ mode }, v);
+        }}>{t('invoice.pay.markPaid')}</Button>
         <Button variant="ghost" disabled={busy} onClick={() => setOpen(null)}>{shared('action.back')}</Button>
       </div>
+    </div>
+  );
+}
+
+/** WQ55b: the methods a visit's bill offers as big buttons. */
+const SIMPLE_MODES: readonly InvoicePaymentMode[] = ['cash', 'upi', 'card', 'bank'];
+
+/**
+ * WQ55b: a visit's payment: all that is due, by one method tapped as a 48 px button, then one Record. The longer words
+ * behind "Read more", a reference and a note behind "Add a note".
+ */
+function SimplePayment({ invoice, locked, busy, onRecord }: { invoice: Invoice; locked: boolean; busy: boolean; onRecord: OnRecord }) {
+  const due = dueOf(invoice);
+  const [mode, setMode] = useState<InvoicePaymentMode | ''>('');
+  const [reference, setReference] = useState('');
+  const [note, setNote] = useState('');
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  function record() {
+    const errs: Record<string, string> = {};
+    if (!mode) errs.mode = t('invoice.pay.chooseMethod');
+    if (reference.trim().length > MAX_REFERENCE) errs.reference = tooLongWords(MAX_REFERENCE);
+    if (note.trim().length > MAX_NOTE) errs.note = tooLongWords(MAX_NOTE);
+    setErrors(errs);
+    if (Object.keys(errs).length || !mode) return;
+    void onRecord({ splits: [{ mode, amountMinor: due, ...(reference.trim() ? { reference: reference.trim() } : {}) }], ...(note.trim() ? { note: note.trim() } : {}) },
+      invoice.lifecycleVersion);
+  }
+  return (
+    <div className="simple-pay" role="group" aria-label={t('invoice.pay.record')}>
+      <fieldset className="pay-buttons" aria-describedby={errors.mode ? 'simple-pay-err' : undefined}>
+        <legend>{t('invoice.pay.howPaid', { amount: money(due) })}</legend>
+        {SIMPLE_MODES.map((m) => (
+          <button key={m} type="button" className="pay-button" aria-pressed={mode === m} onClick={() => { setMode(m); setErrors({}); }}>{MODE_LABEL[m]}</button>
+        ))}
+      </fieldset>
+      {errors.mode && <span id="simple-pay-err" className="j-field__error" role="alert">{errors.mode}</span>}
+      <details className="more-details">
+        <summary>{t('invoice.pay.addNote')}</summary>
+        <TextField label={t('invoice.pay.reference')} value={reference} maxLength={MAX_REFERENCE} error={errors.reference} onChange={(e) => setReference(e.target.value)} />
+        <TextField label={t('invoice.pay.note')} value={note} maxLength={MAX_NOTE} error={errors.note} onChange={(e) => setNote(e.target.value)} />
+      </details>
+      <div><Button busy={busy} disabled={locked} onClick={record}>{t('invoice.pay.recordPaid', { amount: money(due) })}</Button></div>
+      <details className="more-details">
+        <summary>{t('invoice.pay.readMore')}</summary>
+        <p className="ws-muted">{t('invoice.pay.simpleMore')}</p>
+      </details>
     </div>
   );
 }
@@ -624,7 +697,8 @@ function CancelForm({ ctx, invoice, locked, onBusy, onDone, onRefused }: {
 }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
-  const [refundMode, setRefundMode] = useState<InvoicePaymentMode>('cash');
+  // WQ55b: how the money was returned is chosen (no default), as for a payment.
+  const [refundMode, setRefundMode] = useState<InvoicePaymentMode | ''>('');
   const [refundRef, setRefundRef] = useState('');
   const [refundNote, setRefundNote] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -652,13 +726,14 @@ function CancelForm({ ctx, invoice, locked, onBusy, onDone, onRefused }: {
     const errs: Record<string, string> = {};
     if (reason.trim().length < 3) errs.reason = t('invoice.cancel.reasonShort');
     else if (reason.trim().length > MAX_CANCEL_REASON) errs.reason = tooLongWords(MAX_CANCEL_REASON);
+    if (paid && !refundMode) errs.refundMode = t('invoice.cancel.chooseReturned');
     if (paid && refundRef.trim().length > MAX_REFERENCE) errs.refundRef = tooLongWords(MAX_REFERENCE);
     if (paid && refundNote.trim().length > MAX_NOTE) errs.refundNote = tooLongWords(MAX_NOTE);
     setErrors(errs);
     setError(null);
     if (Object.keys(errs).length) return;
     const refund: RefundInput | undefined = paid
-      ? { mode: refundMode, ...(refundRef.trim() ? { reference: refundRef.trim() } : {}), ...(refundNote.trim() ? { note: refundNote.trim() } : {}), amountMinor: paidMinor }
+      ? { mode: refundMode as InvoicePaymentMode, ...(refundRef.trim() ? { reference: refundRef.trim() } : {}), ...(refundNote.trim() ? { note: refundNote.trim() } : {}), amountMinor: paidMinor }
       : undefined;
     setBusy(true);
     onBusy(true);
@@ -688,9 +763,12 @@ function CancelForm({ ctx, invoice, locked, onBusy, onDone, onRefused }: {
         <div className="rx-form-row">
           <div className="j-field">
             <label htmlFor="refund-mode">{t('invoice.cancel.returnedBy')}</label>
-            <select id="refund-mode" value={refundMode} onChange={(e) => setRefundMode(e.target.value as InvoicePaymentMode)}>
+            <select id="refund-mode" value={refundMode} aria-invalid={errors.refundMode ? true : undefined} aria-describedby={errors.refundMode ? 'refund-mode-err' : undefined}
+              onChange={(e) => setRefundMode(e.target.value as InvoicePaymentMode | '')}>
+              <option value="">{t('invoice.pay.choose')}</option>
               {PAYMENT_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
+            {errors.refundMode && <span id="refund-mode-err" className="j-field__error" role="alert">{errors.refundMode}</span>}
           </div>
           <TextField label={t('invoice.cancel.refundRef')} value={refundRef} maxLength={MAX_REFERENCE} error={errors.refundRef} onChange={(e) => setRefundRef(e.target.value)} />
           <TextField label={t('invoice.cancel.refundNote')} value={refundNote} maxLength={MAX_NOTE} error={errors.refundNote} onChange={(e) => setRefundNote(e.target.value)} />

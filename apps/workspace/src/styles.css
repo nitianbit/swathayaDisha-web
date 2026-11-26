@@ -166,3 +166,15 @@
 /* WQ54b: how a counter payment was taken: three large choices, none chosen at first. */
 .pay-picker .ws-check { min-height: 48px; font-size: 1.0625rem; }
 .pay-picker .ws-check input { width: 24px; height: 24px; }
+
+/* WQ55b: a visit's short bill and payment (big method buttons, details behind a 48 px "More details"). */
+.more-details > summary { cursor: pointer; padding: 12px 0; line-height: 24px; color: var(--brand-strong); font-weight: 600; }
+.pay-buttons { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.pay-buttons legend { font-weight: 700; font-size: 1.125rem; margin-bottom: var(--space-2); }
+.pay-button { min-height: 48px; min-width: 96px; padding: 0 var(--space-4); border: 2px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  color: var(--ink); font-size: 1.0625rem; font-weight: 600; cursor: pointer; }
+.pay-button[aria-pressed='true'] { border-color: var(--brand); background: var(--brand-soft); color: var(--brand-strong); }
+.simple-pay { display: grid; gap: var(--space-3); }
+.bill-lines li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: 1.0625rem; }
+.bill-total { font-size: 1.5rem; }
+.desk-code > summary { cursor: pointer; padding: 12px 0; line-height: 24px; color: var(--brand-strong); }

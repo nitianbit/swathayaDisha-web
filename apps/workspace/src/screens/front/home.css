@@ -66,3 +66,6 @@ body.visit-mode .ws-main { font-size: 1.0625rem; }
   body.visit-mode .ws-main input[type='checkbox'], body.visit-mode .ws-main input[type='radio'] { width: 24px; height: 24px; }
 }
 .simple > .ws-search, .simple > .simple-row { margin-bottom: var(--space-3); }
+/* WQ55b: a waiting line this person cannot open is plain text; a refused read is said once, with nothing to retry. */
+.pending-item--plain { background: none; padding: 0; color: var(--ink); }
+.simple-forbidden { margin: 0; color: var(--muted); }

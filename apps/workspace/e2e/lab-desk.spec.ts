@@ -275,7 +275,7 @@ test('walk-in now: the patient, the tests and the total; booked with no time, th
   await form.getByLabel('Language the patient speaks').selectOption('hi');
   await form.getByRole('button', { name: 'Book' }).click();
   const check = page.getByRole('group', { name: 'Check the total' });
-  await expect(check).toContainText('Walk-in now: now, Indiranagar');
+  await expect(check).toContainText('Walk-in now, Indiranagar');
   await check.getByRole('button', { name: 'Yes, book for ₹750.00' }).click();
   await expect(page.getByRole('heading', { name: 'Booked' })).toBeVisible();
   await expect(page.getByText('The tests are booked. The patient pays at the lab.')).toBeVisible();
@@ -499,6 +499,8 @@ test('WQ21b: a code from the doctor ticks this lab’s matching tests; the rest 
   await signIn(page);
   await nav(page).getByRole('link', { name: 'Front desk' }).click();
   await patient(page);
+  // WQ55b: the code is a small link under the tests.
+  await page.getByText('Have a test code from the doctor?', { exact: true }).click();
   await page.getByLabel('Have a test code from the doctor? (optional)').fill('abcd efgh');
   await page.getByRole('button', { name: 'Load tests' }).click();
   await expect(page.getByText('Recommended tests: cbc, Lipid  Profile, Vitamin D.')).toBeVisible();
@@ -524,6 +526,8 @@ test('WQ21b: an unknown code (or another number) is said plainly at the desk', a
   await signIn(page);
   await nav(page).getByRole('link', { name: 'Front desk' }).click();
   await patient(page);
+  // WQ55b: the code is a small link under the tests.
+  await page.getByText('Have a test code from the doctor?', { exact: true }).click();
   await page.getByLabel('Have a test code from the doctor? (optional)').fill('WXYZ-2345');
   await page.getByRole('button', { name: 'Load tests' }).click();
   await expect(page.getByText('No recommended tests were found for this code and this mobile number. Check both with the patient.')).toBeVisible();

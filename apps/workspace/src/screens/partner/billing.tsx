@@ -74,6 +74,10 @@ export interface BillPrefill {
   phone: string;
   /** "Dr Mehta, Tue, 17 Nov 2026, 09:30" / "Asha, Wed, 25 Nov 2026, 10:00" — what the form shows about the record. */
   label: string;
+  /** WQ55b: the booked tests (catalogue ids): the bill starts with them, at today's catalogue price. */
+  items?: string[];
+  /** WQ55b: a visit opened from + New: the short bill (name, phone, items, total) and the short payment. */
+  simple?: boolean;
 }
 export const billPrefillSlot = (identity: string) => `invoice-prefill:${identity}`;
 /** What is stored: the prefill and the one-time token the navigation to the form carries in its route state. */
@@ -94,23 +98,27 @@ export function billLinkRefusal(code: string | undefined): string | undefined {
 /** Who may open bills (the bills list): any of these permissions. */
 export const BILL_READERS = ['invoices.create', 'invoices.cancel', 'payments.record', 'finance.view'] as const;
 
+/** Opens the new-bill form with this record handed over (WQ55b: also straight after a visit's desk booking). */
+export function openBill(ctx: ScopeContext, memory: SessionMemory, prefill: BillPrefill, navigate: ReturnType<typeof useNavigate>) {
+  // Bound to this navigation: the form takes it only when the route state names this token, once.
+  const token = newRequestKey();
+  memory.set(billPrefillSlot(scopeIdentity(ctx)), { token, prefill } satisfies BillHandover);
+  navigate(`${ctx.link('invoices')}/new`, { state: { prefillToken: token } });
+}
+
 /**
  * Q14 / r12: the new-bill form for this record, prefilled with its patient, branch (and doctor) and the record (handed over
  * in session memory only, never in the URL), or the bills list for other bill readers.
  */
-export function BillLink({ ctx, memory, prefill, label }: { ctx: ScopeContext; memory: SessionMemory; prefill: BillPrefill; label?: string }) {
+export function BillLink({ ctx, memory, prefill, label, className }: { ctx: ScopeContext; memory: SessionMemory; prefill: BillPrefill; label?: string; className?: string }) {
   const navigate = useNavigate();
   if (holdsAny(ctx.actor, ['invoices.create'])) {
-    const to = `${ctx.link('invoices')}/new`;
     return (
-      <Link to={to} onClick={(e) => {
+      <Link to={`${ctx.link('invoices')}/new`} className={className} onClick={(e) => {
         // A modified click opens another tab (its own session memory): nothing is handed over, the form starts empty.
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
         e.preventDefault();
-        // Bound to this navigation: the form takes it only when the route state names this token, once.
-        const token = newRequestKey();
-        memory.set(billPrefillSlot(scopeIdentity(ctx)), { token, prefill } satisfies BillHandover);
-        navigate(to, { state: { prefillToken: token } });
+        openBill(ctx, memory, prefill, navigate);
       }}>{label ?? t('billing.makeBill')}</Link>
     );
   }

@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
-  addDays, addressErrors, COLLECTOR_PHONE_PATTERN, CONSENT_STATEMENT_LANGUAGE, deskItems, deskRefusal, deskTotalMinor, isBookable, isSwitchedOff, istDateOf,
+  addDays, addressErrors, COLLECTOR_PHONE_PATTERN, holdsAny, CONSENT_STATEMENT_LANGUAGE, deskItems, deskRefusal, deskTotalMinor, isBookable, isSwitchedOff, istDateOf,
   LAB_DESK_CONSENT_STATEMENT, LAB_DESK_CONSENT_VERSION, LAB_DESK_SWITCHED_OFF_MESSAGE, labDeskApi, MAX_COLLECTOR_NAME, patientBody,
   type DeskBookingRequest, type DeskByKey, type DeskReceipt, type LabAddress, type LabBooking, type VisitMode,
 } from '@jansetu/api';
@@ -11,13 +11,13 @@ import { Alert, Button, ErrorState, Loading, Parts, shared, TextField } from '@j
 import { newRequestKey } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
-import { AddressFields, EMPTY_ADDRESS, labAddressLine, labAddressOf, LanguageSelect } from '../pharmacy/bookingFields.tsx';
+import { AddressFields, defaultPatientLanguage, EMPTY_ADDRESS, labAddressLine, labAddressOf, LanguageSelect } from '../pharmacy/bookingFields.tsx';
 import { useAssistedCreate } from '../pharmacy/assistedCreate.ts';
 import { PatientSection, usePatientStep } from '../pharmacy/patientStep.tsx';
 import { RecommendedTests, useRecommendedTicks } from '../pharmacy/recommendedTests.tsx';
 import { SlotDays } from '../pharmacy/slotDays.tsx';
 import { UnconfirmedBooking } from '../pharmacy/unconfirmedBooking.tsx';
-import { BillLink, money, useCatalogue } from './billing.tsx';
+import { BillLink, money, openBill, useCatalogue, type BillPrefill } from './billing.tsx';
 import { formatDay, LabOnly, modesOf, useScopedBranches } from './labs.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 import { t, type PartnerKey } from '../../i18n/partner/index.ts';
@@ -59,9 +59,10 @@ interface PendingDesk { request: DeskBookingRequest; summary: Summary; bill: { n
 interface Done { booking: LabBooking | null; summary?: Summary; bill?: { name: string; phone: string }; replayed: boolean; newAccount?: boolean }
 
 function SummaryList({ s }: { s: Summary }) {
-  // A walk-in is booked for now (older records in this session hold the word itself).
-  const parts = { mode: t(MODE_KEY[s.mode]), when: <strong>{s.when || t('labDesk.now')}</strong>, branch: s.branch };
-  const visit = !s.address ? t.rich<'labDesk.summary.visit', ReactNode>('labDesk.summary.visit', parts)
+  // A walk-in is booked for now: "Walk-in now, Indiranagar" (WQ55b: the time is not said twice).
+  const parts = { mode: t(MODE_KEY[s.mode]), when: <strong>{s.when}</strong>, branch: s.branch };
+  const visit = !s.address && !s.when ? t.rich<'labDesk.summary.walkin', ReactNode>('labDesk.summary.walkin', { mode: parts.mode, branch: s.branch })
+    : !s.address ? t.rich<'labDesk.summary.visit', ReactNode>('labDesk.summary.visit', parts)
     : s.collector ? t.rich<'labDesk.summary.visitAtCollector', ReactNode>('labDesk.summary.visitAtCollector', { ...parts, address: s.address, collector: s.collector })
     : t.rich<'labDesk.summary.visitAt', ReactNode>('labDesk.summary.visitAt', { ...parts, address: s.address });
   return (
@@ -72,6 +73,17 @@ function SummaryList({ s }: { s: Summary }) {
       <li><Parts of={t.rich('labDesk.summary.total', { total: <strong>{money(s.totalMinor)}</strong> })} /></li>
     </ul>
   );
+}
+
+/** The bill of a desk booking: its customer (the account holder), branch and, WQ55b, its booked tests; `simple` for a visit. */
+function billPrefillOf(b: LabBooking, bill: { name: string; phone: string } | undefined, simple: boolean): BillPrefill {
+  return {
+    link: { kind: 'lab_booking', id: b._id }, branchId: b.branchId, doctorId: '', name: bill?.name ?? '', phone: bill?.phone ?? '',
+    label: b.patient?.name === undefined
+      ? t('labDesk.billForUnnamed', { day: formatDay(b.slot.date), time: b.slot.startTime })
+      : t('labDesk.billFor', { name: b.patient.name, day: formatDay(b.slot.date), time: b.slot.startTime }),
+    items: (b.items ?? []).map((i) => String(i.catalogItemId)), simple,
+  };
 }
 
 function Desk({ ctx }: { ctx: ScopeContext }) {
@@ -105,6 +117,19 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
   const pt = usePatientStep({ pharmacyId: identity, perform, lookupPatient: (phone) => desk.lookup(phone),
     onFind: () => setNotice(null), onSwitchedOff: () => setOff(true), onChangePhone: () => { setReview(null); setRefused(null); } });
   const { lookup, patient, patientDone, patientLabel } = pt;
+  // WQ55b: a visit opened from + New: booked at once (the button names the total), then straight to its bill.
+  const fromNew = !!pt.visit;
+  const navigate = useNavigate();
+  const [payNow, setPayNow] = useState(false);
+  useEffect(() => { if (payNow && review) { setPayNow(false); void create.pay(); } }, [payNow, review]); // eslint-disable-line react-hooks/exhaustive-deps
+  // After a visit's booking, its bill opens at once (for a member who makes bills).
+  const billed = useRef(false);
+  useEffect(() => {
+    const b = done?.booking;
+    if (!fromNew || !b || billed.current || !holdsAny(ctx.actor, ['invoices.create'])) return;
+    billed.current = true;
+    openBill(ctx, memory, billPrefillOf(b, done?.bill, true), navigate);
+  }, [done]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Step 2: the visit, branch, tests and time.
   const branches = useScopedBranches(ctx);
@@ -144,7 +169,7 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
   const [address, setAddress] = useState(EMPTY_ADDRESS);
   const [collectorName, setCollectorName] = useState('');
   const [collectorPhone, setCollectorPhone] = useState('');
-  const [language, setLanguage] = useState('');
+  const [language, setLanguage] = useState(defaultPatientLanguage);
   const [errors, setErrors] = useState<Record<string, string>>({});
   useEffect(() => { if (isSwitchedOff(catalogue.error)) setOff(true); }, [catalogue.error]);
 
@@ -152,7 +177,7 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
   function toggleItem(id: string) { setItemIds((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id])); setRefused(null); }
   function resetAll() {
     pt.reset(); setMode('walkin'); setBranchId(null); setItemIds([]); setSlotId(null); setAddress(EMPTY_ADDRESS); setCollectorName(''); setCollectorPhone('');
-    setLanguage(''); setErrors({}); setReview(null); setRefused(null); setDone(null); setNotice(null); recTicks.reset();
+    setLanguage(defaultPatientLanguage()); setErrors({}); setReview(null); setRefused(null); setDone(null); setNotice(null); recTicks.reset();
   }
 
   function book(e: FormEvent) {
@@ -191,7 +216,7 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
         tests: items.filter((i) => chosen.includes(i._id)).map((i) => i.name), totalMinor,
         ...(home ? { address: labAddressLine(home) } : {}), ...(collector ? { collector: collector.name } : {}),
       },
-    });
+    });    if (fromNew) setPayNow(true);
   }
 
   // An unconfirmed booking stays on screen while it is resent or given up (its first attempt shows the review busy).
@@ -211,6 +236,7 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
 
   if (done) {
     const b = done.booking;
+    const prefill = b ? billPrefillOf(b, done.bill, fromNew) : null;
     return (
       <section className="ws-section" aria-labelledby="done-h">
         <h2 id="done-h">{done.replayed ? t('labDesk.done.alreadyTitle') : t('labDesk.done.title')}</h2>
@@ -220,17 +246,11 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
         {done.summary && <SummaryList s={done.summary} />}
         {done.newAccount && <p className="ws-muted">{t('labDesk.done.newAccount')}</p>}
         {!b && <p className="ws-muted">{t('labDesk.done.notYourBranch')}</p>}
+        {/* WQ55b: the next step is the bill (the main button); another patient and the booking are secondary. */}
         <div className="ws-actions">
+          {prefill && <BillLink ctx={ctx} memory={memory} label={t('labDesk.makeBill')} prefill={prefill} className="j-btn j-btn--primary" />}
+          <Button variant="secondary" onClick={resetAll}>{t('labDesk.another')}</Button>
           {b && <Link to={`${ctx.link('lab-bookings')}/${b._id}`}>{t('labDesk.done.open')}</Link>}
-          {b && (
-            <BillLink ctx={ctx} memory={memory} label={t('labDesk.makeBill')} prefill={{
-              link: { kind: 'lab_booking', id: b._id }, branchId: b.branchId, doctorId: '', name: done.bill?.name ?? '', phone: done.bill?.phone ?? '',
-              label: b.patient?.name === undefined
-                ? t('labDesk.billForUnnamed', { day: formatDay(b.slot.date), time: b.slot.startTime })
-                : t('labDesk.billFor', { name: b.patient.name, day: formatDay(b.slot.date), time: b.slot.startTime }),
-            }} />
-          )}
-          <Button onClick={resetAll}>{t('labDesk.another')}</Button>
         </div>
       </section>
     );
@@ -248,7 +268,6 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
       {patientDone && (
         <section className="ws-section" aria-labelledby="desk-h">
           <h2 id="desk-h">{t('labDesk.step2')}</h2>
-          {lookup && <RecommendedTests load={desk.recommendation} phone={lookup.phone} perform={perform} disabled={frozen} ticks={recTicks} />}
           <form className="rx-form" noValidate onSubmit={book} aria-label={t('labDesk.testsAndTime')}>
             <fieldset className="ws-frozen" disabled={frozen}>
               <fieldset className="ws-checks">
@@ -322,14 +341,21 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
             {!review && (
               <div className="ws-actions">
                 <span><Parts of={t.rich('labDesk.summary.total', { total: <strong>{formatPaise(totalMinor)}</strong> })} /></span>
-                <Button type="submit">{t('labDesk.book')}</Button>
+                <Button type="submit">{fromNew ? t('labDesk.bookFor', { total: money(totalMinor) }) : t('labDesk.book')}</Button>
               </div>
             )}
           </form>
+          {/* WQ55b: the tests come first; a doctor's test code is a small link that opens its field. */}
+          {lookup && (
+            <details className="desk-code">
+              <summary>{t('labDesk.haveCode')}</summary>
+              <RecommendedTests load={desk.recommendation} phone={lookup.phone} perform={perform} disabled={frozen} ticks={recTicks} />
+            </details>
+          )}
         </section>
       )}
 
-      {review && (
+      {review && (!fromNew || refused) && (
         <section className="ws-section" aria-labelledby="desk-ok-h">
           <h2 id="desk-ok-h">{t('labDesk.step3')}</h2>
           <div className="confirm" role="group" aria-label={t('labDesk.check')}>

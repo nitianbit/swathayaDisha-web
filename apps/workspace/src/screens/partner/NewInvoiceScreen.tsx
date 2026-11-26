@@ -14,7 +14,7 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { afterFailure, beginAttempt, newRequestKey, ownsKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
-import { useVisitPreset, type VisitPatient } from '../front/visitPatient.ts';
+import { useVisitMode, useVisitPreset, type VisitPatient } from '../front/visitPatient.ts';
 import { VisitPatientLine } from '../front/visitBar.tsx';
 import { billLinkRefusal, billPrefillSlot, money, takeHandover, useCatalogue, useClinicDoctors, type BillHandover, type BillPrefill } from './billing.tsx';
 import { Totals, type IssuedNotice } from './InvoiceScreen.tsx';
@@ -186,8 +186,11 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
   const prefillSlot = billPrefillSlot(scopeIdentity(ctx));
   const location = useLocation();
   const [prefill] = useState(() => takeHandover(memory.get<BillHandover>(prefillSlot), location.state));
-  // WQ55: opened from + New, the visit's patient (handed over once).
+  // WQ55: opened from + New, the visit's patient (handed over once). WQ55b: a visit's bill (from + New, or straight from
+  // its desk booking) is the short one, and its bill page too.
   const visit = useVisitPreset();
+  const simple = !!visit || !!prefill?.simple;
+  useVisitMode(simple);
   // Read once: whatever was handed over (also a handover this navigation does not name) is cleared now.
   useEffect(() => { memory.delete(prefillSlot); }, [memory, prefillSlot]);
 
@@ -216,7 +219,7 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
     setPendingState((cur) => (cur && cur.requestKey !== requestKey ? cur : undefined));
     // What happened, as data: the bill page words it (in the language showing then).
     const notice: IssuedNotice = { serial: inv.serial, earlier, linked: !!inv.customer?.userId };
-    navigate(`${ctx.link('invoices')}/${inv._id}`, { state: { issued: notice } });
+    navigate(`${ctx.link('invoices')}/${inv._id}`, { state: { issued: notice, ...(simple ? { simple: true } : {}) } });
   };
 
   /** Sends exactly `p` (same key, same content). Only success, or a definite refusal of its FIRST attempt, ends it. */
@@ -291,7 +294,7 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
           <>
           {gaveUp && <Alert tone="ok">{t('newInvoice.gaveUp')}</Alert>}
           <InvoiceForm partner={p!} branches={branches.data} catalogue={catalogue.data} doctors={doctors.data} doctorsError={doctors.isError ? messageOf(doctors.error) : null}
-            busy={busy} refused={refused} prefill={prefill} visit={visit}
+            busy={busy} refused={refused} prefill={prefill} visit={visit} simple={simple}
             onIssue={(body) => {
               const requestKey = newRequestKey();
               void send(startOp(requestKey, { ...body, idempotencyKey: requestKey }));
@@ -311,18 +314,31 @@ function PendingSummary({ body }: { body: NewInvoice }) {
   );
 }
 
-function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy, refused, prefill, visit, onIssue }: {
+/** A bill line from a catalogue item (its name, price and GST rate kept; only quantity and discount change). */
+const catalogueLine = (it: CatalogueItem): LineDraft => ({
+  key: lineKey(), item: { _id: it._id, name: it.name, priceMinor: it.priceMinor, gstRate: it.gstRate, sac: it.sac },
+  description: it.name, sac: it.sac ?? '', qty: '1', price: paiseToInput(it.priceMinor), discount: '', gstRate: String(it.gstRate),
+});
+
+function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy, refused, prefill, visit, simple, onIssue }: {
   partner: Partner; branches: Branch[]; catalogue: CatalogueItem[]; doctors: ClinicDoctor[] | undefined; doctorsError: string | null;
-  busy: boolean; refused: string | null; prefill?: BillPrefill; visit: VisitPatient | null; onIssue: (body: Omit<NewInvoice, 'idempotencyKey'>) => void;
+  busy: boolean; refused: string | null; prefill?: BillPrefill; visit: VisitPatient | null; simple: boolean; onIssue: (body: Omit<NewInvoice, 'idempotencyKey'>) => void;
 }) {
   const [d, setD] = useState<InvoiceDraft>(() => (prefill
     ? { ...EMPTY, branchId: prefill.branchId, doctorId: prefill.doctorId, name: prefill.name, phone: prefill.phone,
-      link: { ...prefill.link, label: prefill.label, nameFixed: !!prefill.name.trim(), phoneFixed: !!prefill.phone.trim() } }
+      link: { ...prefill.link, label: prefill.label, nameFixed: !!prefill.name.trim(), phoneFixed: !!prefill.phone.trim() },
+      // WQ55b: the booked tests, at today's catalogue price (one the catalogue no longer offers is left out).
+      lines: (prefill.items ?? []).flatMap((id) => {
+        const it = catalogue.find((i) => i._id === id && i.isActive && !i.adminDisabled);
+        return it ? [catalogueLine(it)] : [];
+      }) }
     // WQ55: a bill opened from + New is the account holder's (as a desk booking's bill): a family member's is in the phone
     // owner's name (typed on + New, else typed here).
     : { ...EMPTY, branchId: branches.length === 1 ? branches[0]!._id : '',
       ...(visit ? { name: visit.family ? visit.family.holderName : visit.name, phone: visit.phone } : {}) }));
   const linked = !!d.link;
+  // WQ55b: a visit's bill with no name yet (a family member's, the owner not named on + New) asks for the owner's.
+  const [nameAsked] = useState(() => simple && !d.name.trim());
   // Field errors appear once the person has asked to review the bill, then follow every change.
   const [tried, setTried] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
@@ -367,17 +383,16 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
     const it = offered.find((i) => i._id === pick);
     if (!it) { setPickError(t('newInvoice.chooseItem')); return; }
     setPickError(null);
-    set({ lines: [...d.lines, {
-      key: lineKey(), item: { _id: it._id, name: it.name, priceMinor: it.priceMinor, gstRate: it.gstRate, sac: it.sac },
-      description: it.name, sac: it.sac ?? '', qty: '1', price: paiseToInput(it.priceMinor), discount: '', gstRate: String(it.gstRate),
-    }] });
+    set({ lines: [...d.lines, catalogueLine(it)] });
     setPick('');
   }
 
   function review(e: FormEvent) {
     e.preventDefault();
     setTried(true);
-    if (Object.keys(built.errors).length === 0) setReviewing(true);
+    if (Object.keys(built.errors).length > 0) return;
+    // WQ55b: a visit's short bill is issued at once (its button names the total).
+    if (simple) onIssue(built.body); else setReviewing(true);
   }
 
   const pv = built.preview;
@@ -400,60 +415,94 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
         ) : (
           <div className="ws-actions" role="group" aria-label={t('newInvoice.labBooking')}>
             <span>{t(d.link.phoneFixed ? 'newInvoice.forLabBooking' : 'newInvoice.forLabBookingPhone', { label: d.link.label })}</span>
-            <Button variant="ghost" onClick={() => set({ link: undefined })}>{t('newInvoice.notForBooking')}</Button>
+            {!simple && <Button variant="ghost" onClick={() => set({ link: undefined })}>{t('newInvoice.notForBooking')}</Button>}
           </div>
         ))}
-        <div className="rx-form-row">
-          <div className="j-field">
-            <label htmlFor="nb-branch">{t('newInvoice.branch')}</label>
-            <select id="nb-branch" value={d.branchId} disabled={linked} aria-invalid={errors.branchId ? true : undefined} aria-describedby={errors.branchId ? 'nb-branch-error' : undefined}
-              onChange={(e) => set({ branchId: e.target.value, doctorId: '' })}>
-              <option value="">{t('newInvoice.chooseBranch')}</option>
-              {branches.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
-            </select>
-            {errors.branchId && <span id="nb-branch-error" className="j-field__error">{errors.branchId}</span>}
-          </div>
-          {partner.kind === 'clinic' && (
+        {(!simple || (!linked && branches.length > 1)) && (
+          <div className="rx-form-row">
             <div className="j-field">
-              <label htmlFor="nb-doctor">{t('newInvoice.doctor')}</label>
-              <select id="nb-doctor" value={d.doctorId} disabled={!d.branchId || linked} aria-describedby="nb-doctor-hint" onChange={(e) => set({ doctorId: e.target.value })}>
-                <option value="">{t('newInvoice.noDoctor')}</option>
-                {branchDoctors.map((x) => <option key={x.doctorId} value={x.doctorId}>{x.name}{x.specialization ? ` (${x.specialization})` : ''}</option>)}
+              <label htmlFor="nb-branch">{t('newInvoice.branch')}</label>
+              <select id="nb-branch" value={d.branchId} disabled={linked} aria-invalid={errors.branchId ? true : undefined} aria-describedby={errors.branchId ? 'nb-branch-error' : undefined}
+                onChange={(e) => set({ branchId: e.target.value, doctorId: '' })}>
+                <option value="">{t('newInvoice.chooseBranch')}</option>
+                {branches.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
               </select>
-              <span id="nb-doctor-hint" className="j-field__hint">
-                {doctorsError ? t('newInvoice.doctorsFailed', { reason: doctorsError }) : !d.branchId ? t('newInvoice.doctorBranchFirst')
-                  : branchDoctors.length === 0 ? t('newInvoice.noDoctorHere') : t('newInvoice.doctorsHere')}
-              </span>
+              {errors.branchId && <span id="nb-branch-error" className="j-field__error">{errors.branchId}</span>}
             </div>
-          )}
-        </div>
+            {partner.kind === 'clinic' && (
+              <div className="j-field">
+                <label htmlFor="nb-doctor">{t('newInvoice.doctor')}</label>
+                <select id="nb-doctor" value={d.doctorId} disabled={!d.branchId || linked} aria-describedby="nb-doctor-hint" onChange={(e) => set({ doctorId: e.target.value })}>
+                  <option value="">{t('newInvoice.noDoctor')}</option>
+                  {branchDoctors.map((x) => <option key={x.doctorId} value={x.doctorId}>{x.name}{x.specialization ? ` (${x.specialization})` : ''}</option>)}
+                </select>
+                <span id="nb-doctor-hint" className="j-field__hint">
+                  {doctorsError ? t('newInvoice.doctorsFailed', { reason: doctorsError }) : !d.branchId ? t('newInvoice.doctorBranchFirst')
+                    : branchDoctors.length === 0 ? t('newInvoice.noDoctorHere') : t('newInvoice.doctorsHere')}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
         <div className="rx-form-row">
-          <TextField label={t('newInvoice.name')} value={d.name} maxLength={MAX_NAME} error={errors.name} readOnly={!!d.link?.nameFixed}
+          <TextField label={simple ? t('newInvoice.nameOnBill') : t('newInvoice.name')} hint={nameAsked ? t('newInvoice.nameOnBillHint') : undefined}
+            value={d.name} maxLength={MAX_NAME} error={errors.name} readOnly={!!d.link?.nameFixed}
             onChange={(e) => set({ name: e.target.value })} />
           <TextField label={d.link?.kind === 'lab_booking' ? t('newInvoice.mobile') : t('newInvoice.mobileOptional')} inputMode="tel" value={d.phone} error={errors.phone} readOnly={d.link?.kind === 'appointment' || !!d.link?.phoneFixed}
             onChange={(e) => set({ phone: e.target.value })} />
-          <TextField label={t('newInvoice.age')} inputMode="numeric" value={d.age} error={errors.age} onChange={(e) => set({ age: e.target.value.replace(/\D/g, '') })} />
-          <div className="j-field">
-            <label htmlFor="nb-gender">{t('newInvoice.gender')}</label>
-            <select id="nb-gender" value={d.gender} onChange={(e) => set({ gender: e.target.value as InvoiceDraft['gender'] })}>
-              <option value="">{t('newInvoice.gender.none')}</option><option value="female">{t('newInvoice.gender.female')}</option>
-              <option value="male">{t('newInvoice.gender.male')}</option><option value="other">{t('newInvoice.gender.other')}</option>
-            </select>
-          </div>
+          {!simple && (
+            <>
+              <TextField label={t('newInvoice.age')} inputMode="numeric" value={d.age} error={errors.age} onChange={(e) => set({ age: e.target.value.replace(/\D/g, '') })} />
+              <div className="j-field">
+                <label htmlFor="nb-gender">{t('newInvoice.gender')}</label>
+                <select id="nb-gender" value={d.gender} onChange={(e) => set({ gender: e.target.value as InvoiceDraft['gender'] })}>
+                  <option value="">{t('newInvoice.gender.none')}</option><option value="female">{t('newInvoice.gender.female')}</option>
+                  <option value="male">{t('newInvoice.gender.male')}</option><option value="other">{t('newInvoice.gender.other')}</option>
+                </select>
+              </div>
+            </>
+          )}
         </div>
-        {linkNotice}
-        <div className="rx-form-row">
-          <TextField label={t('newInvoice.gstin')} maxLength={15} value={d.gstin} error={errors.gstin} hint={t('newInvoice.gstinHint')}
-            onChange={(e) => set({ gstin: e.target.value })} />
-          <TextField label={t('newInvoice.stateCode')} inputMode="numeric" maxLength={2} value={d.placeOfSupply} error={errors.placeOfSupply}
-            hint={branch?.address?.stateCode ? t('newInvoice.stateCodeHintCode', { code: branch.address.stateCode }) : t('newInvoice.stateCodeHint')}
-            onChange={(e) => set({ placeOfSupply: e.target.value.replace(/\D/g, '') })} />
-        </div>
+        {!simple ? (
+          <>
+            {linkNotice}
+            <div className="rx-form-row">
+              <TextField label={t('newInvoice.gstin')} maxLength={15} value={d.gstin} error={errors.gstin} hint={t('newInvoice.gstinHint')}
+                onChange={(e) => set({ gstin: e.target.value })} />
+              <TextField label={t('newInvoice.stateCode')} inputMode="numeric" maxLength={2} value={d.placeOfSupply} error={errors.placeOfSupply}
+                hint={branch?.address?.stateCode ? t('newInvoice.stateCodeHintCode', { code: branch.address.stateCode }) : t('newInvoice.stateCodeHint')}
+                onChange={(e) => set({ placeOfSupply: e.target.value.replace(/\D/g, '') })} />
+            </div>
+          </>
+        ) : (
+          // WQ55b: a visit's short bill: age, gender, GSTIN and state code behind More details (as before when opened).
+          <details className="more-details">
+            <summary>{t('newInvoice.moreDetails')}</summary>
+            <div className="rx-form-row">
+              <TextField label={t('newInvoice.age')} inputMode="numeric" value={d.age} error={errors.age} onChange={(e) => set({ age: e.target.value.replace(/\D/g, '') })} />
+              <div className="j-field">
+                <label htmlFor="nb-gender">{t('newInvoice.gender')}</label>
+                <select id="nb-gender" value={d.gender} onChange={(e) => set({ gender: e.target.value as InvoiceDraft['gender'] })}>
+                  <option value="">{t('newInvoice.gender.none')}</option><option value="female">{t('newInvoice.gender.female')}</option>
+                  <option value="male">{t('newInvoice.gender.male')}</option><option value="other">{t('newInvoice.gender.other')}</option>
+                </select>
+              </div>
+            </div>
+            {linkNotice}
+            <div className="rx-form-row">
+              <TextField label={t('newInvoice.gstin')} maxLength={15} value={d.gstin} error={errors.gstin} hint={t('newInvoice.gstinHint')}
+                onChange={(e) => set({ gstin: e.target.value })} />
+              <TextField label={t('newInvoice.stateCode')} inputMode="numeric" maxLength={2} value={d.placeOfSupply} error={errors.placeOfSupply}
+                hint={branch?.address?.stateCode ? t('newInvoice.stateCodeHintCode', { code: branch.address.stateCode }) : t('newInvoice.stateCodeHint')}
+                onChange={(e) => set({ placeOfSupply: e.target.value.replace(/\D/g, '') })} />
+            </div>
+          </details>
+        )}
       </section>
 
       <section className="ws-section" aria-labelledby="nb-items-h">
         <h2 id="nb-items-h">{t('newInvoice.items')}</h2>
-        {!chargesGst(partner) && <p className="ws-muted">{t('newInvoice.noGst', { name: partner.name })}</p>}
+        {!chargesGst(partner) && <p className="ws-muted">{simple ? t('newInvoice.noGstShort') : t('newInvoice.noGst', { name: partner.name })}</p>}
         {priceNotice && <Alert tone="warn">{priceNotice}</Alert>}
         <div className="ws-search">
           <div className="j-field">
@@ -470,7 +519,19 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
           </Button>
         </div>
         {errors.lines && <Alert>{errors.lines}</Alert>}
-        {d.lines.map((l, i) => {
+        {simple ? (
+          <ul className="ws-list bill-lines" aria-label={t('newInvoice.items')}>
+            {d.lines.map((l, i) => (
+              <li key={l.key}>
+                <span>{`${(l.item?.name ?? l.description).trim()} · ${pv.lines[i] ? money(pv.lines[i]!.amountMinor) : '—'}`}</span>
+                <Button variant="ghost" aria-label={t('newInvoice.removeLine', { n: i + 1 })} onClick={() => set({ lines: d.lines.filter((x) => x.key !== l.key) })}>
+                  {shared('action.remove')}
+                </Button>
+                {shown(`${l.key}.amount`) && <Alert>{shown(`${l.key}.amount`)}</Alert>}
+              </li>
+            ))}
+          </ul>
+        ) : d.lines.map((l, i) => {
           const lp = pv.lines[i];
           const named = (l.item?.name ?? l.description).trim();
           const title = named ? t('newInvoice.lineTitleNamed', { n: i + 1, name: named }) : t('newInvoice.lineTitle', { n: i + 1 });
@@ -514,6 +575,16 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
         })}
       </section>
 
+      {simple ? (
+        <section className="ws-section" aria-labelledby="nb-total-h">
+          <h2 id="nb-total-h" className="bill-total">{t('newInvoice.totalIs', { total: money(pv.totals.totalMinor) })}</h2>
+          <details className="more-details">
+            <summary>{t('newInvoice.moreDetails')}</summary>
+            <Totals totals={pv.totals} igst={igst} label={t('newInvoice.expectedTotals')} />
+          </details>
+          {(errors.bill ?? built.errors.bill) && <Alert>{errors.bill ?? built.errors.bill}</Alert>}
+        </section>
+      ) : (
       <section className="ws-section" aria-labelledby="nb-total-h">
         <h2 id="nb-total-h">{t('newInvoice.expected')}</h2>
         <p className="ws-muted">
@@ -523,9 +594,12 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
         <Totals totals={pv.totals} igst={igst} label={t('newInvoice.expectedTotals')} />
         {(errors.bill ?? built.errors.bill) && <Alert>{errors.bill ?? built.errors.bill}</Alert>}
       </section>
+      )}
 
       {refused && <Alert>{t('newInvoice.notIssued', { reason: refused })}</Alert>}
-      {!reviewing ? (
+      {simple ? (
+        <div className="rx-actions"><Button type="submit" busy={busy}>{t('newInvoice.issueFor', { total: money(pv.totals.totalMinor) })}</Button></div>
+      ) : !reviewing ? (
         <div className="rx-actions"><Button type="submit">{t('newInvoice.review')}</Button></div>
       ) : (
         <div className="confirm" role="group" aria-label={t('newInvoice.issueGroup')}>
