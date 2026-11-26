@@ -19,7 +19,7 @@ import { BILL_READERS, BillLink, openBill, type BillPrefill } from './billing.ts
 import { useVisitPreset, type VisitPatient } from '../front/visitPatient.ts';
 import { VisitPatientLine } from '../front/visitBar.tsx';
 import {
-  appointmentLabel, appointmentTone, ClinicOnly, clinicLink, istTime, useClinicApi, useDoctorList, type ClinicApi,
+  appointmentLabel, appointmentTone, ClinicOnly, clinicLink, istTime, prefillOf, useClinicApi, useDoctorList, type ClinicApi,
 } from './clinic.tsx';
 import { deskBookingSlot, type DeskPending, type DeskPendingBody } from './desk.ts';
 import { formatDay, useNow } from './labs.tsx';
@@ -345,7 +345,15 @@ function DeskDay({ ctx, visit }: { ctx: ScopeContext; visit: VisitPatient | null
         {receipt ? (
           <>
             <Receipt ctx={ctx} receipt={receipt} memory={memory} row={rows.find((r) => r.bookingId === receipt.booking.bookingId)} />
-            {!holdsAny(ctx.actor, ['invoices.create']) && <Link className="j-btn j-btn--primary" to="/">{t('desk.visit.done')}</Link>}
+            {!holdsAny(ctx.actor, ['invoices.create']) ? <Link className="j-btn j-btn--primary" to="/">{t('desk.visit.done')}</Link>
+              // WQ57c: the bill waits for the booked row; when it cannot be read (or is not there yet), say so and read it again.
+              : !bookedRow && (list.isError ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
+                : !list.isFetching && list.isSuccess ? (
+                  <div className="ws-actions">
+                    <span className="ws-muted">{t('desk.visit.rowNotRead')}</span>
+                    <Button onClick={() => void list.refetch()}>{t('desk.visit.makeBill')}</Button>
+                  </div>
+                ) : <Loading label={t('desk.loadingAppointments')} />)}
           </>
         ) : !pendingPanel && (
           <ClinicVisit ctx={ctx} clinic={clinic} visit={visit} when={when} branches={offered} doctors={doctors.data ?? []} patient={patient}
@@ -671,21 +679,6 @@ function PendingBookingSummary({ body }: { body: DeskPendingBody }) {
     </div>
   );
 }
-
-/**
- * Q14: the bill's customer is the appointment's account holder (409 APPOINTMENT_CUSTOMER_MISMATCH otherwise), not a family
- * member. WQ57: the doctor's fee is on it.
- */
-const prefillOf = (a: ClinicAppointment): BillPrefill => ({
-  link: { kind: 'appointment', id: a.bookingId }, branchId: a.branchId ?? '', doctorId: a.doctorId,
-  name: (a.patient?.relationship ? a.patient.accountName : a.patient?.name) ?? '', phone: a.patient?.phone ?? '',
-  label: `${a.doctorName ?? t('desk.theDoctor')}, ${appointmentLabel(a)}`,
-  ...(a.fee ? { handLines: [feeLine(a.doctorName, a.fee)] } : {}),
-});
-/** WQ57: the doctor's fee (rupees) as a bill line. */
-const feeLine = (doctor: string | undefined, fee: number) => ({
-  description: t('desk.feeLine', { doctor: doctor ?? t('desk.theDoctor') }), priceMinor: Math.round(fee * 100), ...(doctor ? { doctor } : {}),
-});
 
 /**
  * Q14: an appointment's bill (its open bill, else the latest cancelled one): its number and status with a link; or, for

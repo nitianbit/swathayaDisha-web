@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
   canonicalPhone, EMPTY_PATIENT, istToday, MAX_SALE_SEARCH, patientProblems, usableCustomers, type AssistedRelation, type PatientDraft,
 } from '@jansetu/api';
 import { Alert, Button, Loading, TextField } from '@jansetu/ui';
 import { t } from '../../i18n/home/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
+import { useSession } from '../../session.tsx';
+import { openBill } from '../partner/billing.tsx';
+import { usePartnerScope } from '../partner/scope.tsx';
 import { PatientFields } from '../pharmacy/patientStep.tsx';
 import { useFrontDesk, type FrontDesk } from './desk.tsx';
 import { Failed, Register } from './home.tsx';
@@ -194,6 +197,9 @@ function TodayVisits({ desk, phone, ask }: { desk: FrontDesk; phone: string; ask
 
 /** WQ57b: a clinic's appointments of today for this number (also those booked on an earlier day). */
 function TodayAppointments({ desk, find, phone, ask }: { desk: FrontDesk; find: NonNullable<FrontDesk['findToday']>; phone: string; ask: number }) {
+  const ctx = usePartnerScope();
+  const { memory } = useSession();
+  const navigate = useNavigate();
   const q = useQuery({ queryKey: ['visit-find', desk.kind, 'appointments', phone, ask], queryFn: () => find(phone), gcTime: 0 });
   return (
     <section aria-labelledby="np-today-h">
@@ -201,7 +207,12 @@ function TodayAppointments({ desk, find, phone, ask }: { desk: FrontDesk; find: 
       {!q.data ? (q.isError ? <Failed error={q.error} forbidden={desk.forbidden} onRetry={() => void q.refetch()} /> : <Loading />)
         : q.data.length === 0 ? <p className="ws-muted">{t('new.noAppointments')}</p> : (
           <ul className="ws-list">
-            {q.data.map((a) => <li key={a.id}>{t('new.appointmentLine', { time: a.time, doctor: a.doctor, name: a.name || t('new.noName') })}</li>)}
+            {q.data.map((a) => (
+              <li key={a.id}>
+                {t('new.appointmentLine', { time: a.time, doctor: a.doctor, name: a.name || t('new.noName') })}
+                {a.bill && ctx && <>{' '}<Button variant="secondary" onClick={() => openBill(ctx, memory, a.bill!, navigate)}>{t('new.billAppointment')}</Button></>}
+              </li>
+            ))}
           </ul>
         )}
     </section>

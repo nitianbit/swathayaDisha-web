@@ -325,6 +325,9 @@ function PendingSummary({ body }: { body: NewInvoice }) {
   );
 }
 
+/** A name found as whole words in a text (letters and digits of any script around it end a word). */
+export const wholeWords = (name: string) => new RegExp(`(^|[^\\p{L}\\p{N}])${name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')}($|[^\\p{L}\\p{N}])`, 'iu');
+
 const offeredById = (catalogue: readonly CatalogueItem[], id: string) => catalogue.find((i) => i._id === id && i.isActive && !i.adminDisabled);
 
 /** A bill line from a catalogue item (its name, price and GST rate kept; only quantity and discount change). */
@@ -348,7 +351,9 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
         // WQ57b: the clinic's own consultation item for that doctor (its name names the doctor, or the one consultation at
         // that price) is billed from the catalogue instead of a hand-written fee.
         const consults = catalogue.filter((i) => i.kind === 'consultation' && i.isActive && !i.adminDisabled);
-        const item = (l.doctor ? consults.find((i) => i.name.toLowerCase().includes(l.doctor!.toLowerCase())) : undefined)
+        // WQ57c: only at the fee, and the doctor's name as whole words ("Dr Rao" is not "Dr Raoul"); else the hand line stays.
+        const named = l.doctor ? wholeWords(l.doctor) : null;
+        const item = (named ? consults.find((i) => i.priceMinor === l.priceMinor && named.test(i.name)) : undefined)
           ?? (consults.length === 1 && consults[0]!.priceMinor === l.priceMinor ? consults[0] : undefined);
         return item ? catalogueLine(item)
           : { key: lineKey(), description: l.description, sac: '', qty: '1', price: paiseToInput(l.priceMinor), discount: '', gstRate: '0' };

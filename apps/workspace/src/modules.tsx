@@ -104,6 +104,8 @@ export interface WorkspacePage {
    * all. Pages for other roles ignore it.
    */
   partnerPermissions?: readonly PartnerPermission[];
+  /** WQ57c: a kind's own readers instead (a clinic's Today: its bookings or its bills). */
+  partnerPermissionsByKind?: Partial<Record<PartnerKind, readonly PartnerPermission[]>>;
   /** Partners only: the page exists for these partner kinds (all kinds when absent). */
   partnerKinds?: readonly PartnerKind[];
   /** Partners only: needs partner-wide scope (an owner, or staff not limited to some branches). */
@@ -285,6 +287,7 @@ export const PAGES: readonly WorkspacePage[] = [
   { path: '/partner/new', roles: ['partner'], element: <NewVisitScreen />, partnerKinds: ['lab', 'clinic'] },
   {
     path: '/partner/today', roles: ['partner'], element: <TodayScreen />, partnerKinds: ['lab', 'clinic'], partnerPermissions: REGISTER_READERS,
+    partnerPermissionsByKind: { clinic: CLINIC_REGISTER_READERS },
     // Next to Home (a lab's and a clinic's alike).
     nav: { labelKey: 'nav.today', icon: CalendarDays, sectionKey: '' },
   },
@@ -443,7 +446,8 @@ export function pagesFor(user: Pick<StaffUser, 'role' | 'partner'>): WorkspacePa
     const m = user.partner?.member;
     if (!m) return false;
     if (p.partnerKinds && !p.partnerKinds.includes(user.partner!.partner.kind)) return false;
-    if (p.partnerPermissions && !holdsAny(m, p.partnerPermissions)) return false;
+    const needs = p.partnerPermissionsByKind?.[user.partner!.partner.kind] ?? p.partnerPermissions;
+    if (needs && !holdsAny(m, needs)) return false;
     if (p.partnerWide && !hasGlobalScope(m)) return false;
     return true;
   });

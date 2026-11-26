@@ -739,7 +739,8 @@ test('a lost booking answer locks the form; the key finds it (also after a reloa
   await expect(panel).toContainText('A request made earlier on this device');
   await expect(panel).not.toContainText('Meena');
   await panel.getByRole('button', { name: 'Check whether it was recorded' }).click();
-  await expect(page.getByText('This booking had already been made; nothing was booked twice. The patient with Dr Mehta on Tue, 17 Nov, 2026, 10:30 at Indiranagar.', { exact: false })).toBeVisible();
+  // WQ57b/c: the receipt names the server's patient (the booked row read back).
+  await expect(page.getByText('This booking had already been made; nothing was booked twice. Meena with Dr Mehta on Tue, 17 Nov, 2026, 10:30 at Indiranagar.', { exact: false })).toBeVisible();
   await expect(panel).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Appointment: Meena, Tue, 17 Nov, 2026, 10:30' })).toBeVisible();
   expect(books(backend)).toHaveLength(2);

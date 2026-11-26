@@ -2850,6 +2850,19 @@ desk; nothing copied).
 - **Taps for a walk-in with Dr Kavya paid in cash: 9 at one branch** (+ New, Find, This person, Next, Appointment now, Book Dr
   Kavya at 10:15, Issue bill for ₹500.00, Cash, Record ₹500.00 paid); 10 with two branches (one tapped).
 
+## WQ57c clinic fixes (2026-11-27, branch `wq57c/clinic-fixes` from web stage 6bc8c1d)
+
+- **Blocker: a server without r40d's lookup.** The clinic's lookup answers a 404 with no code as "not known" (null): + New goes
+  on and the number is typed twice. A 403 or 429 is said as before.
+- **The fee stays on the bill.** A clinic consultation item replaces the hand-written fee only at the fee, and only when its name
+  has the doctor's name as whole words ("Dr Rao" is not "Dr Raoul"), or it is the only consultation at the fee.
+- **The receipt's name** is the server's (clinic-desk's lost-booking check now expects "Meena with Dr Mehta").
+- **No dead end after booking in a visit.** When the booked row cannot be read back, the error with Try again; when it is not
+  there yet, "The appointment is booked. Its details could not be read yet." and "Make the bill" (reads it again).
+- **Find patient (clinic):** each of today's desk appointments not billed yet has "Bill this appointment" (the short bill,
+  linked to the appointment, its fee on it).
+- **Menu:** a clinic's Today needs a clinic register reader (`partnerPermissionsByKind`: its bookings or its bills).
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -3240,6 +3253,7 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-27 | WQ57c clinic fixes (from 6bc8c1d) | typecheck clean; Vitest 539/539 (the whole-word match); clinic-desk alone on 1 worker 52/52; clinic-home 17/17 + 3 skipped (a server without the lookup, Bill this appointment); the full suite via pw-slot.sh 1204/1204 + 8 skipped (20.6 min) on a temporary config (port 5568). |
 | 2026-11-27 | WQ57b clinic reception polish (r40, r40d lookup built to the lab's shape; from 7b76939) | typecheck clean; Vitest 538/538; the full suite via pw-slot.sh 1202/1202 + 8 skipped (26.2 min) on a temporary config (port 5568, deleted): clinic-home's walk-in with Dr Kavya in cash in 9 taps at one branch (390 px) and 10 with two (desktop, tablet), a shared session offered inside a busy time, the appointment's day on a Today row, Find patient by name among today's appointments, the Book button in sight on a 390 × 667 phone. |
 | 2026-11-26 | WQ57 the simple clinic reception home (r40 21a4a92b, from 85b3815) | typecheck clean; Vitest 537/537; the full suite via pw-slot.sh 1197 passed, 2 failed (WQ51b's clinic Home tiles, replaced by the reception home), 7 skipped (22.9 min) on a temporary config (port 5568, deleted); after updating that test (and a type fix in the new spec) doctor-tools and clinic-home 80/80 + 2 skipped. clinic-home: walk-in with Dr Kavya in cash in 9 taps (desktop, tablet, 390 px), one Today row, a later time avoiding a busy block, a family member, a branch-limited member, a member without billing. Screenshots in /tmp/wq57-shots. |
 | 2026-11-26 | WQ55c lab desk polish (r38c 9b512b92, from c59c07a) | typecheck clean; Vitest 535/535; lab-home, lab-desk, partner-invoices, pharmacy-home 123/123 + 5 skipped; the full suite via pw-slot.sh 1187/1187 + 5 skipped (14.3 min) on a temporary config (port 5567, deleted). A first full run on an overloaded machine (5.1 h) timed out 48 unrelated tablet tests; the rerun passed. Walk-in CBC in cash: 12 taps at one branch; 13 the first time at two, then 12. |

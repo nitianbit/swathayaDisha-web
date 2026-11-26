@@ -1,11 +1,12 @@
 import { useMemo, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { appointmentAt, appointmentDay, partnerClinicApi, type ClinicAppointmentStatus, type DeskAppointment } from '@jansetu/api';
+import { appointmentAt, appointmentDay, partnerClinicApi, type ClinicAppointment, type ClinicAppointmentStatus, type DeskAppointment } from '@jansetu/api';
 import { formatClock } from '@jansetu/i18n';
 import { Empty, ErrorState, Loading, shared } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { t } from '../../i18n/partner/index.ts';
 import { useSession } from '../../session.tsx';
+import type { BillPrefill } from './billing.tsx';
 import { formatDay } from './labs.tsx';
 import { scopeIdentity, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 
@@ -61,3 +62,18 @@ export function appointmentLabel(a: Pick<DeskAppointment, 'bookingDate' | 'booki
 
 export const appointmentTone = (s: ClinicAppointmentStatus): 'ok' | 'warn' | 'danger' | undefined =>
   s === 'completed' ? 'ok' : s === 'cancelled' || s === 'no_show' ? 'danger' : s === 'pending' ? 'warn' : undefined;
+
+/**
+ * Q14: the bill's customer is the appointment's account holder (409 APPOINTMENT_CUSTOMER_MISMATCH otherwise), not a family
+ * member. WQ57: the doctor's fee is on it.
+ */
+export const prefillOf = (a: ClinicAppointment): BillPrefill => ({
+  link: { kind: 'appointment', id: a.bookingId }, branchId: a.branchId ?? '', doctorId: a.doctorId,
+  name: (a.patient?.relationship ? a.patient.accountName : a.patient?.name) ?? '', phone: a.patient?.phone ?? '',
+  label: `${a.doctorName ?? t('desk.theDoctor')}, ${appointmentLabel(a)}`,
+  ...(a.fee ? { handLines: [feeLine(a.doctorName, a.fee)] } : {}),
+});
+/** WQ57: the doctor's fee (rupees) as a bill line. */
+const feeLine = (doctor: string | undefined, fee: number) => ({
+  description: t('desk.feeLine', { doctor: doctor ?? t('desk.theDoctor') }), priceMinor: Math.round(fee * 100), ...(doctor ? { doctor } : {}),
+});
