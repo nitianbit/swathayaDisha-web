@@ -2599,6 +2599,17 @@ the to-do delete is in the api module but not offered (only add and tick were as
   "…: couldn't load" on its own line, the others still show.
 - Full suite on ac804db (r37 final shapes): 1167/1167 + 1 skipped (15.6 min).
 
+### WQ54 r37b final (backend stage 6de072f2; same branch, on 8d4b33f)
+
+- The r37 review items above match r37b as built: `madeOn`/`paidToday` rows (earlier rows paid that day, at their payment
+  time), "collected" = received that day, "to collect" = money still to collect from patients, `null` queues said per line,
+  Mark paid always `cash`, `upi` or `card`.
+- `cardPaymentsWaiting { count, amountMinor, items:[{kind,id}] }`: the line links to that booking when there is one, else
+  the booked consultations.
+- To-dos: the server's order (open first, then newest; opaque cursor); 409 `TODO_LIMIT` (500 open) and 409
+  `IDEMPOTENCY_KEY_REUSED` (also a deleted to-do's key) are said in words, the text kept, a new key on the next Add.
+- Full suite on 8d4b33f: 1167/1167 + 1 skipped (14.8 min).
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -2989,7 +3000,8 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 
 | Date | Packet | Checks |
 |---|---|---|
-| 2026-11-26 | WQ54 r37 review items (on ac804db) | typecheck clean; Vitest 533/533; Playwright pharmacy-home 9/9 + 1 skipped (the what-waits journey adds a row paid today and made earlier, a queue that could not load, card payments waiting), orders (the cash-on-delivery journey sends `paymentSource: 'upi'` from the picker), pharmacy-sale: 73/73 on a temporary config (port 5566); the full suite via pw-slot.sh runs on this commit (result in the report). |
+| 2026-11-26 | WQ54 r37b final (6de072f2, on 8d4b33f) | typecheck clean; Vitest 533/533; Playwright pharmacy-home 9/9 + 1 skipped (card payments waiting with r37b's items; TODO_LIMIT said with the text kept) on a temporary config (port 5566, deleted). |
+| 2026-11-26 | WQ54 r37 review items (on ac804db) | typecheck clean; Vitest 533/533; Playwright pharmacy-home 9/9 + 1 skipped (the what-waits journey adds a row paid today and made earlier, a queue that could not load, card payments waiting), orders (the cash-on-delivery journey sends `paymentSource: 'upi'` from the picker), pharmacy-sale: 73/73 on a temporary config (port 5566); the full suite via pw-slot.sh 1167/1167 + 1 skipped (14.8 min). |
 | 2026-11-26 | WQ54 to r37 final shapes (950417ab, on ebca0fb) | typecheck clean; Vitest 533/533 (pharmacyToday.test.ts: the paged today read and its checks, the to-do routes, `todayLink`, `pendingCount`); Playwright pharmacy-home 9/9 + 1 skipped (+1 journey x 2: an unpaid counter sale one tap from its page, each row opening its record) + session; the full suite via pw-slot.sh 1167/1167 + 1 skipped (15.6 min). |
 | 2026-11-26 | WQ54 simple pharmacy home P1 (on stage 9b80676) | Against r37's draft shapes (mocked). typecheck clean; Vitest 532/532 (+3 in pharmacyToday.test.ts: routes and bodies with checks before sending, the money line's parts, an answer of another shape shown empty); Playwright pharmacy-home 7/7 + 1 skipped (example 1 on desktop, tablet and a phone (More menu, 48 px buttons): a new patient, a video consult from the wallet, medicines in cash, Today with both and the money split, a to-do added and ticked; no internet with Try again keeping the to-do's text and key; Find patient by a POST search) + consult-now, assisted-booking, lab-booking, pharmacy-sale, orders, session, i18n on a temporary config (port 5566); the full suite via pw-slot.sh 1165/1165 + 1 skipped (14.6 min). |
 | 2026-11-26 | WQ50c r36b rx flag (on stage c512942) | typecheck clean; Vitest 529/529 (+1: `isRxMedicine` reads `rx` only; the keyed sale body is always in-store with a customer); Playwright pharmacy-sale 14/14 (the mock's stock rows carry `rx`) on a temporary config (port 5564, deleted). |

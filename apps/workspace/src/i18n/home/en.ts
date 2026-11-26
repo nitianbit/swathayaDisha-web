@@ -75,6 +75,9 @@ export default {
   'todos.textError': 'Write the to-do (at most {max} characters).',
   /** {who}: who added it. */
   'todos.by': 'Added by {who}',
+  /** r37b: the pharmacy has 500 open to-dos. */
+  'todos.limit': 'There are 500 open to-dos. Tick the done ones, then add this one.',
+  'todos.keyReused': 'This to-do was sent before in another form. Tap Add to add it now.',
   'todos.changed': 'This to-do was changed meanwhile. The list shows it as it is now.',
   'todos.loading': 'Loading the to-dos…',
 

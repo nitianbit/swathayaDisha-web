@@ -70,6 +70,7 @@ async function mockBackend(page: Page): Promise<Backend> {
     if (path === '/pharmacy-assisted/todos' && method === 'GET') return ok(route, [...b.todos].reverse(), 200, { pagination: { nextCursor: null } });
     if (path === '/pharmacy-assisted/todos' && method === 'POST') {
       if (b.todoOfflineOnce) { b.todoOfflineOnce = false; return route.abort('internetdisconnected'); }
+      if (String(body!.text) === 'one too many') return refuse(route, 409, 'TODO_LIMIT');
       const key = String(body!.requestKey);
       const known = b.todos.find((x) => x._id === b.todoKeys[key]);
       if (known) return ok(route, { todo: known, replayed: true });
@@ -285,6 +286,11 @@ test('no internet: the register says so with Try again; a to-do that did not go 
   expect(adds).toHaveLength(2);
   expect(adds[1]!.body!.requestKey).toBe(adds[0]!.body!.requestKey);
   expect(b.todos).toHaveLength(1);
+  // r37b: 500 open to-dos at most: said in words, the text kept.
+  await page.getByLabel('New to-do').fill('one too many');
+  await page.getByRole('button', { name: 'Add' }).click();
+  await expect(page.getByText('There are 500 open to-dos. Tick the done ones, then add this one.')).toBeVisible();
+  await expect(page.getByLabel('New to-do')).toHaveValue('one too many');
 });
 
 test('Find patient: found by phone through a POST search, then what they need', async ({ page }) => {
@@ -309,7 +315,7 @@ test('what waits: an unpaid counter sale is one tap from its page; each row open
     method: null, status: 'placed', link: { kind: 'pharmacy_order', id: SALE } });
   b.register.push({ kind: 'order', id: '92'.padStart(24, '0'), at: NOW.toISOString(), shortRef: 'PO-6', patientName: 'Meena S.', what: 'ORS', amountMinor: 5000, paid: true,
     method: 'cash', status: 'completed', paidToday: true, madeOn: '2026-11-24', link: { kind: 'pharmacy_order', id: '92'.padStart(24, '0') } });
-  b.pendingExtra = { labReportsReady: null, cardPaymentsWaiting: { count: 2, ids: [] } };
+  b.pendingExtra = { labReportsReady: null, cardPaymentsWaiting: { count: 2, amountMinor: 90000, items: [{ kind: 'booking', id: 'b1'.repeat(12) }, { kind: 'lab_booking', id: 'b2'.repeat(12) }] } };
   await signIn(page);
   await expect(page.getByRole('link', { name: '1 unpaid sale' })).toHaveAttribute('href', `#/pharmacy/sale/${SALE}`);
   await expect(page.getByRole('link', { name: /Ravi K\.\s?: Dolo 650 \+1 more/ })).toHaveAttribute('href', `#/pharmacy/orders/${SALE}`);

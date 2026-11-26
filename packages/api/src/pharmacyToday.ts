@@ -24,7 +24,7 @@ export interface TodayItem {
   paid: boolean;
   method: PaymentMethodKey | null;
   status: string;
-  /** r37b: an earlier day's entry paid on this day (`madeOn`: the India date it was made). */
+  /** r37b: an earlier day's entry paid on this day, placed at its payment time (`madeOn`: the India date it was made). */
   paidToday?: boolean;
   madeOn?: string | null;
   /** The record that shows it. */
@@ -45,7 +45,8 @@ export interface TodayPending {
   bookingsAwaiting?: (Counted & { consultationIds?: string[]; labBookingIds?: string[] }) | null;
   labReportsReady?: (Counted & { ids?: string[] }) | null;
   lowStock?: (Counted & { ids?: string[] }) | null;
-  cardPaymentsWaiting?: (Counted & { ids?: string[] }) | null;
+  /** r37b: card payments of bookings not confirmed yet, their amount and records. */
+  cardPaymentsWaiting?: (Counted & { amountMinor?: number; items?: { kind: string; id: string }[] }) | null;
 }
 export const PENDING_KEYS = ['prescriptionsToReview', 'unpaidCounterSales', 'cardPaymentsWaiting', 'bookingsAwaiting', 'labReportsReady', 'lowStock'] as const;
 export type PendingKey = (typeof PENDING_KEYS)[number];

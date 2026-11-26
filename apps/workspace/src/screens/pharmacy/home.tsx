@@ -96,7 +96,11 @@ function pendingLink(day: TodayAnswer, k: PendingKey): string {
     case 'unpaidCounterSales': return ids.length === 1 && /^[0-9a-fA-F]{24}$/.test(ids[0]!) ? `/pharmacy/sale/${ids[0]}` : '/pharmacy/orders';
     case 'bookingsAwaiting': return '/pharmacy/consultations';
     case 'labReportsReady': return '/pharmacy/lab-tests';
-    case 'cardPaymentsWaiting': return '/pharmacy/consultations';
+    case 'cardPaymentsWaiting': {
+      const one = day.pending?.cardPaymentsWaiting?.items;
+      return one?.length === 1 && /^[0-9a-fA-F]{24}$/.test(one[0]!.id)
+        ? (one[0]!.kind === 'lab_booking' ? `/pharmacy/lab-tests/${one[0]!.id}` : `/pharmacy/consultations/${one[0]!.id}`) : '/pharmacy/consultations';
+    }
     default: return '/pharmacy/low-stock';
   }
 }
@@ -179,7 +183,9 @@ export function Todos({ pharmacyId }: { pharmacyId: string }) {
       await reread();
     } catch (err) {
       if (definitelyNotRecorded(err)) setRequestKey(null);
-      setError(homeWords(err));
+      const code = err instanceof ApiError ? err.code : undefined;
+      // r37b: 500 open to-dos at most; a key already used (also a deleted to-do's) needs a new one: Add sends one.
+      setError(code === 'TODO_LIMIT' ? t('todos.limit') : code === 'IDEMPOTENCY_KEY_REUSED' ? t('todos.keyReused') : homeWords(err));
     } finally {
       setBusy(false);
     }
