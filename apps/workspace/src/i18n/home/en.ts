@@ -204,6 +204,8 @@ export default {
   'new.todayAppointments': 'Appointments today',
   'new.noAppointments': 'No appointments today.',
   'new.appointmentLine': '{time} · {doctor} · {name}',
+  /** WQ57c: a desk appointment of today not billed yet. */
+  'new.billAppointment': 'Bill this appointment',
   'new.appointmentFound': '{name} · {phone} · today {time}, {doctor}',
   /** The four kinds of visit, in plain words. */
   'new.video': 'See a doctor now (video)',

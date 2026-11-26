@@ -999,6 +999,9 @@ export default {
   /** {doctor}, {time}: who and when. */
   'desk.visit.book': 'Book {doctor} at {time}, {branch}',
   'desk.visit.done': 'Done',
+  /** WQ57c: the booked appointment is not read back yet (its bill needs it). */
+  'desk.visit.rowNotRead': 'The appointment is booked. Its details could not be read yet.',
+  'desk.visit.makeBill': 'Make the bill',
   'desk.title': 'Front desk',
   'desk.intro': 'Appointments with the clinic’s doctors by day (India time), desk and online. Desk appointments are in person and paid at the clinic.',
   'desk.stepRunning': 'Another step on this appointment is still running. Wait for it to finish, then try again.',

@@ -24,7 +24,10 @@ const NOW = new Date('2026-11-26T04:30:00.000Z');
 
 type Rec = Record<string, unknown>;
 interface Me { _id: string; partnerId: string; name: string; role: 'owner' | 'staff'; permissions: string[]; branchIds: string[] }
-interface Backend { calls: { method: string; path: string; body: Rec | null }[]; me: Me; live: boolean; appts: Rec[]; register: Rec[]; bills: Rec[]; todayForbidden?: boolean }
+interface Backend { calls: { method: string; path: string; body: Rec | null }[]; me: Me; live: boolean; appts: Rec[]; register: Rec[]; bills: Rec[]; todayForbidden?: boolean;
+  catalogue?: Rec[];
+  /** A server without r40d's lookup (404, no code). */
+  noLookup?: boolean }
 
 const owner: Me = { _id: OWNER, partnerId: CLINIC, name: 'Ravi Owner', role: 'owner', permissions: ALL, branchIds: [] };
 const staff = (branchIds: string[], ...permissions: string[]): Me => ({ _id: STAFF, partnerId: CLINIC, name: 'Sita Staff', role: 'staff', permissions, branchIds });
@@ -82,7 +85,7 @@ async function mockBackend(page: Page, me: Me = owner): Promise<Backend> {
     const q = url.searchParams;
     if (sub === '/me') return ok(route, partner);
     if (sub === '/branches') return ok(route, branches);
-    if (sub === '/catalogue') return ok(route, []);
+    if (sub === '/catalogue') return ok(route, b.catalogue ?? []);
     if (sub === '/clinic/doctors') return ok(route, doctors);
     if (sub === '/clinic/slots') {
       return ok(route, slots.filter((s) => !s.taken && s.doctorId === q.get('doctorId') && s.branchId === q.get('branchId') && s.date === q.get('date')
@@ -91,6 +94,7 @@ async function mockBackend(page: Page, me: Me = owner): Promise<Backend> {
     }
     // r40d: the clinic's lookup (the lab's shape).
     if (sub === '/clinic/patients/lookup' && method === 'POST') {
+      if (b.noLookup) return json(route, 404, { error: 404, message: 'Not found' });
       if (!b.me.permissions.includes('bookings.manage') && b.me.role !== 'owner') return fail(route, 403, 'FORBIDDEN', 'You do not have permission');
       return ok(route, { exists: true, holderNameMasked: 'R*** K***' });
     }
@@ -302,6 +306,7 @@ test('an appointment for later never offers a time when the doctor is busy elsew
 
 test('Find patient by name: today’s appointments (also one booked on an earlier day)', async ({ page }) => {
   const b = await mockBackend(page);
+  b.catalogue = [{ _id: 'ab'.repeat(12), kind: 'consultation', name: 'Consultation · Dr Kavyan', priceMinor: 50000, gstRate: 0, isActive: true }];
   b.appts.push({ bookingId: '81'.padEnd(24, '0'), bookingDate: '20261126', bookingTime: '10:30', status: 'confirmed', doctorId: D1, doctorName: 'Dr Kavya', branchId: BR1,
     fee: 500, payAtClinic: true, source: 'desk', paidOnline: false, patient: { name: 'Asha Rao', phone: '9800000001', dependentId: null }, bill: null });
   await signIn(page);
@@ -312,6 +317,30 @@ test('Find patient by name: today’s appointments (also one booked on an earlie
   await expect(page.getByText('This number is on Jansetu: R*** K***')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Appointments today' })).toContainText('10:30 · Dr Kavya · Asha Rao');
   expect(b.calls.some((c) => c.path.includes('asha') || c.path.includes('9800000001'))).toBe(false);
+  // WQ57c: an appointment not billed yet is billed from here: the short bill, linked to it, the fee on it.
+  await page.getByRole('region', { name: 'Appointments today' }).getByRole('button', { name: 'Bill this appointment' }).click();
+  await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Items' })).toContainText('Consultation · Dr Kavya · ₹500.00');
+  await expect(page.getByRole('list', { name: 'Items' })).not.toContainText('Dr Kavyan');
+  await page.getByRole('button', { name: 'Issue bill for ₹500.00' }).click();
+  expect(b.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/invoices')!.body).toMatchObject({
+    appointmentId: '81'.padEnd(24, '0'), customer: { name: 'Asha Rao', phone: '9800000001' } });
+});
+
+test('a server without the clinic lookup yet (404): + New goes on, the number typed twice', async ({ page }) => {
+  const b = await mockBackend(page);
+  b.noLookup = true;
+  await signIn(page);
+  await bigButtons(page).getByRole('link', { name: '+ New' }).click();
+  await page.getByLabel('Phone number or name').fill(PHONE);
+  await page.getByRole('button', { name: 'Find', exact: true }).click();
+  await whoIs(page).getByRole('button', { name: 'This person' }).click();
+  await expect(page.getByText(/This number is (on|new to) Jansetu/)).toHaveCount(0);
+  await page.getByLabel('Patient’s full name').fill('Meena Iyer');
+  await page.getByLabel('Type the number again').fill(PHONE);
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(choices(page).getByRole('link', { name: 'Appointment now (walk-in)' })).toBeVisible();
+  expect(b.calls.filter((c) => c.path.endsWith('/clinic/patients/lookup'))).toHaveLength(1);
 });
 
 test('a family member: Ravi on his mother’s number; the bill names the phone’s owner, asked once', async ({ page }) => {

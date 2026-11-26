@@ -74,8 +74,7 @@ export function buildInvoice(d: InvoiceDraft, partner: Pick<Partner, 'taxRegime'
   else if (name.length > MAX_NAME) errors.name = tooLongWords(MAX_NAME);
   const phone = d.phone.replace(/[\s-]/g, '');
   if (phone && !INVOICE_PHONE_PATTERN.test(phone)) errors.phone = t('newInvoice.error.phone');
-  // WQ56b: a bill for a booking is its account holder's: without the booked mobile it is refused, so it is asked here.
-  else if (!phone && d.link && !d.link.phoneFixed) errors.phone = t('newInvoice.error.bookedMobile');
+  else if (!phone && d.link) errors.phone = t('newInvoice.error.bookedMobile');
   const age = d.age.trim();
   if (age && (!/^\d{1,3}$/.test(age) || Number(age) > 150)) errors.age = t('newInvoice.error.age');
   const gstin = d.gstin.trim().toUpperCase();
@@ -327,6 +326,9 @@ function PendingSummary({ body }: { body: NewInvoice }) {
   );
 }
 
+/** Match a full name without splitting letters, combining marks or digits. */
+export const wholeWords = (name: string) => new RegExp(`(^|[^\\p{L}\\p{M}\\p{N}])${name.normalize('NFC').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')}($|[^\\p{L}\\p{M}\\p{N}])`, 'iu');
+
 const offeredById = (catalogue: readonly CatalogueItem[], id: string) => catalogue.find((i) => i._id === id && i.isActive && !i.adminDisabled);
 
 /** A bill line from a catalogue item (its name, price and GST rate kept; only quantity and discount change). */
@@ -347,11 +349,10 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
         const it = offeredById(catalogue, id);
         return it ? [catalogueLine(it)] : [];
       }), ...(prefill.handLines ?? []).map((l): LineDraft => {
-        // WQ57b: the clinic's own consultation item for that doctor (its name names the doctor, or the one consultation at
-        // that price) is billed from the catalogue instead of a hand-written fee.
-        const consults = catalogue.filter((i) => i.kind === 'consultation' && i.isActive && !i.adminDisabled);
-        const item = (l.doctor ? consults.find((i) => i.name.toLowerCase().includes(l.doctor!.toLowerCase())) : undefined)
-          ?? (consults.length === 1 && consults[0]!.priceMinor === l.priceMinor ? consults[0] : undefined);
+        // Only a catalogue line that names this doctor and matches the booked fee can replace the hand line.
+        const named = l.doctor ? wholeWords(l.doctor) : null;
+        const item = named && catalogue.find((i) => i.kind === 'consultation' && i.isActive && !i.adminDisabled
+          && i.priceMinor === l.priceMinor && named.test(i.name.normalize('NFC')));
         return item ? catalogueLine(item)
           : { key: lineKey(), description: l.description, sac: '', qty: '1', price: paiseToInput(l.priceMinor), discount: '', gstRate: '0' };
       })] }
@@ -495,7 +496,8 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
           <TextField label={simple ? t('newInvoice.nameOnBill') : t('newInvoice.name')} hint={nameAsked ? t('newInvoice.nameOnBillHint') : undefined}
             value={d.name} maxLength={MAX_NAME} error={errors.name} readOnly={!!d.link?.nameFixed}
             onChange={(e) => set({ name: e.target.value })} />
-          <TextField label={d.link && !d.link.phoneFixed ? t('newInvoice.bookedMobile') : d.link?.kind === 'lab_booking' ? t('newInvoice.mobile') : t('newInvoice.mobileOptional')}
+          <TextField label={d.link ? t('newInvoice.mobile') : t('newInvoice.mobileOptional')}
+            hint={d.link && !d.link.phoneFixed ? t('newInvoice.bookedMobile') : undefined}
             inputMode="tel" value={d.phone} error={errors.phone} readOnly={!!d.link?.phoneFixed}
             onChange={(e) => set({ phone: e.target.value })} />
           {!simple && (

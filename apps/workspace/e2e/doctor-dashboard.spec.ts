@@ -30,6 +30,7 @@ interface Backend {
   rows: (Rec & { name: string })[];
   todos: Rec[];
   bills: Rec[];
+  loseFollowUp?: boolean;
 }
 
 const at = (time: string) => new Date(`${DAY}T${time}:00+05:30`).toISOString();
@@ -38,11 +39,11 @@ function row(n: number, time: string, name: string, o: Rec): Rec & { name: strin
     paymentStatus: 'paid', price: 700, settlementSystem: 'ledger', source: 'self', clinic: null, channel: 'online', createdAt: NOW.toISOString(), ...o };
 }
 
-async function mockBackend(page: Page, o: { owner?: boolean } = {}): Promise<Backend> {
+async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean } = {}): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
   const b: Backend = { calls: [], live: false, owner: o.owner !== false, todos: [], bills: [], rows: [
     row(1, '10:30', 'Ravi Demo', { source: 'clinic_desk', consultationMode: 'in-person', clinicDesk: { partnerId: OWN, branchId: OWNBR }, clinic: { id: OWN, name: 'Dr Arjun Skin Clinic' },
-      channel: 'clinic', paymentStatus: 'pending', settlementSystem: 'clinic' }),
+      channel: 'clinic', paymentStatus: 'pending', settlementSystem: 'clinic', bill: null }),
     row(2, '11:30', 'Meera Demo', {}),
     row(3, '15:00', 'Lata Demo', { source: 'clinic_desk', consultationMode: 'in-person', clinicDesk: { partnerId: DEMO, branchId: DEMOBR }, clinic: { id: DEMO, name: 'Demo Care Clinic' },
       channel: 'clinic', paymentStatus: 'pending', settlementSystem: 'clinic' }),
@@ -50,7 +51,7 @@ async function mockBackend(page: Page, o: { owner?: boolean } = {}): Promise<Bac
   ] };
   const profile = { _id: DOC, name: 'Dr Arjun Demo', specialization: 'Dermatologist', consultationFee: 700, phone: '9000000004', isActive: true, isVerified: true };
   const clinics = () => ({ invites: [], clinics: [
-    ...(b.owner ? [{ partnerId: OWN, name: 'Dr Arjun Skin Clinic', solo: true, verified: true, role: 'owner', branches: [{ branchId: OWNBR, name: 'Main' }] }] : []),
+    ...(b.owner ? [{ partnerId: OWN, name: 'Dr Arjun Skin Clinic', solo: !o.nonSolo, verified: true, role: 'owner', branches: [{ branchId: OWNBR, name: 'Main' }] }] : []),
     { partnerId: DEMO, name: 'Demo Care Clinic', solo: false, verified: true, role: 'staff', branches: [{ branchId: DEMOBR, name: 'Baner' }] },
   ] });
   const practice = () => (b.owner ? { partner: { _id: OWN, kind: 'clinic', name: 'Dr Arjun Skin Clinic', taxRegime: 'unregistered', verification: { state: 'verified' },
@@ -70,6 +71,7 @@ async function mockBackend(page: Page, o: { owner?: boolean } = {}): Promise<Bac
       values: { doctor: 'Dr Arjun Demo', time: r.bookingTime, mode: r.consultationMode } }, amountMinor: Number(r.price) * 100, paid: r.paymentStatus === 'paid', method: null,
     status: r.status, madeOn: DAY, paidToday: false, link: { kind: 'booking', id: r._id }, source: r.source, channel: r.channel, clinic: r.clinic }));
   let seq = 10;
+  let followUp: { key: string; answer: Rec } | undefined;
   await page.route('**/api/v1/**', async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -94,10 +96,15 @@ async function mockBackend(page: Page, o: { owner?: boolean } = {}): Promise<Bac
       lastSeenAt: null, heartbeatExpired: true, busy: false, busyUntil: null, online: false });
     if (p === '/instant/offers') return ok(route, []);
     if (p === '/clinics') return ok(route, clinics());
-    if (p === '/practice' || (p === '/clinic' && method === 'GET')) return ok(route, practice());
+    if (p === '/practice') return ok(route, o.nonSolo ? null : practice());
+    if (p === '/clinic' && method === 'GET') return ok(route, practice());
     if (p === '/slots') return ok(route, slots.filter((s) => !b.rows.some((r) => r.slotId === s._id)));
     if (p === '/appointments/list') return ok(route, listed(), 200, { meta: { total: b.rows.length, truncated: false } });
     if (p === '/appointments' && method === 'GET') return ok(route, listed());
+    if (p.startsWith('/appointments/') && method === 'GET') {
+      const appointment = b.rows.find((r) => r._id === p.split('/').pop());
+      return appointment ? ok(route, { booking: appointment }) : fail(route, 404, 'BOOKING_NOT_FOUND', 'Booking not found');
+    }
     if (p === '/today' && method === 'GET') {
       const paid = b.bills.filter((x) => x.lifecycleState === 'paid');
       return ok(route, { date: DAY, items: register(), nextCursor: null,
@@ -113,11 +120,29 @@ async function mockBackend(page: Page, o: { owner?: boolean } = {}): Promise<Bac
       const id = bid(++seq);
       const name = x.clinicId === DEMO ? 'Demo Care Clinic' : 'Dr Arjun Skin Clinic';
       b.rows.push(row(seq, s.startTime, x.customer.name ?? 'Patient', { _id: id, slotId: s._id, source: 'clinic_desk', consultationMode: 'in-person',
-        clinicDesk: { partnerId: x.clinicId, branchId: s.branchId }, clinic: { id: x.clinicId, name }, channel: 'clinic', paymentStatus: 'pending', settlementSystem: 'clinic' }));
+        clinicDesk: { partnerId: x.clinicId, branchId: s.branchId }, clinic: { id: x.clinicId, name }, channel: 'clinic', paymentStatus: 'pending', settlementSystem: 'clinic', bookedByMe: true }));
       return ok(route, { booking: { bookingId: id, bookingDate: YMD, bookingTime: s.startTime, status: 'confirmed', doctorId: DOC, branchId: s.branchId, fee: 700, payAtClinic: true },
         customer: { userId: 'u1'.repeat(12), phone: x.customer.phone, created: false }, patient: null, replayed: false }, 201);
     }
     if (p === '/consultations' && method === 'POST') {
+      if (body?.followUpOf) {
+        const key = String(body.requestKey);
+        if (followUp) {
+          if (followUp.key !== key) return fail(route, 400, 'FOLLOW_UP_ALREADY_USED', 'Follow-up already used');
+          if (b.loseFollowUp) {
+            b.loseFollowUp = false;
+            return fail(route, 409, 'SLOT_NOT_AVAILABLE', 'The time is no longer available');
+          }
+          return ok(route, { ...followUp.answer, replayed: true });
+        }
+        const parent = b.rows.find((r) => r._id === body.followUpOf)!;
+        parent.followUp = { ...(parent.followUp as Rec), benefitUsed: true };
+        const booking = { bookingId: bid(++seq), bookingDate: YMD, bookingTime: '13:00', status: 'confirmed', paymentStatus: 'paid',
+          consultationMode: body.mode, fee: 0, followUpOf: body.followUpOf };
+        followUp = { key, answer: { booking, payment: { required: false, payBy: null }, replayed: false } };
+        if (b.loseFollowUp) return route.abort('failed');
+        return ok(route, followUp.answer, 201);
+      }
       const x = body as { slotId: string; mode: string; customer: { phone: string; name?: string } };
       const s = slots.find((y) => y._id === x.slotId)!;
       const id = bid(++seq);
@@ -134,6 +159,7 @@ async function mockBackend(page: Page, o: { owner?: boolean } = {}): Promise<Bac
           online: sum(120_000, 2), partner: sum(50_000, 1), referral: sum(10_000, 1), other: sum(0, 0),
           clinics: [{ clinicId: DEMO, name: 'Demo Care Clinic', ...sum(100_000, 1) }, { clinicId: null, name: null, ...sum(50_000, 1) }] } } : {}) });
     }
+    if (p === '/finance/statement') return ok(route, { lines: [], nextCursor: null });
     if (p === '/todos' && method === 'GET') return ok(route, [...b.todos].reverse(), 200, { pagination: { nextCursor: null } });
     if (p === '/todos' && method === 'POST') {
       const todo = { _id: `7${b.todos.length}`.padStart(24, '0'), text: body!.text, done: false, version: 1, createdBy: { kind: 'doctor', id: DOC, name: 'Dr Arjun Demo' } };
@@ -213,9 +239,9 @@ test('one list of today from every source, in time order, with chips: All, each 
   await expect(page.getByRole('link', { name: '1 prescription to write' })).toBeVisible();
   await expect(chips(page).getByRole('button')).toHaveText(['All', 'Dr Arjun Skin Clinic', 'Demo Care Clinic', 'Online', 'Booked by partners']);
   await expect(list(page).getByRole('listitem')).toHaveCount(4);
-  await expect(list(page).getByRole('listitem').nth(0)).toContainText('10:30Ravi DemoIn personDr Arjun Skin Clinic desk');
+  await expect(list(page).getByRole('listitem').nth(0)).toContainText('Ravi DemoIn personAt Dr Arjun Skin Clinic');
   await expect(list(page).getByRole('listitem').nth(1)).toContainText('Meera DemoVideoBooked in the app');
-  await expect(list(page).getByRole('listitem').nth(2)).toContainText('Lata DemoIn personDemo Care Clinic desk');
+  await expect(list(page).getByRole('listitem').nth(2)).toContainText('Lata DemoIn personAt Demo Care Clinic');
   await expect(list(page).getByRole('listitem').nth(3)).toContainText('Imran DemoVideoBooked by Demo Pharmacy');
   await shot(page, 'home');
   await chips(page).getByRole('button', { name: 'Demo Care Clinic' }).click();
@@ -250,7 +276,7 @@ test('+ New → a clinic appointment at Demo Care: chosen clinic, his free time 
   expect(sent).toMatchObject({ clinicId: DEMO, branchId: DEMOBR, slotId: S_DEMO, customer: { phone: PHONE, name: 'Asha Demo' } });
   expect(String(sent.requestKey)).toMatch(/^[A-Za-z0-9_-]{8,}$/);
   await page.getByRole('link', { name: 'Home', exact: true }).first().click();
-  await expect(list(page).getByRole('listitem').last()).toContainText('17:00Asha DemoIn personDemo Care Clinic desk');
+  await expect(list(page).getByRole('listitem').last()).toContainText('Asha DemoIn personBooked by you · at Demo Care Clinic');
   expect(await stored(page)).not.toContain(PHONE);
   expect(await stored(page)).not.toContain('Asha');
 });
@@ -261,6 +287,7 @@ test('an online consultation: the patient pays in the Jansetu app within 30 minu
   await newVisit(page, 'Meena Demo');
   await page.getByRole('navigation', { name: 'What does the patient need?' }).getByRole('link', { name: 'Online consultation (video or call)' }).click();
   await expect(page.getByText('The patient pays in the Jansetu app within 30 minutes.')).toBeVisible();
+  await expect(page.getByText(/₹700\.00/).first()).toBeVisible();
   // No consultation type is chosen for him.
   await expect(page.getByRole('group', { name: 'Video or phone call?' }).getByRole('button', { pressed: true })).toHaveCount(0);
   await page.getByRole('group', { name: 'Video or phone call?' }).getByRole('button', { name: 'Video' }).click();
@@ -277,17 +304,24 @@ test('an online consultation: the patient pays in the Jansetu app within 30 minu
   await expect(r).toContainText('Waiting for the patient to pay in the app');
 });
 
-test('he bills his own clinic from the dashboard: the short bill with his fee, paid in cash; Bills opens its bills', async ({ page }) => {
-  const b = await mockBackend(page);
+test('he bills the account holder for a family visit at the non-solo clinic he owns', async ({ page }) => {
+  const b = await mockBackend(page, { nonSolo: true });
+  Object.assign(b.rows[0]!, { dependentId: bid(50), customer: { phone: PHONE, name: null }, bill: null });
   await signIn(page);
   // Only his own clinic's appointment has Bill (Demo Care's reception bills its own).
   await expect(list(page).getByRole('button', { name: 'Bill' })).toHaveCount(1);
   await list(page).getByRole('listitem').filter({ hasText: 'Ravi Demo' }).getByRole('button', { name: 'Bill' }).click();
   await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
+  await expect(page.getByLabel('Mobile number', { exact: true })).toHaveValue(PHONE);
+  const name = page.getByRole('textbox', { name: 'Name on the bill' });
+  await expect(name).toHaveValue('');
+  await page.getByRole('button', { name: 'Issue bill for ₹700.00' }).click();
+  expect(b.bills).toHaveLength(0);
+  await name.fill('Asha Holder');
   await page.getByRole('button', { name: 'Issue bill for ₹700.00' }).click();
   await expect(page.getByText(/^Bill DSKIN\/2627\/0001 issued\./)).toBeVisible();
   expect(b.calls.find((c) => c.method === 'POST' && c.path === '/specialists/me/clinic/invoices')!.body).toMatchObject({
-    appointmentId: bid(1), branchId: OWNBR, customer: { name: 'Ravi Demo' }, items: [{ description: 'Consultation · Dr Arjun Demo', unitPriceMinor: 70000, qty: 1 }] });
+    appointmentId: bid(1), branchId: OWNBR, customer: { name: 'Asha Holder', phone: PHONE }, items: [{ description: 'Consultation · Dr Arjun Demo', unitPriceMinor: 70000, qty: 1 }] });
   const pay = page.getByRole('group', { name: 'Record payment' });
   await pay.getByRole('button', { name: 'Cash', exact: true }).click();
   await pay.getByRole('button', { name: 'Record ₹700.00 paid' }).click();
@@ -301,6 +335,38 @@ test('he bills his own clinic from the dashboard: the short bill with his fee, p
   await expect(page.getByRole('heading', { name: 'Bills', level: 1 })).toBeVisible();
   await expect(page.getByText('DSKIN/2627/0001')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sign out and open my clinic’s workspace' })).toHaveCount(0);
+});
+
+test('an earlier paid bill stays attached to today’s visit even when the register has no bill for today', async ({ page }) => {
+  const b = await mockBackend(page);
+  Object.assign(b.rows[0]!, { bill: { invoiceId: bid(51), number: 51, serial: 'DSKIN/2627/0051', state: 'paid' } });
+  await signIn(page);
+  const own = list(page).getByRole('listitem').filter({ hasText: 'Ravi Demo' });
+  await expect(own.getByRole('link', { name: 'Paid', exact: true })).toHaveAttribute('href', `#/doctor/clinic/invoices/${bid(51)}`);
+  await expect(own.getByRole('button', { name: 'Bill', exact: true })).toHaveCount(0);
+});
+
+test('a booked follow-up can be resent with the same key after checking appointments', async ({ page }) => {
+  const b = await mockBackend(page);
+  b.loseFollowUp = true;
+  Object.assign(b.rows[1]!, { status: 'completed', followUp: { eligibilityExpiresAt: '20261204' } });
+  await signIn(page);
+  await list(page).getByRole('link', { name: /Meera Demo/ }).click();
+  await page.getByRole('link', { name: /Book a follow-up/ }).click();
+  await page.getByRole('button', { name: 'Video', exact: true }).click();
+  await expect(page.getByLabel('Day')).toHaveAttribute('max', '2026-12-04');
+  await page.getByRole('button', { name: '13:00', exact: true }).click();
+  await page.getByRole('button', { name: /Book the follow-up at 13:00/ }).click();
+  await page.getByRole('link', { name: 'Check your appointments' }).click();
+  await page.getByRole('link', { name: 'Continue follow-up booking' }).click();
+  await page.getByRole('button', { name: 'Send again' }).click();
+  // A refusal on a resend does not settle the first, unanswered attempt.
+  await page.getByRole('button', { name: 'Send again' }).click();
+  await expect(page.getByText(/Follow-up booked on/)).toBeVisible();
+  const attempts = b.calls.filter((c) => c.method === 'POST' && c.path === '/specialists/me/consultations');
+  expect(attempts).toHaveLength(3);
+  expect(attempts[1]!.body).toEqual(attempts[0]!.body);
+  expect(attempts[2]!.body).toEqual(attempts[0]!.body);
 });
 
 test('a doctor who owns no clinic: no Bills button, no Bill on rows, and Doctor › Bills says so', async ({ page }) => {
@@ -330,6 +396,10 @@ test('earnings in one view by where they came from: the period sent whole, chips
   const earn = page.getByRole('region', { name: 'Where your earnings came from' });
   await expect(earn.getByText('Earned in this period ₹3,300.00')).toBeVisible();
   expect(b.calls.some((c) => c.path === '/specialists/me/finance?from=2026-11-01&to=2026-11-27&breakdown=1')).toBe(true);
+  await expect.poll(() => b.calls.some((c) => c.path.startsWith('/specialists/me/finance/statement?') && c.path.includes('from=2026-11-01&to=2026-11-27'))).toBe(true);
+  await page.getByLabel('From (India date)', { exact: true }).fill('2026-11-12');
+  await expect.poll(() => b.calls.some((c) => c.path === '/specialists/me/finance?from=2026-11-12&to=2026-11-27&breakdown=1')).toBe(true);
+  await expect.poll(() => b.calls.some((c) => c.path.startsWith('/specialists/me/finance/statement?') && c.path.includes('from=2026-11-12&to=2026-11-27'))).toBe(true);
   const which = earn.getByRole('group', { name: 'Which earnings' });
   await expect(which.getByRole('button')).toHaveText(['All', 'Online', 'Demo Care Clinic', 'In person, no clinic', 'Booked by partners', 'Referral cuts']);
   await which.getByRole('button', { name: 'Demo Care Clinic' }).click();

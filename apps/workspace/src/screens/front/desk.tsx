@@ -2,11 +2,13 @@ import { useQuery } from '@tanstack/react-query';
 import { formatClock } from '@jansetu/i18n';
 import { CalendarDays, Pill, Plus, Receipt, Search, type LucideIcon } from 'lucide-react';
 import {
-  appointmentAt, canonicalPhone, CLINIC_PENDING_KEYS, doctorDashboardApi, DOCTOR_PENDING_KEYS, hasGlobalScope, holdsAny, istToday, labAssistedApi, labDeskApi,
+  ApiError, appointmentAt, canonicalPhone, CLINIC_PENDING_KEYS, doctorDashboardApi, DOCTOR_PENDING_KEYS, hasGlobalScope, holdsAny, istToday, labAssistedApi, labDeskApi,
   LAB_PENDING_KEYS, OBJECT_ID_PATTERN, partnerClinicApi, partnerWorkspaceApi, PENDING_KEYS, pharmacyAssistedApi, pharmacySaleApi, todayApi,
   type ClinicPendingKey, type DoctorPendingKey, type LabPendingKey, type PatientLookup, type PendingKey, type SaleCustomer, type TodayApi, type TodayDesk,
 } from '@jansetu/api';
 import { t } from '../../i18n/home/index.ts';
+import type { BillPrefill } from '../partner/billing.tsx';
+import { prefillOf } from '../partner/clinic.tsx';
 import { CLINIC_REGISTER_READERS, pagesFor, REGISTER_READERS } from '../../modules.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 import { visitPath } from './visitPatient.ts';
@@ -29,7 +31,7 @@ export interface FrontDesk {
   /** + New's "what", each an existing flow opened with the visit's patient. */
   choices: { to: string; label: string }[];
   /** The number's lookup (whether it is on Jansetu, the owner's masked name); null when this person may not look up. */
-  lookup: ((phone: string) => Promise<PatientLookup>) | null;
+  lookup: ((phone: string) => Promise<PatientLookup | null>) | null;
   /** This desk's own patients searched by name or phone (a pharmacy's customers); null: + New takes a phone only. */
   customers: ((search: string) => Promise<SaleCustomer[]>) | null;
   /** The waiting work, in the strip's order, and where each is done (null: shown, but not a link for this person). */
@@ -50,7 +52,7 @@ export interface FrontDesk {
   findToday?: (text: string) => Promise<TodayAppointment[]>;
 }
 /** WQ57b: one of today's appointments as Find patient shows it (the holder's mobile to continue with). */
-export interface TodayAppointment { id: string; name: string; phone: string; time: string; doctor: string }
+export interface TodayAppointment { id: string; name: string; phone: string; time: string; doctor: string; bill?: BillPrefill }
 
 /** The one record's page when the list names exactly one, else the list page. */
 export const oneOr = (ids: readonly string[] | undefined, count: number, one: (id: string) => string, list: string) =>
@@ -135,7 +137,7 @@ export function useFrontDesk(): FrontDesk | null {
   ];
   if (kind === 'clinic') {
     // WQ57 (P3): a clinic's reception: an appointment now (a walk-in) or later (`bookings.manage`), a bill
-    // (`invoices.create`); the clinic desk has no number lookup (the number is typed twice on + New).
+    // (`invoices.create`); WQ57b the clinic's own number lookup (r40d) for members who book.
     const book = holdsAny(m, ['bookings.manage']);
     const desk = page('/partner/desk');
     const choices = [
@@ -147,7 +149,11 @@ export function useFrontDesk(): FrontDesk | null {
     return {
       kind: 'clinic', id: user.id, today: todayApi(api, 'clinic'), newPath: '/partner/new', todayPath: '/partner/today', big: partnerBig(choices), choices,
       // WQ57b (r40d): the clinic's own lookup (the lab's shape), for members who book.
-      lookup: book ? (phone) => clinic.lookup(phone) : null, customers: null, pending: CLINIC_PENDING_KEYS,
+      // A server without the lookup yet (404 with no code) is "not known": the number is typed twice. 403 and 429 stay.
+      lookup: book ? async (phone) => {
+        try { return await clinic.lookup(phone); } catch (err) { if (err instanceof ApiError && err.status === 404 && !err.code) return null; throw err; }
+      } : null,
+      customers: null, pending: CLINIC_PENDING_KEYS,
       findToday: reads ? async (text) => {
         const day = istToday();
         const { appointments } = await clinic.dayView({ from: day, to: day });
@@ -158,7 +164,10 @@ export function useFrontDesk(): FrontDesk | null {
           const name = a.patient?.name ?? '';
           const hit = digits.length >= 4 ? !!phone?.includes(digits) : !!words && name.toLowerCase().includes(words);
           const at = appointmentAt(a);
-          return hit && phone ? [{ id: a.bookingId, name, phone, time: at ? formatClock(at) : a.bookingTime, doctor: a.doctorName ?? '' }] : [];
+          // WQ57c: a desk appointment not billed yet can be billed from here (the short bill, linked to it).
+          const billable = bill && a.source === 'desk' && a.status !== 'cancelled' && (!a.bill || a.bill.state === 'cancelled');
+          return hit && phone ? [{ id: a.bookingId, name, phone, time: at ? formatClock(at) : a.bookingTime, doctor: a.doctorName ?? '',
+            ...(billable ? { bill: { ...prefillOf(a), simple: true } } : {}) }] : [];
         });
       } : undefined,
       pendingTo: (k, ids, n) => (k === 'unpaidBills' ? bills(ids, n) : k === 'appointmentsToday' || k === 'deskUnbilled' ? desk(ids, n) : null),

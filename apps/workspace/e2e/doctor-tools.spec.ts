@@ -949,6 +949,9 @@ test('earnings: balance, statement with running balance and paging, CSV via blob
   const balance = page.getByRole('region', { name: 'Balance' });
   await expect(balance).toContainText('₹30,400.00'); // 59 × ₹600 − ₹5,000
   await expect(balance).toContainText('₹5,000.00 on Fri, 16 Oct, 2026');
+  // The shared period starts this month. Clear it to inspect the complete statement and page back.
+  await page.getByLabel('From (India date)').fill('');
+  await page.getByLabel('To (India date)').fill('');
   const lines = page.getByRole('table', { name: 'Statement lines' });
   await expect(lines.getByRole('row')).toHaveCount(51);
   await expect(lines.getByRole('row').nth(1)).toContainText('Consultation · line 60');
@@ -957,7 +960,7 @@ test('earnings: balance, statement with running balance and paging, CSV via blob
   await expect(lines.getByRole('row')).toHaveCount(61);
   await expect(page.getByRole('button', { name: 'Show older entries' })).toHaveCount(0);
   const older = backend.calls.filter((c) => c.path.startsWith('/specialists/me/finance/statement?')).map((c) => c.path);
-  expect(older[1]).toMatch(/before=\d+_[0-9a-f]{24}&limit=50$/);
+  expect(older.some((path) => /before=\d+_[0-9a-f]{24}&limit=50$/.test(path))).toBe(true);
   // WQ52: the finance statements' period fields (read after a short pause) and CSV.
   await page.getByLabel('From (India date)').fill('2026-11-30');
   await page.getByLabel('To (India date)').fill('2026-11-01');

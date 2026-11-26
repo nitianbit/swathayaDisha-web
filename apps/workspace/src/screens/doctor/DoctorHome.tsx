@@ -13,7 +13,7 @@ import { useSession } from '../../session.tsx';
 import { useFrontDesk, type FrontDesk } from '../front/desk.tsx';
 import { BigActions, Failed, MoneyLine, PendingStrip, todayKey, Todos } from '../front/home.tsx';
 import { openBill } from '../partner/billing.tsx';
-import { feeLine } from '../partner/DeskScreen.tsx';
+import { feeLine } from '../partner/clinic.tsx';
 import { usePartnerScope } from '../partner/scope.tsx';
 import { offersKey, rupeesOf, useClinics, useDoctor, useDoctorProfile, useOwnedClinic, useUpcomingAppointments, type DoctorContext } from './doctor.tsx';
 import { appointmentLabel } from './AppointmentsScreen.tsx';
@@ -168,7 +168,7 @@ function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
               const deskRow = a.clinicDesk;
               const bill = a.bill?.state === 'cancelled' ? null : a.bill;
               // His own clinic's desk appointment: he makes its bill here (the short bill) unless it was cancelled or billed.
-              const billable = !!ctx && !!deskRow && deskRow.partnerId.toLowerCase() === ownId && a.status !== 'cancelled';
+              const billable = !!ctx && !!deskRow && deskRow.partnerId.toLowerCase() === ownId && a.bill !== undefined && a.status !== 'cancelled';
               return (
                 <li key={a._id} className="appt-row">
                   {/* The row opens the appointment (join, mark done, records) on Appointments. */}
