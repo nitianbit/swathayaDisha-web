@@ -18,9 +18,9 @@ import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { canMarkPaid, ORDER_STATUS_LABEL, orderLabel, paymentWaitsForPharmacist } from './orderLabels.ts';
 import { CheckPanel, useKeyedCheck, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
-import { useVisitMode, useVisitPreset, type VisitPatient } from './visitPatient.ts';
+import { useVisitMode, useVisitPreset, type VisitPatient } from '../front/visitPatient.ts';
 import { methodWords, PaymentMethodPicker, paymentWords } from './paymentPicker.tsx';
-import { VisitPatientLine, visitWho } from './visitBar.tsx';
+import { VisitPatientLine, visitWho } from '../front/visitBar.tsx';
 
 /**
  * WQ50: Pharmacy › New sale, one screen for a counter sale: the customer (one this pharmacy already has, or a walk-in by
@@ -73,7 +73,7 @@ function SaleForm({ pharmacyId }: { pharmacyId: string }) {
   const { op, send, settle } = useOwnedOp<SaleBody>(`pharmacy-sale:${pharmacyId}`);
   // WQ54/WQ54b: opened from + New, the visit's patient is the customer: one this pharmacy has (found there), else a
   // walk-in by that phone and name (linked by phone: found or made, as for any walk-in).
-  const preset = useVisitPreset(pharmacyId);
+  const preset = useVisitPreset();
   const [customer, setCustomer] = useState<Customer | null>(() => (!preset ? null : preset.customerId
     ? { kind: 'existing', id: preset.customerId, label: visitWho(preset) } : { kind: 'walkin' }));
   // WQ54c: an order has a customer, not a patient: a family member's medicines are sold to the phone's owner.

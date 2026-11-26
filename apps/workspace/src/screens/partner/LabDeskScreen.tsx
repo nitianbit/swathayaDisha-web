@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import {
   addDays, addressErrors, COLLECTOR_PHONE_PATTERN, CONSENT_STATEMENT_LANGUAGE, deskItems, deskRefusal, deskTotalMinor, isBookable, isSwitchedOff, istDateOf,
   LAB_DESK_CONSENT_STATEMENT, LAB_DESK_CONSENT_VERSION, LAB_DESK_SWITCHED_OFF_MESSAGE, labDeskApi, MAX_COLLECTOR_NAME, patientBody,
@@ -108,7 +108,9 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
 
   // Step 2: the visit, branch, tests and time.
   const branches = useScopedBranches(ctx);
-  const [mode, setMode] = useState<Mode>('walkin');
+  // WQ55: + New's "Home collection" opens the desk on a home collection (`home=1`; nothing about the patient).
+  const [params] = useSearchParams();
+  const [mode, setMode] = useState<Mode>(() => (params.get('home') === '1' ? 'home' : 'walkin'));
   const visit = visitOf(mode);
   const offering = useMemo(() => branches.inScope.filter((b) => modesOf(b).includes(visit)), [branches.inScope, visit]);
   const [branchId, setBranchId] = useState<string | null>(null);

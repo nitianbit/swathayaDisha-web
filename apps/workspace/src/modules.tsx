@@ -72,8 +72,8 @@ import { WalletScreen } from './screens/pharmacy/WalletScreen.tsx';
 import { LabReferralEarningsScreen } from './screens/finance/ReferralEarningsScreen.tsx';
 import { PharmacyFinanceScreen } from './screens/pharmacy/FinanceScreen.tsx';
 import { SaleBillScreen, SaleScreen } from './screens/pharmacy/SaleScreen.tsx';
-import { NewVisitScreen } from './screens/pharmacy/NewVisitScreen.tsx';
-import { TodayScreen } from './screens/pharmacy/home.tsx';
+import { NewVisitScreen } from './screens/front/NewVisitScreen.tsx';
+import { TodayScreen } from './screens/front/home.tsx';
 import { WalletDisputesScreen } from './screens/admin/WalletDisputesScreen.tsx';
 import { Truck } from 'lucide-react';
 import { PartnerFinanceScreen } from './screens/finance/PartnerFinanceScreen.tsx';
@@ -273,6 +273,13 @@ export const PAGES: readonly WorkspacePage[] = [
   },
   { path: '/partner/invoices/new', roles: ['partner'], element: <NewInvoiceScreen />, partnerPermissions: ['invoices.create'] },
   { path: '/partner/invoices/:invoiceId', roles: ['partner'], element: <InvoiceScreen />, partnerPermissions: INVOICE_READERS },
+  // WQ55 (P4): a lab member's + New (the patient, then what: the desk, a home collection, a doctor, a bill, each by its
+  // permission; none: the page says to ask the owner) and Today (the day's register; the server scopes it to the member).
+  { path: '/partner/new', roles: ['partner'], element: <NewVisitScreen />, partnerKinds: ['lab'] },
+  {
+    path: '/partner/today', roles: ['partner'], element: <TodayScreen />, partnerKinds: ['lab'],
+    nav: { labelKey: 'nav.today', icon: CalendarDays, sectionKey: 'nav.section.lab' },
+  },
   // WQ3: lab slots and online lab bookings (labs only).
   {
     path: '/partner/lab-bookings', roles: ['partner'], element: <LabBookingsScreen />, partnerPermissions: LAB_READERS, partnerKinds: ['lab'],

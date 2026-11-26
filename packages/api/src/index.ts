@@ -281,5 +281,8 @@ export type {
 export { COUNTER_PAYMENTS, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, pharmacySaleApi, SALE_KEY_PATTERN, saleRequestBody, usableCustomers, walkInProblems } from './pharmacySale.ts';
 export type { CounterPayment, SaleAnswer, SaleBody, SaleByKey, SaleCustomer, SaleLine } from './pharmacySale.ts';
 // WQ54 (P1): the simple pharmacy home: the day's register and the pharmacy's to-dos (backend r37).
-export { bookingsWaiting, MAX_TODO_TEXT, moneyParts, PAYMENT_METHOD_KEYS, PENDING_KEYS, pendingCount, pharmacyTodayApi, TODAY_PAGE_MAX, TODAY_SEARCH_MAX, TODAY_SEARCH_MIN, todayLink, todayOf, todoText } from './pharmacyToday.ts';
-export type { PaymentMethodKey, PendingKey, TodayAnswer, TodayItem, TodayKind, TodayLinkKind, TodayPending, TodayTotals, Todo, WhatParts } from './pharmacyToday.ts';
+export {
+  bookingsWaiting, LAB_PENDING_KEYS, MAX_TODO_TEXT, moneyParts, PAYMENT_METHOD_KEYS, PENDING_KEYS, pendingCount, pharmacyTodayApi, TODAY_PAGE_MAX, TODAY_SEARCH_MAX,
+  TODAY_SEARCH_MIN, todayApi, todayLink, todayOf, todoText,
+} from './pharmacyToday.ts';
+export type { LabPendingKey, PaymentMethodKey, PendingKey, TodayAnswer, TodayApi, TodayDesk, TodayItem, TodayKind, TodayLinkKind, TodayPending, TodayTotals, Todo, WhatParts } from './pharmacyToday.ts';

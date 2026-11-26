@@ -433,7 +433,8 @@ function UnconfirmedPayment({ op, sending, billUnpaid, onResend, onCheck, onForg
   );
 }
 
-type SplitDraft = { key: number; mode: InvoicePaymentMode; amount: string; reference: string };
+/** WQ55: no method is chosen at first (`''`): the person picks how it was paid. */
+type SplitDraft = { key: number; mode: InvoicePaymentMode | ''; amount: string; reference: string };
 let splitSeq = 0;
 /** Each method's fields get their own label: "Amount (₹)", "Amount (₹) (method 2)", … */
 const nth = (i: number, first: string, later: (n: number) => string): string => (i === 0 ? first : later(i + 1));
@@ -471,7 +472,7 @@ function PaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }: {
 /** Q14 review: a bill of ₹0 is marked paid with a plain method (there is no amount to split). */
 function ZeroBillPayment({ invoice, locked, busy, onRecord }: { invoice: Invoice; locked: boolean; busy: boolean; onRecord: OnRecord }) {
   const [open, setOpen] = useState<{ version: number } | null>(null);
-  const [mode, setMode] = useState<InvoicePaymentMode>('cash');
+  const [mode, setMode] = useState<InvoicePaymentMode | ''>('');
   const guard = useReviewGuard(invoice.lifecycleVersion, !!open, () => setOpen(null));
   if (!open) {
     return (
@@ -485,13 +486,14 @@ function ZeroBillPayment({ invoice, locked, busy, onRecord }: { invoice: Invoice
     <div className="confirm" role="group" aria-label={t('invoice.pay.record')}>
       <div className="j-field">
         <label htmlFor="pay-zero-mode">{t('invoice.pay.paidBy')}</label>
-        <select id="pay-zero-mode" value={mode} onChange={(e) => setMode(e.target.value as InvoicePaymentMode)}>
+        <select id="pay-zero-mode" value={mode} onChange={(e) => setMode(e.target.value as InvoicePaymentMode | '')}>
+          <option value="">{t('invoice.pay.choose')}</option>
           {PAYMENT_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
       </div>
       <div className="confirm-text">{t('invoice.pay.zero', { serial: invoice.serial, amount: money(0) })}</div>
       <div className="confirm-actions">
-        <Button busy={busy} disabled={locked} onClick={() => { const v = open.version; setOpen(null); void onRecord({ mode }, v); }}>{t('invoice.pay.markPaid')}</Button>
+        <Button busy={busy} disabled={locked || !mode} onClick={() => { if (!mode) return; const v = open.version; setOpen(null); void onRecord({ mode }, v); }}>{t('invoice.pay.markPaid')}</Button>
         <Button variant="ghost" disabled={busy} onClick={() => setOpen(null)}>{shared('action.back')}</Button>
       </div>
     </div>
@@ -509,7 +511,7 @@ function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }
   const confirming = !!reviewed;
   const setConfirming = (on: false) => { if (!on) setReviewed(null); };
   const guard = useReviewGuard(invoice.lifecycleVersion, open, () => setReviewed(null));
-  const [rows, setRows] = useState<SplitDraft[]>(() => [{ key: ++splitSeq, mode: 'cash', amount: paiseToInput(due), reference: '' }]);
+  const [rows, setRows] = useState<SplitDraft[]>(() => [{ key: ++splitSeq, mode: '', amount: paiseToInput(due), reference: '' }]);
   const [note, setNote] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -526,6 +528,7 @@ function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }
       const a = rupeesToPaise(r.amount);
       if (a === null || a <= 0) errs[`amount${r.key}`] = r.amount.trim() ? t('invoice.pay.enterRupees') : t('invoice.pay.enterAmount');
       if (r.reference.trim().length > MAX_REFERENCE) errs[`reference${r.key}`] = tooLongWords(MAX_REFERENCE);
+      if (!r.mode) errs[`mode${r.key}`] = t('invoice.pay.chooseMethod');
     });
     if (note.trim().length > MAX_NOTE) errs.note = tooLongWords(MAX_NOTE);
     const problem = Object.keys(errs).length ? null : paymentProblem(splits, due, allowPartPayments, money);
@@ -536,7 +539,8 @@ function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }
   }
 
   const body: { splits: PaymentSplit[]; note?: string } = {
-    splits: splits.map((x) => ({ mode: x.mode, amountMinor: x.amountMinor!, ...(x.reference ? { reference: x.reference } : {}) })),
+    // Sent only once every method is chosen (the review refuses an empty one).
+    splits: splits.map((x) => ({ mode: x.mode as InvoicePaymentMode, amountMinor: x.amountMinor!, ...(x.reference ? { reference: x.reference } : {}) })),
     ...(note.trim() ? { note: note.trim() } : {}),
   };
   // The confirmation shows (and sends) what was reviewed.
@@ -554,9 +558,12 @@ function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }
             <div key={r.key} className="rx-form-row">
               <div className="j-field">
                 <label htmlFor={`pay-mode-${r.key}`}>{nth(i, t('invoice.pay.paidBy'), (n) => t('invoice.pay.paidByN', { n }))}</label>
-                <select id={`pay-mode-${r.key}`} value={r.mode} onChange={(e) => set(r.key, { mode: e.target.value as InvoicePaymentMode })}>
+                <select id={`pay-mode-${r.key}`} value={r.mode} aria-invalid={errors[`mode${r.key}`] ? true : undefined}
+                  aria-describedby={errors[`mode${r.key}`] ? `pay-mode-${r.key}-err` : undefined} onChange={(e) => set(r.key, { mode: e.target.value as InvoicePaymentMode | '' })}>
+                  <option value="">{t('invoice.pay.choose')}</option>
                   {PAYMENT_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                 </select>
+                {errors[`mode${r.key}`] && <span id={`pay-mode-${r.key}-err`} className="j-field__error" role="alert">{errors[`mode${r.key}`]}</span>}
               </div>
               <TextField label={nth(i, t('invoice.pay.amount'), (n) => t('invoice.pay.amountN', { n }))} inputMode="decimal" value={r.amount} error={errors[`amount${r.key}`]} onChange={(e) => set(r.key, { amount: e.target.value })} />
               <TextField label={nth(i, t('invoice.pay.reference'), (n) => t('invoice.pay.referenceN', { n }))} hint={i === 0 ? t('invoice.pay.referenceHint') : undefined} value={r.reference} maxLength={MAX_REFERENCE}
@@ -576,7 +583,7 @@ function SplitPaymentForm({ invoice, allowPartPayments, locked, busy, onRecord }
           <div className="confirm-actions">
             <Button type="submit">{t('common.continue')}</Button>
             {rows.length < MAX_PAYMENT_SPLITS && (
-              <Button variant="secondary" onClick={() => setRows((rs) => [...rs, { key: ++splitSeq, mode: 'upi', amount: paiseToInput(Math.max(0, due - total)) || '', reference: '' }])}>
+              <Button variant="secondary" onClick={() => setRows((rs) => [...rs, { key: ++splitSeq, mode: '', amount: paiseToInput(Math.max(0, due - total)) || '', reference: '' }])}>
                 {t('invoice.pay.addMethod')}
               </Button>
             )}

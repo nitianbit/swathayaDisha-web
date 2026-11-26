@@ -1293,6 +1293,8 @@ test('WQ11b: after a bill is paid, the desk row shows it paid (the Bill column i
   await expect(row.getByRole('link', { name: /^Bill SC\/2627\/000\d+, Unpaid$/ })).toBeVisible();
   await row.getByRole('link', { name: /^Bill SC\/2627\/000\d+, Unpaid$/ }).click();
   await page.getByRole('button', { name: 'Record payment' }).click();
+  // WQ55: no method is chosen at first.
+  await page.getByLabel('Paid by').selectOption('cash');
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Record ₹500.00 paid' }).click();
   await expect(page.getByText('Payment recorded.')).toBeVisible();

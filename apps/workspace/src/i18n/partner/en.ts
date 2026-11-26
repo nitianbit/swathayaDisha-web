@@ -652,6 +652,9 @@ export default {
   'invoice.unconfirmed.forgetConsequence': 'The bill as read now shows no such payment, so it was not recorded so far. Forget it here and record a payment again only if the customer still has to pay. If the earlier one still arrives after another payment, it is refused (it names the bill version it was decided on), so the bill is never paid twice.',
   'invoice.pay.record': 'Record payment',
   'invoice.pay.paidBy': 'Paid by',
+  /** WQ55: no method is chosen at first. */
+  'invoice.pay.choose': 'Choose…',
+  'invoice.pay.chooseMethod': 'Choose how it was paid: cash, UPI, card, bank or other.',
   /** The fields of the 2nd, 3rd… method of a payment split across methods. */
   'invoice.pay.paidByN': 'Paid by (method {n})',
   'invoice.pay.zero': 'Bill {serial} is for {amount}. Mark it as paid? It will show Paid; this cannot be changed or removed.',
@@ -739,6 +742,8 @@ export default {
   'newInvoice.chooseItem': 'Choose an item to add.',
   'newInvoice.linkNotice': 'With a phone number the bill is added to that number’s Jansetu customer account; if there is none, one is created for it, and the customer may get an SMS about the bill. An existing account’s details are never changed.',
   'newInvoice.who': 'Branch and customer',
+  /** WQ55: a bill opened from + New for a family member: an in-house bill has a customer, the phone's owner. */
+  'newInvoice.visitFamily': 'The bill is in the phone owner’s name (a bill has no separate patient).',
   'newInvoice.appointment': 'Appointment',
   'newInvoice.forAppointment': 'For the clinic appointment with {label}. Its branch, doctor and customer (the account holder) stay as booked.',
   'newInvoice.notForAppointment': 'Not for this appointment',

@@ -2,11 +2,10 @@ import './home.css';
 import { useState, type FormEvent } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { CalendarDays, Pill, Plus, Search } from 'lucide-react';
 import {
-  ApiError, bookingsWaiting, CONSULT_MODE_LABEL, istToday, MAX_TODO_TEXT, moneyParts, OBJECT_ID_PATTERN, PAYMENT_METHOD_KEYS, PENDING_KEYS, pendingCount,
-  pharmacyTodayApi, TODAY_PAGE_MAX, TODAY_SEARCH_MAX, TODAY_SEARCH_MIN, todayLink, todoText,
-  type ConsultMode, type PaymentMethodKey, type PendingKey, type TodayAnswer, type TodayItem, type Todo,
+  ApiError, bookingsWaiting, CONSULT_MODE_LABEL, istToday, MAX_TODO_TEXT, moneyParts, PAYMENT_METHOD_KEYS, pendingCount, TODAY_PAGE_MAX,
+  TODAY_SEARCH_MAX, TODAY_SEARCH_MIN, todayLink, todoText,
+  type ConsultMode, type PaymentMethodKey, type TodayAnswer, type TodayApi, type TodayDesk, type TodayItem, type Todo,
 } from '@jansetu/api';
 import { CALENDAR_DATE, formatClock, formatDateWith, formatPaise } from '@jansetu/i18n';
 import { Alert, Badge, Button, Empty, Loading, Parts, TextField } from '@jansetu/ui';
@@ -14,33 +13,37 @@ import { messageOf } from '../../errors.ts';
 import { t } from '../../i18n/home/index.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
-import { useSession } from '../../session.tsx';
-import { usePharmacyId } from './ownedOp.tsx';
+import { useFrontDesk, type FrontDesk } from './desk.tsx';
 import { HomeButton } from './visitBar.tsx';
 
 /**
- * WQ54 (P1, SIMPLE_DESIGN_PLAN_2026-11-26) / WQ54b: the simple pharmacy home, for a counter clerk used to a paper
- * register, on any device: four big buttons (+ New, Find patient, Sell medicines, Today), the day's money, what is waiting,
- * the latest 10 entries (newest first) and the pharmacy's to-dos. The menu stays (the side menu; "More" on a phone). Big
- * type and 48 px targets (`home.css`). Without internet: a plain message and Try again, keeping what was typed.
+ * WQ54 (P1, SIMPLE_DESIGN_PLAN_2026-11-26) / WQ54b / WQ55 (P4): the simple front-desk home, for a counter clerk used to a
+ * paper register, on any device: a pharmacy's or a lab member's (`desk.tsx`). Big buttons (a pharmacy: + New, Find patient,
+ * Sell medicines, Today; a lab: + New, Find patient, New bill, Today, by permission), the day's money, what is waiting, the
+ * latest 10 entries (newest first) and the shared to-dos. The menu stays (the side menu; "Menu" on a phone). Big type and
+ * 48 px targets (`home.css`). Without internet: a plain message and Try again, keeping what was typed.
  */
 
-/** No internet (or no answer in time): one plain sentence; anything else in the server's words. */
-export function homeWords(err: unknown): string {
-  return err instanceof ApiError && (err.code === 'NETWORK' || err.code === 'TIMEOUT') ? t('offline') : messageOf(err);
+/**
+ * No internet (or no answer in time): one plain sentence; WQ55 a read this person may not make: `forbidden` (a lab
+ * member: ask the owner), never a blank screen; anything else in the server's words.
+ */
+export function homeWords(err: unknown, forbidden?: string | null): string {
+  if (err instanceof ApiError && (err.code === 'NETWORK' || err.code === 'TIMEOUT')) return t('offline');
+  return forbidden && err instanceof ApiError && err.status === 403 ? forbidden : messageOf(err);
 }
 
 /** A failed read in plain words, with one big Try again. */
-export function Failed({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+export function Failed({ error, onRetry, forbidden }: { error: unknown; onRetry: () => void; forbidden?: string | null }) {
   return (
     <div className="simple-failed" role="alert">
-      <p>{homeWords(error)}</p>
+      <p>{homeWords(error, forbidden)}</p>
       <Button onClick={onRetry}>{t('tryAgain')}</Button>
     </div>
   );
 }
 
-export const todayKey = (pharmacyId: string, date: string) => ['pharmacy-today', pharmacyId, date] as const;
+export const todayKey = (desk: Pick<FrontDesk, 'kind' | 'id'>, date: string) => ['front-today', desk.kind, desk.id, date] as const;
 const HOME_ROWS = 10;
 const isOldestFirst = (items: readonly TodayItem[]) => items.length > 1 && Date.parse(items[0]!.at) < Date.parse(items[items.length - 1]!.at);
 
@@ -48,7 +51,7 @@ const isOldestFirst = (items: readonly TodayItem[]) => items.length > 1 && Date.
  * The home's read: the day's money and what waits, and its latest 10 rows, newest first (r37c `order=desc`). A server
  * before r37c lists oldest first whatever is asked: its pages are followed to the last one for the latest 10.
  */
-async function latestRows(today: ReturnType<typeof pharmacyTodayApi>['today'], date: string): Promise<TodayAnswer> {
+async function latestRows(today: TodayApi['today'], date: string): Promise<TodayAnswer> {
   const first = await today({ date, order: 'desc', limit: HOME_ROWS });
   if (!isOldestFirst(first.items)) return first;
   let before: TodayItem[] = [];
@@ -60,39 +63,38 @@ async function latestRows(today: ReturnType<typeof pharmacyTodayApi>['today'], d
   return { ...first, items: [...before, ...page.items].slice(-HOME_ROWS).reverse() };
 }
 
-export function useToday(pharmacyId: string, date: string) {
-  const { api } = useSession();
+export function useToday(desk: FrontDesk, date: string) {
   // Always read again when a page shows it: a sale or a booking made on another page has just changed the day.
-  return useQuery({ queryKey: [...todayKey(pharmacyId, date), 'home'], queryFn: () => latestRows(pharmacyTodayApi(api).today, date),
-    staleTime: 0, refetchOnMount: 'always' });
+  return useQuery({ queryKey: [...todayKey(desk, date), 'home'], queryFn: () => latestRows(desk.today.today, date), staleTime: 0, refetchOnMount: 'always' });
 }
 
-export function PharmacyHome() {
-  const pharmacyId = usePharmacyId();
+/** The front desk's home (a pharmacy's or WQ55 a lab member's). */
+export function FrontDeskHome({ desk }: { desk: FrontDesk }) {
   const day = istToday();
-  const q = useToday(pharmacyId, day);
+  const q = useToday(desk, day);
   return (
     <div className="simple">
       <nav className="big-actions" aria-label={t('big.label')}>
-        <Link className="big-action big-action--main" to="/pharmacy/new"><Plus size={28} aria-hidden="true" />{t('big.new')}</Link>
-        <Link className="big-action" to="/pharmacy/new?find=1"><Search size={28} aria-hidden="true" />{t('big.find')}</Link>
-        <Link className="big-action" to="/pharmacy/sale"><Pill size={28} aria-hidden="true" />{t('big.sell')}</Link>
-        <Link className="big-action" to="/pharmacy/today"><CalendarDays size={28} aria-hidden="true" />{t('big.today')}</Link>
+        {desk.big.map(({ to, label, Icon }, i) => (
+          <Link key={to} className={i === 0 ? 'big-action big-action--main' : 'big-action'} to={to}><Icon size={28} aria-hidden="true" />{label}</Link>
+        ))}
       </nav>
+      {/* WQ55: a member allowed none of the visits says so (never a blank home). */}
+      {desk.choices.length === 0 && <Alert tone="warn">{t('askOwnerVisits')}</Alert>}
       <section className="ws-section" aria-labelledby="reg-h">
         <h2 id="reg-h">{t('register.title')}</h2>
-        {!q.data ? (q.isError ? <Failed error={q.error} onRetry={() => void q.refetch()} /> : <Loading label={t('register.loading')} />) : (
+        {!q.data ? (q.isError ? <Failed error={q.error} forbidden={desk.forbidden} onRetry={() => void q.refetch()} /> : <Loading label={t('register.loading')} />) : (
           <>
             <MoneyLine day={q.data} date={day} />
-            <PendingStrip day={q.data} />
-            <Register items={q.data.items} date={day} />
+            <PendingStrip day={q.data} desk={desk} />
+            <Register items={q.data.items} date={day} desk={desk.kind} />
             {(q.data.nextCursor || q.data.totals.count > q.data.items.length) && (
-              <p><Link className="j-btn j-btn--secondary" to="/pharmacy/today">{t('register.all')}</Link></p>
+              <p><Link className="j-btn j-btn--secondary" to={desk.todayPath}>{t('register.all')}</Link></p>
             )}
           </>
         )}
       </section>
-      <Todos pharmacyId={pharmacyId} />
+      <Todos desk={desk} />
     </div>
   );
 }
@@ -110,57 +112,63 @@ export function MoneyLine({ day, date }: { day: TodayAnswer; date: string }) {
       <p className="money-main">{date === istToday() ? t('money.collectedToday', { amount: collected }) : t('money.collectedOn', { date: formatDay(date), amount: collected })}</p>
       {methods.length > 0 && <p className="money-methods">{methods.join(' · ')}</p>}
       <p className={due > 0 ? 'money-due money-due--warn' : 'money-due'}>{t('money.toCollect', { amount: formatPaise(due) })}</p>
+      {/* r38b: what was returned that day, on its own line (collected stays as received). */}
+      {(day.totals.refundedMinor ?? 0) > 0 && (
+        <p className="money-refunded">{date === istToday() ? t('money.refundedToday', { amount: formatPaise(day.totals.refundedMinor!) })
+          : t('money.refundedOn', { date: formatDay(date), amount: formatPaise(day.totals.refundedMinor!) })}</p>
+      )}
     </section>
   );
 }
 
-/** The one record's page when the list names exactly one, else the list page. */
-const oneOr = (ids: readonly string[] | undefined, count: number, one: (id: string) => string, list: string) =>
-  (count === 1 && ids?.length === 1 && OBJECT_ID_PATTERN.test(ids[0]!) ? one(ids[0]!) : list);
-
-type PendingLine = { id: string; text: string; to: string | null };
-/** What is waiting in lines, each with where it is done (r37c: bookings waiting for payment, by kind). */
-function pendingLines(day: TodayAnswer): PendingLine[] {
+type PendingLine = { id: string; text: string; to: string | null; failed?: boolean };
+/** What is waiting in lines, in the desk's order, each with where it is done (r37c: bookings waiting for payment, by kind). */
+function pendingLines(day: TodayAnswer, desk: FrontDesk): PendingLine[] {
   const p = day.pending;
   const lines: PendingLine[] = [];
-  const add = (k: Exclude<PendingKey, 'bookingsAwaiting'>, to: string) => {
+  for (const k of desk.pending) {
     const n = pendingCount(p, k);
-    if (n === null) lines.push({ id: k, text: t(`pending.failed.${k}`), to: null });
-    else if (n > 0) lines.push({ id: k, text: t(`pending.${k}`, { count: n }), to });
-  };
-  for (const k of PENDING_KEYS) {
-    if (k === 'prescriptionsToReview') add(k, '/pharmacy/prescriptions');
-    else if (k === 'unpaidCounterSales') add(k, oneOr(p?.unpaidCounterSales?.ids, pendingCount(p, k) ?? 0, (id) => `/pharmacy/sale/${id}`, '/pharmacy/orders'));
-    else if (k === 'labReportsReady') add(k, '/pharmacy/lab-tests');
-    else if (k === 'lowStock') add(k, '/pharmacy/low-stock');
-    else {
-      const n = pendingCount(p, k);
-      const b = bookingsWaiting(p);
-      if (n === null || !b) { lines.push({ id: k, text: t('pending.failed.bookingsAwaiting'), to: null }); continue; }
-      const ba = p?.bookingsAwaiting;
-      if (b.consultations > 0) {
-        lines.push({ id: 'consultations', text: t('pending.doctorPayments', { count: b.consultations }),
-          to: oneOr(ba?.consultationIds, b.consultations, (id) => `/pharmacy/consultations/${id}`, '/pharmacy/consultations') });
-      }
-      if (b.labBookings > 0) {
-        lines.push({ id: 'labBookings', text: t('pending.labPayments', { count: b.labBookings }),
-          to: oneOr(ba?.labBookingIds, b.labBookings, (id) => `/pharmacy/lab-tests/${id}`, '/pharmacy/lab-tests') });
-      }
-      if (n > 0 && b.consultations + b.labBookings === 0) lines.push({ id: k, text: t('pending.bookingsAwaiting', { count: n }), to: '/pharmacy/consultations' });
+    if (k === 'reportsDue') {
+      // r38: reports to upload and to release, each on its line (one line when the server does not split them).
+      const r = p?.reportsDue;
+      if (n === null) { lines.push({ id: k, text: t('pending.failed.reportsDue'), to: null, failed: true }); continue; }
+      const up = Number(r?.toUploadCount ?? 0);
+      const rel = Number(r?.toReleaseCount ?? 0);
+      if (up > 0) lines.push({ id: 'reportsToUpload', text: t('pending.reportsToUpload', { count: up }), to: desk.pendingTo(k, r?.toUploadIds, up) });
+      if (rel > 0) lines.push({ id: 'reportsToRelease', text: t('pending.reportsToRelease', { count: rel }), to: desk.pendingTo(k, r?.toReleaseIds, rel) });
+      if (n > 0 && up + rel === 0) lines.push({ id: k, text: t('pending.reportsDue', { count: n }), to: desk.pendingTo(k, undefined, n) });
+      continue;
     }
+    if (k !== 'bookingsAwaiting') {
+      const q = p?.[k] as { ids?: string[]; visitIds?: string[]; homeIds?: string[] } | null | undefined;
+      const ids = k === 'samplesToCollect' ? [...(q?.visitIds ?? []), ...(q?.homeIds ?? [])] : q?.ids;
+      if (n === null) lines.push({ id: k, text: t(`pending.failed.${k}`), to: null, failed: true });
+      else if (n > 0) lines.push({ id: k, text: t(`pending.${k}`, { count: n }), to: desk.pendingTo(k, ids, n) });
+      continue;
+    }
+    const b = bookingsWaiting(p);
+    if (n === null || !b) { lines.push({ id: k, text: t('pending.failed.bookingsAwaiting'), to: null, failed: true }); continue; }
+    const ba = p?.bookingsAwaiting;
+    if (b.consultations > 0) {
+      lines.push({ id: 'consultations', text: t('pending.doctorPayments', { count: b.consultations }), to: desk.bookingTo.consultations(ba?.consultationIds, b.consultations) });
+    }
+    if (b.labBookings > 0) {
+      lines.push({ id: 'labBookings', text: t('pending.labPayments', { count: b.labBookings }), to: desk.bookingTo.labBookings(ba?.labBookingIds, b.labBookings) });
+    }
+    if (n > 0 && b.consultations + b.labBookings === 0) lines.push({ id: k, text: t('pending.bookingsAwaiting', { count: n }), to: desk.bookingTo.consultations(undefined, n) });
   }
   return lines;
 }
 
 /** What is waiting, each a link to where it is done; a list that could not be read is said on its own line. */
-export function PendingStrip({ day }: { day: TodayAnswer }) {
+export function PendingStrip({ day, desk }: { day: TodayAnswer; desk: FrontDesk }) {
   if (!day.pending) return null;
-  const lines = pendingLines(day);
+  const lines = pendingLines(day, desk);
   return (
     <div className="pending-strip" aria-label={t('pending.title')} role="group">
       {lines.length === 0 ? <span className="ws-muted">{t('pending.none')}</span>
         : lines.map((x) => (x.to === null
-          ? <span key={x.id} className="pending-item pending-item--failed">{x.text}</span>
+          ? <span key={x.id} className={x.failed ? 'pending-item pending-item--failed' : 'pending-item'}>{x.text}</span>
           : <Link key={x.id} className="pending-item" to={x.to}>{x.text}</Link>))}
     </div>
   );
@@ -179,7 +187,9 @@ export function whatWords(i: Pick<TodayItem, 'what' | 'whatParts'>): string {
     case 'order.items': return list(t('what.counter'));
     case 'order.counter': return t('what.counter');
     case 'order.online': return t('what.online');
-    case 'lab.tests': return list(t('what.labTests'));
+    // r38: a lab's own test at home says so.
+    case 'lab.tests': return v.visit === 'home' ? `${list(t('what.labTests'))} · ${t('what.home')}` : list(t('what.labTests'));
+    case 'bill.items': return list(t('what.bill'));
     case 'wallet.topup': return t('what.topup');
     case 'consult.scheduled':
     case 'consult.instant': {
@@ -195,12 +205,12 @@ export function whatWords(i: Pick<TodayItem, 'what' | 'whatParts'>): string {
  * The register: the time, who and what (tap to open), the amount, paid or not. `date`: the register's day (an earlier
  * day's entry paid that day says so).
  */
-export function Register({ items, date }: { items: readonly TodayItem[]; date: string }) {
+export function Register({ items, date, desk }: { items: readonly TodayItem[]; date: string; desk: TodayDesk }) {
   if (items.length === 0) return <Empty title={t('register.none')}>{t('register.noneText')}</Empty>;
   return (
     <ul className="register" aria-label={t('register.caption')}>
       {items.map((i) => {
-        const to = todayLink(i);
+        const to = todayLink(i, desk);
         // A wallet top-up has no patient: no name is said for it.
         const who = i.patientName ?? (i.kind === 'wallet_topup' ? null : t('register.noName'));
         const words = <>{who ? <Parts of={t.rich('register.line', { who: <strong>{who}</strong>, what: whatWords(i) })} /> : whatWords(i)}{i.shortRef ? <span className="ws-muted">{` · ${i.shortRef}`}</span> : null}</>;
@@ -212,6 +222,8 @@ export function Register({ items, date }: { items: readonly TodayItem[]; date: s
             <span className="register-pay">
               <span className="register-amount">{formatPaise(i.amountMinor)}</span>{' '}
               {i.paid ? <Badge tone="ok">{i.method ? t('register.paidBy', { method: methodWords(i.method) ?? '' }) : t('register.paid')}</Badge>
+                // r38: a desk booking's money is on its bill (its own row says so, not "Not paid").
+                : i.kind === 'lab_booking' && i.whatParts?.values?.source === 'lab_desk' ? <Badge>{t('register.onBill')}</Badge>
                 : <Badge tone="warn">{t('register.unpaid')}</Badge>}
               {i.paidToday && i.madeOn && i.madeOn !== date && <span className="register-note">{t('register.paidTodayMade', { date: formatDay(i.madeOn) })}</span>}
             </span>
@@ -226,11 +238,10 @@ export function Register({ items, date }: { items: readonly TodayItem[]; date: s
  * The pharmacy's shared to-dos: add (once per request key: a lost answer is sent again with the same key, the text kept),
  * and tick (fenced by the version shown; a change made meanwhile is read again and said).
  */
-export function Todos({ pharmacyId }: { pharmacyId: string }) {
-  const { api } = useSession();
+export function Todos({ desk }: { desk: FrontDesk }) {
   const queryClient = useQueryClient();
-  const todos = pharmacyTodayApi(api);
-  const key = ['pharmacy-todos', pharmacyId];
+  const todos = desk.today;
+  const key = ['front-todos', desk.kind, desk.id];
   const q = useQuery({ queryKey: key, queryFn: () => todos.todos({ limit: 100 }) });
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -259,7 +270,7 @@ export function Todos({ pharmacyId }: { pharmacyId: string }) {
       if (definitelyNotRecorded(err)) setRequestKey(null);
       const code = err instanceof ApiError ? err.code : undefined;
       // r37b: 500 open to-dos at most; a key already used (also a deleted to-do's) needs a new one: Add sends one.
-      setError(code === 'TODO_LIMIT' ? t('todos.limit') : code === 'IDEMPOTENCY_KEY_REUSED' ? t('todos.keyReused') : homeWords(err));
+      setError(code === 'TODO_LIMIT' ? t('todos.limit') : code === 'IDEMPOTENCY_KEY_REUSED' ? t('todos.keyReused') : homeWords(err, desk.forbidden));
     } finally {
       setBusy(false);
     }
@@ -271,7 +282,7 @@ export function Todos({ pharmacyId }: { pharmacyId: string }) {
     try {
       await todos.setDone(x._id, done, x.version);
     } catch (err) {
-      setNote(err instanceof ApiError && err.code === 'TODO_CHANGED' ? t('todos.changed') : homeWords(err));
+      setNote(err instanceof ApiError && err.code === 'TODO_CHANGED' ? t('todos.changed') : homeWords(err, desk.forbidden));
     } finally {
       await reread();
       setTicked((m) => { const { [x._id]: _gone, ...rest } = m; return rest; });
@@ -282,12 +293,12 @@ export function Todos({ pharmacyId }: { pharmacyId: string }) {
     <section className="ws-section" aria-labelledby="todo-h">
       <h2 id="todo-h">{t('todos.title')}</h2>
       <form className="todo-add" noValidate onSubmit={(e) => void add(e)}>
-        <TextField label={t('todos.new')} hint={t('todos.newHint')} value={text} maxLength={MAX_TODO_TEXT} autoComplete="off" error={error}
+        <TextField label={t('todos.new')} hint={desk.kind === 'lab' ? t('todos.newHintLab') : t('todos.newHint')} value={text} maxLength={MAX_TODO_TEXT} autoComplete="off" error={error}
           onChange={(e) => { setText(e.target.value); setRequestKey(null); }} />
         <Button type="submit" busy={busy}>{error && requestKey ? t('tryAgain') : t('todos.add')}</Button>
       </form>
       {note && <Alert tone="warn">{note}</Alert>}
-      {!q.data ? (q.isError ? <Failed error={q.error} onRetry={() => void q.refetch()} /> : <Loading label={t('todos.loading')} />)
+      {!q.data ? (q.isError ? <Failed error={q.error} forbidden={desk.forbidden} onRetry={() => void q.refetch()} /> : <Loading label={t('todos.loading')} />)
         : q.data.items.length === 0 ? <p className="ws-muted">{t('todos.none')}</p>
         : (
           <ul className="todo-list">
@@ -307,22 +318,26 @@ export function Todos({ pharmacyId }: { pharmacyId: string }) {
 }
 
 /**
- * Today (`/pharmacy/today`): one India day's full register, newest first (an earlier day by its date), in pages of 50 with
- * Show more; the whole day's money and what waits. r37c: a search covers the whole day on the server (a POST).
+ * Today (`/pharmacy/today`, WQ55 `/partner/today`): one India day's full register, newest first (an earlier day by its
+ * date), in pages of 50 with Show more; the whole day's money and what waits. r37c: a search covers the whole day on the
+ * server (a POST).
  */
 export function TodayScreen() {
-  const pharmacyId = usePharmacyId();
-  const { api } = useSession();
-  const today = pharmacyTodayApi(api);
+  const desk = useFrontDesk();
+  return desk ? <DayRegister desk={desk} /> : <Empty title={t('askOwner')} />;
+}
+
+function DayRegister({ desk }: { desk: FrontDesk }) {
+  const today = desk.today;
   const [date, setDate] = useState(() => istToday());
   const [text, setText] = useState('');
   const [searched, setSearched] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const pages = { initialPageParam: undefined as string | undefined, getNextPageParam: (last: TodayAnswer) => last.nextCursor ?? undefined,
     staleTime: 0, refetchOnMount: 'always' as const };
-  const q = useInfiniteQuery({ queryKey: [...todayKey(pharmacyId, date), 'pages'], ...pages,
+  const q = useInfiniteQuery({ queryKey: [...todayKey(desk, date), 'pages'], ...pages,
     queryFn: ({ pageParam }) => today.today({ date, order: 'desc', limit: 50, cursor: pageParam }) });
-  const found = useInfiniteQuery({ queryKey: [...todayKey(pharmacyId, date), 'search', searched], ...pages, enabled: searched !== null,
+  const found = useInfiniteQuery({ queryKey: [...todayKey(desk, date), 'search', searched], ...pages, enabled: searched !== null,
     queryFn: ({ pageParam }) => today.search({ date, q: searched ?? '', order: 'desc', limit: 50, cursor: pageParam }) });
   const first = q.data?.pages[0];
   const list = searched !== null ? found : q;
@@ -349,14 +364,14 @@ export function TodayScreen() {
         <Button type="submit" busy={found.isFetching && !found.isFetchingNextPage}>{t('today.find')}</Button>
         {searched !== null && <Button variant="secondary" onClick={() => { setText(''); setSearched(null); setSearchError(null); }}>{t('today.clear')}</Button>}
       </form>
-      {!first ? (q.isError ? <Failed error={q.error} onRetry={() => void q.refetch()} /> : <Loading label={t('register.loading')} />) : (
+      {!first ? (q.isError ? <Failed error={q.error} forbidden={desk.forbidden} onRetry={() => void q.refetch()} /> : <Loading label={t('register.loading')} />) : (
         <>
           <MoneyLine day={first} date={date} />
-          <PendingStrip day={first} />
+          <PendingStrip day={first} desk={desk} />
           <p className="ws-muted">{t('today.count', { count: first.totals.count })}</p>
           {first.truncated && <Alert tone="warn">{t('today.truncated')}</Alert>}
           {!list.data ? (list.isError ? <Failed error={list.error} onRetry={() => void list.refetch()} /> : <Loading label={t('register.loading')} />)
-            : searched !== null && items.length === 0 ? <p>{t('today.noMatch')}</p> : <Register items={items} date={date} />}
+            : searched !== null && items.length === 0 ? <p>{t('today.noMatch')}</p> : <Register items={items} date={date} desk={desk.kind} />}
           {list.isFetchNextPageError && <Failed error={list.error} onRetry={() => void list.fetchNextPage()} />}
           {list.hasNextPage && <div><Button variant="secondary" busy={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>{t('today.more')}</Button></div>}
         </>

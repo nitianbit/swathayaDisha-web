@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import type { AssistedGender, AssistedRelation, PatientLookup } from '@jansetu/api';
-import { useSession } from '../../session.tsx';
+import { useSession, useStaff } from '../../session.tsx';
 
 /**
  * WQ54 (P1) / WQ54b: the patient a "+ New" visit is for, chosen once on + New and handed to ONE existing flow (Book
@@ -61,19 +61,23 @@ export function visitStore(memory: Memory, pharmacyId: string) {
   };
 }
 
-export function useVisitStore(pharmacyId: string) {
+/** WQ55: the signed-in person's visit memory (a pharmacy, or a lab member: the same + New for both). */
+export function useVisitStore() {
   const { memory } = useSession();
-  return visitStore(memory, pharmacyId);
+  return visitStore(memory, useStaff().id);
 }
+
+/** WQ55: where this person's + New is (a flow's [Change] goes back there). */
+export const newVisitPath = (role: string) => (role === 'partner' ? '/partner/new' : '/pharmacy/new');
 
 /**
  * The patient handed to this flow (read once, on the first render), else null. Then the handover is cleared and `?visit=1`
  * dropped from the address (replace): going Back to this page, or reloading it, opens it empty. While a flow is in visit
  * mode the page uses the simple home's big type and targets (`visit-mode` on the page).
  */
-export function useVisitPreset(pharmacyId: string): VisitPatient | null {
+export function useVisitPreset(): VisitPatient | null {
   const [params, setParams] = useSearchParams();
-  const store = useVisitStore(pharmacyId);
+  const store = useVisitStore();
   const [preset] = useState(() => (params.get('visit') === '1' ? store.peekHandover() : null));
   useEffect(() => {
     if (params.get('visit') !== '1') return;

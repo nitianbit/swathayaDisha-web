@@ -3,8 +3,8 @@ import { Link, useNavigate } from 'react-router';
 import { House } from 'lucide-react';
 import { Button, Parts } from '@jansetu/ui';
 import { t } from '../../i18n/home/index.ts';
-import { usePharmacyId } from './ownedOp.tsx';
-import { useVisitStore, type VisitPatient } from './visitPatient.ts';
+import { useStaff } from '../../session.tsx';
+import { newVisitPath, useVisitStore, type VisitPatient } from './visitPatient.ts';
 
 /** WQ54b: back to the simple home, on the page itself (+ New, Today, a flow opened from + New); a phone has it in the header. */
 export function HomeButton() {
@@ -23,12 +23,13 @@ export function visitWho(p: VisitPatient): string {
  * to + New's first step with the number kept (WQ54c; not while something is being sent).
  */
 export function VisitPatientLine({ patient, canChange }: { patient: VisitPatient; canChange: boolean }) {
-  const store = useVisitStore(usePharmacyId());
+  const store = useVisitStore();
+  const { role } = useStaff();
   const navigate = useNavigate();
   return (
     <div className="visit-line">
       <p><Parts of={t.rich('visit.patient', { who: <strong>{visitWho(patient)}</strong> })} /></p>
-      {canChange && <Button variant="secondary" onClick={() => { store.keepNumber(patient.phone); navigate('/pharmacy/new'); }}>{t('visit.change')}</Button>}
+      {canChange && <Button variant="secondary" onClick={() => { store.keepNumber(patient.phone); navigate(newVisitPath(role)); }}>{t('visit.change')}</Button>}
       <HomeButton />
     </div>
   );

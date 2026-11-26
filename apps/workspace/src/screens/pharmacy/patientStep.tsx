@@ -12,8 +12,8 @@ import { useSession } from '../../session.tsx';
 import type { Perform } from '../finance/finance.tsx';
 import type { ConsultBooker } from './consultBooker.ts';
 import { t } from '../../i18n/pharmacy/index.ts';
-import { useVisitPreset, type VisitPatient } from './visitPatient.ts';
-import { VisitPatientLine } from './visitBar.tsx';
+import { useVisitPreset, type VisitPatient } from '../front/visitPatient.ts';
+import { VisitPatientLine } from '../front/visitBar.tsx';
 
 /**
  * WQ17: the patient step of an assisted booking (WQ12, moved here unchanged from Book consultation so that Book lab test
@@ -64,7 +64,7 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
   }
 
   // WQ54/WQ54b: opened from + New: the visit's patient (phone and name) is looked up once and shown, never asked again.
-  const preset = useVisitPreset(pharmacyId);
+  const preset = useVisitPreset();
   // Only for the handed-over patient: a reset (another booking) or a changed number is the usual step again.
   const [visitOn, setVisitOn] = useState(true);
   const presetDone = useRef(false);

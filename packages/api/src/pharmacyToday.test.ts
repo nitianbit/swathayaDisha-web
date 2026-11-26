@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createApiClient } from './client.ts';
-import { bookingsWaiting, moneyParts, pendingCount, pharmacyTodayApi, todayLink, todayOf, todoText } from './pharmacyToday.ts';
+import { bookingsWaiting, moneyParts, pendingCount, pharmacyTodayApi, todayApi, todayLink, todayOf, todoText } from './pharmacyToday.ts';
 
 // WQ54 (P1): the day's register and the pharmacy's to-dos (backend r37, draft shapes).
 
@@ -53,7 +53,7 @@ describe('WQ54 pharmacy today and to-dos', () => {
   });
 
   it('the money line: only the methods that received money', () => {
-    expect(moneyParts({ collectedMinor: 82000, byMethod: { cash: 32000, wallet: 50000, card: 0 }, unpaidMinor: 0, count: 2 }))
+    expect(moneyParts({ collectedMinor: 82000, byMethod: { cash: 32000, wallet: 50000, card: 0, bank: 0 }, unpaidMinor: 0, count: 2 }))
       .toEqual([{ key: 'cash', minor: 32000 }, { key: 'wallet', minor: 50000 }]);
     expect(moneyParts({ collectedMinor: 100, byMethod: { card: 100 }, unpaidMinor: 0, count: 1 }).map((p) => p.key)).toEqual(['card']);
     expect(moneyParts({ collectedMinor: 0, byMethod: {}, unpaidMinor: 0, count: 0 })).toEqual([]);
@@ -63,6 +63,9 @@ describe('WQ54 pharmacy today and to-dos', () => {
     expect(todayOf({ items: [], totals: {}, truncated: [] }).truncated).toBeUndefined();
     expect(todayOf({ items: [], totals: {}, truncated: true }).truncated).toBeUndefined();
     expect(todayOf({ items: [], totals: {}, truncated: ['items'] }).truncated).toEqual(['items']);
+    // r38b: refunds that day, kept only when there were any.
+    expect(todayOf({ items: [], totals: { refundedMinor: 5000 } }).totals.refundedMinor).toBe(5000);
+    expect(todayOf({ items: [], totals: { refundedMinor: 0 } }).totals).not.toHaveProperty('refundedMinor');
     expect(bookingsWaiting({ bookingsAwaiting: { count: 3, consultationCount: 2, labCount: 1 } })).toEqual({ consultations: 2, labBookings: 1 });
     expect(bookingsWaiting({ bookingsAwaiting: { count: 2, consultationIds: ['a'], labBookingIds: ['b'] } })).toEqual({ consultations: 1, labBookings: 1 });
     expect(bookingsWaiting({ bookingsAwaiting: null })).toBeNull();
@@ -84,5 +87,33 @@ describe('WQ54 pharmacy today and to-dos', () => {
     expect(pendingCount({ prescriptionsToReview: { count: 3 } }, 'prescriptionsToReview')).toBe(3);
     expect(pendingCount(undefined, 'lowStock')).toBe(0);
     expect(pendingCount({ labReportsReady: null }, 'labReportsReady')).toBeNull();
+  });
+
+  it('WQ55: a lab desk reads the same shapes on its own routes; its rows open its own pages', async () => {
+    const { c, calls } = client();
+    const a = todayApi(c, 'lab');
+    await a.today({ order: 'desc', limit: 10 });
+    await a.search({ q: 'CBC' });
+    await a.todos();
+    await a.addTodo('Call courier', KEY);
+    await a.setDone(TODO, true, 1);
+    expect(calls.map((x) => `${x.method} ${x.url}`)).toEqual([
+      'GET /api/v1/partner-workspace/today?limit=10&order=desc',
+      'POST /api/v1/partner-workspace/today/search',
+      'GET /api/v1/partner-workspace/todos',
+      'POST /api/v1/partner-workspace/todos',
+      `PATCH /api/v1/partner-workspace/todos/${TODO}`,
+    ]);
+    const id = 'b1'.repeat(12);
+    expect(todayLink({ link: { kind: 'lab_booking', id } }, 'lab')).toBe(`/partner/lab-bookings/${id}`);
+    expect(todayLink({ link: { kind: 'invoice', id } }, 'lab')).toBe(`/partner/invoices/${id}`);
+    expect(todayLink({ link: { kind: 'booking', id } }, 'lab')).toBe(`/partner/consultations/${id}`);
+    expect(todayLink({ link: { kind: 'pharmacy_order', id } }, 'lab')).toBeNull();
+    expect(todayLink({ link: { kind: 'invoice', id } })).toBeNull();
+    expect(todayLink({ link: { kind: 'wallet_entry', id } }, 'lab')).toBe('/partner/wallet');
+    expect(pendingCount({ samplesToCollect: { count: 2, visitCount: 1, homeCount: 1 } }, 'samplesToCollect')).toBe(2);
+    // A queue this member may not read is absent (no line); a failing one is null.
+    expect(pendingCount({}, 'consultationsWaiting')).toBe(0);
+    expect(pendingCount({ unpaidBills: null }, 'unpaidBills')).toBeNull();
   });
 });

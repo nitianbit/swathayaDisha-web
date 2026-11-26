@@ -2707,6 +2707,40 @@ was booked as the phone's owner. + New's step 1 is now the one place the patient
 - The short lines are unchanged: a pharmacy's "…and the lab sees them for this test", a doctor's "…the lab sees them, and
   you can see the report for 90 days" (chosen by who books, since the statement is now shared).
 
+## WQ55 the simple lab front-desk home, P4 (2026-11-26, branch `wq55/lab-home` from web stage 47289d6; backend r38 85c10c6e)
+
+The pharmacy's simple home (WQ54–54e), for a lab member, with the same pieces, not copies.
+
+- **Shared front desk (`screens/front/`).** The home, + New, Today, the visit handover and the visit bar moved out of
+  `screens/pharmacy/` and now serve both desks through one config (`desk.tsx`, `useFrontDesk`): routes, big buttons, + New's
+  choices, the number lookup, the patients search (a pharmacy's only), the waiting work and where it is done, and a
+  "not allowed" sentence. `todayApi(c, 'pharmacy' | 'lab')` reads `/pharmacy-assisted/*` or `/partner-workspace/*` (today,
+  today/search, todos); `todayLink(item, desk)` opens each desk's own pages. The visit memory is keyed by the signed-in
+  person.
+- **Lab home (lab members, owners and staff):** big buttons **+ New**, **Find patient**, **New bill** (the existing bill),
+  **Today**; the day's money (r38 adds **bank**), the waiting work (samples to collect today, reports to upload and to
+  release, unpaid bills, bookings waiting for payment, consultations waiting; a queue the member may not read is absent, a
+  failing one says "couldn't load"), the latest 10 and the to-dos. A desk booking's money is on its bill: its row says
+  "Paid on its bill". Rows are worded from r38's `lab.tests` (a home collection says so) and `bill.items`.
+- **+ New (`/partner/new`):** the same step 1 (phone only: a lab has no patient list to search by name), with "This person /
+  Someone else", the lookup this member may make (the desk's with `bookings.manage`, else the doctor booking's with
+  `assisted.book`; a member with neither types the number twice). Then **Lab test at the desk**, **Home collection** (the desk
+  opened on a home collection, `home=1`), **Book a doctor** (2e), **Bill**, each by permission, through the one-shot handover
+  and visit mode ("Patient: … [Change] [Home]"). A bill for a family member is in the phone owner's name (an in-house bill
+  has a customer, not a patient).
+- **Permissions and branch scope:** only the buttons and choices the member's permissions allow; the waiting work links only
+  to pages they may open; a member allowed no visit is told "To start visits or bills here, ask the lab owner to allow
+  them"; a refused read says "Ask the lab owner to allow this." (never a blank screen). The desk keeps its branch scope; the
+  server scopes the register.
+- **Mark paid needs a chosen method** on a bill too: the bill's payment form starts with no method ("Choose…") and says
+  "Choose how it was paid…" until one is chosen (every partner's bills; the specs now choose one).
+- Decisions (owner away): Today for a lab is in the menu's Lab section; the lab's register is open to every lab member (the
+  server decides what each sees); the lab's to-do example speaks of samples.
+- **r38b slots (ahead of it landing):** "Refunded today ₹x" as its own line when the day's `totals.refundedMinor` is above 0
+  ("Collected today" unchanged); `pending.deskUnbilled` as "N walk-ins without a bill" (to the lab bookings, one to its page);
+  a desk booking row that carries its bill's paid state shows it like any paid row (else "Paid on its bill"); branch-scoped
+  lab to-dos need nothing here (the server scopes them).
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -3097,6 +3131,7 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-26 | WQ55 the simple lab front-desk home (r38 85c10c6e, from 47289d6) | typecheck clean; Vitest 535/535; the full suite via pw-slot.sh 1185/1185 + 5 skipped (15.7 min) on a temporary config (port 5567, deleted), with lab-home (walk-in CBC paid in cash in Today with totals, home collection, family member, branch-limited member, member without billing; desktop, tablet, 390 px) and the bill payment specs choosing a method; then the r38b slots: lab-home and pharmacy-home again 27/27 + 5 skipped. Screenshots in /tmp/wq55-shots. |
 | 2026-11-26 | WQ54e one lab-test statement (r37d a6ac7f3f, from 571f5c5) | typecheck clean; Vitest 534/534; Playwright lab-booking, doctor-lab, pharmacy-home 87/87 + 3 skipped (the exact statement behind Read more on both Book lab test pages; `statementVersion: 'web-lab-test-v1'` in both bodies) on a temporary config (port 5566, deleted). |
 | 2026-11-26 | WQ54d before the older-user test (from 95b0f32) | typecheck clean; Vitest 534/534; Playwright pharmacy-home, lab-desk, lab-consult, doctor-lab, lab-booking, consult-now, assisted-booking, card-booking, pharmacy-sale, pharmacy-extras, i18n: 351/351 + 3 skipped on a temporary config (port 5566, deleted). |
 | 2026-11-26 | WQ54c who the patient is, asked once on + New (from 7e2bb7a) | typecheck clean; Vitest 534/534; the full suite via pw-slot.sh 1173/1173 + 3 skipped (the 390 px journeys run once) (13.9 min) on a temporary config (port 5566, deleted): who journeys (someone else on a phone, a mother’s child, the owner) on desktop, tablet and 390 px; Find patient by name, every Find asking again, today’s visits; lab specs open Read more for the full consent; 390 px screenshots in /tmp/wq54c-shots. |

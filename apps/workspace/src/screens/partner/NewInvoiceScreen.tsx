@@ -14,6 +14,8 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { afterFailure, beginAttempt, newRequestKey, ownsKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
+import { useVisitPreset, type VisitPatient } from '../front/visitPatient.ts';
+import { VisitPatientLine } from '../front/visitBar.tsx';
 import { billLinkRefusal, billPrefillSlot, money, takeHandover, useCatalogue, useClinicDoctors, type BillHandover, type BillPrefill } from './billing.tsx';
 import { Totals, type IssuedNotice } from './InvoiceScreen.tsx';
 import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
@@ -184,6 +186,8 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
   const prefillSlot = billPrefillSlot(scopeIdentity(ctx));
   const location = useLocation();
   const [prefill] = useState(() => takeHandover(memory.get<BillHandover>(prefillSlot), location.state));
+  // WQ55: opened from + New, the visit's patient (handed over once).
+  const visit = useVisitPreset();
   // Read once: whatever was handed over (also a handover this navigation does not name) is cleared now.
   useEffect(() => { memory.delete(prefillSlot); }, [memory, prefillSlot]);
 
@@ -287,7 +291,7 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
           <>
           {gaveUp && <Alert tone="ok">{t('newInvoice.gaveUp')}</Alert>}
           <InvoiceForm partner={p!} branches={branches.data} catalogue={catalogue.data} doctors={doctors.data} doctorsError={doctors.isError ? messageOf(doctors.error) : null}
-            busy={busy} refused={refused} prefill={prefill}
+            busy={busy} refused={refused} prefill={prefill} visit={visit}
             onIssue={(body) => {
               const requestKey = newRequestKey();
               void send(startOp(requestKey, { ...body, idempotencyKey: requestKey }));
@@ -307,14 +311,17 @@ function PendingSummary({ body }: { body: NewInvoice }) {
   );
 }
 
-function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy, refused, prefill, onIssue }: {
+function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy, refused, prefill, visit, onIssue }: {
   partner: Partner; branches: Branch[]; catalogue: CatalogueItem[]; doctors: ClinicDoctor[] | undefined; doctorsError: string | null;
-  busy: boolean; refused: string | null; prefill?: BillPrefill; onIssue: (body: Omit<NewInvoice, 'idempotencyKey'>) => void;
+  busy: boolean; refused: string | null; prefill?: BillPrefill; visit: VisitPatient | null; onIssue: (body: Omit<NewInvoice, 'idempotencyKey'>) => void;
 }) {
   const [d, setD] = useState<InvoiceDraft>(() => (prefill
     ? { ...EMPTY, branchId: prefill.branchId, doctorId: prefill.doctorId, name: prefill.name, phone: prefill.phone,
       link: { ...prefill.link, label: prefill.label, nameFixed: !!prefill.name.trim(), phoneFixed: !!prefill.phone.trim() } }
-    : { ...EMPTY, branchId: branches.length === 1 ? branches[0]!._id : '' }));
+    // WQ55: a bill opened from + New is the account holder's (as a desk booking's bill): a family member's is in the phone
+    // owner's name (typed on + New, else typed here).
+    : { ...EMPTY, branchId: branches.length === 1 ? branches[0]!._id : '',
+      ...(visit ? { name: visit.family ? visit.family.holderName : visit.name, phone: visit.phone } : {}) }));
   const linked = !!d.link;
   // Field errors appear once the person has asked to review the bill, then follow every change.
   const [tried, setTried] = useState(false);
@@ -383,6 +390,8 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
     <form className="rx-form" noValidate onSubmit={review}>
       <section className="ws-section" aria-labelledby="nb-who-h">
         <h2 id="nb-who-h">{t('newInvoice.who')}</h2>
+        {visit && <VisitPatientLine patient={visit} canChange={!busy && !reviewing} />}
+        {visit?.family && <p className="ws-muted">{t('newInvoice.visitFamily')}</p>}
         {d.link && (d.link.kind === 'appointment' ? (
           <div className="ws-actions" role="group" aria-label={t('newInvoice.appointment')}>
             <span>{t('newInvoice.forAppointment', { label: d.link.label })}</span>

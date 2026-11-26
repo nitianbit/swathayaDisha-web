@@ -740,6 +740,8 @@ test('a bill: pay after confirming, a refused payment shows the server and the c
   // Someone else recorded the payment of bill 2 first: the server's message, and the bill as it is now.
   await page.getByRole('link', { name: 'LB/2627/0002' }).click();
   await page.getByRole('button', { name: 'Record payment' }).click();
+  // WQ55: no method is chosen at first.
+  await page.getByLabel('Paid by').selectOption('cash');
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Record ₹500.00 paid' }).click();
   await expect(page.getByText('Payment not recorded: This bill is paid')).toBeVisible();
@@ -1055,6 +1057,8 @@ test('pay and cancel are one at a time; a lost payment answer is resent unchange
   let release!: () => void;
   backend.holdPay = new Promise<void>((r) => { release = r; });
   await page.getByRole('button', { name: 'Record payment' }).click();
+  // WQ55: no method is chosen at first.
+  await page.getByLabel('Paid by').selectOption('cash');
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
   await expect(page.getByRole('button', { name: 'Cancel bill' })).toBeDisabled();
@@ -1167,6 +1171,8 @@ test('a payment sent just before a reload: only the bill settles it; a new one i
   backend.holdPay = new Promise<void>((r) => { release = r; });
   backend.heldPayConflict = true; // never recorded
   await page.getByRole('button', { name: 'Record payment' }).click();
+  // WQ55: no method is chosen at first.
+  await page.getByLabel('Paid by').selectOption('cash');
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
   await expect(page.getByRole('group', { name: 'Unconfirmed payment' })).toContainText('is being sent');
@@ -1264,6 +1270,8 @@ test('Q14 part payments: the owner allows them (version-fenced); a bill is paid 
 
   await page.goto(`/#/partner/invoices/${INV1}`);
   await page.getByRole('button', { name: 'Record payment' }).click();
+  // WQ55: no method is chosen at first.
+  await page.getByLabel('Paid by').selectOption('cash');
   await expect(page.getByText('₹1,008.00 is due. Any amount up to that can be recorded; the rest stays due on the bill.')).toBeVisible();
   await page.getByLabel('Amount (₹)', { exact: true }).fill('300');
   await page.getByRole('button', { name: 'Continue' }).click();
@@ -1277,6 +1285,8 @@ test('Q14 part payments: the owner allows them (version-fenced); a bill is paid 
 
   // The rest, split across two methods; more than is due is caught before sending.
   await page.getByRole('button', { name: 'Record payment' }).click();
+  // WQ55: no method is chosen at first.
+  await page.getByLabel('Paid by').selectOption('cash');
   await expect(page.getByLabel('Amount (₹)', { exact: true })).toHaveValue('708');
   await page.getByLabel('Amount (₹)', { exact: true }).fill('800');
   await page.getByRole('button', { name: 'Continue' }).click();
@@ -1284,6 +1294,7 @@ test('Q14 part payments: the owner allows them (version-fenced); a bill is paid 
   await page.getByLabel('Amount (₹)', { exact: true }).fill('208');
   await page.getByRole('button', { name: 'Add another method' }).click();
   await expect(page.getByLabel('Amount (₹) (method 2)')).toHaveValue('500');
+  await page.getByLabel('Paid by (method 2)').selectOption('upi');
   await page.getByLabel('Reference (optional) (method 2)').fill('UPI77');
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByText('Record ₹708.00 as paid by Cash ₹208.00 + UPI ₹500.00 (reference UPI77) for bill LB/2627/0001? The bill will show Paid.')).toBeVisible();
@@ -1316,6 +1327,8 @@ test('Q14 full payment only (the default): a part is refused before sending; a p
   await signInPartner(page);
   await page.goto(`/#/partner/invoices/${INV1}`);
   await page.getByRole('button', { name: 'Record payment' }).click();
+  // WQ55: no method is chosen at first.
+  await page.getByLabel('Paid by').selectOption('cash');
   await expect(page.getByText('Only full payment is taken: the amounts must add up to all that is due.', { exact: false })).toBeVisible();
   await page.getByLabel('Amount (₹)', { exact: true }).fill('500');
   await page.getByRole('button', { name: 'Continue' }).click();
@@ -1344,6 +1357,8 @@ test('Q14 review: a ₹0 bill is marked paid with a plain method; a payment refu
   await expect(page.getByText('Payment not recorded: Bills need a database update before payments can be recorded. Ask an admin.')).toBeVisible();
   await expect(page.getByRole('group', { name: 'Unconfirmed payment' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Record payment' }).click();
+  // WQ55: no method is chosen at first.
+  await page.getByLabel('Paid by').selectOption('cash');
   await page.getByRole('button', { name: 'Mark as paid' }).click();
   await expect(page.getByText('Payment recorded.')).toBeVisible();
   const pays = backend.calls.filter((c) => c.path.endsWith('/pay')).map((c) => c.body as Rec);
@@ -1357,6 +1372,8 @@ test('WQ8 review: two cashiers — a payment reviewed on an older bill version i
   await signInPartner(page);
   await page.goto(`/#/partner/invoices/${INV1}`);
   await page.getByRole('button', { name: 'Record payment' }).click();
+  // WQ55: no method is chosen at first.
+  await page.getByLabel('Paid by').selectOption('cash');
   await page.getByLabel('Amount (₹)', { exact: true }).fill('300');
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByText('Record ₹300.00 as paid by Cash for bill LB/2627/0001? ₹708.00 stays due', { exact: false })).toBeVisible();
@@ -1398,6 +1415,8 @@ test('WQ8 review: a resend refused for good (part payments switched off meanwhil
   await page.goto(`/#/partner/invoices/${INV1}`);
   backend.dropNextPay = true;
   await page.getByRole('button', { name: 'Record payment' }).click();
+  // WQ55: no method is chosen at first.
+  await page.getByLabel('Paid by').selectOption('cash');
   await page.getByLabel('Amount (₹)', { exact: true }).fill('300');
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Record ₹300.00 paid' }).click();
@@ -1438,6 +1457,8 @@ test('WQ11b: a payment resend refused 403 (permission changed) stays unconfirmed
   await expect(page.getByRole('button', { name: 'Record payment' })).toBeEnabled();
   backend.dropNextPay = true;
   await page.getByRole('button', { name: 'Record payment' }).click();
+  // WQ55: no method is chosen at first.
+  await page.getByLabel('Paid by').selectOption('cash');
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Record ₹1,008.00 paid' }).click();
   const unsure = page.getByRole('group', { name: 'Unconfirmed payment' });

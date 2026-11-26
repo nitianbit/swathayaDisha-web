@@ -9,6 +9,8 @@ export default {
   'big.find': 'Find patient',
   'big.sell': 'Sell medicines',
   'big.today': 'Today',
+  /** WQ55: a lab's "New bill" (an in-house bill). */
+  'big.bill': 'New bill',
   'big.label': 'What do you want to do?',
 
   /** The day's money: {amount}s are formatted. r37b: money received that day. */
@@ -19,11 +21,16 @@ export default {
   'money.cash': 'Cash {amount}',
   'money.upi': 'UPI {amount}',
   'money.card': 'Card {amount}',
+  /** r38: a lab's bills may be paid by bank transfer. */
+  'money.bank': 'Bank {amount}',
   'money.wallet': 'Wallet {amount}',
   'money.online': 'Online {amount}',
   'money.other': 'Other {amount}',
   /** r37b: money still to collect from patients. */
   'money.toCollect': 'To collect {amount}',
+  /** r38b: money returned that day (its own line, only when there was any). */
+  'money.refundedToday': 'Refunded today {amount}',
+  'money.refundedOn': 'Refunded on {date}: {amount}',
   'money.label': 'Money of the day',
 
   'register.title': 'Today’s register',
@@ -39,6 +46,8 @@ export default {
   'register.paidTodayMade': 'paid today · made {date}',
   /** A row: {who} the patient, {what} the line. */
   'register.line': '{who}: {what}',
+  /** r38: a desk booking's money is on its bill (the booking itself is not paid). */
+  'register.onBill': 'Paid on its bill',
   /** A row (not a wallet top-up) without a patient name. */
   'register.noName': 'Customer',
   'register.loading': 'Loading the register…',
@@ -46,6 +55,7 @@ export default {
   'method.cash': 'cash',
   'method.upi': 'UPI',
   'method.card': 'card',
+  'method.bank': 'bank',
   'method.wallet': 'wallet',
   'method.online': 'online',
   'method.other': 'other',
@@ -61,6 +71,23 @@ export default {
   'pending.labReportsReady': { one: '{count} lab report ready', other: '{count} lab reports ready' },
   'pending.lowStock': { one: '{count} medicine low in stock', other: '{count} medicines low in stock' },
   /** r37b: the server could not read that list just now (only that line). */
+  /** WQ55 (r38): a lab's waiting work. */
+  'pending.samplesToCollect': { one: '{count} sample to collect today', other: '{count} samples to collect today' },
+  /** Reports due, by step (the last when the server does not split them). */
+  'pending.reportsToUpload': { one: '{count} report to upload', other: '{count} reports to upload' },
+  'pending.reportsToRelease': { one: '{count} report to release', other: '{count} reports to release' },
+  'pending.reportsDue': { one: '{count} report due', other: '{count} reports due' },
+  'pending.unpaidBills': { one: '{count} unpaid bill', other: '{count} unpaid bills' },
+  /** r38b: desk walk-ins without a bill yet. */
+  'pending.deskUnbilled': { one: '{count} walk-in without a bill', other: '{count} walk-ins without a bill' },
+  'pending.failed.deskUnbilled': 'Walk-ins without a bill: couldn’t load',
+  'pending.bookingsAwaitingPayment': { one: '{count} booking waiting for payment', other: '{count} bookings waiting for payment' },
+  'pending.consultationsWaiting': { one: '{count} consultation waiting', other: '{count} consultations waiting' },
+  'pending.failed.samplesToCollect': 'Samples to collect: couldn’t load',
+  'pending.failed.reportsDue': 'Reports due: couldn’t load',
+  'pending.failed.unpaidBills': 'Unpaid bills: couldn’t load',
+  'pending.failed.bookingsAwaitingPayment': 'Bookings waiting for payment: couldn’t load',
+  'pending.failed.consultationsWaiting': 'Consultations waiting: couldn’t load',
   'pending.failed.prescriptionsToReview': 'Prescriptions to review: couldn’t load',
   'pending.failed.unpaidCounterSales': 'Unpaid sales: couldn’t load',
   'pending.failed.bookingsAwaiting': 'Bookings waiting for payment: couldn’t load',
@@ -71,6 +98,8 @@ export default {
   'todos.add': 'Add',
   'todos.new': 'New to-do',
   'todos.newHint': 'For example: Call supplier for Dolo 650',
+  /** WQ55: a lab's example. */
+  'todos.newHintLab': 'For example: Call the courier for the home samples',
   'todos.none': 'No to-dos. Add one above.',
   'todos.textError': 'Write the to-do (at most {max} characters).',
   /** {who}: who added it. */
@@ -80,6 +109,10 @@ export default {
   'todos.keyReused': 'This to-do was sent before in another form. Tap Add to add it now.',
   'todos.changed': 'This to-do was changed meanwhile. The list shows it as it is now.',
   'todos.loading': 'Loading the to-dos…',
+
+  /** WQ55: a lab member asked to do (or read) what their permissions do not allow: never a blank screen. */
+  'askOwner': 'Ask the lab owner to allow this.',
+  'askOwnerVisits': 'To start visits or bills here, ask the lab owner to allow them.',
 
   /** No internet: what was typed stays. */
   'offline': 'No internet connection. Check it, then tap Try again. Nothing you typed is lost.',
@@ -130,6 +163,14 @@ export default {
   'new.doctor': 'Book a doctor for later',
   'new.lab': 'Book a lab test',
   'new.medicines': 'Sell medicines',
+  /** WQ55: a lab's kinds of visit. */
+  'new.labDesk': 'Lab test at the desk',
+  'new.homeCollection': 'Home collection',
+  'new.labDoctor': 'Book a doctor',
+  'new.bill': 'Bill',
+  /** WQ55: a lab finds a patient by phone only. */
+  'new.phoneOnly': 'Patient’s mobile number',
+  'new.phoneOnlyHint': 'Type the 10-digit number, then tap Find.',
 
   'today.title': 'Today',
   'today.intro': 'Everything of a day: visits, sales and tests, the money and what is waiting.',
@@ -154,4 +195,8 @@ export default {
   /** An instant consultation (in place of its time). */
   'what.now': 'now',
   'what.topup': 'Wallet top-up',
+  /** WQ55: a lab's bill without a first line. */
+  'what.bill': 'Bill',
+  /** r38: a lab test collected at home. */
+  'what.home': 'home collection',
 } as const;

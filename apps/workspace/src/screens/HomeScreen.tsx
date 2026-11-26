@@ -5,11 +5,13 @@ import { PageHeading } from '../PageHeading.tsx';
 import { useStaff } from '../session.tsx';
 import { t } from '../i18n/shell/index.ts';
 import { DoctorHome } from './doctor/DoctorHome.tsx';
-import { PharmacyHome } from './pharmacy/home.tsx';
+import { useFrontDesk } from './front/desk.tsx';
+import { FrontDeskHome } from './front/home.tsx';
 
 export function HomeScreen() {
   const user = useStaff();
   const pages = pagesFor(user).filter((p) => p.nav && p.path !== '/');
+  const desk = useFrontDesk();
   return (
     <>
       <PageHeading title={t('home.welcome', { name: user.name })}>
@@ -23,8 +25,9 @@ export function HomeScreen() {
         </Alert>
       )}
       {user.role === 'specialist' && <DoctorHome />}
-      {/* WQ54 (P1): a pharmacy's home is its big buttons, today's register and to-dos; the menu stays for the long way. */}
-      {user.role === 'pharmacy' ? <PharmacyHome /> : pages.length === 0 ? (
+      {/* WQ54 (P1) / WQ55 (P4): a pharmacy's and a lab member's home is its big buttons, today's register and to-dos; the
+          menu stays for the long way. */}
+      {desk ? <FrontDeskHome desk={desk} /> : pages.length === 0 ? (
         <Empty title={t('home.empty.title')}>{t('home.empty.body')}</Empty>
       ) : (
         <ul className="home-links">
