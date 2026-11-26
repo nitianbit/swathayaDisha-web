@@ -2697,6 +2697,16 @@ was booked as the phone's owner. + New's step 1 is now the one place the patient
   `CONSENT_STATEMENT`, which speaks of a consultation and a doctor); its short line says what a test allows. A lab-test
   statement for pharmacies needs a new versioned text on the server.
 
+## WQ54e one lab-test statement (2026-11-26, branch `wq54e/lab-test-consent` from web stage 571f5c5; backend r37d a6ac7f3f)
+
+- A pharmacy's and a doctor's **lab-test** bookings attest one statement, `LAB_TEST_CONSENT_STATEMENT` (version
+  `web-lab-test-v1`, language `en`; one constant in `assistedLab.ts`, no copies), shown word for word behind Read more on
+  both Book lab test pages and sent with that version. It replaces the doctor's `web-doctor-lab-v1` text and the
+  consultation statement the pharmacy's lab tests used (WQ54d's "seen, not changed"). Consultations keep their own
+  statements (the server refuses the lab-test one on a consultation, 400 `CONSENT_STATEMENT_MISMATCH`).
+- The short lines are unchanged: a pharmacy's "…and the lab sees them for this test", a doctor's "…the lab sees them, and
+  you can see the report for 90 days" (chosen by who books, since the statement is now shared).
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -3087,6 +3097,7 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-26 | WQ54e one lab-test statement (r37d a6ac7f3f, from 571f5c5) | typecheck clean; Vitest 534/534; Playwright lab-booking, doctor-lab, pharmacy-home 87/87 + 3 skipped (the exact statement behind Read more on both Book lab test pages; `statementVersion: 'web-lab-test-v1'` in both bodies) on a temporary config (port 5566, deleted). |
 | 2026-11-26 | WQ54d before the older-user test (from 95b0f32) | typecheck clean; Vitest 534/534; Playwright pharmacy-home, lab-desk, lab-consult, doctor-lab, lab-booking, consult-now, assisted-booking, card-booking, pharmacy-sale, pharmacy-extras, i18n: 351/351 + 3 skipped on a temporary config (port 5566, deleted). |
 | 2026-11-26 | WQ54c who the patient is, asked once on + New (from 7e2bb7a) | typecheck clean; Vitest 534/534; the full suite via pw-slot.sh 1173/1173 + 3 skipped (the 390 px journeys run once) (13.9 min) on a temporary config (port 5566, deleted): who journeys (someone else on a phone, a mother’s child, the owner) on desktop, tablet and 390 px; Find patient by name, every Find asking again, today’s visits; lab specs open Read more for the full consent; 390 px screenshots in /tmp/wq54c-shots. |
 | 2026-11-26 | WQ54b the simpler pharmacy home (r37c 7f4ff46b, from 662e9f1) | typecheck clean; Vitest 534/534; the full suite via pw-slot.sh 1171/1171 + 3 skipped (the 390 px journeys run once) (13.5 min) on a temporary config (port 5566, deleted), with the tablet project now a Galaxy Tab S4 held sideways; after a last patient-step fix (visit mode off after a reset or a changed number) pharmacy-home, consult-now, assisted-booking, lab-booking, lab-desk, card-booking, pharmacy-sale and orders again 253/253 + 3 skipped; 390 px screenshots of the home, + New and Today. |

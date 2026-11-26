@@ -257,6 +257,10 @@ async function walkIn(page: Page) {
   // WQ27: the doctor has no "booked here before" list, so nothing says it is being read.
   await expect(page.getByText('Looking for family members you booked for before…')).toHaveCount(0);
   await page.getByLabel('Patient’s full name').fill('Rina Kumari');
+  // r37d (WQ54e): the same lab-test statement as a pharmacy's, exactly, behind Read more; the doctor's short line.
+  await expect(page.getByText('The patient agrees: Jansetu keeps their details (an account for this number), the lab sees them, and you can see the report for 90 days.')).toBeVisible();
+  await page.getByText('Read more').click();
+  await expect(page.getByText('The patient (or a family member with them) agreed that we book these lab tests for them on Jansetu; that Jansetu keeps their details, and makes a Jansetu account for this mobile number if it has none; that the lab sees their name, mobile number and the tests booked, to do these tests; that the report reaches the patient in their Jansetu app; and that we can see the report for 90 days after the lab first releases it.', { exact: true })).toBeVisible();
   await page.getByLabel('Patient agreed to this booking').check();
   await page.getByRole('button', { name: 'Next: choose the lab' }).click();
 }
@@ -293,7 +297,7 @@ test('from a consultation: Appointments › Book lab test for this patient, the 
   await expect(page.getByText('Patient: Rina Kumari')).toBeVisible();
   expect(b.creates).toHaveLength(1);
   expect(b.creates[0]).toMatchObject({ fromBookingId: CONSULT, typedName: 'Rina Kumari', partnerId: LAB, branchId: BR, visitMode: 'lab', slotId: SLOT, itemIds: [T1],
-    acceptedPriceMinor: 30_000, paymentMethod: 'wallet', consent: { agreed: true, statementVersion: 'web-doctor-lab-v1', statementLanguage: 'en' } });
+    acceptedPriceMinor: 30_000, paymentMethod: 'wallet', consent: { agreed: true, statementVersion: 'web-lab-test-v1', statementLanguage: 'en' } });
   expect(b.creates[0]).not.toHaveProperty('phone');
   expect(b.creates[0]).not.toHaveProperty('patient');
   expect(b.calls.some((c) => c.path.endsWith('/patients/lookup'))).toBe(false); // nothing counted
@@ -314,7 +318,7 @@ test('a walk-in: the masked lookup by phone (in the body only), then the same st
   await expect(page.getByRole('heading', { name: 'Booked' })).toBeVisible();
   expect(b.calls.find((c) => c.path === '/specialists/me/assisted/patients/lookup')?.body).toEqual({ phone: PHONE });
   expect(b.creates[0]).toMatchObject({ phone: PHONE, patient: { relation: 'self', name: 'Rina Kumari' }, paymentMethod: 'wallet',
-    consent: { statementVersion: 'web-doctor-lab-v1' } });
+    consent: { statementVersion: 'web-lab-test-v1' } });
   expect(b.creates[0]).not.toHaveProperty('fromBookingId');
   await nothingStored(page, b, PHONE, 'Rina Kumari');
 });

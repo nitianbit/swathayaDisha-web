@@ -216,11 +216,15 @@ export function labRefusal(err: unknown): Refusal {
 /** Every doctor route needs a verified, active doctor (403 `SPECIALIST_NOT_VERIFIED`): said plainly, nothing else shown. */
 export let DOCTOR_LAB_CLOSED_MESSAGE = '';
 onLanguage(() => { DOCTOR_LAB_CLOSED_MESSAGE = t('lab.doctorClosed'); });
-/** The consent a doctor attests; the version names this exact sentence (a change of words is a new version). */
-export const DOCTOR_LAB_CONSENT_VERSION = 'web-doctor-lab-v1';
-export const DOCTOR_LAB_CONSENT_STATEMENT =
+/**
+ * r37d (WQ54e): the consent a pharmacy or a doctor attests when booking LAB TESTS ("we": the booker). The version names
+ * this exact text (a change of words is a new version); a consultation keeps its own statement (the server answers 400
+ * `CONSENT_STATEMENT_MISMATCH` for this one on a consultation).
+ */
+export const LAB_TEST_CONSENT_VERSION = 'web-lab-test-v1';
+export const LAB_TEST_CONSENT_STATEMENT =
   // i18n-ignore: the versioned consent text is recorded as English (round 6f, Q2)
-  'The patient (or a family member with them) agreed that this doctor books these lab tests for them on Jansetu; that an account is made for their mobile number if it has none; that their name and mobile number are shared with Jansetu and the lab; and that this doctor can see the released report for 90 days.';
+  'The patient (or a family member with them) agreed that we book these lab tests for them on Jansetu; that Jansetu keeps their details, and makes a Jansetu account for this mobile number if it has none; that the lab sees their name, mobile number and the tests booked, to do these tests; that the report reaches the patient in their Jansetu app; and that we can see the report for 90 days after the lab first releases it.';
 
 const DOCTOR_LAB_WORDS: RefusalWords = {
   SPECIALIST_NOT_VERIFIED: { kind: 'other', key: 'lab.doctorClosed' },

@@ -27,7 +27,7 @@ function client(answer: (c: Call) => Response = () => json(200, { success: true,
   return { c, calls };
 }
 const base = {
-  requestKey: KEY, consent: { agreed: true as const, statementVersion: 'web-doctor-lab-v1', statementLanguage: 'en' }, preferredLanguage: 'hi',
+  requestKey: KEY, consent: { agreed: true as const, statementVersion: 'web-lab-test-v1', statementLanguage: 'en' }, preferredLanguage: 'hi',
   partnerId: LAB, branchId: BR, visitMode: 'lab' as const, slotId: 'd1'.repeat(12), itemIds: ['f1'.repeat(12)], acceptedPriceMinor: 30_000, paymentMethod: 'wallet' as const,
 };
 const err = (status: number, code: string) => new ApiError(status, 'refused', code);

@@ -1,5 +1,5 @@
 import {
-  CONSENT_STATEMENT, CONSENT_STATEMENT_VERSION, DOCTOR_LAB_CLOSED_MESSAGE, DOCTOR_LAB_CONSENT_STATEMENT, DOCTOR_LAB_CONSENT_VERSION, doctorLabApi, doctorLabRefusal,
+  DOCTOR_LAB_CLOSED_MESSAGE, LAB_TEST_CONSENT_STATEMENT, LAB_TEST_CONSENT_VERSION, doctorLabApi, doctorLabRefusal,
   doctorRecommendationsApi, isDoctorWalletClosed, labRefusal, pharmacyLabApi, pharmacyRecommendationsApi, type ApiClient, type LabBookerKind, type LabCreateRequest,
   type LabReceipt, type LabRoutes, type PatientLookup, type Refusal, type TestRecommendation,
 } from '@jansetu/api';
@@ -51,7 +51,7 @@ export function pharmacyLabBooker(api: ApiClient, pharmacyId: string): LabBooker
     kind: 'pharmacy', id: pharmacyId,
     routes: { ...labs, book: (r) => { if (!('phone' in r)) throw new Error(t('labBooker.aPharmacyBooksByPhone')); return labs.book(r); } },
     loadRecommendation: pharmacyRecommendationsApi(api).load, refusal: labRefusal,
-    consent: { statement: CONSENT_STATEMENT, version: CONSENT_STATEMENT_VERSION }, payer: { kind: 'pharmacy', id: pharmacyId }, cardSource: labCardSource,
+    consent: { statement: LAB_TEST_CONSENT_STATEMENT, version: LAB_TEST_CONSENT_VERSION }, payer: { kind: 'pharmacy', id: pharmacyId }, cardSource: labCardSource,
     slot: (what, bookingId) => `assisted-lab-${what}:${pharmacyId}${bookingId ? `:${bookingId}` : ''}`,
     listKey: ['pharmacy-lab-bookings', pharmacyId], labsKey: ['assisted-labs', pharmacyId], walletKey: ['pharmacy-wallet', pharmacyId],
     paths: { book: '/pharmacy/lab-book', list: '/pharmacy/lab-tests' },
@@ -64,7 +64,7 @@ export function doctorLabBooker(api: ApiClient, doctorId: string): LabBooker {
   return {
     kind: 'doctor', id: doctorId, routes: labs, lookup: labs.lookup, loadRecommendation: doctorRecommendationsApi(api).load, refusal: doctorLabRefusal,
     closed: isDoctorWalletClosed, closedMessage: DOCTOR_LAB_CLOSED_MESSAGE,
-    consent: { statement: DOCTOR_LAB_CONSENT_STATEMENT, version: DOCTOR_LAB_CONSENT_VERSION }, payer: { kind: 'doctor', id: doctorId },
+    consent: { statement: LAB_TEST_CONSENT_STATEMENT, version: LAB_TEST_CONSENT_VERSION }, payer: { kind: 'doctor', id: doctorId },
     cardSource: doctorLabCardSource,
     slot: (what, bookingId) => `assisted-lab-${what}:doctor:${doctorId}${bookingId ? `:${bookingId}` : ''}`,
     listKey: ['doctor-lab-bookings', doctorId], labsKey: ['doctor-assisted-labs', doctorId], walletKey: ['doctor-wallet', doctorId],

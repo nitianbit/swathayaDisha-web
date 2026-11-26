@@ -211,7 +211,7 @@ export {
   cleanRecommendationCode, formatRecommendationCode, recommendationLookup, matchRecommended, pharmacyRecommendationsApi, recommendationRefusal, recommendationsOff,
   branchesFor, canCancelLab, LAB_BOOKER_CANCEL_CUTOFF_MS, LAB_SWITCHED_OFF_MESSAGE, labRefusal, labStatusLabel, labTotalMinor, pharmacyLabApi,
   // WQ25: a doctor books lab tests (r26 phase 3b) on the same routes, by booker.
-  doctorLabApi, doctorLabBody, doctorLabRefusal, doctorRecommendationsApi, DOCTOR_LAB_CLOSED_MESSAGE, DOCTOR_LAB_CONSENT_STATEMENT, DOCTOR_LAB_CONSENT_VERSION,
+  doctorLabApi, doctorLabBody, doctorLabRefusal, doctorRecommendationsApi, DOCTOR_LAB_CLOSED_MESSAGE, LAB_TEST_CONSENT_STATEMENT, LAB_TEST_CONSENT_VERSION,
 } from './assistedLab.ts';
 export type {
   TestRecommendation, AssistedLab, AssistedLabBranch, AssistedLabItem, AssistedLabSlot, LabAddress as AssistedLabAddress, LabBookingListStatus, LabBookingRequest, LabBookingView, LabByKeyAnswer,

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  ApiError, ASSISTED_GENDERS, DOCTOR_LAB_CONSENT_STATEMENT, LAB_CONSENT_STATEMENT, LAB_DESK_CONSENT_STATEMENT, ASSISTED_RELATIONS, assistedRefusal, canonicalPhone, CONSULT_MODE_LABEL, CONSENT_STATEMENT, doctorToolsApi, EMPTY_PATIENT, familyBookedBefore,
+  ApiError, ASSISTED_GENDERS, LAB_CONSENT_STATEMENT, LAB_DESK_CONSENT_STATEMENT, LAB_TEST_CONSENT_STATEMENT, ASSISTED_RELATIONS, assistedRefusal, canonicalPhone, CONSULT_MODE_LABEL, CONSENT_STATEMENT, doctorToolsApi, EMPTY_PATIENT, familyBookedBefore,
   formatSlotDate, istToday, isSwitchedOff, MAX_PERSON_NAME, patientProblems, pharmacyAssistedApi, type AssistedGender, type AssistedRelation, type DoctorAppointment,
   type PatientDraft, type PatientLookup, type Refusal,
 } from '@jansetu/api';
@@ -218,7 +218,8 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = t('comm
 
             <PatientFields patient={patient} set={set} errors={patientErrors} booker={booker} />
 
-            <AgreedTick agreed={agreed} setAgreed={setAgreed} agreeError={agreeError} setAgreeError={setAgreeError} consent={consent} forTest={forTest} />
+            <AgreedTick agreed={agreed} setAgreed={setAgreed} agreeError={agreeError} setAgreeError={setAgreeError} consent={consent} forTest={forTest}
+              doctor={booker === 'doctor'} />
           </fieldset>
           {patientDone ? (
             <div className="ws-actions">
@@ -288,11 +289,14 @@ export function PatientFields({ patient, set, errors: patientErrors, booker = 'p
   );
 }
 
-/** WQ54d: the short line of the statement shown (it names what the statement allows). */
-function shortConsent(statement: string, forTest: boolean): string {
+/**
+ * WQ54d: the short line of the statement shown (it names what the statement allows). WQ54e: a pharmacy's and a doctor's
+ * lab tests share one statement ("we"): the doctor's line says "you can see the report".
+ */
+function shortConsent(statement: string, forTest: boolean, doctor: boolean): string {
   if (statement === LAB_DESK_CONSENT_STATEMENT) return t('patientStep.consentShort.labDesk');
-  if (statement === DOCTOR_LAB_CONSENT_STATEMENT) return t('patientStep.consentShort.doctorTest');
   if (statement === LAB_CONSENT_STATEMENT) return t('patientStep.consentShort.labConsult');
+  if (statement === LAB_TEST_CONSENT_STATEMENT) return doctor ? t('patientStep.consentShort.doctorTest') : t('patientStep.consentShort.pharmacyTest');
   return forTest ? t('patientStep.consentShort.pharmacyTest') : t('patientStep.consentShort.pharmacyConsult');
 }
 
@@ -300,16 +304,18 @@ function shortConsent(statement: string, forTest: boolean): string {
  * The "patient agreed" tick: one short plain sentence, the full statement it attests behind "Read more" (WQ54c; a lab
  * test's own sentence with `forTest`). `large` in a flow opened from + New.
  */
-function AgreedTick({ agreed, setAgreed, agreeError, setAgreeError, consent, large, forTest }: {
+function AgreedTick({ agreed, setAgreed, agreeError, setAgreeError, consent, large, forTest, doctor }: {
   agreed: boolean; setAgreed: (b: boolean) => void; agreeError: string | null; setAgreeError: (e: string | null) => void; consent: string; large?: boolean;
   forTest?: boolean;
+  /** A doctor books (the doctor's own words). */
+  doctor?: boolean;
 }) {
   return (
     <>
       <label className={large ? 'rx-ack visit-consent' : 'rx-ack'}>
         <input type="checkbox" checked={agreed} aria-describedby={agreeError ? 'agree-err' : 'agree-text'}
           onChange={(e) => { setAgreed(e.target.checked); if (e.target.checked) setAgreeError(null); }} />{t('patientStep.patientAgreedToThisBooking')}</label>
-      <span id="agree-text" className="j-field__hint">{shortConsent(consent, !!forTest)}</span>
+      <span id="agree-text" className="j-field__hint">{shortConsent(consent, !!forTest, !!doctor)}</span>
       <details className="consent-more">
         <summary>{t('patientStep.consentReadMore')}</summary>
         <p className="j-field__hint">{consent}</p>
@@ -425,7 +431,7 @@ export function ConsultationPatientSection({ step, frozen, locked, consent, walk
             <TextField label={t('patientStep.patientSFullName')} autoComplete="off" value={name} maxLength={MAX_PERSON_NAME} error={nameError}
               hint={b?.family ? t('patientStep.typeTheNameThePatient2') : t('patientStep.typeTheNameThePatient')}
               onChange={(e) => setName(e.target.value)} />
-            <AgreedTick agreed={agreed} setAgreed={setAgreed} agreeError={agreeError} setAgreeError={setAgreeError} consent={consent} forTest />
+            <AgreedTick agreed={agreed} setAgreed={setAgreed} agreeError={agreeError} setAgreeError={setAgreeError} consent={consent} forTest doctor />
           </fieldset>
           {done ? (
             <div className="ws-actions">

@@ -224,9 +224,14 @@ async function patientReady(page: Page) {
   await page.getByRole('button', { name: 'Find' }).click();
   await expect(page.getByText('Account holder: Rina K.')).toBeVisible();
   await page.getByLabel('Patient’s full name').fill('Rina Kumari');
+  // r37d (WQ54e): the lab-test statement, exactly, behind Read more; the short line as before.
+  await expect(page.getByText('The patient agrees: Jansetu keeps their details (an account for this number) and the lab sees them for this test.')).toBeVisible();
+  await page.getByText('Read more').click();
+  await expect(page.getByText(LAB_TEST_STATEMENT, { exact: true })).toBeVisible();
   await page.getByLabel('Patient agreed to this booking').check();
   await page.getByRole('button', { name: 'Next: choose the lab' }).click();
 }
+const LAB_TEST_STATEMENT = 'The patient (or a family member with them) agreed that we book these lab tests for them on Jansetu; that Jansetu keeps their details, and makes a Jansetu account for this mobile number if it has none; that the lab sees their name, mobile number and the tests booked, to do these tests; that the report reaches the patient in their Jansetu app; and that we can see the report for 90 days after the lab first releases it.';
 
 async function chooseLabTests(page: Page, opts: { home?: boolean; both?: boolean } = {}) {
   if (opts.home) await page.getByLabel('Home collection').check();
@@ -262,7 +267,7 @@ test('book a lab test: the same patient step, a nearby lab, branch, tests, time,
   await expect(page.getByText('Paid from your wallet: ₹500.00')).toBeVisible();
   expect(b.creates).toHaveLength(1);
   expect(b.creates[0]).toMatchObject({ phone: PHONE, patient: { relation: 'self', name: 'Rina Kumari' }, partnerId: LAB, branchId: BR, visitMode: 'lab', slotId: SLOT,
-    itemIds: [T1, T2], acceptedPriceMinor: 50_000, preferredLanguage: 'hi', paymentMethod: 'wallet', consent: { agreed: true, statementLanguage: 'en' } });
+    itemIds: [T1, T2], acceptedPriceMinor: 50_000, preferredLanguage: 'hi', paymentMethod: 'wallet', consent: { agreed: true, statementVersion: 'web-lab-test-v1', statementLanguage: 'en' } });
   expect(b.creates[0]!.address).toBeUndefined();
   // r11 validates `notes` but never stores or shows it: no note is offered or sent.
   expect(b.creates[0]!.notes).toBeUndefined();
