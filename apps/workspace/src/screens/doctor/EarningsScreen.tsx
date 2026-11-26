@@ -42,6 +42,8 @@ const financeKey = (d: DoctorContext) => [...d.key, 'finance'];
 
 function Earnings({ d }: { d: DoctorContext }) {
   const finance = useQuery({ queryKey: financeKey(d), queryFn: () => d.api.finance() });
+  const today = istToday();
+  const period = useStatementPeriod({ from: `${today.slice(0, 8)}01`, to: today });
   return (
     <>
       <PageHeading title={t('earnings.earnings')}>{t('earnings.whatYouEarnedThroughJansetu')}</PageHeading>
@@ -56,8 +58,13 @@ function Earnings({ d }: { d: DoctorContext }) {
             <PayoutDestination d={d} account={finance.data.account} />
           </>
         )}
-      <Breakdown d={d} />
-      <Statement d={d} />
+      {/* WQ56b: one period for both: where the earnings came from, and the statement (and its CSV). */}
+      <section className="ws-section" aria-labelledby="period-h">
+        <h2 id="period-h">{t('earn.period')}</h2>
+        <StatementPeriodFields p={period} csv={(q, signal) => d.api.statementCsv(q, signal)} csvPrefix={CSV_PREFIX} />
+      </section>
+      <Breakdown d={d} p={period} />
+      <Statement d={d} p={period} />
       <Payouts d={d} />
       <History d={d} />
       <Events d={d} />
@@ -216,10 +223,11 @@ function PayoutForm({ d, version, onClose, onSaved }: {
 
 // ── Statement ──
 
-function Statement({ d }: { d: DoctorContext }) {
-  // WQ52: the finance statements' period fields and CSV (India dates, a short pause while a date is typed).
-  const statementPeriod = useStatementPeriod();
-  const { period, filtered } = statementPeriod;
+/** WQ52: the finance statements' period (India dates, a short pause while a date is typed); WQ56b: shared with the breakdown. */
+type Period = ReturnType<typeof useStatementPeriod>;
+
+function Statement({ d, p }: { d: DoctorContext; p: Period }) {
+  const { period, filtered } = p;
   const q = useInfiniteQuery({
     queryKey: [...d.key, 'statement', period],
     queryFn: ({ pageParam }) => d.api.statement({ ...period, before: pageParam, limit: STATEMENT_PAGE }),
@@ -233,7 +241,6 @@ function Statement({ d }: { d: DoctorContext }) {
   return (
     <section className="ws-section" aria-labelledby="stmt-h">
       <h2 id="stmt-h">{t('earnings.statement')}</h2>
-      <StatementPeriodFields p={statementPeriod} csv={(p, signal) => d.api.statementCsv(p, signal)} csvPrefix={CSV_PREFIX} />
       {!period ? null
         : q.isPending ? <Loading label={t('earnings.loadingTheStatement')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
@@ -376,15 +383,13 @@ function Events({ d }: { d: DoctorContext }) {
 
 /**
  * WQ56 (r39 `breakdown`): one combined view of what he earned, by where it came from: online, each clinic, bookings
- * made by pharmacies and labs, referral cuts. Chips show one part; the period is sent whole (from the 1st of this month
- * to today when a date is left empty); r39b answers the breakdown only when asked (`breakdown=1`).
+ * made by pharmacies and labs, referral cuts. Chips show one part. The statement, download and breakdown use the same
+ * dates; r39b answers the breakdown only when asked (`breakdown=1`).
  */
-function Breakdown({ d }: { d: DoctorContext }) {
+function Breakdown({ d, p }: { d: DoctorContext; p: Period }) {
   const { api } = useSession();
-  const p = useStatementPeriod();
   const clinics = useClinics(d);
-  const today = istToday();
-  const period = p.period ? { from: p.period.from ?? `${today.slice(0, 8)}01`, to: p.period.to ?? today } : null;
+  const period = p.period;
   const q = useQuery({ queryKey: [...d.key, 'breakdown', period], queryFn: () => doctorDashboardApi(api).finance(period!), enabled: !!period });
   const [chip, setChip] = useState('all');
   const b = q.data?.breakdown;
@@ -403,10 +408,6 @@ function Breakdown({ d }: { d: DoctorContext }) {
     <section className="ws-section" aria-labelledby="earn-h">
       <h2 id="earn-h">{t('earn.title')}</h2>
       <p className="ws-muted">{t('earn.intro')}</p>
-      <div className="ws-search" role="group" aria-label={t('earn.period')}>
-        <TextField label={t('earn.from')} type="date" value={p.from} onChange={(e) => p.setFrom(e.target.value)} error={p.bad} hint={p.from ? undefined : t('earn.fromHint')} />
-        <TextField label={t('earn.to')} type="date" value={p.to} onChange={(e) => p.setTo(e.target.value)} hint={p.to ? undefined : t('earn.toHint')} />
-      </div>
       {!period ? null : q.isPending ? <Loading label={t('earn.loading')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : !b ? <p className="ws-muted">{t('earn.notYet')}</p>

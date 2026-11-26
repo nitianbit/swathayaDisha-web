@@ -121,9 +121,6 @@ function sourceWords(a: ListedAppointment): string {
   }
 }
 
-/** A bill of his clinic for an appointment: its id and whether it is paid. */
-type RowBill = { id: string; paid: boolean };
-
 function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
   const { api, memory } = useSession();
   const dash = useMemo(() => doctorDashboardApi(api), [api]);
@@ -134,9 +131,6 @@ function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
   const navigate = useNavigate();
   const list = useQuery({ queryKey: [...d.key, 'dash', 'list', day], queryFn: () => dash.appointments({ from: day, to: day }), staleTime: 0, refetchOnMount: 'always' });
   const reg = useQuery({ queryKey: [...todayKey(desk, day), 'doctor-day'], queryFn: () => wholeDay(desk, day), staleTime: 0, refetchOnMount: 'always' });
-  // WQ56b: his clinic's bills made today, so a billed appointment says so (r39c also names it on the register's bills).
-  const bills = useQuery({ queryKey: [...(ctx?.key ?? ['none']), 'invoices', 'dash', day], queryFn: () => ctx!.billing.invoices({ from: day, to: day, limit: 100 }),
-    enabled: !!owned && !!ctx, staleTime: 0, refetchOnMount: 'always' });
   const next = useUpcomingAppointments(d, 14);
   const [chip, setChip] = useState('all');
   const rows = list.data?.items ?? [];
@@ -145,13 +139,6 @@ function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
   const items = reg.data?.items ?? [];
   // The patient seen at each appointment, from the register (the list has no names).
   const names = new Map(items.filter((i) => i.kind === 'appointment').map((i) => [i.id.toLowerCase(), i.patientName]));
-  const billOf = new Map<string, RowBill>();
-  for (const inv of bills.data?.items ?? []) {
-    if (inv.appointmentId && inv.lifecycleState !== 'cancelled') billOf.set(inv.appointmentId.toLowerCase(), { id: inv._id, paid: inv.lifecycleState === 'paid' });
-  }
-  for (const i of items) {
-    if (i.kind === 'bill' && i.appointmentId && i.status !== 'cancelled') billOf.set(i.appointmentId.toLowerCase(), { id: i.id, paid: i.paid });
-  }
   const ownId = owned?.partnerId.toLowerCase();
   const coming = rows.length === 0 && list.data ? next.items.find((b) => (b.status === 'confirmed' || b.status === 'pending') && b.bookingDate > day.replace(/-/g, '')) : undefined;
   return (
@@ -179,7 +166,7 @@ function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
               const time = at ? formatClock(at.getTime()) : a.bookingTime;
               const name = names.get(a._id.toLowerCase()) ?? null;
               const deskRow = a.clinicDesk;
-              const bill = billOf.get(a._id.toLowerCase());
+              const bill = a.bill?.state === 'cancelled' ? null : a.bill;
               // His own clinic's desk appointment: he makes its bill here (the short bill) unless it was cancelled or billed.
               const billable = !!ctx && !!deskRow && deskRow.partnerId.toLowerCase() === ownId && a.status !== 'cancelled';
               return (
@@ -193,7 +180,7 @@ function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
                   <Badge tone={a.status === 'pending' ? 'warn' : a.status === 'confirmed' || a.status === 'completed' ? 'ok' : undefined}>{APPOINTMENT_STATUS_LABEL[a.status] ?? a.status}</Badge>
                   {a.status === 'pending' && a.paymentStatus !== 'paid' && a.source === 'doctor_assisted' && <span className="ws-muted">{t('dash.payInApp')}</span>}
                   {billable && bill && (
-                    <Link className="j-btn j-btn--secondary" to={`/doctor/clinic/invoices/${bill.id}`}>{bill.paid ? t('dash.billPaid') : t('dash.billed')}</Link>
+                    <Link className="j-btn j-btn--secondary" to={`/doctor/clinic/invoices/${bill.invoiceId}`}>{bill.state === 'paid' ? t('dash.billPaid') : t('dash.billed')}</Link>
                   )}
                   {billable && !bill && deskRow && (
                     // The bill is the account holder's (r39c `customer`; until then the bill asks the mobile it was booked with).

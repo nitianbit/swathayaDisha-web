@@ -115,10 +115,13 @@ describe('WQ56 where a new booking can be', () => {
     expect(ownedClinic({ ...mine, clinics: [{ ...mine.clinics[0]!, verified: false }] }, own)).toBeNull();
   });
   it('a follow-up is offered for a completed, paid consultation that is not one, until its window ends', () => {
-    const c = { status: 'completed' as const, paymentStatus: 'paid' as const, bookingDate: '20261120', bookingKind: 'scheduled' as const };
+    const c = { status: 'completed' as const, paymentStatus: 'paid' as const, bookingDate: '20261120', bookingKind: 'scheduled' as const,
+      followUp: { eligibilityExpiresAt: '20261204' } };
     expect(followUpOpen(c, '2026-11-27')).toBe(true);
     expect(followUpLastDay(c)).toBe('2026-12-04');
     expect(followUpOpen(c, '2026-12-05')).toBe(false);
+    expect(followUpOpen({ ...c, followUp: undefined }, '2026-11-27')).toBe(false);
+    expect(followUpLastDay({ followUp: { eligibilityExpiresAt: '20261131' } })).toBeNull();
     expect(followUpLastDay({ ...c, followUp: { eligibilityExpiresAt: '20261201' } })).toBe('2026-12-01');
     expect(followUpOpen({ ...c, paymentStatus: 'pending' }, '2026-11-27')).toBe(false);
     expect(followUpOpen({ ...c, followUp: { isFollowUp: true } }, '2026-11-27')).toBe(false);

@@ -1,5 +1,5 @@
 import './doctor.css';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
@@ -9,7 +9,7 @@ import {
 import { formatClock, formatDateTime } from '@jansetu/i18n';
 import { Alert, Button, Empty, formatRupees, Loading, TextField } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
-import { afterFailure, beginAttempt, newRequestKey, startOp, type PendingOp } from '../../requests.ts';
+import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
 import { useFrontDesk } from '../front/desk.tsx';
 import { Failed, homeWords, todayKey } from '../front/home.tsx';
@@ -18,6 +18,7 @@ import { useVisitPreset, type VisitPatient } from '../front/visitPatient.ts';
 import { openBill, type BillPrefill } from '../partner/billing.tsx';
 import { feeLine, visitRequest } from '../partner/DeskScreen.tsx';
 import { usePartnerScope } from '../partner/scope.tsx';
+import { useOwnedOp } from '../pharmacy/ownedOp.tsx';
 import { formatYmd, NotADoctor, useClinics, useDoctor, useDoctorProfile, useOwnedClinic, useTicker, type DoctorContext } from './doctor.tsx';
 import { t } from '../../i18n/doctor/index.ts';
 
@@ -39,30 +40,52 @@ const useDash = () => {
   return useMemo(() => doctorDashboardApi(api), [api]);
 };
 
-/** One booking as an operation: its body and key kept until the server answers for sure (`afterFailure`). */
-function useOnce<B, T>(run: (body: B, requestKey: string) => Promise<T>) {
-  const [op, setOp] = useState<PendingOp<B> | null>(null);
+const visitSlot = (d: DoctorContext, kind: 'clinic' | 'online' | 'follow-up') => `doctor-visit:${d.identity}:${kind}`;
+
+export function DoctorBookingRecovery({ d }: { d: DoctorContext }) {
+  const { memory } = useSession();
+  const pending = (['clinic', 'online', 'follow-up'] as const).filter((kind) => memory.get(visitSlot(d, kind)));
+  if (!pending.length) return null;
+  return (
+    <Alert tone="warn">
+      {t('visit.unconfirmed')}
+      <div className="ws-actions">{pending.map((kind) => (
+        <Link key={kind} className="j-btn j-btn--secondary" to={`/doctor/new/${kind}`}>{t(`visit.resume.${kind}`)}</Link>
+      ))}</div>
+    </Alert>
+  );
+}
+
+/** A lost answer keeps this exact booking in session memory when the doctor checks the appointment list. */
+function useOnce<B, T>(slot: string, run: (body: B, requestKey: string) => Promise<T>) {
+  const { memory } = useSession();
+  const { op, send: sendOwned } = useOwnedOp<B>(slot);
+  const inFlight = useRef(false);
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
   const [done, setDone] = useState<T | null>(null);
-  /** Sends `body`, or (an answer was lost) the same booking again with its key. */
-  async function send(body: B) {
-    const attempt = beginAttempt(op ?? startOp(newRequestKey(), body));
-    setOp(attempt); setBusy(true); setRefused(null);
+  async function transmit(request: PendingOp<B>) {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    setRefused(null);
     try {
-      const answer = await run(attempt.body, attempt.requestKey);
-      setOp(null);
-      setDone(answer);
-    } catch (err) {
-      const words = refusalWords(err);
-      const next = afterFailure(attempt, err, words);
-      setOp(next);
-      if (!next) setRefused(words);
+      const answer = await sendOwned(request, (body) => run(body, request.requestKey));
+      if (answer.kind === 'ok') setDone(answer.value);
+      if (answer.kind === 'refused') setRefused(refusalWords(answer.error));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
-  return { busy, refused, done, send, open: !busy ? op : null, locked: busy || !!op, clear: () => setRefused(null) };
+  const send = (body: B) => {
+    if (!memory.get(slot)) void transmit(startOp(newRequestKey(), body));
+  };
+  const resend = () => {
+    const stored = memory.get<PendingOp<B>>(slot);
+    if (stored) void transmit(stored);
+  };
+  return { busy, refused, done, send, resend, open: op, locked: busy || !!op, clear: () => setRefused(null) };
 }
 type Once = ReturnType<typeof useOnce<unknown, unknown>>;
 
@@ -73,24 +96,30 @@ function refusalWords(err: unknown): string {
 }
 
 /** The booking's button, or after a lost answer: what is not known, Send again (the same booking) and the appointments. */
-function SendBar({ once, label, onSend }: { once: Pick<Once, 'busy' | 'refused' | 'open'>; label: string | null; onSend: () => void }) {
-  if (once.open) {
-    return (
-      <div className="ws-section" role="alert">
-        <Alert tone="warn">{t('visit.uncertain', { reason: once.open.error ?? '' })}</Alert>
-        <div className="ws-actions">
-          <Button busy={once.busy} onClick={onSend}>{t('visit.sendAgain')}</Button>
-          <Link className="j-btn j-btn--secondary" to="/doctor/appointments">{t('visit.checkAppointments')}</Link>
-        </div>
-      </div>
-    );
-  }
+function SendBar({ once, label, onSend }: { once: Pick<Once, 'busy' | 'refused'>; label: string | null; onSend: () => void }) {
   return (
     <>
       {once.refused && <Alert>{once.refused}</Alert>}
       {label && <div className="ws-actions"><Button busy={once.busy} onClick={onSend}>{label}</Button></div>}
     </>
   );
+}
+
+function ResumeBooking({ once, visit }: { once: Pick<Once, 'open' | 'busy' | 'resend'>; visit?: VisitPatient }) {
+  if (once.busy) return <Loading />;
+  if (once.open) {
+    return (
+      <div className="ws-section" role="alert">
+        {visit && <VisitPatientLine patient={visit} canChange={false} />}
+        <Alert tone="warn">{once.open.error ? t('visit.uncertain', { reason: once.open.error }) : t('visit.unconfirmed')}</Alert>
+        <div className="ws-actions">
+          <Button onClick={once.resend}>{t('visit.sendAgain')}</Button>
+          <Link className="j-btn j-btn--secondary" to="/doctor/appointments">{t('visit.checkAppointments')}</Link>
+        </div>
+      </div>
+    );
+  }
+  return null;
 }
 
 /** A visit opened without its patient (a reload, or the address typed): back to + New. */
@@ -186,32 +215,32 @@ export function DoctorClinicVisitScreen() {
   const d = useDoctor();
   const visit = useVisitPreset();
   if (!d) return <NotADoctor />;
-  return <VisitPage title={t('visit.clinic.title')}>{visit ? <ClinicVisit key={d.identity} d={d} visit={visit} /> : <NoPatient />}</VisitPage>;
+  return <VisitPage title={t('visit.clinic.title')}><ClinicVisit key={d.identity} d={d} visit={visit} /></VisitPage>;
 }
 
-interface ClinicChoice { clinicId: string; clinic: string; slot: DoctorSlot; own: boolean }
+interface ClinicChoice { clinicId: string; clinic: string; slot: DoctorSlot; own: boolean; visit: VisitPatient }
 interface ClinicBooked extends ClinicChoice { answer: DoctorClinicAnswer }
 
-function ClinicVisit({ d, visit }: { d: DoctorContext; visit: VisitPatient }) {
+function ClinicVisit({ d, visit }: { d: DoctorContext; visit: VisitPatient | null }) {
   const dash = useDash();
   const clinics = useClinics(d);
   const { owned } = useOwnedClinic(d.user.id);
   const refresh = useRefreshDay(d);
-  const once = useOnce<ClinicChoice, ClinicBooked>(async (c, requestKey) => {
-    const { slotId: _s, ...who } = visitRequest(visit, c.slot._id);
+  const once = useOnce<ClinicChoice, ClinicBooked>(visitSlot(d, 'clinic'), async (c, requestKey) => {
+    const { slotId: _s, ...who } = visitRequest(c.visit, c.slot._id);
     const answer = await dash.bookClinic({ clinicId: c.clinicId, ...(c.slot.branchId ? { branchId: String(c.slot.branchId) } : {}), slotId: c.slot._id, requestKey, ...who });
     refresh();
     return { ...c, answer };
   });
   const [clinicId, setClinicId] = useState<string | null>(null);
   const [slot, setSlot] = useState<DoctorSlot | null>(null);
-  if (once.done) return <ClinicDone visit={visit} done={once.done} />;
+  if (once.done) return <ClinicDone visit={once.done.visit} done={once.done} />;
+  if (once.locked) return <ResumeBooking once={once} visit={once.open?.body.visit} />;
+  if (!visit) return <NoPatient />;
   if (!clinics.data) return clinics.isError ? <Failed error={clinics.error} onRetry={() => void clinics.refetch()} /> : <Loading />;
   const { places, of } = placeWords(clinics.data);
-  // While a booking is open (an answer lost), it stays the one on screen.
-  const open = once.open?.body;
-  const clinic = places.find((c) => c.partnerId === (open?.clinicId ?? clinicId)) ?? (places.length === 1 ? places[0]! : null);
-  const chosen = open?.slot ?? slot;
+  const clinic = places.find((c) => c.partnerId === clinicId) ?? (places.length === 1 ? places[0]! : null);
+  const chosen = slot;
   const name = (c: { name?: string }) => c.name ?? t('dash.clinicUnnamed');
   return (
     <>
@@ -238,7 +267,7 @@ function ClinicVisit({ d, visit }: { d: DoctorContext; visit: VisitPatient }) {
                 onPick={(s) => { setSlot(s); once.clear(); }} label={(s) => (clinic.branches.length > 1 ? `${clock(s)} · ${of(s).split(' · ').pop()}` : clock(s))} />
               <SendBar once={once}
                 label={chosen ? t('visit.clinic.book', { time: clock(chosen), day: formatYmd(chosen.date), clinic: name(clinic) }) : null}
-                onSend={() => chosen && void once.send({ clinicId: clinic.partnerId, clinic: name(clinic), slot: chosen, own: owned?.partnerId === clinic.partnerId })} />
+                onSend={() => chosen && once.send({ clinicId: clinic.partnerId, clinic: name(clinic), slot: chosen, own: owned?.partnerId === clinic.partnerId, visit })} />
               <p className="ws-muted">{t('visit.clinic.paidAtClinic')}</p>
             </>
           )}
@@ -285,29 +314,30 @@ export function DoctorOnlineVisitScreen() {
   const d = useDoctor();
   const visit = useVisitPreset();
   if (!d) return <NotADoctor />;
-  return <VisitPage title={t('visit.online.title')}>{visit ? <OnlineVisit key={d.identity} d={d} visit={visit} /> : <NoPatient />}</VisitPage>;
+  return <VisitPage title={t('visit.online.title')}><OnlineVisit key={d.identity} d={d} visit={visit} /></VisitPage>;
 }
 
 const ONLINE_MODES = ['video', 'call'] as const;
-interface OnlineChoice { mode: 'video' | 'call'; slot: DoctorSlot }
+interface OnlineChoice { mode: 'video' | 'call'; slot: DoctorSlot; visit: VisitPatient }
 
-function OnlineVisit({ d, visit }: { d: DoctorContext; visit: VisitPatient }) {
+function OnlineVisit({ d, visit }: { d: DoctorContext; visit: VisitPatient | null }) {
   const dash = useDash();
   const profile = useDoctorProfile(d);
   const refresh = useRefreshDay(d);
-  const once = useOnce<OnlineChoice, DoctorConsultationAnswer>(async (c, requestKey) => {
-    const { slotId: _s, notes: _n, ...who } = visitRequest(visit, c.slot._id);
+  const once = useOnce<OnlineChoice, { answer: DoctorConsultationAnswer; visit: VisitPatient }>(visitSlot(d, 'online'), async (c, requestKey) => {
+    const { slotId: _s, notes: _n, ...who } = visitRequest(c.visit, c.slot._id);
     const answer = await dash.bookConsultation({ slotId: c.slot._id, mode: c.mode, requestKey, ...who });
     refresh();
-    return answer;
+    return { answer, visit: c.visit };
   });
   // No mode is chosen for him: video or a phone call is asked.
   const [mode, setMode] = useState<'video' | 'call' | null>(null);
   const [slot, setSlot] = useState<DoctorSlot | null>(null);
-  if (once.done) return <ConsultationDone visit={visit} answer={once.done} />;
-  const open = once.open?.body;
-  const m = open?.mode ?? mode;
-  const chosen = open?.slot ?? slot;
+  if (once.done) return <ConsultationDone visit={once.done.visit} answer={once.done.answer} />;
+  if (once.locked) return <ResumeBooking once={once} visit={once.open?.body.visit} />;
+  if (!visit) return <NoPatient />;
+  const m = mode;
+  const chosen = slot;
   const fee = profile.data?.consultationFee;
   return (
     <>
@@ -328,7 +358,7 @@ function OnlineVisit({ d, visit }: { d: DoctorContext; visit: VisitPatient }) {
       </section>
       {m && <TimePicker key={m} d={d} where={{ mode: m }} slotId={chosen?._id ?? null} disabled={once.locked} onPick={(s) => { setSlot(s); once.clear(); }} label={clock} />}
       <SendBar once={once} label={m && chosen ? t('visit.online.book', { mode: CONSULT_MODE_LABEL[m], time: clock(chosen), day: formatYmd(chosen.date) }) : null}
-        onSend={() => m && chosen && void once.send({ mode: m, slot: chosen })} />
+        onSend={() => m && chosen && once.send({ mode: m, slot: chosen, visit })} />
     </>
   );
 }
@@ -359,8 +389,14 @@ function ConsultationDone({ visit, answer }: { visit: VisitPatient | null; answe
 export function DoctorFollowUpScreen() {
   const d = useDoctor();
   const { bookingId } = useParams();
+  const { memory } = useSession();
   const visit = useVisitPreset();
   if (!d) return <NotADoctor />;
+  const pending = memory.get<PendingOp<FollowUpChoice>>(visitSlot(d, 'follow-up'));
+  if (pending) {
+    const parentId = pending.body.parentId;
+    return <VisitPage title={t('visit.followUp.title')}><FollowUp key={`${d.identity}:${parentId}`} d={d} parentId={parentId} visit={null} /></VisitPage>;
+  }
   if (bookingId !== undefined) {
     return (
       <VisitPage title={t('visit.followUp.title')}>
@@ -414,38 +450,39 @@ function PickEarlier({ d, visit }: { d: DoctorContext; visit: VisitPatient }) {
 }
 
 const FOLLOW_UP_MODES = ['video', 'call', 'in-person'] as const;
-interface FollowUpChoice { mode: (typeof FOLLOW_UP_MODES)[number]; slot: DoctorSlot }
+interface FollowUpChoice { parentId: string; mode: (typeof FOLLOW_UP_MODES)[number]; slot: DoctorSlot }
 
 function FollowUp({ d, parentId, visit }: { d: DoctorContext; parentId: string; visit: VisitPatient | null }) {
   const dash = useDash();
   const clinics = useClinics(d);
   const parent = useQuery({ queryKey: [...d.key, 'appointment', parentId], queryFn: () => d.api.appointment(parentId), retry: false });
   const refresh = useRefreshDay(d);
-  const once = useOnce<FollowUpChoice, DoctorConsultationAnswer>(async (c, requestKey) => {
-    const answer = await dash.bookConsultation({ slotId: c.slot._id, mode: c.mode, followUpOf: parentId, requestKey });
+  const once = useOnce<FollowUpChoice, DoctorConsultationAnswer>(visitSlot(d, 'follow-up'), async (c, requestKey) => {
+    const answer = await dash.bookConsultation({ slotId: c.slot._id, mode: c.mode, followUpOf: c.parentId, requestKey });
     refresh();
     return answer;
   });
   const [mode, setMode] = useState<FollowUpChoice['mode'] | null>(null);
   const [slot, setSlot] = useState<DoctorSlot | null>(null);
   if (once.done) return <ConsultationDone visit={visit} answer={once.done} />;
+  if (once.locked) return <ResumeBooking once={once} />;
   if (!parent.data) return parent.isError ? <Failed error={parent.error} onRetry={() => void parent.refetch()} /> : <Loading />;
   const p = parent.data;
   const at = appointmentStart(p);
   const { places, of } = placeWords(clinics.data);
   const branchIds = places.flatMap((c) => c.branches.map((b) => b.branchId));
-  const open = once.open?.body;
-  const m = open?.mode ?? mode;
-  const chosen = open?.slot ?? slot;
+  const m = mode;
+  const chosen = slot;
+  const last = followUpLastDay(p);
   const today = istToday();
   return (
     <>
       {visit && <VisitPatientLine patient={visit} canChange={!once.locked} />}
       <p>{t('visit.followUp.of', { day: formatYmd(p.bookingDate), time: at ? formatClock(at.getTime()) : p.bookingTime,
         mode: p.consultationMode ? CONSULT_MODE_LABEL[p.consultationMode] : t('doctorHome.consultation') })}</p>
-      {!followUpOpen(p, today) ? <Alert tone="warn">{t('visit.followUp.notOpen')}</Alert> : (
+      {!last || !followUpOpen(p, today) ? <Alert tone="warn">{t('visit.followUp.notOpen')}</Alert> : (
         <>
-          <p className="ws-muted">{t('visit.followUp.free', { day: formatYmd(followUpLastDay(p).replace(/-/g, '')) })}</p>
+          <p className="ws-muted">{t('visit.followUp.free', { day: formatYmd(last.replace(/-/g, '')) })}</p>
           <section className="ws-section" aria-labelledby="vf-h">
             <h2 id="vf-h">{t('visit.followUp.how')}</h2>
             <div className="big-actions" role="group" aria-labelledby="vf-h">
@@ -456,11 +493,11 @@ function FollowUp({ d, parentId, visit }: { d: DoctorContext; parentId: string; 
             </div>
           </section>
           {m && (
-            <TimePicker key={m} d={d} where={m === 'in-person' ? { branchIds } : { mode: m }} slotId={chosen?._id ?? null} disabled={once.locked} last={followUpLastDay(p)}
+            <TimePicker key={m} d={d} where={m === 'in-person' ? { branchIds } : { mode: m }} slotId={chosen?._id ?? null} disabled={once.locked} last={last}
               onPick={(s) => { setSlot(s); once.clear(); }} label={(s) => (m === 'in-person' ? `${clock(s)} · ${of(s)}` : clock(s))} />
           )}
           <SendBar once={once} label={m && chosen ? t('visit.followUp.book', { time: clock(chosen), day: formatYmd(chosen.date) }) : null}
-            onSend={() => m && chosen && void once.send({ mode: m, slot: chosen })} />
+            onSend={() => m && chosen && once.send({ parentId, mode: m, slot: chosen })} />
         </>
       )}
     </>

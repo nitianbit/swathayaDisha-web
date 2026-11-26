@@ -1,4 +1,5 @@
 import './doctor.css';
+import { DoctorBookingRecovery } from './DoctorVisitScreens.tsx';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
@@ -44,6 +45,7 @@ function Appointments({ d }: { d: DoctorContext }) {
   return (
     <>
       <PageHeading title={t('common.appointments')}>{t('appointments.yourConsultationsScheduledAndInstant')}</PageHeading>
+      <DoctorBookingRecovery d={d} />
       <div className="ws-search">
         <div className="j-field ws-filter">
           <label htmlFor="appt-view">{t('common.show')}</label>

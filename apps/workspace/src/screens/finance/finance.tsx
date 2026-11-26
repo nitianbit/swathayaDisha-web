@@ -225,11 +225,11 @@ export function StatementSection({ queryKey, load, csv, csvPrefix, emptyText = t
  * A statement's India-date period (WQ26c: shared by the finance statements and the referral statements): the typed dates,
  * whether they are real, and the period they make (null while they are not).
  */
-export function useStatementPeriod() {
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+export function useStatementPeriod(initial = { from: '', to: '' }) {
+  const [from, setFrom] = useState(initial.from);
+  const [to, setTo] = useState(initial.to);
   // WQ52: the dates take effect after a short pause, so typing a year digit by digit (0002, 0020, 0202, 2026) reads once.
-  const [settled, setSettled] = useState({ from: '', to: '' });
+  const [settled, setSettled] = useState(initial);
   useEffect(() => {
     if (settled.from === from && settled.to === to) return undefined;
     const timer = setTimeout(() => setSettled({ from, to }), PERIOD_PAUSE_MS);

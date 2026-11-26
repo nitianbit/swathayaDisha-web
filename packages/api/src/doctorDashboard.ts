@@ -1,9 +1,9 @@
 import type { ApiClient } from './client.ts';
-import type { DeskBookingResult, DeskPatientInput } from './clinic.ts';
+import type { ClinicAppointment, DeskBookingResult, DeskPatientInput } from './clinic.ts';
 import { appointmentInstant } from './cancellationWindow.ts';
 import { movableSlot, type DoctorAppointment, type DoctorSlot, type MyClinics, type SoloPractice } from './doctorTools.ts';
 import type { FinanceSummary } from './finance.ts';
-import { addDays, isRealDate } from './partnerLabs.ts';
+import { isRealDate } from './partnerLabs.ts';
 import type { PatientLookup } from './assisted.ts';
 import { OBJECT_ID_PATTERN, REQUEST_KEY_PATTERN } from './partners.ts';
 
@@ -30,6 +30,8 @@ export interface ListedAppointment extends DoctorAppointment {
   paidBy?: string | null;
   /** r39c: the account holder (the mobile it was booked with) on rows of the clinic he owns. */
   customer?: { phone?: string | null; name?: string | null } | null;
+  /** The linked invoice at the clinic admitted for billing, regardless of its issue date. */
+  bill?: ClinicAppointment['bill'];
   /** r39c: he booked it himself (a clinic appointment or an online consultation). */
   bookedByMe?: boolean;
 }
@@ -111,18 +113,19 @@ export const FOLLOW_UP_DAYS = 14;
 
 /**
  * A consultation whose free follow-up can still be offered (the server's rule decides): completed, paid, not itself a
- * follow-up, its benefit not used, and its window open on `today` (`eligibilityExpiresAt`, else its day + 14).
+ * follow-up, its benefit not used, and its server-issued window open on `today`.
  */
 export function followUpOpen(b: Pick<DoctorAppointment, 'status' | 'paymentStatus' | 'followUp' | 'bookingDate' | 'bookingKind'>, today: string): boolean {
   if (b.status !== 'completed' || b.paymentStatus !== 'paid' || b.followUp?.isFollowUp || b.followUp?.benefitUsed) return false;
-  return followUpLastDay(b) >= today;
+  const last = followUpLastDay(b);
+  return last !== null && last >= today;
 }
 /** The last day (YYYY-MM-DD) a follow-up of this consultation can be on. */
-export function followUpLastDay(b: Pick<DoctorAppointment, 'followUp' | 'bookingDate'>): string {
-  const ymd = /^\d{8}$/.test(b.followUp?.eligibilityExpiresAt ?? '') ? b.followUp!.eligibilityExpiresAt! : null;
-  if (ymd) return `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`;
-  const day = `${b.bookingDate.slice(0, 4)}-${b.bookingDate.slice(4, 6)}-${b.bookingDate.slice(6, 8)}`;
-  return isRealDate(day) ? addDays(day, FOLLOW_UP_DAYS) : day;
+export function followUpLastDay(b: Pick<DoctorAppointment, 'followUp'>): string | null {
+  const expiry = b.followUp?.eligibilityExpiresAt;
+  if (!expiry || !/^\d{8}$/.test(expiry)) return null;
+  const day = `${expiry.slice(0, 4)}-${expiry.slice(4, 6)}-${expiry.slice(6, 8)}`;
+  return isRealDate(day) ? day : null;
 }
 
 /** The verified clinics he consults at (his own included), each with its branches: where a clinic appointment can be. */
