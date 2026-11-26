@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
   addDays, ApiError, appointmentStart, bookableClinics, CONSULT_MODE_LABEL, doctorDashboardApi, freeSlots, istToday, OBJECT_ID_PATTERN, ownedClinic,
-  type DoctorConsultationAnswer, type DoctorSlot, type TodayItem,
+  type DoctorClinicAnswer, type DoctorConsultationAnswer, type DoctorSlot, type TodayItem,
 } from '@jansetu/api';
 import { formatClock, formatDateTime } from '@jansetu/i18n';
 import { Alert, Button, Empty, Loading, TextField } from '@jansetu/ui';
@@ -16,6 +16,7 @@ import { Failed, homeWords, todayKey } from '../front/home.tsx';
 import { HomeButton, VisitPatientLine, visitWho } from '../front/visitBar.tsx';
 import { useVisitPreset, visitDeskRequest, type VisitPatient } from '../front/visitPatient.ts';
 import { openBill } from '../partner/billing.tsx';
+import { visitBillPrefill } from '../partner/DeskScreen.tsx';
 import { usePartnerScope } from '../partner/scope.tsx';
 import { formatYmd, NotADoctor, useClinics, useDoctor, useTicker, type DoctorContext } from './doctor.tsx';
 import { t } from '../../i18n/doctor/index.ts';
@@ -106,9 +107,9 @@ function TimePicker({ d, where, slotId, onPick, disabled, label }: {
       {!slots.data ? (slots.isError ? <Failed error={slots.error} onRetry={() => void slots.refetch()} /> : <Loading label={t('visit.loadingTimes')} />)
         : free.length === 0 ? <Alert tone="warn">{t('visit.noTimes', { day: formatYmd(day.replace(/-/g, '')) })}</Alert>
         : (
-          <div className="time-buttons" role="group" aria-label={t('visit.times')}>
+          <div className="pay-buttons" role="group" aria-label={t('visit.times')}>
             {free.map((s) => (
-              <button key={s._id} type="button" className="time-button" aria-pressed={slotId === s._id} disabled={disabled} onClick={() => onPick(s)}>{label(s)}</button>
+              <button key={s._id} type="button" className="pay-button" aria-pressed={slotId === s._id} disabled={disabled} onClick={() => onPick(s)}>{label(s)}</button>
             ))}
           </div>
         )}
@@ -152,7 +153,7 @@ export function DoctorClinicVisitScreen() {
   return <VisitPage title={t('visit.clinic.title')}>{visit ? <ClinicVisit key={d.identity} d={d} visit={visit} /> : <NoPatient />}</VisitPage>;
 }
 
-interface ClinicBooked { clinic: string; slot: DoctorSlot; own: boolean; appointmentId: string; branchId: string }
+interface ClinicBooked { clinic: string; slot: DoctorSlot; own: boolean; answer: DoctorClinicAnswer }
 
 function ClinicVisit({ d, visit }: { d: DoctorContext; visit: VisitPatient }) {
   const dash = useDash();
@@ -170,7 +171,7 @@ function ClinicVisit({ d, visit }: { d: DoctorContext; visit: VisitPatient }) {
   const book = (c: NonNullable<typeof clinic>, s: DoctorSlot) => once.send(async (requestKey) => {
     const r = await dash.bookClinic({ clinicId: c.partnerId, ...(s.branchId ? { branchId: String(s.branchId) } : {}), slotId: s._id, requestKey, ...visitDeskRequest(visit) });
     refresh();
-    return { clinic: name(c), slot: s, own: ownedClinic(clinics.data)?.partnerId === c.partnerId, appointmentId: r.booking._id, branchId: String(s.branchId ?? '') };
+    return { clinic: name(c), slot: s, own: ownedClinic(clinics.data)?.partnerId === c.partnerId, answer: r };
   });
   return (
     <>
@@ -220,9 +221,9 @@ function ClinicDone({ visit, done }: { visit: VisitPatient; done: ClinicBooked }
   const navigate = useNavigate();
   return (
     <Booked title={t('visit.clinic.booked', { who: visitWho(visit), clinic: done.clinic, time: clock(done.slot), day: formatYmd(done.slot.date) })}
-      actions={done.own && ctx && done.branchId ? (
-        <Button onClick={() => openBill(ctx, memory, { link: { kind: 'appointment', id: done.appointmentId }, branchId: done.branchId, doctorId: me.id,
-          name: visit.family ? visit.family.holderName : visit.name, phone: visit.phone, label: `${formatYmd(done.slot.date)}, ${clock(done.slot)}`, simple: true }, navigate)}>
+      actions={done.own && ctx ? (
+        // His own clinic: the reception's short bill with his fee on it (WQ57's).
+        <Button onClick={() => openBill(ctx, memory, visitBillPrefill({ booking: done.answer.booking, replayed: done.answer.replayed, branchName: '', doctorName: me.name }, visit), navigate)}>
           {t('visit.clinic.bill')}
         </Button>
       ) : null}>
@@ -288,11 +289,11 @@ function ConsultationDone({ visit, answer }: { visit: VisitPatient | null; answe
   const at = appointmentStart({ bookingDate: b.bookingDate, bookingTime: b.bookingTime });
   const when = `${formatYmd(b.bookingDate)}, ${at ? formatClock(at.getTime()) : b.bookingTime}`;
   const mode = b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode as keyof typeof CONSULT_MODE_LABEL] ?? b.consultationMode : '';
-  const payBy = answer.payment.payBy ? Date.parse(answer.payment.payBy) : NaN;
+  const payBy = answer.payment.payBy && !Number.isNaN(Date.parse(answer.payment.payBy)) ? answer.payment.payBy : null;
   return (
     <Booked title={b.followUpOf ? t('visit.followUp.booked', { when }) : t('visit.online.booked', { who: visit ? visitWho(visit) : '', mode, when })}>
       {answer.payment.required
-        ? <p>{Number.isNaN(payBy) ? t('visit.online.payInApp') : t('visit.online.payBy', { time: formatDateTime(payBy) })}</p>
+        ? <p>{payBy ? t('visit.online.payBy', { time: formatDateTime(payBy) }) : t('visit.online.payInApp')}</p>
         : <p>{t('visit.online.nothingToPay')}</p>}
     </Booked>
   );
@@ -347,7 +348,7 @@ function PickEarlier({ d, visit }: { d: DoctorContext; visit: VisitPatient }) {
               {q.data.map((i) => (
                 <li key={i.id}>
                   <Button variant="secondary" onClick={() => setParent(i)}>
-                    {`${formatDateTime(Date.parse(i.at))} · ${i.patientName ?? t('visit.noName')}`}
+                    {`${formatDateTime(i.at)} · ${i.patientName ?? t('visit.noName')}`}
                   </Button>
                 </li>
               ))}

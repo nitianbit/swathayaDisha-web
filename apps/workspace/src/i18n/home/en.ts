@@ -93,12 +93,17 @@ export default {
   'pending.reportsDue': { one: '{count} report due', other: '{count} reports due' },
   'pending.unpaidBills': { one: '{count} unpaid bill', other: '{count} unpaid bills' },
   /** r38b: desk walk-ins without a bill yet. */
+  /** WQ57 (r40): a clinic's appointments today, by step (the last when the server does not split them). */
+  'pending.toCheckIn': { one: '{count} to check in', other: '{count} to check in' },
+  'pending.toConfirm': { one: '{count} to confirm', other: '{count} to confirm' },
+  'pending.appointmentsToday': { one: '{count} appointment today', other: '{count} appointments today' },
   'pending.deskUnbilled': { one: '{count} walk-in without a bill', other: '{count} walk-ins without a bill' },
   'pending.failed.deskUnbilled': 'Walk-ins without a bill: couldn’t load',
   'pending.consultationsWaiting': { one: '{count} consultation waiting', other: '{count} consultations waiting' },
   /** r37b: the server could not read that list just now (only that line). */
   'pending.failed.samplesToCollect': 'Samples to collect: couldn’t load',
   'pending.failed.reportsDue': 'Reports due: couldn’t load',
+  'pending.failed.appointmentsToday': 'Appointments today: couldn’t load',
   'pending.failed.unpaidBills': 'Unpaid bills: couldn’t load',
   'pending.failed.bookingsAwaitingPayment': 'Doctor bookings waiting for payment: couldn’t load',
   'pending.failed.consultationsWaiting': 'Consultations waiting: couldn’t load',
@@ -115,12 +120,24 @@ export default {
   'pending.failed.appointmentsToConfirm': 'Appointments waiting: couldn’t load',
   'pending.failed.reportsReady': 'Lab reports ready: couldn’t load',
 
+  /** WQ57: a clinic reception's doctors today. */
+  'doctors.title': 'Doctors today',
+  'doctors.none': 'No doctor sees patients here yet.',
+  'doctors.free': 'Free',
+  /** A doctor taken elsewhere (another clinic, online): the time only. */
+  'doctors.busy': '{from}–{to} Busy',
+  /** {doctor}: the doctor's name. */
+  'doctors.of': 'Today with {doctor}',
+  'doctors.patient': 'Patient',
+
   'todos.title': 'My to-dos',
   'todos.add': 'Add',
   'todos.new': 'New to-do',
   'todos.newHint': 'For example: Call supplier for Dolo 650',
   /** WQ55: a lab's example. */
   'todos.newHintLab': 'For example: Call the courier for the home samples',
+  /** WQ57: a clinic's example. */
+  'todos.newHintClinic': 'For example: Call Mrs Shah about tomorrow’s time',
   /** WQ56: a doctor's own to-dos (only he sees them). */
   'todos.newHintDoctor': 'Only you see these. For example: Call Ravi about his report',
   'todos.none': 'No to-dos. Add one above.',
@@ -136,6 +153,9 @@ export default {
   /** WQ55: a lab member asked to do (or read) what their permissions do not allow: never a blank screen. */
   'askOwner': 'Ask the lab owner to allow this.',
   'askOwnerVisits': 'To start visits or bills here, ask the lab owner to allow them.',
+  /** WQ57: the same at a clinic's reception. */
+  'askOwnerClinic': 'Ask the clinic owner to allow this.',
+  'askOwnerVisitsClinic': 'To book appointments or make bills here, ask the clinic owner to allow them.',
 
   /** No internet: what was typed stays. */
   'offline': 'No internet connection. Check it, then tap Try again. Nothing you typed is lost.',
@@ -191,6 +211,9 @@ export default {
   'new.homeCollection': 'Home collection',
   'new.labDoctor': 'Book a doctor',
   'new.bill': 'Bill',
+  /** WQ57: a clinic's kinds of visit. */
+  'new.clinicNow': 'Appointment now (walk-in)',
+  'new.clinicLater': 'Appointment for later',
   /** WQ55: a lab finds a patient by phone only. */
   'new.phoneOnly': 'Patient’s mobile number',
   'new.phoneOnlyHint': 'Type the 10-digit number, then tap Find.',
@@ -220,6 +243,8 @@ export default {
   'what.topup': 'Wallet top-up',
   /** WQ55: a lab's bill without a first line. */
   'what.bill': 'Bill',
+  /** WQ57: a clinic appointment without its doctor or time. */
+  'what.appointment': 'Appointment',
   /** WQ55b: a bill on its own; {items}: its first item (+N more). */
   'what.billOf': 'Bill · {items}',
   /** r38: a lab test collected at home. */

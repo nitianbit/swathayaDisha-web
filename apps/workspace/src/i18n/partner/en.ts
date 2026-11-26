@@ -969,6 +969,22 @@ export default {
   'desk.notStarted': 'It is not the day of this appointment yet, so it was not marked as seen. Mark it on the day of the appointment.',
   'desk.noShowTooEarly': 'It is too early to mark a no-show: wait until 15 minutes after the appointment time (in a session with several patients, 15 minutes after the session ends).',
   'desk.changed': 'The appointment changed since you opened it (someone else updated it), so nothing was done. It has been read again: check it and try again.',
+  /** WQ57: the doctor's fee as a bill line; {doctor}: the doctor's name. */
+  'desk.feeLine': 'Consultation · {doctor}',
+  /** WQ57: a visit from + New at the reception. */
+  'desk.visit.now': 'Appointment now',
+  'desk.visit.later': 'Appointment for later',
+  'desk.visit.whichDoctor': 'Which doctor?',
+  'desk.visit.noDoctor': 'No doctor sees patients at this branch.',
+  'desk.visit.day': 'Day',
+  'desk.visit.times': 'Free times',
+  /** {doctor}: the doctor's name. */
+  'desk.visit.noneToday': '{doctor} has no free time left today. Go back and choose Appointment for later.',
+  'desk.visit.noTimes': 'No free time with {doctor} on this day. Choose another day.',
+  'desk.visit.busyHidden': 'Times when the doctor is busy elsewhere are not shown.',
+  /** {doctor}, {time}: who and when. */
+  'desk.visit.book': 'Book {doctor} at {time}',
+  'desk.visit.done': 'Done',
   'desk.title': 'Front desk',
   'desk.intro': 'Appointments with the clinic’s doctors by day (India time), desk and online. Desk appointments are in person and paid at the clinic.',
   'desk.stepRunning': 'Another step on this appointment is still running. Wait for it to finish, then try again.',

@@ -1666,11 +1666,10 @@ test('WQ51b: a doctor who is not verified and active gets the closed-workspace w
   await expect(page.getByText('Jansetu has not verified your clinic yet', { exact: false })).toHaveCount(0);
 });
 
-test('WQ51b: a clinic’s Home tile has the menu’s words (its services, not a lab’s tests)', async ({ page }) => {
+test('WQ51b: a clinic’s menu has its words (its services, not a lab’s tests); WQ57: its Home is the reception’s', async ({ page }) => {
   await mockBackend(page);
   await signIn(page, 'Lab or clinic staff');
-  const tiles = page.locator('.home-links');
   await expect(nav(page).getByRole('link', { name: 'Services and prices' })).toBeVisible();
-  await expect(tiles.getByRole('link', { name: 'Services and prices' })).toBeVisible();
-  await expect(tiles.getByRole('link', { name: 'Tests and packages' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Tests and packages' })).toHaveCount(0);
+  await expect(page.getByRole('navigation', { name: 'What do you want to do?' })).toBeVisible();
 });

@@ -1,5 +1,5 @@
 import type { ApiClient } from './client.ts';
-import type { DeskPatientInput } from './clinic.ts';
+import type { DeskBookingResult, DeskPatientInput } from './clinic.ts';
 import { appointmentInstant } from './cancellationWindow.ts';
 import { movableSlot, type DoctorAppointment, type DoctorSlot, type MyClinics } from './doctorTools.ts';
 import type { FinanceSummary } from './finance.ts';
@@ -49,12 +49,8 @@ export interface DoctorConsultationAnswer {
   payment: { by: 'patient_app'; required: boolean; payBy: string | null };
   replayed: boolean;
 }
-export interface DoctorClinicAnswer {
-  booking: { _id: string; bookingDate: string; bookingTime: string; status: string };
-  customer: { userId: string; phone: string | null; created: boolean };
-  patient?: { dependentId: string; name: string | null; relationship: string | null } | null;
-  replayed: boolean;
-}
+/** The clinic desk's own answer (`deskView`): the appointment is that clinic's. */
+export type DoctorClinicAnswer = DeskBookingResult;
 
 export type EarningChannel = 'clinic' | 'online' | 'partner' | 'referral' | 'other';
 export interface EarningSum { earnedMinor: number; reversedMinor: number; netMinor: number; count: number }

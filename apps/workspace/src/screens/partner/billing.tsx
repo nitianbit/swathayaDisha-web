@@ -78,6 +78,8 @@ export interface BillPrefill {
   items?: { id: string; name: string }[];
   /** WQ55b: a visit opened from + New: the short bill (name, phone, items, total) and the short payment. */
   simple?: boolean;
+  /** WQ57: lines not from the catalogue (a clinic appointment's doctor's fee), in paise. */
+  handLines?: { description: string; priceMinor: number }[];
 }
 export const billPrefillSlot = (identity: string) => `invoice-prefill:${identity}`;
 /** What is stored: the prefill and the one-time token the navigation to the form carries in its route state. */

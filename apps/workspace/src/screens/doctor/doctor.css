@@ -1,11 +1,4 @@
 /* WQ56 (P2): the doctor's dashboard and + New visits: 17 px type and 48 px targets (the simple home's rules). Tokens only. */
-.time-buttons { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.time-button {
-  min-height: 48px; min-width: 6.5rem; padding: 0 var(--space-3); border: 2px solid var(--line); border-radius: var(--radius);
-  background: var(--surface); color: var(--ink); font-size: 1.0625rem; font-weight: 600; font-variant-numeric: tabular-nums;
-}
-.time-button[aria-pressed='true'] { border-color: var(--brand); background: var(--brand-soft); }
-.time-button:hover:not(:disabled), .time-button:focus-visible { border-color: var(--brand); }
 .doctor-note { font-weight: 600; padding: var(--space-2) var(--space-3); border-radius: var(--radius); background: var(--brand-soft); color: var(--brand-strong); }
 /* Today's appointments: chips to filter, then one line per appointment in time order. */
 .chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-3); }

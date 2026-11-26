@@ -124,9 +124,9 @@ export {
   appointmentAt, appointmentDay, appointmentRangeProblem, canonicalMobile, CLINIC_APPOINTMENT_STATUS_LABEL, CLINIC_APPOINTMENT_STATUSES, clinicBranchesFor,
   DESK_GENDERS, DESK_RELATIONS, deskActions, deskBookingProblems, doctorsAtBranch, DOCTOR_INVITE_STATE_LABEL, DOCTOR_INVITE_STATES, familyMemberProblems,
   LINK_REFUSAL, linkProblems, MAX_APPOINTMENT_DAYS, MAX_APPOINTMENTS, MAX_DESK_CANCEL_REASON, MAX_DESK_NAME, MAX_DESK_NOTES, MAX_FAMILY_NAME, MAX_LINK_BRANCHES,
-  partnerClinicApi,
+  freeOfBusy, partnerClinicApi,
 } from './clinic.ts';
-export type {
+export type { DoctorBusy,
   AppointmentBill, AppointmentQuery, BookingNoShowMove, ClinicAppointment, ClinicAppointmentStatus, ClinicDoctorRow, DeskAction, DeskActionOffer, DeskAppointment, DeskSlotKnown,
   DeskBookingInput, DeskGender, DeskKeyAbandon, DeskPatientInput, DeskRelation, DeskBookingResult, DeskSlot, DoctorInvite,
   DoctorInviteState, DoctorLinkResult, DoctorUnlinkResult, LinkDoctorInput,
@@ -282,10 +282,10 @@ export { COUNTER_PAYMENTS, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, pharmacySaleApi, 
 export type { CounterPayment, SaleAnswer, SaleBody, SaleByKey, SaleCustomer, SaleLine } from './pharmacySale.ts';
 // WQ54 (P1): the simple pharmacy home: the day's register and the pharmacy's to-dos (backend r37).
 export {
-  bookingsWaiting, LAB_PENDING_KEYS, MAX_TODO_TEXT, moneyParts, PAYMENT_METHOD_KEYS, PENDING_KEYS, pendingCount, pharmacyTodayApi, TODAY_PAGE_MAX, TODAY_SEARCH_MAX,
+  bookingsWaiting, CLINIC_PENDING_KEYS, LAB_PENDING_KEYS, MAX_TODO_TEXT, moneyParts, PAYMENT_METHOD_KEYS, PENDING_KEYS, pendingCount, pharmacyTodayApi, TODAY_PAGE_MAX, TODAY_SEARCH_MAX,
   TODAY_SEARCH_MIN, todayApi, todayLink, todayOf, todoText,
 } from './pharmacyToday.ts';
-export type { LabPendingKey, PaymentMethodKey, PendingKey, TodayAnswer, TodayApi, TodayDesk, TodayItem, TodayKind, TodayLinkKind, TodayPending, TodayTotals, Todo, WhatParts } from './pharmacyToday.ts';
+export type { ClinicPendingKey, LabPendingKey, PaymentMethodKey, PendingKey, TodayAnswer, TodayApi, TodayDesk, TodayItem, TodayKind, TodayLinkKind, TodayPending, TodayTotals, Todo, WhatParts } from './pharmacyToday.ts';
 // WQ56 (P2): the doctor's single dashboard (backend r39): one appointment list, his clinic and online bookings, the breakdown.
 export { DOCTOR_PENDING_KEYS } from './pharmacyToday.ts';
 export type { DoctorPendingKey } from './pharmacyToday.ts';

@@ -15,6 +15,7 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
 import { useFrontDesk, type FrontDesk } from './desk.tsx';
 import { HomeButton } from './visitBar.tsx';
+import { DoctorsToday } from './doctorsToday.tsx';
 
 /**
  * WQ54 (P1, SIMPLE_DESIGN_PLAN_2026-11-26) / WQ54b / WQ55 (P4): the simple front-desk home, for a counter clerk used to a
@@ -78,7 +79,9 @@ export function FrontDeskHome({ desk }: { desk: FrontDesk }) {
     <div className="simple">
       <BigActions desk={desk} />
       {/* WQ55: a member allowed none of the visits says so (never a blank home). */}
-      {desk.choices.length === 0 && <Alert tone="warn">{t('askOwnerVisits')}</Alert>}
+      {desk.choices.length === 0 && <Alert tone="warn">{desk.noVisits}</Alert>}
+      {/* WQ57: a clinic's reception sees each doctor's next appointments and busy times. */}
+      {desk.kind === 'clinic' && <DoctorsToday forbidden={desk.forbidden} />}
       {desk.register && <section className="ws-section" aria-labelledby="reg-h">
         <h2 id="reg-h">{t('register.title')}</h2>
         {!q.data ? (q.isError ? <Failed error={q.error} forbidden={desk.forbidden} onRetry={() => void q.refetch()} /> : <Loading label={t('register.loading')} />) : (
@@ -137,15 +140,21 @@ function pendingLines(day: TodayAnswer, desk: FrontDesk): PendingLine[] {
   const lines: PendingLine[] = [];
   for (const k of desk.pending) {
     const n = pendingCount(p, k);
-    if (k === 'reportsDue') {
-      // r38: reports to upload and to release, each on its line (one line when the server does not split them).
-      const r = p?.reportsDue;
-      if (n === null) { lines.push({ id: k, text: t('pending.failed.reportsDue'), to: null, failed: true }); continue; }
-      const up = Number(r?.toUploadCount ?? 0);
-      const rel = Number(r?.toReleaseCount ?? 0);
-      if (up > 0) lines.push({ id: 'reportsToUpload', text: t('pending.reportsToUpload', { count: up }), to: desk.pendingTo(k, r?.toUploadIds, up) });
-      if (rel > 0) lines.push({ id: 'reportsToRelease', text: t('pending.reportsToRelease', { count: rel }), to: desk.pendingTo(k, r?.toReleaseIds, rel) });
-      if (n > 0 && up + rel === 0) lines.push({ id: k, text: t('pending.reportsDue', { count: n }), to: desk.pendingTo(k, undefined, n) });
+    if (k === 'reportsDue' || k === 'appointmentsToday') {
+      // r38: reports to upload and to release; r40: appointments to check in and to confirm; each on its line (one line
+      // when the server does not split them).
+      const r = (p?.[k] ?? undefined) as Record<string, unknown> | undefined;
+      const parts = k === 'reportsDue'
+        ? [['reportsToUpload', 'toUploadCount', 'toUploadIds'], ['reportsToRelease', 'toReleaseCount', 'toReleaseIds']] as const
+        : [['toCheckIn', 'toCheckInCount', 'toCheckInIds'], ['toConfirm', 'toConfirmCount', 'toConfirmIds']] as const;
+      if (n === null) { lines.push({ id: k, text: t(`pending.failed.${k}`), to: null, failed: true }); continue; }
+      let shown = 0;
+      for (const [id, count, ids] of parts) {
+        const c = Number(r?.[count] ?? 0);
+        if (c > 0) lines.push({ id, text: t(`pending.${id}`, { count: c }), to: desk.pendingTo(k, r?.[ids] as string[] | undefined, c) });
+        shown += Math.max(0, c);
+      }
+      if (n > 0 && shown === 0) lines.push({ id: k, text: t(`pending.${k}`, { count: n }), to: desk.pendingTo(k, undefined, n) });
       continue;
     }
     if (k !== 'bookingsAwaiting') {
@@ -204,6 +213,11 @@ export function whatWords(i: Pick<TodayItem, 'what' | 'whatParts'>): string {
     // WQ55b: a bill on its own says so.
     case 'bill.items': return present(v.first) ? t('what.billOf', { items: list('') }) : t('what.bill');
     case 'wallet.topup': return t('what.topup');
+    // r40: a clinic appointment: the doctor and time (names stay data), the way it is held.
+    case 'clinic.appointment': {
+      const parts = [present(v.doctor) ? String(v.doctor) : null, present(v.time) ? String(v.time) : null, mode].filter((x): x is string => !!x);
+      return parts.length ? parts.join(' · ') : t('what.appointment');
+    }
     case 'consult.scheduled':
     case 'consult.instant': {
       const when = p.code === 'consult.instant' ? t('what.now') : present(v.time) ? String(v.time) : null;
@@ -218,7 +232,11 @@ export function whatWords(i: Pick<TodayItem, 'what' | 'whatParts'>): string {
  * The register: the time, who and what (tap to open), the amount, paid or not. `date`: the register's day (an earlier
  * day's entry paid that day says so).
  */
-const isDeskRow = (i: TodayItem) => i.kind === 'lab_booking' && i.whatParts?.values?.source === 'lab_desk';
+/** A visit made at this desk, paid on its bill: a lab's desk booking, WQ57 a clinic's desk appointment. */
+const isDeskRow = (i: TodayItem) => (i.kind === 'lab_booking' && i.whatParts?.values?.source === 'lab_desk')
+  || (i.kind === 'appointment' && i.whatParts?.values?.source === 'desk');
+/** The visit a bill is for (r38c a lab booking, r40 an appointment). */
+const billedVisit = (i: TodayItem) => i.labBookingId ?? i.appointmentId ?? null;
 
 /**
  * WQ55b: one row per desk visit: a bill naming the desk booking it bills (`labBookingId`, asked of the server) is folded
@@ -231,8 +249,9 @@ export function oneRowPerVisit(items: readonly TodayItem[]): { rows: TodayItem[]
   const desk = new Set(items.filter(isDeskRow).map((i) => i.id));
   const billOf = new Map<string, TodayItem>();
   const rows = items.filter((i) => {
-    if (i.kind !== 'bill' || !i.labBookingId || !desk.has(i.labBookingId)) return true;
-    billOf.set(i.labBookingId, i);
+    const visit = billedVisit(i);
+    if (i.kind !== 'bill' || !visit || !desk.has(visit)) return true;
+    billOf.set(visit, i);
     return false;
   });
   return { rows, billOf };
@@ -263,8 +282,8 @@ export function Register({ items, date, desk, unbilled }: { items: readonly Toda
             <span className="register-pay">
               <span className="register-amount">{formatPaise(i.amountMinor)}</span>{' '}
               {/* WQ55c: an ended booking says how it ended; a bill paid in part says so. */}
-              {i.kind === 'lab_booking' && i.status === 'cancelled' ? <Badge>{t('register.cancelled')}</Badge>
-                : i.kind === 'lab_booking' && i.status === 'no_show' ? <Badge>{t('register.noShow')}</Badge>
+              {(i.kind === 'lab_booking' || i.kind === 'appointment') && i.status === 'cancelled' ? <Badge>{t('register.cancelled')}</Badge>
+                : (i.kind === 'lab_booking' || i.kind === 'appointment') && i.status === 'no_show' ? <Badge>{t('register.noShow')}</Badge>
                 : (i.kind === 'bill' ? i.status : bill?.status) === 'partly_paid' && !i.paid ? <Badge tone="warn">{t('register.partPaid')}</Badge>
                 : i.paid ? paidBadge(i.method ?? bill?.method)
                 : isDeskRow(i) ? <Badge tone="warn">{unbilled?.includes(i.id) ? t('register.noBill') : bill ? t('register.billUnpaid') : t('register.onBill')}</Badge>
@@ -337,7 +356,7 @@ export function Todos({ desk }: { desk: FrontDesk }) {
     <section className="ws-section" aria-labelledby="todo-h">
       <h2 id="todo-h">{t('todos.title')}</h2>
       <form className="todo-add" noValidate onSubmit={(e) => void add(e)}>
-        <TextField label={t('todos.new')} hint={desk.kind === 'lab' ? t('todos.newHintLab') : desk.kind === 'doctor' ? t('todos.newHintDoctor') : t('todos.newHint')} value={text} maxLength={MAX_TODO_TEXT} autoComplete="off" error={error}
+        <TextField label={t('todos.new')} hint={desk.kind === 'lab' ? t('todos.newHintLab') : desk.kind === 'clinic' ? t('todos.newHintClinic') : desk.kind === 'doctor' ? t('todos.newHintDoctor') : t('todos.newHint')} value={text} maxLength={MAX_TODO_TEXT} autoComplete="off" error={error}
           onChange={(e) => { setText(e.target.value); setRequestKey(null); }} />
         <Button type="submit" busy={busy}>{error && requestKey ? t('tryAgain') : t('todos.add')}</Button>
       </form>

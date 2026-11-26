@@ -13,6 +13,7 @@ import { useSession } from '../../session.tsx';
 import { useFrontDesk, type FrontDesk } from '../front/desk.tsx';
 import { BigActions, Failed, MoneyLine, PendingStrip, todayKey, Todos } from '../front/home.tsx';
 import { openBill } from '../partner/billing.tsx';
+import { feeLine } from '../partner/DeskScreen.tsx';
 import { usePartnerScope } from '../partner/scope.tsx';
 import { offersKey, rupeesOf, useClinics, useDoctor, useDoctorProfile, type DoctorContext } from './doctor.tsx';
 import { useDoctorPresence } from './presence.tsx';
@@ -170,8 +171,10 @@ function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
                     <Badge tone={a.status === 'pending' ? 'warn' : a.status === 'confirmed' || a.status === 'completed' ? 'ok' : undefined}>{APPOINTMENT_STATUS_LABEL[a.status] ?? a.status}</Badge>
                     {a.status === 'pending' && a.paymentStatus !== 'paid' && a.source === 'doctor_assisted' && <span className="ws-muted">{t('dash.payInApp')}</span>}
                     {billable && deskRow && (
+                      // The bill is the account holder's: a family member's name is not put on it (the bill asks), the fee is.
                       <Button variant="secondary" onClick={() => openBill(ctx!, memory, { link: { kind: 'appointment', id: a._id }, branchId: deskRow.branchId, doctorId: d.user.id,
-                        name: name ?? '', phone: '', label: name ? `${time} · ${name}` : time, simple: true }, navigate)}>
+                        name: a.dependentId ? '' : name ?? '', phone: '', label: name ? `${time} · ${name}` : time, simple: true,
+                        ...(a.price ? { handLines: [feeLine(d.user.name, a.price)] } : {}) }, navigate)}>
                         {t('dash.bill')}
                       </Button>
                     )}

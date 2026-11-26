@@ -468,4 +468,87 @@ export default {
   'clinicPage.noClinic.title': 'You have no clinic of your own yet',
   'clinicPage.noClinic.body': 'Bills and prices belong to your clinic.',
   'clinicPage.noClinic.create': 'Create your clinic',
+  /** WQ56 (P2): the doctor's dashboard. Names, clinic names and times are values. */
+  'dash.today': 'Today',
+  /** {amount}: formatted money. What his Jansetu earnings grew by today. */
+  'dash.earnedToday': 'Earned today {amount}',
+  'dash.loading': 'Loading your day…',
+  'dash.appointments': 'Today’s appointments',
+  'dash.chip.label': 'Show',
+  'dash.chip.all': 'All',
+  'dash.chip.online': 'Online',
+  'dash.chip.partners': 'Booked by partners',
+  'dash.clinicUnnamed': 'Clinic',
+  'dash.none': 'No appointments today.',
+  'dash.noneHere': 'None of today’s appointments are here.',
+  'dash.noName': 'Patient',
+  /** Where an appointment came from. {clinic}: a clinic's name; {name}: the pharmacy or lab that booked it. */
+  'dash.source.clinicDesk': '{clinic} desk',
+  'dash.source.bookedBy': 'Booked by {name}',
+  'dash.source.pharmacy': 'Booked by a pharmacy',
+  'dash.source.lab': 'Booked by a lab',
+  'dash.source.you': 'Booked by you',
+  'dash.source.instant': 'Consult now',
+  'dash.source.app': 'Booked in the app',
+  'dash.source.appAt': 'Booked in the app · {clinic}',
+  /** An online consultation he booked: the patient has not paid in the app yet. */
+  'dash.payInApp': 'Waiting for the patient to pay in the app',
+  'dash.bill': 'Bill',
+  'dash.truncated': 'Not every appointment could be shown. Open Appointments for the full list.',
+
+  /** WQ56: + New's visits for a doctor. */
+  'visit.noPatient': 'Choose the patient first',
+  'visit.startNew': 'Go to + New',
+  'visit.noName': 'Patient',
+  'visit.consultation': 'Consultation',
+  'visit.when': 'When?',
+  'visit.day': 'Day',
+  'visit.times': 'Free times',
+  'visit.loadingTimes': 'Loading your free times…',
+  /** {day}: a date. */
+  'visit.noTimes': 'You have no free time here on {day}. Choose another day.',
+  'visit.sendAgain': 'Send again',
+  'visit.another': 'Another patient',
+  'visit.clinic.title': 'Clinic appointment',
+  'visit.clinic.which': 'Which clinic?',
+  'visit.clinic.unnamed': 'Clinic',
+  'visit.clinic.at': 'At {clinic}',
+  'visit.clinic.none': 'You consult at no verified clinic yet.',
+  'visit.clinic.toClinics': 'Open Clinics',
+  /** {time}, {day}, {clinic}. */
+  'visit.clinic.book': 'Book {time}, {day} at {clinic}',
+  'visit.clinic.paidAtClinic': 'The patient pays at the clinic.',
+  /** {who}: the patient; {clinic}; {time}; {day}. */
+  'visit.clinic.booked': 'Booked: {who} at {clinic}, {day}, {time}',
+  'visit.clinic.inList': 'It is in {clinic}’s reception list. The patient pays at the clinic.',
+  'visit.clinic.inOwnList': 'It is in your clinic’s list. Make the bill when the patient pays.',
+  'visit.clinic.bill': 'Make the bill',
+  'visit.online.title': 'Online consultation',
+  'visit.online.how': 'Video or phone call?',
+  'visit.online.paysInApp': 'The patient pays in the Jansetu app within 30 minutes.',
+  /** {mode}: video or phone call; {time}; {day}. */
+  'visit.online.book': 'Book {mode}, {day}, {time}',
+  /** {who}; {mode}; {when}: date and time. */
+  'visit.online.booked': 'Booked: {who}, {mode}, {when}',
+  /** {time}: date and time the payment must be made by. */
+  'visit.online.payBy': 'The patient pays in the Jansetu app by {time}. If not paid by then, the booking ends and the time is free again.',
+  'visit.online.payInApp': 'The patient pays in the Jansetu app within 30 minutes. If not paid by then, the booking ends and the time is free again.',
+  'visit.online.nothingToPay': 'There is nothing to pay.',
+  'visit.followUp.title': 'Follow-up',
+  'visit.followUp.which': 'Which consultation does this follow?',
+  /** {days}: how many days back. */
+  'visit.followUp.noneEarlier': 'No completed consultation with this number in the last {days} days.',
+  'visit.followUp.notFound': 'Consultation not found',
+  /** {when}: date and time; {mode}: how it was held. */
+  'visit.followUp.of': 'Follow-up of the consultation on {when} ({mode})',
+  'visit.followUp.free': 'A follow-up is free and is confirmed at once.',
+  'visit.followUp.how': 'How?',
+  'visit.followUp.book': 'Book the follow-up, {day}, {time}',
+  'visit.followUp.booked': 'Follow-up booked: {when}',
+  /** Refusals he can act on (by the server's code). */
+  'visit.refusal.SLOT_NOT_AVAILABLE': 'This time is no longer free. Choose another time.',
+  'visit.refusal.CLINIC_NOT_FOUND': 'You no longer consult at this clinic.',
+  'visit.refusal.PARTNER_NOT_VERIFIED': 'Jansetu has not verified this clinic yet.',
+  'visit.refusal.USE_CLINIC_APPOINTMENT': 'An in-person visit is booked as a clinic appointment.',
+  'visit.refusal.IDEMPOTENCY_KEY_REUSED': 'This booking was changed while it was being sent. Tap the button again.',
 } as const;
