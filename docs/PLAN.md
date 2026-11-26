@@ -3282,6 +3282,10 @@ appointments" list (the home's list is today's appointments, `doctor-dashboard.s
   pending tasks open the relevant record. The next appointment appears when today is empty, and the filter chips scroll.
 - Online booking shows the fee. The earnings breakdown, statement and CSV start with the same India-date period
   (month to date) and use the same range after an edit.
+- Verification for `e12cca6` with clinic stage `a65c5a4` merged. Type check, 548 unit tests and both same-origin
+  builds passed. The focused doctor run passed 97 cases with one planned skip. The full workspace run passed 1233
+  cases with nine planned skips. Independent source reviews approved the web and backend. The paired stage update
+  awaits the isolated database run for backend `39d9a74`.
 
 ## Follow-ups
 
