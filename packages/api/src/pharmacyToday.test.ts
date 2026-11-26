@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createApiClient } from './client.ts';
-import { moneyParts, pharmacyTodayApi, todayOf, todoText } from './pharmacyToday.ts';
+import { moneyParts, pendingCount, pharmacyTodayApi, todayLink, todayOf, todoText } from './pharmacyToday.ts';
 
 // WQ54 (P1): the day's register and the pharmacy's to-dos (backend r37, draft shapes).
 
@@ -21,22 +21,23 @@ describe('WQ54 pharmacy today and to-dos', () => {
     const { c, calls } = client();
     const a = pharmacyTodayApi(c);
     await a.today();
-    await a.today('2026-11-26');
+    await a.today({ date: '2026-11-26', cursor: 'c1', limit: 200 });
     await a.todos();
     await a.addTodo('  Call   supplier ', KEY);
     await a.setDone(TODO, true, 3);
-    await a.remove(TODO, 4);
+    await a.remove(TODO);
     expect(calls.map((x) => `${x.method} ${x.url}`)).toEqual([
       'GET /api/v1/pharmacy-assisted/today',
-      'GET /api/v1/pharmacy-assisted/today?date=2026-11-26',
+      'GET /api/v1/pharmacy-assisted/today?date=2026-11-26&cursor=c1&limit=200',
       'GET /api/v1/pharmacy-assisted/todos',
       'POST /api/v1/pharmacy-assisted/todos',
       `PATCH /api/v1/pharmacy-assisted/todos/${TODO}`,
-      `DELETE /api/v1/pharmacy-assisted/todos/${TODO}?expectedVersion=4`,
+      `DELETE /api/v1/pharmacy-assisted/todos/${TODO}`,
     ]);
     expect(calls[3]!.body).toEqual({ text: 'Call supplier', requestKey: KEY });
     expect(calls[4]!.body).toEqual({ done: true, expectedVersion: 3 });
-    expect(() => a.today('2026-02-31')).toThrow();
+    expect(() => a.today({ date: '2026-02-31' })).toThrow();
+    expect(() => a.today({ limit: 201 })).toThrow();
     expect(() => a.setDone('nope', true, 1)).toThrow();
     expect(() => a.addTodo('x', 'bad key')).toThrow();
     expect(() => a.addTodo('   ', KEY)).toThrow();
@@ -51,7 +52,19 @@ describe('WQ54 pharmacy today and to-dos', () => {
   });
 
   it('an answer of another shape (an older server, a broken one) is empty, never a crash', () => {
-    expect(todayOf([])).toEqual({ items: [], totals: { collectedMinor: 0, byMethod: {}, unpaidMinor: 0, count: 0 }, pending: {} });
+    expect(todayOf([])).toEqual({ items: [], totals: { collectedMinor: 0, byMethod: {}, unpaidMinor: 0, count: 0 }, nextCursor: null });
     expect(todayOf({ items: [null, { id: 'x' }], totals: { collectedMinor: 'a' } }).items).toEqual([{ id: 'x' }]);
+  });
+
+  it('a row opens its record; pending counts are read safely', () => {
+    const id = 'b1'.repeat(12);
+    expect(todayLink({ link: { kind: 'pharmacy_order', id } })).toBe(`/pharmacy/orders/${id}`);
+    expect(todayLink({ link: { kind: 'booking', id } })).toBe(`/pharmacy/consultations/${id}`);
+    expect(todayLink({ link: { kind: 'lab_booking', id } })).toBe(`/pharmacy/lab-tests/${id}`);
+    expect(todayLink({ link: { kind: 'wallet_transaction', id } })).toBe('/pharmacy/wallet');
+    expect(todayLink({ link: { kind: 'other', id } })).toBeNull();
+    expect(todayLink({ link: null })).toBeNull();
+    expect(pendingCount({ prescriptionsToReview: { count: 3 } }, 'prescriptionsToReview')).toBe(3);
+    expect(pendingCount(undefined, 'lowStock')).toBe(0);
   });
 });

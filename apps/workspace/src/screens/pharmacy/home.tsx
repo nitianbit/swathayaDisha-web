@@ -1,11 +1,11 @@
 import './home.css';
 import { useState, type FormEvent } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { CalendarDays, Pill, Plus, Search } from 'lucide-react';
 import {
-  ApiError, istToday, MAX_TODO_TEXT, moneyParts, PENDING_KEYS, pharmacyTodayApi, todoText,
-  type TodayAnswer, type TodayItem, type Todo,
+  ApiError, istToday, MAX_TODO_TEXT, moneyParts, PENDING_KEYS, pendingCount, pharmacyTodayApi, TODAY_PAGE_MAX, todayLink, todoText,
+  type PendingKey, type TodayAnswer, type TodayItem, type Todo,
 } from '@jansetu/api';
 import { formatPaise } from '@jansetu/i18n';
 import { Alert, Badge, Button, Empty, formatDateTime, Loading, TextField } from '@jansetu/ui';
@@ -40,10 +40,12 @@ function Failed({ error, onRetry }: { error: unknown; onRetry: () => void }) {
 
 export const todayKey = (pharmacyId: string, date: string) => ['pharmacy-today', pharmacyId, date] as const;
 
+/** The home's read: the day's first 200 rows (the money and what waits are the whole day's). */
 export function useToday(pharmacyId: string, date: string) {
   const { api } = useSession();
   // Always read again when a page shows it: a sale or a booking made on another page has just changed the day.
-  return useQuery({ queryKey: todayKey(pharmacyId, date), queryFn: () => pharmacyTodayApi(api).today(date), staleTime: 0, refetchOnMount: 'always' });
+  return useQuery({ queryKey: [...todayKey(pharmacyId, date), 'home'], queryFn: () => pharmacyTodayApi(api).today({ date, limit: TODAY_PAGE_MAX }),
+    staleTime: 0, refetchOnMount: 'always' });
 }
 
 export function PharmacyHome() {
@@ -64,8 +66,9 @@ export function PharmacyHome() {
           <>
             <MoneyLine day={q.data} />
             <PendingStrip day={q.data} />
-            <Register items={q.data.items.slice(0, 10)} />
-            {q.data.items.length > 10 && <p><Link to="/pharmacy/today">{t('register.all')}</Link></p>}
+            {/* The latest 10, in the order they were made (a register is read top to bottom). */}
+            <Register items={q.data.items.slice(-10)} />
+            {(q.data.items.length > 10 || q.data.nextCursor) && <p><Link to="/pharmacy/today">{t('register.all')}</Link></p>}
           </>
         )}
       </section>
@@ -85,30 +88,30 @@ export function MoneyLine({ day }: { day: TodayAnswer }) {
   );
 }
 
-const PENDING_LINK: Readonly<Record<(typeof PENDING_KEYS)[number], string>> = {
-  prescriptions: '/pharmacy/prescriptions', unpaidSales: '/pharmacy/today', labReports: '/pharmacy/lab-tests', consultations: '/pharmacy/consultations',
-};
+/** Where each waiting kind is done (one unpaid sale opens that sale's page). */
+function pendingLink(day: TodayAnswer, k: PendingKey): string {
+  const ids = day.pending?.unpaidCounterSales?.ids ?? [];
+  switch (k) {
+    case 'prescriptionsToReview': return '/pharmacy/prescriptions';
+    case 'unpaidCounterSales': return ids.length === 1 && /^[0-9a-fA-F]{24}$/.test(ids[0]!) ? `/pharmacy/sale/${ids[0]}` : '/pharmacy/orders';
+    case 'bookingsAwaiting': return '/pharmacy/consultations';
+    case 'labReportsReady': return '/pharmacy/lab-tests';
+    default: return '/pharmacy/low-stock';
+  }
+}
 
 /** What is waiting, each a link to where it is done. */
 export function PendingStrip({ day }: { day: TodayAnswer }) {
-  const items = PENDING_KEYS.map((k) => ({ k, n: Number(day.pending?.[k] ?? 0) })).filter((x) => Number.isInteger(x.n) && x.n > 0);
+  if (!day.pending) return null;
+  const items = PENDING_KEYS.map((k) => ({ k, n: pendingCount(day.pending, k) })).filter((x) => x.n > 0);
   return (
     <div className="pending-strip" aria-label={t('pending.title')} role="group">
       {items.length === 0 ? <span className="ws-muted">{t('pending.none')}</span>
-        : items.map((x) => <Link key={x.k} className="pending-item" to={PENDING_LINK[x.k]}>{t(`pending.${x.k}`, { count: x.n })}</Link>)}
+        : items.map((x) => <Link key={x.k} className="pending-item" to={pendingLink(day, x.k)}>{t(`pending.${x.k}`, { count: x.n })}</Link>)}
     </div>
   );
 }
 
-/** A register row's own page (the existing detail pages). */
-function linkOf(i: TodayItem): string | null {
-  if (i.link && i.link.startsWith('/pharmacy/')) return i.link;
-  if (!/^[0-9a-fA-F]{24}$/.test(i.id)) return null;
-  if (i.kind === 'sale') return `/pharmacy/orders/${i.id}`;
-  if (i.kind === 'consultation' || i.kind === 'instant') return `/pharmacy/consultations/${i.id}`;
-  if (i.kind === 'lab') return `/pharmacy/lab-tests/${i.id}`;
-  return null;
-}
 const METHOD_KEYS = ['cash', 'upi', 'card', 'wallet', 'online', 'other'] as const;
 const methodWords = (m: string | null) => (m && (METHOD_KEYS as readonly string[]).includes(m) ? t(`method.${m as (typeof METHOD_KEYS)[number]}`) : m);
 
@@ -118,7 +121,7 @@ export function Register({ items }: { items: readonly TodayItem[] }) {
   return (
     <ul className="register" aria-label={t('register.caption')}>
       {items.map((i) => {
-        const to = linkOf(i);
+        const to = todayLink(i);
         const words = <><strong>{i.patientName ?? t('register.noName')}</strong>{`: ${i.what}`}{i.shortRef ? <span className="ws-muted">{` · ${i.shortRef}`}</span> : null}</>;
         return (
           <li key={`${i.kind}:${i.id}`} className="register-row">
@@ -143,7 +146,7 @@ export function Todos({ pharmacyId }: { pharmacyId: string }) {
   const queryClient = useQueryClient();
   const todos = pharmacyTodayApi(api);
   const key = ['pharmacy-todos', pharmacyId];
-  const q = useQuery({ queryKey: key, queryFn: () => todos.todos() });
+  const q = useQuery({ queryKey: key, queryFn: () => todos.todos({ limit: 100 }) });
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [requestKey, setRequestKey] = useState<string | null>(null);
@@ -181,7 +184,7 @@ export function Todos({ pharmacyId }: { pharmacyId: string }) {
     try {
       await todos.setDone(x._id, done, x.version);
     } catch (err) {
-      setNote(err instanceof ApiError && err.status === 409 ? t('todos.changed') : homeWords(err));
+      setNote(err instanceof ApiError && err.code === 'TODO_CHANGED' ? t('todos.changed') : homeWords(err));
     } finally {
       await reread();
       setTicked((m) => { const { [x._id]: _gone, ...rest } = m; return rest; });
@@ -198,16 +201,16 @@ export function Todos({ pharmacyId }: { pharmacyId: string }) {
       </form>
       {note && <Alert tone="warn">{note}</Alert>}
       {!q.data ? (q.isError ? <Failed error={q.error} onRetry={() => void q.refetch()} /> : <Loading label={t('todos.loading')} />)
-        : q.data.length === 0 ? <p className="ws-muted">{t('todos.none')}</p>
+        : q.data.items.length === 0 ? <p className="ws-muted">{t('todos.none')}</p>
         : (
           <ul className="todo-list">
-            {q.data.map((x) => (
+            {q.data.items.map((x) => (
               <li key={x._id}>
                 <label className={(ticked[x._id] ?? x.done) ? 'todo todo--done' : 'todo'}>
                   <input type="checkbox" checked={ticked[x._id] ?? x.done} onChange={(e) => void tick(x, e.target.checked)} />
                   <span>{x.text}</span>
                 </label>
-                {x.createdByName && <span className="ws-muted">{t('todos.by', { who: x.createdByName })}</span>}
+                {x.createdBy?.name && <span className="ws-muted">{t('todos.by', { who: x.createdBy.name })}</span>}
               </li>
             ))}
           </ul>
@@ -216,14 +219,26 @@ export function Todos({ pharmacyId }: { pharmacyId: string }) {
   );
 }
 
-/** Today (`/pharmacy/today`): one day's full register (an earlier day by its date), searched by name or ref, its totals and what waits. */
+/**
+ * Today (`/pharmacy/today`): one India day's full register in the order it was made (an earlier day by its date), in pages
+ * of 50 with Show more; searched by name, ref or what in the rows read; the whole day's money and what waits.
+ */
 export function TodayScreen() {
   const pharmacyId = usePharmacyId();
+  const { api } = useSession();
   const [date, setDate] = useState(() => istToday());
   const [search, setSearch] = useState('');
-  const q = useToday(pharmacyId, date);
+  const q = useInfiniteQuery({
+    queryKey: [...todayKey(pharmacyId, date), 'pages'],
+    queryFn: ({ pageParam }) => pharmacyTodayApi(api).today({ date, limit: 50, cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    staleTime: 0, refetchOnMount: 'always',
+  });
+  const first = q.data?.pages[0];
   const s = search.trim().toLowerCase();
-  const items = (q.data?.items ?? []).filter((i) => !s || (i.patientName ?? '').toLowerCase().includes(s) || (i.shortRef ?? '').toLowerCase().includes(s)
+  const all = (q.data?.pages ?? []).flatMap((p) => p.items);
+  const items = all.filter((i) => !s || (i.patientName ?? '').toLowerCase().includes(s) || (i.shortRef ?? '').toLowerCase().includes(s)
     || String(i.what ?? '').toLowerCase().includes(s));
   return (
     <div className="simple">
@@ -232,12 +247,15 @@ export function TodayScreen() {
         <TextField label={t('today.date')} type="date" value={date} max={istToday()} onChange={(e) => { if (e.target.value) setDate(e.target.value); }} />
         <TextField label={t('today.search')} value={search} autoComplete="off" onChange={(e) => setSearch(e.target.value)} />
       </div>
-      {!q.data ? (q.isError ? <Failed error={q.error} onRetry={() => void q.refetch()} /> : <Loading label={t('register.loading')} />) : (
+      {!first ? (q.isError ? <Failed error={q.error} onRetry={() => void q.refetch()} /> : <Loading label={t('register.loading')} />) : (
         <>
-          <MoneyLine day={q.data} />
-          <PendingStrip day={q.data} />
-          <p className="ws-muted">{t('today.count', { count: items.length })}</p>
+          <MoneyLine day={first} />
+          <PendingStrip day={first} />
+          <p className="ws-muted">{t('today.count', { count: first.totals.count })}</p>
+          {first.truncated && <Alert tone="warn">{t('today.truncated')}</Alert>}
           {s && items.length === 0 ? <p>{t('today.noMatch')}</p> : <Register items={items} />}
+          {q.isFetchNextPageError && <Failed error={q.error} onRetry={() => void q.fetchNextPage()} />}
+          {q.hasNextPage && <div><Button variant="secondary" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>{t('today.more')}</Button></div>}
         </>
       )}
     </div>

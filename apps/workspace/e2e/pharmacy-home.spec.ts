@@ -58,20 +58,24 @@ async function mockBackend(page: Page): Promise<Backend> {
       for (const r of b.register) if (r.paid) byMethod[String(r.method)] = (byMethod[String(r.method)] ?? 0) + Number(r.amountMinor);
       const collectedMinor = b.register.filter((r) => r.paid).reduce((a, r) => a + Number(r.amountMinor), 0);
       const unpaid = b.register.filter((r) => !r.paid);
-      return ok(route, { date: url.searchParams.get('date'), items: [...b.register].reverse(),
+      // r37: oldest first; the whole day's totals; pending on the first page.
+      const sales = unpaid.filter((r) => r.kind === 'order');
+      return ok(route, { date: url.searchParams.get('date'), items: b.register, nextCursor: null,
         totals: { collectedMinor, byMethod, unpaidMinor: unpaid.reduce((a, r) => a + Number(r.amountMinor), 0), count: b.register.length },
-        pending: { prescriptions: 0, unpaidSales: unpaid.filter((r) => r.kind === 'sale').length } });
+        pending: { prescriptionsToReview: { count: 0, ids: [] }, unpaidCounterSales: { count: sales.length, ids: sales.map((r) => r.id) },
+          bookingsAwaiting: { count: 0, consultationIds: [], labBookingIds: [] }, labReportsReady: { count: 0, ids: [] }, lowStock: { count: 0, ids: [] } } });
     }
-    if (path === '/pharmacy-assisted/todos' && method === 'GET') return ok(route, b.todos);
+    if (path === '/pharmacy-assisted/todos' && method === 'GET') return ok(route, [...b.todos].reverse(), 200, { pagination: { nextCursor: null } });
     if (path === '/pharmacy-assisted/todos' && method === 'POST') {
       if (b.todoOfflineOnce) { b.todoOfflineOnce = false; return route.abort('internetdisconnected'); }
       const key = String(body!.requestKey);
       const known = b.todos.find((x) => x._id === b.todoKeys[key]);
-      if (known) return ok(route, known);
-      const todo = { _id: `7${b.todos.length}`.padStart(24, '0'), text: body!.text, done: false, version: 1, createdByName: 'Pooja' };
+      if (known) return ok(route, { todo: known, replayed: true });
+      const todo = { _id: `7${b.todos.length}`.padStart(24, '0'), text: body!.text, dueAt: null, done: false, doneAt: null, version: 1,
+        createdBy: { kind: 'pharmacy', id: PH, name: 'Pooja' }, createdAt: NOW.toISOString(), updatedAt: NOW.toISOString() };
       b.todos.push(todo);
       b.todoKeys[key] = String(todo._id);
-      return ok(route, todo, 201);
+      return ok(route, { todo, replayed: false }, 201);
     }
     const todo = /^\/pharmacy-assisted\/todos\/(\w{24})$/.exec(path);
     if (todo && method === 'PATCH') {
@@ -99,8 +103,8 @@ async function mockBackend(page: Page): Promise<Backend> {
         assisted: { shortRef: 'K7QXM2PA', join: x.join, preferredLanguage: x.preferredLanguage },
         money: { quotedAmountMinor: x.acceptedQuoteMinor, discountMinor: 0, paidMinor: x.acceptedPayableMinor, returnedMinor: 0, refundedMinor: 0 } };
       b.request = request;
-      b.register.push({ kind: 'instant', id: REQ, at: NOW.toISOString(), shortRef: 'K7QXM2PA', patientName: (x.patient as Json).name, what: 'Dr Kavya video',
-        amountMinor: x.acceptedPayableMinor, paid: true, method: 'wallet', status: 'offered', link: null });
+      b.register.push({ kind: 'consultation', id: REQ, at: NOW.toISOString(), shortRef: 'K7QXM2PA', patientName: (x.patient as Json).name, what: 'Dr Kavya · now · video',
+        amountMinor: x.acceptedPayableMinor, paid: true, method: 'wallet', status: 'offered', link: { kind: 'booking', id: REQ } });
       return ok(route, { request, funding: { method: 'wallet', amountMinor: x.acceptedPayableMinor, state: 'held', walletEntryId: 'w1' }, newAccount: false, replayed: false }, 201);
     }
     if (new RegExp(`^${base}/requests/${REQ}(/activity)?$`).test(path) && b.request) return ok(route, b.request);
@@ -122,8 +126,8 @@ async function mockBackend(page: Page): Promise<Backend> {
         prescriptionStatus: 'not_required', createdAt: NOW.toISOString(), bill: { pharmacy: { name: 'Demo Pharmacy', address: null, city: 'Pune', state: null, pincode: null,
           gstNumber: null, drugLicenseNumber: null }, paymentMethod: null, paidAt: null } };
       b.orders.push(order);
-      b.register.push({ kind: 'sale', id: order._id, at: NOW.toISOString(), shortRef: 'PO-100', patientName: 'Asha Verma', what: 'medicines', amountMinor: total * 100, paid: false,
-        method: null, status: 'placed', link: null });
+      b.register.push({ kind: 'order', id: order._id, at: new Date(NOW.getTime() + 35 * 60_000).toISOString(), shortRef: 'PO-100', patientName: 'Asha Verma', what: 'Dolo 650',
+        amountMinor: total * 100, paid: false, method: null, status: 'placed', link: { kind: 'pharmacy_order', id: order._id } });
       return ok(route, { order, paymentRequired: false }, 201);
     }
     const one = /^\/pharmacy-orders\/(\w{24})(\/mark-paid)?$/.exec(path);
@@ -221,13 +225,14 @@ async function exampleOne(page: Page, b: Backend, signedIn = false) {
   await page.goto('/#/pharmacy/today');
   await expect(page.getByRole('heading', { name: 'Today', level: 1 })).toBeVisible();
   await expect(page.getByLabel('Money of the day')).toHaveText('Collected ₹820.00: cash ₹320.00 · UPI ₹0.00 · wallet ₹500.00 · unpaid ₹0.00');
-  const rows = page.getByRole('list', { name: 'The day’s visits, sales and tests, latest first' }).getByRole('listitem');
+  const rows = page.getByRole('list', { name: 'The day’s visits, sales and tests, in the order they were made' }).getByRole('listitem');
   await expect(rows).toHaveCount(2);
-  await expect(rows.nth(0)).toContainText('Asha Verma: medicines');
-  await expect(rows.nth(0)).toContainText('₹320.00');
-  await expect(rows.nth(0)).toContainText('Paid (cash)');
-  await expect(rows.nth(1)).toContainText('Asha Verma: Dr Kavya video');
-  await expect(rows.nth(1)).toContainText('Paid (wallet)');
+  // In the order they were made, as in a register.
+  await expect(rows.nth(0)).toContainText('Asha Verma: Dr Kavya · now · video');
+  await expect(rows.nth(0)).toContainText('Paid (wallet)');
+  await expect(rows.nth(1)).toContainText('Asha Verma: Dolo 650');
+  await expect(rows.nth(1)).toContainText('₹320.00');
+  await expect(rows.nth(1)).toContainText('Paid (cash)');
   await page.getByLabel('Search by name or ref').fill('K7Q');
   await expect(rows).toHaveCount(1);
   await rows.nth(0).getByRole('link').click();
@@ -291,4 +296,17 @@ test('Find patient: found by phone through a POST search, then what they need', 
   await page.getByRole('button', { name: `Choose Asha Verma · ${PHONE}` }).click();
   await expect(page.getByRole('link', { name: /^Lab test/ })).toHaveAttribute('href', '#/pharmacy/lab-book?visit=1');
   expect(b.calls.find((c) => c.path === '/pharmacy-customers/search')!.body).toMatchObject({ search: PHONE });
+});
+
+test('what waits: an unpaid counter sale is one tap from its page; each row opens its record', async ({ page }) => {
+  const b = await mockBackend(page);
+  const SALE = '91'.padStart(24, '0');
+  b.register.push({ kind: 'wallet_topup', id: 'f1'.padStart(24, '0'), at: NOW.toISOString(), shortRef: null, patientName: null, what: 'Wallet top-up', amountMinor: 100000,
+    paid: false, method: 'upi', status: 'credited', link: { kind: 'wallet_transaction', id: 'f1'.padStart(24, '0') } });
+  b.register.push({ kind: 'order', id: SALE, at: NOW.toISOString(), shortRef: 'PO-7', patientName: 'Ravi K.', what: 'Dolo 650 +1 more', amountMinor: 12000, paid: false,
+    method: null, status: 'placed', link: { kind: 'pharmacy_order', id: SALE } });
+  await signIn(page);
+  await expect(page.getByRole('link', { name: '1 unpaid sale' })).toHaveAttribute('href', `#/pharmacy/sale/${SALE}`);
+  await expect(page.getByRole('link', { name: /Ravi K\.\s?: Dolo 650 \+1 more/ })).toHaveAttribute('href', `#/pharmacy/orders/${SALE}`);
+  await expect(page.getByRole('link', { name: /Wallet top-up/ })).toHaveAttribute('href', '#/pharmacy/wallet');
 });

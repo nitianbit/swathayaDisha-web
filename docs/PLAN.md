@@ -2575,6 +2575,20 @@ backend r37's draft shapes (in parallel; mocked in e2e until its final shapes co
 API gaps / waiting for r37's final shapes: the register's phone search; the pending keys; whether `link` paths are app paths;
 the to-do delete is in the api module but not offered (only add and tick were asked).
 
+### WQ54 built to r37's final shapes (backend stage 950417ab; same branch, on ebca0fb)
+
+- **Today's register** (`GET /pharmacy-assisted/today?date&cursor&limit`): rows oldest first (a register is read top to
+  bottom; the home shows the latest 10 in that order, from a first page of 200); the Today page reads pages of 50 with
+  **Show more**; `totals` are the whole day's on every page (a wallet top-up is listed, not collected); `truncated` is said;
+  `what` is the server's ready-made line, shown as data. A row opens its record by `link {kind, id}` (`todayLink`: order →
+  the order page, booking → the consultation, lab booking → the lab test, wallet transaction → the wallet). A row is the
+  day it was made at the counter; upcoming appointments are in pending and the booking lists.
+- **Pending** (first page): prescriptions to review, unpaid counter sales (one opens that sale's page), bookings coming up,
+  lab reports ready, low stock, each a link; none shown on later pages.
+- **To-dos:** `GET` newest first in a page (`items`), `POST` answers `{ todo, replayed }`, 409 `TODO_CHANGED` is said and
+  read again, `createdBy.name` shows who added it (shared within the pharmacy). Delete stays in the api module only.
+- The earlier gaps: the register has no phone (search is by name, ref or what); pending and links are now the server's.
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -2965,7 +2979,8 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 
 | Date | Packet | Checks |
 |---|---|---|
-| 2026-11-26 | WQ54 simple pharmacy home P1 (on stage 9b80676) | Against r37's draft shapes (mocked). typecheck clean; Vitest 532/532 (+3 in pharmacyToday.test.ts: routes and bodies with checks before sending, the money line's parts, an answer of another shape shown empty); Playwright pharmacy-home 7/7 + 1 skipped (example 1 on desktop, tablet and a phone (More menu, 48 px buttons): a new patient, a video consult from the wallet, medicines in cash, Today with both and the money split, a to-do added and ticked; no internet with Try again keeping the to-do's text and key; Find patient by a POST search) + consult-now, assisted-booking, lab-booking, pharmacy-sale, orders, session, i18n on a temporary config (port 5566, deleted); the full suite via pw-slot.sh runs on this commit (result in the report). |
+| 2026-11-26 | WQ54 to r37 final shapes (950417ab, on ebca0fb) | typecheck clean; Vitest 533/533 (pharmacyToday.test.ts: the paged today read and its checks, the to-do routes, `todayLink`, `pendingCount`); Playwright pharmacy-home 9/9 + 1 skipped (+1 journey x 2: an unpaid counter sale one tap from its page, each row opening its record) + session; the full suite via pw-slot.sh runs on this commit (result in the report). |
+| 2026-11-26 | WQ54 simple pharmacy home P1 (on stage 9b80676) | Against r37's draft shapes (mocked). typecheck clean; Vitest 532/532 (+3 in pharmacyToday.test.ts: routes and bodies with checks before sending, the money line's parts, an answer of another shape shown empty); Playwright pharmacy-home 7/7 + 1 skipped (example 1 on desktop, tablet and a phone (More menu, 48 px buttons): a new patient, a video consult from the wallet, medicines in cash, Today with both and the money split, a to-do added and ticked; no internet with Try again keeping the to-do's text and key; Find patient by a POST search) + consult-now, assisted-booking, lab-booking, pharmacy-sale, orders, session, i18n on a temporary config (port 5566); the full suite via pw-slot.sh 1165/1165 + 1 skipped (14.6 min). |
 | 2026-11-26 | WQ50c r36b rx flag (on stage c512942) | typecheck clean; Vitest 529/529 (+1: `isRxMedicine` reads `rx` only; the keyed sale body is always in-store with a customer); Playwright pharmacy-sale 14/14 (the mock's stock rows carry `rx`) on a temporary config (port 5564, deleted). |
 | 2026-11-26 | WQ50b part 2 (r36 135b5639 shapes, on ff743be) | typecheck clean; Vitest 528/528 (pharmacySale.test.ts: the POST search, the keyed create, by-key and abandon routes, a bad key refused before sending); Playwright pharmacy-sale 14/14 (7 journeys x 2: walk-in cash sale with the r36 bill; Rx marked before the sale; refusals incl. INDEXES_OUTDATED; a resend under the same key answers the first sale; checked by key then given up; a replay of a sale cancelled meanwhile prints no bill; a resend refused as another body reads the key) + orders, stock, stock-supply, prescription-review, pharmacy-extras 254/254 on a temporary config (port 5564); the full suite via pw-slot.sh runs on this commit (result in the report). |
 | 2026-11-26 | WQ50b part 1 (on stage 06c2080) | typecheck clean; Vitest 529/529 (pharmacySale.test.ts: the body built before sending, rows without a holder left out, a lost sale never matched to an order that existed before or is closed); Playwright pharmacy-sale 10/10 (5 journeys x 2: walk-in cash sale with the GST-inclusive bill, its own page after a reload; Rx sale with Create waiting for the upload and back from the review; refusals incl. the 503 prescription gate; a lost answer ignoring earlier and cancelled sales; Forget only after a late second check) + orders, stock, stock-supply, prescription-review, pharmacy-extras 254/254 on a temporary config (port 5564); the full suite via pw-slot.sh 1146/1146 (15.9 min). |

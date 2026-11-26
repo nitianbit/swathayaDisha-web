@@ -23,7 +23,7 @@ export default {
   'money.label': 'Money of the day',
 
   'register.title': 'Today’s register',
-  'register.caption': 'The day’s visits, sales and tests, latest first',
+  'register.caption': 'The day’s visits, sales and tests, in the order they were made',
   'register.none': 'Nothing yet today',
   'register.noneText': 'Each visit, sale and test of the day is listed here.',
   'register.all': 'See all of today',
@@ -47,10 +47,12 @@ export default {
 
   'pending.title': 'Waiting for you',
   'pending.none': 'Nothing is waiting.',
-  'pending.prescriptions': { one: '{count} prescription to review', other: '{count} prescriptions to review' },
-  'pending.unpaidSales': { one: '{count} unpaid sale', other: '{count} unpaid sales' },
-  'pending.labReports': { one: '{count} lab report to give', other: '{count} lab reports to give' },
-  'pending.consultations': { one: '{count} consultation waiting', other: '{count} consultations waiting' },
+  'pending.prescriptionsToReview': { one: '{count} prescription to review', other: '{count} prescriptions to review' },
+  'pending.unpaidCounterSales': { one: '{count} unpaid sale', other: '{count} unpaid sales' },
+  /** Bookings (doctor or lab) that are coming up. */
+  'pending.bookingsAwaiting': { one: '{count} booking coming up', other: '{count} bookings coming up' },
+  'pending.labReportsReady': { one: '{count} lab report ready', other: '{count} lab reports ready' },
+  'pending.lowStock': { one: '{count} medicine low in stock', other: '{count} medicines low in stock' },
 
   'todos.title': 'My to-dos',
   'todos.add': 'Add',
@@ -107,4 +109,7 @@ export default {
   'today.count': { one: '{count} item', other: '{count} items' },
   'today.noMatch': 'Nothing matches this search.',
   'today.older': 'Earlier days: change the day above.',
+  'today.more': 'Show more',
+  /** The server lists a very busy day only in part. */
+  'today.truncated': 'This day has too many rows to list them all here. The money above is the whole day’s.',
 } as const;
