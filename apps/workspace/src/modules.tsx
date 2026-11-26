@@ -279,10 +279,12 @@ export const PAGES: readonly WorkspacePage[] = [
   { path: '/partner/invoices/:invoiceId', roles: ['partner'], element: <InvoiceScreen />, partnerPermissions: INVOICE_READERS },
   // WQ55 (P4): a lab member's + New (the patient, then what: the desk, a home collection, a doctor, a bill, each by its
   // permission; none: the page says to ask the owner) and Today (the day's register; the server scopes it to the member).
-  { path: '/partner/new', roles: ['partner'], element: <NewVisitScreen />, partnerKinds: ['lab'] },
+  // WQ57 (P3): the same + New and Today for a clinic's reception.
+  { path: '/partner/new', roles: ['partner'], element: <NewVisitScreen />, partnerKinds: ['lab', 'clinic'] },
   {
-    path: '/partner/today', roles: ['partner'], element: <TodayScreen />, partnerKinds: ['lab'], partnerPermissions: REGISTER_READERS,
-    nav: { labelKey: 'nav.today', icon: CalendarDays, sectionKey: 'nav.section.lab' },
+    path: '/partner/today', roles: ['partner'], element: <TodayScreen />, partnerKinds: ['lab', 'clinic'], partnerPermissions: REGISTER_READERS,
+    // Next to Home (a lab's and a clinic's alike).
+    nav: { labelKey: 'nav.today', icon: CalendarDays, sectionKey: '' },
   },
   // WQ3: lab slots and online lab bookings (labs only).
   {

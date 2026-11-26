@@ -2795,6 +2795,35 @@ The pharmacy's simple home (WQ54–54e), for a lab member, with the same pieces,
   walk-in stays unbilled." (Stay is the main answer; a data-router blocker on the way to Home only).
 - Taps for a walk-in CBC in cash: 12 at one branch, 13 the first time at two branches, then 12 (the branch is remembered).
 
+## WQ57 the simple clinic reception home, P3 (2026-11-26, branch `wq57/clinic-home` from web stage 85b3815; backend r40 21a4a92b)
+
+The lab's front desk (WQ55–55c), for a clinic's reception, through the same `front/` pieces (`useFrontDesk` gains a clinic
+desk; nothing copied).
+
+- **Home:** big buttons **+ New**, **Find patient**, **New bill**, **Today** by permission; **Doctors today**: each clinic doctor
+  with their next appointments and, in grey, "12:00–12:30 Busy" when taken elsewhere (r40 `busy`, the time only: never the
+  patient or the place; for members who read the clinic's day); the day's money (the lab's shape, refunds and bank); waiting
+  work ("3 to check in · 1 to confirm · 2 walk-ins without a bill · 1 unpaid bill"); the latest rows; shared to-dos.
+- **Today** (`/partner/today`, now next to Home in the menu for labs and clinics alike): r40's rows. An appointment reads
+  "Dr Kavya · 10:15 · In person"; a bill naming its appointment (`appointmentId`) is folded into that row, as a lab's; an
+  online appointment paid online reads "Paid (online)" (not in the clinic's money).
+- **+ New (`/partner/new`):** the same patient step (This person / Someone else; the clinic desk has no number lookup, so the
+  number is typed twice), then **Appointment now (walk-in)**, **Appointment for later**, **Bill**, each by permission.
+- **The desk in a visit** (`/partner/desk?visit=1&when=now|later`): the patient named once; the branch (the last-used one
+  first, session memory); the doctors as big buttons (one at the branch: chosen at once); "now" offers the doctor's next free
+  time today, "later" a day and its free times; a time inside the doctor's busy block is never offered ("Times when the
+  doctor is busy elsewhere are not shown."). "Book Dr Kavya at 10:15" books in one tap through the desk's own keyed booking,
+  then opens the short bill with the doctor's fee on it ("Consultation · Dr Kavya", a hand line at 0% GST, from the
+  appointment's fee); a member without bills sees the receipt and Done. The desk's own "Create bill" also starts with the fee
+  and is the main button on its receipt.
+- **Taps for a walk-in with Dr Kavya paid in cash: 9** (+ New, Find, This person, Next, Appointment now, Book Dr Kavya at
+  10:15, Issue bill for ₹500.00, Cash, Record ₹500.00 paid); one more when the branch has several doctors.
+- Decisions (owner away): an appointment row opens the reception's day (there is no appointment page); the fee line is a
+  hand line at 0% GST (a consultation is exempt); "now" is the doctor's next free slot today.
+- r40c (coming, no shape change): busy blocks rounded out to 15 minutes and clipped to the range read are drawn as given
+  (their own from and to) and checked against a time by overlap, never by whole slots; `deskUnbilled` counts up to today on
+  the server.
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -3185,6 +3214,7 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-26 | WQ57 the simple clinic reception home (r40 21a4a92b, from 85b3815) | typecheck clean; Vitest 537/537; the full suite via pw-slot.sh 1197 passed, 2 failed (WQ51b's clinic Home tiles, replaced by the reception home), 7 skipped (22.9 min) on a temporary config (port 5568, deleted); after updating that test (and a type fix in the new spec) doctor-tools and clinic-home 80/80 + 2 skipped. clinic-home: walk-in with Dr Kavya in cash in 9 taps (desktop, tablet, 390 px), one Today row, a later time avoiding a busy block, a family member, a branch-limited member, a member without billing. Screenshots in /tmp/wq57-shots. |
 | 2026-11-26 | WQ55c lab desk polish (r38c 9b512b92, from c59c07a) | typecheck clean; Vitest 535/535; lab-home, lab-desk, partner-invoices, pharmacy-home 123/123 + 5 skipped; the full suite via pw-slot.sh 1187/1187 + 5 skipped (14.3 min) on a temporary config (port 5567, deleted). A first full run on an overloaded machine (5.1 h) timed out 48 unrelated tablet tests; the rerun passed. Walk-in CBC in cash: 12 taps at one branch; 13 the first time at two, then 12. |
 | 2026-11-26 | WQ55b the lab desk, shorter and truthful (r38b f86bf769, from 531c3a3) | typecheck clean; Vitest 535/535; the full suite via pw-slot.sh 1185/1185 + 5 skipped (14.1 min) on a temporary config (port 5567, deleted): lab-home's walk-in CBC in cash counted at 12 taps for a one-branch clerk (390 px) and 13 with two branches, the booked CBC on the bill, one Today row, truthful desk rows, doctor bookings waiting, plain lines, no Try again on a refusal, no home collection where no branch does it; the refund method chosen; the code link at the desk. Screenshots in /tmp/wq55b-shots. |
 | 2026-11-26 | WQ55 the simple lab front-desk home (r38 85c10c6e, from 47289d6) | typecheck clean; Vitest 535/535; the full suite via pw-slot.sh 1185/1185 + 5 skipped (15.7 min) on a temporary config (port 5567, deleted), with lab-home (walk-in CBC paid in cash in Today with totals, home collection, family member, branch-limited member, member without billing; desktop, tablet, 390 px) and the bill payment specs choosing a method; then the r38b slots: lab-home and pharmacy-home again 27/27 + 5 skipped. Screenshots in /tmp/wq55-shots. |

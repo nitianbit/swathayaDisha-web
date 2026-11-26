@@ -116,4 +116,12 @@ describe('WQ54 pharmacy today and to-dos', () => {
     expect(pendingCount({}, 'consultationsWaiting')).toBe(0);
     expect(pendingCount({ unpaidBills: null }, 'unpaidBills')).toBeNull();
   });
+
+  it('WQ57: a clinic reception reads the lab routes; its appointments open the day, its bills their page', () => {
+    const id = 'b1'.repeat(12);
+    expect(todayLink({ link: { kind: 'booking', id } }, 'clinic')).toBe('/partner/desk');
+    expect(todayLink({ link: { kind: 'invoice', id } }, 'clinic')).toBe(`/partner/invoices/${id}`);
+    expect(todayLink({ link: { kind: 'lab_booking', id } }, 'clinic')).toBeNull();
+    expect(pendingCount({ appointmentsToday: { count: 4, toCheckInCount: 3, toConfirmCount: 1 } }, 'appointmentsToday')).toBe(4);
+  });
 });

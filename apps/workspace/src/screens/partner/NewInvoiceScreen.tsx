@@ -341,10 +341,11 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
     ? { ...EMPTY, branchId: prefill.branchId, doctorId: prefill.doctorId, name: prefill.name, phone: prefill.phone,
       link: { ...prefill.link, label: prefill.label, nameFixed: !!prefill.name.trim(), phoneFixed: !!prefill.phone.trim() },
       // WQ55b: the booked tests, at today's catalogue price (one the catalogue no longer offers is left out).
-      lines: (prefill.items ?? []).flatMap(({ id }) => {
+      lines: [...(prefill.items ?? []).flatMap(({ id }) => {
         const it = offeredById(catalogue, id);
         return it ? [catalogueLine(it)] : [];
-      }) }
+      }), ...(prefill.handLines ?? []).map((l): LineDraft => ({ key: lineKey(), description: l.description, sac: '', qty: '1', price: paiseToInput(l.priceMinor),
+        discount: '', gstRate: '0' }))] }
     // WQ55: a bill opened from + New is the account holder's (as a desk booking's bill): a family member's is in the phone
     // owner's name (typed on + New, else typed here).
     : { ...EMPTY, branchId: branches.length === 1 ? branches[0]!._id : '',

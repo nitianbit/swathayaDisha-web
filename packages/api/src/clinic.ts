@@ -378,6 +378,16 @@ const STATES = new Set<string>(DOCTOR_INVITE_STATES);
 const STATUSES = new Set<string>(CLINIC_APPOINTMENT_STATUSES);
 
 /** The clinic routes of one partner workspace (member, or admin acting as owner). Ids, phones and dates are checked before any path. */
+/** r40: a doctor's time taken elsewhere (another clinic, online): the doctor and when only. */
+export interface DoctorBusy { doctorId: string; from: string; to: string }
+const busyOf = (raw: unknown): DoctorBusy[] => (Array.isArray(raw) ? raw : []).flatMap((b) => {
+  const x = b as Partial<DoctorBusy> | null;
+  return x && typeof x.doctorId === 'string' && typeof x.from === 'string' && typeof x.to === 'string' ? [{ doctorId: x.doctorId, from: x.from, to: x.to }] : [];
+});
+/** WQ57: a time (its start and end instants) is free of this doctor's busy blocks. */
+export const freeOfBusy = (doctorId: string, from: number, to: number, busy: readonly DoctorBusy[]) =>
+  !busy.some((b) => b.doctorId === doctorId && Date.parse(b.from) < to && Date.parse(b.to) > from);
+
 export function partnerClinicApi(c: ApiClient, scope: PartnerScope) {
   const base = () => `${partnerWorkspaceBase(scope)}/clinic`;
   const appt = (id: string, command: string) => `${base()}/appointments/${checkId(id, 'appointment')}/${command}`;
@@ -420,6 +430,19 @@ export function partnerClinicApi(c: ApiClient, scope: PartnerScope) {
           branchId: q.branchId === undefined ? undefined : checkId(q.branchId, 'branch'),
         },
       });
+    },
+    /**
+     * WQ57 (r40): the same list with `busy` beside it: when each clinic doctor is taken elsewhere (`{ doctorId, from, to }`
+     * only; no patient or place).
+     */
+    dayView: async (q: AppointmentQuery): Promise<{ appointments: ClinicAppointment[]; busy: DoctorBusy[] }> => {
+      const problem = appointmentRangeProblem(q.from, q.to);
+      if (problem) throw new Error(`Invalid appointment dates: ${problem}`); // i18n-ignore: a programming error, not shown
+      const r = await c.getWith<ClinicAppointment[], { busy: unknown }>(`${base()}/appointments`, {
+        query: { from: q.from, to: q.to, doctorId: q.doctorId === undefined ? undefined : checkId(q.doctorId, 'doctor'),
+          branchId: q.branchId === undefined ? undefined : checkId(q.branchId, 'branch') },
+      });
+      return { appointments: Array.isArray(r.data) ? r.data : [], busy: busyOf(r.meta.busy) };
     },
     /**
      * Books a desk appointment exactly once per (desk member, `requestKey`): resending the same request answers the

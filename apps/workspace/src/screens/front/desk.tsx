@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { CalendarDays, Pill, Plus, Receipt, Search, type LucideIcon } from 'lucide-react';
 import {
-  hasGlobalScope, holdsAny, labAssistedApi, labDeskApi, LAB_PENDING_KEYS, OBJECT_ID_PATTERN, partnerWorkspaceApi, PENDING_KEYS, pharmacyAssistedApi, pharmacySaleApi, todayApi,
-  type LabPendingKey, type PatientLookup, type PendingKey, type SaleCustomer, type TodayApi, type TodayDesk,
+  CLINIC_PENDING_KEYS, hasGlobalScope, holdsAny, labAssistedApi, labDeskApi, LAB_PENDING_KEYS, OBJECT_ID_PATTERN, partnerWorkspaceApi, PENDING_KEYS, pharmacyAssistedApi, pharmacySaleApi, todayApi,
+  type ClinicPendingKey, type LabPendingKey, type PatientLookup, type PendingKey, type SaleCustomer, type TodayApi, type TodayDesk,
 } from '@jansetu/api';
 import { t } from '../../i18n/home/index.ts';
 import { pagesFor, REGISTER_READERS } from '../../modules.tsx';
@@ -30,14 +30,16 @@ export interface FrontDesk {
   /** This desk's own patients searched by name or phone (a pharmacy's customers); null: + New takes a phone only. */
   customers: ((search: string) => Promise<SaleCustomer[]>) | null;
   /** The waiting work, in the strip's order, and where each is done (null: shown, but not a link for this person). */
-  pending: readonly (PendingKey | LabPendingKey)[];
-  pendingTo: (key: PendingKey | LabPendingKey, ids: readonly string[] | undefined, count: number) => string | null;
+  pending: readonly (PendingKey | LabPendingKey | ClinicPendingKey)[];
+  pendingTo: (key: PendingKey | LabPendingKey | ClinicPendingKey, ids: readonly string[] | undefined, count: number) => string | null;
   /** A pharmacy's bookings waiting for payment, by kind (r37c `bookingsAwaiting`); a lab has its own queues instead. */
   bookingTo?: { consultations: (ids: readonly string[] | undefined, count: number) => string | null; labBookings: (ids: readonly string[] | undefined, count: number) => string | null };
   /** A read this person is not allowed: said plainly (a lab member: ask the owner). */
   forbidden: string | null;
   /** WQ55b: this person reads the day register (a lab member: by permission). */
   register: boolean;
+  /** WQ57: said when this person may start no visit (never a blank home). */
+  noVisits: string;
 }
 
 /** The one record's page when the list names exactly one, else the list page. */
@@ -48,7 +50,8 @@ export const oneOr = (ids: readonly string[] | undefined, count: number, one: (i
 export function useFrontDesk(): FrontDesk | null {
   const { api } = useSession();
   const user = useStaff();
-  const lab = user.role === 'partner' && user.partner?.partner.kind === 'lab' ? user.partner : null;
+  const kind = user.role === 'partner' ? user.partner?.partner.kind : undefined;
+  const lab = kind === 'lab' || kind === 'clinic' ? user.partner! : null;
   // WQ55b: the lab's branches (the same read as the workspace's), so a choice no branch of this member offers is not shown.
   const branches = useQuery({
     queryKey: ['partner-ws', 'member', lab?.partner.id ?? 'none', 'branches'], queryFn: () => partnerWorkspaceApi(api, { kind: 'member' }).branches(), enabled: !!lab,
@@ -76,23 +79,45 @@ export function useFrontDesk(): FrontDesk | null {
         consultations: (ids, n) => oneOr(ids, n, (id) => `/pharmacy/consultations/${id}`, '/pharmacy/consultations'),
         labBookings: (ids, n) => oneOr(ids, n, (id) => `/pharmacy/lab-tests/${id}`, '/pharmacy/lab-tests'),
       },
-      forbidden: null, register: true,
+      forbidden: null, register: true, noVisits: '',
     };
   }
   const m = user.partner?.member;
-  if (user.role !== 'partner' || !m || user.partner?.partner.kind !== 'lab') return null;
+  if (user.role !== 'partner' || !m || (kind !== 'lab' && kind !== 'clinic')) return null;
+  const open = new Set(pagesFor(user).map((p) => p.path));
+  const page = (path: string, one?: (id: string) => string) => (ids: readonly string[] | undefined, n: number) =>
+    (!open.has(path) ? null : one ? oneOr(ids, n, one, path) : path);
+  const register = holdsAny(m, REGISTER_READERS);
+  const bill = holdsAny(m, ['invoices.create']);
+  const bills = page('/partner/invoices', (id) => `/partner/invoices/${id}`);
+  const partnerBig = (choices: readonly unknown[]) => [
+    ...(choices.length ? [{ to: '/partner/new', label: t('big.new'), Icon: Plus }, { to: '/partner/new?find=1', label: t('big.find'), Icon: Search }] : []),
+    ...(bill ? [{ to: '/partner/invoices/new', label: t('big.bill'), Icon: Receipt }] : []),
+    ...(register ? [{ to: '/partner/today', label: t('big.today'), Icon: CalendarDays }] : []),
+  ];
+  if (kind === 'clinic') {
+    // WQ57 (P3): a clinic's reception: an appointment now (a walk-in) or later (`bookings.manage`), a bill
+    // (`invoices.create`); the clinic desk has no number lookup (the number is typed twice on + New).
+    const book = holdsAny(m, ['bookings.manage']);
+    const desk = page('/partner/desk');
+    const choices = [
+      ...(book ? [{ to: `${visitPath('/partner/desk')}&when=now`, label: t('new.clinicNow') }, { to: `${visitPath('/partner/desk')}&when=later`, label: t('new.clinicLater') }] : []),
+      ...(bill ? [{ to: visitPath('/partner/invoices/new'), label: t('new.bill') }] : []),
+    ];
+    return {
+      kind: 'clinic', id: user.id, today: todayApi(api, 'clinic'), newPath: '/partner/new', todayPath: '/partner/today', big: partnerBig(choices), choices,
+      lookup: null, customers: null, pending: CLINIC_PENDING_KEYS,
+      pendingTo: (k, ids, n) => (k === 'unpaidBills' ? bills(ids, n) : k === 'appointmentsToday' || k === 'deskUnbilled' ? desk(ids, n) : null),
+      forbidden: t('askOwnerClinic'), register, noVisits: t('askOwnerVisitsClinic'),
+    };
+  }
   // WQ55: only what this member may do: the desk's walk-ins and home collections (`bookings.manage`), booking a doctor
   // (`assisted.book`), a bill (`invoices.create`); the waiting work links only to pages they may open.
   const desk = holdsAny(m, ['bookings.manage']);
   const consult = holdsAny(m, ['assisted.book']);
-  const bill = holdsAny(m, ['invoices.create']);
-  const open = new Set(pagesFor(user).map((p) => p.path));
-  const page = (path: string, one?: (id: string) => string) => (ids: readonly string[] | undefined, n: number) =>
-    (!open.has(path) ? null : one ? oneOr(ids, n, one, path) : path);
   const bookings = page('/partner/lab-bookings', (id) => `/partner/lab-bookings/${id}`);
   const mine = (branches.data ?? []).filter((x) => x.isActive !== false && (hasGlobalScope(m) || m.branchIds.includes(x._id)));
   const home = mine.some((x) => x.services?.homeCollection);
-  const register = holdsAny(m, REGISTER_READERS);
   const choices = [
     ...(desk ? [{ to: visitPath('/partner/lab-desk'), label: t('new.labDesk') }] : []),
     // Only when one of this member's branches does home collection.
@@ -102,20 +127,15 @@ export function useFrontDesk(): FrontDesk | null {
   ];
   return {
     kind: 'lab', id: user.id, today: todayApi(api, 'lab'), newPath: '/partner/new', todayPath: '/partner/today',
-    big: [
-      ...(choices.length ? [{ to: '/partner/new', label: t('big.new'), Icon: Plus }, { to: '/partner/new?find=1', label: t('big.find'), Icon: Search }] : []),
-      ...(bill ? [{ to: '/partner/invoices/new', label: t('big.bill'), Icon: Receipt }] : []),
-      ...(register ? [{ to: '/partner/today', label: t('big.today'), Icon: CalendarDays }] : []),
-    ],
+    big: partnerBig(choices),
     choices,
     lookup: desk ? (phone) => labDeskApi(api, { kind: 'member' }).lookup(phone) : consult ? (phone) => labAssistedApi(api).lookup(phone) : null,
     customers: null,
     pending: LAB_PENDING_KEYS,
-    // r38: each queue where it is done (one record: its own page).
     // r38: each queue where it is done (one record: its own page); bookings waiting for payment are consultations.
-    pendingTo: (k, ids, n) => (k === 'unpaidBills' ? page('/partner/invoices', (id) => `/partner/invoices/${id}`)(ids, n)
+    pendingTo: (k, ids, n) => (k === 'unpaidBills' ? bills(ids, n)
       : k === 'consultationsWaiting' || k === 'bookingsAwaitingPayment' ? page('/partner/consultations', (id) => `/partner/consultations/${id}`)(ids, n)
       : k === 'samplesToCollect' || k === 'reportsDue' || k === 'deskUnbilled' ? bookings(ids, n) : null),
-    forbidden: t('askOwner'), register,
+    forbidden: t('askOwner'), register, noVisits: t('askOwnerVisits'),
   };
 }

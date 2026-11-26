@@ -30,7 +30,7 @@ export function NewVisitScreen() {
       <div className="simple">
         <PageHeading title={find ? t('new.findTitle') : t('new.title')} />
         <div className="simple-top"><HomeButton /></div>
-        <Alert tone="warn">{t('askOwnerVisits')}</Alert>
+        <Alert tone="warn">{desk?.noVisits || t('askOwnerVisits')}</Alert>
       </div>
     );
   }

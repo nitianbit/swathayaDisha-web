@@ -13,11 +13,11 @@ import { OBJECT_ID_PATTERN } from './partners.ts';
  */
 
 /** r38 (a lab): `lab_booking`, `bill`, `consultation`, `wallet_topup`. */
-export type TodayKind = 'order' | 'consultation' | 'lab_booking' | 'wallet_topup' | 'bill';
+export type TodayKind = 'order' | 'consultation' | 'lab_booking' | 'wallet_topup' | 'bill' | 'appointment';
 /** r38 (a lab): `lab_booking`, `invoice`, `booking`, `wallet_entry`. */
 export type TodayLinkKind = 'pharmacy_order' | 'booking' | 'lab_booking' | 'wallet_transaction' | 'invoice' | 'wallet_entry';
-/** Whose front desk: a pharmacy's (r37) or a lab's (r38). */
-export type TodayDesk = 'pharmacy' | 'lab';
+/** Whose front desk: a pharmacy's (r37), a lab's (r38) or WQ57 a clinic's reception (r40). */
+export type TodayDesk = 'pharmacy' | 'lab' | 'clinic';
 export interface TodayItem {
   kind: TodayKind | string;
   id: string;
@@ -43,6 +43,8 @@ export interface TodayItem {
    * one row. r38b: a desk booking's own `paid` is its bill's.
    */
   labBookingId?: string | null;
+  /** r40 (a clinic's bill): the appointment it bills (folded into that appointment's row). */
+  appointmentId?: string | null;
 }
 /** r38: a lab's bills add `bank`. */
 export type PaymentMethodKey = 'cash' | 'upi' | 'card' | 'bank' | 'wallet' | 'online' | 'other';
@@ -75,6 +77,8 @@ export interface TodayPending {
   /** r38b: desk walk-ins without a bill yet. */
   deskUnbilled?: (Counted & { ids?: string[] }) | null;
   bookingsAwaitingPayment?: (Counted & { ids?: string[] }) | null;
+  /** r40 (a clinic): today's appointments still to check in or to confirm. */
+  appointmentsToday?: (Counted & { toCheckInCount?: number; toConfirmCount?: number; toCheckInIds?: string[]; toConfirmIds?: string[] }) | null;
   consultationsWaiting?: (Counted & { ids?: string[] }) | null;
 }
 export const PENDING_KEYS = ['prescriptionsToReview', 'unpaidCounterSales', 'bookingsAwaiting', 'labReportsReady', 'lowStock'] as const;
@@ -82,11 +86,14 @@ export type PendingKey = (typeof PENDING_KEYS)[number];
 /** WQ55: a lab's waiting work, in the order the strip shows it. */
 export const LAB_PENDING_KEYS = ['samplesToCollect', 'reportsDue', 'deskUnbilled', 'unpaidBills', 'bookingsAwaitingPayment', 'consultationsWaiting'] as const;
 export type LabPendingKey = (typeof LAB_PENDING_KEYS)[number];
+/** WQ57 (r40): a clinic reception's waiting work. */
+export const CLINIC_PENDING_KEYS = ['appointmentsToday', 'deskUnbilled', 'unpaidBills'] as const;
+export type ClinicPendingKey = (typeof CLINIC_PENDING_KEYS)[number];
 /**
  * r37c: a row's line as a code and its values: `order.items { first, more }`, `order.counter`, `order.online`,
  * `consult.scheduled { doctor, time, mode }`, `consult.instant { doctor, mode }`, `lab.tests { first, more }`, `wallet.topup`.
  * r38 (a lab): `lab.tests` adds `source` (`self`, `pharmacy_assisted`, `doctor_assisted`, `lab_desk`) and `visit` (`lab`,
- * `home`); `bill.items { first, more }`.
+ * `home`); `bill.items { first, more }`. r40 (a clinic): `clinic.appointment { doctor, date, time, mode, source: desk|online }`.
  */
 export interface WhatParts { code: string; values?: Record<string, string | number | null> }
 /** `truncated` (r37b): which lists the server cut short (an empty list = nothing cut). */
@@ -133,7 +140,7 @@ export function todayOf(raw: unknown): TodayAnswer {
 }
 
 /** A waiting kind's count (0 when the server does not say); `null` when the server could not read that queue. */
-export const pendingCount = (p: TodayPending | undefined, k: PendingKey | LabPendingKey): number | null => {
+export const pendingCount = (p: TodayPending | undefined, k: PendingKey | LabPendingKey | ClinicPendingKey): number | null => {
   if (p && k in p && p[k] === null) return null;
   const n = Number(p?.[k]?.count ?? 0);
   return Number.isInteger(n) && n > 0 ? n : 0;
@@ -156,7 +163,7 @@ export function bookingsWaiting(p: TodayPending | undefined): { consultations: n
   return { consultations: n(b?.consultationCount, b?.consultationIds), labBookings: n(b?.labCount, b?.labBookingIds) };
 }
 
-const TODAY_BASE: Readonly<Record<TodayDesk, string>> = { pharmacy: '/pharmacy-assisted', lab: '/partner-workspace' };
+const TODAY_BASE: Readonly<Record<TodayDesk, string>> = { pharmacy: '/pharmacy-assisted', lab: '/partner-workspace', clinic: '/partner-workspace' };
 
 /** A front desk's day register and to-dos: a pharmacy's (`/pharmacy-assisted`) or WQ55 a lab member's (`/partner-workspace`). */
 export function todayApi(c: ApiClient, desk: TodayDesk) {
@@ -212,6 +219,8 @@ const LINKS: Readonly<Record<TodayDesk, Partial<Record<TodayLinkKind, (id: strin
     lab_booking: (id) => `/partner/lab-bookings/${id}`, booking: (id) => `/partner/consultations/${id}`, invoice: (id) => `/partner/invoices/${id}`,
     wallet_entry: () => '/partner/wallet',
   },
+  // WQ57: an appointment opens the reception's day (it has no page of its own); a bill its page.
+  clinic: { booking: () => '/partner/desk', invoice: (id) => `/partner/invoices/${id}` },
 };
 /** The app page of a register row's record (the existing detail pages of that desk), or null. */
 export function todayLink(i: Pick<TodayItem, 'link'>, desk: TodayDesk = 'pharmacy'): string | null {

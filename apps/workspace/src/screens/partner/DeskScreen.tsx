@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
   addDays, ApiError, appointmentAt, appointmentDay, canonicalMobile, CLINIC_APPOINTMENT_STATUS_LABEL, clinicBranchesFor, DESK_GENDERS, DESK_RELATIONS,
-  deskActions, deskBookingProblems, doctorsAtBranch, familyMemberProblems, holdsAny, INVOICE_STATE_LABEL, isRealDate, istDateOf, MAX_APPOINTMENTS,
+  deskActions, deskBookingProblems, doctorsAtBranch, familyMemberProblems, freeOfBusy, holdsAny, INVOICE_STATE_LABEL, isRealDate, istDateOf, MAX_APPOINTMENTS,
   MAX_DESK_CANCEL_REASON, MAX_DESK_NAME, MAX_DESK_NOTES, MAX_FAMILY_NAME, noShowMovedOnce,
   type Branch, type ClinicAppointment, type ClinicDoctorRow, type DeskAction, type DeskActionOffer, type DeskAppointment, type DeskBookingResult,
   type DeskGender, type DeskPatientInput, type DeskRelation, type DeskSlot, type DeskSlotKnown,
@@ -15,7 +15,9 @@ import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
 import { messageOf } from '../../errors.ts';
 import { afterFailure, beginAttempt, keyedLookup, newRequestKey, ownsKey, resolveStored, startOp, stillCurrent, wasAbandoned } from '../../requests.ts';
 import { useSession, type SessionMemory } from '../../session.tsx';
-import { BILL_READERS, BillLink, type BillPrefill } from './billing.tsx';
+import { BILL_READERS, BillLink, openBill, type BillPrefill } from './billing.tsx';
+import { useVisitPreset, type VisitPatient } from '../front/visitPatient.ts';
+import { VisitPatientLine } from '../front/visitBar.tsx';
 import {
   appointmentLabel, appointmentTone, ClinicOnly, clinicLink, istTime, useClinicApi, useDoctorList, type ClinicApi,
 } from './clinic.tsx';
@@ -164,7 +166,11 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
   const [pending, setPendingState] = useState<DeskPending | undefined>(() => memory.get<DeskPending>(slotKey));
   const [sending, setSending] = useState(false);
   const [chosen, setChosen] = useState<Chosen | null>(null);
-  const [patient, setPatient] = useState<Patient>(NO_PATIENT);
+  // WQ57 (P3): opened from + New, the visit's patient (handed over once) and its "now" or "later".
+  const visit = useVisitPreset();
+  const [params] = useSearchParams();
+  const [when] = useState<'now' | 'later'>(() => (params.get('when') === 'later' ? 'later' : 'now'));
+  const [patient, setPatient] = useState<Patient>(() => (visit ? patientOf(visit) : NO_PATIENT));
   const [refused, setRefused] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<ReceiptView | null>(null);
   const [gaveUp, setGaveUp] = useState<string | null>(null);
@@ -257,6 +263,25 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
   }
 
 
+  /** Books `chosen` for `request` (one key; the desk's own form and a visit from + New alike). */
+  const bookChosen = (c: Chosen, request: Omit<DeskPendingBody['request'], 'requestKey'>) => {
+    const requestKey = newRequestKey();
+    const body: DeskPendingBody = {
+      request: { ...request, requestKey },
+      shown: { doctorName: c.doctor.name, doctorId: c.doctor.doctorId, branchName: c.branch.name, branchId: c.branch._id, day: c.slot.date, time: clock(c.slot.startTime) },
+    };
+    memory.set(lastBranchSlot(ctx), c.branch._id);
+    void send(startOp(requestKey, body));
+  };
+  // WQ57: after a visit's appointment, its bill (the doctor's fee on it) opens at once for a member who makes bills.
+  const navigate = useNavigate();
+  const billed = useRef(false);
+  useEffect(() => {
+    if (!visit || !receipt || billed.current || !holdsAny(ctx.actor, ['invoices.create'])) return;
+    billed.current = true;
+    openBill(ctx, memory, visitBillPrefill(receipt, visit), navigate);
+  }, [receipt]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const locked = !!pending;
   const rows = list.data ?? [];
   const current = rows.find((r) => r.bookingId === selected);
@@ -286,9 +311,7 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
     );
   }
 
-  return (
-    <>
-      {pending && !(sending && pending.attempts === 1 && !pending.uncertain) && (
+  const pendingPanel = pending && !(sending && pending.attempts === 1 && !pending.uncertain) ? (
         <PendingOpPanel key={pending.attempts} label={t('desk.unconfirmed')} op={pending} busy={sending} onResend={() => void send(pending)}
           // Q13: the exact appointment this desk member's key booked (`GET /clinic/appointments/by-key/:key`), also after a reload.
           fetchPage={keyedLookup(pending.requestKey, () => clinic.appointmentByKey(pending.requestKey))}
@@ -304,7 +327,30 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
           abandonWhenNotFound abandonLabel={t('desk.giveUp')}
           onDiscard={() => closeWith(pending, t('desk.gaveUp'))}
           summary={pending.restored || !pending.body ? null : <PendingBookingSummary body={pending.body} />} />
-      )}
+  ) : null;
+
+  // WQ57 (P3): a visit from + New: the doctor and the time only (the patient came from + New), booked in one tap.
+  if (visit) {
+    return (
+      <>
+        {pendingPanel}
+        {gaveUp && !pending && <Alert tone="ok">{gaveUp}</Alert>}
+        {receipt ? (
+          <>
+            <Receipt ctx={ctx} receipt={receipt} memory={memory} row={rows.find((r) => r.bookingId === receipt.booking.bookingId)} />
+            {!holdsAny(ctx.actor, ['invoices.create']) && <Link className="j-btn j-btn--primary" to="/">{t('desk.visit.done')}</Link>}
+          </>
+        ) : !pendingPanel && (
+          <ClinicVisit ctx={ctx} clinic={clinic} visit={visit} when={when} branches={offered} doctors={doctors.data ?? []} patient={patient}
+            sending={sending} refused={refused} memory={memory} onBook={bookChosen} />
+        )}
+      </>
+    );
+  }
+
+  return (
+    <>
+      {pendingPanel}
       {gaveUp && !pending && <Alert tone="ok">{gaveUp}</Alert>}
       {receipt && <Receipt ctx={ctx} receipt={receipt} memory={memory} row={rows.find((r) => r.bookingId === receipt.booking.bookingId)} />}
 
@@ -443,21 +489,123 @@ function DeskDay({ ctx }: { ctx: ScopeContext }) {
       {manage && chosen && !(pending && !(sending && pending.attempts === 1 && !pending.uncertain)) && (
         <BookingForm chosen={chosen} patient={patient} setPatient={setPatient} sending={sending} refused={refused}
           onCancel={() => { setChosen(null); setRefused(null); }}
-          onBook={(request) => {
-            const requestKey = newRequestKey();
-            const body: DeskPendingBody = {
-              request: { ...request, requestKey },
-              shown: { doctorName: chosen.doctor.name, doctorId: chosen.doctor.doctorId, branchName: chosen.branch.name, branchId: chosen.branch._id,
-                day: chosen.slot.date, time: clock(chosen.slot.startTime) },
-            };
-            void send(startOp(requestKey, body));
-          }} />
+          onBook={(request) => bookChosen(chosen, request)} />
       )}
     </>
   );
 }
 
 const patientName = (r: Pick<ClinicAppointment, 'patient'>) => r.patient?.name || t('desk.nameNotGiven');
+
+/**
+ * WQ57 (P3): a visit's appointment: the branch (the last-used one first), the doctor (big buttons), then "now" the next free
+ * time today or "later" a day and its free times. A time when the doctor is busy elsewhere (r40) is never offered.
+ */
+function ClinicVisit({ ctx, clinic, visit, when, branches, doctors, patient, sending, refused, memory, onBook }: {
+  ctx: ScopeContext; clinic: ClinicApi; visit: VisitPatient; when: 'now' | 'later'; branches: Branch[]; doctors: ClinicDoctorRow[]; patient: Patient;
+  sending: boolean; refused: string | null; memory: SessionMemory; onBook: (c: Chosen, request: Omit<DeskPendingBody['request'], 'requestKey'>) => void;
+}) {
+  const today = istDateOf(new Date());
+  const [branchId, setBranchId] = useState(() => {
+    const last = memory.get<string>(lastBranchSlot(ctx));
+    return branches.find((b) => b._id === last)?._id ?? branches[0]?._id ?? '';
+  });
+  const branch = branches.find((b) => b._id === branchId);
+  const here = branch ? doctorsAtBranch(doctors, branch._id) : [];
+  const [doctorId, setDoctorId] = useState<string | null>(null);
+  const doctor = here.find((d) => d.doctorId === doctorId) ?? (here.length === 1 ? here[0] : undefined);
+  const [day, setDay] = useState(today);
+  const [slotId, setSlotId] = useState<string | null>(null);
+  const slots = useQuery({
+    queryKey: [...ctx.key, 'clinic-slots', doctor?.doctorId, branch?._id, day], enabled: !!doctor && !!branch && isRealDate(day),
+    queryFn: () => clinic.deskSlots({ doctorId: doctor!.doctorId, branchId: branch!._id, date: day }),
+  });
+  const busy = useQuery({
+    queryKey: [...ctx.key, 'clinic-busy', doctor?.doctorId, day], enabled: !!doctor && isRealDate(day),
+    queryFn: () => clinic.dayView({ from: day, to: day, doctorId: doctor!.doctorId }),
+  });
+  const free = (slots.data ?? []).filter((s) => {
+    const from = Date.parse(s.startsAt);
+    const end = appointmentAt({ bookingDate: s.date.replace(/-/g, ''), bookingTime: s.endTime })?.getTime() ?? from + 30 * 60_000;
+    return s.seatsLeft > 0 && freeOfBusy(doctor!.doctorId, from, end, busy.data?.busy ?? []);
+  });
+  const slot = when === 'now' ? free[0] : free.find((s) => s.slotId === slotId);
+  const book = () => doctor && branch && slot && onBook({ slot, doctor, branch }, requestOf(patient, slot.slotId));
+  const fee = doctor?.consultationFee;
+  return (
+    <section className="ws-section" aria-labelledby="cv-h">
+      <h2 id="cv-h">{when === 'now' ? t('desk.visit.now') : t('desk.visit.later')}</h2>
+      <VisitPatientLine patient={visit} canChange={!sending} />
+      {branches.length > 1 && (
+        <div className="j-field">
+          <label htmlFor="cv-branch">{t('desk.branch')}</label>
+          <select id="cv-branch" value={branchId} onChange={(e) => { setBranchId(e.target.value); setDoctorId(null); setSlotId(null); }}>
+            {branches.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
+          </select>
+        </div>
+      )}
+      {here.length === 0 ? <Alert tone="warn">{t('desk.visit.noDoctor')}</Alert> : (
+        <div className="big-actions big-actions--two" role="group" aria-label={t('desk.visit.whichDoctor')}>
+          {here.map((d) => (
+            <button key={d.doctorId} type="button" className="big-action" aria-pressed={doctor?.doctorId === d.doctorId}
+              onClick={() => { setDoctorId(d.doctorId); setSlotId(null); }}>{d.name}{d.specialization ? <span className="big-action-text">{d.specialization}</span> : null}</button>
+          ))}
+        </div>
+      )}
+      {doctor && when === 'later' && (
+        <TextField label={t('desk.visit.day')} type="date" min={today} value={day} onChange={(e) => { if (e.target.value) { setDay(e.target.value); setSlotId(null); } }} />
+      )}
+      {doctor && (!slots.data || !busy.data ? (slots.isError || busy.isError
+        ? <ErrorState message={messageOf(slots.error ?? busy.error)} onRetry={() => { void slots.refetch(); void busy.refetch(); }} /> : <Loading label={t('desk.loadingSlots')} />)
+        : free.length === 0 ? <Alert tone="warn">{when === 'now' ? t('desk.visit.noneToday', { doctor: doctor.name }) : t('desk.visit.noTimes', { doctor: doctor.name })}</Alert>
+        : when === 'later' ? (
+          <div className="pay-buttons" role="group" aria-label={t('desk.visit.times')}>
+            {free.map((s) => (
+              <button key={s.slotId} type="button" className="pay-button" aria-pressed={slotId === s.slotId} onClick={() => setSlotId(s.slotId)}>{clock(s.startTime)}</button>
+            ))}
+          </div>
+        ) : null)}
+      {doctor && busy.data && busy.data.busy.some((b) => b.doctorId === doctor.doctorId) && <p className="ws-muted">{t('desk.visit.busyHidden')}</p>}
+      {refused && <Alert>{t('desk.notBooked', { reason: refused })}</Alert>}
+      {doctor && slot && (
+        <div className="rx-actions">
+          <Button busy={sending} onClick={book}>{t('desk.visit.book', { doctor: doctor.name, time: clock(slot.startTime) })}</Button>
+          <span className="ws-muted">{fee ? t('desk.form.fee', { fee: formatRupees(fee) }) : t('desk.form.feeNone')}</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** A booking's request from the desk's patient details (the account holder's mobile and name; a family member when chosen). */
+function requestOf(patient: Patient, slotId: string): Omit<DeskPendingBody['request'], 'requestKey'> {
+  const name = patient.name.trim();
+  const notes = patient.notes.trim();
+  const seen: DeskPatientInput | undefined = patient.forFamily && patient.relation
+    ? { name: patient.familyName.trim().replace(/\s+/g, ' '), relation: patient.relation, ...(patient.gender ? { gender: patient.gender } : {}),
+      ...(patient.dateOfBirth ? { dateOfBirth: patient.dateOfBirth } : {}) }
+    : undefined;
+  return { slotId, customer: { phone: canonicalMobile(patient.phone)!, ...(name ? { name } : {}) }, ...(seen ? { patient: seen } : {}), ...(notes ? { notes } : {}) };
+}
+
+/** WQ57: + New's patient as the desk's details: the account holder's name (the owner's, for a family member) and who is seen. */
+const patientOf = (v: VisitPatient): Patient => ({
+  ...NO_PATIENT, phone: v.phone, name: v.family ? v.family.holderName : v.name,
+  ...(v.family ? { forFamily: true, familyName: v.name, relation: v.family.relation, gender: v.family.gender, dateOfBirth: v.family.dateOfBirth } : {}),
+});
+
+/** WQ57: this person's last-used branch at the desk (session memory only). */
+const lastBranchSlot = (ctx: ScopeContext) => `clinic-last-branch:${scopeIdentity(ctx)}`;
+
+/** WQ57: a visit's bill: the appointment, its account holder (+ New's numbers and names), the doctor's fee; the short bill. */
+function visitBillPrefill(r: ReceiptView, v: VisitPatient): BillPrefill {
+  const b = r.booking;
+  return {
+    link: { kind: 'appointment', id: b.bookingId }, branchId: b.branchId ?? '', doctorId: b.doctorId, name: v.family ? v.family.holderName : v.name, phone: v.phone,
+    label: `${r.doctorName ?? t('desk.theDoctor')}, ${appointmentLabel(b)}`, simple: true,
+    ...(b.fee ? { handLines: [feeLine(r.doctorName, b.fee)] } : {}),
+  };
+}
 /** Q14: who is being seen, when it is a family member: "Mother of Kiran Shah". */
 const familyLine = (r: Pick<ClinicAppointment, 'patient'>) =>
   (!r.patient?.relationship ? ''
@@ -493,8 +641,9 @@ function Receipt({ ctx, receipt, memory, row }: { ctx: ScopeContext; receipt: Re
       {' '}{t('desk.receipt.fee', { fee: formatRupees(b.fee ?? 0) })}
       {receipt.created ? <> {t('desk.receipt.created')}</> : null}
       {' '}{t('desk.receipt.notified')}
-      {' '}{row?.patient?.phone ? <BillLink ctx={ctx} memory={memory} prefill={prefillOf(row)} />
-        : holdsAny(ctx.actor, ['invoices.create']) ? t('desk.receipt.makeBill') : null}
+      {row?.patient?.phone ? null : holdsAny(ctx.actor, ['invoices.create']) ? <>{' '}{t('desk.receipt.makeBill')}</> : null}
+      {/* WQ57: the next step is the bill (the main button, the doctor's fee on it). */}
+      {row?.patient?.phone && <div className="ws-actions"><BillLink ctx={ctx} memory={memory} prefill={prefillOf(row)} className="j-btn j-btn--primary" /></div>}
     </Alert>
   );
 }
@@ -513,12 +662,18 @@ function PendingBookingSummary({ body }: { body: DeskPendingBody }) {
   );
 }
 
-/** Q14: the bill's customer is the appointment's account holder (409 APPOINTMENT_CUSTOMER_MISMATCH otherwise), not a family member. */
+/**
+ * Q14: the bill's customer is the appointment's account holder (409 APPOINTMENT_CUSTOMER_MISMATCH otherwise), not a family
+ * member. WQ57: the doctor's fee is on it.
+ */
 const prefillOf = (a: ClinicAppointment): BillPrefill => ({
   link: { kind: 'appointment', id: a.bookingId }, branchId: a.branchId ?? '', doctorId: a.doctorId,
   name: (a.patient?.relationship ? a.patient.accountName : a.patient?.name) ?? '', phone: a.patient?.phone ?? '',
   label: `${a.doctorName ?? t('desk.theDoctor')}, ${appointmentLabel(a)}`,
+  ...(a.fee ? { handLines: [feeLine(a.doctorName, a.fee)] } : {}),
 });
+/** WQ57: the doctor's fee (rupees) as a bill line. */
+const feeLine = (doctor: string | undefined, fee: number) => ({ description: t('desk.feeLine', { doctor: doctor ?? t('desk.theDoctor') }), priceMinor: Math.round(fee * 100) });
 
 /**
  * Q14: an appointment's bill (its open bill, else the latest cancelled one): its number and status with a link; or, for
@@ -638,10 +793,7 @@ function BookingForm({ chosen, patient, setPatient, sending, refused, onCancel, 
               {' '}{t('desk.form.once')}
             </div>
             <div className="confirm-actions">
-              <Button busy={sending} onClick={() => {
-                const notes = patient.notes.trim();
-                onBook({ slotId: chosen.slot.slotId, customer: { phone: canonicalMobile(patient.phone)!, ...(name ? { name } : {}) }, ...(seen ? { patient: seen } : {}), ...(notes ? { notes } : {}) });
-              }}>{t('desk.form.book')}</Button>
+              <Button busy={sending} onClick={() => onBook(requestOf(patient, chosen.slot.slotId))}>{t('desk.form.book')}</Button>
               <Button variant="ghost" disabled={sending} onClick={() => setReviewing(false)}>{t('desk.form.backToDetails')}</Button>
             </div>
           </div>

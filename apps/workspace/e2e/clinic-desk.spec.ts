@@ -1284,8 +1284,8 @@ test('WQ11b: after a bill is paid, the desk row shows it paid (the Bill column i
   await openDesk(page);
   const row = appointments(page).getByRole('row').filter({ hasText: 'Asha Rao' });
   await row.getByRole('link', { name: 'Create bill' }).click();
-  await page.getByLabel('From the catalogue').selectOption({ label: 'Consultation · ₹500.00' });
-  await page.getByRole('button', { name: 'Add item' }).click();
+  // WQ57: the doctor's fee is on the bill already.
+  await expect(page.getByLabel('Description').first()).toHaveValue('Consultation · Dr Mehta');
   await page.getByRole('button', { name: 'Review the bill' }).click();
   await page.getByRole('button', { name: 'Issue bill' }).click();
   await expect(page.getByText(/^Bill SC\/2627\/000\d+ issued\./)).toBeVisible();

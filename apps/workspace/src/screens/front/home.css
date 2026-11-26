@@ -69,3 +69,9 @@ body.visit-mode .ws-main { font-size: 1.0625rem; }
 /* WQ55b: a waiting line this person cannot open is plain text; a refused read is said once, with nothing to retry. */
 .pending-item--plain { background: none; padding: 0; color: var(--ink); }
 .simple-forbidden { margin: 0; color: var(--muted); }
+/* WQ57: a clinic reception's doctors today; a busy block is grey. */
+.doctors-today { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-3); }
+.doctors-today > li { display: grid; gap: var(--space-1); }
+.doctors-today ul { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.doctors-today ul li { padding: var(--space-1) var(--space-2); border-radius: var(--radius); background: var(--brand-soft); }
+.doctors-today ul li.doctor-busy { background: var(--canvas); color: var(--muted); }
