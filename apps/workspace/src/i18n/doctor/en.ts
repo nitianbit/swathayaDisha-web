@@ -468,6 +468,7 @@ export default {
   'clinicPage.noClinic.title': 'You have no clinic of your own yet',
   'clinicPage.noClinic.body': 'Bills and prices belong to your clinic.',
   'clinicPage.noClinic.create': 'Create your clinic',
+  'clinicPage.chooseClinic': 'Choose which clinic to bill from its workspace',
   /** WQ56 (P2): the doctor's dashboard. Names, clinic names and times are values. */
   /** {amount}: formatted money. What his Jansetu earnings grew by today. */
   'dash.earnedToday': 'Earned today {amount}',
@@ -514,6 +515,8 @@ export default {
   /** An answer was lost: {reason} says why. */
   'visit.uncertain': 'It is not known yet whether this was booked ({reason}). Check your appointments before booking anything else, or send the same booking again: it is never booked twice.',
   'visit.unconfirmed': 'There is a booking waiting for confirmation. Send the same booking again to check it without booking twice.',
+  'visit.recoveryNotice': 'A booking is waiting for confirmation.',
+  'visit.afterReload': 'The page was reloaded while this booking was waiting for confirmation. Check Appointments to see whether it was booked. Its details are no longer available to send again.',
   'visit.resume.clinic': 'Continue clinic booking',
   'visit.resume.online': 'Continue online booking',
   'visit.resume.follow-up': 'Continue follow-up booking',
@@ -521,7 +524,6 @@ export default {
   'visit.another': 'Another patient',
   'visit.clinic.title': 'Clinic appointment',
   'visit.clinic.which': 'Which clinic?',
-  'visit.clinic.at': 'At {clinic}',
   'visit.clinic.none': 'You consult at no verified clinic yet.',
   'visit.clinic.toClinics': 'Open Clinics',
   /** {time}, {day}, {clinic}. */

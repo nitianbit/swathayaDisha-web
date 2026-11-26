@@ -31,6 +31,7 @@ interface Backend {
   todos: Rec[];
   bills: Rec[];
   loseFollowUp?: boolean;
+  loseBooking?: 'clinic' | 'online';
 }
 
 const at = (time: string) => new Date(`${DAY}T${time}:00+05:30`).toISOString();
@@ -39,7 +40,7 @@ function row(n: number, time: string, name: string, o: Rec): Rec & { name: strin
     paymentStatus: 'paid', price: 700, settlementSystem: 'ledger', source: 'self', clinic: null, channel: 'online', createdAt: NOW.toISOString(), ...o };
 }
 
-async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean } = {}): Promise<Backend> {
+async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean; onlyOwn?: boolean; severalClinics?: boolean } = {}): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
   const b: Backend = { calls: [], live: false, owner: o.owner !== false, todos: [], bills: [], rows: [
     row(1, '10:30', 'Ravi Demo', { source: 'clinic_desk', consultationMode: 'in-person', clinicDesk: { partnerId: OWN, branchId: OWNBR }, clinic: { id: OWN, name: 'Dr Arjun Skin Clinic' },
@@ -52,7 +53,8 @@ async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean }
   const profile = { _id: DOC, name: 'Dr Arjun Demo', specialization: 'Dermatologist', consultationFee: 700, phone: '9000000004', isActive: true, isVerified: true };
   const clinics = () => ({ invites: [], clinics: [
     ...(b.owner ? [{ partnerId: OWN, name: 'Dr Arjun Skin Clinic', solo: !o.nonSolo, verified: true, role: 'owner', branches: [{ branchId: OWNBR, name: 'Main' }] }] : []),
-    { partnerId: DEMO, name: 'Demo Care Clinic', solo: false, verified: true, role: 'staff', branches: [{ branchId: DEMOBR, name: 'Baner' }] },
+    ...(!o.onlyOwn ? [{ partnerId: DEMO, name: 'Demo Care Clinic', solo: false, verified: true, role: o.severalClinics ? 'owner' : 'staff',
+      branches: [{ branchId: DEMOBR, name: 'Baner' }] }] : []),
   ] });
   const practice = () => (b.owner ? { partner: { _id: OWN, kind: 'clinic', name: 'Dr Arjun Skin Clinic', taxRegime: 'unregistered', verification: { state: 'verified' },
     invoiceSeries: { prefix: 'DSKIN' }, isActive: true }, branches: [{ _id: OWNBR, partnerId: OWN, name: 'Main', isActive: true,
@@ -97,7 +99,8 @@ async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean }
     if (p === '/instant/offers') return ok(route, []);
     if (p === '/clinics') return ok(route, clinics());
     if (p === '/practice') return ok(route, o.nonSolo ? null : practice());
-    if (p === '/clinic' && method === 'GET') return ok(route, practice());
+    if (p === '/clinic' && method === 'GET') return o.severalClinics
+      ? fail(route, 409, 'CLINIC_CHOICE_REQUIRED', 'Choose a clinic') : ok(route, practice());
     if (p === '/slots') return ok(route, slots.filter((s) => !b.rows.some((r) => r.slotId === s._id)));
     if (p === '/appointments/list') return ok(route, listed(), 200, { meta: { total: b.rows.length, truncated: false } });
     if (p === '/appointments' && method === 'GET') return ok(route, listed());
@@ -115,6 +118,7 @@ async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean }
     }
     if (p === '/patients/lookup') return ok(route, { exists: true, holderNameMasked: 'A*** D***' });
     if (p === '/clinic-appointments' && method === 'POST') {
+      if (b.loseBooking === 'clinic') return route.abort('failed');
       const x = body as { clinicId: string; branchId?: string; slotId: string; customer: { phone: string; name?: string } };
       const s = slots.find((y) => y._id === x.slotId)!;
       const id = bid(++seq);
@@ -143,6 +147,7 @@ async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean }
         if (b.loseFollowUp) return route.abort('failed');
         return ok(route, followUp.answer, 201);
       }
+      if (b.loseBooking === 'online') return route.abort('failed');
       const x = body as { slotId: string; mode: string; customer: { phone: string; name?: string } };
       const s = slots.find((y) => y._id === x.slotId)!;
       const id = bid(++seq);
@@ -369,6 +374,45 @@ test('a booked follow-up can be resent with the same key after checking appointm
   expect(attempts[2]!.body).toEqual(attempts[0]!.body);
 });
 
+for (const kind of ['clinic', 'online', 'follow-up'] as const) {
+  test(`a lost ${kind} booking remains safe after a page reload`, async ({ page }) => {
+    const b = await mockBackend(page, { onlyOwn: true });
+    const endpoint = kind === 'clinic' ? '/specialists/me/clinic-appointments' : '/specialists/me/consultations';
+    if (kind === 'follow-up') {
+      b.loseFollowUp = true;
+      Object.assign(b.rows[1]!, { status: 'completed', followUp: { eligibilityExpiresAt: '20261204' } });
+    } else b.loseBooking = kind;
+    await signIn(page);
+    if (kind === 'follow-up') {
+      await list(page).getByRole('link', { name: /Meera Demo/ }).click();
+      await page.getByRole('link', { name: /Book a follow-up/ }).click();
+    } else {
+      await newVisit(page, 'Asha Recovery');
+      const choice = kind === 'clinic' ? 'Clinic appointment' : 'Online consultation (video or call)';
+      await page.getByRole('navigation', { name: 'What does the patient need?' }).getByRole('link', { name: choice }).click();
+    }
+    if (kind === 'clinic') await page.getByRole('group', { name: 'Which clinic?' }).getByRole('button', { name: 'Dr Arjun Skin Clinic' }).click();
+    else await page.getByRole('button', { name: 'Video', exact: true }).click();
+    const slot = kind === 'clinic' ? '12:00' : '13:00';
+    await page.getByRole('button', { name: slot, exact: true }).click();
+    await page.getByRole('button', { name: new RegExp(`^Book.*${slot}`) }).click();
+    await expect(page.getByRole('button', { name: 'Send again' })).toBeVisible();
+    const attempts = () => b.calls.filter((c) => c.method === 'POST' && c.path === endpoint);
+    const key = String(attempts()[0]!.body?.requestKey);
+    expect(await stored(page)).toContain(key);
+    expect(await stored(page)).not.toMatch(/Asha Recovery|9876543210/);
+    await page.reload();
+    await expect(page.getByText(/Its details are no longer available to send again/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Send again' })).toHaveCount(0);
+    await page.getByRole('link', { name: 'Check your appointments' }).click();
+    await page.getByRole('link', { name: `Continue ${kind} booking` }).click();
+    await expect(page.getByText(/Its details are no longer available to send again/)).toBeVisible();
+    expect(await stored(page)).toContain(key);
+    expect(await stored(page)).not.toMatch(/Asha Recovery|9876543210/);
+    expect(attempts()).toHaveLength(1);
+  });
+}
+
 test('a doctor who owns no clinic: no Bills button, no Bill on rows, and Doctor › Bills says so', async ({ page }) => {
   await mockBackend(page, { owner: false });
   await signIn(page);
@@ -376,6 +420,14 @@ test('a doctor who owns no clinic: no Bills button, no Bill on rows, and Doctor 
   await expect(list(page).getByRole('button', { name: 'Bill' })).toHaveCount(0);
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Bills', exact: true }).click();
   await expect(page.getByText('You have no clinic of your own yet')).toBeVisible();
+});
+
+test('the Bills menu explains where to bill when the doctor owns several clinics', async ({ page }) => {
+  await mockBackend(page, { severalClinics: true, nonSolo: true });
+  await signIn(page);
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Bills', exact: true }).click();
+  await expect(page.getByText('Choose which clinic to bill from its workspace')).toBeVisible();
+  await expect(page.getByText('You have no clinic of your own yet')).toHaveCount(0);
 });
 
 test('his to-dos are his own: added once, no "added by"', async ({ page }) => {
@@ -411,8 +463,8 @@ test.describe('on a 390 px phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
   test.beforeEach(({}, info) => test.skip(info.project.name !== 'desktop', 'the phone size runs once'));
 
-  test('the dashboard and a clinic appointment at his own clinic (one clinic choice skipped) on a phone', async ({ page }) => {
-    const b = await mockBackend(page);
+  test('the dashboard and choosing his only clinic on a phone', async ({ page }) => {
+    const b = await mockBackend(page, { onlyOwn: true });
     b.rows = b.rows.filter((r) => r.clinic === null || (r.clinic as Rec).id === OWN);
     await signIn(page);
     await noSidewaysScroll(page);
@@ -420,6 +472,7 @@ test.describe('on a 390 px phone', () => {
     await page.screenshot({ path: '/tmp/wq56-shots/home-phone.png', fullPage: true });
     await newVisit(page, 'Lata Demo');
     await page.getByRole('navigation', { name: 'What does the patient need?' }).getByRole('link', { name: 'Clinic appointment' }).click();
+    await expect(page.getByRole('group', { name: 'Free times' })).toHaveCount(0);
     await page.getByRole('group', { name: 'Which clinic?' }).getByRole('button', { name: 'Dr Arjun Skin Clinic' }).click();
     await page.getByRole('group', { name: 'Free times' }).getByRole('button', { name: '12:00' }).click();
     await noSidewaysScroll(page);

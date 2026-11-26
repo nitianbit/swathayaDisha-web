@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, doctorStanding, VERIFICATION_LABEL } from '@jansetu/api';
+import { ApiError, CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE, doctorStanding, VERIFICATION_LABEL } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
@@ -50,10 +50,17 @@ function ClinicPageFor({ d, page }: { d: DoctorContext; page: Page }) {
   const own = useOwnedClinic(d.user.id, active === true);
   if (profile.isPending || (active && own.pending)) return <Loading label={t('clinics.loadingYourClinic')} />;
   if (active && own.owned) return page === 'bills' ? <InvoicesScreen /> : <CatalogueScreen />;
+  const chooseClinic = own.error instanceof ApiError && own.error.code === 'CLINIC_CHOICE_REQUIRED';
+  const openClinic = () => { window.history.replaceState(null, '', LANDING[page]); signOut('toClinicWorkspace'); };
   return (
     <>
       <PageHeading title={t(`clinicPage.${page}.title`)} />
-      {q.isPending ? <Loading label={t('clinics.loadingYourClinic')} />
+      {active && own.error ? (chooseClinic ? (
+        <Empty title={t('clinicPage.chooseClinic')}>
+          <Button onClick={openClinic}>{t('clinicPage.open')}</Button>
+        </Empty>
+      ) : <ErrorState message={messageOf(own.error)} onRetry={own.retry} />)
+        : q.isPending ? <Loading label={t('clinics.loadingYourClinic')} />
         : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
         : !q.data ? (
           <Empty title={t('clinicPage.noClinic.title')}>
@@ -72,7 +79,7 @@ function ClinicPageFor({ d, page }: { d: DoctorContext; page: Page }) {
               : active && (
                 <div className="ws-actions">
                   {/* As Shell's sign-out: the address is set first, so the clinic workspace opens on this page's twin. */}
-                  <Button onClick={() => { window.history.replaceState(null, '', LANDING[page]); signOut('toClinicWorkspace'); }}>{t('clinicPage.open')}</Button>
+                  <Button onClick={openClinic}>{t('clinicPage.open')}</Button>
                 </div>
               )}
           </section>

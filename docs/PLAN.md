@@ -3273,7 +3273,10 @@ appointments" list (the home's list is today's appointments, `doctor-dashboard.s
   phone. When a detail is missing, the form asks for it before issuing the bill. The appointment response shows the current
   linked bill even if it was made or paid on an earlier day. A cancelled bill permits a replacement.
 - A booking whose answer was lost retains its request key and original details in session memory. The doctor can check
-  Appointments and continue the same booking upon return. After a full reload, check Appointments before booking again.
+  Appointments and continue the same booking upon return. A full reload keeps only the request key. The recovery screen
+  directs the doctor to Appointments and leaves the request unresolved when the original details are unavailable.
+- The doctor chooses a clinic even if only one is offered. The Bills menu explains which workspace to use when the
+  doctor owns several clinics, and a failed appointment or clinic read offers Try again.
 - Follow-up uses the date the server granted. Doctor-created desk bookings identify who booked them. Rows and single
   pending tasks open the relevant record. The next appointment appears when today is empty, and the filter chips scroll.
 - Online booking shows the fee. The earnings breakdown, statement and CSV start with the same India-date period

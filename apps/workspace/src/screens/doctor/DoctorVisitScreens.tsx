@@ -49,7 +49,7 @@ export function DoctorBookingRecovery({ d }: { d: DoctorContext }) {
   if (!pending.length) return null;
   return (
     <Alert tone="warn">
-      {t('visit.unconfirmed')}
+      {t('visit.recoveryNotice')}
       <div className="ws-actions">{pending.map((kind) => (
         <Link key={kind} className="j-btn j-btn--secondary" to={`/doctor/new/${kind}`}>{t(`visit.resume.${kind}`)}</Link>
       ))}</div>
@@ -84,7 +84,7 @@ function useOnce<B, T>(slot: string, run: (body: B, requestKey: string) => Promi
   };
   const resend = () => {
     const stored = memory.get<PendingOp<B>>(slot);
-    if (stored) void transmit(stored);
+    if (stored && !stored.restored && stored.body) void transmit(stored);
   };
   return { busy, refused, done, send, resend, open: op, locked: busy || !!op, clear: () => setRefused(null) };
 }
@@ -108,6 +108,7 @@ function SendBar({ once, label, onSend }: { once: Pick<Once, 'busy' | 'refused'>
 
 function ResumeBooking({ once, visit }: { once: Pick<Once, 'open' | 'busy' | 'resend'>; visit?: VisitPatient }) {
   if (once.busy) return <Loading />;
+  if (once.open?.restored || (once.open && !once.open.body)) return <RestoredBooking />;
   if (once.open) {
     return (
       <div className="ws-section" role="alert">
@@ -121,6 +122,18 @@ function ResumeBooking({ once, visit }: { once: Pick<Once, 'open' | 'busy' | 're
     );
   }
   return null;
+}
+
+/** A reload preserves the key only. The doctor checks the appointment list; resending requires the original details. */
+function RestoredBooking() {
+  return (
+    <Alert tone="warn">
+      {t('visit.afterReload')}
+      <div className="ws-actions">
+        <Link className="j-btn j-btn--secondary" to="/doctor/appointments">{t('visit.checkAppointments')}</Link>
+      </div>
+    </Alert>
+  );
 }
 
 /** A visit opened without its patient (a reload, or the address typed): back to + New. */
@@ -236,11 +249,11 @@ function ClinicVisit({ d, visit }: { d: DoctorContext; visit: VisitPatient | nul
   const [clinicId, setClinicId] = useState<string | null>(null);
   const [slot, setSlot] = useState<DoctorSlot | null>(null);
   if (once.done) return <ClinicDone visit={once.done.visit} done={once.done} />;
-  if (once.locked) return <ResumeBooking once={once} visit={once.open?.body.visit} />;
+  if (once.locked) return <ResumeBooking once={once} visit={once.open?.body?.visit} />;
   if (!visit) return <NoPatient />;
   if (!clinics.data) return clinics.isError ? <Failed error={clinics.error} onRetry={() => void clinics.refetch()} /> : <Loading />;
   const { places, of } = placeWords(clinics.data);
-  const clinic = places.find((c) => c.partnerId === clinicId) ?? (places.length === 1 ? places[0]! : null);
+  const clinic = places.find((c) => c.partnerId === clinicId);
   const chosen = slot;
   const name = (c: { name?: string }) => c.name ?? t('dash.clinicUnnamed');
   return (
@@ -250,20 +263,17 @@ function ClinicVisit({ d, visit }: { d: DoctorContext; visit: VisitPatient | nul
         <Alert tone="warn">{t('visit.clinic.none')} <Link to="/doctor/clinics">{t('visit.clinic.toClinics')}</Link></Alert>
       ) : (
         <>
-          {places.length > 1 && (
-            <section className="ws-section" aria-labelledby="vc-h">
-              <h2 id="vc-h">{t('visit.clinic.which')}</h2>
-              <div className="big-actions big-actions--two" role="group" aria-labelledby="vc-h">
-                {places.map((c) => (
-                  <button key={c.partnerId} type="button" className="big-action" aria-pressed={clinic?.partnerId === c.partnerId} disabled={once.locked}
-                    onClick={() => { setClinicId(c.partnerId); setSlot(null); once.clear(); }}>{name(c)}</button>
-                ))}
-              </div>
-            </section>
-          )}
+          <section className="ws-section" aria-labelledby="vc-h">
+            <h2 id="vc-h">{t('visit.clinic.which')}</h2>
+            <div className="big-actions big-actions--two" role="group" aria-labelledby="vc-h">
+              {places.map((c) => (
+                <button key={c.partnerId} type="button" className="big-action" aria-pressed={clinic?.partnerId === c.partnerId}
+                  onClick={() => { setClinicId(c.partnerId); setSlot(null); once.clear(); }}>{name(c)}</button>
+              ))}
+            </div>
+          </section>
           {clinic && (
             <>
-              {places.length === 1 && <p>{t('visit.clinic.at', { clinic: name(clinic) })}</p>}
               <TimePicker key={clinic.partnerId} d={d} where={{ branchIds: clinic.branches.map((b) => b.branchId) }} slotId={chosen?._id ?? null} disabled={once.locked}
                 onPick={(s) => { setSlot(s); once.clear(); }} label={(s) => (clinic.branches.length > 1 ? `${clock(s)} · ${of(s).split(' · ').pop()}` : clock(s))} />
               <SendBar once={once}
@@ -335,7 +345,7 @@ function OnlineVisit({ d, visit }: { d: DoctorContext; visit: VisitPatient | nul
   const [mode, setMode] = useState<'video' | 'call' | null>(null);
   const [slot, setSlot] = useState<DoctorSlot | null>(null);
   if (once.done) return <ConsultationDone visit={once.done.visit} answer={once.done.answer} />;
-  if (once.locked) return <ResumeBooking once={once} visit={once.open?.body.visit} />;
+  if (once.locked) return <ResumeBooking once={once} visit={once.open?.body?.visit} />;
   if (!visit) return <NoPatient />;
   const m = mode;
   const chosen = slot;
@@ -395,6 +405,9 @@ export function DoctorFollowUpScreen() {
   if (!d) return <NotADoctor />;
   const pending = memory.get<PendingOp<FollowUpChoice>>(visitSlot(d, 'follow-up'));
   if (pending) {
+    if (pending.restored || !pending.body) {
+      return <VisitPage title={t('visit.followUp.title')}><RestoredBooking /></VisitPage>;
+    }
     const parentId = pending.body.parentId;
     return <VisitPage title={t('visit.followUp.title')}><FollowUp key={`${d.identity}:${parentId}`} d={d} parentId={parentId} visit={null} /></VisitPage>;
   }

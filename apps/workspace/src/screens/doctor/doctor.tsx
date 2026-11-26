@@ -45,7 +45,14 @@ export function useOwnedClinic(doctorId: string, enabled = true) {
   const { api } = useSession();
   const clinics = useQuery({ queryKey: ['doctor', doctorId, 'clinics'], queryFn: () => doctorToolsApi(api).clinics(), enabled });
   const billed = useQuery({ queryKey: ['doctor', doctorId, 'billed-clinic'], queryFn: () => doctorDashboardApi(api).billedClinic(), enabled });
-  return { owned: ownedClinic(clinics.data, billed.data), pending: enabled && (clinics.isPending || billed.isPending), clinics };
+  const error = billed.error ?? clinics.error;
+  return {
+    owned: error ? null : ownedClinic(clinics.data, billed.data),
+    pending: enabled && (clinics.isPending || billed.isPending),
+    error,
+    retry: () => { void clinics.refetch(); void billed.refetch(); },
+    clinics,
+  };
 }
 export const offersKey = (d: DoctorContext) => [...d.key, 'offers'];
 export const appointmentsKey = (d: DoctorContext) => [...d.key, 'appointments'];

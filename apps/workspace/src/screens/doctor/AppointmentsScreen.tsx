@@ -39,13 +39,15 @@ function Appointments({ d }: { d: DoctorContext }) {
   const [day, setDay] = useState(() => istDateOf(new Date()));
   // WQ56b: `?open=<id>` (from the home's rows and waiting work): that appointment's day, with its row shown and marked.
   const openId = useSearchParams()[0].get('open');
-  const opened = useQuery({ queryKey: [...appointmentsKey(d), 'open', openId], queryFn: () => d.api.appointment(openId!), enabled: !!openId && OBJECT_ID_PATTERN.test(openId), retry: false });
+  const openRequested = !!openId && OBJECT_ID_PATTERN.test(openId);
+  const opened = useQuery({ queryKey: [...appointmentsKey(d), 'open', openId], queryFn: () => d.api.appointment(openId!), enabled: openRequested, retry: false });
   const openDay = opened.data ? fromYmd(opened.data.bookingDate) : null;
   useEffect(() => { if (openDay) { setView('day'); setDay(openDay); } }, [openDay]);
   return (
     <>
       <PageHeading title={t('common.appointments')}>{t('appointments.yourConsultationsScheduledAndInstant')}</PageHeading>
       <DoctorBookingRecovery d={d} />
+      {openRequested && opened.isError && <ErrorState message={messageOf(opened.error)} onRetry={() => void opened.refetch()} />}
       <div className="ws-search">
         <div className="j-field ws-filter">
           <label htmlFor="appt-view">{t('common.show')}</label>
@@ -57,7 +59,8 @@ function Appointments({ d }: { d: DoctorContext }) {
         </div>
         {view === 'day' && <TextField label={t('appointments.day')} type="date" value={day} onChange={(e) => setDay(e.target.value)} />}
       </div>
-      {view === 'day' ? (isRealDate(day) ? <DayList key={day} d={d} day={day} openId={openDay === day ? openId : null} /> : <Empty title={t('appointments.chooseADay')}>{t('appointments.pickTheDayToShow')}</Empty>)
+      {openRequested && opened.isPending ? <Loading label={t('common.loadingAppointments')} />
+        : view === 'day' ? (isRealDate(day) ? <DayList key={day} d={d} day={day} openId={openDay === day ? openId : null} /> : <Empty title={t('appointments.chooseADay')}>{t('appointments.pickTheDayToShow')}</Empty>)
         : <UpcomingList key={view} d={d} days={view === 'today' ? 1 : UPCOMING_DAYS} />}
     </>
   );
