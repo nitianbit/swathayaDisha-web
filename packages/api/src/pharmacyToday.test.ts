@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createApiClient } from './client.ts';
-import { moneyParts, pendingCount, pharmacyTodayApi, todayLink, todayOf, todoText } from './pharmacyToday.ts';
+import { bookingsWaiting, moneyParts, pendingCount, pharmacyTodayApi, todayLink, todayOf, todoText } from './pharmacyToday.ts';
 
 // WQ54 (P1): the day's register and the pharmacy's to-dos (backend r37, draft shapes).
 
@@ -26,6 +26,8 @@ describe('WQ54 pharmacy today and to-dos', () => {
     await a.addTodo('  Call   supplier ', KEY);
     await a.setDone(TODO, true, 3);
     await a.remove(TODO);
+    await a.today({ order: 'desc', limit: 10 });
+    await a.search({ date: '2026-11-26', q: '  Asha ', order: 'desc' });
     expect(calls.map((x) => `${x.method} ${x.url}`)).toEqual([
       'GET /api/v1/pharmacy-assisted/today',
       'GET /api/v1/pharmacy-assisted/today?date=2026-11-26&cursor=c1&limit=200',
@@ -33,22 +35,37 @@ describe('WQ54 pharmacy today and to-dos', () => {
       'POST /api/v1/pharmacy-assisted/todos',
       `PATCH /api/v1/pharmacy-assisted/todos/${TODO}`,
       `DELETE /api/v1/pharmacy-assisted/todos/${TODO}`,
+      'GET /api/v1/pharmacy-assisted/today?limit=10&order=desc',
+      'POST /api/v1/pharmacy-assisted/today/search',
     ]);
     expect(calls[3]!.body).toEqual({ text: 'Call supplier', requestKey: KEY });
     expect(calls[4]!.body).toEqual({ done: true, expectedVersion: 3 });
+    // r37c: the search is in the body (never in an address).
+    expect(calls[7]!.body).toEqual({ date: '2026-11-26', q: 'Asha', order: 'desc' });
+    expect(() => a.search({ q: ' a ' })).toThrow();
     expect(() => a.today({ date: '2026-02-31' })).toThrow();
     expect(() => a.today({ limit: 201 })).toThrow();
     expect(() => a.setDone('nope', true, 1)).toThrow();
     expect(() => a.addTodo('x', 'bad key')).toThrow();
     expect(() => a.addTodo('   ', KEY)).toThrow();
-    expect(calls).toHaveLength(6);
+    expect(calls).toHaveLength(8);
     expect(todoText('x'.repeat(201))).toBeNull();
   });
 
-  it('the money line: cash, UPI and wallet always; other methods only with money', () => {
+  it('the money line: only the methods that received money', () => {
     expect(moneyParts({ collectedMinor: 82000, byMethod: { cash: 32000, wallet: 50000, card: 0 }, unpaidMinor: 0, count: 2 }))
-      .toEqual([{ key: 'cash', minor: 32000 }, { key: 'upi', minor: 0 }, { key: 'wallet', minor: 50000 }]);
-    expect(moneyParts({ collectedMinor: 100, byMethod: { card: 100 }, unpaidMinor: 0, count: 1 }).map((p) => p.key)).toEqual(['cash', 'upi', 'card', 'wallet']);
+      .toEqual([{ key: 'cash', minor: 32000 }, { key: 'wallet', minor: 50000 }]);
+    expect(moneyParts({ collectedMinor: 100, byMethod: { card: 100 }, unpaidMinor: 0, count: 1 }).map((p) => p.key)).toEqual(['card']);
+    expect(moneyParts({ collectedMinor: 0, byMethod: {}, unpaidMinor: 0, count: 0 })).toEqual([]);
+  });
+
+  it('truncated is a list (only a non-empty one is kept); bookings waiting by kind', () => {
+    expect(todayOf({ items: [], totals: {}, truncated: [] }).truncated).toBeUndefined();
+    expect(todayOf({ items: [], totals: {}, truncated: true }).truncated).toBeUndefined();
+    expect(todayOf({ items: [], totals: {}, truncated: ['items'] }).truncated).toEqual(['items']);
+    expect(bookingsWaiting({ bookingsAwaiting: { count: 3, consultationCount: 2, labCount: 1 } })).toEqual({ consultations: 2, labBookings: 1 });
+    expect(bookingsWaiting({ bookingsAwaiting: { count: 2, consultationIds: ['a'], labBookingIds: ['b'] } })).toEqual({ consultations: 1, labBookings: 1 });
+    expect(bookingsWaiting({ bookingsAwaiting: null })).toBeNull();
   });
 
   it('an answer of another shape (an older server, a broken one) is empty, never a crash', () => {

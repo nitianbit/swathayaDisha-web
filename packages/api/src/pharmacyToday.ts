@@ -1,5 +1,6 @@
 import type { ApiClient, Page } from './client.ts';
 import { isRealDate } from './partnerLabs.ts';
+import { OBJECT_ID_PATTERN } from './partners.ts';
 
 /**
  * WQ54 (P1, the simple pharmacy home; backend r37, stage 950417ab): the day's register
@@ -18,8 +19,10 @@ export interface TodayItem {
   shortRef: string | null;
   /** The name this pharmacy may show (typed, else masked). */
   patientName: string | null;
-  /** The server's ready-made line ("Dolo 650 +1 more", "Dr Kavya · 11:30 · video"): data, shown as sent. */
+  /** The server's ready-made line ("Dolo 650 +1 more", "Dr Kavya · 11:30 · video"): English data, the fallback. */
   what: string;
+  /** r37c: the same line as a code the app words (`t()`) with its values (names stay data); `what` when it is not known. */
+  whatParts?: WhatParts | null;
   amountMinor: number;
   paid: boolean;
   method: PaymentMethodKey | null;
@@ -42,15 +45,20 @@ interface Counted { count: number }
 export interface TodayPending {
   prescriptionsToReview?: (Counted & { ids?: string[] }) | null;
   unpaidCounterSales?: (Counted & { ids?: string[] }) | null;
-  bookingsAwaiting?: (Counted & { consultationIds?: string[]; labBookingIds?: string[] }) | null;
+  /** r37c: bookings waiting for their payment (any day), with the count of each kind. */
+  bookingsAwaiting?: (Counted & { consultationCount?: number; labCount?: number; consultationIds?: string[]; labBookingIds?: string[] }) | null;
   labReportsReady?: (Counted & { ids?: string[] }) | null;
   lowStock?: (Counted & { ids?: string[] }) | null;
-  /** r37b: card payments of bookings not confirmed yet, their amount and records. */
-  cardPaymentsWaiting?: (Counted & { amountMinor?: number; items?: { kind: string; id: string }[] }) | null;
 }
-export const PENDING_KEYS = ['prescriptionsToReview', 'unpaidCounterSales', 'cardPaymentsWaiting', 'bookingsAwaiting', 'labReportsReady', 'lowStock'] as const;
+export const PENDING_KEYS = ['prescriptionsToReview', 'unpaidCounterSales', 'bookingsAwaiting', 'labReportsReady', 'lowStock'] as const;
 export type PendingKey = (typeof PENDING_KEYS)[number];
-export interface TodayAnswer { date?: string; items: TodayItem[]; totals: TodayTotals; pending?: TodayPending; truncated?: boolean; nextCursor: string | null }
+/**
+ * r37c: a row's line as a code and its values: `order.items { first, more }`, `order.counter`, `order.online`,
+ * `consult.scheduled { doctor, time, mode }`, `consult.instant { doctor, mode }`, `lab.tests { first, more }`, `wallet.topup`.
+ */
+export interface WhatParts { code: string; values?: Record<string, string | number | null> }
+/** `truncated` (r37b): which lists the server cut short (an empty list = nothing cut). */
+export interface TodayAnswer { date?: string; items: TodayItem[]; totals: TodayTotals; pending?: TodayPending; truncated?: string[]; nextCursor: string | null }
 
 /** `todo` (shared within the pharmacy; `createdBy.name` is who added it). */
 export interface Todo {
@@ -59,8 +67,11 @@ export interface Todo {
 }
 export const MAX_TODO_TEXT = 200;
 export const TODAY_PAGE_MAX = 200;
+/** r37c `todaySearchSchema.q`. */
+export const TODAY_SEARCH_MIN = 2;
+export const TODAY_SEARCH_MAX = 100;
 const KEY = /^[A-Za-z0-9_-]{8,64}$/;
-const OBJECT_ID = /^[0-9a-fA-F]{24}$/;
+const OBJECT_ID = OBJECT_ID_PATTERN;
 const CURSOR = /^[A-Za-z0-9_.:-]{1,200}$/;
 
 /** A to-do's text as sent (trimmed, single spaces), or null when it is empty or too long. */
@@ -83,7 +94,7 @@ export function todayOf(raw: unknown): TodayAnswer {
     items: Array.isArray(r.items) ? r.items.filter((i): i is TodayItem => !!i && typeof i === 'object' && typeof (i as TodayItem).id === 'string') : [],
     totals: { collectedMinor: num(t.collectedMinor), byMethod: t.byMethod && typeof t.byMethod === 'object' ? t.byMethod : {}, unpaidMinor: num(t.unpaidMinor), count: num(t.count) },
     ...(r.pending && typeof r.pending === 'object' ? { pending: r.pending } : {}),
-    ...(r.truncated === true ? { truncated: true } : {}),
+    ...(Array.isArray(r.truncated) && r.truncated.length > 0 ? { truncated: r.truncated.map(String) } : {}),
     nextCursor: typeof r.nextCursor === 'string' && r.nextCursor ? r.nextCursor : null,
   };
 }
@@ -95,15 +106,41 @@ export const pendingCount = (p: TodayPending | undefined, k: PendingKey): number
   return Number.isInteger(n) && n > 0 ? n : 0;
 };
 
+function checkPage(q: { date?: string; cursor?: string; limit?: number }) {
+  check(q.date === undefined || isRealDate(q.date), 'date');
+  check(q.cursor === undefined || CURSOR.test(q.cursor), 'cursor');
+  check(q.limit === undefined || (Number.isInteger(q.limit) && q.limit >= 1 && q.limit <= TODAY_PAGE_MAX), 'limit');
+}
+
+/**
+ * r37c: bookings waiting for payment by kind (its counts; an older answer without them: the id lists, at most 20 each),
+ * or null when that queue could not be read.
+ */
+export function bookingsWaiting(p: TodayPending | undefined): { consultations: number; labBookings: number } | null {
+  const b = p?.bookingsAwaiting;
+  if (b === null) return null;
+  const n = (v: unknown, ids: unknown) => (Number.isInteger(v) && (v as number) >= 0 ? (v as number) : Array.isArray(ids) ? ids.length : 0);
+  return { consultations: n(b?.consultationCount, b?.consultationIds), labBookings: n(b?.labCount, b?.labBookingIds) };
+}
+
 export function pharmacyTodayApi(c: ApiClient) {
   const todo = (id: string) => { check(OBJECT_ID.test(id), 'to-do'); return `/pharmacy-assisted/todos/${id}`; };
   return {
-    /** One India day's register (YYYY-MM-DD; none = today), oldest first, one cursor page (1–200 rows). */
-    today: (q: { date?: string; cursor?: string; limit?: number } = {}) => {
-      check(q.date === undefined || isRealDate(q.date), 'date');
-      check(q.cursor === undefined || CURSOR.test(q.cursor), 'cursor');
-      check(q.limit === undefined || (Number.isInteger(q.limit) && q.limit >= 1 && q.limit <= TODAY_PAGE_MAX), 'limit');
-      return c.get<unknown>('/pharmacy-assisted/today', { query: { date: q.date, cursor: q.cursor, limit: q.limit } }).then(todayOf);
+    /** One India day's register (YYYY-MM-DD; none = today), one cursor page (1–200 rows); r37c `order=desc`: newest first. */
+    today: (q: { date?: string; cursor?: string; limit?: number; order?: 'asc' | 'desc' } = {}) => {
+      checkPage(q);
+      return c.get<unknown>('/pharmacy-assisted/today', { query: { date: q.date, cursor: q.cursor, limit: q.limit, order: q.order } }).then(todayOf);
+    },
+    /**
+     * r37c: the whole day searched on the server by name, ref, line text or (4+ digits) phone; a POST, so nothing typed
+     * is in an address. The rows only (no totals or waiting work).
+     */
+    search: (q: { date?: string; q: string; cursor?: string; limit?: number; order?: 'asc' | 'desc' }) => {
+      checkPage(q);
+      const s = q.q.trim();
+      check(s.length >= TODAY_SEARCH_MIN && s.length <= TODAY_SEARCH_MAX, 'search');
+      return c.post<unknown>('/pharmacy-assisted/today/search', { body: { ...(q.date ? { date: q.date } : {}), q: s, ...(q.cursor ? { cursor: q.cursor } : {}),
+        ...(q.limit ? { limit: q.limit } : {}), ...(q.order ? { order: q.order } : {}) } }).then(todayOf);
     },
     /** Newest first; open and done alike. */
     todos: (q: { done?: boolean; cursor?: string; limit?: number } = {}): Promise<Page<Todo>> =>
@@ -121,10 +158,9 @@ export function pharmacyTodayApi(c: ApiClient) {
   };
 }
 
-/** Today's money in one line's parts: the methods with money (cash, UPI and wallet always). */
+/** The day's money by method: only the methods that received money. */
 export function moneyParts(t: TodayTotals): { key: PaymentMethodKey; minor: number }[] {
-  return PAYMENT_METHOD_KEYS.map((key) => ({ key, minor: Number(t.byMethod?.[key] ?? 0) }))
-    .filter((p) => Number.isFinite(p.minor) && (p.minor > 0 || p.key === 'cash' || p.key === 'upi' || p.key === 'wallet'));
+  return PAYMENT_METHOD_KEYS.map((key) => ({ key, minor: Number(t.byMethod?.[key] ?? 0) })).filter((p) => Number.isFinite(p.minor) && p.minor > 0);
 }
 
 /** The app page of a register row's record (the existing detail pages), or null. */

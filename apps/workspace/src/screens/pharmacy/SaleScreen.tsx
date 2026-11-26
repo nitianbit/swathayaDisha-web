@@ -3,7 +3,7 @@ import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
-  ApiError, formatExpiry, inventoryApi, isRxMedicine, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, medicineName, pharmacyOrdersApi,
+  ApiError, formatExpiry, inventoryApi, isRxMedicine, MAX_CUSTOMER_NAME, MAX_SALE_SEARCH, medicineName, OBJECT_ID_PATTERN, pharmacyOrdersApi,
   pharmacySaleApi, saleRequestBody, sellableQty, usableCustomers, walkInProblems,
   type CounterPayment, type InventoryItem, type PharmacyOrder, type SaleBody,
 } from '@jansetu/api';
@@ -18,8 +18,9 @@ import { useSession } from '../../session.tsx';
 import { useOneAtATime } from '../finance/finance.tsx';
 import { canMarkPaid, ORDER_STATUS_LABEL, orderLabel, paymentWaitsForPharmacist } from './orderLabels.ts';
 import { CheckPanel, useKeyedCheck, useOwnedOp, usePharmacyId } from './ownedOp.tsx';
-import { useVisitPreset } from './visitPatient.ts';
-import { PaymentMethodPicker, paymentWords } from './paymentPicker.tsx';
+import { useVisitPreset, type VisitPatient } from './visitPatient.ts';
+import { methodWords, PaymentMethodPicker, paymentWords } from './paymentPicker.tsx';
+import { VisitPatientLine } from './visitBar.tsx';
 
 /**
  * WQ50: Pharmacy › New sale, one screen for a counter sale: the customer (one this pharmacy already has, or a walk-in by
@@ -70,9 +71,11 @@ function SaleForm({ pharmacyId }: { pharmacyId: string }) {
   const queryClient = useQueryClient();
   const { perform, busy } = useOneAtATime('order');
   const { op, send, settle } = useOwnedOp<SaleBody>(`pharmacy-sale:${pharmacyId}`);
-  // WQ54: opened from + New, the visit's patient is the customer (linked by phone: found or made, as for any walk-in).
+  // WQ54/WQ54b: opened from + New, the visit's patient is the customer: one this pharmacy has (found there), else a
+  // walk-in by that phone and name (linked by phone: found or made, as for any walk-in).
   const preset = useVisitPreset(pharmacyId);
-  const [customer, setCustomer] = useState<Customer | null>(() => (preset ? { kind: 'walkin' } : null));
+  const [customer, setCustomer] = useState<Customer | null>(() => (!preset ? null : preset.customerId
+    ? { kind: 'existing', id: preset.customerId, label: preset.name ? `${preset.name} · ${preset.phone}` : preset.phone } : { kind: 'walkin' }));
   const [walkIn, setWalkIn] = useState(() => ({ name: preset?.name ?? '', phone: preset?.phone ?? '', consent: false }));
   const [lines, setLines] = useState<Line[]>([]);
   const [prescriptions, setPrescriptions] = useState<string[]>([]);
@@ -174,8 +177,9 @@ function SaleForm({ pharmacyId }: { pharmacyId: string }) {
   return (
     <form className="rx-form sale" noValidate onSubmit={check}>
       {note && <Alert>{note}</Alert>}
-      <CustomerPicker customer={customer} walkIn={walkIn} errors={errors} disabled={locked}
-        onCustomer={(c) => { setCustomer(c); setErrors({}); }} onWalkIn={setWalkIn} />
+      {preset ? <VisitCustomer visit={preset} customer={customer} walkIn={walkIn} errors={errors} disabled={locked} onWalkIn={setWalkIn} />
+        : <CustomerPicker customer={customer} walkIn={walkIn} errors={errors} disabled={locked}
+          onCustomer={(c) => { setCustomer(c); setErrors({}); }} onWalkIn={setWalkIn} />}
       <MedicinePicker lines={lines} error={errors.lines} disabled={locked} onLines={setLines} />
       <Prescriptions urls={prescriptions} disabled={review || busy} uploading={uploading} onUploading={setUploading} onUrls={setPrescriptions} />
 
@@ -197,6 +201,32 @@ function SaleForm({ pharmacyId }: { pharmacyId: string }) {
         ) : <div><Button type="submit" disabled={uploading}>{t('create')}</Button></div>}
       </section>
     </form>
+  );
+}
+
+/** WQ54b: the customer of a sale opened from + New: named once; a walk-in is asked only its name (if + New had none) and agreement. */
+function VisitCustomer({ visit, customer, walkIn, errors, disabled, onWalkIn }: {
+  visit: VisitPatient; customer: Customer | null; walkIn: { name: string; phone: string; consent: boolean }; errors: Errors; disabled: boolean;
+  onWalkIn: (w: { name: string; phone: string; consent: boolean }) => void;
+}) {
+  return (
+    <section className="ws-section" aria-labelledby="sale-customer-h">
+      <h2 id="sale-customer-h">{t('customer.title')}</h2>
+      <VisitPatientLine patient={visit} canChange={!disabled} />
+      {customer?.kind === 'walkin' && (
+        <>
+          {(!visit.name || errors.name) && (
+            <TextField label={t('walkIn.name')} value={walkIn.name} maxLength={MAX_CUSTOMER_NAME} autoComplete="off" disabled={disabled} error={errors.name}
+              onChange={(e) => onWalkIn({ ...walkIn, name: e.target.value })} />
+          )}
+          {errors.phone && <Alert>{errors.phone}</Alert>}
+          <label className="ws-check visit-consent">
+            <input type="checkbox" checked={walkIn.consent} disabled={disabled} onChange={(e) => onWalkIn({ ...walkIn, consent: e.target.checked })} /> {t('walkIn.consent')}
+          </label>
+          {errors.consent && <Alert>{errors.consent}</Alert>}
+        </>
+      )}
+    </section>
   );
 }
 
@@ -377,7 +407,7 @@ function Prescriptions({ urls, disabled, uploading, onUploading, onUrls }: {
 
 export function SaleBillScreen() {
   const { orderId = '' } = useParams();
-  if (!/^[0-9a-fA-F]{24}$/.test(orderId)) return <Empty title={t('done.notFound')}><Link to="/pharmacy/sale">{t('done.new')}</Link></Empty>;
+  if (!OBJECT_ID_PATTERN.test(orderId)) return <Empty title={t('done.notFound')}><Link to="/pharmacy/sale">{t('done.new')}</Link></Empty>;
   return <SaleDone key={orderId} orderId={orderId} />;
 }
 
@@ -407,10 +437,6 @@ function SaleDone({ orderId }: { orderId: string }) {
   );
 }
 
-const PAYMENT_WORDS: Readonly<Record<string, () => string>> = {
-  cash: () => t('payment.cash'), upi: () => t('payment.upi'), card: () => t('payment.card'), in_store_payment: () => t('bill.atCounter'), cash_on_delivery: () => t('bill.onDelivery'),
-};
-
 /**
  * The cash memo: r36's `bill` on the pharmacy's order read (the selling pharmacy's name, address, GSTIN and drug licence;
  * once paid, how and when), the customer as this pharmacy may name them, and each line's batches with their expiry.
@@ -420,7 +446,7 @@ function Bill({ order: o }: { order: PharmacyOrder }) {
   const ph = o.bill?.pharmacy ?? null;
   const address = ph ? [ph.address, ph.city, ph.state, ph.pincode].filter(Boolean).join(', ') : '';
   const method = o.bill?.paymentMethod ?? o.paymentSource ?? null;
-  const how = method ? PAYMENT_WORDS[method]?.() ?? method : null;
+  const how = method ? methodWords(method) : null;
   const c = typeof o.customerId === 'object' && o.customerId ? o.customerId : null;
   const customer = c ? [c.name, c.phone].filter(Boolean).join(' · ') : '';
   return (
@@ -464,9 +490,10 @@ function Bill({ order: o }: { order: PharmacyOrder }) {
 function Payment({ order: o }: { order: PharmacyOrder }) {
   const { api } = useSession();
   const queryClient = useQueryClient();
-  const [how, setHow] = useState<CounterPayment>('cash');
+  const [how, setHow] = useState<CounterPayment | null>(null);
   if (!canMarkPaid(o)) return null;
   async function markPaid() {
+    if (!how) return;
     try {
       await pharmacyOrdersApi(api).markPaid(o._id, { paymentSource: how });
     } catch (err) {
@@ -487,8 +514,8 @@ function Payment({ order: o }: { order: PharmacyOrder }) {
       ) : (
         <>
           <PaymentMethodPicker value={how} onChange={setHow} name="sale-pay" />
-          <ConfirmAction label={t('payment.markPaid')} confirmLabel={t('payment.confirm')}
-            consequence={t('payment.consequence', { amount: formatRupees(o.grandTotal), how: paymentWords(how) })} onConfirm={() => markPaid()} />
+          <ConfirmAction label={t('payment.markPaid')} confirmLabel={t('payment.confirm')} disabled={!how}
+            consequence={how ? t('payment.consequence', { amount: formatRupees(o.grandTotal), how: paymentWords(how) }) : ''} onConfirm={() => markPaid()} />
         </>
       )}
     </section>

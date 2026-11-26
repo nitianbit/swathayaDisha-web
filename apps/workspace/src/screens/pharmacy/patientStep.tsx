@@ -13,6 +13,7 @@ import type { Perform } from '../finance/finance.tsx';
 import type { ConsultBooker } from './consultBooker.ts';
 import { t } from '../../i18n/pharmacy/index.ts';
 import { useVisitPreset } from './visitPatient.ts';
+import { VisitPatientLine } from './visitBar.tsx';
 
 /**
  * WQ17: the patient step of an assisted booking (WQ12, moved here unchanged from Book consultation so that Book lab test
@@ -57,12 +58,15 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
   const set = <K extends keyof PatientDraft>(k: K, v: PatientDraft[K]) => setPatient((d) => ({ ...d, [k]: v }));
 
   function reset() {
+    setVisitOn(false);
     setPhoneText(''); setPhoneError(null); setLookup(null); setPatient(EMPTY_PATIENT); setPatientErrors({}); setAgreed(false); setAgreeError(null);
     setPatientDone(false);
   }
 
-  // WQ54: opened from + New: the visit's patient (phone and name) is filled in and looked up once, so it is typed once.
+  // WQ54/WQ54b: opened from + New: the visit's patient (phone and name) is looked up once and shown, never asked again.
   const preset = useVisitPreset(pharmacyId);
+  // Only for the handed-over patient: a reset (another booking) or a changed number is the usual step again.
+  const [visitOn, setVisitOn] = useState(true);
   const presetDone = useRef(false);
   useEffect(() => {
     if (!preset || presetDone.current) return;
@@ -84,8 +88,9 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
     try {
       const result = await perform(() => (lookupPatient ?? assisted.lookup)(phone));
       setLookup({ phone, result });
-      // WQ54: the + New patient: its name, and the number already typed once on + New (not asked for a second time).
-      setPatient({ ...EMPTY_PATIENT, phone, ...(preset && canonicalPhone(preset.phone) === phone ? { name: preset.name, phoneAgain: phone } : {}) });
+      // WQ54b: the + New patient's name (none when + New had only a masked one: asked here), and the number counted as typed
+      // twice only when it came from + New's search results (or was typed twice there).
+      setPatient({ ...EMPTY_PATIENT, phone, ...(preset && canonicalPhone(preset.phone) === phone ? { name: preset.name, phoneAgain: preset.confirmed ? phone : '' } : {}) });
       setPatientErrors({});
     } catch (err) {
       if (isSwitchedOff(err)) { onSwitchedOff(); return; }
@@ -95,6 +100,7 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
   }
 
   function changePhone() {
+    setVisitOn(false);
     setLookup(null); setPatient(EMPTY_PATIENT); setPatientErrors({}); setAgreed(false); setPatientDone(false);
     onChangePhone?.();
   }
@@ -132,7 +138,7 @@ export function usePatientStep({ pharmacyId, perform, onFind, onSwitchedOff, onC
 
   return {
     phoneText, setPhoneText, phoneError, lookup, patient, setPatient, set, patientErrors, agreed, setAgreed, agreeError, setAgreeError,
-    patientDone, setPatientDone, family, knownFamily, familyLoading, find, changePhone, patientNext, patientLabel, reset,
+    patientDone, setPatientDone, family, knownFamily, familyLoading, find, changePhone, patientNext, patientLabel, reset, visit: visitOn ? preset : null,
   };
 }
 
@@ -150,6 +156,7 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = t('comm
     patientDone, setPatientDone, knownFamily, familyLoading, find, changePhone, patientNext,
   } = step;
   const frozenPatient = frozen;
+  if (step.visit && (lookup || !phoneError)) return <VisitPatientSection step={step} frozen={frozen} locked={locked} nextLabel={nextLabel} consent={consent} />;
   return (
     <section className="ws-section" aria-labelledby="pt-h">
       <h2 id="pt-h">{t('patientStep.n1Patient')}</h2>
@@ -234,11 +241,7 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = t('comm
                 onChange={(e) => set('holderName', e.target.value)} />
             )}
 
-            <label className="rx-ack">
-              <input type="checkbox" checked={agreed} aria-describedby={agreeError ? 'agree-err' : 'agree-text'}
-                onChange={(e) => { setAgreed(e.target.checked); if (e.target.checked) setAgreeError(null); }} />{t('patientStep.patientAgreedToThisBooking')}</label>
-            <span id="agree-text" className="j-field__hint">{consent}</span>
-            {agreeError && <span id="agree-err" className="j-field__error" role="alert">{agreeError}</span>}
+            <AgreedTick agreed={agreed} setAgreed={setAgreed} agreeError={agreeError} setAgreeError={setAgreeError} consent={consent} />
           </fieldset>
           {patientDone ? (
             <div className="ws-actions">
@@ -252,6 +255,59 @@ export function PatientSection({ step, busy, frozen, locked, nextLabel = t('comm
       )}
     </section>
 
+  );
+}
+
+/** The "patient agreed" tick with the statement it attests (WQ54b: `large` in a flow opened from + New). */
+function AgreedTick({ agreed, setAgreed, agreeError, setAgreeError, consent, large }: {
+  agreed: boolean; setAgreed: (b: boolean) => void; agreeError: string | null; setAgreeError: (e: string | null) => void; consent: string; large?: boolean;
+}) {
+  return (
+    <>
+      <label className={large ? 'rx-ack visit-consent' : 'rx-ack'}>
+        <input type="checkbox" checked={agreed} aria-describedby={agreeError ? 'agree-err' : 'agree-text'}
+          onChange={(e) => { setAgreed(e.target.checked); if (e.target.checked) setAgreeError(null); }} />{t('patientStep.patientAgreedToThisBooking')}</label>
+      <span id="agree-text" className="j-field__hint">{consent}</span>
+      {agreeError && <span id="agree-err" className="j-field__error" role="alert">{agreeError}</span>}
+    </>
+  );
+}
+
+/**
+ * WQ54b: the patient step of a flow opened from + New: "Patient: Asha [Change]" (no "Who is the patient?", no second
+ * number), the name only when + New had none, and the agreement tick, large. A lookup that fails shows the usual step.
+ */
+function VisitPatientSection({ step, frozen, locked, nextLabel, consent }: { step: PatientStep; frozen: boolean; locked: boolean; nextLabel: string; consent: string }) {
+  const { visit, lookup, patient, set, patientErrors, agreed, setAgreed, agreeError, setAgreeError, patientDone, setPatientDone, patientNext } = step;
+  if (!visit) return null;
+  return (
+    <section className="ws-section" aria-labelledby="pt-h">
+      <h2 id="pt-h">{t('patientStep.n1Patient')}</h2>
+      <VisitPatientLine patient={visit} canChange={!locked} />
+      {!lookup ? <Loading /> : (
+        <form className="rx-form" noValidate onSubmit={patientNext}>
+          <fieldset className="ws-frozen" disabled={frozen}>
+            {(!visit.name || patientErrors.name) && (
+              <TextField label={t('patientStep.patientSFullName')} autoComplete="off" value={patient.name} maxLength={MAX_PERSON_NAME} error={patientErrors.name}
+                hint={t('patientStep.typeTheNameThePatient')} onChange={(e) => set('name', e.target.value)} />
+            )}
+            {!lookup.result.exists && (!visit.confirmed || patientErrors.phoneAgain) && (
+              <TextField label={t('patientStep.typeTheNumberAgain')} inputMode="tel" autoComplete="off" value={patient.phoneAgain} error={patientErrors.phoneAgain}
+                onChange={(e) => set('phoneAgain', e.target.value)} />
+            )}
+            <AgreedTick agreed={agreed} setAgreed={setAgreed} agreeError={agreeError} setAgreeError={setAgreeError} consent={consent} large />
+          </fieldset>
+          {patientDone ? (
+            <div className="ws-actions">
+              <Badge tone="ok">{t('patientStep.patientReady')}</Badge>
+              <Button variant="ghost" disabled={locked} onClick={() => setPatientDone(false)}>{t('patientStep.changePatientDetails')}</Button>
+            </div>
+          ) : (
+            <div><Button type="submit">{nextLabel}</Button></div>
+          )}
+        </form>
+      )}
+    </section>
   );
 }
 
@@ -321,11 +377,7 @@ export function ConsultationPatientSection({ step, frozen, locked, consent, walk
             <TextField label={t('patientStep.patientSFullName')} autoComplete="off" value={name} maxLength={MAX_PERSON_NAME} error={nameError}
               hint={b?.family ? t('patientStep.typeTheNameThePatient2') : t('patientStep.typeTheNameThePatient')}
               onChange={(e) => setName(e.target.value)} />
-            <label className="rx-ack">
-              <input type="checkbox" checked={agreed} aria-describedby={agreeError ? 'agree-err' : 'agree-text'}
-                onChange={(e) => { setAgreed(e.target.checked); if (e.target.checked) setAgreeError(null); }} />{t('patientStep.patientAgreedToThisBooking')}</label>
-            <span id="agree-text" className="j-field__hint">{consent}</span>
-            {agreeError && <span id="agree-err" className="j-field__error" role="alert">{agreeError}</span>}
+            <AgreedTick agreed={agreed} setAgreed={setAgreed} agreeError={agreeError} setAgreeError={setAgreeError} consent={consent} />
           </fieldset>
           {done ? (
             <div className="ws-actions">

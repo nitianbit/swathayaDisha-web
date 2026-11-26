@@ -13,7 +13,7 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 import { CustomerReturnForm } from './CustomerReturnForm.tsx';
-import { PaymentMethodPicker, paymentWords } from './paymentPicker.tsx';
+import { orderPaymentWords, PaymentMethodPicker, paymentWords } from './paymentPicker.tsx';
 import {
   blockedReason, canMarkPaid, DELIVERY_EXCEPTION_LABEL, FORWARD_LABEL, ORDER_STATUS_LABEL, orderLabel,
   PAYMENT_STATUS_LABEL, REFUND_STATUS_LABEL, TERMINAL,
@@ -62,7 +62,7 @@ function OrderView({ order }: { order: PharmacyOrder }) {
   const exceptions = (Object.keys(DELIVERY_EXCEPTION_FROM) as DeliveryExceptionType[])
     .filter((ex) => DELIVERY_EXCEPTION_FROM[ex].includes(order.status));
   const markable = canMarkPaid(order);
-  const [how, setHow] = useState<CounterPayment>('cash');
+  const [how, setHow] = useState<CounterPayment | null>(null);
   const unpaid = !order.paymentStatus || order.paymentStatus === 'pending' || order.paymentStatus === 'failed';
   // D3 (`requestCancel`): Placed, Accepted or Packed; unpaid → cancelled at once, money held → waits for a decision.
   // The generic status update refuses to close a paid order (ORDER_PAID_USE_CANCEL_REQUEST), so this is the only way.
@@ -104,7 +104,7 @@ function OrderView({ order }: { order: PharmacyOrder }) {
         </div>
         <dl className="ws-dl">
           <dt>{t('order.delivery')}</dt><dd>{order.deliveryMode === 'delivery' ? t('order.delivery2', { value: order.deliveryAddress ? ` to ${order.deliveryAddress}` : '' }) : t('order.pickupAtThePharmacy')}</dd>
-          <dt>{t('order.paymentMethod')}</dt><dd>{order.paymentMode ? order.paymentMode.replace(/_/g, ' ') : '—'}</dd>
+          <dt>{t('order.paymentMethod')}</dt><dd>{orderPaymentWords(order) ?? '—'}</dd>
           {order.refill && <><dt>{t('order.refillPaymentDue')}</dt><dd>{formatDateTime(order.refill.paymentDueBy)}</dd></>}
         </dl>
       </section>
@@ -140,11 +140,11 @@ function OrderView({ order }: { order: PharmacyOrder }) {
               <div className="ws-action">
                 {/* WQ54 (r37 review): how it was paid, sent exactly (cash, UPI or card): the day's money is split by it. */}
                 <PaymentMethodPicker value={how} onChange={setHow} name={`order-pay-${order._id}`} />
-                <ConfirmAction label={t('order.recordPayment')} confirmLabel={t('order.yesPaymentReceived')}
-                  consequence={t(order.paymentMode === 'cash_on_delivery' ? 'order.receivedOnDeliveryBy' : 'order.receivedAtCounterBy',
-                    { amount: formatRupees(order.grandTotal), how: paymentWords(how) })}
+                <ConfirmAction label={t('order.recordPayment')} confirmLabel={t('order.yesPaymentReceived')} disabled={!how}
+                  consequence={how ? t(order.paymentMode === 'cash_on_delivery' ? 'order.receivedOnDeliveryBy' : 'order.receivedAtCounterBy',
+                    { amount: formatRupees(order.grandTotal), how: paymentWords(how) }) : ''}
                   reason={'optional'} reasonLabel={t('common.note')}
-                  onConfirm={(note) => act(() => orders.markPaid(order._id, { paymentSource: how, ...(note ? { notes: note } : {}) }))} />
+                  onConfirm={(note) => (how ? act(() => orders.markPaid(order._id, { paymentSource: how, ...(note ? { notes: note } : {}) })) : Promise.resolve())} />
               </div>
             )}
             {canRequestCancel && (

@@ -2610,6 +2610,50 @@ the to-do delete is in the api module but not offered (only add and tick were as
   `IDEMPOTENCY_KEY_REUSED` (also a deleted to-do's key) are said in words, the text kept, a new key on the next Add.
 - Full suite on 8d4b33f: 1167/1167 + 1 skipped (14.8 min).
 
+## WQ54b the simpler pharmacy home (2026-11-26, branch `wq54b/home-simpler` from web stage 662e9f1; backend r37c 7f4ff46b)
+
+Review of WQ54: the right patient every time, correct day data, and fewer things to read for an older clerk.
+
+- **The right patient.** + New hands a flow one patient, once (`visitPatient.ts`): a one-shot handover slot that the flow
+  opened with `?visit=1` reads on its first render, clears, and drops `?visit=1` from the address (replace), so Back, Forward
+  or a reload opens the flow empty. Only the name this pharmacy typed is handed over (`typedName ?? ''`): a masked or missing
+  name is asked in the flow. A patient found by the search sells as that existing customer (not a walk-in). "Type the number
+  again" is filled only when the number came from the search results (or was typed twice on + New). The last patient is kept
+  apart and offered only as a small "Same patient again: Asha", for 30 minutes after that visit; never the default, and gone
+  at sign-out (session memory).
+- **One patient step** on + New: one phone field; a patient this pharmacy has is tapped; a new number asks, on the same
+  screen, for the name and the number again. "What" in plain words: **See a doctor now (video)**, **Book a doctor for later**,
+  **Book a lab test**, **Sell medicines**. The focus moves to the step's heading on each step change.
+- **Flows opened from + New** (Consult now, Book consultation, Book lab test, New sale): the patient section is one line,
+  "Patient: Asha · 98… [Change] [Home]" (Change opens + New); no "Who is the patient?", no second number; the name only when
+  + New had none; the agreement tick stays, large. On a phone such a page has 17 px text and 48 px targets (`visit-mode`).
+- **Day data (r37c).** The home reads `order=desc&limit=10` (newest first); a server before r37c (oldest first whatever is
+  asked) is followed to its last page for the latest 10. Today reads newest first in pages of 50, and its search is the
+  server's (`POST /pharmacy-assisted/today/search { date, q, order, limit, cursor }`, 2–100 characters, the whole day; name,
+  ref, line text, 4+ digits a phone). Rows are worded from `whatParts` (`order.items`, `order.counter`, `order.online`,
+  `consult.scheduled`, `consult.instant`, `lab.tests`, `wallet.topup`; names and times stay data; the mode through the
+  consult-mode words), else `what`. "paid today · made <date>" only when `madeOn` is not the register's day. `truncated` is a
+  list (said only when not empty). A wallet top-up row has no "Customer". Pending: bookings waiting for payment by kind
+  (`consultationCount`, `labCount`: "2 doctor bookings waiting for payment" → consultations, "1 lab test waiting for payment"
+  → lab tests; one record → its page); `cardPaymentsWaiting` is dropped; a missing queue is absent, only `null` says
+  "couldn't load".
+- **Money:** one big line "Collected today ₹820" (an earlier day: "Collected on 24 Nov 2026: ₹x"), a smaller line with only
+  the methods that took money ("Cash ₹320 · Wallet ₹500"), and "To collect ₹x" on its own line, in the warning colour when
+  more than 0; a labelled region ("Money of the day").
+- **Register rows** are blocks (no grid), time only (the day is the page's). "See all of today" is a 48 px button.
+- **Payment picker:** nothing chosen at first ("Tap cash, UPI or card first."; Mark paid / Record payment waits); 48 px
+  choices. The Order page's "Payment method" shows the method recorded once paid (`bill.paymentMethod`, else
+  `paymentSource`), the payment mode before.
+- **Phone shell (≤ 760 px):** `grid-template-rows: auto 1fr`; Home and More in the header; the menu closes on every page
+  change. + New, Today and the visit flows have a Home button on the page from 761 px up. Main, forms and sections use
+  `minmax(0, 1fr)` columns on a phone, so a wide table scrolls in its own box; New sale no longer scrolls sideways at 390 px.
+- **Reuse:** `Failed`, `PAYMENT_METHOD_KEYS`, `OBJECT_ID_PATTERN` (home, New sale, `usableCustomers`), one payment-method
+  wording (`methodWords`, Bill and Order page), one agreement tick (`AgreedTick`, three patient steps). Unused keys removed.
+- Decisions (owner away): there is no patient history page yet, so **Find patient** is + New's step 1 (titled Find patient);
+  a new number on + New is typed twice there, so the flows do not ask again; Today is newest first like the home; the
+  Playwright tablet project is now a Galaxy Tab S4 held sideways (1138 px), since up to 760 px is the phone layout, which
+  three 390 px journeys cover (example 1, Back after a visit, a masked name).
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -3000,6 +3044,7 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-26 | WQ54b the simpler pharmacy home (r37c 7f4ff46b, from 662e9f1) | typecheck clean; Vitest 534/534; the full suite via pw-slot.sh 1171/1171 + 3 skipped (the 390 px journeys run once) (13.5 min) on a temporary config (port 5566, deleted), with the tablet project now a Galaxy Tab S4 held sideways; after a last patient-step fix (visit mode off after a reset or a changed number) pharmacy-home, consult-now, assisted-booking, lab-booking, lab-desk, card-booking, pharmacy-sale and orders again 253/253 + 3 skipped; 390 px screenshots of the home, + New and Today. |
 | 2026-11-26 | WQ54 r37b final (6de072f2, on 8d4b33f) | typecheck clean; Vitest 533/533; Playwright pharmacy-home 9/9 + 1 skipped (card payments waiting with r37b's items; TODO_LIMIT said with the text kept) on a temporary config (port 5566, deleted). |
 | 2026-11-26 | WQ54 r37 review items (on ac804db) | typecheck clean; Vitest 533/533; Playwright pharmacy-home 9/9 + 1 skipped (the what-waits journey adds a row paid today and made earlier, a queue that could not load, card payments waiting), orders (the cash-on-delivery journey sends `paymentSource: 'upi'` from the picker), pharmacy-sale: 73/73 on a temporary config (port 5566); the full suite via pw-slot.sh 1167/1167 + 1 skipped (14.8 min). |
 | 2026-11-26 | WQ54 to r37 final shapes (950417ab, on ebca0fb) | typecheck clean; Vitest 533/533 (pharmacyToday.test.ts: the paged today read and its checks, the to-do routes, `todayLink`, `pendingCount`); Playwright pharmacy-home 9/9 + 1 skipped (+1 journey x 2: an unpaid counter sale one tap from its page, each row opening its record) + session; the full suite via pw-slot.sh 1167/1167 + 1 skipped (15.6 min). |

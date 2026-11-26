@@ -105,7 +105,7 @@ async function mockBackend(page: Page, initial: Order): Promise<Backend> {
       return json(route, 200, { success: true, data: state.order });
     }
     if (path === `/pharmacy-orders/${ID}/mark-paid`) {
-      state.order = { ...o, paymentStatus: 'paid' };
+      state.order = { ...o, paymentStatus: 'paid', paymentSource: (body as { paymentSource?: string } | null)?.paymentSource };
       return json(route, 200, { success: true, data: state.order });
     }
     if (path === `/pharmacy-orders/${ID}/prescription-refund/retry`) {
@@ -234,9 +234,14 @@ test('cash on delivery: the order can go out unpaid, the payment is recorded, th
   await openOrder(page);
   await expect(page.getByRole('button', { name: 'Mark completed' })).toBeDisabled();
   await expect(page.getByText('Record the payment first.')).toBeVisible();
-  // WQ54 (r37 review): how it was paid is chosen and sent exactly (the day's money is split by it).
+  // WQ54 (r37 review): how it was paid is chosen and sent exactly (the day's money is split by it). WQ54b: nothing at first.
+  await expect(page.getByRole('definition').filter({ hasText: 'cash on delivery' })).toBeVisible();
+  await expect(page.getByText('Tap cash, UPI or card first.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record payment' })).toBeDisabled();
   await page.getByRole('group', { name: 'Paid by' }).getByLabel('UPI').check();
   await step(page, 'Record payment', 'Yes, payment received');
+  // WQ54b: once paid, the method recorded, not the payment mode.
+  await expect(page.getByRole('definition').filter({ hasText: /^UPI$/ })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Mark completed' })).toBeEnabled();
   await step(page, 'Mark completed', 'Yes, mark completed');
   expect(backend.calls.map((c) => c.path)).toEqual(['/mark-paid', '/status']);

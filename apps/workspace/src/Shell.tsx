@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from 'react';
-import { NavLink } from 'react-router';
-import { LogOut, Menu } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Link, NavLink, useLocation } from 'react-router';
+import { House, LogOut, Menu } from 'lucide-react';
 import { Button, LanguageScope, LanguageSwitcher, useLanguage } from '@jansetu/ui';
 import { navLabelKey, pagesFor } from './modules.tsx';
 import { t } from './i18n/shell/index.ts';
@@ -17,16 +17,22 @@ export function Shell({ children }: { children: ReactNode }) {
   const nav = pagesFor(user).filter((p) => p.nav);
   const sections = [...new Set(nav.map((p) => p.nav!.sectionKey))];
   // WQ54: on a phone the menu sits behind one "More" button (the page comes first); a tablet and a desktop show it always.
+  // WQ54b: it closes on every page change (a link in it, Back, or a link on the page), and Home stays in the phone's header.
   const [menuOpen, setMenuOpen] = useState(false);
+  const { pathname, search } = useLocation();
+  useEffect(() => setMenuOpen(false), [pathname, search]);
 
   return (
     <div className="ws">
       <a className="ws-skip" href="#main">{t('shell.skip')}</a>
       <aside className="ws-side">
         <div className="ws-brand">{BRAND} <span>{t('shell.workspace')}</span></div>
-        <button type="button" className="ws-more" aria-expanded={menuOpen} aria-controls="ws-menu" onClick={() => setMenuOpen((o) => !o)}>
-          <Menu size={20} aria-hidden="true" /> {menuOpen ? t('shell.close') : t('shell.more')}
-        </button>
+        <div className="ws-phone-bar">
+          <Link className="ws-phone-home" to="/"><House size={20} aria-hidden="true" /> {t('nav.home')}</Link>
+          <button type="button" className="ws-more" aria-expanded={menuOpen} aria-controls="ws-menu" onClick={() => setMenuOpen((o) => !o)}>
+            <Menu size={20} aria-hidden="true" /> {menuOpen ? t('shell.close') : t('shell.more')}
+          </button>
+        </div>
         <div id="ws-menu" className={menuOpen ? 'ws-menu ws-menu--open' : 'ws-menu'}>
         <nav aria-label={t('shell.nav')}>
           {sections.map((section) => (

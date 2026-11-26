@@ -1,6 +1,7 @@
 import type { ApiClient } from './client.ts';
 import { PHONE_PATTERN } from './auth.ts';
 import { idOf } from './assisted.ts';
+import { OBJECT_ID_PATTERN } from './partners.ts';
 import type { PharmacyOrder } from './pharmacyOrders.ts';
 
 /**
@@ -52,7 +53,7 @@ export function walkInProblems(w: { name: string; phone: string; consent: boolea
 
 /** Rows a sale can use: only those naming the holder (a row without a `userId._id` is left out). */
 export const usableCustomers = (rows: readonly SaleCustomer[]) =>
-  rows.filter((r): r is SaleCustomer & { userId: { _id: string } } => typeof r.userId?._id === 'string' && /^[0-9a-fA-F]{24}$/.test(r.userId._id));
+  rows.filter((r): r is SaleCustomer & { userId: { _id: string } } => typeof r.userId?._id === 'string' && OBJECT_ID_PATTERN.test(r.userId._id));
 
 /**
  * The create's JSON body, or a throw for a bad id: built BEFORE the owned request is sent, so a programming error is

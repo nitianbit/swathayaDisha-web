@@ -1,6 +1,9 @@
 /* WQ50 counter sale. Tokens only (packages/ui/src/tokens.css). */
 .sale-choices li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .sale .j-table .j-field { margin: 0; max-width: 7rem; }
+/* WQ54b: the file picker never makes a phone's page wider than the screen. */
+.sale .j-field { grid-template-columns: minmax(0, 1fr); }
+.sale input[type='file'] { max-width: 100%; }
 /* The bill alone on paper: everything else on the page is hidden when printing. */
 @media print {
   body * { visibility: hidden; }

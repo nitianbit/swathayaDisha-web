@@ -160,6 +160,8 @@ export default {
   'payment.upi': 'UPI',
   /** WQ54: a card machine at the counter. */
   'payment.card': 'Card',
+  /** WQ54b: nothing is chosen at first. */
+  'payment.chooseFirst': 'Tap cash, UPI or card first.',
   'payment.markPaid': 'Mark paid',
   'payment.confirm': 'Yes, it is paid',
   /** {how}: Cash or UPI. */

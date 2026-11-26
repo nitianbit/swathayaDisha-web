@@ -117,21 +117,21 @@
 .ws-hours > .ws-muted { align-self: center; }
 @media (max-width: 760px) { .ws-hours { grid-template-columns: 1fr; } }
 
-/* WQ54: the phone's "More" button; the menu is always there from a tablet up. */
-.ws-more { display: none; }
+/* WQ54/WQ54b: on a phone (up to 760 px) the header holds Home and "More" (the menu); the menu is always there above that. */
+.ws-phone-bar { display: none; }
 .ws-menu { display: contents; }
-@media (max-width: 600px) {
-  .ws-more { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 48px; padding: 0 var(--space-3); font-size: 1.0625rem;
-    border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
-  .ws-side { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+@media (max-width: 760px) {
+  .ws { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+  .ws-side { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line);
+    flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+  /* A wide table scrolls inside its own box: no page is wider than the phone (WQ54b). */
+  .ws-main, .rx-form, .ws-section { grid-template-columns: minmax(0, 1fr); }
+  .ws-main { padding: var(--space-4); }
+  .ws-phone-bar { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .ws-more, .ws-phone-home { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 48px; padding: 0 var(--space-3); font-size: 1.0625rem;
+    border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); text-decoration: none; }
   .ws-menu { display: none; width: 100%; }
   .ws-menu--open { display: grid; gap: var(--space-4); }
-}
-
-@media (max-width: 760px) {
-  .ws { grid-template-columns: 1fr; }
-  .ws-side { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
-  .ws-main { padding: var(--space-4); }
 }
 
 /* WQ2: bill lines */
@@ -157,3 +157,7 @@
 /* A form body frozen while it is being saved (nothing typed during the save can change what is sent). */
 .ws-frozen { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: var(--space-4); }
 .doc-meet { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+
+/* WQ54b: how a counter payment was taken: three large choices, none chosen at first. */
+.pay-picker .ws-check { min-height: 48px; font-size: 1.0625rem; }
+.pay-picker .ws-check input { width: 24px; height: 24px; }
