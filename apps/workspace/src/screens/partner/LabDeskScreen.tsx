@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
-  addDays, addressErrors, COLLECTOR_PHONE_PATTERN, holdsAny, CONSENT_STATEMENT_LANGUAGE, deskItems, deskRefusal, deskTotalMinor, isBookable, isSwitchedOff, istDateOf,
+  addDays, addressErrors, COLLECTOR_PHONE_PATTERN, holdsAny, PATIENT_LANGUAGES, CONSENT_STATEMENT_LANGUAGE, deskItems, deskRefusal, deskTotalMinor, isBookable, isSwitchedOff, istDateOf,
   LAB_DESK_CONSENT_STATEMENT, LAB_DESK_CONSENT_VERSION, LAB_DESK_SWITCHED_OFF_MESSAGE, labDeskApi, MAX_COLLECTOR_NAME, patientBody,
   type DeskBookingRequest, type DeskByKey, type DeskReceipt, type LabAddress, type LabBooking, type VisitMode,
 } from '@jansetu/api';
@@ -75,14 +75,18 @@ function SummaryList({ s }: { s: Summary }) {
   );
 }
 
-/** The bill of a desk booking: its customer (the account holder), branch and, WQ55b, its booked tests; `simple` for a visit. */
-function billPrefillOf(b: LabBooking, bill: { name: string; phone: string } | undefined, simple: boolean): BillPrefill {
+/**
+ * The bill of a desk booking: its customer (the account holder), branch and, WQ55b, its booked tests; `simple` for a visit.
+ * WQ55c: also from the booking's own page (no customer known there: the owner's name when the patient is the owner).
+ */
+export function billPrefillOf(b: LabBooking, bill: { name: string; phone: string } | undefined, simple: boolean): BillPrefill {
   return {
-    link: { kind: 'lab_booking', id: b._id }, branchId: b.branchId, doctorId: '', name: bill?.name ?? '', phone: bill?.phone ?? '',
+    link: { kind: 'lab_booking', id: b._id }, branchId: b.branchId, doctorId: '',
+    name: bill?.name ?? (b.patient?.kind === 'self' ? b.patient.name ?? '' : ''), phone: bill?.phone ?? '',
     label: b.patient?.name === undefined
       ? t('labDesk.billForUnnamed', { day: formatDay(b.slot.date), time: b.slot.startTime })
       : t('labDesk.billFor', { name: b.patient.name, day: formatDay(b.slot.date), time: b.slot.startTime }),
-    items: (b.items ?? []).map((i) => String(i.catalogItemId)), simple,
+    items: (b.items ?? []).map((i) => ({ id: String(i.catalogItemId), name: i.name })), simple,
   };
 }
 
@@ -99,7 +103,10 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
   const create = useAssistedCreate<PendingDesk, DeskReceipt, DeskByKey>({
     slot: `lab-desk-book:${identity}`, perform, book: (request) => desk.book(request), abandon: (key) => desk.abandon(key), refusal: deskRefusal,
     charged: false, refreshKeys: [[...ctx.key, 'lab-bookings'], [...ctx.key, 'slots']],
-    onReceipt: (v, p) => setDone({ booking: v.booking, summary: p.body.summary, bill: p.body.bill, replayed: v.replayed, newAccount: v.newAccount }),
+    onReceipt: (v, p) => {
+      if (v.booking) memory.set(`desk-last-branch:${identity}`, v.booking.branchId);
+      setDone({ booking: v.booking, summary: p.body.summary, bill: p.body.bill, replayed: v.replayed, newAccount: v.newAccount });
+    },
     onUsed: (r, p) => { settle(p.requestKey); setReview(null); setDone({ booking: r.booking, summary: p.body?.summary, bill: p.body?.bill, replayed: true }); create.refresh(); return null; },
     onOff: () => setOff(true),
     onNotice: setNotice,
@@ -121,6 +128,7 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
   const fromNew = !!pt.visit;
   const navigate = useNavigate();
   const [payNow, setPayNow] = useState(false);
+  const [languageOpen, setLanguageOpen] = useState(false);
   useEffect(() => { if (payNow && review) { setPayNow(false); void create.pay(); } }, [payNow, review]); // eslint-disable-line react-hooks/exhaustive-deps
   // After a visit's booking, its bill opens at once (for a member who makes bills).
   const billed = useRef(false);
@@ -140,7 +148,14 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
   const offering = useMemo(() => branches.inScope.filter((b) => modesOf(b).includes(visit)), [branches.inScope, visit]);
   const [branchId, setBranchId] = useState<string | null>(null);
   const branch = offering.find((b) => b._id === branchId) ?? null;
-  useEffect(() => { if (offering.length === 1 && !branchId) setBranchId(offering[0]!._id); }, [offering, branchId]);
+  // WQ55c: one branch is chosen at once; with several, this person's last-used one (session memory only), else their own.
+  const lastBranchSlot = `desk-last-branch:${identity}`;
+  useEffect(() => {
+    if (branchId) return;
+    const usual = memory.get<string>(lastBranchSlot) ?? ctx.actor.branchIds[0];
+    const pick = offering.length === 1 ? offering[0] : offering.find((b) => b._id === usual);
+    if (pick) setBranchId(pick._id);
+  }, [offering, branchId]); // eslint-disable-line react-hooks/exhaustive-deps
   const catalogue = useCatalogue(ctx, { enabled: patientDone && !off });
   const items = useMemo(() => deskItems(catalogue.data ?? [], visit), [catalogue.data, visit]);
   const [itemIds, setItemIds] = useState<string[]>([]);
@@ -270,14 +285,17 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
           <h2 id="desk-h">{t('labDesk.step2')}</h2>
           <form className="rx-form" noValidate onSubmit={book} aria-label={t('labDesk.testsAndTime')}>
             <fieldset className="ws-frozen" disabled={frozen}>
-              <fieldset className="ws-checks">
-                <legend>{t('labDesk.visit')}</legend>
-                {(['walkin', 'lab', 'home'] as const).map((m) => (
-                  <label key={m} className="ws-check">
-                    <input type="radio" name="desk-visit" checked={mode === m} onChange={() => chooseMode(m)} /> {t(MODE_KEY[m])}
-                  </label>
-                ))}
-              </fieldset>
+              {/* WQ55c: + New already chose the visit (at the desk now, or a home collection): it is not asked again. */}
+              {fromNew ? <p><strong>{t(MODE_KEY[mode])}</strong></p> : (
+                <fieldset className="ws-checks">
+                  <legend>{t('labDesk.visit')}</legend>
+                  {(['walkin', 'lab', 'home'] as const).map((m) => (
+                    <label key={m} className="ws-check">
+                      <input type="radio" name="desk-visit" checked={mode === m} onChange={() => chooseMode(m)} /> {t(MODE_KEY[m])}
+                    </label>
+                  ))}
+                </fieldset>
+              )}
 
               {branches.isPending ? <Loading label={t('common.loadingBranches')} />
                 : branches.isError ? <ErrorState message={deskRefusal(branches.error).message} onRetry={() => void branches.refetch()} />
@@ -335,7 +353,13 @@ function Desk({ ctx }: { ctx: ScopeContext }) {
                 </>
               )}
 
-              <LanguageSelect id="desk-lang" value={language} error={errors.language} onChange={setLanguage} />
+              {/* WQ55c: in a visit, the messages' language is a line to change (English, the one released). */}
+              {fromNew && !languageOpen ? (
+                <p className="desk-lang">
+                  <Parts of={t.rich('labDesk.messagesIn', { language: <strong>{PATIENT_LANGUAGES.find((l) => l.code === language)?.label ?? language}</strong> })} />{' '}
+                  <Button variant="ghost" onClick={() => setLanguageOpen(true)}>{t('labDesk.changeLanguage')}</Button>
+                </p>
+              ) : <LanguageSelect id="desk-lang" value={language} error={errors.language} onChange={setLanguage} />}
             </fieldset>
             {refused && !review && <Alert>{refused.message}</Alert>}
             {!review && (

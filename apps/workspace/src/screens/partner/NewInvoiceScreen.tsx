@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Link, useLocation, useNavigate } from 'react-router';
+import { Link, useBlocker, useLocation, useNavigate } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import {
   allowedGstRates, ApiError, chargesGst, customerGstinProblem, INVOICE_PHONE_PATTERN, MAX_LINE_DESCRIPTION,
@@ -191,6 +191,8 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
   const visit = useVisitPreset();
   const simple = !!visit || !!prefill?.simple;
   useVisitMode(simple);
+  // WQ55c: Home from a visit's bill not issued yet asks first (the walk-in would stay unbilled); Stay is the main answer.
+  const leaving = useBlocker(({ nextLocation }) => simple && nextLocation.pathname === '/');
   // Read once: whatever was handed over (also a handover this navigation does not name) is cleared now.
   useEffect(() => { memory.delete(prefillSlot); }, [memory, prefillSlot]);
 
@@ -262,6 +264,15 @@ function NewInvoice({ ctx }: { ctx: ScopeContext }) {
   return (
     <>
       <Link className="ws-back" to={ctx.link('invoices')}><ArrowLeft size={16} aria-hidden="true" /> {t('newInvoice.backToBills')}</Link>
+      {leaving.state === 'blocked' && (
+        <div className="confirm" role="alertdialog" aria-labelledby="nb-leave-h">
+          <p id="nb-leave-h"><strong>{t('newInvoice.leaveTitle')}</strong></p>
+          <div className="confirm-actions">
+            <Button autoFocus onClick={() => leaving.reset()}>{t('newInvoice.stay')}</Button>
+            <Button variant="secondary" onClick={() => leaving.proceed()}>{t('newInvoice.leave')}</Button>
+          </div>
+        </div>
+      )}
       <PageHeading title={t('newInvoice.title')}>
         {ctx.adminHome ? <>{p?.name == null ? t('scope.managingThis') : t('scope.managing', { name: p.name })} </> : null}
         {p?.name == null ? t('newInvoice.seriesUnnamed') : t('newInvoice.series', { name: p.name })}
@@ -314,6 +325,8 @@ function PendingSummary({ body }: { body: NewInvoice }) {
   );
 }
 
+const offeredById = (catalogue: readonly CatalogueItem[], id: string) => catalogue.find((i) => i._id === id && i.isActive && !i.adminDisabled);
+
 /** A bill line from a catalogue item (its name, price and GST rate kept; only quantity and discount change). */
 const catalogueLine = (it: CatalogueItem): LineDraft => ({
   key: lineKey(), item: { _id: it._id, name: it.name, priceMinor: it.priceMinor, gstRate: it.gstRate, sac: it.sac },
@@ -328,8 +341,8 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
     ? { ...EMPTY, branchId: prefill.branchId, doctorId: prefill.doctorId, name: prefill.name, phone: prefill.phone,
       link: { ...prefill.link, label: prefill.label, nameFixed: !!prefill.name.trim(), phoneFixed: !!prefill.phone.trim() },
       // WQ55b: the booked tests, at today's catalogue price (one the catalogue no longer offers is left out).
-      lines: (prefill.items ?? []).flatMap((id) => {
-        const it = catalogue.find((i) => i._id === id && i.isActive && !i.adminDisabled);
+      lines: (prefill.items ?? []).flatMap(({ id }) => {
+        const it = offeredById(catalogue, id);
         return it ? [catalogueLine(it)] : [];
       }) }
     // WQ55: a bill opened from + New is the account holder's (as a desk booking's bill): a family member's is in the phone
@@ -337,6 +350,8 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
     : { ...EMPTY, branchId: branches.length === 1 ? branches[0]!._id : '',
       ...(visit ? { name: visit.family ? visit.family.holderName : visit.name, phone: visit.phone } : {}) }));
   const linked = !!d.link;
+  // WQ55c: booked tests the catalogue no longer offers are said by name (fewer lines than tests booked).
+  const [missing] = useState(() => (prefill?.items ?? []).filter(({ id }) => !offeredById(catalogue, id)).map((x) => x.name));
   // WQ55b: a visit's bill with no name yet (a family member's, the owner not named on + New) asks for the owner's.
   const [nameAsked] = useState(() => simple && !d.name.trim());
   // Field errors appear once the person has asked to review the bill, then follow every change.
@@ -400,6 +415,28 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
   const linkNotice = d.phone.trim() ? (
     <Alert tone="warn">{t('newInvoice.linkNotice')}</Alert>
   ) : null;
+
+  // WQ55c: a visit's bill offers only tests not on it yet.
+  const pickable = simple ? offered.filter((i) => !d.lines.some((l) => l.item?._id === i._id)) : offered;
+  const picker = (
+    <div className="ws-search">
+      <div className="j-field">
+        <label htmlFor="nb-pick">{t('newInvoice.fromCatalogue')}</label>
+        <select id="nb-pick" value={pick} aria-describedby={pickError ? 'nb-pick-error' : undefined} onChange={(e) => { setPick(e.target.value); setPickError(null); }}>
+          <option value="">{pickable.length ? t('newInvoice.chooseAnItem') : t('newInvoice.noCatalogue')}</option>
+          {pickable.map((i) => <option key={i._id} value={i._id}>{i.name} · {money(i.priceMinor)}</option>)}
+        </select>
+        {pickError && <span id="nb-pick-error" className="j-field__error">{pickError}</span>}
+      </div>
+      <Button variant="secondary" onClick={addFromCatalogue}>{t('newInvoice.addItem')}</Button>
+      {/* A hand-written line needs its own fields: the full bill only. */}
+      {!simple && (
+        <Button variant="secondary" onClick={() => set({ lines: [...d.lines, { key: lineKey(), description: '', sac: '', qty: '1', price: '', discount: '', gstRate: '0' }] })}>
+          {t('newInvoice.addLine')}
+        </Button>
+      )}
+    </div>
+  );
 
   return (
     <form className="rx-form" noValidate onSubmit={review}>
@@ -504,20 +541,8 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
         <h2 id="nb-items-h">{t('newInvoice.items')}</h2>
         {!chargesGst(partner) && <p className="ws-muted">{simple ? t('newInvoice.noGstShort') : t('newInvoice.noGst', { name: partner.name })}</p>}
         {priceNotice && <Alert tone="warn">{priceNotice}</Alert>}
-        <div className="ws-search">
-          <div className="j-field">
-            <label htmlFor="nb-pick">{t('newInvoice.fromCatalogue')}</label>
-            <select id="nb-pick" value={pick} aria-describedby={pickError ? 'nb-pick-error' : undefined} onChange={(e) => { setPick(e.target.value); setPickError(null); }}>
-              <option value="">{offered.length ? t('newInvoice.chooseAnItem') : t('newInvoice.noCatalogue')}</option>
-              {offered.map((i) => <option key={i._id} value={i._id}>{i.name} · {money(i.priceMinor)}</option>)}
-            </select>
-            {pickError && <span id="nb-pick-error" className="j-field__error">{pickError}</span>}
-          </div>
-          <Button variant="secondary" onClick={addFromCatalogue}>{t('newInvoice.addItem')}</Button>
-          <Button variant="secondary" onClick={() => set({ lines: [...d.lines, { key: lineKey(), description: '', sac: '', qty: '1', price: '', discount: '', gstRate: '0' }] })}>
-            {t('newInvoice.addLine')}
-          </Button>
-        </div>
+        {missing.length > 0 && <Alert tone="warn">{t('newInvoice.missingTests', { tests: missing.join(', ') })}</Alert>}
+        {!simple && picker}
         {errors.lines && <Alert>{errors.lines}</Alert>}
         {simple ? (
           <ul className="ws-list bill-lines" aria-label={t('newInvoice.items')}>
@@ -531,7 +556,15 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
               </li>
             ))}
           </ul>
-        ) : d.lines.map((l, i) => {
+        ) : null}
+        {/* WQ55c: in a visit the bill's lines come first; another test is a small link that opens the catalogue. */}
+        {simple && (
+          <details className="more-details">
+            <summary>{t('newInvoice.addAnother')}</summary>
+            {picker}
+          </details>
+        )}
+        {!simple && d.lines.map((l, i) => {
           const lp = pv.lines[i];
           const named = (l.item?.name ?? l.description).trim();
           const title = named ? t('newInvoice.lineTitleNamed', { n: i + 1, name: named }) : t('newInvoice.lineTitle', { n: i + 1 });

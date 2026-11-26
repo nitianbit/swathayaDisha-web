@@ -2775,6 +2775,26 @@ The pharmacy's simple home (WQ54–54e), for a lab member, with the same pieces,
   the check back); the short payment records the whole due (part payments stay on the full form); the tap count is from + New
   to the recorded payment, typing not counted.
 
+## WQ55c lab desk polish (2026-11-26, branch `wq55c/lab-desk-polish` from web stage c59c07a; backend r38c 9b512b92)
+
+- **Rows.** A cancelled desk booking reads "Cancelled", a no-show "Did not come"; a bill paid in part (`partly_paid`) "Part paid".
+  r38c's `labBookingId` on bill items (null for a member who does not read lab bookings) folds a bill into its booking's row,
+  as built in WQ55b; Today's count is of the rows shown (the day's count less the bills folded in the rows read).
+- **One bill prefill.** The desk, "Walk-ins without a bill" (to the booking) and the booking page's "Make bill" share
+  `billPrefillOf` (the booked tests; the name when the patient is the owner; the phone when known) and open the short bill.
+  Booked tests the catalogue no longer offers are named on the bill ("Not on this bill (no longer in your catalogue): …").
+- **Words.** "Choose how it was paid." on the full form, "Tap cash, UPI, card or bank." on a visit's (only the methods
+  offered); the desk intro no longer says to make the bill from the booking.
+- **Desk in a visit.** Once Next is tapped, the patient is one line ("Patient: Meena · ✓ agreed [Change details]") and the
+  tests are at the top (also in the pharmacy's visit flows). + New's choice is the visit (at the desk now, or a home
+  collection): no other is offered. With several branches the desk starts at this person's last-used branch (session memory,
+  per person), else their own first. The messages' language is a line, "Messages in: English [Change]" (English, the one
+  released; the full desk keeps its select).
+- **Bill in a visit.** Its lines first; "Add another test" is a small link opening the catalogue, which leaves out the tests
+  already on the bill (no hand-written line in the short bill). Home before the bill is issued asks "Leave without a bill? The
+  walk-in stays unbilled." (Stay is the main answer; a data-router blocker on the way to Home only).
+- Taps for a walk-in CBC in cash: 12 at one branch, 13 the first time at two branches, then 12 (the branch is remembered).
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -3165,6 +3185,7 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-26 | WQ55c lab desk polish (r38c 9b512b92, from c59c07a) | typecheck clean; Vitest 535/535; lab-home, lab-desk, partner-invoices, pharmacy-home 123/123 + 5 skipped; the full suite via pw-slot.sh 1187/1187 + 5 skipped (14.3 min) on a temporary config (port 5567, deleted). A first full run on an overloaded machine (5.1 h) timed out 48 unrelated tablet tests; the rerun passed. Walk-in CBC in cash: 12 taps at one branch; 13 the first time at two, then 12. |
 | 2026-11-26 | WQ55b the lab desk, shorter and truthful (r38b f86bf769, from 531c3a3) | typecheck clean; Vitest 535/535; the full suite via pw-slot.sh 1185/1185 + 5 skipped (14.1 min) on a temporary config (port 5567, deleted): lab-home's walk-in CBC in cash counted at 12 taps for a one-branch clerk (390 px) and 13 with two branches, the booked CBC on the bill, one Today row, truthful desk rows, doctor bookings waiting, plain lines, no Try again on a refusal, no home collection where no branch does it; the refund method chosen; the code link at the desk. Screenshots in /tmp/wq55b-shots. |
 | 2026-11-26 | WQ55 the simple lab front-desk home (r38 85c10c6e, from 47289d6) | typecheck clean; Vitest 535/535; the full suite via pw-slot.sh 1185/1185 + 5 skipped (15.7 min) on a temporary config (port 5567, deleted), with lab-home (walk-in CBC paid in cash in Today with totals, home collection, family member, branch-limited member, member without billing; desktop, tablet, 390 px) and the bill payment specs choosing a method; then the r38b slots: lab-home and pharmacy-home again 27/27 + 5 skipped. Screenshots in /tmp/wq55-shots. |
 | 2026-11-26 | WQ54e one lab-test statement (r37d a6ac7f3f, from 571f5c5) | typecheck clean; Vitest 534/534; Playwright lab-booking, doctor-lab, pharmacy-home 87/87 + 3 skipped (the exact statement behind Read more on both Book lab test pages; `statementVersion: 'web-lab-test-v1'` in both bodies) on a temporary config (port 5566, deleted). |

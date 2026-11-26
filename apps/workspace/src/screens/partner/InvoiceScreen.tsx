@@ -542,7 +542,7 @@ function SimplePayment({ invoice, locked, busy, onRecord }: { invoice: Invoice; 
   const [errors, setErrors] = useState<Record<string, string>>({});
   function record() {
     const errs: Record<string, string> = {};
-    if (!mode) errs.mode = t('invoice.pay.chooseMethod');
+    if (!mode) errs.mode = t('invoice.pay.tapMethod');
     if (reference.trim().length > MAX_REFERENCE) errs.reference = tooLongWords(MAX_REFERENCE);
     if (note.trim().length > MAX_NOTE) errs.note = tooLongWords(MAX_NOTE);
     setErrors(errs);

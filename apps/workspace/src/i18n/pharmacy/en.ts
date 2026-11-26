@@ -1081,6 +1081,8 @@ export default {
   'patientStep.consentShort.doctorTest': 'The patient agrees: Jansetu keeps their details (an account for this number), the lab sees them, and you can see the report for 90 days.',
   'patientStep.consentReadMore': 'Read more',
   'patientStep.patientReady': 'Patient ready',
+  /** WQ55c: a flow opened from + New, once the patient step is done; {who}: the patient. */
+  'patientStep.visitDone': 'Patient: {who} · ✓ agreed',
   'patientStep.changePatientDetails': 'Change patient details',
   'patientStep.typeThePatientSName': 'Type the patient’s name.',
   'patientStep.useAtMostCharacters': 'Use at most {MAX_PERSON_NAME} characters.',

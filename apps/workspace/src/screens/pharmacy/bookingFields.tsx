@@ -1,4 +1,3 @@
-import { getLanguage } from '@jansetu/i18n';
 import { canonicalPhone, MAX_CONCERN, PATIENT_LANGUAGES, type BookerKind, type JoinOn, type LabAddress } from '@jansetu/api';
 import { TextArea, TextField } from '@jansetu/ui';
 import { t } from '../../i18n/pharmacy/index.ts';
@@ -9,11 +8,8 @@ import { t } from '../../i18n/pharmacy/index.ts';
  */
 
 /** `preferredLanguage`: one of the patient languages (required by every assisted create). */
-/** WQ55b: the patient's language starts as the workspace's (English when the patient list has no such language). */
-export const defaultPatientLanguage = (): string => {
-  const ui = getLanguage();
-  return PATIENT_LANGUAGES.some((l) => l.code === ui) ? ui : 'en';
-};
+/** WQ55b/WQ55c: the patient's language starts as English (the one released for patients' messages so far). */
+export const defaultPatientLanguage = (): string => 'en';
 
 export function LanguageSelect({ id, value, error, onChange }: { id: string; value: string; error?: string; onChange: (code: string) => void }) {
   return (

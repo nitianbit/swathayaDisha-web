@@ -144,7 +144,7 @@ export default {
   'labBookings.showMoreLater': 'Show more (later slots)',
   // ── LabDeskScreen ──
   'labDesk.title': 'Front desk',
-  'labDesk.intro': 'Book tests for a patient at your lab. The patient pays at the lab; make the bill from the booking.',
+  'labDesk.intro': 'Book tests for a patient at your lab. The patient pays at the lab.',
   'labDesk.mode.walkin': 'Walk-in now',
   'labDesk.mode.lab': 'Lab visit at a time',
   'labDesk.mode.home': 'Home collection',
@@ -201,6 +201,9 @@ export default {
   'labDesk.book': 'Book',
   /** WQ55b: a visit's one-tap booking; {total}: the total. */
   'labDesk.bookFor': 'Book for {total}',
+  /** WQ55c: the language of the patient's messages, shown as a line; {language}: its name. */
+  'labDesk.messagesIn': 'Messages in: {language}',
+  'labDesk.changeLanguage': 'Change',
   /** WQ55b: a doctor's test code, a small link under the tests. */
   'labDesk.haveCode': 'Have a test code from the doctor?',
   'labDesk.step3': '3. Check the total',
@@ -668,7 +671,9 @@ export default {
   'invoice.moreActions': 'More actions',
   'invoice.done': 'Done',
   'invoice.cancel.chooseReturned': 'Choose how the money was returned.',
-  'invoice.pay.chooseMethod': 'Choose how it was paid: cash, UPI, card, bank or other.',
+  /** WQ55c: only the methods offered: the full form's list, or a visit's four buttons. */
+  'invoice.pay.chooseMethod': 'Choose how it was paid.',
+  'invoice.pay.tapMethod': 'Tap cash, UPI, card or bank.',
   /** The fields of the 2nd, 3rd… method of a payment split across methods. */
   'invoice.pay.paidByN': 'Paid by (method {n})',
   'invoice.pay.zero': 'Bill {serial} is for {amount}. Mark it as paid? It will show Paid; this cannot be changed or removed.',
@@ -776,8 +781,15 @@ export default {
   'newInvoice.name': 'Customer name',
   /** WQ55b: a visit's short bill: the customer is the phone's owner (asked here when + New had no name for them). */
   'newInvoice.nameOnBill': 'Name on the bill',
+  /** WQ55c: booked tests the catalogue no longer offers; {tests}: their names. */
+  'newInvoice.missingTests': 'Not on this bill (no longer in your catalogue): {tests}. Add it by hand if it was done.',
   'newInvoice.nameOnBillHint': 'The phone owner’s name',
   'newInvoice.moreDetails': 'More details',
+  'newInvoice.addAnother': 'Add another test',
+  /** WQ55c: Home from a visit's bill not issued yet. */
+  'newInvoice.leaveTitle': 'Leave without a bill? The walk-in stays unbilled.',
+  'newInvoice.stay': 'Stay',
+  'newInvoice.leave': 'Leave',
   'newInvoice.noGstShort': 'No GST on this bill.',
   /** {total}: the bill's total. */
   'newInvoice.totalIs': 'Total {total}',

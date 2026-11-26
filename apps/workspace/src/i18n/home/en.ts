@@ -53,6 +53,10 @@ export default {
   'register.onBill': 'Pay on its bill',
   'register.billUnpaid': 'Bill not paid',
   'register.noBill': 'No bill yet',
+  /** WQ55c: a booking that ended; a bill paid in part. */
+  'register.cancelled': 'Cancelled',
+  'register.noShow': 'Did not come',
+  'register.partPaid': 'Part paid',
   /** A row (not a wallet top-up) without a patient name. */
   'register.noName': 'Customer',
   'register.loading': 'Loading the register…',

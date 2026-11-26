@@ -74,8 +74,8 @@ export interface BillPrefill {
   phone: string;
   /** "Dr Mehta, Tue, 17 Nov 2026, 09:30" / "Asha, Wed, 25 Nov 2026, 10:00" — what the form shows about the record. */
   label: string;
-  /** WQ55b: the booked tests (catalogue ids): the bill starts with them, at today's catalogue price. */
-  items?: string[];
+  /** WQ55b: the booked tests (catalogue id and name): the bill starts with them, at today's catalogue price. */
+  items?: { id: string; name: string }[];
   /** WQ55b: a visit opened from + New: the short bill (name, phone, items, total) and the short payment. */
   simple?: boolean;
 }

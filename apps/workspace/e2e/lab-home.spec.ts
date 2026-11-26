@@ -241,6 +241,8 @@ async function deskPatient(page: Page, line: string) {
   await expect(page.getByText('Who is the patient?')).toHaveCount(0);
   await tap(page.getByLabel('Patient agreed to this booking'));
   await tap(page.getByRole('button', { name: 'Next: choose the tests' }));
+  // WQ55c: done, the patient is one line and the tests are at the top.
+  await expect(page.getByText(/^Patient: .* · ✓ agreed$/)).toBeVisible();
 }
 
 /**
@@ -259,12 +261,15 @@ async function walkInPaidInCash(page: Page, b: Backend, branches: 1 | 2) {
   await tap(choices(page).getByRole('link', { name: 'Lab test at the desk' }));
   await deskPatient(page, `Meena Iyer · ${PHONE}`);
   const form = page.getByRole('form', { name: 'Tests and time' });
-  await expect(form.getByLabel('Walk-in now')).toBeChecked();
+  // + New chose the desk: no other visit is offered.
+  await expect(form.getByText('Walk-in now', { exact: true })).toBeVisible();
+  await expect(form.getByRole('radio')).toHaveCount(0);
   // The tests come first; a doctor's code is a small link.
   await expect(page.getByText('Have a test code from the doctor?', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Have a test code from the doctor? (optional)')).toBeHidden();
-  // The patient's language starts as the workspace's.
-  await expect(form.getByLabel('Language the patient speaks')).toHaveValue('en');
+  // The patient's messages: English (the one released), a line to change.
+  await expect(form.getByText('Messages in: English')).toBeVisible();
+  await expect(form.getByLabel('Language the patient speaks')).toHaveCount(0);
   if (branches === 2) { await form.getByLabel('Branch').selectOption({ label: 'Indiranagar' }); taps.n += 1; }
   await tap(form.getByLabel(/^CBC/));
   await tap(form.getByRole('button', { name: 'Book for ₹300.00' }));
@@ -274,7 +279,15 @@ async function walkInPaidInCash(page: Page, b: Backend, branches: 1 | 2) {
   // The number was looked up once, on + New.
   expect(b.calls.filter((c) => c.path.endsWith('/patients/lookup'))).toHaveLength(1);
   await expect(page.getByRole('list', { name: 'Items' })).toContainText('CBC · ₹300.00');
+  // Another test is a small link; the catalogue it opens leaves out the tests already on the bill.
+  await page.getByText('Add another test').click();
+  await expect(page.getByLabel('From the catalogue').getByRole('option', { name: /CBC/ })).toHaveCount(0);
   await expect(page.getByLabel('Name on the bill')).toHaveValue('Meena Iyer');
+  // Home before the bill is issued asks first; Stay keeps the bill.
+  await page.getByRole('link', { name: 'Home', exact: true }).first().click();
+  await expect(page.getByText('Leave without a bill? The walk-in stays unbilled.')).toBeVisible();
+  await page.getByRole('button', { name: 'Stay' }).click();
+  await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
   await expect(page.getByLabel('Age')).toBeHidden();
   await expect(page.getByRole('heading', { name: 'Total ₹300.00' })).toBeVisible();
   await tap(page.getByRole('button', { name: 'Issue bill for ₹300.00' }));
@@ -285,7 +298,7 @@ async function walkInPaidInCash(page: Page, b: Backend, branches: 1 | 2) {
   const pay = page.getByRole('group', { name: 'Record payment' });
   for (const box of await Promise.all((await pay.getByRole('button', { name: /^(Cash|UPI|Card|Bank)/ }).all()).map((x) => x.boundingBox()))) expect(box!.height).toBeGreaterThanOrEqual(48);
   await pay.getByRole('button', { name: 'Record ₹300.00 paid' }).click();
-  await expect(page.getByText('Choose how it was paid: cash, UPI, card, bank or other.')).toBeVisible();
+  await expect(page.getByText('Tap cash, UPI, card or bank.')).toBeVisible();
   await tap(pay.getByRole('button', { name: 'Cash', exact: true }));
   await tap(pay.getByRole('button', { name: 'Record ₹300.00 paid' }));
   await expect(page.getByText('Paid by Cash')).toBeVisible();
@@ -300,6 +313,8 @@ async function walkInPaidInCash(page: Page, b: Backend, branches: 1 | 2) {
   // One row for the visit: the desk booking with its bill's state (the bill names its booking).
   const rows = page.getByRole('list', { name: 'The day’s visits, sales and tests' }).getByRole('listitem');
   await expect(rows).toHaveCount(1);
+  // WQ55c: the count is of the rows shown (the bill is folded into its booking's row).
+  await expect(page.getByText('1 item', { exact: true })).toBeVisible();
   await expect(rows.first()).toContainText('Meena Iyer: CBC');
   await expect(rows.first()).toContainText('₹300.00');
   await expect(rows.first()).toContainText('Paid (cash)');
@@ -316,8 +331,47 @@ async function bigButtonsVia(page: Page) {
 
 test('a walk-in CBC paid in cash appears in Today with its totals', async ({ page }) => {
   const b = await mockBackend(page);
-  // Two branches do lab visits: one more tap to choose.
+  // Two branches do lab visits: one more tap to choose, the first time.
   expect(await walkInPaidInCash(page, b, 2)).toBe(13);
+  // WQ55c: the next walk-in starts at the branch used last (memory only).
+  await bigButtonsVia(page);
+  await newVisit(page, { self: 'Ravi Kumar' });
+  await choices(page).getByRole('link', { name: 'Lab test at the desk' }).click();
+  await deskPatient(page, `Ravi Kumar · ${PHONE}`);
+  await expect(page.getByRole('form', { name: 'Tests and time' }).getByLabel('Branch')).toHaveValue(BR1);
+  expect(await stored(page)).not.toContain(BR1);
+});
+
+test('the register says how each desk visit stands; Make bill from a booking opens the short bill with its tests', async ({ page }) => {
+  const b = await mockBackend(page);
+  const row = (id: string, o: Rec): Rec => ({ kind: 'lab_booking', id, at: NOW.toISOString(), shortRef: null, patientName: 'Asha', what: 'CBC',
+    whatParts: { code: 'lab.tests', values: { first: 'CBC', more: 0, source: 'lab_desk', visit: 'lab' } }, amountMinor: 30000, paid: false, method: null,
+    madeOn: DAY, link: { kind: 'lab_booking', id }, ...o });
+  const BK = 'ab'.repeat(12);
+  b.register.push(row('a2'.repeat(12), { status: 'cancelled', patientName: 'Cancelled One' }), row('a3'.repeat(12), { status: 'no_show', patientName: 'Absent One' }),
+    { kind: 'bill', id: 'bb'.repeat(12), at: NOW.toISOString(), shortRef: 'LB/2627/0009', patientName: 'Part One', what: 'CBC',
+      whatParts: { code: 'bill.items', values: { first: 'CBC', more: 0 } }, amountMinor: 30000, paid: false, method: null, status: 'partly_paid', madeOn: DAY,
+      link: { kind: 'invoice', id: 'bb'.repeat(12) }, labBookingId: null });
+  // A desk booking whose second test the catalogue no longer offers.
+  b.bookings.push({ _id: BK, partnerId: LAB, branchId: BR1, userId: 'u1'.repeat(12), patient: { kind: 'self', name: 'Meena Iyer' }, visitMode: 'lab',
+    slot: { walkIn: true, date: DAY, startTime: '10:00', startsAt: NOW.toISOString() },
+    items: [{ catalogItemId: T1, kind: 'test', name: 'CBC', priceMinor: 30000, gstRate: 0 }, { catalogItemId: 'd9'.repeat(12), kind: 'test', name: 'Vitamin D', priceMinor: 90000, gstRate: 0 }],
+    pricing: { subtotalMinor: 120000, discountMinor: 0, payableMinor: 120000, commissionMinor: 0, currency: 'INR' }, status: 'confirmed', statusVersion: 0, paymentStatus: 'pending',
+    reschedule: { version: 0, pending: false }, report: { draftFiles: [], releasedFiles: [], releases: [] }, lifecycle: {}, source: 'lab_desk', payAtLab: true,
+    desk: { memberId: OWNER, branchId: BR1, arrivedAt: null, preferredLanguage: 'en', payAtLab: true }, bill: null, createdAt: NOW.toISOString() });
+  await signIn(page);
+  await expect(page.getByRole('listitem').filter({ hasText: 'Cancelled One' })).toContainText('Cancelled');
+  await expect(page.getByRole('listitem').filter({ hasText: 'Absent One' })).toContainText('Did not come');
+  await expect(page.getByRole('listitem').filter({ hasText: 'Part One' })).toContainText('Part paid');
+  await expect(page.getByText('Pay on its bill')).toHaveCount(0);
+  // "Walk-ins without a bill" → the booking → Make bill: the desk's prefill, the short bill.
+  await page.getByRole('link', { name: '1 walk-in without a bill' }).click();
+  await expect(page.getByRole('heading', { name: 'Lab booking: Meena Iyer' })).toBeVisible();
+  await page.getByRole('link', { name: 'Make bill' }).click();
+  await expect(page.getByRole('list', { name: 'Items' })).toContainText('CBC · ₹300.00');
+  await expect(page.getByLabel('Name on the bill')).toHaveValue('Meena Iyer');
+  // Fewer lines than tests booked: the missing one is named.
+  await expect(page.getByText('Not on this bill (no longer in your catalogue): Vitamin D. Add it by hand if it was done.')).toBeVisible();
 });
 
 test('a home collection: + New opens the desk on a home collection; the address and the time are sent', async ({ page }) => {
@@ -327,12 +381,15 @@ test('a home collection: + New opens the desk on a home collection; the address 
   await choices(page).getByRole('link', { name: 'Home collection' }).click();
   await deskPatient(page, `Meena Iyer · ${PHONE}`);
   const form = page.getByRole('form', { name: 'Tests and time' });
-  await expect(form.getByLabel('Home collection')).toBeChecked();
+  await expect(form.getByText('Home collection', { exact: true })).toBeVisible();
+  await expect(form.getByRole('radio')).toHaveCount(0);
   await form.getByLabel(/^CBC/).check();
   await form.getByRole('button', { name: /12:00–13:00/ }).click();
   await form.getByLabel('House and street').fill('12 MG Road');
   await form.getByLabel('City').fill('Bengaluru');
   await form.getByLabel('Pincode').fill('560001');
+  // The messages' language can be changed from its line.
+  await form.getByRole('button', { name: 'Change', exact: true }).click();
   await form.getByLabel('Language the patient speaks').selectOption('kn');
   await form.getByRole('button', { name: 'Book for ₹300.00' }).click();
   await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
@@ -343,7 +400,10 @@ test('a home collection: + New opens the desk on a home collection; the address 
   b.pendingExtra = { reportsDue: { count: 3, toUploadCount: 2, toReleaseCount: 1, toUploadIds: [], toReleaseIds: [] }, consultationsWaiting: null,
     deskUnbilled: { count: 2, ids: [] }, bookingsAwaitingPayment: { count: 1, ids: [C] } };
   b.refundedMinor = 5000;
-  await bigButtonsVia(page);
+  // Leaving the bill unissued is asked, then allowed.
+  await page.getByRole('link', { name: 'Home', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Leave' }).click();
+  await expect(bigButtons(page)).toBeVisible();
   // r38b: walk-ins without a bill; a refund that day on its own line (collected unchanged).
   await expect(page.getByRole('link', { name: '2 walk-ins without a bill' })).toHaveAttribute('href', '#/partner/lab-bookings');
   await expect(money(page).getByRole('paragraph')).toHaveText(['Collected today ₹0.00', 'To collect ₹0.00', 'Refunded today ₹50.00']);

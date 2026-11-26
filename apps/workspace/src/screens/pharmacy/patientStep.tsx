@@ -13,7 +13,7 @@ import type { Perform } from '../finance/finance.tsx';
 import type { ConsultBooker } from './consultBooker.ts';
 import { t } from '../../i18n/pharmacy/index.ts';
 import { useVisitPreset, type VisitPatient } from '../front/visitPatient.ts';
-import { VisitPatientLine } from '../front/visitBar.tsx';
+import { VisitPatientLine, visitWho } from '../front/visitBar.tsx';
 
 /**
  * WQ17: the patient step of an assisted booking (WQ12, moved here unchanged from Book consultation so that Book lab test
@@ -334,6 +334,16 @@ function VisitPatientSection({ step, frozen, locked, nextLabel, consent, forTest
 }) {
   const { visit, lookup, patient, set, patientErrors, agreed, setAgreed, agreeError, setAgreeError, patientDone, setPatientDone, patientNext } = step;
   if (!visit) return null;
+  // WQ55c: once done, one line (the next step is then at the top): "Patient: Meena · ✓ agreed [Change]".
+  if (patientDone && lookup) {
+    return (
+      <section className="ws-section visit-done" aria-labelledby="pt-h">
+        <h2 id="pt-h" className="j-sr-only">{t('patientStep.n1Patient')}</h2>
+        <p><Parts of={t.rich('patientStep.visitDone', { who: <strong>{patient.name.trim() || visitWho(visit)}</strong> })} /></p>
+        <Button variant="ghost" disabled={locked} onClick={() => setPatientDone(false)}>{t('patientStep.changePatientDetails')}</Button>
+      </section>
+    );
+  }
   return (
     <section className="ws-section" aria-labelledby="pt-h">
       <h2 id="pt-h">{t('patientStep.n1Patient')}</h2>

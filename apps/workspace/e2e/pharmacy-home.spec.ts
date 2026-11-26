@@ -384,7 +384,8 @@ async function whoJourneys(page: Page, b: Backend) {
   await expect(page.getByText('Who is the patient?')).toHaveCount(0);
   await page.getByLabel('Patient agreed to this booking').check();
   await page.getByRole('button', { name: 'Next: choose the doctor' }).click();
-  await expect(page.getByText('Patient ready')).toBeVisible();
+  // WQ55c: the finished patient step is one line.
+  await expect(page.getByText('Patient: Asha Verma · ✓ agreed')).toBeVisible();
   // One lookup per Find on + New (four here: two numbers, the number kept by Change, Find again); none by a flow.
   expect(lookups(b)).toHaveLength(4);
   await noSidewaysScroll(page);

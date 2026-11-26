@@ -90,7 +90,7 @@ export function FrontDeskHome({ desk }: { desk: FrontDesk }) {
             <MoneyLine day={q.data} date={day} />
             <PendingStrip day={q.data} desk={desk} />
             <Register items={q.data.items} date={day} desk={desk.kind} unbilled={q.data.pending?.deskUnbilled?.ids} />
-            {(q.data.nextCursor || q.data.totals.count > q.data.items.length) && (
+            {(q.data.nextCursor || shownCount(q.data.totals.count, q.data.items) > oneRowPerVisit(q.data.items).rows.length) && (
               <p><Link className="j-btn j-btn--secondary" to={desk.todayPath}>{t('register.all')}</Link></p>
             )}
           </>
@@ -217,6 +217,9 @@ const isDeskRow = (i: TodayItem) => i.kind === 'lab_booking' && i.whatParts?.val
  * WQ55b: one row per desk visit: a bill naming the desk booking it bills (`labBookingId`, asked of the server) is folded
  * into that booking's row; a bill on its own stays a row ("Bill · …").
  */
+/** WQ55c: the day's rows as shown: the server's count less the bills folded into their bookings' rows (in the rows read). */
+export const shownCount = (count: number, items: readonly TodayItem[]) => Math.max(0, count - (items.length - oneRowPerVisit(items).rows.length));
+
 export function oneRowPerVisit(items: readonly TodayItem[]): { rows: TodayItem[]; billOf: Map<string, TodayItem> } {
   const desk = new Set(items.filter(isDeskRow).map((i) => i.id));
   const billOf = new Map<string, TodayItem>();
@@ -252,7 +255,11 @@ export function Register({ items, date, desk, unbilled }: { items: readonly Toda
             <span className="register-item">{to ? <Link to={to}>{words}</Link> : words}</span>
             <span className="register-pay">
               <span className="register-amount">{formatPaise(i.amountMinor)}</span>{' '}
-              {i.paid ? paidBadge(i.method ?? bill?.method)
+              {/* WQ55c: an ended booking says how it ended; a bill paid in part says so. */}
+              {i.kind === 'lab_booking' && i.status === 'cancelled' ? <Badge>{t('register.cancelled')}</Badge>
+                : i.kind === 'lab_booking' && i.status === 'no_show' ? <Badge>{t('register.noShow')}</Badge>
+                : (i.kind === 'bill' ? i.status : bill?.status) === 'partly_paid' && !i.paid ? <Badge tone="warn">{t('register.partPaid')}</Badge>
+                : i.paid ? paidBadge(i.method ?? bill?.method)
                 : isDeskRow(i) ? <Badge tone="warn">{unbilled?.includes(i.id) ? t('register.noBill') : bill ? t('register.billUnpaid') : t('register.onBill')}</Badge>
                 : <Badge tone="warn">{t('register.unpaid')}</Badge>}
               {i.paidToday && i.madeOn && i.madeOn !== date && <span className="register-note">{t('register.paidTodayMade', { date: formatDay(i.madeOn) })}</span>}
@@ -398,7 +405,7 @@ function DayRegister({ desk }: { desk: FrontDesk }) {
         <>
           <MoneyLine day={first} date={date} />
           <PendingStrip day={first} desk={desk} />
-          <p className="ws-muted">{t('today.count', { count: first.totals.count })}</p>
+          <p className="ws-muted">{t('today.count', { count: shownCount(first.totals.count, items) })}</p>
           {first.truncated && <Alert tone="warn">{t('today.truncated')}</Alert>}
           {!list.data ? (list.isError ? <Failed error={list.error} onRetry={() => void list.refetch()} /> : <Loading label={t('register.loading')} />)
             : searched !== null && items.length === 0 ? <p>{t('today.noMatch')}</p> : <Register items={items} date={date} desk={desk.kind} unbilled={first.pending?.deskUnbilled?.ids} />}

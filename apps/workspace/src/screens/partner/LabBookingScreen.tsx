@@ -17,6 +17,7 @@ import { messageOf } from '../../errors.ts';
 import { PageHeading } from '../../PageHeading.tsx';
 import { definitelyNotRecorded, newRequestKey } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
+import { billPrefillOf } from './LabDeskScreen.tsx';
 import { BILL_READERS, BillLink, genderLabel, money } from './billing.tsx';
 import { OwnedCancel } from '../pharmacy/ownedCancel.tsx';
 import {
@@ -968,9 +969,8 @@ function DeskParts({ ctx, booking: b, disabled, perform, onNotice, reread, readN
           </p>
         ) : <p>{t('labBooking.desk.noBill')}</p>}
         {canBillDesk(b) && (
-          <BillLink ctx={ctx} memory={memory} label={t('labBooking.desk.makeBill')} prefill={{
-            link: { kind: 'lab_booking', id: b._id }, branchId: b.branchId, doctorId: '', name: '', phone: '', label: `${b.patient.name}, ${slotLabel(b.slot)}`,
-          }} />
+          // WQ55c: the desk's prefill (the booked tests; the name when the patient is the owner), the short bill.
+          <BillLink ctx={ctx} memory={memory} label={t('labBooking.desk.makeBill')} prefill={billPrefillOf(b, undefined, true)} />
         )}
       </section>
       {manage && canDeskCancel(b) && (
