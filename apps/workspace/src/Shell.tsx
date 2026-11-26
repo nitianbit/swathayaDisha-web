@@ -28,11 +28,11 @@ export function Shell({ children }: { children: ReactNode }) {
       <aside className="ws-side">
         <div className="ws-brand">{BRAND} <span>{t('shell.workspace')}</span></div>
         <div className="ws-phone-bar">
-          {/* WQ54c: icon buttons on one row; their words for screen readers. */}
-          <Link className="ws-phone-home" to="/"><House size={24} aria-hidden="true" /><span className="j-sr-only">{t('nav.home')}</span></Link>
+          {/* WQ54c/WQ54d: icon buttons on one row, a short word under each. */}
+          <Link className="ws-phone-home" to="/"><House size={22} aria-hidden="true" /><span>{t('nav.home')}</span></Link>
           <button type="button" className="ws-more" aria-expanded={menuOpen} aria-controls="ws-menu" onClick={() => setMenuOpen((o) => !o)}>
-            {menuOpen ? <X size={24} aria-hidden="true" /> : <Menu size={24} aria-hidden="true" />}
-            <span className="j-sr-only">{menuOpen ? t('shell.close') : t('shell.more')}</span>
+            {menuOpen ? <X size={22} aria-hidden="true" /> : <Menu size={22} aria-hidden="true" />}
+            <span>{menuOpen ? t('shell.close') : t('shell.menu')}</span>
           </button>
         </div>
         <div id="ws-menu" className={menuOpen ? 'ws-menu ws-menu--open' : 'ws-menu'}>

@@ -127,12 +127,13 @@
   /* A wide table scrolls inside its own box: no page is wider than the phone (WQ54b). */
   .ws-main, .rx-form, .ws-section { grid-template-columns: minmax(0, 1fr); }
   .ws-main { padding: var(--space-4); }
-  /* WQ54c: one row at 390 px: the short brand, then Home and More as 48 px icon buttons. */
+  /* WQ54c/WQ54d: one row at 390 px: the short brand, then Home and Menu, each an icon with a short word under it. */
   .ws-side { flex-wrap: nowrap; padding-top: var(--space-2); padding-bottom: var(--space-2); }
   .ws-side:has(.ws-menu--open) { flex-wrap: wrap; }
   .ws-brand span { display: none; }
   .ws-phone-bar { display: flex; gap: var(--space-2); }
-  .ws-more, .ws-phone-home { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; padding: 0;
+  .ws-more, .ws-phone-home { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 60px;
+    min-height: 56px; padding: var(--space-1) var(--space-2); font-size: 0.8125rem; font-weight: 600; line-height: 1.1; text-decoration: none;
     border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
   .ws-menu { display: none; width: 100%; }
   .ws-menu--open { display: grid; gap: var(--space-4); }

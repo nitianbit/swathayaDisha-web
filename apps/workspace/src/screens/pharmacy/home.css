@@ -50,7 +50,8 @@
 .visit-consent input { width: 28px; height: 28px; flex: none; accent-color: var(--brand); }
 /* WQ54c: a flow (and a sale's payment and bill) opened from + New: 17 px type on any screen. */
 body.visit-mode .ws-main { font-size: 1.0625rem; }
-.consent-more summary { cursor: pointer; min-height: 32px; color: var(--brand-strong); }
+/* WQ54d: Read more is a 48 px target. */
+.consent-more summary { cursor: pointer; padding: 12px 0; line-height: 24px; color: var(--brand-strong); }
 .who-step { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
 .big-action[aria-pressed='true'] { border-color: var(--brand); background: var(--brand-soft); }
 @media (max-width: 760px) {

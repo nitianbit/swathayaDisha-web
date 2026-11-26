@@ -432,9 +432,11 @@ function SaleDone({ orderId }: { orderId: string }) {
             <Bill order={q.data} />
             <Payment order={q.data} />
             {visit ? (
-              // WQ54c: one obvious next step after a visit's sale; the rest small.
+              // WQ54c/WQ54d: one obvious next step after a visit's sale, once it is paid (until then it is Mark paid); one
+              // that cannot be paid here (the pharmacist reviews it first) gets a plain Done. The rest small.
               <div className="ws-actions sale-noprint">
-                <Link className="j-btn j-btn--primary" to="/">{t('done.done')}</Link>
+                {q.data.paymentStatus === 'paid' ? <Link className="j-btn j-btn--primary" to="/">{t('done.done')}</Link>
+                  : !canMarkPaid(q.data) && <Link className="j-btn j-btn--secondary" to="/">{t('done.done')}</Link>}
                 <Button variant="ghost" onClick={() => window.print()}>{t('done.print')}</Button>
                 <Link className="ws-muted" to={`/pharmacy/orders/${q.data._id}`}>{t('done.openOrder')}</Link>
               </div>

@@ -33,8 +33,9 @@ export default {
   /** WQ54: the day's register. */
   'nav.today': 'Today',
   /** WQ54: on a phone, the menu behind one button. */
-  'shell.more': 'More',
-  'shell.close': 'Close the menu',
+  /** WQ54d: the phone header's two buttons, a short word under each icon. */
+  'shell.menu': 'Menu',
+  'shell.close': 'Close',
   'nav.payouts': 'Payouts',
   'nav.pharmacies': 'Pharmacies',
   'nav.pharmacyWallets': 'Pharmacy wallets',

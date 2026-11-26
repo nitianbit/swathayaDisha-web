@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  ApiError, ASSISTED_GENDERS, ASSISTED_RELATIONS, assistedRefusal, canonicalPhone, CONSULT_MODE_LABEL, CONSENT_STATEMENT, doctorToolsApi, EMPTY_PATIENT, familyBookedBefore,
+  ApiError, ASSISTED_GENDERS, DOCTOR_LAB_CONSENT_STATEMENT, LAB_CONSENT_STATEMENT, LAB_DESK_CONSENT_STATEMENT, ASSISTED_RELATIONS, assistedRefusal, canonicalPhone, CONSULT_MODE_LABEL, CONSENT_STATEMENT, doctorToolsApi, EMPTY_PATIENT, familyBookedBefore,
   formatSlotDate, istToday, isSwitchedOff, MAX_PERSON_NAME, patientProblems, pharmacyAssistedApi, type AssistedGender, type AssistedRelation, type DoctorAppointment,
   type PatientDraft, type PatientLookup, type Refusal,
 } from '@jansetu/api';
@@ -288,6 +288,14 @@ export function PatientFields({ patient, set, errors: patientErrors, booker = 'p
   );
 }
 
+/** WQ54d: the short line of the statement shown (it names what the statement allows). */
+function shortConsent(statement: string, forTest: boolean): string {
+  if (statement === LAB_DESK_CONSENT_STATEMENT) return t('patientStep.consentShort.labDesk');
+  if (statement === DOCTOR_LAB_CONSENT_STATEMENT) return t('patientStep.consentShort.doctorTest');
+  if (statement === LAB_CONSENT_STATEMENT) return t('patientStep.consentShort.labConsult');
+  return forTest ? t('patientStep.consentShort.pharmacyTest') : t('patientStep.consentShort.pharmacyConsult');
+}
+
 /**
  * The "patient agreed" tick: one short plain sentence, the full statement it attests behind "Read more" (WQ54c; a lab
  * test's own sentence with `forTest`). `large` in a flow opened from + New.
@@ -301,7 +309,7 @@ function AgreedTick({ agreed, setAgreed, agreeError, setAgreeError, consent, lar
       <label className={large ? 'rx-ack visit-consent' : 'rx-ack'}>
         <input type="checkbox" checked={agreed} aria-describedby={agreeError ? 'agree-err' : 'agree-text'}
           onChange={(e) => { setAgreed(e.target.checked); if (e.target.checked) setAgreeError(null); }} />{t('patientStep.patientAgreedToThisBooking')}</label>
-      <span id="agree-text" className="j-field__hint">{forTest ? t('patientStep.consentShortTest') : t('patientStep.consentShort')}</span>
+      <span id="agree-text" className="j-field__hint">{shortConsent(consent, !!forTest)}</span>
       <details className="consent-more">
         <summary>{t('patientStep.consentReadMore')}</summary>
         <p className="j-field__hint">{consent}</p>

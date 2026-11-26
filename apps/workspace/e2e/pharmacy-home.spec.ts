@@ -260,8 +260,10 @@ async function exampleOne(page: Page, b: Backend, signedIn = false) {
   await expect(page.getByLabel('Type the number again')).toHaveCount(0);
   await expect(page.getByLabel('Patient’s full name')).toHaveCount(0);
   // WQ54c: the agreement in one plain sentence, the full statement behind Read more.
-  await expect(page.getByText('The patient agrees to share their details with Jansetu for this visit.')).toBeVisible();
+  await expect(page.getByText('The patient agrees: Jansetu keeps their details (an account for this number), the doctor sees them, and this pharmacy can see the prescription for 90 days.')).toBeVisible();
   await expect(page.getByText(/agreed that this pharmacy books this consultation/)).toBeHidden();
+  // WQ54d: Read more is a 48 px target.
+  expect((await page.getByText('Read more').boundingBox())!.height).toBeGreaterThanOrEqual(48);
   await page.getByText('Read more').click();
   await expect(page.getByText(/agreed that this pharmacy books this consultation/)).toBeVisible();
   const asked = await requestConsult(page, b);
@@ -289,6 +291,8 @@ async function exampleOne(page: Page, b: Backend, signedIn = false) {
   // WQ54b: no method is chosen at first; Mark paid waits for one. WQ54c: the payment and the bill in big type.
   await expect(pay.getByRole('radio', { checked: true })).toHaveCount(0);
   await expect(pay.getByRole('button', { name: 'Mark paid' })).toBeDisabled();
+  // WQ54d: Done only once it is paid; until then the next step is Mark paid.
+  await expect(page.getByRole('link', { name: 'Done', exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => getComputedStyle(document.querySelector('.ws-main')!).fontSize)).toBe('17px');
   await pay.getByLabel('Cash').check();
   await pay.getByRole('button', { name: 'Mark paid' }).click();
@@ -358,7 +362,7 @@ async function whoJourneys(page: Page, b: Backend) {
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await choices(page).getByRole('link', { name: 'Book a lab test' }).click();
   await expect(page.getByText('Patient: Ravi (son of S*** D***)')).toBeVisible();
-  await expect(page.getByText('The patient agrees to share their details with Jansetu for this test.')).toBeVisible();
+  await expect(page.getByText('The patient agrees: Jansetu keeps their details (an account for this number) and the lab sees them for this test.')).toBeVisible();
   await page.getByRole('button', { name: 'Change', exact: true }).click();
   await expect(page.getByLabel('Phone number or name')).toHaveValue(PHONE);
   await expect(whoIs(page)).toBeVisible();
@@ -517,16 +521,18 @@ test.describe('on a 390 px phone', () => {
     await signIn(page);
     const menu = page.getByRole('navigation', { name: 'Main' });
     await expect(menu).toBeHidden();
-    // WQ54c: the short brand, Home and More on one row (icon buttons named for screen readers).
+    // WQ54c/WQ54d: the short brand, Home and Menu on one row, a word under each icon.
     const home = page.getByRole('link', { name: 'Home', exact: true });
-    const more = page.getByRole('button', { name: 'More' });
+    const more = page.getByRole('button', { name: 'Menu' });
     const [brand, homeBox, moreBox] = await Promise.all([page.locator('.ws-brand').boundingBox(), home.boundingBox(), more.boundingBox()]);
     expect(Math.abs(homeBox!.y - moreBox!.y)).toBeLessThan(2);
     expect(brand!.y + brand!.height).toBeGreaterThan(homeBox!.y);
     expect(homeBox!.height).toBeGreaterThanOrEqual(48);
+    await expect(home).toHaveText('Home');
+    await expect(more).toHaveText('Menu');
     await more.click();
     await expect(menu.getByRole('link', { name: 'Stock', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Close the menu' }).click();
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(menu).toBeHidden();
     // Every big button is at least 48 px tall.
     for (const box of await Promise.all((await bigButtons(page).getByRole('link').all()).map((l) => l.boundingBox()))) expect(box!.height).toBeGreaterThanOrEqual(48);
@@ -570,7 +576,7 @@ test.describe('on a 390 px phone', () => {
     await expect(page.getByText(/^Patient: /)).toHaveCount(0);
     // Signed out and in again: + New offers no "Same patient again".
     await page.goto('/#/');
-    await page.getByRole('button', { name: 'More' }).click();
+    await page.getByRole('button', { name: 'Menu' }).click();
     await page.getByRole('button', { name: 'Sign out' }).click();
     await signIn(page);
     await bigButtons(page).getByRole('link', { name: '+ New' }).click();

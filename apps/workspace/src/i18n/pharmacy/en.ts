@@ -1069,9 +1069,16 @@ export default {
   'patientStep.phoneOwnerSNameOptional': 'Phone owner’s name (optional)',
   'patientStep.onlyUsedTheFirstTime': 'Only used the first time you book on this number.',
   'patientStep.patientAgreedToThisBooking': 'Patient agreed to this booking',
-  /** WQ54c: the agreement in one plain sentence; the full statement follows behind "Read more". */
-  'patientStep.consentShort': 'The patient agrees to share their details with Jansetu for this visit.',
-  'patientStep.consentShortTest': 'The patient agrees to share their details with Jansetu for this test.',
+  /**
+   * WQ54c/WQ54d: the agreement in one plain line that still names what it allows (the full statement follows behind
+   * "Read more"), one per statement: a pharmacy's or a lab's consultation, a pharmacy's lab test, the lab desk, a doctor's
+   * lab test ("you": the doctor).
+   */
+  'patientStep.consentShort.pharmacyConsult': 'The patient agrees: Jansetu keeps their details (an account for this number), the doctor sees them, and this pharmacy can see the prescription for 90 days.',
+  'patientStep.consentShort.labConsult': 'The patient agrees: Jansetu keeps their details (an account for this number), the doctor sees them, and this lab can see the prescription for 90 days.',
+  'patientStep.consentShort.pharmacyTest': 'The patient agrees: Jansetu keeps their details (an account for this number) and the lab sees them for this test.',
+  'patientStep.consentShort.labDesk': 'The patient agrees: Jansetu keeps their details (an account for this number) and the report goes to their Jansetu app.',
+  'patientStep.consentShort.doctorTest': 'The patient agrees: Jansetu keeps their details (an account for this number), the lab sees them, and you can see the report for 90 days.',
   'patientStep.consentReadMore': 'Read more',
   'patientStep.patientReady': 'Patient ready',
   'patientStep.changePatientDetails': 'Change patient details',

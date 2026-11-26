@@ -2681,6 +2681,22 @@ was booked as the phone's owner. + New's step 1 is now the one place the patient
   member, with the owner's name optional, as in the full step); the family members booked here before are not offered on
   + New (the server reuses a same-name, same-relation member); the bill shows no patient name (the sale has none).
 
+## WQ54d before the older-user test (2026-11-26, branch `wq54d/older-user` from web stage 95b0f32)
+
+- **Phone header:** still one row; a short word under each icon, **Home** and **Menu** (Close while open), which are also
+  their names for screen readers.
+- **Visit sale bill:** the big **Done** shows only once the sale is paid; until then the next step is choosing cash, UPI or
+  card and Mark paid. A sale that cannot be paid here yet (the pharmacist reviews a prescription first) gets a plain Done.
+- **Read more** is a 48 px target.
+- **Consent line:** one plain line that still names what the statement allows, chosen by the statement shown: a pharmacy's
+  consultation ("Jansetu keeps their details (an account for this number), the doctor sees them, and this pharmacy can see
+  the prescription for 90 days"), a lab's consultation (this lab), a pharmacy's lab test (the lab sees them), the lab desk
+  (the report goes to their Jansetu app) and a doctor's lab test (you can see the report for 90 days). The full statement
+  stays behind Read more.
+- Seen, not changed: a pharmacy's lab test records and shows the consultation statement (`labBooker.ts` uses
+  `CONSENT_STATEMENT`, which speaks of a consultation and a doctor); its short line says what a test allows. A lab-test
+  statement for pharmacies needs a new versioned text on the server.
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -3071,6 +3087,7 @@ admin guide lists them all. Labels from the catalogues; example names from the b
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-26 | WQ54d before the older-user test (from 95b0f32) | typecheck clean; Vitest 534/534; Playwright pharmacy-home, lab-desk, lab-consult, doctor-lab, lab-booking, consult-now, assisted-booking, card-booking, pharmacy-sale, pharmacy-extras, i18n: 351/351 + 3 skipped on a temporary config (port 5566, deleted). |
 | 2026-11-26 | WQ54c who the patient is, asked once on + New (from 7e2bb7a) | typecheck clean; Vitest 534/534; the full suite via pw-slot.sh 1173/1173 + 3 skipped (the 390 px journeys run once) (13.9 min) on a temporary config (port 5566, deleted): who journeys (someone else on a phone, a mother’s child, the owner) on desktop, tablet and 390 px; Find patient by name, every Find asking again, today’s visits; lab specs open Read more for the full consent; 390 px screenshots in /tmp/wq54c-shots. |
 | 2026-11-26 | WQ54b the simpler pharmacy home (r37c 7f4ff46b, from 662e9f1) | typecheck clean; Vitest 534/534; the full suite via pw-slot.sh 1171/1171 + 3 skipped (the 390 px journeys run once) (13.5 min) on a temporary config (port 5566, deleted), with the tablet project now a Galaxy Tab S4 held sideways; after a last patient-step fix (visit mode off after a reset or a changed number) pharmacy-home, consult-now, assisted-booking, lab-booking, lab-desk, card-booking, pharmacy-sale and orders again 253/253 + 3 skipped; 390 px screenshots of the home, + New and Today. |
 | 2026-11-26 | WQ54 r37b final (6de072f2, on 8d4b33f) | typecheck clean; Vitest 533/533; Playwright pharmacy-home 9/9 + 1 skipped (card payments waiting with r37b's items; TODO_LIMIT said with the text kept) on a temporary config (port 5566, deleted). |
