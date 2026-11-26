@@ -286,7 +286,7 @@ export function partnerWorkspaceBase(scope: PartnerScope): string {
 
 /** WQ56: `GET /specialists/me/clinic` answers null when he has no clinic of his own: said as the bill routes say it. */
 function ownClinicOrNone<T>(r: T | null): T {
-  if (!r) throw new ApiError(404, 'Clinic not found', 'CLINIC_NOT_FOUND');
+  if (!r) throw new ApiError(404, 'Clinic not found', 'CLINIC_NOT_FOUND'); // i18n-ignore: the server's own message for this code; screens word the code
   return r;
 }
 

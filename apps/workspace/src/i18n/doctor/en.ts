@@ -551,4 +551,25 @@ export default {
   'visit.refusal.PARTNER_NOT_VERIFIED': 'Jansetu has not verified this clinic yet.',
   'visit.refusal.USE_CLINIC_APPOINTMENT': 'An in-person visit is booked as a clinic appointment.',
   'visit.refusal.IDEMPOTENCY_KEY_REUSED': 'This booking was changed while it was being sent. Tap the button again.',
+  /** WQ56 (r39): his earnings by where they came from. {amount}: formatted money. */
+  'earn.title': 'Where your earnings came from',
+  'earn.intro': 'Online, at each clinic, from bookings made by pharmacies and labs, and referral cuts. Clinic desk appointments are paid at the clinic and are not here.',
+  'earn.period': 'Period',
+  'earn.from': 'From',
+  'earn.to': 'To',
+  'earn.fromHint': 'Empty: the 1st of this month',
+  'earn.toHint': 'Empty: today',
+  'earn.loading': 'Loading your earnings by source…',
+  'earn.notYet': 'This server does not split earnings by source yet.',
+  'earn.show': 'Show',
+  'earn.online': 'Online',
+  'earn.partner': 'Booked by partners',
+  'earn.referral': 'Referral cuts',
+  'earn.other': 'Other',
+  'earn.total': 'Earned in this period {amount}',
+  /** {count}: consultations or cuts earned; {reversed}: money taken back by refunds. */
+  'earn.line': { one: '{count} earning · {reversed} reversed', other: '{count} earnings · {reversed} reversed' },
+  /** WQ56: a completed consultation's free follow-up. {label}: its date and time. */
+  'appointments.followUp': 'Book follow-up',
+  'appointments.followUpFor': 'Book a follow-up of {label}',
 } as const;

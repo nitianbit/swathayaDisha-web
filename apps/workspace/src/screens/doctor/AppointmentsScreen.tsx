@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  ApiError, APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentInstant, appointmentRefusal, CONSULT_MODE_LABEL, doctorNoShowMove, fromYmd, isRealDate, istDateOf,
+  appointmentStart, ApiError, APPOINTMENT_STATUS_LABEL, appointmentActions, appointmentInstant, appointmentRefusal, CONSULT_MODE_LABEL, doctorNoShowMove, fromYmd, isRealDate, istDateOf,
   labBookableFrom, movableSlot, NO_SHOW_GRACE_MS, noShowSlotFits, schedulableBranches, sessionEndOf, type AppointmentAction, type DoctorAppointment, type DoctorSlot,
 } from '@jansetu/api';
 import { Alert, Badge, Empty, ErrorState, Loading, TextField, formatRupees } from '@jansetu/ui';
@@ -234,10 +234,20 @@ function Row({ d, b, actions, link, onChanged, onRefused, move }: {
             <div><Link to={`/doctor/appointments/${b._id}/records`} aria-label={recordsT('link.recordsFor', { when: label })}>{recordsT('link.records')}</Link></div>
           </>
         )}
+        {/* WQ56 (r39): a completed, paid consultation of the last 14 days may get its free follow-up (the server decides). */}
+        {followUpOpen(b, move.now) && (
+          <div><Link to={`/doctor/follow-up/${b._id}`} aria-label={t('appointments.followUpFor', { label })}>{t('appointments.followUp')}</Link></div>
+        )}
       </td>
     </tr>
   );
 }
+
+/** WQ56: the follow-up rule's window as offered here (completed, paid, within 14 days of its day); the server decides. */
+const followUpOpen = (b: DoctorAppointment, now: Date) => {
+  const at = appointmentStart(b);
+  return b.status === 'completed' && b.paymentStatus === 'paid' && b.bookingKind !== 'instant' && !!at && now.getTime() - at.getTime() <= 14 * 86_400_000;
+};
 
 /**
  * The place of a slot in words: a clinic branch by its name (the doctor's clinics), or none: the doctor's own place for
