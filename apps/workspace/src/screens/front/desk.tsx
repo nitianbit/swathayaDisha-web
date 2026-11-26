@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { CalendarDays, Pill, Plus, Receipt, Search, type LucideIcon } from 'lucide-react';
 import {
-  hasGlobalScope, holdsAny, labAssistedApi, labDeskApi, LAB_PENDING_KEYS, OBJECT_ID_PATTERN, partnerWorkspaceApi, PENDING_KEYS, pharmacyAssistedApi, pharmacySaleApi, todayApi,
-  type LabPendingKey, type PatientLookup, type PendingKey, type SaleCustomer, type TodayApi, type TodayDesk,
+  doctorDashboardApi, doctorToolsApi, DOCTOR_PENDING_KEYS, hasGlobalScope, holdsAny, labAssistedApi, labDeskApi, LAB_PENDING_KEYS, OBJECT_ID_PATTERN, ownedClinic,
+  partnerWorkspaceApi, PENDING_KEYS, pharmacyAssistedApi, pharmacySaleApi, todayApi,
+  type DoctorPendingKey, type LabPendingKey, type PatientLookup, type PendingKey, type SaleCustomer, type TodayApi, type TodayDesk,
 } from '@jansetu/api';
 import { t } from '../../i18n/home/index.ts';
 import { pagesFor, REGISTER_READERS } from '../../modules.tsx';
@@ -30,8 +31,8 @@ export interface FrontDesk {
   /** This desk's own patients searched by name or phone (a pharmacy's customers); null: + New takes a phone only. */
   customers: ((search: string) => Promise<SaleCustomer[]>) | null;
   /** The waiting work, in the strip's order, and where each is done (null: shown, but not a link for this person). */
-  pending: readonly (PendingKey | LabPendingKey)[];
-  pendingTo: (key: PendingKey | LabPendingKey, ids: readonly string[] | undefined, count: number) => string | null;
+  pending: readonly (PendingKey | LabPendingKey | DoctorPendingKey)[];
+  pendingTo: (key: PendingKey | LabPendingKey | DoctorPendingKey, ids: readonly string[] | undefined, count: number) => string | null;
   /** A pharmacy's bookings waiting for payment, by kind (r37c `bookingsAwaiting`); a lab has its own queues instead. */
   bookingTo?: { consultations: (ids: readonly string[] | undefined, count: number) => string | null; labBookings: (ids: readonly string[] | undefined, count: number) => string | null };
   /** A read this person is not allowed: said plainly (a lab member: ask the owner). */
@@ -53,6 +54,31 @@ export function useFrontDesk(): FrontDesk | null {
   const branches = useQuery({
     queryKey: ['partner-ws', 'member', lab?.partner.id ?? 'none', 'branches'], queryFn: () => partnerWorkspaceApi(api, { kind: 'member' }).branches(), enabled: !!lab,
   });
+  // WQ56: a doctor's clinics (the Clinics page's read), for Bills when he owns one.
+  const clinics = useQuery({ queryKey: ['doctor', user.id, 'clinics'], queryFn: () => doctorToolsApi(api).clinics(), enabled: user.role === 'specialist' });
+  if (user.role === 'specialist') {
+    // WQ56 (P2): the doctor's own day: + New (his clinic appointment, an online consultation, a lab test, a follow-up),
+    // Find patient, Today, and Bills only when he owns a clinic he can bill. His to-dos are private (r39).
+    const owns = !!ownedClinic(clinics.data);
+    const page = (path: string, one?: (id: string) => string) => (ids: readonly string[] | undefined, n: number) => (one ? oneOr(ids, n, one, path) : path);
+    return {
+      kind: 'doctor', id: user.id, today: todayApi(api, 'doctor'), newPath: '/doctor/new', todayPath: '/doctor/today',
+      big: [
+        { to: '/doctor/new', label: t('big.new'), Icon: Plus }, { to: '/doctor/new?find=1', label: t('big.find'), Icon: Search },
+        { to: '/doctor/today', label: t('big.today'), Icon: CalendarDays }, ...(owns ? [{ to: '/doctor/bills', label: t('big.bills'), Icon: Receipt }] : []),
+      ],
+      choices: [
+        { to: visitPath('/doctor/new/clinic'), label: t('new.clinicAppointment') }, { to: visitPath('/doctor/new/online'), label: t('new.online') },
+        { to: visitPath('/doctor/lab-book'), label: t('new.lab') }, { to: visitPath('/doctor/new/follow-up'), label: t('new.followUp') },
+      ],
+      lookup: (phone) => doctorDashboardApi(api).lookup(phone), customers: null,
+      pending: DOCTOR_PENDING_KEYS,
+      pendingTo: (k, ids, n) => (k === 'reportsReady' ? page('/doctor/lab-tests', (id) => `/doctor/lab-tests/${id}`)(ids, n)
+        : k === 'unpaidBills' ? page('/doctor/clinic/invoices', (id) => `/doctor/clinic/invoices/${id}`)(ids, n)
+        : k === 'prescriptionsToWrite' || k === 'appointmentsToConfirm' ? '/doctor/appointments' : null),
+      forbidden: null, register: true,
+    };
+  }
   if (user.role === 'pharmacy') {
     const assisted = pharmacyAssistedApi(api);
     return {

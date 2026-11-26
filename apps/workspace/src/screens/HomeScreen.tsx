@@ -24,10 +24,9 @@ export function HomeScreen() {
             : t('home.unverified', { partner: user.partner.partner.name })}
         </Alert>
       )}
-      {user.role === 'specialist' && <DoctorHome />}
-      {/* WQ54 (P1) / WQ55 (P4): a pharmacy's and a lab member's home is its big buttons, today's register and to-dos; the
-          menu stays for the long way. */}
-      {desk ? <FrontDeskHome desk={desk} /> : pages.length === 0 ? (
+      {/* WQ54 (P1) / WQ55 (P4): a pharmacy's and a lab member's home is its big buttons, today's register and to-dos; WQ56
+          (P2) a doctor's is his dashboard. The menu stays for the long way. */}
+      {user.role === 'specialist' ? <DoctorHome /> : desk ? <FrontDeskHome desk={desk} /> : pages.length === 0 ? (
         <Empty title={t('home.empty.title')}>{t('home.empty.body')}</Empty>
       ) : (
         <ul className="home-links">

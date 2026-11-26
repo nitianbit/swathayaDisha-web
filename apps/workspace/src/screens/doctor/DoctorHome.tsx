@@ -1,37 +1,63 @@
+import './doctor.css';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router';
-import { appointmentStart, CONSULT_MODE_LABEL, doctorStanding } from '@jansetu/api';
-import { Alert, Badge, ErrorState, Loading } from '@jansetu/ui';
+import { Link, useNavigate } from 'react-router';
+import {
+  APPOINTMENT_STATUS_LABEL, appointmentStart, byPartner, CONSULT_MODE_LABEL, doctorDashboardApi, doctorStanding, istToday, ownedClinic, TODAY_PAGE_MAX,
+  type ListedAppointment, type MyClinics, type TodayAnswer,
+} from '@jansetu/api';
+import { formatClock, formatPaise } from '@jansetu/i18n';
+import { Alert, Badge, Button, ErrorState, Loading } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
-import { appointmentLabel } from './AppointmentsScreen.tsx';
-import { offersKey, RefreshFailed, rupeesOf, useDoctor, useDoctorProfile, useUpcomingAppointments, useTicker, type DoctorContext } from './doctor.tsx';
+import { useSession } from '../../session.tsx';
+import { useFrontDesk, type FrontDesk } from '../front/desk.tsx';
+import { BigActions, Failed, MoneyLine, PendingStrip, todayKey, Todos } from '../front/home.tsx';
+import { openBill } from '../partner/billing.tsx';
+import { usePartnerScope } from '../partner/scope.tsx';
+import { offersKey, rupeesOf, useClinics, useDoctor, useDoctorProfile, type DoctorContext } from './doctor.tsx';
 import { useDoctorPresence } from './presence.tsx';
 import { t } from '../../i18n/doctor/index.ts';
 
-/** Home for a doctor: standing with Jansetu, "available now", open offers and the next appointments. */
+/**
+ * WQ56 (P2, SIMPLE_DESIGN_PLAN_2026-11-26): the doctor's single dashboard. Big buttons (+ New, Find patient, Today, and
+ * Bills only when he owns a clinic he can bill); today's appointments from every source in one time-ordered list with
+ * chips (All · each clinic · Online · Booked by partners); what waits; what he earned today; his private to-dos; and his
+ * standing with Jansetu (verified, available now, offers). Reads that need a verified, active doctor wait for it.
+ */
 export function DoctorHome() {
   const d = useDoctor();
-  if (!d) return null;
-  return <Status key={d.identity} d={d} />;
+  const desk = useFrontDesk();
+  if (!d || !desk) return null;
+  return <Dashboard key={d.identity} d={d} desk={desk} />;
 }
 
-function Status({ d }: { d: DoctorContext }) {
+function Dashboard({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
   const profile = useDoctorProfile(d);
-  const presence = useDoctorPresence();
-  const offers = useQuery({ queryKey: offersKey(d), queryFn: () => d.api.offers(), refetchInterval: 30_000 });
-  const next = useUpcomingAppointments(d, 14);
-  const now = useTicker(60_000);
   const standing = profile.data ? doctorStanding(profile.data) : null;
-  const coming = next.items.filter((b) => (b.status === 'confirmed' || b.status === 'pending') && (appointmentStart(b)?.getTime() ?? 0) >= now.getTime() - 30 * 60_000).slice(0, 3);
+  const active = standing === 'active';
+  return (
+    <div className="simple">
+      {active && <BigActions desk={desk} />}
+      {active && <TodayAppointments d={d} desk={desk} />}
+      <Status d={d} standing={standing} profileError={profile.isError ? profile.error : null} onRetry={() => void profile.refetch()} />
+      <Todos desk={desk} />
+    </div>
+  );
+}
+
+/** His standing with Jansetu, "available now" and the offers waiting (the long way to each is the menu). */
+function Status({ d, standing, profileError, onRetry }: { d: DoctorContext; standing: ReturnType<typeof doctorStanding> | null; profileError: unknown; onRetry: () => void }) {
+  const presence = useDoctorPresence();
+  const offers = useQuery({ queryKey: offersKey(d), queryFn: () => d.api.offers(), refetchInterval: 30_000, enabled: standing === 'active' });
   return (
     <section className="ws-section" aria-labelledby="status-h">
       <h2 id="status-h">{t('doctorHome.yourStatus')}</h2>
-      {profile.isError && <ErrorState message={messageOf(profile.error)} onRetry={() => void profile.refetch()} />}
+      {profileError ? <ErrorState message={messageOf(profileError)} onRetry={onRetry} /> : null}
       {standing === 'inactive' && <Alert>{t('doctorHome.yourDoctorAccountIsNot')}</Alert>}
       {standing === 'unverified' && <Alert tone="warn">{t('doctorHome.yourProfileIsWaitingFor')}</Alert>}
       <dl className="ws-dl">
         <dt>{t('common.verification')}</dt>
-        <dd>{profile.isPending ? '…' : standing === 'active' ? <Badge tone="ok">{t('common.verified')}</Badge> : standing === 'inactive' ? <Badge tone="danger">{t('doctorHome.notActive')}</Badge> : <Badge tone="warn">{t('common.waitingForVerification')}</Badge>}</dd>
+        <dd>{standing === null ? '…' : standing === 'active' ? <Badge tone="ok">{t('common.verified')}</Badge> : standing === 'inactive' ? <Badge tone="danger">{t('doctorHome.notActive')}</Badge> : <Badge tone="warn">{t('common.waitingForVerification')}</Badge>}</dd>
         <dt>{t('common.availableNow')}</dt>
         <dd>
           {presence.presence?.available
@@ -40,22 +66,123 @@ function Status({ d }: { d: DoctorContext }) {
             : presence.loading ? '…' : <Badge tone="warn">{t('doctorHome.couldNotBeRead')}</Badge>}
           {' '}<Link to="/doctor/consult-now">{t('common.consultNow')}</Link>
         </dd>
-        <dt>{t('doctorHome.offersWaiting')}</dt>
-        <dd>{offers.isPending ? '…' : offers.isError ? messageOf(offers.error) : offers.data.length === 0 ? t('doctorHome.none') : <Link to="/doctor/consult-now">{t('doctorHome.openOffers', { count: offers.data.length })}</Link>}</dd>
-      </dl>
-      <h3>{t('doctorHome.nextAppointments')}</h3>
-      {next.refreshError && <RefreshFailed error={next.refreshError} readAt={next.readAt} onRetry={next.refetch} />}
-      {next.pending ? <Loading label={t('common.loadingAppointments')} />
-        : next.error ? <ErrorState message={messageOf(next.error)} onRetry={() => void next.refetch()} />
-        : coming.length === 0 ? <p className="ws-muted">{t('doctorHome.noAppointmentsInTheNext')}</p>
-        : (
-          <ul className="ws-list" aria-label={t('doctorHome.nextAppointments')}>
-            {coming.map((b) => (
-              <li key={b._id}>{appointmentLabel(b)} · {b.consultationMode ? CONSULT_MODE_LABEL[b.consultationMode] : t('doctorHome.consultation')}{b.bookingKind === 'instant' ? ` ${t('doctorHome.instantTag')}` : ''}{b.status === 'pending' ? ` · ${t('doctorHome.waiting')}` : ''}</li>
-            ))}
-          </ul>
+        {standing === 'active' && (
+          <>
+            <dt>{t('doctorHome.offersWaiting')}</dt>
+            <dd>{offers.isPending ? '…' : offers.isError ? messageOf(offers.error) : offers.data.length === 0 ? t('doctorHome.none') : <Link to="/doctor/consult-now">{t('doctorHome.openOffers', { count: offers.data.length })}</Link>}</dd>
+          </>
         )}
-      <p><Link to="/doctor/appointments">{t('doctorHome.allAppointments')}</Link></p>
+      </dl>
     </section>
+  );
+}
+
+/** The whole day's register (every page, oldest first): the patients' names, the money, what waits. */
+async function wholeDay(desk: FrontDesk, date: string): Promise<TodayAnswer> {
+  const first = await desk.today.today({ date, order: 'asc', limit: TODAY_PAGE_MAX });
+  let items = first.items;
+  let cursor = first.nextCursor;
+  for (let n = 0; cursor && n < 10; n += 1) {
+    const next = await desk.today.today({ date, cursor, order: 'asc', limit: TODAY_PAGE_MAX });
+    items = [...items, ...next.items];
+    cursor = next.nextCursor;
+  }
+  return { ...first, items, nextCursor: cursor };
+}
+
+type Chip = { id: string; label: string; test: (a: ListedAppointment) => boolean };
+
+/** The chips: All, each clinic he consults at (and any other clinic on today's list), Online, Booked by partners. */
+function chipsOf(clinics: MyClinics | undefined, rows: readonly ListedAppointment[]): Chip[] {
+  const named = new Map<string, string>();
+  for (const c of clinics?.clinics ?? []) named.set(c.partnerId.toLowerCase(), c.name ?? t('dash.clinicUnnamed'));
+  for (const a of rows) if (a.clinic && !named.has(a.clinic.id.toLowerCase())) named.set(a.clinic.id.toLowerCase(), a.clinic.name ?? t('dash.clinicUnnamed'));
+  return [
+    { id: 'all', label: t('dash.chip.all'), test: () => true },
+    ...[...named].map(([id, label]) => ({ id: `clinic:${id}`, label, test: (a: ListedAppointment) => a.clinic?.id.toLowerCase() === id })),
+    { id: 'online', label: t('dash.chip.online'), test: (a: ListedAppointment) => a.channel === 'online' },
+    { id: 'partners', label: t('dash.chip.partners'), test: (a: ListedAppointment) => byPartner(a.source) },
+  ];
+}
+
+/** Where an appointment came from, in words (truthful: who booked it, or where it is). */
+function sourceWords(a: ListedAppointment): string {
+  const clinic = a.clinic ? a.clinic.name ?? t('dash.clinicUnnamed') : null;
+  switch (a.source) {
+    case 'clinic_desk': return t('dash.source.clinicDesk', { clinic: clinic ?? t('dash.clinicUnnamed') });
+    case 'pharmacy_assisted': return a.paidBy ? t('dash.source.bookedBy', { name: a.paidBy }) : t('dash.source.pharmacy');
+    case 'lab_assisted': return a.paidBy ? t('dash.source.bookedBy', { name: a.paidBy }) : t('dash.source.lab');
+    case 'doctor_assisted': return t('dash.source.you');
+    case 'instant': return t('dash.source.instant');
+    default: return clinic ? t('dash.source.appAt', { clinic }) : t('dash.source.app');
+  }
+}
+
+function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
+  const { api, memory } = useSession();
+  const dash = useMemo(() => doctorDashboardApi(api), [api]);
+  const day = istToday();
+  const clinics = useClinics(d);
+  const ctx = usePartnerScope();
+  const navigate = useNavigate();
+  const list = useQuery({ queryKey: [...d.key, 'dash', 'list', day], queryFn: () => dash.appointments({ from: day, to: day }), staleTime: 0, refetchOnMount: 'always' });
+  const reg = useQuery({ queryKey: [...todayKey(desk, day), 'doctor-day'], queryFn: () => wholeDay(desk, day), staleTime: 0, refetchOnMount: 'always' });
+  const [chip, setChip] = useState('all');
+  const rows = list.data?.items ?? [];
+  const chips = chipsOf(clinics.data, rows);
+  const shown = rows.filter((chips.find((c) => c.id === chip) ?? chips[0]!).test);
+  // The patient seen at each appointment, from the register (the list has no names).
+  const names = new Map((reg.data?.items ?? []).filter((i) => i.kind === 'appointment').map((i) => [i.id.toLowerCase(), i.patientName]));
+  const owned = ownedClinic(clinics.data);
+  const ownId = owned?.partnerId.toLowerCase();
+  return (
+    <>
+      <section className="ws-section" aria-labelledby="day-h">
+        <h2 id="day-h">{t('dash.today')}</h2>
+        {reg.data && <p className="earned-line">{t('dash.earnedToday', { amount: formatPaise(reg.data.totals.earnedMinor ?? 0) })}</p>}
+        {/* His own clinic's bills of the day: collected and still to collect (only when he owns one). */}
+        {reg.data && owned && <MoneyLine day={reg.data} date={day} />}
+        {!reg.data ? (reg.isError ? <Failed error={reg.error} onRetry={() => void reg.refetch()} /> : <Loading label={t('dash.loading')} />)
+          : <PendingStrip day={reg.data} desk={desk} />}
+      </section>
+      <section className="ws-section" aria-labelledby="appts-h">
+        <h2 id="appts-h">{t('dash.appointments')}</h2>
+        <div className="chips" role="group" aria-label={t('dash.chip.label')}>
+          {chips.map((c) => <button key={c.id} type="button" className="chip" aria-pressed={chip === c.id} onClick={() => setChip(c.id)}>{c.label}</button>)}
+        </div>
+        {!list.data ? (list.isError ? <Failed error={list.error} onRetry={() => void list.refetch()} /> : <Loading label={t('common.loadingAppointments')} />)
+          : shown.length === 0 ? <p className="ws-muted">{rows.length === 0 ? t('dash.none') : t('dash.noneHere')}</p>
+          : (
+            <ul className="appt-list" aria-label={t('dash.appointments')}>
+              {shown.map((a) => {
+                const at = appointmentStart(a);
+                const time = at ? formatClock(at.getTime()) : a.bookingTime;
+                const name = names.get(a._id.toLowerCase()) ?? null;
+                const deskRow = a.clinicDesk;
+                // His own clinic's desk appointment: he makes its bill here (the short bill) unless it was cancelled.
+                const billable = !!ctx && !!deskRow && deskRow.partnerId.toLowerCase() === ownId && a.status !== 'cancelled';
+                return (
+                  <li key={a._id} className="appt-row">
+                    <span className="appt-time">{time}</span>
+                    <span className="appt-who">{name ?? t('dash.noName')}</span>
+                    <span>{a.consultationMode ? CONSULT_MODE_LABEL[a.consultationMode] : t('doctorHome.consultation')}</span>
+                    <span className="appt-source">{sourceWords(a)}</span>
+                    <Badge tone={a.status === 'pending' ? 'warn' : a.status === 'confirmed' || a.status === 'completed' ? 'ok' : undefined}>{APPOINTMENT_STATUS_LABEL[a.status] ?? a.status}</Badge>
+                    {a.status === 'pending' && a.paymentStatus !== 'paid' && a.source === 'doctor_assisted' && <span className="ws-muted">{t('dash.payInApp')}</span>}
+                    {billable && deskRow && (
+                      <Button variant="secondary" onClick={() => openBill(ctx!, memory, { link: { kind: 'appointment', id: a._id }, branchId: deskRow.branchId, doctorId: d.user.id,
+                        name: name ?? '', phone: '', label: name ? `${time} · ${name}` : time, simple: true }, navigate)}>
+                        {t('dash.bill')}
+                      </Button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        {list.data?.truncated && <Alert tone="warn">{t('dash.truncated')}</Alert>}
+        <p><Link to="/doctor/appointments">{t('doctorHome.allAppointments')}</Link></p>
+      </section>
+    </>
   );
 }

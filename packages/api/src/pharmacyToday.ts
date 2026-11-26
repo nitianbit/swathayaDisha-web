@@ -16,8 +16,8 @@ import { OBJECT_ID_PATTERN } from './partners.ts';
 export type TodayKind = 'order' | 'consultation' | 'lab_booking' | 'wallet_topup' | 'bill';
 /** r38 (a lab): `lab_booking`, `invoice`, `booking`, `wallet_entry`. */
 export type TodayLinkKind = 'pharmacy_order' | 'booking' | 'lab_booking' | 'wallet_transaction' | 'invoice' | 'wallet_entry';
-/** Whose front desk: a pharmacy's (r37) or a lab's (r38). */
-export type TodayDesk = 'pharmacy' | 'lab';
+/** Whose front desk: a pharmacy's (r37) or a lab's (r38); WQ56 (r39) a doctor's own day. */
+export type TodayDesk = 'pharmacy' | 'lab' | 'doctor';
 export interface TodayItem {
   kind: TodayKind | string;
   id: string;
@@ -43,6 +43,10 @@ export interface TodayItem {
    * one row. r38b: a desk booking's own `paid` is its bill's.
    */
   labBookingId?: string | null;
+  /** r39 (a doctor's `appointment`): where it came from, at a clinic or online, and the clinic. */
+  source?: string;
+  channel?: 'clinic' | 'online';
+  clinic?: { id: string; name: string | null } | null;
 }
 /** r38: a lab's bills add `bank`. */
 export type PaymentMethodKey = 'cash' | 'upi' | 'card' | 'bank' | 'wallet' | 'online' | 'other';
@@ -55,6 +59,8 @@ export interface TodayTotals {
   collectedMinor: number; byMethod: Partial<Record<PaymentMethodKey, number>>; unpaidMinor: number; count: number;
   /** r38b: money returned that day (0 when the server does not say), by method. */
   refundedMinor?: number; refundsByMethod?: Partial<Record<PaymentMethodKey, number>>;
+  /** r39 (a doctor): what his ledger earned that day (consultations and referral cuts, net of reversals). */
+  earnedMinor?: number;
 }
 interface Counted { count: number }
 /** What waits (the first page only). r37b: a queue whose read failed on the server is `null`. */
@@ -76,12 +82,19 @@ export interface TodayPending {
   deskUnbilled?: (Counted & { ids?: string[] }) | null;
   bookingsAwaitingPayment?: (Counted & { ids?: string[] }) | null;
   consultationsWaiting?: (Counted & { ids?: string[] }) | null;
+  /** r39 (a doctor): completed in the last 14 days with no prescription; pending from this day on; reports released in 7 days. */
+  prescriptionsToWrite?: (Counted & { ids?: string[] }) | null;
+  appointmentsToConfirm?: (Counted & { ids?: string[]; awaitingPaymentCount?: number }) | null;
+  reportsReady?: (Counted & { ids?: string[] }) | null;
 }
 export const PENDING_KEYS = ['prescriptionsToReview', 'unpaidCounterSales', 'bookingsAwaiting', 'labReportsReady', 'lowStock'] as const;
 export type PendingKey = (typeof PENDING_KEYS)[number];
 /** WQ55: a lab's waiting work, in the order the strip shows it. */
 export const LAB_PENDING_KEYS = ['samplesToCollect', 'reportsDue', 'deskUnbilled', 'unpaidBills', 'bookingsAwaitingPayment', 'consultationsWaiting'] as const;
 export type LabPendingKey = (typeof LAB_PENDING_KEYS)[number];
+/** WQ56 (r39): a doctor's waiting work (`unpaidBills` only when he owns a clinic). */
+export const DOCTOR_PENDING_KEYS = ['prescriptionsToWrite', 'appointmentsToConfirm', 'reportsReady', 'unpaidBills'] as const;
+export type DoctorPendingKey = (typeof DOCTOR_PENDING_KEYS)[number];
 /**
  * r37c: a row's line as a code and its values: `order.items { first, more }`, `order.counter`, `order.online`,
  * `consult.scheduled { doctor, time, mode }`, `consult.instant { doctor, mode }`, `lab.tests { first, more }`, `wallet.topup`.
@@ -125,7 +138,8 @@ export function todayOf(raw: unknown): TodayAnswer {
     ...(typeof r.date === 'string' ? { date: r.date } : {}),
     items: Array.isArray(r.items) ? r.items.filter((i): i is TodayItem => !!i && typeof i === 'object' && typeof (i as TodayItem).id === 'string') : [],
     totals: { collectedMinor: num(t.collectedMinor), byMethod: t.byMethod && typeof t.byMethod === 'object' ? t.byMethod : {}, unpaidMinor: num(t.unpaidMinor), count: num(t.count),
-      ...(num(t.refundedMinor) > 0 ? { refundedMinor: num(t.refundedMinor) } : {}) },
+      ...(num(t.refundedMinor) > 0 ? { refundedMinor: num(t.refundedMinor) } : {}),
+      ...(typeof t.earnedMinor === 'number' && Number.isFinite(t.earnedMinor) ? { earnedMinor: t.earnedMinor } : {}) },
     ...(r.pending && typeof r.pending === 'object' ? { pending: r.pending } : {}),
     ...(Array.isArray(r.truncated) && r.truncated.length > 0 ? { truncated: r.truncated.map(String) } : {}),
     nextCursor: typeof r.nextCursor === 'string' && r.nextCursor ? r.nextCursor : null,
@@ -133,7 +147,7 @@ export function todayOf(raw: unknown): TodayAnswer {
 }
 
 /** A waiting kind's count (0 when the server does not say); `null` when the server could not read that queue. */
-export const pendingCount = (p: TodayPending | undefined, k: PendingKey | LabPendingKey): number | null => {
+export const pendingCount = (p: TodayPending | undefined, k: PendingKey | LabPendingKey | DoctorPendingKey): number | null => {
   if (p && k in p && p[k] === null) return null;
   const n = Number(p?.[k]?.count ?? 0);
   return Number.isInteger(n) && n > 0 ? n : 0;
@@ -156,7 +170,7 @@ export function bookingsWaiting(p: TodayPending | undefined): { consultations: n
   return { consultations: n(b?.consultationCount, b?.consultationIds), labBookings: n(b?.labCount, b?.labBookingIds) };
 }
 
-const TODAY_BASE: Readonly<Record<TodayDesk, string>> = { pharmacy: '/pharmacy-assisted', lab: '/partner-workspace' };
+const TODAY_BASE: Readonly<Record<TodayDesk, string>> = { pharmacy: '/pharmacy-assisted', lab: '/partner-workspace', doctor: '/specialists/me' };
 
 /** A front desk's day register and to-dos: a pharmacy's (`/pharmacy-assisted`) or WQ55 a lab member's (`/partner-workspace`). */
 export function todayApi(c: ApiClient, desk: TodayDesk) {
@@ -212,6 +226,8 @@ const LINKS: Readonly<Record<TodayDesk, Partial<Record<TodayLinkKind, (id: strin
     lab_booking: (id) => `/partner/lab-bookings/${id}`, booking: (id) => `/partner/consultations/${id}`, invoice: (id) => `/partner/invoices/${id}`,
     wallet_entry: () => '/partner/wallet',
   },
+  // WQ56: an appointment opens his Appointments (it has no page of its own); a bill of his own clinic its page.
+  doctor: { booking: () => '/doctor/appointments', invoice: (id) => `/doctor/clinic/invoices/${id}`, lab_booking: (id) => `/doctor/lab-tests/${id}` },
 };
 /** The app page of a register row's record (the existing detail pages of that desk), or null. */
 export function todayLink(i: Pick<TodayItem, 'link'>, desk: TodayDesk = 'pharmacy'): string | null {

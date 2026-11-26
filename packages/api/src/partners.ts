@@ -263,8 +263,11 @@ export const REQUEST_KEY_PATTERN = /^[A-Za-z0-9_-]{8,100}$/;
 export type Version = string | undefined;
 const fence = (v: Version) => (v ? { expectedUpdatedAt: v } : {});
 
-/** Whose workspace: the signed-in member's own partner, or (admins) any partner by id. */
-export type PartnerScope = { kind: 'member' } | { kind: 'admin'; partnerId: string };
+/**
+ * Whose workspace: the signed-in member's own partner, or (admins) any partner by id; WQ56 (r39) a doctor billing the
+ * clinic he owns (`/specialists/me/clinic`: its catalogue and bills only, his owner authority).
+ */
+export type PartnerScope = { kind: 'member' } | { kind: 'admin'; partnerId: string } | { kind: 'doctor' };
 
 /** An id the backend can take (24 hex), checked before any request. */
 export function checkId(id: string, what: string): string {
@@ -275,15 +278,23 @@ export function checkId(id: string, what: string): string {
 
 /** The workspace root for a scope; an id is checked before it is put in a path. */
 export function partnerWorkspaceBase(scope: PartnerScope): string {
+  if (scope.kind === 'doctor') return '/specialists/me/clinic';
   return scope.kind === 'admin'
     ? `/partner-workspace/admin/${checkId(scope.partnerId, 'partner')}/workspace`
     : '/partner-workspace';
 }
 
+/** WQ56: `GET /specialists/me/clinic` answers null when he has no clinic of his own: said as the bill routes say it. */
+function ownClinicOrNone<T>(r: T | null): T {
+  if (!r) throw new ApiError(404, 'Clinic not found', 'CLINIC_NOT_FOUND');
+  return r;
+}
+
 export function partnerWorkspaceApi(c: ApiClient, scope: PartnerScope) {
   const base = () => partnerWorkspaceBase(scope);
   return {
-    me: () => c.get<Partner>(`${base()}/me`),
+    // WQ56: a doctor reads the clinic he owns as his own clinic (`GET /specialists/me/clinic`: the partner and its branches).
+    me: () => (scope.kind === 'doctor' ? c.get<{ partner: Partner } | null>(base()).then(ownClinicOrNone).then((r) => r.partner) : c.get<Partner>(`${base()}/me`)),
     updateMe: (body: MyPartnerUpdate, version?: Version) => c.put<Partner>(`${base()}/me`, { body: { ...body, ...fence(version) } }),
     members: () => c.get<PartnerMember[]>(`${base()}/members`),
     /** Q8: a staff member's branch access, replaced whole (empty = all branches). Not for owners or yourself. */
@@ -309,8 +320,9 @@ export function partnerWorkspaceApi(c: ApiClient, scope: PartnerScope) {
     setPermissions: (id: string, permissions: PartnerPermission[], version?: Version) =>
       c.put<PartnerMember>(`${base()}/members/${checkId(id, 'member')}/permissions`, { body: { permissions, ...fence(version) } }),
     /** Q8: every member may read its branches; closed ones too (`includeInactive`) only for branch managers. */
-    branches: (o: { includeInactive?: boolean } = {}) =>
-      c.get<Branch[]>(`${base()}/branches`, { query: { includeInactive: o.includeInactive ? 'true' : undefined } }),
+    branches: (o: { includeInactive?: boolean } = {}) => (scope.kind === 'doctor'
+      ? c.get<{ branches?: Branch[] } | null>(base()).then(ownClinicOrNone).then((r) => (r.branches ?? []).filter((b) => o.includeInactive || b.isActive !== false))
+      : c.get<Branch[]>(`${base()}/branches`, { query: { includeInactive: o.includeInactive ? 'true' : undefined } })),
     branch: (id: string) => c.get<Branch>(`${base()}/branches/${checkId(id, 'branch')}`),
     /**
      * Q16b `createBranchSchema.requestKey` (optional): with a key the create is exactly once per (partner, key); a resend

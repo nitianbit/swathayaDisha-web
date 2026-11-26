@@ -73,6 +73,7 @@ import { LabReferralEarningsScreen } from './screens/finance/ReferralEarningsScr
 import { PharmacyFinanceScreen } from './screens/pharmacy/FinanceScreen.tsx';
 import { SaleBillScreen, SaleScreen } from './screens/pharmacy/SaleScreen.tsx';
 import { NewVisitScreen } from './screens/front/NewVisitScreen.tsx';
+import { DoctorClinicVisitScreen, DoctorFollowUpScreen, DoctorOnlineVisitScreen } from './screens/doctor/DoctorVisitScreens.tsx';
 import { TodayScreen } from './screens/front/home.tsx';
 import { WalletDisputesScreen } from './screens/admin/WalletDisputesScreen.tsx';
 import { Truck } from 'lucide-react';
@@ -143,7 +144,20 @@ export const PAGES: readonly WorkspacePage[] = [
     path: '/doctor/clinics', roles: ['specialist'], element: <ClinicsScreen />,
     nav: { labelKey: 'nav.clinics', icon: Hospital, sectionKey: 'nav.section.doctor' },
   },
-  // WQ51: the doctor's own clinic's bills and price list, from the doctor menu (they open its partner workspace).
+  // WQ56 (P2): the doctor's + New (the shared patient step, then his clinic appointment, an online consultation, a lab
+  // test or a follow-up), his Today register, and billing the clinic he owns from here (`/specialists/me/clinic`).
+  { path: '/doctor/new', roles: ['specialist'], element: <NewVisitScreen /> },
+  { path: '/doctor/new/clinic', roles: ['specialist'], element: <DoctorClinicVisitScreen /> },
+  { path: '/doctor/new/online', roles: ['specialist'], element: <DoctorOnlineVisitScreen /> },
+  { path: '/doctor/new/follow-up', roles: ['specialist'], element: <DoctorFollowUpScreen /> },
+  { path: '/doctor/follow-up/:bookingId', roles: ['specialist'], element: <DoctorFollowUpScreen /> },
+  { path: '/doctor/today', roles: ['specialist'], element: <TodayScreen />, nav: { labelKey: 'nav.today', icon: CalendarDays, sectionKey: 'nav.section.doctor' } },
+  { path: '/doctor/clinic/invoices', roles: ['specialist'], element: <InvoicesScreen /> },
+  { path: '/doctor/clinic/invoices/new', roles: ['specialist'], element: <NewInvoiceScreen /> },
+  { path: '/doctor/clinic/invoices/:invoiceId', roles: ['specialist'], element: <InvoiceScreen /> },
+  { path: '/doctor/clinic/catalogue', roles: ['specialist'], element: <CatalogueScreen /> },
+  // WQ51: the doctor's own clinic's bills and price list, from the doctor menu (WQ56: here for an owner who can bill;
+  // otherwise they say why and open its partner workspace).
   {
     path: '/doctor/bills', roles: ['specialist'], element: <DoctorBillsScreen />,
     nav: { labelKey: 'nav.bills', icon: Receipt, sectionKey: 'nav.section.doctor' },
