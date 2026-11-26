@@ -56,7 +56,8 @@ export type EarningChannel = 'clinic' | 'online' | 'partner' | 'referral' | 'oth
 export interface EarningSum { earnedMinor: number; reversedMinor: number; netMinor: number; count: number }
 export interface EarningsBreakdown {
   from: string | null; to: string | null; totals: EarningSum; online: EarningSum; partner: EarningSum; referral: EarningSum; other: EarningSum;
-  clinics: (EarningSum & { clinicId: string; name: string | null })[];
+  /** r39b: `clinicId` null = in-person visits with no clinic (older ones). */
+  clinics: (EarningSum & { clinicId: string | null; name: string | null })[];
 }
 export interface BreakdownQuery { from?: string; to?: string; channel?: EarningChannel; clinicId?: string }
 
@@ -89,11 +90,11 @@ export function doctorDashboardApi(c: ApiClient) {
       if ('followUpOf' in b) id(b.followUpOf, 'consultation');
       return c.post<DoctorConsultationAnswer>(`${ME}/consultations`, { body: b });
     },
-    /** The earnings summary with r39's `breakdown` for the period and filter. */
+    /** The earnings summary with its `breakdown` for the period and filter (r39b: only when asked, `breakdown=1`). */
     finance: (q: BreakdownQuery = {}) => {
       date(q.from); date(q.to);
       if (q.clinicId !== undefined) id(q.clinicId, 'clinic');
-      return c.get<FinanceSummary & { breakdown?: EarningsBreakdown }>(`${ME}/finance`, { query: { ...q } });
+      return c.get<FinanceSummary & { breakdown?: EarningsBreakdown }>(`${ME}/finance`, { query: { ...q, breakdown: 1 } });
     },
   };
 }

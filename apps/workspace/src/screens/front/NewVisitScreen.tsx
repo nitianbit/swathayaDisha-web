@@ -67,7 +67,8 @@ const DIGITS = /^[\d\s+()-]+$/;
 function PatientStep({ desk, last, kept, find, heading, onChoose }: {
   desk: FrontDesk; last: VisitPatient | null; kept: string | null; find: boolean; heading: RefObject<HTMLHeadingElement | null>; onChoose: (p: VisitPatient) => void;
 }) {
-  const byNameAllowed = !!desk.customers;
+  // A pharmacy's patients by name; WQ57b a clinic's appointments of today by name.
+  const byNameAllowed = !!desk.customers || !!desk.findToday;
   const [text, setText] = useState(kept ?? '');
   const [error, setError] = useState<string | null>(null);
   /** The number being asked about, or the name searched; `ask` changes on every Find, so each Find asks the server. */
@@ -75,11 +76,16 @@ function PatientStep({ desk, last, kept, find, heading, onChoose }: {
   const [name, setName] = useState<string | null>(null);
   const [ask, setAsk] = useState(0);
   // r36: the search is a POST: nothing typed is in an address.
-  const byName = useQuery({ queryKey: ['visit-find', desk.kind, 'name', name, ask], queryFn: () => desk.customers!(name ?? ''), enabled: !!name && byNameAllowed, gcTime: 0 });
-  const found = usableCustomers(byName.data ?? []).flatMap((r) => {
-    const p = canonicalPhone(r.userId.phone ?? '');
-    return p ? [{ r, p }] : [];
+  const byName = useQuery({
+    queryKey: ['visit-find', desk.kind, 'name', name, ask], enabled: !!name && byNameAllowed, gcTime: 0,
+    queryFn: async (): Promise<{ key: string; label: string; phone: string }[]> => (desk.customers
+      ? usableCustomers(await desk.customers(name ?? '')).flatMap((r) => {
+        const p = canonicalPhone(r.userId.phone ?? '');
+        return p ? [{ key: r._id, label: `${r.typedName ?? r.userId.name ?? t('new.noName')} · ${p}`, phone: p }] : [];
+      })
+      : (await desk.findToday!(name ?? '')).map((a) => ({ key: a.id, label: t('new.appointmentFound', { name: a.name || t('new.noName'), phone: a.phone, time: a.time, doctor: a.doctor }), phone: a.phone }))),
   });
+  const found = byName.data ?? [];
 
   function search(e: FormEvent) {
     e.preventDefault();
@@ -108,11 +114,9 @@ function PatientStep({ desk, last, kept, find, heading, onChoose }: {
         : found.length === 0 ? <p>{t('new.noneByName')}</p>
         : (
           <ul className="simple-choices" aria-label={t('new.results')}>
-            {found.map(({ r, p }) => (
-              <li key={r._id}>
-                <Button variant="secondary" onClick={() => { setName(null); setText(p); setPhone(p); setAsk((n) => n + 1); }}>
-                  {`${r.typedName ?? r.userId.name ?? t('new.noName')} · ${p}`}
-                </Button>
+            {found.map(({ key, label, phone: p }) => (
+              <li key={key}>
+                <Button variant="secondary" onClick={() => { setName(null); setText(p); setPhone(p); setAsk((n) => n + 1); }}>{label}</Button>
               </li>
             ))}
           </ul>
@@ -185,6 +189,26 @@ function WhoStep({ desk, phone, ask, find, onChoose }: { desk: FrontDesk; phone:
 
 /** WQ54c: Find patient shows the number's visits of today (r37c's day search by phone). */
 function TodayVisits({ desk, phone, ask }: { desk: FrontDesk; phone: string; ask: number }) {
+  return desk.findToday ? <TodayAppointments desk={desk} find={desk.findToday} phone={phone} ask={ask} /> : <TodayRegisterVisits desk={desk} phone={phone} ask={ask} />;
+}
+
+/** WQ57b: a clinic's appointments of today for this number (also those booked on an earlier day). */
+function TodayAppointments({ desk, find, phone, ask }: { desk: FrontDesk; find: NonNullable<FrontDesk['findToday']>; phone: string; ask: number }) {
+  const q = useQuery({ queryKey: ['visit-find', desk.kind, 'appointments', phone, ask], queryFn: () => find(phone), gcTime: 0 });
+  return (
+    <section aria-labelledby="np-today-h">
+      <h3 id="np-today-h">{t('new.todayAppointments')}</h3>
+      {!q.data ? (q.isError ? <Failed error={q.error} forbidden={desk.forbidden} onRetry={() => void q.refetch()} /> : <Loading />)
+        : q.data.length === 0 ? <p className="ws-muted">{t('new.noAppointments')}</p> : (
+          <ul className="ws-list">
+            {q.data.map((a) => <li key={a.id}>{t('new.appointmentLine', { time: a.time, doctor: a.doctor, name: a.name || t('new.noName') })}</li>)}
+          </ul>
+        )}
+    </section>
+  );
+}
+
+function TodayRegisterVisits({ desk, phone, ask }: { desk: FrontDesk; phone: string; ask: number }) {
   const day = istToday();
   const q = useQuery({ queryKey: ['visit-find', desk.kind, 'today', phone, ask], queryFn: () => desk.today.search({ date: day, q: phone, order: 'desc', limit: 10 }), gcTime: 0 });
   return (

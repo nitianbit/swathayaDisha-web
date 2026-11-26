@@ -566,6 +566,8 @@ export default {
   'earn.partner': 'Booked by partners',
   'earn.referral': 'Referral cuts',
   'earn.other': 'Other',
+  /** r39b: in-person consultations not at a clinic (older ones). */
+  'earn.noClinic': 'In person, no clinic',
   'earn.total': 'Earned in this period {amount}',
   /** {count}: consultations or cuts earned; {reversed}: money taken back by refunds. */
   'earn.line': { one: '{count} earning · {reversed} reversed', other: '{count} earnings · {reversed} reversed' },

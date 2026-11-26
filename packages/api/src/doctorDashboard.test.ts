@@ -44,7 +44,7 @@ describe('WQ56 doctor dashboard (r39)', () => {
       'POST /specialists/me/clinic-appointments',
       'POST /specialists/me/consultations',
       'POST /specialists/me/consultations',
-      'GET /specialists/me/finance?from=2026-11-01&to=2026-11-27',
+      'GET /specialists/me/finance?from=2026-11-01&to=2026-11-27&breakdown=1',
     ]);
     expect(calls[2]!.body).toEqual({ clinicId: CLINIC, branchId: BR, slotId: SLOT, requestKey: KEY, customer: { phone: '9876543210', name: 'Ravi' } });
     expect(calls[4]!.body).toEqual({ slotId: SLOT, mode: 'in-person', followUpOf: PARENT, requestKey: KEY });

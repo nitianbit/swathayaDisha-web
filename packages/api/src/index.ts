@@ -124,7 +124,7 @@ export {
   appointmentAt, appointmentDay, appointmentRangeProblem, canonicalMobile, CLINIC_APPOINTMENT_STATUS_LABEL, CLINIC_APPOINTMENT_STATUSES, clinicBranchesFor,
   DESK_GENDERS, DESK_RELATIONS, deskActions, deskBookingProblems, doctorsAtBranch, DOCTOR_INVITE_STATE_LABEL, DOCTOR_INVITE_STATES, familyMemberProblems,
   LINK_REFUSAL, linkProblems, MAX_APPOINTMENT_DAYS, MAX_APPOINTMENTS, MAX_DESK_CANCEL_REASON, MAX_DESK_NAME, MAX_DESK_NOTES, MAX_FAMILY_NAME, MAX_LINK_BRANCHES,
-  freeOfBusy, partnerClinicApi,
+  partnerClinicApi,
 } from './clinic.ts';
 export type { DoctorBusy,
   AppointmentBill, AppointmentQuery, BookingNoShowMove, ClinicAppointment, ClinicAppointmentStatus, ClinicDoctorRow, DeskAction, DeskActionOffer, DeskAppointment, DeskSlotKnown,

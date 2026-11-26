@@ -92,11 +92,12 @@ export default {
   'pending.reportsToRelease': { one: '{count} report to release', other: '{count} reports to release' },
   'pending.reportsDue': { one: '{count} report due', other: '{count} reports due' },
   'pending.unpaidBills': { one: '{count} unpaid bill', other: '{count} unpaid bills' },
-  /** r38b: desk walk-ins without a bill yet. */
   /** WQ57 (r40): a clinic's appointments today, by step (the last when the server does not split them). */
   'pending.toCheckIn': { one: '{count} to check in', other: '{count} to check in' },
-  'pending.toConfirm': { one: '{count} to confirm', other: '{count} to confirm' },
+  /** WQ57b: online appointments not paid yet. */
+  'pending.toConfirm': { one: '{count} waiting for online payment', other: '{count} waiting for online payment' },
   'pending.appointmentsToday': { one: '{count} appointment today', other: '{count} appointments today' },
+  /** r38b: desk walk-ins without a bill yet. */
   'pending.deskUnbilled': { one: '{count} walk-in without a bill', other: '{count} walk-ins without a bill' },
   'pending.failed.deskUnbilled': 'Walk-ins without a bill: couldn’t load',
   'pending.consultationsWaiting': { one: '{count} consultation waiting', other: '{count} consultations waiting' },
@@ -123,7 +124,7 @@ export default {
   /** WQ57: a clinic reception's doctors today. */
   'doctors.title': 'Doctors today',
   'doctors.none': 'No doctor sees patients here yet.',
-  'doctors.free': 'Free',
+  'doctors.free': 'No appointments',
   /** A doctor taken elsewhere (another clinic, online): the time only. */
   'doctors.busy': '{from}–{to} Busy',
   /** {doctor}: the doctor's name. */
@@ -201,6 +202,11 @@ export default {
   /** WQ54c: Find patient lists the number's visits of today. */
   'new.todayVisits': 'Visits today',
   'new.noVisits': 'No visits today.',
+  /** WQ57b: a clinic's appointments of today ({time}, {doctor}: data; {name}: the patient). */
+  'new.todayAppointments': 'Appointments today',
+  'new.noAppointments': 'No appointments today.',
+  'new.appointmentLine': '{time} · {doctor} · {name}',
+  'new.appointmentFound': '{name} · {phone} · today {time}, {doctor}',
   /** The four kinds of visit, in plain words. */
   'new.video': 'See a doctor now (video)',
   'new.doctor': 'Book a doctor for later',

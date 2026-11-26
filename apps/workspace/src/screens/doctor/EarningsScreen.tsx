@@ -377,7 +377,7 @@ function Events({ d }: { d: DoctorContext }) {
 /**
  * WQ56 (r39 `breakdown`): one combined view of what he earned, by where it came from: online, each clinic, bookings
  * made by pharmacies and labs, referral cuts. Chips show one part; the period is sent whole (from the 1st of this month
- * to today when a date is left empty), as r39b may default or switch the breakdown.
+ * to today when a date is left empty); r39b answers the breakdown only when asked (`breakdown=1`).
  */
 function Breakdown({ d }: { d: DoctorContext }) {
   const { api } = useSession();
@@ -391,7 +391,9 @@ function Breakdown({ d }: { d: DoctorContext }) {
   const names = new Map((clinics.data?.clinics ?? []).map((c) => [c.partnerId.toLowerCase(), c.name]));
   const parts: { id: string; label: string; sum: EarningSum }[] = b ? [
     { id: 'online', label: t('earn.online'), sum: b.online },
-    ...b.clinics.map((c) => ({ id: `clinic:${c.clinicId}`, label: c.name ?? names.get(c.clinicId.toLowerCase()) ?? t('dash.clinicUnnamed'), sum: c })),
+    // r39b: in-person visits with no clinic (older ones) are a part of their own.
+    ...b.clinics.map((c) => ({ id: `clinic:${c.clinicId ?? 'none'}`, sum: c,
+      label: c.clinicId === null ? t('earn.noClinic') : c.name ?? names.get(c.clinicId.toLowerCase()) ?? t('dash.clinicUnnamed') })),
     { id: 'partner', label: t('earn.partner'), sum: b.partner },
     { id: 'referral', label: t('earn.referral'), sum: b.referral },
     ...(b.other.count || b.other.netMinor ? [{ id: 'other', label: t('earn.other'), sum: b.other }] : []),

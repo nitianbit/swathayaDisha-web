@@ -1,12 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
+import { formatClock } from '@jansetu/i18n';
 import { CalendarDays, Pill, Plus, Receipt, Search, type LucideIcon } from 'lucide-react';
 import {
-  CLINIC_PENDING_KEYS, doctorDashboardApi, doctorToolsApi, DOCTOR_PENDING_KEYS, hasGlobalScope, holdsAny, labAssistedApi, labDeskApi, LAB_PENDING_KEYS, OBJECT_ID_PATTERN,
-  ownedClinic, partnerWorkspaceApi, PENDING_KEYS, pharmacyAssistedApi, pharmacySaleApi, todayApi,
+  appointmentAt, canonicalPhone, CLINIC_PENDING_KEYS, doctorDashboardApi, doctorToolsApi, DOCTOR_PENDING_KEYS, hasGlobalScope, holdsAny, istToday, labAssistedApi, labDeskApi,
+  LAB_PENDING_KEYS, OBJECT_ID_PATTERN, ownedClinic, partnerClinicApi, partnerWorkspaceApi, PENDING_KEYS, pharmacyAssistedApi, pharmacySaleApi, todayApi,
   type ClinicPendingKey, type DoctorPendingKey, type LabPendingKey, type PatientLookup, type PendingKey, type SaleCustomer, type TodayApi, type TodayDesk,
 } from '@jansetu/api';
 import { t } from '../../i18n/home/index.ts';
-import { pagesFor, REGISTER_READERS } from '../../modules.tsx';
+import { CLINIC_REGISTER_READERS, pagesFor, REGISTER_READERS } from '../../modules.tsx';
 import { useSession, useStaff } from '../../session.tsx';
 import { visitPath } from './visitPatient.ts';
 
@@ -41,7 +42,14 @@ export interface FrontDesk {
   register: boolean;
   /** WQ57: said when this person may start no visit (never a blank home). */
   noVisits: string;
+  /**
+   * WQ57b: a clinic's appointments of today found by phone or name (also those booked on an earlier day, which today's
+   * register does not list), for Find patient.
+   */
+  findToday?: (text: string) => Promise<TodayAppointment[]>;
 }
+/** WQ57b: one of today's appointments as Find patient shows it (the holder's mobile to continue with). */
+export interface TodayAppointment { id: string; name: string; phone: string; time: string; doctor: string }
 
 /** The one record's page when the list names exactly one, else the list page. */
 export const oneOr = (ids: readonly string[] | undefined, count: number, one: (id: string) => string, list: string) =>
@@ -52,10 +60,12 @@ export function useFrontDesk(): FrontDesk | null {
   const { api } = useSession();
   const user = useStaff();
   const kind = user.role === 'partner' ? user.partner?.partner.kind : undefined;
-  const lab = kind === 'lab' || kind === 'clinic' ? user.partner! : null;
+  // A lab's branches (its home collections); a clinic's choices do not need them.
+  const labPartner = kind === 'lab' ? user.partner! : null;
   // WQ55b: the lab's branches (the same read as the workspace's), so a choice no branch of this member offers is not shown.
   const branches = useQuery({
-    queryKey: ['partner-ws', 'member', lab?.partner.id ?? 'none', 'branches'], queryFn: () => partnerWorkspaceApi(api, { kind: 'member' }).branches(), enabled: !!lab,
+    queryKey: ['partner-ws', 'member', labPartner?.partner.id ?? 'none', 'branches'], queryFn: () => partnerWorkspaceApi(api, { kind: 'member' }).branches(),
+    enabled: !!labPartner,
   });
   // WQ56: a doctor's clinics (the Clinics page's read), for Bills when he owns one.
   const clinics = useQuery({ queryKey: ['doctor', user.id, 'clinics'], queryFn: () => doctorToolsApi(api).clinics(), enabled: user.role === 'specialist' });
@@ -113,7 +123,7 @@ export function useFrontDesk(): FrontDesk | null {
   const open = new Set(pagesFor(user).map((p) => p.path));
   const page = (path: string, one?: (id: string) => string) => (ids: readonly string[] | undefined, n: number) =>
     (!open.has(path) ? null : one ? oneOr(ids, n, one, path) : path);
-  const register = holdsAny(m, REGISTER_READERS);
+  const register = holdsAny(m, kind === 'clinic' ? CLINIC_REGISTER_READERS : REGISTER_READERS);
   const bill = holdsAny(m, ['invoices.create']);
   const bills = page('/partner/invoices', (id) => `/partner/invoices/${id}`);
   const partnerBig = (choices: readonly unknown[]) => [
@@ -130,9 +140,25 @@ export function useFrontDesk(): FrontDesk | null {
       ...(book ? [{ to: `${visitPath('/partner/desk')}&when=now`, label: t('new.clinicNow') }, { to: `${visitPath('/partner/desk')}&when=later`, label: t('new.clinicLater') }] : []),
       ...(bill ? [{ to: visitPath('/partner/invoices/new'), label: t('new.bill') }] : []),
     ];
+    const clinic = partnerClinicApi(api, { kind: 'member' });
+    const reads = holdsAny(m, ['bookings.view', 'bookings.manage']);
     return {
       kind: 'clinic', id: user.id, today: todayApi(api, 'clinic'), newPath: '/partner/new', todayPath: '/partner/today', big: partnerBig(choices), choices,
-      lookup: null, customers: null, pending: CLINIC_PENDING_KEYS,
+      // WQ57b (r40d): the clinic's own lookup (the lab's shape), for members who book.
+      lookup: book ? (phone) => clinic.lookup(phone) : null, customers: null, pending: CLINIC_PENDING_KEYS,
+      findToday: reads ? async (text) => {
+        const day = istToday();
+        const { appointments } = await clinic.dayView({ from: day, to: day });
+        const digits = text.replace(/\D/g, '');
+        const words = text.trim().toLowerCase();
+        return appointments.flatMap((a) => {
+          const phone = canonicalPhone(a.patient?.phone ?? '');
+          const name = a.patient?.name ?? '';
+          const hit = digits.length >= 4 ? !!phone?.includes(digits) : !!words && name.toLowerCase().includes(words);
+          const at = appointmentAt(a);
+          return hit && phone ? [{ id: a.bookingId, name, phone, time: at ? formatClock(at) : a.bookingTime, doctor: a.doctorName ?? '' }] : [];
+        });
+      } : undefined,
       pendingTo: (k, ids, n) => (k === 'unpaidBills' ? bills(ids, n) : k === 'appointmentsToday' || k === 'deskUnbilled' ? desk(ids, n) : null),
       forbidden: t('askOwnerClinic'), register, noVisits: t('askOwnerVisitsClinic'),
     };

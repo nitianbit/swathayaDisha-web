@@ -16,7 +16,8 @@ import { Failed, homeWords, todayKey } from '../front/home.tsx';
 import { HomeButton, VisitPatientLine, visitWho } from '../front/visitBar.tsx';
 import { useVisitPreset, visitDeskRequest, type VisitPatient } from '../front/visitPatient.ts';
 import { openBill } from '../partner/billing.tsx';
-import { visitBillPrefill } from '../partner/DeskScreen.tsx';
+import { feeLine } from '../partner/DeskScreen.tsx';
+import type { BillPrefill } from '../partner/billing.tsx';
 import { usePartnerScope } from '../partner/scope.tsx';
 import { formatYmd, NotADoctor, useClinics, useDoctor, useTicker, type DoctorContext } from './doctor.tsx';
 import { t } from '../../i18n/doctor/index.ts';
@@ -222,13 +223,27 @@ function ClinicDone({ visit, done }: { visit: VisitPatient; done: ClinicBooked }
     <Booked title={t('visit.clinic.booked', { who: visitWho(visit), clinic: done.clinic, time: clock(done.slot), day: formatYmd(done.slot.date) })}
       actions={done.own && ctx ? (
         // His own clinic: the reception's short bill with his fee on it (WQ57's).
-        <Button onClick={() => openBill(ctx, memory, visitBillPrefill({ booking: done.answer.booking, replayed: done.answer.replayed, branchName: '', doctorName: me.name }, visit), navigate)}>
+        <Button onClick={() => openBill(ctx, memory, ownVisitBill(done.answer, visit, me), navigate)}>
           {t('visit.clinic.bill')}
         </Button>
       ) : null}>
       <p>{done.own ? t('visit.clinic.inOwnList') : t('visit.clinic.inList', { clinic: done.clinic })}</p>
     </Booked>
   );
+}
+
+/**
+ * His own clinic's visit bill (the reception's short bill): the appointment, its account holder (+ New's number and name,
+ * the owner's for a family member) and his fee as the consultation line.
+ */
+function ownVisitBill(a: DoctorClinicAnswer, v: VisitPatient, me: { id: string; name: string }): BillPrefill {
+  const b = a.booking;
+  const at = appointmentStart(b);
+  return {
+    link: { kind: 'appointment', id: b.bookingId }, branchId: b.branchId ?? '', doctorId: me.id, name: v.family ? v.family.holderName : v.name, phone: v.phone,
+    label: `${formatYmd(b.bookingDate)}, ${at ? formatClock(at.getTime()) : b.bookingTime}`, simple: true,
+    ...(b.fee ? { handLines: [feeLine(me.name, b.fee)] } : {}),
+  };
 }
 
 // ── Online consultation ──

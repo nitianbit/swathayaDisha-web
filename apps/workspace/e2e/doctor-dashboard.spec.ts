@@ -126,6 +126,14 @@ async function mockBackend(page: Page, o: { owner?: boolean } = {}): Promise<Bac
         source: 'doctor_assisted', dependentId: null, followUpOf: null }, payment: { by: 'patient_app', required: true, payBy: new Date(NOW.getTime() + 30 * 60_000).toISOString() },
         replayed: false }, 201);
     }
+    if (p === '/finance') {
+      const sum = (n: number, c: number) => ({ earnedMinor: n, reversedMinor: 0, netMinor: n, count: c });
+      return ok(route, { account: null, balanceMinor: 0, totals: { earnedMinor: 0, reversedMinor: 0, paidOutMinor: 0, adjustedMinor: 0 }, lastPayout: null,
+        // r39b: the breakdown only when asked.
+        ...(url.searchParams.get('breakdown') === '1' ? { breakdown: { from: url.searchParams.get('from'), to: url.searchParams.get('to'), totals: sum(330_000, 6),
+          online: sum(120_000, 2), partner: sum(50_000, 1), referral: sum(10_000, 1), other: sum(0, 0),
+          clinics: [{ clinicId: DEMO, name: 'Demo Care Clinic', ...sum(100_000, 1) }, { clinicId: null, name: null, ...sum(50_000, 1) }] } } : {}) });
+    }
     if (p === '/todos' && method === 'GET') return ok(route, [...b.todos].reverse(), 200, { pagination: { nextCursor: null } });
     if (p === '/todos' && method === 'POST') {
       const todo = { _id: `7${b.todos.length}`.padStart(24, '0'), text: body!.text, done: false, version: 1, createdBy: { kind: 'doctor', id: DOC, name: 'Dr Arjun Demo' } };
@@ -313,6 +321,20 @@ test('his to-dos are his own: added once, no "added by"', async ({ page }) => {
   await expect(page.getByText('Call Ravi about his report', { exact: true })).toBeVisible();
   await expect(page.getByText(/Added by/)).toHaveCount(0);
   expect(b.calls.filter((c) => c.method === 'POST' && c.path === '/specialists/me/todos')).toHaveLength(1);
+});
+
+test('earnings in one view by where they came from: the period sent whole, chips for online, each clinic, partners, referral', async ({ page }) => {
+  const b = await mockBackend(page);
+  await signIn(page);
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Earnings', exact: true }).click();
+  const earn = page.getByRole('region', { name: 'Where your earnings came from' });
+  await expect(earn.getByText('Earned in this period ₹3,300.00')).toBeVisible();
+  expect(b.calls.some((c) => c.path === '/specialists/me/finance?from=2026-11-01&to=2026-11-27&breakdown=1')).toBe(true);
+  const which = earn.getByRole('group', { name: 'Which earnings' });
+  await expect(which.getByRole('button')).toHaveText(['All', 'Online', 'Demo Care Clinic', 'In person, no clinic', 'Booked by partners', 'Referral cuts']);
+  await which.getByRole('button', { name: 'Demo Care Clinic' }).click();
+  await expect(earn.locator('.earn-sum')).toHaveText([/Demo Care Clinic₹1,000.00/]);
+  await shot(page, 'earnings');
 });
 
 test.describe('on a 390 px phone', () => {

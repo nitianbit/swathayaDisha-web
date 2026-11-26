@@ -786,6 +786,7 @@ export default {
   'newInvoice.nameOnBillHint': 'The phone owner’s name',
   'newInvoice.moreDetails': 'More details',
   'newInvoice.addAnother': 'Add another test',
+  'newInvoice.addAnotherItem': 'Add another item',
   /** WQ55c: Home from a visit's bill not issued yet. */
   'newInvoice.leaveTitle': 'Leave without a bill? The walk-in stays unbilled.',
   'newInvoice.stay': 'Stay',
@@ -975,6 +976,14 @@ export default {
   'desk.visit.now': 'Appointment now',
   'desk.visit.later': 'Appointment for later',
   'desk.visit.whichDoctor': 'Which doctor?',
+  'desk.visit.whichBranch': 'Which branch?',
+  'desk.visit.lastUsed': 'Used last',
+  /** {time}: the doctor's next free time today. */
+  'desk.visit.nextFree': 'Next free: {time}',
+  'desk.visit.today': 'Today',
+  'desk.visit.tomorrow': 'Tomorrow',
+  'desk.visit.pickDate': 'Pick a date',
+  'desk.visit.date': 'Date',
   'desk.visit.noDoctor': 'No doctor sees patients at this branch.',
   'desk.visit.day': 'Day',
   'desk.visit.times': 'Free times',
@@ -983,7 +992,7 @@ export default {
   'desk.visit.noTimes': 'No free time with {doctor} on this day. Choose another day.',
   'desk.visit.busyHidden': 'Times when the doctor is busy elsewhere are not shown.',
   /** {doctor}, {time}: who and when. */
-  'desk.visit.book': 'Book {doctor} at {time}',
+  'desk.visit.book': 'Book {doctor} at {time}, {branch}',
   'desk.visit.done': 'Done',
   'desk.title': 'Front desk',
   'desk.intro': 'Appointments with the clinic’s doctors by day (India time), desk and online. Desk appointments are in person and paid at the clinic.',

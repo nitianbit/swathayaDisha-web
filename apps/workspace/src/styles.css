@@ -178,3 +178,10 @@
 .bill-lines li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: 1.0625rem; }
 .bill-total { font-size: 1.5rem; }
 .desk-code > summary { cursor: pointer; padding: 12px 0; line-height: 24px; color: var(--brand-strong); }
+
+/* WQ57b: a clinic visit starts with its task; the one action stays in sight at the bottom on a short phone. */
+.visit-task-title { font-size: var(--text-xl); margin: 0; }
+.visit-next-free { font-size: 1.25rem; font-weight: 700; margin: 0; }
+.big-action--last { border-style: dashed; }
+.visit-book-bar { position: sticky; bottom: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) 0; background: var(--surface); border-top: 1px solid var(--line); }
