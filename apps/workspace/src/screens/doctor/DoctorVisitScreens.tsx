@@ -1,15 +1,15 @@
 import './doctor.css';
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
   addDays, ApiError, appointmentStart, bookableClinics, CONSULT_MODE_LABEL, doctorDashboardApi, FOLLOW_UP_DAYS, followUpLastDay, followUpOpen, freeSlots, istToday,
-  OBJECT_ID_PATTERN, type DoctorClinicAnswer, type DoctorConsultationAnswer, type DoctorSlot, type MyClinics,
+  OBJECT_ID_PATTERN, type DoctorClinicAnswer, type DoctorConsultationAnswer, type DoctorSlot, type DoctorVisitRequestKind, type MyClinics,
 } from '@jansetu/api';
 import { formatClock, formatDateTime } from '@jansetu/i18n';
 import { Alert, Button, Empty, formatRupees, Loading, TextField } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
-import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
+import { newRequestKey, resolveStored, startOp, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
 import { useFrontDesk } from '../front/desk.tsx';
 import { Failed, homeWords, todayKey } from '../front/home.tsx';
@@ -41,7 +41,7 @@ const useDash = () => {
   return useMemo(() => doctorDashboardApi(api), [api]);
 };
 
-const visitSlot = (d: DoctorContext, kind: 'clinic' | 'online' | 'follow-up') => `doctor-visit:${d.identity}:${kind}`;
+const visitSlot = (d: DoctorContext, kind: DoctorVisitRequestKind) => `doctor-visit:${d.identity}:${kind}`;
 
 export function DoctorBookingRecovery({ d }: { d: DoctorContext }) {
   const { memory } = useSession();
@@ -106,9 +106,13 @@ function SendBar({ once, label, onSend }: { once: Pick<Once, 'busy' | 'refused'>
   );
 }
 
-function ResumeBooking({ once, visit }: { once: Pick<Once, 'open' | 'busy' | 'resend'>; visit?: VisitPatient }) {
+function ResumeBooking({ d, kind, once, visit }: {
+  d: DoctorContext; kind: DoctorVisitRequestKind; once: Pick<Once, 'open' | 'busy' | 'resend'>; visit?: VisitPatient;
+}) {
   if (once.busy) return <Loading />;
-  if (once.open?.restored || (once.open && !once.open.body)) return <RestoredBooking />;
+  if (once.open && (once.open.restored || !once.open.body)) {
+    return <RestoredBooking d={d} kind={kind} requestKey={once.open.requestKey} />;
+  }
   if (once.open) {
     return (
       <div className="ws-section" role="alert">
@@ -124,12 +128,33 @@ function ResumeBooking({ once, visit }: { once: Pick<Once, 'open' | 'busy' | 're
   return null;
 }
 
-/** A reload preserves the key only. The doctor checks the appointment list; resending requires the original details. */
-function RestoredBooking() {
+/** The original key can be checked even when the patient details are no longer in memory. */
+function RestoredBooking({ d, kind, requestKey }: { d: DoctorContext; kind: DoctorVisitRequestKind; requestKey: string }) {
+  const { memory } = useSession();
+  const dash = useDash();
+  const check = useMutation({
+    mutationFn: () => dash.checkVisitRequest(kind, requestKey),
+    onSuccess: ({ appointmentId }) => {
+      if (appointmentId) resolveStored(memory, visitSlot(d, kind), requestKey);
+    },
+  });
+  if (check.data?.appointmentId) {
+    return (
+      <Alert tone="ok">
+        {t('visit.found')}
+        <div className="ws-actions">
+          <Link className="j-btn j-btn--secondary" to={`/doctor/appointments?open=${check.data.appointmentId}`}>{t('visit.openAppointment')}</Link>
+        </div>
+      </Alert>
+    );
+  }
   return (
     <Alert tone="warn">
       {t('visit.afterReload')}
+      {check.isSuccess && <p>{t('visit.stillUnknown')}</p>}
+      {check.isError && <p>{homeWords(check.error)}</p>}
       <div className="ws-actions">
+        <Button busy={check.isPending} onClick={() => check.mutate()}>{t('visit.checkByKey')}</Button>
         <Link className="j-btn j-btn--secondary" to="/doctor/appointments">{t('visit.checkAppointments')}</Link>
       </div>
     </Alert>
@@ -249,7 +274,7 @@ function ClinicVisit({ d, visit }: { d: DoctorContext; visit: VisitPatient | nul
   const [clinicId, setClinicId] = useState<string | null>(null);
   const [slot, setSlot] = useState<DoctorSlot | null>(null);
   if (once.done) return <ClinicDone visit={once.done.visit} done={once.done} />;
-  if (once.locked) return <ResumeBooking once={once} visit={once.open?.body?.visit} />;
+  if (once.locked) return <ResumeBooking d={d} kind="clinic" once={once} visit={once.open?.body?.visit} />;
   if (!visit) return <NoPatient />;
   if (!clinics.data) return clinics.isError ? <Failed error={clinics.error} onRetry={() => void clinics.refetch()} /> : <Loading />;
   const { places, of } = placeWords(clinics.data);
@@ -345,7 +370,7 @@ function OnlineVisit({ d, visit }: { d: DoctorContext; visit: VisitPatient | nul
   const [mode, setMode] = useState<'video' | 'call' | null>(null);
   const [slot, setSlot] = useState<DoctorSlot | null>(null);
   if (once.done) return <ConsultationDone visit={once.done.visit} answer={once.done.answer} />;
-  if (once.locked) return <ResumeBooking once={once} visit={once.open?.body?.visit} />;
+  if (once.locked) return <ResumeBooking d={d} kind="online" once={once} visit={once.open?.body?.visit} />;
   if (!visit) return <NoPatient />;
   const m = mode;
   const chosen = slot;
@@ -406,7 +431,7 @@ export function DoctorFollowUpScreen() {
   const pending = memory.get<PendingOp<FollowUpChoice>>(visitSlot(d, 'follow-up'));
   if (pending) {
     if (pending.restored || !pending.body) {
-      return <VisitPage title={t('visit.followUp.title')}><RestoredBooking /></VisitPage>;
+      return <VisitPage title={t('visit.followUp.title')}><RestoredBooking d={d} kind="follow-up" requestKey={pending.requestKey} /></VisitPage>;
     }
     const parentId = pending.body.parentId;
     return <VisitPage title={t('visit.followUp.title')}><FollowUp key={`${d.identity}:${parentId}`} d={d} parentId={parentId} visit={null} /></VisitPage>;
@@ -479,7 +504,7 @@ function FollowUp({ d, parentId, visit }: { d: DoctorContext; parentId: string; 
   const [mode, setMode] = useState<FollowUpChoice['mode'] | null>(null);
   const [slot, setSlot] = useState<DoctorSlot | null>(null);
   if (once.done) return <ConsultationDone visit={visit} answer={once.done} />;
-  if (once.locked) return <ResumeBooking once={once} />;
+  if (once.locked) return <ResumeBooking d={d} kind="follow-up" once={once} />;
   if (!parent.data) return parent.isError ? <Failed error={parent.error} onRetry={() => void parent.refetch()} /> : <Loading />;
   const p = parent.data;
   const at = appointmentStart(p);

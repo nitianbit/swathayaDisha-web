@@ -56,7 +56,14 @@ describe('WQ56 doctor dashboard (r39)', () => {
     expect(() => d.bookClinic({ clinicId: 'x', slotId: SLOT, requestKey: KEY, customer: { phone: '9876543210' } })).toThrow();
     expect(() => d.bookConsultation({ slotId: SLOT, mode: 'call', requestKey: 'short', customer: { phone: '9876543210' } })).toThrow();
     await expect(d.appointments({ from: '2026-02-30' })).rejects.toThrow();
+    expect(() => d.checkVisitRequest('online', 'short')).toThrow();
     expect(calls).toEqual([]);
+  });
+
+  it('checks a restored booking by posting only its kind and request key', async () => {
+    const { c, calls } = client(() => json(200, { success: true, data: { appointmentId: PARENT } }));
+    await expect(doctorDashboardApi(c).checkVisitRequest('follow-up', KEY)).resolves.toEqual({ appointmentId: PARENT });
+    expect(calls).toEqual([{ url: '/api/v1/specialists/me/visit-requests/check', method: 'POST', body: { kind: 'follow-up', requestKey: KEY } }]);
   });
 
   it('his Today and private to-dos are /specialists/me; a row opens his pages; earnedMinor is kept', async () => {

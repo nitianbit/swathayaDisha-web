@@ -45,11 +45,12 @@ function ClinicPageFor({ d, page }: { d: DoctorContext; page: Page }) {
   // WQ51b: a doctor who is not verified and active cannot use the clinic workspace (the server closes it): no button.
   const profile = useDoctorProfile(d);
   const active = profile.data ? doctorStanding(profile.data) === 'active' : null;
-  const state = q.data?.partner.verification?.state ?? 'pending';
   // WQ56b: nothing is offered until it is known whether he bills here (never the sign-out first, then the bills).
   const own = useOwnedClinic(d.user.id, active === true);
   if (profile.isPending || (active && own.pending)) return <Loading label={t('clinics.loadingYourClinic')} />;
   if (active && own.owned) return page === 'bills' ? <InvoicesScreen /> : <CatalogueScreen />;
+  const clinic = own.clinic ?? q.data;
+  const state = clinic?.partner.verification?.state ?? 'pending';
   const chooseClinic = own.error instanceof ApiError && own.error.code === 'CLINIC_CHOICE_REQUIRED';
   const openClinic = () => { window.history.replaceState(null, '', LANDING[page]); signOut('toClinicWorkspace'); };
   return (
@@ -60,21 +61,21 @@ function ClinicPageFor({ d, page }: { d: DoctorContext; page: Page }) {
           <Button onClick={openClinic}>{t('clinicPage.open')}</Button>
         </Empty>
       ) : <ErrorState message={messageOf(own.error)} onRetry={own.retry} />)
-        : q.isPending ? <Loading label={t('clinics.loadingYourClinic')} />
-        : q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
-        : !q.data ? (
+        : !clinic && q.isPending ? <Loading label={t('clinics.loadingYourClinic')} />
+        : !clinic && q.isError ? <ErrorState message={messageOf(q.error)} onRetry={() => void q.refetch()} />
+        : !clinic ? (
           <Empty title={t('clinicPage.noClinic.title')}>
             {t('clinicPage.noClinic.body')} <Link to="/doctor/clinics">{t('clinicPage.noClinic.create')}</Link>
           </Empty>
         ) : (
           <section className="ws-section stack">
             <p>
-              <strong>{q.data.partner.name}</strong>{' '}
+              <strong>{clinic.partner.name}</strong>{' '}
               <Badge tone={state === 'verified' ? 'ok' : 'warn'}>{VERIFICATION_LABEL[state] ?? state}</Badge>
             </p>
             {state === 'suspended' ? <Alert tone="warn">{t('clinics.suspended')}</Alert>
               : state !== 'verified' && <Alert tone="warn">{t('clinicPage.notVerified')}</Alert>}
-            <p>{t(`clinicPage.${page}.where`, { name: q.data.partner.name })}</p>
+            <p>{t(`clinicPage.${page}.where`, { name: clinic.partner.name })}</p>
             {active === false ? <Alert tone="warn">{CLINIC_DOCTOR_NOT_VERIFIED_MESSAGE}</Alert>
               : active && (
                 <div className="ws-actions">

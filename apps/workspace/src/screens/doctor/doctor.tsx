@@ -52,6 +52,7 @@ export function useOwnedClinic(doctorId: string, enabled = true) {
     error,
     retry: () => { void clinics.refetch(); void billed.refetch(); },
     clinics,
+    clinic: billed.data,
   };
 }
 export const offersKey = (d: DoctorContext) => [...d.key, 'offers'];

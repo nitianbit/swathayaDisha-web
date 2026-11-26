@@ -57,6 +57,7 @@ export interface DoctorConsultationAnswer {
 }
 /** The clinic desk's own answer (`deskView`): the appointment is that clinic's. */
 export type DoctorClinicAnswer = DeskBookingResult;
+export type DoctorVisitRequestKind = 'clinic' | 'online' | 'follow-up';
 
 export type EarningChannel = 'clinic' | 'online' | 'partner' | 'referral' | 'other';
 export interface EarningSum { earnedMinor: number; reversedMinor: number; netMinor: number; count: number }
@@ -97,6 +98,11 @@ export function doctorDashboardApi(c: ApiClient) {
       id(b.slotId, 'slot'); check(REQUEST_KEY_PATTERN.test(b.requestKey), 'request key');
       if ('followUpOf' in b) id(b.followUpOf, 'consultation');
       return c.post<DoctorConsultationAnswer>(`${ME}/consultations`, { body: b });
+    },
+    /** Exact confirmation for a request restored after reload. A null record leaves the outcome unknown. */
+    checkVisitRequest: (kind: DoctorVisitRequestKind, requestKey: string) => {
+      check(REQUEST_KEY_PATTERN.test(requestKey), 'request key');
+      return c.post<{ appointmentId: string | null }>(`${ME}/visit-requests/check`, { body: { kind, requestKey } });
     },
     /** The earnings summary with its `breakdown` for the period and filter (r39b: only when asked, `breakdown=1`). */
     finance: (q: BreakdownQuery = {}) => {
