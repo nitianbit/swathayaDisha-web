@@ -121,6 +121,8 @@ export const REGISTER_READERS: readonly PartnerPermission[] = [...LAB_READERS, .
 /** WQ6 (Q6 routes): `GET /clinic/doctors` readers, and `GET /clinic/slots|appointments` readers. */
 const DOCTOR_READERS: readonly PartnerPermission[] = ['staff.manage', 'bookings.view', 'bookings.manage', 'invoices.create'];
 const DESK_READERS: readonly PartnerPermission[] = ['bookings.view', 'bookings.manage'];
+/** WQ57b: who reads a clinic's day register (r40: its appointments or its bills). */
+export const CLINIC_REGISTER_READERS: readonly PartnerPermission[] = [...DESK_READERS, ...INVOICE_READERS];
 
 export const PAGES: readonly WorkspacePage[] = [
   { path: '/', roles: ['admin', 'pharmacy', 'partner', 'specialist'], element: <HomeScreen />, nav: { labelKey: 'nav.home', icon: House, sectionKey: '' } },

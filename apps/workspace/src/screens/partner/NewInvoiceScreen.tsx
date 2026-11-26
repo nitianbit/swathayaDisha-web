@@ -344,8 +344,15 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
       lines: [...(prefill.items ?? []).flatMap(({ id }) => {
         const it = offeredById(catalogue, id);
         return it ? [catalogueLine(it)] : [];
-      }), ...(prefill.handLines ?? []).map((l): LineDraft => ({ key: lineKey(), description: l.description, sac: '', qty: '1', price: paiseToInput(l.priceMinor),
-        discount: '', gstRate: '0' }))] }
+      }), ...(prefill.handLines ?? []).map((l): LineDraft => {
+        // WQ57b: the clinic's own consultation item for that doctor (its name names the doctor, or the one consultation at
+        // that price) is billed from the catalogue instead of a hand-written fee.
+        const consults = catalogue.filter((i) => i.kind === 'consultation' && i.isActive && !i.adminDisabled);
+        const item = (l.doctor ? consults.find((i) => i.name.toLowerCase().includes(l.doctor!.toLowerCase())) : undefined)
+          ?? (consults.length === 1 && consults[0]!.priceMinor === l.priceMinor ? consults[0] : undefined);
+        return item ? catalogueLine(item)
+          : { key: lineKey(), description: l.description, sac: '', qty: '1', price: paiseToInput(l.priceMinor), discount: '', gstRate: '0' };
+      })] }
     // WQ55: a bill opened from + New is the account holder's (as a desk booking's bill): a family member's is in the phone
     // owner's name (typed on + New, else typed here).
     : { ...EMPTY, branchId: branches.length === 1 ? branches[0]!._id : '',
@@ -448,7 +455,7 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
         {d.link && (d.link.kind === 'appointment' ? (
           <div className="ws-actions" role="group" aria-label={t('newInvoice.appointment')}>
             <span>{t('newInvoice.forAppointment', { label: d.link.label })}</span>
-            <Button variant="ghost" onClick={() => set({ link: undefined })}>{t('newInvoice.notForAppointment')}</Button>
+            {!simple && <Button variant="ghost" onClick={() => set({ link: undefined })}>{t('newInvoice.notForAppointment')}</Button>}
           </div>
         ) : (
           <div className="ws-actions" role="group" aria-label={t('newInvoice.labBooking')}>
@@ -550,9 +557,12 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
             {d.lines.map((l, i) => (
               <li key={l.key}>
                 <span>{`${(l.item?.name ?? l.description).trim()} · ${pv.lines[i] ? money(pv.lines[i]!.amountMinor) : '—'}`}</span>
-                <Button variant="ghost" aria-label={t('newInvoice.removeLine', { n: i + 1 })} onClick={() => set({ lines: d.lines.filter((x) => x.key !== l.key) })}>
-                  {shared('action.remove')}
-                </Button>
+                {/* WQ57b: the only line (a visit's fee or test) is not offered for removal. */}
+                {d.lines.length > 1 && (
+                  <Button variant="ghost" aria-label={t('newInvoice.removeLine', { n: i + 1 })} onClick={() => set({ lines: d.lines.filter((x) => x.key !== l.key) })}>
+                    {shared('action.remove')}
+                  </Button>
+                )}
                 {shown(`${l.key}.amount`) && <Alert>{shown(`${l.key}.amount`)}</Alert>}
               </li>
             ))}
@@ -561,7 +571,7 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
         {/* WQ55c: in a visit the bill's lines come first; another test is a small link that opens the catalogue. */}
         {simple && (
           <details className="more-details">
-            <summary>{t('newInvoice.addAnother')}</summary>
+            <summary>{partner.kind === 'clinic' ? t('newInvoice.addAnotherItem') : t('newInvoice.addAnother')}</summary>
             {picker}
           </details>
         )}

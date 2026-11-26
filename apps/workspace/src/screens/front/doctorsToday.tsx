@@ -25,11 +25,12 @@ function Strip({ ctx, forbidden }: { ctx: ScopeContext; forbidden: string | null
   const day = istToday();
   const q = useQuery({ queryKey: [...ctx.key, 'clinic-day', day], queryFn: () => clinic.dayView({ from: day, to: day }), staleTime: 0, refetchOnMount: 'always' });
   const now = Date.now();
+  // WQ57b: the next appointments by time (sorted first, then the first few), each time read from its date and time.
   const entriesOf = (doctorId: string, appts: readonly ClinicAppointment[], busy: readonly DoctorBusy[]): Entry[] => [
     ...appts.filter((a) => a.doctorId === doctorId && (a.status === 'confirmed' || a.status === 'pending')).flatMap((a) => {
       const at = appointmentAt(a)?.getTime();
       return at !== undefined && at >= now - 30 * 60_000 ? [{ at, key: a.bookingId, text: `${istTime(new Date(at))} ${a.patient?.name ?? t('doctors.patient')}`, busy: false }] : [];
-    }).slice(0, UPCOMING),
+    }).sort((x, y) => x.at - y.at).slice(0, UPCOMING),
     ...busy.filter((b) => b.doctorId === doctorId && Date.parse(b.to) > now)
       .map((b) => ({ at: Date.parse(b.from), key: `busy:${b.from}`, text: t('doctors.busy', { from: istTime(b.from), to: istTime(b.to) }), busy: true })),
   ].sort((x, y) => x.at - y.at);

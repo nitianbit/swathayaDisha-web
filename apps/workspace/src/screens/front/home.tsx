@@ -188,11 +188,13 @@ export function PendingStrip({ day, desk }: { day: TodayAnswer; desk: FrontDesk 
   );
 }
 
+/** "Thu 27 Nov" (an India date read as UTC midnight). */
+const SHORT_DAY: Intl.DateTimeFormatOptions = { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' };
 const methodWords = (m: string | null) => (m && (PAYMENT_METHOD_KEYS as readonly string[]).includes(m) ? t(`method.${m as PaymentMethodKey}`) : m);
 const present = (v: unknown): v is string | number => (typeof v === 'string' && v.trim() !== '') || typeof v === 'number';
 
 /** r37c: a row's line in the app's words (`whatParts`; names stay data); the server's English `what` when not known. */
-export function whatWords(i: Pick<TodayItem, 'what' | 'whatParts'>): string {
+export function whatWords(i: Pick<TodayItem, 'what' | 'whatParts'>, date?: string): string {
   const p = i.whatParts;
   const v = p?.values ?? {};
   const list = (none: string) => (!present(v.first) ? none : Number(v.more) > 0 ? t('what.more', { first: String(v.first), more: Number(v.more) }) : String(v.first));
@@ -208,7 +210,10 @@ export function whatWords(i: Pick<TodayItem, 'what' | 'whatParts'>): string {
     case 'wallet.topup': return t('what.topup');
     // r40: a clinic appointment: the doctor and time (names stay data), the way it is held.
     case 'clinic.appointment': {
-      const parts = [present(v.doctor) ? String(v.doctor) : null, present(v.time) ? String(v.time) : null, mode].filter((x): x is string => !!x);
+      // WQ57b: an appointment on another day than the register's says its day ("Thu 27 Nov").
+      const day = present(v.date) && String(v.date) !== date && /^\d{4}-\d{2}-\d{2}$/.test(String(v.date))
+        ? formatDateWith(Date.parse(`${String(v.date)}T00:00:00Z`), SHORT_DAY) : null;
+      const parts = [present(v.doctor) ? String(v.doctor) : null, day, present(v.time) ? String(v.time) : null, mode].filter((x): x is string => !!x);
       return parts.length ? parts.join(' · ') : t('what.appointment');
     }
     case 'consult.scheduled':
@@ -265,7 +270,7 @@ export function Register({ items, date, desk, unbilled }: { items: readonly Toda
         const to = todayLink(i, desk);
         // A wallet top-up has no patient: no name is said for it.
         const who = i.patientName ?? (i.kind === 'wallet_topup' ? null : t('register.noName'));
-        const words = <>{who ? <Parts of={t.rich('register.line', { who: <strong>{who}</strong>, what: whatWords(i) })} /> : whatWords(i)}{i.shortRef ? <span className="ws-muted">{` · ${i.shortRef}`}</span> : null}</>;
+        const words = <>{who ? <Parts of={t.rich('register.line', { who: <strong>{who}</strong>, what: whatWords(i, date) })} /> : whatWords(i, date)}{i.shortRef ? <span className="ws-muted">{` · ${i.shortRef}`}</span> : null}</>;
         const at = Date.parse(i.at);
         const bill = billOf.get(i.id);
         return (

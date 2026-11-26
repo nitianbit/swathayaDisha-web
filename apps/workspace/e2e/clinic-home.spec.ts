@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
 
 /**
- * WQ57 (P3): the simple clinic reception home against a mocked API (backend r40 21a4a92b: the lab's Today shapes on
+ * WQ57 (P3) / WQ57b: the simple clinic reception home against a mocked API (backend r40 21a4a92b, r40d's lookup: the lab's Today shapes on
  * `/partner-workspace/today` with appointments and their bills, `busy` beside the clinic's appointments): big buttons by
  * permission, the doctors today with their busy blocks, + New (the shared patient step, then an appointment now or later, or
  * a bill), the desk booked in one tap, its bill with the doctor's fee, and Today as one row per visit. On a desktop, a
@@ -47,11 +47,15 @@ async function mockBackend(page: Page, me: Me = owner): Promise<Backend> {
   const slots = [
     { doctorId: D1, branchId: BR1, date: DAY, start: '10:15', end: '10:30' }, { doctorId: D1, branchId: BR1, date: DAY, start: '10:30', end: '10:45' },
     { doctorId: D1, branchId: BR2, date: DAY, start: '10:15', end: '10:30' }, { doctorId: D2, branchId: BR2, date: DAY, start: '10:45', end: '11:00' },
-    { doctorId: D1, branchId: BR1, date: NEXT, start: '11:00', end: '11:15' }, { doctorId: D1, branchId: BR1, date: NEXT, start: '11:15', end: '11:30' },
-    { doctorId: D1, branchId: BR1, date: NEXT, start: '11:30', end: '11:45' },
-  ].map((s) => ({ ...s, taken: false }));
-  // r40: Dr Kavya is busy elsewhere today 12:00–12:30 and tomorrow 11:00–11:30 (the time only).
-  const busy = [{ doctorId: D1, from: at(DAY, '12:00'), to: at(DAY, '12:30') }, { doctorId: D1, from: at(NEXT, '11:00'), to: at(NEXT, '11:30') }];
+    { doctorId: D1, branchId: BR1, date: NEXT, start: '11:00', end: '11:15' }, { doctorId: D1, branchId: BR1, date: NEXT, start: '12:00', end: '12:15' },
+    // A shared session: 5 seats over 11:30–13:00.
+    { doctorId: D1, branchId: BR1, date: NEXT, start: '11:30', end: '13:00', seats: 5 },
+  ].map((s) => ({ seats: 1, ...s, taken: false }));
+  // r40: Dr Kavya is busy elsewhere today and tomorrow 12:00–12:30 (the time only).
+  const busy = [{ doctorId: D1, from: at(DAY, '12:00'), to: at(DAY, '12:30') }, { doctorId: D1, from: at(NEXT, '12:00'), to: at(NEXT, '12:30') }];
+  // r40: the server leaves out a one-patient slot inside the doctor's busy time (a shared session stays).
+  const busyAt = (s: { doctorId: string; date: string; start: string; end: string }) =>
+    busy.some((x) => x.doctorId === s.doctorId && x.from < at(s.date, s.end) && x.to > at(s.date, s.start));
   let seq = 0;
   const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const ok = (route: Route, data: unknown, status = 200, extra: Rec = {}) => json(route, status, { success: true, data, ...extra });
@@ -81,8 +85,14 @@ async function mockBackend(page: Page, me: Me = owner): Promise<Backend> {
     if (sub === '/catalogue') return ok(route, []);
     if (sub === '/clinic/doctors') return ok(route, doctors);
     if (sub === '/clinic/slots') {
-      return ok(route, slots.filter((s) => !s.taken && s.doctorId === q.get('doctorId') && s.branchId === q.get('branchId') && s.date === q.get('date'))
-        .map((s) => ({ slotId: slotId(s.doctorId, s.branchId, s.date, s.start), date: s.date, startTime: s.start, endTime: s.end, startsAt: at(s.date, s.start), seatsLeft: 1 })));
+      return ok(route, slots.filter((s) => !s.taken && s.doctorId === q.get('doctorId') && s.branchId === q.get('branchId') && s.date === q.get('date')
+        && !(s.seats === 1 && busyAt(s)))
+        .map((s) => ({ slotId: slotId(s.doctorId, s.branchId, s.date, s.start), date: s.date, startTime: s.start, endTime: s.end, startsAt: at(s.date, s.start), seatsLeft: s.seats })));
+    }
+    // r40d: the clinic's lookup (the lab's shape).
+    if (sub === '/clinic/patients/lookup' && method === 'POST') {
+      if (!b.me.permissions.includes('bookings.manage') && b.me.role !== 'owner') return fail(route, 403, 'FORBIDDEN', 'You do not have permission');
+      return ok(route, { exists: true, holderNameMasked: 'R*** K***' });
     }
     if (sub === '/clinic/appointments' && method === 'GET') {
       const from = q.get('from')!; const to = q.get('to')!; const doc = q.get('doctorId');
@@ -93,7 +103,7 @@ async function mockBackend(page: Page, me: Me = owner): Promise<Backend> {
     if (sub === '/clinic/appointments' && method === 'POST') {
       const x = body as { slotId: string; customer: { phone: string; name?: string }; patient?: { name: string; relation: string } };
       const s = slots.find((y) => slotId(y.doctorId, y.branchId, y.date, y.start) === x.slotId)!;
-      s.taken = true;
+      if (s.seats === 1) s.taken = true;
       const doc = doctors.find((d) => d.doctorId === s.doctorId)!;
       const id = `9${++seq}`.padEnd(24, '0');
       const seen = x.patient ? x.patient.name : x.customer.name ?? '';
@@ -189,8 +199,10 @@ const tap = async (l: Locator) => { taps.n += 1; await l.click(); };
 /** + New → the number → who → Next (the clinic desk has no lookup: the number is typed twice). */
 async function newVisit(page: Page, who: { self: string } | { family: string; relation: string }) {
   await tap(bigButtons(page).getByRole('link', { name: '+ New' }));
-  await page.getByLabel('Patient’s mobile number').fill(PHONE);
+  await page.getByLabel('Phone number or name').fill(PHONE);
   await tap(page.getByRole('button', { name: 'Find', exact: true }));
+  // WQ57b (r40d): the clinic's lookup says whose number it is.
+  await expect(page.getByText('This number is on Jansetu: R*** K***')).toBeVisible();
   if ('self' in who) {
     await tap(whoIs(page).getByRole('button', { name: 'This person' }));
     await page.getByLabel('Patient’s full name').fill(who.self);
@@ -200,12 +212,14 @@ async function newVisit(page: Page, who: { self: string } | { family: string; re
     await page.getByLabel('Relation to the phone’s owner').selectOption(who.relation);
     taps.n += 1;
   }
-  await page.getByLabel('Type the number again').fill(PHONE);
   await tap(page.getByRole('button', { name: 'Next', exact: true }));
 }
 
-/** A walk-in with Dr Kavya paid in cash, then Today as one row. Returns the taps from + New to the recorded payment. */
-async function walkInWithKavya(page: Page, b: Backend) {
+/**
+ * A walk-in with Dr Kavya paid in cash, then Today as one row. Returns the taps from + New to the recorded payment.
+ * `branches`: how many in-clinic branches the member has (two: one is tapped).
+ */
+async function walkInWithKavya(page: Page, b: Backend, branches: 1 | 2) {
   await signIn(page);
   await expect(bigButtons(page).getByRole('link')).toHaveText(['+ New', 'Find patient', 'New bill', 'Today']);
   // The doctors today: Dr Kavya busy elsewhere at 12:00 (the time only).
@@ -215,14 +229,28 @@ async function walkInWithKavya(page: Page, b: Backend) {
   await newVisit(page, { self: 'Meena Iyer' });
   await expect(choices(page).getByRole('link')).toHaveText(['Appointment now (walk-in)', 'Appointment for later', 'Bill']);
   await tap(choices(page).getByRole('link', { name: 'Appointment now (walk-in)' }));
+  // WQ57b: the page starts with the task (no desk heading).
+  await expect(page.getByRole('heading', { name: 'Appointment now', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Front desk' })).toHaveCount(0);
   await expect(page.getByText(`Patient: Meena Iyer · ${PHONE}`)).toBeVisible();
-  // MG Road has one doctor today: chosen at once; the next free time is offered.
+  if (branches === 2) {
+    // None is chosen for the clerk.
+    const which = page.getByRole('group', { name: 'Which branch?' });
+    await expect(which.getByRole('button', { pressed: true })).toHaveCount(0);
+    await tap(which.getByRole('button', { name: /MG Road/ }));
+  }
+  // MG Road has one doctor today: chosen at once; the next free time is said plainly.
   await expect(page.getByRole('group', { name: 'Which doctor?' }).getByRole('button', { name: /Dr Kavya/ })).toHaveAttribute('aria-pressed', 'true');
-  await tap(page.getByRole('button', { name: 'Book Dr Kavya at 10:15' }));
+  await expect(page.getByText('Next free: 10:15')).toBeVisible();
+  await tap(page.getByRole('button', { name: 'Book Dr Kavya at 10:15, MG Road' }));
   // Straight to the short bill, with the doctor's fee on it.
   await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
   expect(books(b)[0]).toMatchObject({ slotId: slotId(D1, BR1, DAY, '10:15'), customer: { phone: PHONE, name: 'Meena Iyer' } });
   await expect(page.getByRole('list', { name: 'Items' })).toContainText('Consultation · Dr Kavya · ₹500.00');
+  // The only line is not offered for removal; another one is "item" at a clinic.
+  await expect(page.getByRole('list', { name: 'Items' }).getByRole('button', { name: /Remove/ })).toHaveCount(0);
+  await expect(page.getByText('Add another item')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Not for this appointment/ })).toHaveCount(0);
   await tap(page.getByRole('button', { name: 'Issue bill for ₹500.00' }));
   await expect(page.getByText(/^Bill SC\/2627\/0001 issued\./)).toBeVisible();
   expect(b.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/invoices')!.body).toMatchObject({
@@ -247,7 +275,8 @@ async function walkInWithKavya(page: Page, b: Backend) {
 
 test('a walk-in with Dr Kavya paid in cash: one Today row', async ({ page }) => {
   const b = await mockBackend(page);
-  expect(await walkInWithKavya(page, b)).toBe(9);
+  // Two in-clinic branches: one more tap to choose.
+  expect(await walkInWithKavya(page, b, 2)).toBe(10);
 });
 
 test('an appointment for later never offers a time when the doctor is busy elsewhere', async ({ page }) => {
@@ -255,15 +284,34 @@ test('an appointment for later never offers a time when the doctor is busy elsew
   await signIn(page);
   await newVisit(page, { self: 'Meena Iyer' });
   await choices(page).getByRole('link', { name: 'Appointment for later' }).click();
-  await page.getByLabel('Day').fill(NEXT);
+  await page.getByRole('group', { name: 'Which branch?' }).getByRole('button', { name: /MG Road/ }).click();
+  await page.getByRole('group', { name: 'Day' }).getByRole('button', { name: 'Tomorrow' }).click();
   const times = page.getByRole('group', { name: 'Free times' });
-  // 11:00 and 11:15 fall in Dr Kavya's busy block (11:00–11:30): only 11:30 is offered.
-  await expect(times.getByRole('button')).toHaveText(['11:30']);
+  // 12:00 (one patient) falls in Dr Kavya's busy time 12:00–12:30 and the server leaves it out; the shared 11:30–13:00 session
+  // (5 seats) is still offered.
+  await expect(times.getByRole('button')).toHaveText(['11:00', '11:30']);
   await expect(page.getByText('Times when the doctor is busy elsewhere are not shown.')).toBeVisible();
   await times.getByRole('button', { name: '11:30' }).click();
-  await page.getByRole('button', { name: 'Book Dr Kavya at 11:30' }).click();
+  await page.getByRole('button', { name: 'Book Dr Kavya at 11:30, MG Road' }).click();
   await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
   expect(books(b)[0]).toMatchObject({ slotId: slotId(D1, BR1, NEXT, '11:30') });
+  // Today names the appointment's day (it is not today's).
+  await page.goto('/#/partner/today');
+  await expect(page.getByRole('listitem').filter({ hasText: 'Meena Iyer' })).toContainText('Dr Kavya · Fri, 27 Nov · 11:30');
+});
+
+test('Find patient by name: today’s appointments (also one booked on an earlier day)', async ({ page }) => {
+  const b = await mockBackend(page);
+  b.appts.push({ bookingId: '81'.padEnd(24, '0'), bookingDate: '20261126', bookingTime: '10:30', status: 'confirmed', doctorId: D1, doctorName: 'Dr Kavya', branchId: BR1,
+    fee: 500, payAtClinic: true, source: 'desk', paidOnline: false, patient: { name: 'Asha Rao', phone: '9800000001', dependentId: null }, bill: null });
+  await signIn(page);
+  await bigButtons(page).getByRole('link', { name: 'Find patient' }).click();
+  await page.getByLabel('Phone number or name').fill('asha');
+  await page.getByRole('button', { name: 'Find', exact: true }).click();
+  await page.getByRole('button', { name: 'Asha Rao · 9800000001 · today 10:30, Dr Kavya' }).click();
+  await expect(page.getByText('This number is on Jansetu: R*** K***')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Appointments today' })).toContainText('10:30 · Dr Kavya · Asha Rao');
+  expect(b.calls.some((c) => c.path.includes('asha') || c.path.includes('9800000001'))).toBe(false);
 });
 
 test('a family member: Ravi on his mother’s number; the bill names the phone’s owner, asked once', async ({ page }) => {
@@ -271,7 +319,8 @@ test('a family member: Ravi on his mother’s number; the bill names the phone�
   await signIn(page);
   await newVisit(page, { family: 'Ravi', relation: 'Son' });
   await choices(page).getByRole('link', { name: 'Appointment now (walk-in)' }).click();
-  await page.getByRole('button', { name: 'Book Dr Kavya at 10:15' }).click();
+  await page.getByRole('group', { name: 'Which branch?' }).getByRole('button', { name: /MG Road/ }).click();
+  await page.getByRole('button', { name: 'Book Dr Kavya at 10:15, MG Road' }).click();
   expect(books(b)[0]).toMatchObject({ customer: { phone: PHONE }, patient: { name: 'Ravi', relation: 'Son' } });
   const name = page.getByLabel('Name on the bill');
   await expect(name).toHaveValue('');
@@ -292,7 +341,7 @@ test('a branch-limited member: only their branch and its doctors; the partner-wi
   // Aundh only (no branch to choose); both doctors see patients there.
   await expect(page.getByLabel('Branch')).toHaveCount(0);
   await page.getByRole('group', { name: 'Which doctor?' }).getByRole('button', { name: /Dr Rao/ }).click();
-  await page.getByRole('button', { name: 'Book Dr Rao at 10:45' }).click();
+  await page.getByRole('button', { name: 'Book Dr Rao at 10:45, Aundh' }).click();
   await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
   expect(books(b)[0]).toMatchObject({ slotId: slotId(D2, BR2, DAY, '10:45') });
 });
@@ -304,8 +353,10 @@ test('a member without billing permission: no New bill, no Bill, the booking end
   await newVisit(page, { self: 'Meena Iyer' });
   await expect(choices(page).getByRole('link')).toHaveText(['Appointment now (walk-in)', 'Appointment for later']);
   await choices(page).getByRole('link', { name: 'Appointment now (walk-in)' }).click();
-  await page.getByRole('button', { name: 'Book Dr Kavya at 10:15' }).click();
-  await expect(page.getByText(/Booked/).first()).toBeVisible();
+  await page.getByRole('group', { name: 'Which branch?' }).getByRole('button', { name: /MG Road/ }).click();
+  await page.getByRole('button', { name: 'Book Dr Kavya at 10:15, MG Road' }).click();
+  // The receipt names the server's patient (the booked row read back).
+  await expect(page.getByText(/Booked/).first()).toContainText('Meena Iyer');
   await expect(page.getByRole('heading', { name: 'New bill' })).toHaveCount(0);
   await page.getByRole('link', { name: 'Done', exact: true }).click();
   // The waiting work: one to check in, one walk-in without a bill.
@@ -319,13 +370,28 @@ test('a member without billing permission: no New bill, no Bill, the booking end
   await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
 });
 
+test.describe('on a short 390 × 667 phone', () => {
+  test.use({ viewport: { width: 390, height: 667 }, hasTouch: true });
+  test.beforeEach(({}, info) => test.skip(info.project.name !== 'desktop', 'the phone size runs once'));
+
+  test('the visit’s one action is in sight without scrolling', async ({ page }) => {
+    await mockBackend(page);
+    await signIn(page);
+    await newVisit(page, { self: 'Meena Iyer' });
+    await choices(page).getByRole('link', { name: 'Appointment now (walk-in)' }).click();
+    await page.getByRole('group', { name: 'Which branch?' }).getByRole('button', { name: /MG Road/ }).click();
+    await expect(page.getByRole('button', { name: 'Book Dr Kavya at 10:15, MG Road' })).toBeInViewport();
+    await noSidewaysScroll(page);
+  });
+});
+
 test.describe('on a 390 px phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
   test.beforeEach(({}, info) => test.skip(info.project.name !== 'desktop', 'the phone size runs once'));
 
-  test('a walk-in with Dr Kavya paid in cash on a phone in 9 taps', async ({ page }) => {
-    const b = await mockBackend(page);
-    expect(await walkInWithKavya(page, b)).toBe(9);
+  test('a walk-in with Dr Kavya paid in cash on a phone in 9 taps (a clerk at one branch)', async ({ page }) => {
+    const b = await mockBackend(page, staff([BR1], ...ALL));
+    expect(await walkInWithKavya(page, b, 1)).toBe(9);
     await noSidewaysScroll(page);
   });
 
@@ -334,7 +400,7 @@ test.describe('on a 390 px phone', () => {
     await signIn(page);
     await newVisit(page, { family: 'Ravi', relation: 'Son' });
     await choices(page).getByRole('link', { name: 'Appointment now (walk-in)' }).click();
-    await expect(page.getByText('Patient: Ravi (son of')).toBeVisible();
+    await expect(page.getByText('Patient: Ravi (son of R*** K***)')).toBeVisible();
     expect(await page.evaluate(() => getComputedStyle(document.querySelector('.ws-main')!).fontSize)).toBe('17px');
     await noSidewaysScroll(page);
     expect(b.calls.some((c) => c.path.includes(PHONE))).toBe(false);

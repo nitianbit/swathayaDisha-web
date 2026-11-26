@@ -1,3 +1,4 @@
+import type { PatientLookup } from './assisted.ts';
 import type { ApiClient } from './client.ts';
 import { appointmentInstant } from './cancellationWindow.ts';
 import type { ClinicDoctor, InvoiceState } from './partnerInvoices.ts';
@@ -377,19 +378,27 @@ function expected(updatedAt: string | undefined): { expectedUpdatedAt?: string }
 const STATES = new Set<string>(DOCTOR_INVITE_STATES);
 const STATUSES = new Set<string>(CLINIC_APPOINTMENT_STATUSES);
 
-/** The clinic routes of one partner workspace (member, or admin acting as owner). Ids, phones and dates are checked before any path. */
 /** r40: a doctor's time taken elsewhere (another clinic, online): the doctor and when only. */
 export interface DoctorBusy { doctorId: string; from: string; to: string }
 const busyOf = (raw: unknown): DoctorBusy[] => (Array.isArray(raw) ? raw : []).flatMap((b) => {
   const x = b as Partial<DoctorBusy> | null;
   return x && typeof x.doctorId === 'string' && typeof x.from === 'string' && typeof x.to === 'string' ? [{ doctorId: x.doctorId, from: x.from, to: x.to }] : [];
 });
-/** WQ57: a time (its start and end instants) is free of this doctor's busy blocks. */
-export const freeOfBusy = (doctorId: string, from: number, to: number, busy: readonly DoctorBusy[]) =>
-  !busy.some((b) => b.doctorId === doctorId && Date.parse(b.from) < to && Date.parse(b.to) > from);
-
+/** The clinic routes of one partner workspace (member, or admin acting as owner). Ids, phones and dates are checked before any path. */
 export function partnerClinicApi(c: ApiClient, scope: PartnerScope) {
   const base = () => `${partnerWorkspaceBase(scope)}/clinic`;
+  /** The appointments read's query (checked first: a programming error throws, nothing is sent). */
+  const appointmentsQuery = (q: AppointmentQuery) => {
+    const problem = appointmentRangeProblem(q.from, q.to);
+    // i18n-ignore: a programming error, not shown (the screen checks the range first)
+    if (problem) throw new Error(`Invalid appointment dates: ${problem}`);
+    if (q.status !== undefined && !STATUSES.has(q.status)) throw new Error('Invalid appointment status'); // i18n-ignore: a programming error, not shown
+    return {
+      from: q.from, to: q.to, status: q.status,
+      doctorId: q.doctorId === undefined ? undefined : checkId(q.doctorId, 'doctor'),
+      branchId: q.branchId === undefined ? undefined : checkId(q.branchId, 'branch'),
+    };
+  };
   const appt = (id: string, command: string) => `${base()}/appointments/${checkId(id, 'appointment')}/${command}`;
   return {
     /** Active doctor members visible to the caller (readers: staff.manage, bookings.view, bookings.manage, invoices.create). */
@@ -418,31 +427,23 @@ export function partnerClinicApi(c: ApiClient, scope: PartnerScope) {
     deskSlots: (q: { doctorId: string; branchId: string; date: string }) => c.get<DeskSlot[]>(`${base()}/slots`, {
       query: { doctorId: checkId(q.doctorId, 'doctor'), branchId: checkId(q.branchId, 'branch'), date: checkDate(q.date, 'slot') },
     }),
-    appointments: (q: AppointmentQuery) => {
-      const problem = appointmentRangeProblem(q.from, q.to);
-      // i18n-ignore: a programming error, not shown (the screen checks the range first)
-      if (problem) throw new Error(`Invalid appointment dates: ${problem}`);
-      if (q.status !== undefined && !STATUSES.has(q.status)) throw new Error('Invalid appointment status'); // i18n-ignore: a programming error, not shown
-      return c.get<ClinicAppointment[]>(`${base()}/appointments`, {
-        query: {
-          from: q.from, to: q.to, status: q.status,
-          doctorId: q.doctorId === undefined ? undefined : checkId(q.doctorId, 'doctor'),
-          branchId: q.branchId === undefined ? undefined : checkId(q.branchId, 'branch'),
-        },
-      });
-    },
+    appointments: (q: AppointmentQuery) => c.get<ClinicAppointment[]>(`${base()}/appointments`, { query: appointmentsQuery(q) }),
     /**
      * WQ57 (r40): the same list with `busy` beside it: when each clinic doctor is taken elsewhere (`{ doctorId, from, to }`
      * only; no patient or place).
      */
     dayView: async (q: AppointmentQuery): Promise<{ appointments: ClinicAppointment[]; busy: DoctorBusy[] }> => {
-      const problem = appointmentRangeProblem(q.from, q.to);
-      if (problem) throw new Error(`Invalid appointment dates: ${problem}`); // i18n-ignore: a programming error, not shown
-      const r = await c.getWith<ClinicAppointment[], { busy: unknown }>(`${base()}/appointments`, {
-        query: { from: q.from, to: q.to, doctorId: q.doctorId === undefined ? undefined : checkId(q.doctorId, 'doctor'),
-          branchId: q.branchId === undefined ? undefined : checkId(q.branchId, 'branch') },
-      });
+      const r = await c.getWith<ClinicAppointment[], { busy: unknown }>(`${base()}/appointments`, { query: appointmentsQuery(q) });
       return { appointments: Array.isArray(r.data) ? r.data : [], busy: busyOf(r.meta.busy) };
+    },
+    /**
+     * WQ57b (r40d): whether a number is on Jansetu and its holder's masked name (the lab's lookup shape); a POST, so the number
+     * stays in the body. Counted by the server like the other lookups.
+     */
+    lookup: (phone: string) => {
+      const p = canonicalMobile(phone);
+      if (!p) throw new Error('Invalid mobile number'); // i18n-ignore: a programming error, not shown
+      return c.post<PatientLookup>(`${base()}/patients/lookup`, { body: { phone: p } });
     },
     /**
      * Books a desk appointment exactly once per (desk member, `requestKey`): resending the same request answers the
