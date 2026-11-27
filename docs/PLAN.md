@@ -3328,6 +3328,7 @@ visit receipt leaves billing actions to the visit flow while it waits for the bo
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-27 | WQ57d reconciled with stage fd22d0e | Stage's clinic billing fix (f115aa5) already keeps the hand-written fee unless an item names this doctor at the fee, and hides the receipt's "Create bill" sentence in a visit (`showBilling`): the WQ57d code edits were dropped; only a spec stays (a follow-up item and another doctor's item leave the fee hand-written). typecheck clean; Vitest 548/548; clinic-home and clinic-desk 71/71 + 3 skipped. |
 | 2026-11-27 | WQ57c independent clinic billing review corrections (`f115aa5`) | Type check, 546 unit tests and both same-origin web builds passed. The full workspace run had 1218 passes, 9 skips and one records-access timeout. The timeout passed when rerun alone. The new catalogue test demonstrated the wrong doctor on the prior build. |
 | 2026-11-27 | WQ57c merged with web stage 0f69bf2 (WQ56) | typecheck clean; Vitest 546/546; the full suite via pw-slot.sh 1219/1219 + 9 skipped (20.1 min) on a temporary config (port 5568, deleted). `feeLine` lives in `partner/clinic.tsx` (with `prefillOf`); the doctor screens import it from there. |
 | 2026-11-27 | WQ57c clinic fixes (from 6bc8c1d) | typecheck clean; Vitest 539/539 (the whole-word match); clinic-desk alone on 1 worker 52/52; clinic-home 17/17 + 3 skipped (a server without the lookup, Bill this appointment); the full suite via pw-slot.sh 1204/1204 + 8 skipped (20.6 min) on a temporary config (port 5568). |
