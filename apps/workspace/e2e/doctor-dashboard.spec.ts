@@ -33,6 +33,10 @@ interface Backend {
   loseFollowUp?: boolean;
   loseBooking?: 'clinic' | 'online';
   delayConfirmation?: boolean;
+  /** WQ56d: give a key up on the server (as another tab would). */
+  abandon: (key: string) => void;
+  /** WQ56d: the next create's answer waits for this gate. */
+  hold?: Promise<void>;
   /** WQ56c: the next booking's connection drops before it reaches the server (nothing is recorded). */
   dropBeforeServer?: boolean;
   billReadFails?: boolean;
@@ -47,7 +51,7 @@ function row(n: number, time: string, name: string, o: Rec): Rec & { name: strin
 
 async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean; onlyOwn?: boolean; severalClinics?: boolean; pendingClinic?: boolean } = {}): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
-  const b: Backend = { calls: [], live: false, owner: o.owner !== false, todos: [], bills: [], rows: [
+  const b: Backend = { calls: [], live: false, abandon: () => undefined, owner: o.owner !== false, todos: [], bills: [], rows: [
     row(1, '10:30', 'Ravi Demo', { source: 'clinic_desk', consultationMode: 'in-person', clinicDesk: { partnerId: OWN, branchId: OWNBR }, clinic: { id: OWN, name: 'Dr Arjun Skin Clinic' },
       channel: 'clinic', paymentStatus: 'pending', settlementSystem: 'clinic', bill: null }),
     row(2, '11:30', 'Meera Demo', {}),
@@ -82,6 +86,7 @@ async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean; 
   let followUp: { key: string; answer: Rec } | undefined;
   const recorded = new Map<string, string>();
   const abandoned = new Set<string>();
+  b.abandon = (key) => { abandoned.add(key); };
   await page.route('**/api/v1/**', async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -131,10 +136,19 @@ async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean; 
       const key = keyed[2]!;
       const made = keyed[1] === 'clinic-appointments' ? recorded.get(`clinic:${key}`) : recorded.get(`online:${key}`) ?? recorded.get(`follow-up:${key}`);
       if (abandoned.has(key)) return ok(route, { state: 'abandoned' });
-      if (made && !b.delayConfirmation) return ok(route, { state: 'used', booking: { bookingId: made, status: 'confirmed' } });
+      if (made && !b.delayConfirmation) {
+        const r = b.rows.find((x) => x._id === made)!;
+        if (keyed[1] === 'clinic-appointments') return ok(route, { state: 'used', booking: { bookingId: made, bookingDate: r.bookingDate, bookingTime: r.bookingTime, status: r.status } });
+        // r41: a consultation's answer as its create's: the booking and how the patient pays.
+        const owed = r.paymentStatus !== 'paid' && r.status !== 'cancelled' && Number(r.price) > 0;
+        return ok(route, { state: 'used', booking: { bookingId: made, bookingDate: r.bookingDate, bookingTime: r.bookingTime, status: r.status, paymentStatus: r.paymentStatus,
+          consultationMode: r.consultationMode, fee: Number(r.price), source: 'doctor_assisted', dependentId: null, followUpOf: (r.followUp as Rec | undefined)?.isFollowUp ? 'x' : null },
+          payment: { by: 'patient_app', required: owed, payBy: owed ? new Date(NOW.getTime() + 30 * 60_000).toISOString() : null } });
+      }
       if (keyed[3] && !made) { abandoned.add(key); return ok(route, { state: 'abandoned' }); }
       return ok(route, { state: 'unknown' });
     }
+    if ((p === '/clinic-appointments' || p === '/consultations') && method === 'POST' && b.hold) { const g = b.hold; b.hold = undefined; await g; }
     if ((p === '/clinic-appointments' || p === '/consultations') && method === 'POST' && b.dropBeforeServer) {
       b.dropBeforeServer = false;
       return route.abort('failed');
@@ -464,12 +478,20 @@ for (const kind of ['clinic', 'online', 'follow-up'] as const) {
     await expect(page.getByText(/Its details are no longer here to send again/)).toBeVisible();
     // r41: checked by its key — not known yet (kept), then found (settled, opened).
     b.delayConfirmation = true;
-    await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+    await page.getByRole('button', { name: 'Check whether it was booked' }).click();
     await expect(page.getByText(/^Nothing was booked with it so far/)).toBeVisible();
     expect(await stored(page)).toContain(key);
     b.delayConfirmation = false;
-    await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
-    await expect(page.getByText('We found the appointment made by this request.')).toBeVisible();
+    await page.getByRole('button', { name: 'Check whether it was booked' }).click();
+    // WQ56d: a found online consultation is said as its booking was (fee, pay-by, sign-in); a follow-up has nothing to pay.
+    if (kind === 'clinic') await expect(page.getByText('We found the appointment made by this request.')).toBeVisible();
+    else await expect(page.getByText(/^Found: the Video consultation on Fri, 27 Nov, 2026 at 13:00 was booked\./)).toBeVisible();
+    if (kind === 'online') {
+      await expect(page.getByText('Fee ₹700.00')).toBeVisible();
+      await expect(page.getByText(/^The patient pays in the Jansetu app by /)).toBeVisible();
+      await expect(page.getByText('The patient signs in to the Jansetu app with this number to pay.')).toBeVisible();
+    }
+    if (kind === 'follow-up') await expect(page.getByText('There is nothing to pay.')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Open appointment' })).toHaveAttribute('href', `#/doctor/appointments?open=${b.rows.at(-1)!._id}`);
     expect(await stored(page)).not.toContain(key);
     expect(await stored(page)).not.toMatch(/Asha Recovery|9876543210/);
@@ -501,6 +523,56 @@ test('WQ56c (r41): giving up a booking that was in fact made answers `used`: the
   expect(await stored(page)).not.toContain(key);
 });
 
+test('WQ56d: a first send on its way says nothing is wrong; a lost answer says why, a failed resend too; given up elsewhere, Send again says so', async ({ page }) => {
+  const b = await mockBackend(page, { onlyOwn: true });
+  await signIn(page);
+  await newVisit(page, 'Asha Recovery');
+  await page.getByRole('navigation', { name: 'What does the patient need?' }).getByRole('link', { name: 'Online consultation (video or call)' }).click();
+  await page.getByRole('button', { name: 'Video', exact: true }).click();
+  await page.getByRole('button', { name: '13:00', exact: true }).click();
+  // The answer is slow: no "not confirmed" while it is on its way.
+  let release!: () => void;
+  b.hold = new Promise<void>((r) => { release = r; });
+  b.dropBeforeServer = true;
+  await page.getByRole('button', { name: /^Book.*13:00/ }).click();
+  await expect(page.getByRole('group', { name: 'Booking not confirmed' })).toHaveCount(0);
+  release();
+  // Lost: the reason is said.
+  const panel = page.getByRole('group', { name: 'Booking not confirmed' });
+  await expect(panel.getByText(/^It is not known yet whether this was booked \(.+\)/)).toBeVisible();
+  // Sent again and lost again: still said, still the same booking.
+  b.dropBeforeServer = true;
+  await panel.getByRole('button', { name: 'Send again' }).click();
+  await expect(panel.getByText(/^It is not known yet whether this was booked \(.+\)/)).toBeVisible();
+  const posts = b.calls.filter((c) => c.method === 'POST' && c.path === '/specialists/me/consultations');
+  expect(posts).toHaveLength(2);
+  expect(posts[1]!.body!.requestKey).toBe(posts[0]!.body!.requestKey);
+  // Given up in another tab: Send again answers 409 REQUEST_ABANDONED — settled, said, and the form is free again.
+  const key = String(posts[0]!.body!.requestKey);
+  b.abandon(key);
+  await panel.getByRole('button', { name: 'Send again' }).click();
+  await expect(page.getByText(/^Given up: nothing was booked/)).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Booking not confirmed' })).toHaveCount(0);
+  expect(await stored(page)).not.toContain(key);
+  expect(b.rows.filter((r) => r.name === 'Asha Recovery')).toHaveLength(0);
+});
+
+test('WQ56d: a lost booking found by its key but cancelled since is said as such', async ({ page }) => {
+  const b = await mockBackend(page, { onlyOwn: true });
+  b.loseBooking = 'online';
+  await signIn(page);
+  await newVisit(page, 'Asha Recovery');
+  await page.getByRole('navigation', { name: 'What does the patient need?' }).getByRole('link', { name: 'Online consultation (video or call)' }).click();
+  await page.getByRole('button', { name: 'Video', exact: true }).click();
+  await page.getByRole('button', { name: '13:00', exact: true }).click();
+  await page.getByRole('button', { name: /^Book.*13:00/ }).click();
+  await expect(page.getByRole('button', { name: 'Send again' })).toBeVisible();
+  // Unpaid in time: it ended.
+  b.rows.at(-1)!.status = 'cancelled';
+  await page.getByRole('button', { name: 'Check whether it was booked' }).click();
+  await expect(page.getByText(/^This booking was made, but it is no longer on \(Cancelled\)/)).toBeVisible();
+});
+
 test('WQ56c: a booking lost before the server, then a reload: checked by its key, given up, and booked again', async ({ page }) => {
   const b = await mockBackend(page, { onlyOwn: true });
   b.dropBeforeServer = true;
@@ -515,7 +587,7 @@ test('WQ56c: a booking lost before the server, then a reload: checked by its key
   await page.reload();
   await page.goto('/#/doctor/new/online');
   await expect(page.getByText(/Its details are no longer here to send again/)).toBeVisible();
-  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await page.getByRole('button', { name: 'Check whether it was booked' }).click();
   await expect(page.getByText(/^Nothing was booked with it so far/)).toBeVisible();
   await shot(page, 'keyed-check');
   await page.getByRole('button', { name: 'Give it up' }).click();

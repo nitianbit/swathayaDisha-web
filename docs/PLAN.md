@@ -3322,6 +3322,19 @@ The placeholder `POST /me/visit-requests/check` (never on the server) is gone: `
 - Checked against r41 1c597511: the paths, `{state, booking}` with `bookingId` (the desk view, or the consultation's), abandon
   answering `used`. Typecheck, Vitest 548/548, doctor specs 159/159 (dashboard, tools, lab, wallet, records).
 
+### WQ56d review fixes on the lost doctor booking (2026-11-27, branch `wq56d/doctor-keyed-fixes` from web stage b3cb9e7)
+
+1. A first send still on its way shows "sending", never "not confirmed" (the sale's rule: busy, attempt 1, not uncertain).
+2. One owned op per slot: the panel gets the screen's live op (and its `settle`), so a lost answer's reason and a failed
+   resend's are said; a stored follow-up after a reload has its own single instance (`StoredBooking`). What a check or a
+   give-up found is kept by the screen, so it stays on screen once the stored booking is settled.
+3. A found online consultation or follow-up (r41 `{ state:'used', booking, payment }`) is said as its booking was
+   (`ConsultationDone`: fee, pay-by, sign-in; a follow-up has nothing to pay); a found booking that was cancelled (unpaid in
+   time) since says so instead of "found".
+4. Send again answered 409 `REQUEST_ABANDONED` (given up elsewhere): settled, "Given up: nothing was booked…", the form
+   free again (as Add stock).
+5. The check button in the doctor's words: "Check whether it was booked" (`CheckPanel` takes `checkLabel`).
+
 ## Follow-ups
 
 
