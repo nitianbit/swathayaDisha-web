@@ -60,7 +60,9 @@ export type DoctorClinicAnswer = DeskBookingResult;
 export type DoctorVisitRequestKind = 'clinic' | 'online' | 'follow-up';
 /** r41 `…/by-key/:key[/abandon]`: the booking the key made (a desk view, or the consultation's), given up, or not known yet. */
 export type DoctorKeyedBooking =
-  | { state: 'used'; booking: { bookingId?: string; _id?: string; bookingDate?: string; bookingTime?: string; status?: string } }
+  | { state: 'used'; booking: { bookingId?: string; _id?: string; bookingDate?: string; bookingTime?: string; status?: string };
+      /** r41: a consultation's answer also says how the patient pays (as its create did); a clinic appointment's does not. */
+      payment?: DoctorConsultationAnswer['payment'] }
   | { state: 'abandoned' }
   | { state: 'unknown' };
 /** The appointment a keyed booking made (its id, whichever view answered). */

@@ -109,8 +109,10 @@ export function useKeyedCheck<A extends KeyedAnswer>(settle: (requestKey: string
  * An unconfirmed change: what it was, a way to find out whether it was recorded, and (only where repeating it is safe)
  * sending it again. `onCheck` answers null once it settled the change, or a sentence saying what is still unknown.
  */
-export function CheckPanel({ label, children, onCheck, resend, giveUp, forget }: {
+export function CheckPanel({ label, children, onCheck, checkLabel, resend, giveUp, forget }: {
   label: string;
+  /** WQ56d: the check button in the caller's words (default "Check whether it was recorded"). */
+  checkLabel?: string;
   children: ReactNode;
   onCheck: () => Promise<string | null>;
   resend?: { label: string; busy: boolean; onClick: () => void };
@@ -154,7 +156,7 @@ export function CheckPanel({ label, children, onCheck, resend, giveUp, forget }:
       {children}
       {note && <Alert tone={note.tone}>{note.text}</Alert>}
       <div className="confirm-actions">
-        <Button variant={resend ? 'secondary' : 'primary'} busy={checking} disabled={resend?.busy || giveUp?.busy} onClick={() => void check()}>{t('ownedOp.checkWhetherItWasRecorded')}</Button>
+        <Button variant={resend ? 'secondary' : 'primary'} busy={checking} disabled={resend?.busy || giveUp?.busy} onClick={() => void check()}>{checkLabel ?? t('ownedOp.checkWhetherItWasRecorded')}</Button>
         {resend && <Button busy={resend.busy} disabled={checking || giveUp?.busy} onClick={resend.onClick}>{resend.label}</Button>}
         {giveUp && (
           <Button variant="secondary" busy={giveUp.busy} disabled={checking || resend?.busy} onClick={giveUp.onClick}>{giveUp.label}</Button>

@@ -521,6 +521,12 @@ export default {
   'visit.found': 'We found the appointment made by this request.',
   /** WQ56c (r41): a booking whose answer was lost, checked or given up by its key. */
   'visit.unconfirmedLabel': 'Booking not confirmed',
+  /** WQ56d: the check button in the doctor's words. */
+  'visit.checkByKey': 'Check whether it was booked',
+  /** A lost online consultation or follow-up found by its key. {mode}; {day}; {time}. */
+  'visit.foundConsultation': 'Found: the {mode} consultation on {day} at {time} was booked.',
+  /** Found, but no longer booked. {status}: cancelled… */
+  'visit.foundEnded': 'This booking was made, but it is no longer on ({status}). Book again if the patient still needs it.',
   'visit.notYet': 'Nothing was booked with it so far. It may still be on its way: check again, send it again, or give it up.',
   'visit.notYetRestored': 'Nothing was booked with it so far. It may still be on its way: check again, or give it up.',
   'visit.giveUp': 'Give it up',
