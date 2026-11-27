@@ -3351,6 +3351,10 @@ The placeholder `POST /me/visit-requests/check` (never on the server) is gone: `
    free again (as Add stock).
 5. The check button in the doctor's words: "Check whether it was booked" (`CheckPanel` takes `checkLabel`).
 
+Checks (merged with web stage 38d3b66, WQ58): typecheck clean; Vitest 549/549; Playwright workspace 1245 passed, 9 skipped
+(full suite through `pw-slot.sh`, 2 workers, temporary port 5576, config deleted). The WQ56c run on b3cb9e7: 1237 passed, 9
+skipped, 2 failed (`clinic-desk.spec.ts:1282` tablet, `pharmacy-extras.spec.ts:560` tablet), both passing when run again (4/4).
+
 ## Follow-ups
 
 
