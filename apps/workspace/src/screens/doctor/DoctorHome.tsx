@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
 import {
-  APPOINTMENT_STATUS_LABEL, appointmentStart, byPartner, CONSULT_MODE_LABEL, doctorDashboardApi, doctorStanding, istToday, TODAY_PAGE_MAX,
+  APPOINTMENT_STATUS_LABEL, appointmentStart, byPartner, CONSULT_MODE_LABEL, doctorDashboardApi, doctorStanding, INVOICE_STATES, istToday, OBJECT_ID_PATTERN, TODAY_PAGE_MAX,
   type ListedAppointment, type MyClinics, type TodayAnswer,
 } from '@jansetu/api';
 import { formatClock, formatPaise } from '@jansetu/i18n';
@@ -192,12 +192,21 @@ function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
 /** r39c does not attach bill state to appointment rows. Its invoice filter works across issue dates. */
 async function findAppointmentBill(ctx: ScopeContext, appointmentId: string) {
   let cursor: string | undefined;
+  const seen = new Set<string>();
   do {
     const page = await ctx.billing.invoices({ appointmentId, limit: 25, cursor });
-    const bill = page.items.find((invoice) => invoice.appointmentId?.toLowerCase() === appointmentId.toLowerCase()
-      && invoice.lifecycleState !== 'cancelled');
+    if (page.items.some((invoice) => !invoice || typeof invoice.appointmentId !== 'string'
+      || invoice.appointmentId.toLowerCase() !== appointmentId.toLowerCase()
+      || !OBJECT_ID_PATTERN.test(invoice._id) || !INVOICE_STATES.includes(invoice.lifecycleState))) {
+      throw new Error(); // The UI offers Retry without relying on an unverified bill.
+    }
+    const bill = page.items.find((invoice) => invoice.lifecycleState !== 'cancelled');
     if (bill) return { invoiceId: bill._id, state: bill.lifecycleState };
     cursor = page.nextCursor ?? undefined;
+    if (cursor) {
+      if (seen.has(cursor)) throw new Error();
+      seen.add(cursor);
+    }
   } while (cursor);
   return null;
 }

@@ -498,7 +498,7 @@ export function partnerBillingApi(c: ApiClient, scope: PartnerScope) {
     /** One page of bills with `total` and `nextCursor`. */
     invoices: (q: InvoiceQuery = {}): Promise<Page<Invoice>> => {
       if (q.appointmentId !== undefined) checkId(q.appointmentId, 'appointment');
-      return c.page<Invoice>(`${base()}/invoices`, { query: { ...q } });
+      return c.page<Invoice>(`${base()}/invoices`, { query: { ...q }, requireCursorPage: scope.kind === 'doctor' && q.appointmentId !== undefined });
     },
     /** Q10: the bill a request key produced (404 INVOICE_NOT_FOUND when none, in the caller's scope). */
     invoiceByKey: (key: string) => c.get<Invoice>(`${base()}/invoices/by-key/${checkKey(key)}`),

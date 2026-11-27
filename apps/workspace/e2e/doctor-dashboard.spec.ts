@@ -191,7 +191,7 @@ async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean; 
       if (sub === '/catalogue') return ok(route, []);
       if (sub === '/invoices' && method === 'GET') {
         const appointmentId = url.searchParams.get('appointmentId');
-        if (appointmentId && b.billReadFails) return fail(route, 503, 'UNAVAILABLE', 'Bills are temporarily unavailable');
+        if (appointmentId && b.billReadFails) return route.fulfill({ status: 200, contentType: 'text/html', body: '<html></html>' });
         const rows = appointmentId ? b.bills.filter((i) => i.appointmentId === appointmentId) : b.bills;
         return ok(route, rows, 200, { pagination: { total: rows.length, nextCursor: null } });
       }

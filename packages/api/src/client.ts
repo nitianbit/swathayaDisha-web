@@ -215,13 +215,18 @@ export function createApiClient(options: ApiClientOptions) {
     patch: <T>(path: string, o?: RequestOptions) => json<T>('PATCH', path, o),
     delete: <T>(path: string, o?: RequestOptions) => json<T>('DELETE', path, o),
     /** Lists that answer `{ data: T[], pagination: { page, limit, total, totalPages } }`. */
-    page: <T>(path: string, o: RequestOptions = {}) => request('GET', path, o, async (res): Promise<Page<T>> => {
+    page: <T>(path: string, o: RequestOptions & { requireCursorPage?: boolean } = {}) => request('GET', path, o, async (res): Promise<Page<T>> => {
       const body = parseJson(await res.text()) as {
+        success?: boolean;
         data?: T[];
         pagination?: { page?: number; limit?: number; total?: number; totalPages?: number; nextCursor?: unknown };
       } | null;
       const items = Array.isArray(body?.data) ? body.data : [];
       const p = body?.pagination ?? {};
+      if (o.requireCursorPage && (body?.success !== true || !Array.isArray(body.data)
+        || (p.nextCursor !== null && (typeof p.nextCursor !== 'string' || !p.nextCursor.trim())))) {
+        throw new ApiError(502, t('errors.INVALID_RESPONSE'), 'INVALID_RESPONSE');
+      }
       return {
         items,
         page: p.page ?? 1,

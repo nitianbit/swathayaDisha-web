@@ -15,6 +15,7 @@ export default {
   'errors.TIMEOUT': 'The server took too long to respond. Please try again.',
   /** No connection to the server (code made by the app). */
   'errors.NETWORK': 'Could not reach the server. Check your connection and try again.',
+  'errors.INVALID_RESPONSE': 'The server sent an incomplete answer. Please try again.',
 
   /** Under a field whose text is too long; {max} is a number. Every form uses this one (`tooLongWords`). */
   'field.tooLong': 'Use at most {max} characters.',
