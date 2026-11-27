@@ -189,6 +189,9 @@ function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
   );
 }
 
+// The scoped invoice API sends the issue timestamp and invoice ID as its cursor.
+const INVOICE_CURSOR_PATTERN = /^\d{1,15}_[0-9a-f]{24}$/i;
+
 /** r39c does not attach bill state to appointment rows. Its invoice filter works across issue dates. */
 async function findAppointmentBill(ctx: ScopeContext, appointmentId: string) {
   let cursor: string | undefined;
@@ -204,7 +207,7 @@ async function findAppointmentBill(ctx: ScopeContext, appointmentId: string) {
     if (bill) return { invoiceId: bill._id, state: bill.lifecycleState };
     cursor = page.nextCursor ?? undefined;
     if (cursor) {
-      if (seen.has(cursor)) throw new Error();
+      if (!INVOICE_CURSOR_PATTERN.test(cursor) || seen.has(cursor)) throw new Error();
       seen.add(cursor);
     }
   } while (cursor);

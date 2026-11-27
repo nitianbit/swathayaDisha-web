@@ -35,6 +35,7 @@ interface Backend {
   delayConfirmation?: boolean;
   receiptUnavailable?: boolean;
   billReadFails?: boolean;
+  billCursor?: string;
 }
 
 const at = (time: string) => new Date(`${DAY}T${time}:00+05:30`).toISOString();
@@ -193,6 +194,9 @@ async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean; 
         const appointmentId = url.searchParams.get('appointmentId');
         if (appointmentId && b.billReadFails) return route.fulfill({ status: 200, contentType: 'text/html', body: '<html></html>' });
         const rows = appointmentId ? b.bills.filter((i) => i.appointmentId === appointmentId) : b.bills;
+        if (appointmentId && b.billCursor && !url.searchParams.has('cursor')) {
+          return ok(route, [], 200, { pagination: { total: rows.length, nextCursor: b.billCursor } });
+        }
         return ok(route, rows, 200, { pagination: { total: rows.length, nextCursor: null } });
       }
       if (sub === '/invoices' && method === 'POST') {
@@ -371,9 +375,19 @@ test('an earlier paid bill stays attached to today’s visit even when the regis
   const own = list(page).getByRole('listitem').filter({ hasText: 'Ravi Demo' });
   await expect(own.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
   await expect(own.getByRole('button', { name: 'Bill', exact: true })).toHaveCount(0);
+  const invoiceCalls = () => b.calls.filter((call) => call.path.startsWith('/specialists/me/clinic/invoices?'));
   b.billReadFails = false;
+  b.billCursor = 'Demo Name';
+  await own.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect.poll(() => invoiceCalls().length).toBe(2);
+  await expect(own.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+  await expect(own.getByRole('button', { name: 'Bill', exact: true })).toHaveCount(0);
+  expect(invoiceCalls().some((call) => call.path.includes('cursor='))).toBe(false);
+
+  b.billCursor = `1795579200000_${bid(52)}`;
   await own.getByRole('button', { name: 'Try again', exact: true }).click();
   await expect(own.getByRole('link', { name: 'Paid', exact: true })).toHaveAttribute('href', `#/doctor/clinic/invoices/${bid(51)}`);
+  expect(invoiceCalls().some((call) => call.path.includes(`cursor=${b.billCursor}`))).toBe(true);
   await expect(own.getByRole('button', { name: 'Bill', exact: true })).toHaveCount(0);
 });
 
