@@ -1,40 +1,115 @@
 /* Jansetu design tokens. The brand lives here only: change these to rebrand. See docs/DESIGN.md. */
 :root {
-  --ink: #10222b;
-  --muted: #56666e;
-  --line: #d9e2e5;
-  --canvas: #f4f7f7;
-  --surface: #ffffff;
-  --brand: #0b6e70;
-  --brand-strong: #075456;
+  /* ── Primitives (raw values; components use the semantic names below). WQ60: warm and friendly, readable first:
+     every text pair here is AA or better (body ink AAA); every fill that carries white text is ≥ 4.5:1. ── */
+  --p-ink-900: #1c2430;
+  --p-ink-600: #57606b;
+  --p-sand-50: #f7f5f0;
+  --p-sand-100: #efebe3;
+  --p-sand-200: #e4dfd5;
+  --p-white: #ffffff;
+  --p-teal-700: #0b6e70;  --p-teal-800: #075456;  --p-teal-50: #e0f1ef;  --p-teal-100: #c3e4e0;
+  --p-green-700: #1e7b45; --p-green-800: #145a32; --p-green-50: #e4f3e9; --p-green-100: #c8e7d2;
+  --p-violet-700: #6741c8; --p-violet-800: #4b2b9c; --p-violet-50: #efeafb; --p-violet-100: #ddd3f6;
+  --p-blue-700: #1f62c5;  --p-blue-800: #164a96;  --p-blue-50: #e7effc;  --p-blue-100: #cddcf7;
+  --p-clay-700: #b4471a;  --p-clay-800: #873310;  --p-clay-50: #fcece3;  --p-clay-100: #f6d3c0;
+
+  /* ── Semantic: surfaces and text ── */
+  --ink: var(--p-ink-900);
+  --muted: var(--p-ink-600);
+  --line: var(--p-sand-200);
+  --canvas: var(--p-sand-50);
+  --canvas-strong: var(--p-sand-100);
+  --surface: var(--p-white);
+
+  /* ── The brand (Jansetu teal). In a workspace area (`data-area` on the shell) the brand takes that area's colour, so
+     buttons, links, the active menu item and the main tile all follow it. ── */
+  --brand: var(--p-teal-700);
+  --brand-strong: var(--p-teal-800);
   --brand-ink: #ffffff;
-  --brand-soft: #e2f1f0;
+  --brand-soft: var(--p-teal-50);
+  --brand-tint: var(--p-teal-100);
   --accent: #c9551f;
-  --danger: #b42318;
-  --danger-soft: #fdeceb;
-  --ok: #1a7343;
-  --ok-soft: #e5f3eb;
-  --warn: #8a5a00;
-  --warn-soft: #fff3d6;
+
+  /* ── Area accents: one colour per kind of workplace (fill with white text, strong text, soft and tint backgrounds). ── */
+  --area-pharmacy: var(--p-green-700);  --area-pharmacy-strong: var(--p-green-800);  --area-pharmacy-soft: var(--p-green-50);  --area-pharmacy-tint: var(--p-green-100);
+  --area-lab: var(--p-violet-700);      --area-lab-strong: var(--p-violet-800);      --area-lab-soft: var(--p-violet-50);      --area-lab-tint: var(--p-violet-100);
+  --area-clinic: var(--p-blue-700);     --area-clinic-strong: var(--p-blue-800);     --area-clinic-soft: var(--p-blue-50);     --area-clinic-tint: var(--p-blue-100);
+  --area-doctor: var(--p-clay-700);     --area-doctor-strong: var(--p-clay-800);     --area-doctor-soft: var(--p-clay-50);     --area-doctor-tint: var(--p-clay-100);
+
+  /* ── Status (always shown with an icon and words, never colour alone). ── */
+  --ok: #1a7343;     --ok-soft: #e5f3eb;     --ok-line: #b9dcc8;
+  --warn: #7a4f00;   --warn-soft: #fff1d0;   --warn-line: #f0d79a;
+  --danger: #b42318; --danger-soft: #fdeceb; --danger-line: #f3c2bd;
+  --info: #1d5fb8;   --info-soft: #e7f0fc;   --info-line: #bcd3f3;
+  --neutral: #4a5360; --neutral-soft: #eeebe5;
   --focus: #1f6feb;
 
-  --radius: 8px;
+  /* ── Friendly tile hues (an icon colour on its soft background; ≥ 5:1). ── */
+  --hue-sky: #0b5ea8;    --hue-sky-soft: #e3f0fb;
+  --hue-amber: #8a5300;  --hue-amber-soft: #fdf0d5;
+  --hue-rose: #a3214f;   --hue-rose-soft: #fce8ef;
+  --hue-green: #17703f;  --hue-green-soft: #e4f3e9;
+  --hue-violet: #5a35b8; --hue-violet-soft: #eeeafb;
+
+  /* ── Charts (WQ61). A categorical palette from Okabe–Ito, darkened where needed so every series is ≥ 3:1 on white
+     (WCAG 1.4.11) and the order stays distinguishable with the common colour-vision differences. Series are also told
+     apart by label or pattern, never by colour alone. ── */
+  --chart-1: #0072b2; /* blue */
+  --chart-2: #d55e00; /* vermillion */
+  --chart-3: #009e73; /* bluish green */
+  --chart-4: #cc79a7; /* reddish purple */
+  --chart-5: #b07800; /* amber */
+  --chart-6: #2d8fc9; /* sky */
+  --chart-7: #7b5ea7; /* violet */
+  --chart-8: #5f6b76; /* slate */
+  --chart-positive: var(--ok);
+  --chart-negative: var(--danger);
+  --chart-pending: var(--warn);
+  --chart-grid: var(--p-sand-200);
+  --chart-axis: var(--p-ink-600);
+  --chart-text: var(--p-ink-900);
+  --chart-surface: var(--surface);
+
+  /* ── Shape, space, depth ── */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+  --shadow-1: 0 1px 2px rgb(28 36 48 / 0.06), 0 1px 3px rgb(28 36 48 / 0.06);
+  --shadow-2: 0 2px 4px rgb(28 36 48 / 0.05), 0 6px 16px rgb(28 36 48 / 0.08);
+  --shadow-3: 0 4px 8px rgb(28 36 48 / 0.07), 0 12px 28px rgb(28 36 48 / 0.12);
   --tap: 44px;
+  --tap-lg: 48px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
+  --space-7: 48px;
 
+  /* ── Type ── */
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Noto Sans Devanagari', sans-serif;
-  --text-sm: 0.875rem;
+  --text-xs: 0.875rem;
+  --text-sm: 0.9375rem;
   --text-md: 1rem;
+  --text-simple: 1.0625rem;
   --text-lg: 1.25rem;
-  --text-xl: 1.5rem;
+  --text-xl: 1.625rem;
+  --text-2xl: 2rem;
+  --weight-medium: 500;
+  --weight-bold: 700;
+  --weight-heavy: 800;
 
   color-scheme: light;
 }
+
+/* WQ60: a workspace area recolours the brand (see Shell `data-area`). */
+[data-area='pharmacy'] { --brand: var(--area-pharmacy); --brand-strong: var(--area-pharmacy-strong); --brand-soft: var(--area-pharmacy-soft); --brand-tint: var(--area-pharmacy-tint); }
+[data-area='lab'] { --brand: var(--area-lab); --brand-strong: var(--area-lab-strong); --brand-soft: var(--area-lab-soft); --brand-tint: var(--area-lab-tint); }
+[data-area='clinic'] { --brand: var(--area-clinic); --brand-strong: var(--area-clinic-strong); --brand-soft: var(--area-clinic-soft); --brand-tint: var(--area-clinic-tint); }
+[data-area='doctor'] { --brand: var(--area-doctor); --brand-strong: var(--area-doctor-strong); --brand-soft: var(--area-doctor-soft); --brand-tint: var(--area-doctor-tint); }
 
 *, *::before, *::after { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
