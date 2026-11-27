@@ -328,7 +328,8 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
                       <tr key={i}>
                         <td>{l.description}</td><td>{l.sac ?? l.hsn ?? '—'}</td><td>{l.qty}</td><td>{money(l.unitPriceMinor)}</td>
                         <td>{l.discountMinor ? money(l.discountMinor) : '—'}</td><td>{money(l.amountMinor)}</td>
-                        <td>{l.taxTreatment === 'exempt' ? exemptWords(l.sac) : `${l.gstRate}%`}</td>
+                        {/* WQ58b: the SAC is in its own column, so not said twice. */}
+                        <td>{l.taxTreatment === 'exempt' ? exemptWords() : `${l.gstRate}%`}</td>
                       </tr>
                     ))}
                   </tbody>

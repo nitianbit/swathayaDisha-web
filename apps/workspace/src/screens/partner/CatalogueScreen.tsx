@@ -104,9 +104,13 @@ export function itemBody(s: DraftState<Draft>, rates: readonly GstRate[], kind: 
   if (!rates.includes(rate) && dirty.has('gstRate')) errors.gstRate = t('catalogue.error.gstRate');
   else full.gstRate = rate;
   // r42: exempt only at 0% (the server refuses it too: EXEMPT_RATE_NOT_ZERO); not chosen: not sent (the server's usual).
-  if (d.taxTreatment) {
-    if (d.taxTreatment === 'exempt' && rate !== 0) errors.taxTreatment = t('catalogue.error.exemptRate');
-    else full.taxTreatment = d.taxTreatment;
+  // WQ58b: a rate above 0 the person chose on an item that is (or meanwhile became) exempt makes it taxable, sent with the
+  // rate, so an edit that crossed someone else's never meets that refusal.
+  let treatment = d.taxTreatment;
+  if (rate !== 0 && dirty.has('gstRate') && (treatment === 'exempt' || was.taxTreatment === 'exempt')) { treatment = 'taxable'; dirty.add('taxTreatment'); }
+  if (treatment) {
+    if (treatment === 'exempt' && rate !== 0) errors.taxTreatment = t('catalogue.error.exemptRate');
+    else full.taxTreatment = treatment;
   }
 
   if (usesVisitModes(kind)) {

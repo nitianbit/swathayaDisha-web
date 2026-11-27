@@ -830,6 +830,9 @@ export default {
   'newInvoice.catalogueLineSac': 'From the catalogue: {price} each · GST {rate}% · SAC {sac}',
   'newInvoice.catalogueLineExempt': 'From the catalogue: {price} each · GST: {exempt}',
   'newInvoice.gstLabelled': 'GST: {gst}',
+  /** WQ58b: on the doctor's fee line (exempt by default), for a consultation GST applies to. */
+  'newInvoice.chargeGst': 'Charge GST',
+  'newInvoice.feeExempt': 'Exempt from GST',
   'newInvoice.description': 'Description',
   'newInvoice.sac': 'SAC/HSN (optional)',
   'newInvoice.unitPrice': 'Unit price (₹)',

@@ -91,6 +91,8 @@ function partner(id: string, name: string, kind: 'lab' | 'clinic', tax: 'regular
     updatedAt: '2026-11-01T00:00:00.000Z' };
 }
 
+/** r42b's EXEMPT_RATE_NOT_ZERO message. */
+const EXEMPT_RATE_MESSAGE = 'An exempt supply has GST rate 0: set the rate to 0, or mark the item taxable to charge GST';
 const owner = (partnerId = LAB): Me => ({ _id: OWNER, partnerId, name: 'Ravi Owner', role: 'owner', permissions: ALL, branchIds: [] });
 
 /** What the server computes (services/invoice.ts), for the mock's answers. */
@@ -256,7 +258,7 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
       if (!kinds.includes(data.kind as string)) return fail(route, 400, 'ITEM_KIND_NOT_ALLOWED', `A ${p.kind} catalogue takes: ${kinds.join(', ')}`);
       if (p.kind === 'clinic' && (data.visitModes as unknown[] | undefined)?.length) return fail(route, 400, 'VISIT_MODES_NOT_ALLOWED', 'Clinic items have no visit modes');
       if (b.refuseNextItem) { const [st, code, msg] = b.refuseNextItem; b.refuseNextItem = undefined; return fail(route, st, code, msg); }
-      if (data.taxTreatment === 'exempt' && data.gstRate !== 0) return fail(route, 400, 'EXEMPT_RATE_NOT_ZERO', 'An exempt supply must have GST rate 0');
+      if (data.taxTreatment === 'exempt' && data.gstRate !== 0) return fail(route, 400, 'EXEMPT_RATE_NOT_ZERO', EXEMPT_RATE_MESSAGE);
       // r42: a clinic's 0% consultation named no treatment is exempt, SAC 9993.
       if (p.kind === 'clinic' && data.kind === 'consultation' && data.gstRate === 0 && data.taxTreatment === undefined) Object.assign(data, { taxTreatment: 'exempt', sac: data.sac ?? '9993' });
       const it: Rec = { _id: `d${b.catalogue.length + 5}`.repeat(12).slice(0, 24), partnerId: pid, isActive: true, adminDisabled: false, visitModes: [], ...data,
@@ -288,7 +290,7 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
           return fail(route, 409, 'CATALOGUE_ITEM_CHANGED', 'The item changed since you opened it; reload and review');
         }
         if ((changes.taxTreatment ?? it.taxTreatment) === 'exempt' && (changes.gstRate ?? it.gstRate) !== 0) {
-          return fail(route, 400, 'EXEMPT_RATE_NOT_ZERO', 'An exempt supply must have GST rate 0');
+          return fail(route, 400, 'EXEMPT_RATE_NOT_ZERO', EXEMPT_RATE_MESSAGE);
         }
         Object.assign(it, changes); touch(it);
         return ok(route, it);
@@ -351,8 +353,12 @@ async function mockBackend(page: Page, me: Me = owner(), opts: { tax?: 'regular'
       }
       for (const l of x.items as Rec[]) {
         const it = l.catalogItemId ? b.catalogue.find((i) => i._id === l.catalogItemId) : undefined;
-        if (it && (it.priceMinor !== l.unitPriceMinor || it.gstRate !== l.gstRate || (it.taxTreatment && l.taxTreatment && it.taxTreatment !== l.taxTreatment))) {
+        if (it && (it.priceMinor !== l.unitPriceMinor || it.gstRate !== l.gstRate)) {
           return fail(route, 409, 'CATALOGUE_PRICE_CHANGED', `${it.name} is now ₹${((it.priceMinor as number) / 100).toFixed(2)} at ${it.gstRate}% GST; review the bill`);
+        }
+        // r42b: a treatment mismatch keeps the code, with its own message.
+        if (it?.taxTreatment && l.taxTreatment && it.taxTreatment !== l.taxTreatment) {
+          return fail(route, 409, 'CATALOGUE_PRICE_CHANGED', `${it.name} is billed as ${it.taxTreatment}; review the bill`);
         }
       }
       const customer = x.customer as Rec;
@@ -1049,7 +1055,7 @@ test('WQ58 (r42): a clinic consultation at 0% is exempt (SAC 9993); a rate above
   await expect(exempt).toBeChecked();
   await page.getByLabel('Name', { exact: true }).fill('General consultation');
   await page.getByLabel('Price (₹)').fill('400');
-  backend.refuseNextItem = [400, 'EXEMPT_RATE_NOT_ZERO', 'An exempt supply must have GST rate 0'];
+  backend.refuseNextItem = [400, 'EXEMPT_RATE_NOT_ZERO', EXEMPT_RATE_MESSAGE];
   await page.getByRole('button', { name: 'Add item' }).click();
   await expect(page.getByText('An exempt item must be at 0% GST.')).toBeVisible();
   await page.getByRole('button', { name: 'Add item' }).click();
@@ -1080,11 +1086,11 @@ test('WQ58 (r42): a clinic consultation at 0% is exempt (SAC 9993); a rate above
   // A mixed bill: the exempt consultation and a taxable line; the exempt value is shown apart and the total adds up.
   await nav(page).getByRole('link', { name: 'Bills' }).click();
   await page.getByRole('link', { name: 'New bill' }).click();
+  // Exact: the bills list's search ("Bill number, customer name or phone") may still be on screen while the form opens.
+  await page.getByLabel('Customer name', { exact: true }).fill('Kiran');
   const id = backend.catalogue.find((i) => i.name === 'General consultation')!._id as string;
   await page.getByLabel('From the catalogue').selectOption(id);
   await page.getByRole('button', { name: 'Add item' }).click();
-  await page.getByLabel('Customer name').fill('Kiran');
-  await expect(page.getByLabel('Customer name')).toHaveValue('Kiran');
   await page.getByRole('button', { name: 'Add a line by hand' }).click();
   const kit = page.getByRole('group', { name: /^Line 2/ });
   await kit.getByLabel('Description').fill('Dressing kit');
@@ -1100,7 +1106,10 @@ test('WQ58 (r42): a clinic consultation at 0% is exempt (SAC 9993); a rate above
   await expect(page.getByText('Bill CL/2627/0001 issued.')).toBeVisible();
   expect(((creates(backend)[0]!.body as Rec).items as Rec[])[0]).toEqual({ catalogItemId: id, description: 'General consultation', sac: '9993', qty: 1,
     unitPriceMinor: 40000, gstRate: 0, taxTreatment: 'exempt' });
-  await expect(page.getByRole('row').filter({ hasText: 'General consultation' })).toContainText('Exempt (SAC 9993)');
+  // The SAC is in its own column; the GST column says Exempt (not the SAC again).
+  const consult = page.getByRole('row').filter({ hasText: 'General consultation' }).getByRole('cell');
+  await expect(consult.nth(1)).toHaveText('9993');
+  await expect(consult.last()).toHaveText('Exempt');
   await expect(page.getByRole('row').filter({ hasText: 'Dressing kit' })).toContainText('18%');
   const totals = page.locator('dl[aria-label="Totals"]');
   await expect(totals).toContainText('Taxable value₹100.00');
@@ -1110,15 +1119,16 @@ test('WQ58 (r42): a clinic consultation at 0% is exempt (SAC 9993); a rate above
   // The item turned taxable since it was added: refused as a price change (worded as today), the form follows it.
   await nav(page).getByRole('link', { name: 'Bills' }).click();
   await page.getByRole('link', { name: 'New bill' }).click();
+  await page.getByLabel('Customer name', { exact: true }).fill('Kiran');
   await page.getByLabel('From the catalogue').selectOption(id);
   await page.getByRole('button', { name: 'Add item' }).click();
-  await page.getByLabel('Customer name').fill('Kiran');
-  await expect(page.getByLabel('Customer name')).toHaveValue('Kiran');
   backend.priceChangeBeforeBill = { id, taxTreatment: 'taxable' };
   await page.getByRole('button', { name: 'Review the bill' }).click();
   await page.getByRole('button', { name: 'Issue bill' }).click();
-  await expect(page.getByText('Not issued: General consultation is now ₹400.00 at 0% GST; review the bill')).toBeVisible();
+  await expect(page.getByText('Not issued: General consultation is billed as taxable; review the bill')).toBeVisible();
   await expect(page.getByText('General consultation is now ₹400.00 at 0% GST. Review the bill before issuing it.')).toBeVisible();
+  // WQ58b: the catalogue was read again (the refusal's refetch): what was typed stays.
+  await expect(page.getByLabel('Customer name', { exact: true })).toHaveValue('Kiran');
   await page.getByRole('button', { name: 'Review the bill' }).click();
   await page.getByRole('button', { name: 'Issue bill' }).click();
   await expect(page.getByText('Bill CL/2627/0002 issued.')).toBeVisible();
