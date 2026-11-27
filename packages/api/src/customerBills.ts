@@ -22,6 +22,8 @@ export interface BillLine {
   unitPriceMinor: number;
   discountMinor: number;
   gstRate: 0 | 5 | 12 | 18 | 28;
+  /** r42: `exempt` on a tax invoice's exempt line (health care at 0%); absent: taxable. */
+  taxTreatment?: 'taxable' | 'exempt';
   /** Line amount before GST (qty × unit − discount). */
   amountMinor: number;
 }
@@ -30,6 +32,8 @@ export interface BillTotals {
   subtotalMinor: number;
   discountMinor: number;
   taxableMinor: number;
+  /** r42: the exempt lines' value (only on a tax invoice with one); `taxableMinor` is then the taxable lines only. */
+  exemptMinor?: number;
   cgstMinor: number;
   sgstMinor: number;
   igstMinor: number;

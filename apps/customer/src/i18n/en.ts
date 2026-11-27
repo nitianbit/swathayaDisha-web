@@ -631,6 +631,10 @@ export default {
   'bill.subtotal': 'Subtotal',
   'bill.discount': 'Discount',
   'bill.taxable': 'Taxable',
+  'bill.exemptValue': 'Exempt value',
+  /** A health-care line GST does not apply to (a doctor's consultation). */
+  'bill.exempt': 'Exempt',
+  'bill.exemptSac': 'Exempt (SAC {sac})',
   'bill.pdf': 'PDF',
 
   'external.cancelRequested': 'Your cancellation is with the lab. As soon as the lab confirms it, the amount you paid goes back to your Jansetu wallet. You do not need to do anything.',

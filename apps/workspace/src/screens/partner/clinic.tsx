@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { appointmentAt, appointmentDay, partnerClinicApi, type ClinicAppointment, type ClinicAppointmentStatus, type DeskAppointment } from '@jansetu/api';
+import { appointmentAt, appointmentDay, EXEMPT_HEALTHCARE_SAC, partnerClinicApi, type ClinicAppointment, type ClinicAppointmentStatus, type DeskAppointment } from '@jansetu/api';
 import { formatClock } from '@jansetu/i18n';
 import { Empty, ErrorState, Loading, shared } from '@jansetu/ui';
 import { messageOf } from '../../errors.ts';
@@ -73,7 +73,8 @@ export const prefillOf = (a: ClinicAppointment): BillPrefill => ({
   label: `${a.doctorName ?? t('desk.theDoctor')}, ${appointmentLabel(a)}`,
   ...(a.fee ? { handLines: [feeLine(a.doctorName, a.fee)] } : {}),
 });
-/** WQ57: the doctor's fee (rupees) as a bill line. */
+/** WQ57: the doctor's fee (rupees) as a bill line. WQ58 (r42): health care, so exempt from GST (SAC 9993). */
 export const feeLine = (doctor: string | undefined, fee: number) => ({
   description: t('desk.feeLine', { doctor: doctor ?? t('desk.theDoctor') }), priceMinor: Math.round(fee * 100), ...(doctor ? { doctor } : {}),
+  taxTreatment: 'exempt' as const, sac: EXEMPT_HEALTHCARE_SAC,
 });

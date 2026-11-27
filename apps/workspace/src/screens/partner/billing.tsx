@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
-import { holdsAny, type CatalogueItemKind, type PartnerKind, type VisitMode } from '@jansetu/api';
+import { holdsAny, type CatalogueItemKind, type PartnerKind, type TaxTreatment, type VisitMode } from '@jansetu/api';
 import { formatPaise, formatRupees } from '@jansetu/i18n';
 import { t, type PartnerKey } from '../../i18n/partner/index.ts';
 import { newRequestKey } from '../../requests.ts';
@@ -11,6 +11,8 @@ import { scopeIdentity, type ScopeContext } from './scope.tsx';
 /** Paise as money; "—" when missing or not a number (never ₹NaN). */
 export const money = (minor: number | undefined | null) =>
   (typeof minor === 'number' && Number.isFinite(minor) ? formatPaise(minor) : formatRupees(null));
+/** WQ58 (r42): the GST column for an exempt line or item, as the printed bill words it. */
+export const exemptWords = (sac?: string) => (sac ? t('invoice.exemptSac', { sac }) : t('invoice.exempt'));
 
 /** Q10 item kinds (labs: test/package; clinics: consultation/procedure/package/other). */
 const ITEM_KIND_KEY = {
@@ -79,7 +81,7 @@ export interface BillPrefill {
   /** WQ55b: a visit opened from + New: the short bill (name, phone, items, total) and the short payment. */
   simple?: boolean;
   /** WQ57: lines not from the catalogue (a clinic appointment's doctor's fee), in paise. */
-  handLines?: { description: string; priceMinor: number; doctor?: string }[];
+  handLines?: { description: string; priceMinor: number; doctor?: string; taxTreatment?: TaxTreatment; sac?: string }[];
 }
 export const billPrefillSlot = (identity: string) => `invoice-prefill:${identity}`;
 /** What is stored: the prefill and the one-time token the navigation to the form carries in its route state. */

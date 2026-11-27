@@ -262,4 +262,19 @@ describe('Q14 part payments (paidOf, withDue, recordPayment)', () => {
     expect(() => catalogueAdminApi(client).disable('1'.repeat(25))).toThrow('Invalid catalogue item id');
     expect(calls).toHaveLength(0);
   });
+
+  it('r42: an exempt line on a tax invoice is exempt value, not taxable (the same total)', () => {
+    const regular = { taxRegime: 'regular' as const, gstin: '29ABCDE1234F1Z5' };
+    const p = previewInvoice(regular, '29', undefined, [
+      { description: 'Test', qty: 1, unitPriceMinor: 50001, gstRate: 5 },
+      { description: 'Consultation', qty: 1, unitPriceMinor: 30000, gstRate: 0, taxTreatment: 'exempt', sac: '9993' },
+    ]);
+    expect(p.documentKind).toBe('tax_invoice');
+    expect(p.totals).toMatchObject({ taxableMinor: 50001, exemptMinor: 30000, totalMinor: 82501 });
+    // A bill of supply (all 0%) stays as before: no exempt value.
+    const supply = previewInvoice(regular, '29', undefined, [{ description: 'Consultation', qty: 1, unitPriceMinor: 30000, gstRate: 0, taxTreatment: 'exempt' }]);
+    expect(supply.documentKind).toBe('bill_of_supply');
+    expect(supply.totals.exemptMinor).toBeUndefined();
+    expect(supply.totals.taxableMinor).toBe(30000);
+  });
 });

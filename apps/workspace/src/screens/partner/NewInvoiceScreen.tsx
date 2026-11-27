@@ -6,7 +6,7 @@ import {
   allowedGstRates, ApiError, chargesGst, customerGstinProblem, INVOICE_PHONE_PATTERN, MAX_LINE_DESCRIPTION,
   MAX_LINES, MAX_NAME, MAX_PRICE_MINOR, MAX_QTY, MAX_SAC, paiseToInput, previewInvoice, rupeesToPaise, STATE_CODE_PATTERN,
   tooLongWords, type Branch, type CatalogueItem, type ClinicDoctor, type GstRate, type Invoice, type InvoiceGender, type InvoicePreview, type LinePreview,
-  type NewInvoice, type NewInvoiceLine, type Page, type Partner,
+  type NewInvoice, type NewInvoiceLine, type Page, type Partner, type TaxTreatment,
 } from '@jansetu/api';
 import { Alert, Button, Empty, ErrorState, Loading, Parts, shared, TextField } from '@jansetu/ui';
 import { PendingOpPanel } from '../../components/PendingOpPanel.tsx';
@@ -16,7 +16,7 @@ import { afterFailure, beginAttempt, newRequestKey, ownsKey, resolveStored, star
 import { useSession } from '../../session.tsx';
 import { useVisitMode, useVisitPreset, type VisitPatient } from '../front/visitPatient.ts';
 import { VisitPatientLine } from '../front/visitBar.tsx';
-import { billLinkRefusal, billPrefillSlot, money, takeHandover, useCatalogue, useClinicDoctors, type BillHandover, type BillPrefill } from './billing.tsx';
+import { billLinkRefusal, billPrefillSlot, exemptWords, money, takeHandover, useCatalogue, useClinicDoctors, type BillHandover, type BillPrefill } from './billing.tsx';
 import { Totals, type IssuedNotice } from './InvoiceScreen.tsx';
 import { NoSuchPartner, scopeIdentity, useBranches, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 import { t, type PartnerKey } from '../../i18n/partner/index.ts';
@@ -26,9 +26,13 @@ type Pending = PendingOp<NewInvoice>;
 interface LineDraft {
   key: string;
   /** Lines from the catalogue keep its name, price and GST rate; only quantity and discount change. */
-  item?: Pick<CatalogueItem, '_id' | 'name' | 'priceMinor' | 'gstRate' | 'sac'>;
+  item?: Pick<CatalogueItem, '_id' | 'name' | 'priceMinor' | 'gstRate' | 'sac' | 'taxTreatment'>;
   description: string; sac: string; qty: string; price: string; discount: string; gstRate: string;
+  /** WQ58 (r42): a hand line's treatment (the doctor's fee is exempt at 0%); a catalogue line takes its item's. */
+  taxTreatment?: TaxTreatment;
 }
+/** WQ58: the line's GST treatment (the item's for a catalogue line). */
+const treatmentOf = (l: LineDraft) => (l.item ? l.item.taxTreatment : l.taxTreatment);
 export interface InvoiceDraft {
   branchId: string; name: string; phone: string; age: string; gender: '' | InvoiceGender; gstin: string; placeOfSupply: string;
   doctorId: string; lines: LineDraft[];
@@ -109,6 +113,8 @@ export function buildInvoice(d: InvoiceDraft, partner: Pick<Partner, 'taxRegime'
       unitPriceMinor: price ?? 0,
       ...(discount ? { discountMinor: discount } : {}),
       gstRate,
+      // WQ58: a catalogue line sends its item's treatment when the item names one (a change is refused as a price change).
+      ...(treatmentOf(l) ? { taxTreatment: treatmentOf(l) } : {}),
     };
   });
   const stateCode = branch?.address?.stateCode ?? '';
@@ -335,7 +341,7 @@ const FOLLOW_UP_ITEM = /\bfollow[\s\p{Pd}]*up\b/iu;
 
 /** A bill line from a catalogue item (its name, price and GST rate kept; only quantity and discount change). */
 const catalogueLine = (it: CatalogueItem): LineDraft => ({
-  key: lineKey(), item: { _id: it._id, name: it.name, priceMinor: it.priceMinor, gstRate: it.gstRate, sac: it.sac },
+  key: lineKey(), item: { _id: it._id, name: it.name, priceMinor: it.priceMinor, gstRate: it.gstRate, sac: it.sac, taxTreatment: it.taxTreatment },
   description: it.name, sac: it.sac ?? '', qty: '1', price: paiseToInput(it.priceMinor), discount: '', gstRate: String(it.gstRate),
 });
 
@@ -356,7 +362,8 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
         const item = named && catalogue.find((i) => i.kind === 'consultation' && i.isActive && !i.adminDisabled
           && i.priceMinor === l.priceMinor && !FOLLOW_UP_ITEM.test(i.name) && named.test(i.name.normalize('NFC')));
         return item ? catalogueLine(item)
-          : { key: lineKey(), description: l.description, sac: '', qty: '1', price: paiseToInput(l.priceMinor), discount: '', gstRate: '0' };
+          : { key: lineKey(), description: l.description, sac: l.sac ?? '', qty: '1', price: paiseToInput(l.priceMinor), discount: '', gstRate: '0',
+            ...(l.taxTreatment ? { taxTreatment: l.taxTreatment } : {}) };
       })] }
     // WQ55: a bill opened from + New is the account holder's (as a desk booking's bill): a family member's is in the phone
     // owner's name (typed on + New, else typed here).
@@ -397,10 +404,14 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
       let touched = false;
       const lines = x.lines.map((l) => {
         const cur = l.item ? catalogue.find((i) => i._id === l.item!._id) : undefined;
-        if (!l.item || !cur || (cur.priceMinor === l.item.priceMinor && cur.gstRate === l.item.gstRate)) return l;
+        if (!l.item || !cur || (cur.priceMinor === l.item.priceMinor && cur.gstRate === l.item.gstRate
+          && (cur.taxTreatment ?? 'taxable') === (l.item.taxTreatment ?? 'taxable'))) return l;
         touched = true;
-        changes.push(t('newInvoice.priceChanged', { name: cur.name, price: money(cur.priceMinor), rate: cur.gstRate }));
-        return { ...l, item: { ...l.item, priceMinor: cur.priceMinor, gstRate: cur.gstRate, sac: cur.sac }, price: paiseToInput(cur.priceMinor), gstRate: String(cur.gstRate) };
+        changes.push(cur.taxTreatment === 'exempt'
+          ? t('newInvoice.priceChangedExempt', { name: cur.name, price: money(cur.priceMinor) })
+          : t('newInvoice.priceChanged', { name: cur.name, price: money(cur.priceMinor), rate: cur.gstRate }));
+        return { ...l, item: { ...l.item, priceMinor: cur.priceMinor, gstRate: cur.gstRate, sac: cur.sac, taxTreatment: cur.taxTreatment },
+          price: paiseToInput(cur.priceMinor), gstRate: String(cur.gstRate) };
       });
       return touched ? { ...x, lines } : x;
     });
@@ -424,6 +435,8 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
   }
 
   const pv = built.preview;
+  /** WQ58: an exempt line is worded so only on a tax invoice (a bill of supply has no GST to be exempt from). */
+  const exemptShown = (l: LineDraft) => treatmentOf(l) === 'exempt' && pv.documentKind === 'tax_invoice';
   const igst = !pv.sameState;
   const linkNotice = d.phone.trim() ? (
     <Alert tone="warn">{t('newInvoice.linkNotice')}</Alert>
@@ -563,7 +576,8 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
           <ul className="ws-list bill-lines" aria-label={t('newInvoice.items')}>
             {d.lines.map((l, i) => (
               <li key={l.key}>
-                <span>{`${(l.item?.name ?? l.description).trim()} · ${pv.lines[i] ? money(pv.lines[i]!.amountMinor) : '—'}`}</span>
+                <span>{[(l.item?.name ?? l.description).trim(), pv.lines[i] ? money(pv.lines[i]!.amountMinor) : '—',
+                  ...(exemptShown(l) ? [exemptWords(l.item ? l.item.sac : l.sac.trim())] : [])].join(' · ')}</span>
                 {/* WQ57b: the only line (a visit's fee or test) is not offered for removal. */}
                 {d.lines.length > 1 && (
                   <Button variant="ghost" aria-label={t('newInvoice.removeLine', { n: i + 1 })} onClick={() => set({ lines: d.lines.filter((x) => x.key !== l.key) })}>
@@ -592,7 +606,8 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
               <div className="rx-form-row">
                 {l.item ? (
                   <p className="ws-muted">
-                    {l.item.sac ? t('newInvoice.catalogueLineSac', { price: money(l.item.priceMinor), rate: l.item.gstRate, sac: l.item.sac })
+                    {exemptShown(l) ? t('newInvoice.catalogueLineExempt', { price: money(l.item.priceMinor), exempt: exemptWords(l.item.sac) })
+                      : l.item.sac ? t('newInvoice.catalogueLineSac', { price: money(l.item.priceMinor), rate: l.item.gstRate, sac: l.item.sac })
                       : t('newInvoice.catalogueLine', { price: money(l.item.priceMinor), rate: l.item.gstRate })}
                   </p>
                 ) : (
@@ -601,12 +616,17 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
                       onChange={(e) => setLine(l.key, { description: e.target.value })} />
                     <TextField label={t('newInvoice.sac')} value={l.sac} maxLength={MAX_SAC} error={shown(`${l.key}.sac`)} onChange={(e) => setLine(l.key, { sac: e.target.value })} />
                     <TextField label={t('newInvoice.unitPrice')} inputMode="decimal" value={l.price} error={shown(`${l.key}.price`)} onChange={(e) => setLine(l.key, { price: e.target.value })} />
-                    <div className="j-field">
-                      <label htmlFor={`${l.key}-gst`}>{t('newInvoice.gstRate')}</label>
-                      <select id={`${l.key}-gst`} value={l.gstRate} onChange={(e) => setLine(l.key, { gstRate: e.target.value })}>
-                        {rates.map((r) => <option key={r} value={r}>{r}%</option>)}
-                      </select>
-                    </div>
+                    {/* WQ58: an exempt hand line (the doctor's fee) is at 0%: no rate to choose. */}
+                    {l.taxTreatment === 'exempt' ? (
+                      <p className="ws-muted">{t('newInvoice.gstLabelled', { gst: exemptWords(l.sac.trim()) })}</p>
+                    ) : (
+                      <div className="j-field">
+                        <label htmlFor={`${l.key}-gst`}>{t('newInvoice.gstRate')}</label>
+                        <select id={`${l.key}-gst`} value={l.gstRate} onChange={(e) => setLine(l.key, { gstRate: e.target.value })}>
+                          {rates.map((r) => <option key={r} value={r}>{r}%</option>)}
+                        </select>
+                      </div>
+                    )}
                   </>
                 )}
                 <TextField label={t('newInvoice.quantity')} inputMode="numeric" className="ws-qty" value={l.qty} error={shown(`${l.key}.qty`)}

@@ -13,7 +13,7 @@ import { PageHeading } from '../../PageHeading.tsx';
 import { afterFailure, beginAttempt, newRequestKey, startOp, stillCurrent, type PendingOp } from '../../requests.ts';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
 import { sniffDocument } from '../pharmacy/documents.ts';
-import { genderLabel, money, useClinicDoctors } from './billing.tsx';
+import { exemptWords, genderLabel, money, useClinicDoctors } from './billing.tsx';
 import { stateTone } from './InvoicesScreen.tsx';
 import { useVisitMode } from '../front/visitPatient.ts';
 import { useSession } from '../../session.tsx';
@@ -327,7 +327,8 @@ function InvoiceDetail({ ctx, invoiceId }: { ctx: ScopeContext; invoiceId: strin
                     {inv.items.map((l, i) => (
                       <tr key={i}>
                         <td>{l.description}</td><td>{l.sac ?? l.hsn ?? '—'}</td><td>{l.qty}</td><td>{money(l.unitPriceMinor)}</td>
-                        <td>{l.discountMinor ? money(l.discountMinor) : '—'}</td><td>{money(l.amountMinor)}</td><td>{l.gstRate}%</td>
+                        <td>{l.discountMinor ? money(l.discountMinor) : '—'}</td><td>{money(l.amountMinor)}</td>
+                        <td>{l.taxTreatment === 'exempt' ? exemptWords(l.sac) : `${l.gstRate}%`}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -361,6 +362,8 @@ export function Totals({ totals, igst, label }: { totals: Invoice['totals']; igs
       <dt>{t('invoice.subtotal')}</dt><dd>{money(totals.subtotalMinor)}</dd>
       {totals.discountMinor > 0 && <><dt>{t('invoice.discount')}</dt><dd>− {money(totals.discountMinor)}</dd></>}
       <dt>{t('invoice.taxable')}</dt><dd>{money(totals.taxableMinor)}</dd>
+      {/* WQ58 (r42): only on a tax invoice with an exempt line (never "₹0.00"). */}
+      {!!totals.exemptMinor && <><dt>{t('invoice.exemptValue')}</dt><dd>{money(totals.exemptMinor)}</dd></>}
       {igst ? <><dt>{t('invoice.igst')}</dt><dd>{money(totals.igstMinor)}</dd></>
         : <><dt>{t('invoice.cgst')}</dt><dd>{money(totals.cgstMinor)}</dd><dt>{t('invoice.sgst')}</dt><dd>{money(totals.sgstMinor)}</dd></>}
       <dt><strong>{t('invoice.total')}</strong></dt><dd><strong>{money(totals.totalMinor)}</strong></dd>

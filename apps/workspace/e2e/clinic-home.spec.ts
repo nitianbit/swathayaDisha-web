@@ -259,7 +259,7 @@ async function walkInWithKavya(page: Page, b: Backend, branches: 1 | 2) {
   await tap(page.getByRole('button', { name: 'Issue bill for ₹500.00' }));
   await expect(page.getByText(/^Bill SC\/2627\/0001 issued\./)).toBeVisible();
   expect(b.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/invoices')!.body).toMatchObject({
-    appointmentId: b.appts[0]!.bookingId, customer: { name: 'Meena Iyer', phone: PHONE }, items: [{ description: 'Consultation · Dr Kavya', qty: 1, unitPriceMinor: 50000 }] });
+    appointmentId: b.appts[0]!.bookingId, customer: { name: 'Meena Iyer', phone: PHONE }, items: [{ description: 'Consultation · Dr Kavya', qty: 1, unitPriceMinor: 50000 , gstRate: 0, taxTreatment: 'exempt', sac: '9993' }] });
   const pay = page.getByRole('group', { name: 'Record payment' });
   await tap(pay.getByRole('button', { name: 'Cash', exact: true }));
   await tap(pay.getByRole('button', { name: 'Record ₹500.00 paid' }));
