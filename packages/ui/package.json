@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@jansetu/i18n": "*",
-    "react-i18next": "18.0.3"
+    "react-i18next": "18.0.3",
+    "lucide-react": "1.59.0"
   }
 }

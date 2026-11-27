@@ -1,9 +1,15 @@
 /* WQ5 finance screens. Tokens only (packages/ui/src/tokens.css). */
 .fin-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--space-3); margin: 0; }
-.fin-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: var(--space-4); display: grid; gap: var(--space-1); }
-.fin-card dt { color: var(--muted); font-size: var(--text-sm); }
+/* WQ60: money tiles in soft colour: the main one in the area's colour, the others each a friendly hue. */
+.fin-card { --tile-ink: var(--hue-sky); --tile-soft: var(--hue-sky-soft);
+  border: 1px solid transparent; border-radius: var(--radius-lg); background: var(--tile-soft); padding: var(--space-4); display: grid; gap: var(--space-1);
+  box-shadow: var(--shadow-1); }
+.fin-card:nth-child(4n + 3) { --tile-ink: var(--hue-amber); --tile-soft: var(--hue-amber-soft); }
+.fin-card:nth-child(4n + 4) { --tile-ink: var(--hue-violet); --tile-soft: var(--hue-violet-soft); }
+.fin-card:nth-child(4n + 5) { --tile-ink: var(--hue-rose); --tile-soft: var(--hue-rose-soft); }
+.fin-card dt { color: var(--tile-ink); font-size: var(--text-sm); font-weight: 650; }
 .fin-card dd { margin: 0; font-size: var(--text-lg); font-weight: 600; font-variant-numeric: tabular-nums; }
-.fin-card--main { border-color: var(--brand); }
+.fin-card--main { --tile-ink: var(--brand-strong); --tile-soft: var(--brand-soft); border-color: var(--brand-tint); }
 .fin-card--main dd { font-size: var(--text-xl); }
 .fin-amount { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .j-table th.fin-amount { text-align: right; }
@@ -16,5 +22,5 @@
 .fin-radio label { display: inline-flex; align-items: center; gap: var(--space-2); min-height: var(--tap); }
 .ref-lines { list-style: none; padding: 0; margin: var(--space-1) 0 0; font-size: var(--text-sm); }
 /* WQ48: a tile's smaller lines under its amount. */
-.fin-card dd.fin-sub { font-size: var(--text-sm); font-weight: 400; color: var(--muted); }
-.fin-card dd.fin-sub a { color: var(--brand); }
+.fin-card dd.fin-sub { font-size: var(--text-sm); font-weight: 400; color: var(--ink); }
+.fin-card dd.fin-sub a { color: var(--tile-ink); }

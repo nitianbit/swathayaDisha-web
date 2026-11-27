@@ -3,41 +3,80 @@
 .simple .j-btn, .simple button, .simple input, .simple select { min-height: 48px; font-size: 1.0625rem; }
 .simple a { min-height: 48px; }
 .simple a.j-btn { display: inline-flex; align-items: center; gap: var(--space-2); text-decoration: none; }
-.big-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); margin: var(--space-3) 0 var(--space-4); }
+.big-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-4); margin: var(--space-3) 0 var(--space-5); }
 .big-actions--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* WQ60: coloured tiles. The first (the main one) in the area's colour; the others each a friendly hue: the icon large in
+   its circle, the label in ink. Every pair ≥ 5:1. */
 .big-action {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); text-align: center;
-  min-height: 96px; padding: var(--space-3); border: 2px solid var(--line); border-radius: var(--radius); background: var(--surface);
-  color: var(--ink); text-decoration: none; font-weight: 700; font-size: 1.25rem;
+  --tile-ink: var(--hue-sky); --tile-soft: var(--hue-sky-soft);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); text-align: center;
+  min-height: 132px; padding: var(--space-4) var(--space-3); border: 2px solid transparent; border-radius: var(--radius-lg);
+  background: var(--tile-soft); color: var(--ink); text-decoration: none; font-weight: var(--weight-heavy); font-size: 1.25rem; line-height: 1.2;
+  box-shadow: var(--shadow-1); transition: box-shadow 160ms ease-out, transform 160ms ease-out, border-color 160ms ease-out;
 }
-.big-action:hover, .big-action:focus-visible { border-color: var(--brand); }
-.big-action--main { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.big-action:nth-child(4n + 3) { --tile-ink: var(--hue-amber); --tile-soft: var(--hue-amber-soft); }
+.big-action:nth-child(4n + 4) { --tile-ink: var(--hue-rose); --tile-soft: var(--hue-rose-soft); }
+.big-action:nth-child(4n + 5) { --tile-ink: var(--hue-violet); --tile-soft: var(--hue-violet-soft); }
+.big-action__icon {
+  display: grid; place-items: center; width: 60px; height: 60px; border-radius: var(--radius-pill);
+  background: var(--surface); color: var(--tile-ink); box-shadow: var(--shadow-1);
+}
+.big-action:hover { box-shadow: var(--shadow-3); transform: translateY(-2px); }
+.big-action:hover, .big-action:focus-visible { border-color: var(--tile-ink); }
+.big-action--main { --tile-ink: var(--brand); background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.big-action--main .big-action__icon { background: rgb(255 255 255 / 0.18); color: var(--brand-ink); box-shadow: none; }
+.big-action--main:hover, .big-action--main:focus-visible { border-color: var(--brand-strong); background: var(--brand-strong); }
 /* The day's money: one big line, the methods that took money, and what is still to collect (warning colour when any). */
-.money-line { margin: 0 0 var(--space-3); display: grid; gap: var(--space-1); }
+.money-line { margin: 0 0 var(--space-4); display: grid; gap: var(--space-3); justify-items: start; padding: var(--space-4); border-radius: var(--radius-lg);
+  background: var(--ok-soft); border: 1px solid var(--ok-line); }
 .money-line p { margin: 0; }
-.money-main { font-size: 1.5rem; font-weight: 800; }
-.money-methods { color: var(--muted); }
-.money-due { font-weight: 600; }
+.money-main { display: flex; align-items: center; gap: var(--space-3); font-size: 1.625rem; font-weight: var(--weight-heavy); color: var(--ink);
+  font-variant-numeric: tabular-nums; }
+.money-main__icon { flex: none; padding: 8px; width: 44px; height: 44px; border-radius: var(--radius-pill); background: var(--surface); color: var(--ok); }
+/* WQ60: a chip per payment method, its icon and amount. */
+.money-methods { display: flex; flex-wrap: wrap; gap: var(--space-2); color: var(--ink); }
+.money-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 4px 12px; border-radius: var(--radius-pill); background: var(--surface);
+  border: 1px solid var(--ok-line); font-weight: 650; font-variant-numeric: tabular-nums; }
+.money-chip svg { color: var(--ok); flex: none; }
+.money-chip--upi svg, .money-chip--online svg { color: var(--hue-violet); }
+.money-chip--card svg { color: var(--hue-sky); }
+.money-chip--bank svg { color: var(--hue-amber); }
+.money-chip--wallet svg { color: var(--hue-rose); }
+.money-due { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: 700; padding: 6px 12px; border-radius: var(--radius-pill); }
+.money-due--clear { color: var(--ok); background: var(--surface); }
 .money-refunded { color: var(--muted); }
-.money-due--warn { color: var(--warn); background: var(--warn-soft); justify-self: start; padding: var(--space-1) var(--space-2); border-radius: var(--radius); }
-.pending-strip { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
-.pending-item { display: inline-flex; align-items: center; min-height: 48px; padding: 0 var(--space-3); border-radius: var(--radius); background: var(--brand-soft); color: var(--brand-strong); font-weight: 600; }
-.pending-item--failed { background: var(--canvas); color: var(--muted); font-weight: 400; }
+.money-due--warn { color: var(--warn); background: var(--warn-soft); border: 1px solid var(--warn-line); }
+/* WQ60: what waits: an icon and a colour by urgency (someone waiting, money to take, the day's work). */
+.pending-strip { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
+.pending-item { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 48px; padding: 0 var(--space-4); border-radius: var(--radius-pill);
+  background: var(--brand-soft); color: var(--brand-strong); font-weight: 650; border: 1px solid var(--brand-tint); text-underline-offset: 0.2em; }
+a.pending-item:hover { box-shadow: var(--shadow-2); }
+.pending-item svg { flex: none; }
+.pending-item--now { background: var(--danger-soft); color: var(--danger); border-color: var(--danger-line); }
+.pending-item--money { background: var(--warn-soft); color: var(--warn); border-color: var(--warn-line); }
+.pending-item--work { background: var(--info-soft); color: var(--info); border-color: var(--info-line); }
+.pending-item--failed { background: var(--neutral-soft); color: var(--neutral); font-weight: 400; border-color: transparent; }
+.pending-none { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--ok); font-weight: 600; }
 /* A register row reads as a line of a paper register: time, who and what; then the amount and paid or not. */
 .register { list-style: none; padding: 0; margin: 0; }
-.register-row { display: block; min-height: 48px; border-bottom: 1px solid var(--line); padding: var(--space-2) 0; overflow-wrap: anywhere; }
-.register-time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: var(--space-2); }
+.register-row { display: block; min-height: 48px; border-bottom: 1px solid var(--line); padding: var(--space-3) var(--space-2); overflow-wrap: anywhere;
+  border-radius: var(--radius-sm); }
+.register-row:hover { background: var(--canvas); }
+.register-row:last-child { border-bottom: 0; }
+.register-time { display: inline-block; color: var(--brand-strong); background: var(--brand-soft); font-weight: 700; font-variant-numeric: tabular-nums;
+  padding: 1px 8px; border-radius: var(--radius-sm); margin-right: var(--space-2); }
 .register-item a { display: inline-block; min-height: 48px; padding: var(--space-2) 0; }
 .register-pay { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.register-amount { font-variant-numeric: tabular-nums; font-weight: 600; }
+.register-amount { font-variant-numeric: tabular-nums; font-weight: 750; font-size: 1.125rem; }
 .register-note { color: var(--muted); font-size: 0.9375rem; }
 .todo-add { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
 .todo-add .j-field { flex: 1 1 18rem; }
 .todo-list { list-style: none; padding: 0; margin: var(--space-3) 0 0; display: grid; gap: var(--space-2); }
-.todo { display: flex; align-items: center; gap: var(--space-3); min-height: 48px; }
+.todo { display: flex; align-items: center; gap: var(--space-3); min-height: 48px; padding: 0 var(--space-2); border-radius: var(--radius-sm); }
+.todo:hover { background: var(--canvas); }
 .todo input { width: 28px; height: 28px; min-height: 28px; accent-color: var(--brand); }
 .todo--done span { text-decoration: line-through; color: var(--muted); }
-.simple-failed { display: grid; gap: var(--space-2); justify-items: start; padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius); }
+.simple-failed { display: grid; gap: var(--space-2); justify-items: start; padding: var(--space-4); border: 1px solid var(--warn-line); border-radius: var(--radius); background: var(--warn-soft); }
 .simple-row { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
 .simple-row .j-field { flex: 1 1 18rem; }
 .simple-choices { list-style: none; padding: 0; margin: var(--space-3) 0 0; display: grid; gap: var(--space-2); }
@@ -54,7 +93,7 @@ body.visit-mode .ws-main { font-size: 1.0625rem; }
 /* WQ54d: Read more is a 48 px target. */
 .consent-more summary { cursor: pointer; padding: 12px 0; line-height: 24px; color: var(--brand-strong); }
 .who-step { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
-.big-action[aria-pressed='true'] { border-color: var(--brand); background: var(--brand-soft); }
+.big-action[aria-pressed='true'] { border-color: var(--brand); background: var(--brand-soft); box-shadow: 0 0 0 2px var(--brand); }
 @media (max-width: 760px) {
   .big-actions, .big-actions--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   /* The phone's header has Home. */
@@ -70,8 +109,11 @@ body.visit-mode .ws-main { font-size: 1.0625rem; }
 .pending-item--plain { background: none; padding: 0; color: var(--ink); }
 .simple-forbidden { margin: 0; color: var(--muted); }
 /* WQ57: a clinic reception's doctors today; a busy block is grey. */
-.doctors-today { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-3); }
-.doctors-today > li { display: grid; gap: var(--space-1); }
+.doctors-today { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-4); }
+.doctors-today > li { display: grid; gap: var(--space-2); }
+.doctor-name { display: inline-flex; align-items: center; gap: var(--space-2); }
+.doctor-name svg { color: var(--brand); }
 .doctors-today ul { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.doctors-today ul li { padding: var(--space-1) var(--space-2); border-radius: var(--radius); background: var(--brand-soft); }
-.doctors-today ul li.doctor-busy { background: var(--canvas); color: var(--muted); }
+.doctors-today ul li { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: var(--radius-pill); background: var(--brand-soft);
+  color: var(--brand-strong); font-weight: 600; font-variant-numeric: tabular-nums; }
+.doctors-today ul li.doctor-busy { background: var(--neutral-soft); color: var(--neutral); }

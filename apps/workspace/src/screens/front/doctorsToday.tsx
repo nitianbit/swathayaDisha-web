@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { Ban, Clock, Stethoscope } from 'lucide-react';
 import { appointmentAt, holdsAny, istToday, type ClinicAppointment, type DoctorBusy } from '@jansetu/api';
 import { Loading } from '@jansetu/ui';
 import { t } from '../../i18n/home/index.ts';
@@ -46,10 +47,11 @@ function Strip({ ctx, forbidden }: { ctx: ScopeContext; forbidden: string | null
               const entries = entriesOf(d.doctorId, q.data.appointments, q.data.busy);
               return (
                 <li key={d.doctorId}>
-                  <strong>{d.name}</strong>
+                  <strong className="doctor-name"><Stethoscope size={20} aria-hidden="true" />{d.name}</strong>
                   {entries.length === 0 ? <span className="ws-muted">{t('doctors.free')}</span> : (
                     <ul aria-label={t('doctors.of', { doctor: d.name })}>
-                      {entries.map((e) => <li key={e.key} className={e.busy ? 'doctor-busy' : undefined}>{e.text}</li>)}
+                      {/* WQ60: an appointment (a clock) and a busy time (a no-entry sign, grey) differ by icon, not by colour alone. */}
+                      {entries.map((e) => <li key={e.key} className={e.busy ? 'doctor-busy' : undefined}>{e.busy ? <Ban size={16} aria-hidden="true" /> : <Clock size={16} aria-hidden="true" />}{e.text}</li>)}
                     </ul>
                   )}
                 </li>

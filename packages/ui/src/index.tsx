@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
+import { CircleAlert, CircleCheck, CircleX, Inbox, Info, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { t } from './i18n/index.ts';
 
 /** The shared UI words (`packages/ui/src/i18n/en.ts` lists them): Back, Cancel, Try again, Loading… */
@@ -56,12 +57,47 @@ export function TextArea({ label, hint, error, id, 'aria-describedby': own, ...r
   );
 }
 
+/** WQ60: every tone says itself with an icon too (never colour alone). */
+const ALERT_ICON: Record<'error' | 'ok' | 'warn', LucideIcon> = { error: CircleAlert, ok: CircleCheck, warn: TriangleAlert };
+
 export function Alert({ tone = 'error', children }: { tone?: 'error' | 'ok' | 'warn'; children: ReactNode }) {
-  return <div className={`j-alert j-alert--${tone}`} role={tone === 'error' ? 'alert' : 'status'}>{children}</div>;
+  const Icon = ALERT_ICON[tone];
+  return (
+    <div className={`j-alert j-alert--${tone}`} role={tone === 'error' ? 'alert' : 'status'}>
+      <Icon className="j-alert__icon" size={20} aria-hidden="true" />
+      <div className="j-alert__body">{children}</div>
+    </div>
+  );
 }
 
-export function Badge({ tone, children }: { tone?: 'warn' | 'danger' | 'ok'; children: ReactNode }) {
-  return <span className={`j-badge${tone ? ` j-badge--${tone}` : ''}`}>{children}</span>;
+export type BadgeTone = 'warn' | 'danger' | 'ok' | 'info' | 'neutral';
+
+/** WQ60: each tone's usual icon (a badge may name a more exact one: Paid, To collect, Cancelled…). */
+const BADGE_ICON: Partial<Record<BadgeTone, LucideIcon>> = { ok: CircleCheck, warn: CircleAlert, danger: CircleX, info: Info };
+
+/** WQ60: a status badge: its colour and an icon (`icon`, from lucide; else the tone's) with its words. */
+export function Badge({ tone, icon, children }: { tone?: BadgeTone; icon?: LucideIcon; children: ReactNode }) {
+  const Icon = icon ?? (tone ? BADGE_ICON[tone] : undefined);
+  return (
+    <span className={`j-badge${tone ? ` j-badge--${tone}` : ''}`}>
+      {Icon && <Icon size={16} aria-hidden="true" />}
+      {children}
+    </span>
+  );
+}
+
+/** The mark's drawing: a bridge's deck and two arches (styled in tokens.css `.j-mark`). */
+const MARK_PATH = ['M5 21.5h22', 'M8 21.5v-3.2a8 8 0 0 1 16 0v3.2', 'M12.5 21.5v-3a3.5 3.5 0 0 1 7 0v3'].join(''); // i18n-ignore: SVG path data, not words
+
+/** WQ60: the Jansetu mark (a bridge: "setu"), in the brand colour of the area it is shown in. Decorative. */
+export function BrandMark({ size = 32 }: { size?: number }) {
+  return (
+    <svg className="j-mark" width={size} height={size} viewBox="0 0 32 32" aria-hidden="true">
+      <rect className="j-mark__tile" width="32" height="32" rx="9" />
+      <path className="j-mark__line" d={MARK_PATH} />
+      <circle className="j-mark__dot" cx="16" cy="8.5" r="1.9" />
+    </svg>
+  );
 }
 
 /**
@@ -92,9 +128,11 @@ export function Loading({ label }: { label?: string }) {
   return <div className="j-state" role="status" aria-live="polite">{label ?? t('state.loading')}</div>;
 }
 
-export function Empty({ title, children }: { title: string; children?: ReactNode }) {
+export function Empty({ title, icon: Icon = Inbox, children }: { title: string; icon?: LucideIcon; children?: ReactNode }) {
   return (
     <div className="j-state">
+      {/* WQ60: a friendly icon above the one line. */}
+      <span className="j-state__icon"><Icon size={28} aria-hidden="true" /></span>
       <strong>{title}</strong>
       {children}
     </div>

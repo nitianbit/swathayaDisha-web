@@ -23,10 +23,13 @@ body { background: var(--canvas); }
   min-height: 60px; display: grid; justify-items: center; align-content: center; gap: 2px;
   color: var(--muted); text-decoration: none; font-size: var(--text-sm);
 }
+.app-tab svg { padding: 3px 14px; width: 52px; height: 30px; border-radius: var(--radius-pill); box-sizing: border-box; }
+/* WQ60: the active tab's icon sits in a brand pill (with the bolder word: never colour alone). */
 .app-tab.active { color: var(--brand-strong); font-weight: 700; }
+.app-tab.active svg { background: var(--brand-soft); }
 
 .page-head { display: grid; gap: var(--space-1); }
-.page-head h1 { font-size: var(--text-xl); }
+.page-head h1 { font-size: var(--text-xl); font-weight: var(--weight-heavy); }
 .page-head h1:focus { outline: none; }
 .page-sub { margin: 0; color: var(--muted); }
 .back { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--text-sm); min-height: var(--tap); }
@@ -34,19 +37,27 @@ body { background: var(--canvas); }
 .stack { display: grid; gap: var(--space-3); }
 .row { display: flex; gap: var(--space-3); flex-wrap: wrap; }
 .row-between { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-4); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-4); box-shadow: var(--shadow-1); }
 .card h2, section > h2 { font-size: var(--text-lg); margin: 0; }
 
 .tiles { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-3); }
+/* WQ60: coloured tiles: each a friendly hue, its icon large in a white circle, the label in ink (every pair ≥ 5:1). */
 .tile {
-  display: grid; gap: var(--space-2); align-content: center; min-height: 96px; padding: var(--space-4);
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-  color: var(--ink); text-decoration: none; font-weight: 600;
+  --tile-ink: var(--brand-strong); --tile-soft: var(--brand-soft);
+  display: grid; gap: var(--space-3); align-content: center; min-height: 112px; padding: var(--space-4);
+  background: var(--tile-soft); border: 2px solid transparent; border-radius: var(--radius-lg); box-shadow: var(--shadow-1);
+  color: var(--ink); text-decoration: none; font-weight: 700; font-size: var(--text-simple); line-height: 1.25;
 }
-.tile svg { color: var(--brand); }
-.tile-value { display: block; font-size: var(--text-lg); color: var(--brand-strong); }
+.tiles > li:nth-child(5n + 2) .tile { --tile-ink: var(--hue-sky); --tile-soft: var(--hue-sky-soft); }
+.tiles > li:nth-child(5n + 3) .tile { --tile-ink: var(--hue-violet); --tile-soft: var(--hue-violet-soft); }
+.tiles > li:nth-child(5n + 4) .tile { --tile-ink: var(--hue-green); --tile-soft: var(--hue-green-soft); }
+.tiles > li:nth-child(5n + 5) .tile { --tile-ink: var(--hue-amber); --tile-soft: var(--hue-amber-soft); }
+.tiles > li:nth-child(5n + 6) .tile { --tile-ink: var(--hue-rose); --tile-soft: var(--hue-rose-soft); }
+.tile > svg { width: 52px; height: 52px; padding: 13px; border-radius: var(--radius-pill); background: var(--surface); color: var(--tile-ink); box-shadow: var(--shadow-1); }
+.tile:hover, .tile:focus-visible { border-color: var(--tile-ink); }
+.tile-value { display: block; font-size: var(--text-lg); color: var(--tile-ink); font-variant-numeric: tabular-nums; }
 
-.list { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.list { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); overflow: hidden; }
 .list > li + li { border-top: 1px solid var(--line); }
 .list-row { display: grid; gap: 2px; padding: var(--space-3) var(--space-4); }
 .link-row { color: var(--ink); text-decoration: none; min-height: var(--tap); }
@@ -55,7 +66,7 @@ body { background: var(--canvas); }
 .amount-out { color: var(--ink); }
 
 .balance { display: grid; gap: var(--space-1); }
-.balance strong { font-size: 2rem; color: var(--brand-strong); }
+.balance strong { font-size: 2rem; color: var(--brand-strong); font-variant-numeric: tabular-nums; }
 
 .details { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-4); margin: 0; }
 .details dt { color: var(--muted); }
@@ -67,13 +78,13 @@ body { background: var(--canvas); }
 .choice legend { font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--space-2); }
 .choice label { display: flex; align-items: center; gap: var(--space-2); min-height: var(--tap); }
 
-.confirm { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius); background: var(--canvas); }
+.confirm { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--warn-line); border-radius: var(--radius); background: var(--warn-soft); }
 .confirm-actions { display: flex; gap: var(--space-3); flex-wrap: wrap; }
 
 .login { min-height: 100vh; display: grid; place-items: center; padding: var(--space-4); }
-.login-card { width: min(420px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-6) var(--space-5); display: grid; gap: var(--space-4); }
+.login-card { width: min(440px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-6) var(--space-5); display: grid; gap: var(--space-4); box-shadow: var(--shadow-3); }
 .login-card h1:focus { outline: none; }
-.brand { font-weight: 800; font-size: var(--text-lg); color: var(--brand-strong); }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: var(--text-lg); color: var(--ink); }
 .chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .chip { min-height: var(--tap); padding: 0 var(--space-3); border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font: inherit; color: var(--ink); cursor: pointer; }
 .chip[aria-pressed='true'] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); font-weight: 600; }

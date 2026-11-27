@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink, useLocation } from 'react-router';
 import { House, LogOut, Menu, X } from 'lucide-react';
-import { Button, LanguageScope, LanguageSwitcher, useLanguage } from '@jansetu/ui';
+import { BrandMark, Button, LanguageScope, LanguageSwitcher, useLanguage } from '@jansetu/ui';
 import { navLabelKey, pagesFor } from './modules.tsx';
 import { t } from './i18n/shell/index.ts';
 import { useSession, useStaff } from './session.tsx';
@@ -21,12 +21,14 @@ export function Shell({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { pathname, search } = useLocation();
   useEffect(() => setMenuOpen(false), [pathname, search]);
+  // WQ60: one colour per area (tokens.css `[data-area]`): a pharmacy, a lab, a clinic, a doctor; Jansetu teal for admins.
+  const area = user.role === 'pharmacy' ? 'pharmacy' : user.role === 'specialist' ? 'doctor' : user.partner?.partner.kind;
 
   return (
-    <div className="ws">
+    <div className="ws" data-area={area}>
       <a className="ws-skip" href="#main">{t('shell.skip')}</a>
       <aside className="ws-side">
-        <div className="ws-brand">{BRAND} <span>{t('shell.workspace')}</span></div>
+        <div className="ws-brand"><BrandMark size={34} /><span className="ws-brand-name">{BRAND} <span>{t('shell.workspace')}</span></span></div>
         <div className="ws-phone-bar">
           {/* WQ54c/WQ54d: icon buttons on one row, a short word under each. */}
           <Link className="ws-phone-home" to="/"><House size={22} aria-hidden="true" /><span>{t('nav.home')}</span></Link>

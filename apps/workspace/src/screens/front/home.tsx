@@ -1,7 +1,12 @@
 import './home.css';
-import { useState, type FormEvent } from 'react';
+import { Fragment, useState, type FormEvent } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
+import {
+  Banknote, CalendarCheck, CalendarClock, CircleAlert, CircleCheck, CircleDashed, CircleX, ClipboardList, Clock, CreditCard, FileText,
+  FlaskConical, Globe, HandCoins, Hourglass, Landmark, NotebookPen, PackageX, Receipt, ReceiptText, Send, Smartphone, Stethoscope, TestTube,
+  Upload, UserCheck, UserX, Wallet, type LucideIcon,
+} from 'lucide-react';
 import {
   ApiError, bookingsWaiting, CONSULT_MODE_LABEL, istToday, MAX_TODO_TEXT, moneyParts, PAYMENT_METHOD_KEYS, pendingCount, TODAY_PAGE_MAX,
   TODAY_SEARCH_MAX, TODAY_SEARCH_MIN, todayLink, todoText,
@@ -105,7 +110,10 @@ export function BigActions({ desk }: { desk: FrontDesk }) {
   return (
     <nav className="big-actions" aria-label={t('big.label')}>
       {desk.big.map(({ to, label, Icon }, i) => (
-        <Link key={to} className={i === 0 ? 'big-action big-action--main' : 'big-action'} to={to}><Icon size={28} aria-hidden="true" />{label}</Link>
+        <Link key={to} className={i === 0 ? 'big-action big-action--main' : 'big-action'} to={to}>
+          {/* WQ60: a coloured tile: the icon large in its own circle, then the label. */}
+          <span className="big-action__icon"><Icon size={30} aria-hidden="true" /></span>{label}
+        </Link>
       ))}
     </nav>
   );
@@ -117,13 +125,27 @@ const formatDay = (d: string) => (/^\d{4}-\d{2}-\d{2}$/.test(d) ? formatDateWith
 /** "Collected today ₹820", then the methods that took money ("Cash ₹320 · Wallet ₹500"), then "To collect ₹x". */
 export function MoneyLine({ day, date }: { day: TodayAnswer; date: string }) {
   const collected = formatPaise(day.totals.collectedMinor);
-  const methods = moneyParts(day.totals).map((p) => t(`money.${p.key}`, { amount: formatPaise(p.minor) }));
+  const methods = moneyParts(day.totals).map((p) => ({ key: p.key, text: t(`money.${p.key}`, { amount: formatPaise(p.minor) }) }));
   const due = day.totals.unpaidMinor;
+  const DueIcon = due > 0 ? Clock : CircleCheck;
   return (
     <section className="money-line" aria-label={t('money.label')}>
-      <p className="money-main">{date === istToday() ? t('money.collectedToday', { amount: collected }) : t('money.collectedOn', { date: formatDay(date), amount: collected })}</p>
-      {methods.length > 0 && <p className="money-methods">{methods.join(' · ')}</p>}
-      <p className={due > 0 ? 'money-due money-due--warn' : 'money-due'}>{t('money.toCollect', { amount: formatPaise(due) })}</p>
+      <p className="money-main"><HandCoins className="money-main__icon" size={28} aria-hidden="true" />{date === istToday() ? t('money.collectedToday', { amount: collected }) : t('money.collectedOn', { date: formatDay(date), amount: collected })}</p>
+      {/* WQ60: each method a chip with its icon; the words read as before ("Cash ₹320 · Wallet ₹500"). */}
+      {methods.length > 0 && (
+        <p className="money-methods">
+          {methods.map((m, i) => {
+            const Icon = METHOD_ICON[m.key] ?? HandCoins;
+            return (
+              <Fragment key={m.key}>
+                {i > 0 && <span className="j-sr-only"> · </span>}
+                <span className={`money-chip money-chip--${m.key}`}><Icon size={18} aria-hidden="true" />{m.text}</span>
+              </Fragment>
+            );
+          })}
+        </p>
+      )}
+      <p className={due > 0 ? 'money-due money-due--warn' : 'money-due money-due--clear'}><DueIcon size={20} aria-hidden="true" />{t('money.toCollect', { amount: formatPaise(due) })}</p>
       {/* r38b: what was returned that day, on its own line (collected stays as received). */}
       {(day.totals.refundedMinor ?? 0) > 0 && (
         <p className="money-refunded">{date === istToday() ? t('money.refundedToday', { amount: formatPaise(day.totals.refundedMinor!) })
@@ -132,6 +154,40 @@ export function MoneyLine({ day, date }: { day: TodayAnswer; date: string }) {
     </section>
   );
 }
+
+/** WQ60: how each payment method is drawn. */
+const METHOD_ICON: Partial<Record<PaymentMethodKey, LucideIcon>> = {
+  cash: Banknote, upi: Smartphone, card: CreditCard, bank: Landmark, wallet: Wallet, online: Globe, other: HandCoins,
+};
+
+/**
+ * WQ60: what waits, by urgency (an icon and a colour, the words unchanged): `now` someone is waiting or stock is out,
+ * `money` money to take, `work` the day's work.
+ */
+const PENDING_LOOK: Record<string, { icon: LucideIcon; urgency: 'now' | 'money' | 'work' }> = {
+  prescriptionsToReview: { icon: ClipboardList, urgency: 'now' },
+  consultationsWaiting: { icon: Stethoscope, urgency: 'now' },
+  toCheckIn: { icon: UserCheck, urgency: 'now' },
+  lowStock: { icon: PackageX, urgency: 'now' },
+  unpaidCounterSales: { icon: Receipt, urgency: 'money' },
+  bookingsAwaiting: { icon: Hourglass, urgency: 'money' },
+  bookingsAwaitingPayment: { icon: Hourglass, urgency: 'money' },
+  consultations: { icon: Stethoscope, urgency: 'money' },
+  labBookings: { icon: FlaskConical, urgency: 'money' },
+  deskUnbilled: { icon: ReceiptText, urgency: 'money' },
+  unpaidBills: { icon: Wallet, urgency: 'money' },
+  samplesToCollect: { icon: TestTube, urgency: 'work' },
+  reportsDue: { icon: FileText, urgency: 'work' },
+  reportsToUpload: { icon: Upload, urgency: 'work' },
+  reportsToRelease: { icon: Send, urgency: 'work' },
+  labReportsReady: { icon: FileText, urgency: 'work' },
+  reportsReady: { icon: FileText, urgency: 'work' },
+  appointmentsToday: { icon: CalendarClock, urgency: 'work' },
+  toConfirm: { icon: CalendarCheck, urgency: 'work' },
+  appointmentsToConfirm: { icon: CalendarCheck, urgency: 'work' },
+  prescriptionsToWrite: { icon: NotebookPen, urgency: 'work' },
+};
+const pendingLook = (id: string) => PENDING_LOOK[id] ?? { icon: CircleAlert, urgency: 'work' as const };
 
 type PendingLine = { id: string; text: string; to: string | null; failed?: boolean };
 /** What is waiting in lines, in the desk's order, each with where it is done (r37c: bookings waiting for payment, by kind). */
@@ -188,11 +244,16 @@ export function PendingStrip({ day, desk }: { day: TodayAnswer; desk: FrontDesk 
   const lines = pendingLines(day, desk);
   return (
     <div className="pending-strip" aria-label={t('pending.title')} role="group">
-      {lines.length === 0 ? <span className="ws-muted">{t('pending.none')}</span>
-        : lines.map((x) => (x.to === null
-          // WQ55b: a line this person cannot open is plain text, not a pill that looks tappable.
-          ? <span key={x.id} className={x.failed ? 'pending-item pending-item--failed' : 'pending-item pending-item--plain'}>{x.text}</span>
-          : <Link key={x.id} className="pending-item" to={x.to}>{x.text}</Link>))}
+      {lines.length === 0 ? <span className="pending-none"><CircleCheck size={20} aria-hidden="true" />{t('pending.none')}</span>
+        : lines.map((x) => {
+          const look = pendingLook(x.id);
+          const Icon = x.failed ? CircleAlert : look.icon;
+          const body = <><Icon size={20} aria-hidden="true" />{x.text}</>;
+          return x.to === null
+            // WQ55b: a line this person cannot open is plain text, not a pill that looks tappable.
+            ? <span key={x.id} className={x.failed ? 'pending-item pending-item--failed' : `pending-item pending-item--plain pending-item--${look.urgency}`}>{body}</span>
+            : <Link key={x.id} className={`pending-item pending-item--${look.urgency}`} to={x.to}>{body}</Link>;
+        })}
     </div>
   );
 }
@@ -272,7 +333,7 @@ export function oneRowPerVisit(items: readonly TodayItem[]): { rows: TodayItem[]
 export function Register({ items, date, desk, unbilled }: { items: readonly TodayItem[]; date: string; desk: TodayDesk; unbilled?: readonly string[] }) {
   if (items.length === 0) return <Empty title={t('register.none')}>{t('register.noneText')}</Empty>;
   const { rows, billOf } = oneRowPerVisit(items);
-  const paidBadge = (method: string | null | undefined) => <Badge tone="ok">{method ? t('register.paidBy', { method: methodWords(method) ?? '' }) : t('register.paid')}</Badge>;
+  const paidBadge = (method: string | null | undefined) => <Badge tone="ok" icon={CircleCheck}>{method ? t('register.paidBy', { method: methodWords(method) ?? '' }) : t('register.paid')}</Badge>;
   return (
     <ul className="register" aria-label={t('register.caption')}>
       {rows.map((i) => {
@@ -289,12 +350,14 @@ export function Register({ items, date, desk, unbilled }: { items: readonly Toda
             <span className="register-pay">
               <span className="register-amount">{formatPaise(i.amountMinor)}</span>{' '}
               {/* WQ55c: an ended booking says how it ended; a bill paid in part says so. */}
-              {(i.kind === 'lab_booking' || i.kind === 'appointment') && i.status === 'cancelled' ? <Badge>{t('register.cancelled')}</Badge>
-                : (i.kind === 'lab_booking' || i.kind === 'appointment') && i.status === 'no_show' ? <Badge>{t('register.noShow')}</Badge>
-                : (i.kind === 'bill' ? i.status : bill?.status) === 'partly_paid' && !i.paid ? <Badge tone="warn">{t('register.partPaid')}</Badge>
+              {/* WQ60: every status its own icon and colour (Paid, To collect, No bill yet, Cancelled…). */}
+              {(i.kind === 'lab_booking' || i.kind === 'appointment') && i.status === 'cancelled' ? <Badge tone="neutral" icon={CircleX}>{t('register.cancelled')}</Badge>
+                : (i.kind === 'lab_booking' || i.kind === 'appointment') && i.status === 'no_show' ? <Badge tone="neutral" icon={UserX}>{t('register.noShow')}</Badge>
+                : (i.kind === 'bill' ? i.status : bill?.status) === 'partly_paid' && !i.paid ? <Badge tone="warn" icon={CircleDashed}>{t('register.partPaid')}</Badge>
                 : i.paid ? paidBadge(i.method ?? bill?.method)
-                : isDeskRow(i) ? <Badge tone="warn">{unbilled?.includes(i.id) ? t('register.noBill') : bill ? t('register.billUnpaid') : t('register.onBill')}</Badge>
-                : <Badge tone="warn">{t('register.unpaid')}</Badge>}
+                : isDeskRow(i) ? (unbilled?.includes(i.id) ? <Badge tone="info" icon={ReceiptText}>{t('register.noBill')}</Badge>
+                  : <Badge tone="warn" icon={Clock}>{bill ? t('register.billUnpaid') : t('register.onBill')}</Badge>)
+                : <Badge tone="warn" icon={Clock}>{t('register.unpaid')}</Badge>}
               {i.paidToday && i.madeOn && i.madeOn !== date && <span className="register-note">{t('register.paidTodayMade', { date: formatDay(i.madeOn) })}</span>}
             </span>
           </li>

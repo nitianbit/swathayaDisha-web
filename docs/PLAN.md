@@ -2875,6 +2875,59 @@ its Switch line (none; each + New choice keeps its own page's switch). The menu 
 that nothing is chosen for you. Word and PDF rebuilt in `~/Desktop/SwasthaDisha/Jansetu-user-guides` with
 `docs/guides/md2html.py` and `soffice` (as WQ53).
 
+## WQ60 visual redesign: colour, icons, tiles (2026-11-28, branch `wq60/visual-redesign` from web stage 0a54db1)
+
+The owner's word: "make them colourful… icons, more attractive… don't change the simple screens idea". Looks only: no
+flow, step, route, wording or button order changed, and no new words.
+
+- **Tokens.** One layer in `packages/ui/src/tokens.css`, which both apps import. It has:
+  - warm neutrals;
+  - an accent per area: pharmacy green, lab violet, clinic blue, doctor clay;
+  - status colours: ok, warn, danger, info, neutral;
+  - tile hues;
+  - a chart palette (`--chart-1…8`, based on Okabe–Ito, each ≥ 3:1 on white, plus positive, negative, pending, grid,
+    axis and text);
+  - radii, soft shadows, and a type and spacing scale.
+
+  Every text pair was checked: body ink is 14:1, and white on each area fill is ≥ 5.2:1. Control edges
+  (`--line-strong`) are ≥ 4:1 (WCAG 1.4.11). The shell's `data-area` re-points `--brand*`, so one colour follows the
+  whole area.
+- **Shared components** (`@jansetu/ui`):
+  - `Alert` draws its tone's icon.
+  - `Badge` takes an `icon`; by default it draws its tone's icon (ok a tick, warn an alert circle, danger an X, info an
+    i).
+  - `Empty` has a friendly icon above its line.
+  - `BrandMark` draws the Jansetu mark (a bridge, "setu") in the area colour, shown in the menu, the phone header and
+    both logins.
+  - lucide-react is now declared by `@jansetu/ui` (it was already a root dependency).
+- **Homes** (pharmacy, lab, clinic, doctor; the shared front desk):
+  - The big buttons are coloured tiles. The first is in the area colour; the others are sky, amber and rose, each with
+    its icon large in a white circle.
+  - The day's money is a soft green panel with a chip per payment method, each with its own icon (cash, UPI, card, bank,
+    wallet, online). "To collect" shows a clock when money is due and a tick at ₹0.
+  - What is waiting is shown with an icon and a colour by urgency: rose when someone is waiting or stock is low, amber
+    when there is money to take, blue for the day's work.
+  - Register badges each have their own icon and colour: Paid (tick, green), Not paid / Bill not paid / Pay on its bill
+    (clock, amber), No bill yet (receipt, blue), Part paid (dashed circle), Cancelled (X, grey), No-show (grey).
+  - Doctors today: a clock on an appointment and a no-entry sign on Busy.
+- **Shell:**
+  - The menu has the mark and the area band across the top.
+  - The active item is filled in the area colour, and every menu icon is tinted.
+  - The phone header buttons are tinted.
+- **Other screens:** finance and earnings tiles in soft hues; cards with soft shadows and larger radii; tinted table
+  headers; tabular numbers for money.
+- **Customer app:**
+  - The home tiles are coloured the same way.
+  - The active tab's icon sits in a pill.
+  - Cards and lists are softer.
+  - The mark appears on the login.
+- **Decided alone:**
+  - Tokens live in the shared `tokens.css` rather than in each app's stylesheet, so there is one layer for both apps.
+  - The system font is kept: no download, Devanagari covered, cheap phones.
+  - No hint lines on the big buttons: they would be new words, and the e2e checks read each tile's exact text.
+  - No dark theme.
+- **Screenshots** before and after (390 px and desktop) of every home are in `/tmp/wq60-shots`.
+
 ## WQ58b exempt follow-ups and the "lost name" check (2026-11-27, from web stage 38d3b66)
 
 - **The lost customer name was a test race, not data loss.** Traced with mount, render, input and DOM-removal logs:
@@ -3389,6 +3442,7 @@ The placeholder `POST /me/visit-requests/check` (never on the server) is gone: `
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-28 | WQ60 visual redesign | typecheck clean; Vitest 549/549 (literal scan included); the Impeccable detector found nothing in the changed files. Full workspace run through pw-slot: 1244 passed, 9 skipped, and 1 tablet timeout (records-access:158), which passed 4/4 when rerun alone. Full customer run: 282 passed. Before and after screenshots of the five homes at 390 px and desktop are in /tmp/wq60-shots. |
 | 2026-11-27 | WQ58b exempt follow-ups | typecheck clean; Vitest 549/549. The WQ58/WQ58b tests passed 18/18 (3 repeats, both projects). partner-invoices, clinic-home, clinic-desk and doctor-dashboard through pw-slot: 182 passed, 4 skipped. The lost-name report was traced to a substring label match on the bills list's search (a test race), not a form reset. |
 | 2026-11-27 | WQ58 GST-exempt consultations (r42) | typecheck clean; Vitest 549/549 (new r42 preview test). Related specs (partner-invoices, clinic-home, clinic-desk, doctor-dashboard) gave 175 passes; 3 load-timing failures passed when rerun three times with 2 workers. Customer bills 12/12. Full workspace run through pw-slot: 1241 passed, 9 skipped. Full customer run: 282 passed. New e2e: a mixed clinic bill in both apps (Exempt (SAC 9993), Exempt value, no ₹0 row); the exempt toggle; a rate above 0 sends taxable; EXEMPT_RATE_NOT_ZERO in plain words; a changed treatment refused as a price change. |
 | 2026-11-27 | WQ57d reconciled with stage fd22d0e | Stage's clinic billing fix (f115aa5) already keeps the hand-written fee unless an item names this doctor at the fee, and hides the receipt's "Create bill" sentence in a visit (`showBilling`): the WQ57d code edits were dropped; only a spec stays (a follow-up item and another doctor's item leave the fee hand-written). typecheck clean; Vitest 548/548; clinic-home and clinic-desk 71/71 + 3 skipped. |

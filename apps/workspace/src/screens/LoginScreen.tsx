@@ -3,7 +3,7 @@ import {
   ApiError, EMAIL_NOT_REGISTERED_MESSAGE, EMAIL_NOT_REGISTERED_STAFF_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, PARTNER_KIND_LABEL, parseLoginIdentifier,
   targetKey, targetKind, type OtpTarget, type PartnerSelection,
 } from '@jansetu/api';
-import { Alert, Button, LanguageSwitcher, Parts, shared, TextField, useCooldowns } from '@jansetu/ui';
+import { Alert, BrandMark, Button, LanguageSwitcher, Parts, shared, TextField, useCooldowns } from '@jansetu/ui';
 import { t } from '../i18n/shell/index.ts';
 import { BRAND } from '../Shell.tsx';
 import { messageOf } from '../errors.ts';
@@ -140,7 +140,7 @@ export function LoginScreen({ notice: codes }: { notice?: SessionNotices }) {
   return (
     <main className="login">
       <div className="login-card">
-        <div className="ws-brand login-brand">{BRAND} <span>{t('shell.workspace')}</span></div>
+        <div className="ws-brand login-brand"><BrandMark size={40} /><span className="ws-brand-name">{BRAND} <span>{t('shell.workspace')}</span></span></div>
         <LanguageSwitcher />
         <h1 id="page-title" tabIndex={-1}>{t('login.title')}</h1>
         {notice && <Alert tone="warn">{notice}</Alert>}

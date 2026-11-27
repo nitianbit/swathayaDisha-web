@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import {
   ApiError, EMAIL_NOT_REGISTERED_MESSAGE, isEmailNotRegistered, maskTarget, MAX_EMAIL, OTP_PATTERN, parseLoginIdentifier, targetKey, targetKind, type OtpTarget,
 } from '@jansetu/api';
-import { Alert, Button, LanguageSwitcher, Parts, shared, TextField, useCooldowns } from '@jansetu/ui';
+import { Alert, BrandMark, Button, LanguageSwitcher, Parts, shared, TextField, useCooldowns } from '@jansetu/ui';
 import { messageOf } from '../common.tsx';
 import { t } from '../i18n/index.ts';
 import { useSession, type SessionNotices } from '../session.tsx';
@@ -82,7 +82,7 @@ export function LoginScreen({ notice }: { notice?: SessionNotices }) {
   return (
     <main className="login">
       <div className="login-card">
-        <div className="brand">{t('common.brand')}</div>
+        <div className="brand"><BrandMark size={40} />{t('common.brand')}</div>
         <LanguageSwitcher />
         <h1 id="page-title" tabIndex={-1}>{t('login.title')}</h1>
         <p className="page-sub">{t('login.sub')}</p>

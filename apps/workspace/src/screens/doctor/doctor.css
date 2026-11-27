@@ -6,17 +6,20 @@
   min-height: 48px; padding: 0 var(--space-3); border: 2px solid var(--line); border-radius: 999px; background: var(--surface);
   color: var(--ink); font-size: 1.0625rem; font-weight: 600; flex: none; white-space: nowrap;
 }
-.chip[aria-pressed='true'] { border-color: var(--brand); background: var(--brand); color: var(--brand-ink); }
+.chip[aria-pressed='true'] { border-color: var(--brand); background: var(--brand); color: var(--brand-ink); box-shadow: var(--shadow-1); }
 .appt-list { list-style: none; padding: 0; margin: 0; }
 .appt-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); min-height: 48px; padding: var(--space-2) 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
-.appt-time { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 4.5rem; }
+.appt-time { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 4.5rem; color: var(--brand-strong); background: var(--brand-soft);
+  padding: 1px 8px; border-radius: var(--radius-sm); text-align: center; }
 .appt-who { font-weight: 600; }
 .appt-source { color: var(--muted); }
 .appt-row .j-btn { min-height: 48px; }
-.earned-line { font-size: 1.5rem; font-weight: 800; margin: 0 0 var(--space-3); }
+.earned-line { font-size: 1.625rem; font-weight: 800; margin: 0 0 var(--space-3); font-variant-numeric: tabular-nums; }
 .earn-sums { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: var(--space-3); margin: var(--space-3) 0; }
-.earn-sum { border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-3); }
-.earn-sum strong { display: block; font-size: 1.25rem; }
+.earn-sum { --tile-ink: var(--hue-sky); --tile-soft: var(--hue-sky-soft); border-radius: var(--radius-lg); padding: var(--space-4); background: var(--tile-soft); box-shadow: var(--shadow-1); }
+.earn-sum:nth-child(3n + 2) { --tile-ink: var(--hue-amber); --tile-soft: var(--hue-amber-soft); }
+.earn-sum:nth-child(3n + 3) { --tile-ink: var(--hue-violet); --tile-soft: var(--hue-violet-soft); }
+.earn-sum strong { display: block; font-size: 1.25rem; color: var(--tile-ink); font-variant-numeric: tabular-nums; }
 /* WQ56b: an appointment opened from the home or the waiting work is marked. */
 tr.appt-opened > td { background: var(--brand-soft); }
 .appt-open { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 48px; color: inherit; }
