@@ -1,15 +1,15 @@
 import './doctor.css';
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
   addDays, ApiError, appointmentStart, bookableClinics, CONSULT_MODE_LABEL, doctorDashboardApi, FOLLOW_UP_DAYS, followUpLastDay, followUpOpen, freeSlots, istToday,
-  OBJECT_ID_PATTERN, type DoctorClinicAnswer, type DoctorConsultationAnswer, type DoctorSlot, type DoctorVisitRequestKind, type MyClinics,
+  keyedBookingId, OBJECT_ID_PATTERN, type DoctorClinicAnswer, type DoctorConsultationAnswer, type DoctorSlot, type DoctorVisitRequestKind, type MyClinics,
 } from '@jansetu/api';
 import { formatClock, formatDateTime } from '@jansetu/i18n';
 import { Alert, Button, Empty, formatRupees, Loading, TextField } from '@jansetu/ui';
 import { PageHeading } from '../../PageHeading.tsx';
-import { newRequestKey, resolveStored, startOp, type PendingOp } from '../../requests.ts';
+import { newRequestKey, startOp, type PendingOp } from '../../requests.ts';
 import { useSession, useStaff } from '../../session.tsx';
 import { useFrontDesk } from '../front/desk.tsx';
 import { Failed, homeWords, todayKey } from '../front/home.tsx';
@@ -19,7 +19,7 @@ import { openBill, type BillPrefill } from '../partner/billing.tsx';
 import { feeLine } from '../partner/clinic.tsx';
 import { visitRequest } from '../partner/DeskScreen.tsx';
 import { usePartnerScope } from '../partner/scope.tsx';
-import { useOwnedOp } from '../pharmacy/ownedOp.tsx';
+import { CheckPanel, useKeyedCheck, useOwnedOp } from '../pharmacy/ownedOp.tsx';
 import { formatYmd, NotADoctor, useClinics, useDoctor, useDoctorProfile, useOwnedClinic, useTicker, type DoctorContext } from './doctor.tsx';
 import { t } from '../../i18n/doctor/index.ts';
 
@@ -106,59 +106,64 @@ function SendBar({ once, label, onSend }: { once: Pick<Once, 'busy' | 'refused'>
   );
 }
 
+/**
+ * A booking whose answer was lost: Send again (the same booking, the same key), Check whether it was booked (r41: by its
+ * key) and Give it up (the key can then never book) — after a reload too, when its details are no longer here to send.
+ */
 function ResumeBooking({ d, kind, once, visit }: {
   d: DoctorContext; kind: DoctorVisitRequestKind; once: Pick<Once, 'open' | 'busy' | 'resend'>; visit?: VisitPatient;
 }) {
-  if (once.busy) return <Loading />;
-  if (once.open && (once.open.restored || !once.open.body)) {
-    return <RestoredBooking d={d} kind={kind} requestKey={once.open.requestKey} />;
-  }
-  if (once.open) {
-    return (
-      <div className="ws-section" role="alert">
-        {visit && <VisitPatientLine patient={visit} canChange={false} />}
-        <Alert tone="warn">{once.open.error ? t('visit.uncertain', { reason: once.open.error }) : t('visit.unconfirmed')}</Alert>
-        <div className="ws-actions">
-          <Button onClick={once.resend}>{t('visit.sendAgain')}</Button>
-          <Link className="j-btn j-btn--secondary" to="/doctor/appointments">{t('visit.checkAppointments')}</Link>
-        </div>
-      </div>
-    );
-  }
-  return null;
+  if (once.busy && !once.open) return <Loading />;
+  if (!once.open) return null;
+  const restored = !!once.open.restored || !once.open.body;
+  return (
+    <div className="ws-section">
+      {visit && !restored && <VisitPatientLine patient={visit} canChange={false} />}
+      <KeyedBooking d={d} kind={kind} restored={restored} resend={restored ? undefined : { busy: once.busy, onClick: once.resend }} />
+    </div>
+  );
 }
 
-/** The original key can be checked even when the patient details are no longer in memory. */
-function RestoredBooking({ d, kind, requestKey }: { d: DoctorContext; kind: DoctorVisitRequestKind; requestKey: string }) {
-  const { memory } = useSession();
+/** The stored booking of `kind`, checked or given up by its key (`useKeyedCheck`); what was found is said with a link. */
+function KeyedBooking({ d, kind, restored, resend }: {
+  d: DoctorContext; kind: DoctorVisitRequestKind; restored: boolean; resend?: { busy: boolean; onClick: () => void };
+}) {
   const dash = useDash();
-  const check = useMutation({
-    mutationFn: () => dash.checkVisitRequest(kind, requestKey),
-    onSuccess: ({ appointmentId }) => {
-      if (appointmentId) resolveStored(memory, visitSlot(d, kind), requestKey);
+  const queryClient = useQueryClient();
+  const { op, settle } = useOwnedOp<unknown>(visitSlot(d, kind));
+  const [outcome, setOutcome] = useState<{ found: string | null } | 'givenUp' | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const keyed = useKeyedCheck(settle, { byKey: (key) => dash.bookingByKey(kind, key), abandon: (key) => dash.abandonBooking(kind, key) }, {
+    found: (r) => {
+      setOutcome({ found: keyedBookingId(r) });
+      void queryClient.invalidateQueries({ queryKey: [...d.key, 'dash'] });
+      void queryClient.invalidateQueries({ queryKey: [...d.key, 'appointments'] });
     },
+    givenUp: () => setOutcome('givenUp'),
+    notYet: (wasRestored) => (wasRestored ? t('visit.notYetRestored') : t('visit.notYet')),
+    cannotGiveUp: () => setNote(t('visit.cannotGiveUp')),
+    failed: (err) => setNote(refusalWords(err)),
   });
-  if (check.data?.appointmentId) {
+  if (outcome === 'givenUp') {
+    return <Alert tone="ok">{t('visit.givenUp')} <Link to="/doctor/new">{t('visit.startNew')}</Link></Alert>;
+  }
+  if (outcome) {
     return (
       <Alert tone="ok">
         {t('visit.found')}
-        <div className="ws-actions">
-          <Link className="j-btn j-btn--secondary" to={`/doctor/appointments?open=${check.data.appointmentId}`}>{t('visit.openAppointment')}</Link>
-        </div>
+        {outcome.found && <div className="ws-actions"><Link className="j-btn j-btn--secondary" to={`/doctor/appointments?open=${outcome.found}`}>{t('visit.openAppointment')}</Link></div>}
       </Alert>
     );
   }
+  if (!op) return null;
   return (
-    <Alert tone="warn">
-      {t('visit.afterReload')}
-      {check.isSuccess && <p>{t('visit.stillUnknown')}</p>}
-      {check.isError && <p>{check.error instanceof ApiError && check.error.status === 404
-        ? t('visit.checkUnavailable') : homeWords(check.error)}</p>}
-      <div className="ws-actions">
-        <Button busy={check.isPending} onClick={() => check.mutate()}>{t('visit.checkByKey')}</Button>
-        <Link className="j-btn j-btn--secondary" to="/doctor/appointments">{t('visit.checkAppointments')}</Link>
-      </div>
-    </Alert>
+    <CheckPanel label={t('visit.unconfirmedLabel')} onCheck={() => keyed.check(op)}
+      resend={resend ? { label: t('visit.sendAgain'), busy: resend.busy, onClick: resend.onClick } : undefined}
+      giveUp={{ label: t('visit.giveUp'), busy: keyed.givingUp, onClick: () => void keyed.giveUp(op, (run) => run()) }}>
+      <Alert tone="warn">{restored ? t('visit.afterReload') : op.error ? t('visit.uncertain', { reason: op.error }) : t('visit.unconfirmed')}</Alert>
+      {note && <Alert>{note}</Alert>}
+      <p><Link to="/doctor/appointments">{t('visit.checkAppointments')}</Link></p>
+    </CheckPanel>
   );
 }
 
@@ -432,7 +437,7 @@ export function DoctorFollowUpScreen() {
   const pending = memory.get<PendingOp<FollowUpChoice>>(visitSlot(d, 'follow-up'));
   if (pending) {
     if (pending.restored || !pending.body) {
-      return <VisitPage title={t('visit.followUp.title')}><RestoredBooking d={d} kind="follow-up" requestKey={pending.requestKey} /></VisitPage>;
+      return <VisitPage title={t('visit.followUp.title')}><KeyedBooking d={d} kind="follow-up" restored /></VisitPage>;
     }
     const parentId = pending.body.parentId;
     return <VisitPage title={t('visit.followUp.title')}><FollowUp key={`${d.identity}:${parentId}`} d={d} parentId={parentId} visit={null} /></VisitPage>;

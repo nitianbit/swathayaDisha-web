@@ -289,8 +289,8 @@ export type { ClinicPendingKey, LabPendingKey, PaymentMethodKey, PendingKey, Tod
 // WQ56 (P2): the doctor's single dashboard (backend r39): one appointment list, his clinic and online bookings, the breakdown.
 export { DOCTOR_PENDING_KEYS } from './pharmacyToday.ts';
 export type { DoctorPendingKey } from './pharmacyToday.ts';
-export { APPOINTMENT_SOURCES, bookableClinics, byPartner, doctorDashboardApi, FOLLOW_UP_DAYS, followUpLastDay, followUpOpen, freeSlots, MAX_LIST_DAYS, ownedClinic } from './doctorDashboard.ts';
+export { APPOINTMENT_SOURCES, bookableClinics, byPartner, doctorDashboardApi, keyedBookingId, FOLLOW_UP_DAYS, followUpLastDay, followUpOpen, freeSlots, MAX_LIST_DAYS, ownedClinic } from './doctorDashboard.ts';
 export type {
   AppointmentListQuery, AppointmentSource, BreakdownQuery, DoctorClinicAnswer, DoctorClinicBooking, DoctorConsultationAnswer, DoctorConsultationNew,
-  DoctorDashboardApi, DoctorFollowUp, DoctorPatientRequest, DoctorVisitRequestKind, EarningChannel, EarningsBreakdown, EarningSum, ListedAppointment,
+  DoctorDashboardApi, DoctorFollowUp, DoctorKeyedBooking, DoctorPatientRequest, DoctorVisitRequestKind, EarningChannel, EarningsBreakdown, EarningSum, ListedAppointment,
 } from './doctorDashboard.ts';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createApiClient } from './client.ts';
-import { bookableClinics, doctorDashboardApi, followUpLastDay, followUpOpen, freeSlots, ownedClinic } from './doctorDashboard.ts';
+import { bookableClinics, doctorDashboardApi, keyedBookingId, followUpLastDay, followUpOpen, freeSlots, ownedClinic } from './doctorDashboard.ts';
 import type { DoctorSlot, MyClinics } from './doctorTools.ts';
 import { partnerBillingApi, partnerWorkspaceApi } from './index.ts';
 import { todayApi, todayLink, todayOf } from './pharmacyToday.ts';
@@ -56,14 +56,25 @@ describe('WQ56 doctor dashboard (r39)', () => {
     expect(() => d.bookClinic({ clinicId: 'x', slotId: SLOT, requestKey: KEY, customer: { phone: '9876543210' } })).toThrow();
     expect(() => d.bookConsultation({ slotId: SLOT, mode: 'call', requestKey: 'short', customer: { phone: '9876543210' } })).toThrow();
     await expect(d.appointments({ from: '2026-02-30' })).rejects.toThrow();
-    expect(() => d.checkVisitRequest('online', 'short')).toThrow();
+    expect(() => d.bookingByKey('online', 'short')).toThrow();
+    expect(() => d.abandonBooking('clinic', 'bad/key')).toThrow();
     expect(calls).toEqual([]);
   });
 
-  it('checks a restored booking by posting only its kind and request key', async () => {
-    const { c, calls } = client(() => json(200, { success: true, data: { appointmentId: PARENT } }));
-    await expect(doctorDashboardApi(c).checkVisitRequest('follow-up', KEY)).resolves.toEqual({ appointmentId: PARENT });
-    expect(calls).toEqual([{ url: '/api/v1/specialists/me/visit-requests/check', method: 'POST', body: { kind: 'follow-up', requestKey: KEY } }]);
+  it('r41: a booking is found or given up by its key, on the create it was sent to', async () => {
+    const { c, calls } = client((x) => json(200, { success: true, data: x.method === 'GET'
+      ? { state: 'used', booking: { bookingId: PARENT, status: 'confirmed' } } : { state: 'abandoned' } }));
+    const d = doctorDashboardApi(c);
+    const found = await d.bookingByKey('clinic', KEY);
+    expect(keyedBookingId(found)).toBe(PARENT);
+    expect(keyedBookingId({ state: 'used', booking: { _id: CLINIC } })).toBe(CLINIC);
+    expect(keyedBookingId(await d.abandonBooking('follow-up', KEY))).toBeNull();
+    await d.bookingByKey('online', KEY);
+    expect(calls.map((x) => `${x.method} ${x.url.replace(/^.*\/api\/v1/, '')}`)).toEqual([
+      `GET /specialists/me/clinic-appointments/by-key/${KEY}`,
+      `POST /specialists/me/consultations/by-key/${KEY}/abandon`,
+      `GET /specialists/me/consultations/by-key/${KEY}`,
+    ]);
   });
 
   it('his Today and private to-dos are /specialists/me; a row opens his pages; earnedMinor is kept', async () => {

@@ -33,7 +33,8 @@ interface Backend {
   loseFollowUp?: boolean;
   loseBooking?: 'clinic' | 'online';
   delayConfirmation?: boolean;
-  receiptUnavailable?: boolean;
+  /** WQ56c: the next booking's connection drops before it reaches the server (nothing is recorded). */
+  dropBeforeServer?: boolean;
   billReadFails?: boolean;
   billCursor?: string;
 }
@@ -80,6 +81,7 @@ async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean; 
   let seq = 10;
   let followUp: { key: string; answer: Rec } | undefined;
   const recorded = new Map<string, string>();
+  const abandoned = new Set<string>();
   await page.route('**/api/v1/**', async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -123,9 +125,22 @@ async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean; 
           ...(b.owner ? { unpaidBills: { count: 0, ids: [] } } : {}) } });
     }
     if (p === '/patients/lookup') return ok(route, { exists: true, holderNameMasked: 'A*** D***' });
-    if (p === '/visit-requests/check' && method === 'POST') {
-      if (b.receiptUnavailable) return json(route, 404, { error: 404, message: 'Not found' });
-      return ok(route, { appointmentId: b.delayConfirmation ? null : recorded.get(`${body?.kind}:${body?.requestKey}`) ?? null });
+    // r41: a booking's key looked up, or given up, on the create it was sent to.
+    const keyed = /^\/(clinic-appointments|consultations)\/by-key\/([A-Za-z0-9_-]+)(\/abandon)?$/.exec(p);
+    if (keyed) {
+      const key = keyed[2]!;
+      const made = keyed[1] === 'clinic-appointments' ? recorded.get(`clinic:${key}`) : recorded.get(`online:${key}`) ?? recorded.get(`follow-up:${key}`);
+      if (abandoned.has(key)) return ok(route, { state: 'abandoned' });
+      if (made && !b.delayConfirmation) return ok(route, { state: 'used', booking: { bookingId: made, status: 'confirmed' } });
+      if (keyed[3] && !made) { abandoned.add(key); return ok(route, { state: 'abandoned' }); }
+      return ok(route, { state: 'unknown' });
+    }
+    if ((p === '/clinic-appointments' || p === '/consultations') && method === 'POST' && b.dropBeforeServer) {
+      b.dropBeforeServer = false;
+      return route.abort('failed');
+    }
+    if ((p === '/clinic-appointments' || p === '/consultations') && method === 'POST' && abandoned.has(String(body?.requestKey))) {
+      return fail(route, 409, 'REQUEST_ABANDONED', 'This request was given up');
     }
     if (p === '/clinic-appointments' && method === 'POST') {
       const x = body as { clinicId: string; branchId?: string; slotId: string; customer: { phone: string; name?: string } };
@@ -442,36 +457,55 @@ for (const kind of ['clinic', 'online', 'follow-up'] as const) {
     expect(await stored(page)).toContain(key);
     expect(await stored(page)).not.toMatch(/Asha Recovery|9876543210/);
     await page.reload();
-    await expect(page.getByText(/Its details are no longer available to send again/)).toBeVisible();
+    await expect(page.getByText(/Its details are no longer here to send again/)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Send again' })).toHaveCount(0);
     await page.getByRole('link', { name: 'Check your appointments' }).click();
     await page.getByRole('link', { name: `Continue ${kind} booking` }).click();
-    await expect(page.getByText(/Its details are no longer available to send again/)).toBeVisible();
-    if (kind === 'online') {
-      b.receiptUnavailable = true;
-      await page.getByRole('button', { name: 'Check whether it was booked' }).click();
-      await expect(page.getByText(/This server does not support checking a booking by its request key yet/)).toBeVisible();
-      expect(await stored(page)).toContain(key);
-      expect(attempts()).toHaveLength(1);
-      b.receiptUnavailable = false;
-    }
+    await expect(page.getByText(/Its details are no longer here to send again/)).toBeVisible();
+    // r41: checked by its key — not known yet (kept), then found (settled, opened).
     b.delayConfirmation = true;
-    await page.getByRole('button', { name: 'Check whether it was booked' }).click();
-    await expect(page.getByText(/could not confirm this booking yet/)).toBeVisible();
+    await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+    await expect(page.getByText(/^Nothing was booked with it so far/)).toBeVisible();
     expect(await stored(page)).toContain(key);
     b.delayConfirmation = false;
-    await page.getByRole('button', { name: 'Check whether it was booked' }).click();
+    await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
     await expect(page.getByText('We found the appointment made by this request.')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Open appointment' })).toHaveAttribute('href', `#/doctor/appointments?open=${b.rows.at(-1)!._id}`);
     expect(await stored(page)).not.toContain(key);
     expect(await stored(page)).not.toMatch(/Asha Recovery|9876543210/);
     expect(attempts()).toHaveLength(1);
-    const checks = b.calls.filter((c) => c.path === '/specialists/me/visit-requests/check');
-    expect(checks).toHaveLength(kind === 'online' ? 3 : 2);
-    expect(checks.every((call) => call.method === 'POST')).toBe(true);
-    expect(checks.map(({ body }) => body)).toEqual(checks.map(() => ({ kind, requestKey: key })));
+    const route = kind === 'clinic' ? 'clinic-appointments' : 'consultations';
+    expect(b.calls.filter((c) => c.path.includes('/by-key/')).map((c) => `${c.method} ${c.path}`))
+      .toEqual([1, 2].map(() => `GET /specialists/me/${route}/by-key/${key}`));
   });
 }
+
+test('WQ56c: a booking lost before the server, then a reload: checked by its key, given up, and booked again', async ({ page }) => {
+  const b = await mockBackend(page, { onlyOwn: true });
+  b.dropBeforeServer = true;
+  await signIn(page);
+  await newVisit(page, 'Asha Recovery');
+  await page.getByRole('navigation', { name: 'What does the patient need?' }).getByRole('link', { name: 'Online consultation (video or call)' }).click();
+  await page.getByRole('button', { name: 'Video', exact: true }).click();
+  await page.getByRole('button', { name: '13:00', exact: true }).click();
+  await page.getByRole('button', { name: /^Book.*13:00/ }).click();
+  await expect(page.getByRole('button', { name: 'Send again' })).toBeVisible();
+  const key = String(b.calls.find((c) => c.method === 'POST' && c.path === '/specialists/me/consultations')!.body!.requestKey);
+  await page.reload();
+  await page.goto('/#/doctor/new/online');
+  await expect(page.getByText(/Its details are no longer here to send again/)).toBeVisible();
+  await page.getByRole('button', { name: 'Check whether it was recorded' }).click();
+  await expect(page.getByText(/^Nothing was booked with it so far/)).toBeVisible();
+  await shot(page, 'keyed-check');
+  await page.getByRole('button', { name: 'Give it up' }).click();
+  await expect(page.getByText(/^Given up: nothing was booked/)).toBeVisible();
+  expect(b.calls.some((c) => c.method === 'POST' && c.path === `/specialists/me/consultations/by-key/${key}/abandon`)).toBe(true);
+  expect(await stored(page)).not.toContain(key);
+  // Nothing holds the doctor now: a new booking goes through.
+  await page.getByRole('link', { name: 'Go to + New' }).click();
+  await expect(page.getByRole('heading', { name: 'New' })).toBeVisible();
+  expect(b.rows.filter((r) => r.name === 'Asha Recovery')).toHaveLength(0);
+});
 
 test('a doctor who owns no clinic: no Bills button, no Bill on rows, and Doctor › Bills says so', async ({ page }) => {
   await mockBackend(page, { owner: false });

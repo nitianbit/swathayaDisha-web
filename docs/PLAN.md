@@ -3295,6 +3295,21 @@ appointments" list (the home's list is today's appointments, `doctor-dashboard.s
 WQ57d clinic follow-up. A same-price catalogue entry for a follow-up cannot replace the consultation fee. The clinic's
 visit receipt leaves billing actions to the visit flow while it waits for the booked appointment to appear.
 
+### WQ56c a lost doctor booking settled by its key (2026-11-27, branch `wq56c/doctor-keyed-check` from web stage fd22d0e; backend r41)
+
+r41 adds `GET /specialists/me/clinic-appointments/by-key/:key` and `…/me/consultations/by-key/:key` (an online consultation's
+and a follow-up's), each with `POST …/abandon`, answering `{state:'used', booking} | {state:'abandoned'} | {state:'unknown'}`.
+The placeholder `POST /me/visit-requests/check` (never on the server) is gone: `doctorDashboardApi().bookingByKey` and
+`abandonBooking`, and `keyedBookingId` for the appointment it made.
+
+- A booking whose answer was lost shows the shared check panel (`CheckPanel` + `useKeyedCheck`, as the withdrawal and the
+  set-off): Send again (while its details are here), Check whether it was recorded, Give it up, and Check your
+  appointments. After a reload (only the key is kept) it is checked or given up the same way, so it is never held for
+  ever: found, it settles with "Open appointment"; given up, nothing was or can be booked with it and + New is free again.
+- e2e: each kind (clinic, online, follow-up) lost, reloaded, checked (not known yet, kept), then found (settled, nothing
+  about the patient stored); an online booking lost before the server, reloaded, checked, given up (`…/abandon`), and
+  + New opens again.
+
 ## Follow-ups
 
 

@@ -58,6 +58,14 @@ export interface DoctorConsultationAnswer {
 /** The clinic desk's own answer (`deskView`): the appointment is that clinic's. */
 export type DoctorClinicAnswer = DeskBookingResult;
 export type DoctorVisitRequestKind = 'clinic' | 'online' | 'follow-up';
+/** r41 `…/by-key/:key[/abandon]`: the booking the key made (a desk view, or the consultation's), given up, or not known yet. */
+export type DoctorKeyedBooking =
+  | { state: 'used'; booking: { bookingId?: string; _id?: string; bookingDate?: string; bookingTime?: string; status?: string } }
+  | { state: 'abandoned' }
+  | { state: 'unknown' };
+/** The appointment a keyed booking made (its id, whichever view answered). */
+export const keyedBookingId = (a: DoctorKeyedBooking): string | null =>
+  (a.state === 'used' ? a.booking.bookingId ?? a.booking._id ?? null : null);
 
 export type EarningChannel = 'clinic' | 'online' | 'partner' | 'referral' | 'other';
 export interface EarningSum { earnedMinor: number; reversedMinor: number; netMinor: number; count: number }
@@ -72,6 +80,11 @@ const check = (ok: boolean, what: string) => {
   if (!ok) throw new Error(`Invalid ${what}`); // i18n-ignore: a programming error, the screens check first
 };
 const id = (v: string, what: string) => { check(OBJECT_ID_PATTERN.test(v), what); return v; };
+/** A clinic appointment's key is the desk create's; an online consultation's or a follow-up's is the consultation create's. */
+const keyedPath = (kind: DoctorVisitRequestKind, requestKey: string) => {
+  check(REQUEST_KEY_PATTERN.test(requestKey), 'request key');
+  return `${ME}/${kind === 'clinic' ? 'clinic-appointments' : 'consultations'}/by-key/${requestKey}`;
+};
 const date = (v: string | undefined) => { check(v === undefined || isRealDate(v), 'date'); return v; };
 
 export function doctorDashboardApi(c: ApiClient) {
@@ -100,10 +113,13 @@ export function doctorDashboardApi(c: ApiClient) {
       return c.post<DoctorConsultationAnswer>(`${ME}/consultations`, { body: b });
     },
     /** Exact confirmation for a request restored after reload. A null record leaves the outcome unknown. */
-    checkVisitRequest: (kind: DoctorVisitRequestKind, requestKey: string) => {
-      check(REQUEST_KEY_PATTERN.test(requestKey), 'request key');
-      return c.post<{ appointmentId: string | null }>(`${ME}/visit-requests/check`, { body: { kind, requestKey } });
-    },
+    /**
+     * r41: what a booking's request key made (`used`, with the booking), whether it was given up (`abandoned`, it can never
+     * book), or `unknown` (nothing with it yet): a clinic appointment's key, or an online consultation's or follow-up's.
+     */
+    bookingByKey: (kind: DoctorVisitRequestKind, requestKey: string) => c.get<DoctorKeyedBooking>(keyedPath(kind, requestKey)),
+    /** r41: gives a booking's key up on the server (answers `abandoned`), unless it already booked (answers `used`). */
+    abandonBooking: (kind: DoctorVisitRequestKind, requestKey: string) => c.post<DoctorKeyedBooking>(`${keyedPath(kind, requestKey)}/abandon`, { body: {} }),
     /** The earnings summary with its `breakdown` for the period and filter (r39b: only when asked, `breakdown=1`). */
     finance: (q: BreakdownQuery = {}) => {
       date(q.from); date(q.to);
