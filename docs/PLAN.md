@@ -2865,6 +2865,16 @@ desk; nothing copied).
   Known numbers stay read-only, and the server checks that the number belongs to the appointment's account holder.
 - **Menu:** a clinic's Today needs a clinic register reader (`partnerPermissionsByKind`: its bookings or its bills).
 
+## WQ59 user guides for the simple homes (2026-11-27, from web stage 68fe44d)
+
+The pharmacy, lab, clinic and doctor guides (`docs/guides/*-guide.md`) gain, after Sign in: the phone's Home and Menu,
+"Your home" (each big button, the money lines, what waits, the register, who sees what), "+ New" step by step with a
+worked tap path (pharmacy: medicines in cash; lab: a walk-in CBC in cash, 12 taps; clinic: a walk-in with Dr Kavya in cash,
+9 taps; doctor: a clinic or online appointment), "Today" and "To-dos" (shared at a counter, private for a doctor), each with
+its Switch line (none; each + New choice keeps its own page's switch). The menu tables gain Home and Today; payments say
+that nothing is chosen for you. Word and PDF rebuilt in `~/Desktop/SwasthaDisha/Jansetu-user-guides` with
+`docs/guides/md2html.py` and `soffice` (as WQ53).
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
