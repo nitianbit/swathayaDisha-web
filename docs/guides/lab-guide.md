@@ -17,12 +17,65 @@ Some pages work only after Jansetu switches them on. Each section ends with a **
 
 A new lab opens once Jansetu has verified it. Until then Home says it "is waiting for verification by Jansetu".
 
+On a phone, **Home** and **Menu** are the two buttons at the top. Tap **Menu** for every other page; it closes when you open one.
+
+## Your home
+
+Home is your front desk. The big buttons depend on what you are allowed to do:
+
+| Button | What it does | Needs |
+|---|---|---|
+| **+ New** | Start a visit: the patient first, then what they need | Front desk, booking a doctor or making bills |
+| **Find patient** | The same first step | as + New |
+| **New bill** | A new bill | Making bills |
+| **Today** | Everything of the day | Lab bookings, bills or booking a doctor |
+
+If you may do none of these, Home says **Ask the lab owner to allow them**.
+
+Under the buttons:
+
+- **Collected today ₹…** with the ways money came in (cash, UPI, card, bank), **To collect ₹…**, and **Refunded today ₹…** when there was a refund.
+- **Waiting for you**: samples to collect today, reports to upload and to release, walk-ins without a bill, unpaid bills, doctor bookings waiting for payment, consultations waiting. A line you cannot open is plain text.
+- **Today's register**: the latest 10 entries. A walk-in and its bill show as one line, for example **Meena Iyer: CBC · ₹300.00 · Paid (cash)**. **Pay on its bill**, **Bill not paid** or **No bill yet** tell you what is left to do.
+- **My to-dos** (see below).
+
+**Switch:** none for Home, Today and to-dos. Each choice under + New needs the switch of its own page (below).
+
+## + New: a walk-in, step by step
+
+1. Tap **+ New**. Type the patient's **mobile number** and tap **Find**. The page says whether the number is on Jansetu.
+2. Tap **This person** (type the name) or **Someone else (family member)** (name and relation). Tap **Next**.
+3. Choose **Lab test at the desk**, **Home collection**, **Book a doctor** or **Bill**. Home collection appears only if one of your branches collects at home.
+4. The front desk opens with the patient filled in. Tick **Patient agreed to this booking** and tap **Next: choose the tests**. The patient shrinks to one line: **Patient: Meena · ✓ agreed [Change details]**.
+5. Tick the tests and tap **Book for ₹…**. The booking is made at once and its bill opens, with the tests already on it.
+6. Tap **Issue bill for ₹…**, tap how they paid (**Cash**, **UPI**, **Card** or **Bank**; nothing is chosen for you), then **Record ₹… paid**, then **Done**.
+
+**Example: a walk-in CBC paid in cash, 12 taps:** + New → **Find** → **This person** → **Next** → **Lab test at the desk** → tick the agreement → **Next: choose the tests** → tick **CBC** → **Book for ₹300.00** → **Issue bill for ₹300.00** → **Cash** → **Record ₹300.00 paid**. With two branches, choose the branch the first time (13 taps); the next walk-in starts at the branch you used last.
+
+If you tap **Home** before issuing the bill, the page asks **Leave without a bill? The walk-in stays unbilled.** Tap **Stay** to finish it.
+
+**Messages in: English [Change]** is the language of the patient's messages.
+
+## Today
+
+The whole day, newest first, 50 at a time. Pick another **Day**; **Search the day** finds a visit by name, phone (4 or more digits), reference or test.
+
+**Switch:** none.
+
+## To-dos
+
+At the bottom of Home. Type a to-do and tap **Add**; tick it when done. Everyone at your lab sees the same list (a member limited to some branches sees those branches' to-dos).
+
+**Switch:** none.
+
 ## Where is what
 
 **Owners** see every page. **Staff** see the pages their permissions allow. The owner gives permissions on **Staff**.
 
 | Menu (section) | What is there | Staff need |
 |---|---|---|
+| Home | Your front desk: big buttons, today's money and register, to-dos | everyone |
+| Today | Every entry of a day, with search | View bookings, Manage bookings, Upload or Release reports, a bills permission, or Book consultations |
 | Profile (Organisation) | Your lab's details and contact | everyone |
 | Staff (Organisation) | Add staff and give permissions | Manage staff |
 | Branches (Organisation) | Addresses, services, opening hours | Manage branches |
@@ -67,7 +120,7 @@ Bills made at your counter, newest first.
 2. Add items **From the catalogue** (your tests and packages), or **Add a line by hand**.
 3. Tap **Review the bill**, then **Issue bill**.
 
-On a bill: **Record payment**, **Cancel bill**, **Open PDF**.
+On a bill: **Record payment** (choose how it was paid; nothing is chosen for you), **Cancel bill** (choose how any money was returned), **Open PDF**.
 
 **Switch:** none.
 

@@ -337,6 +337,20 @@ test('Find patient by name: today’s appointments (also one booked on an earlie
     appointmentId: '81'.padEnd(24, '0'), customer: { name: 'Asha Rao', phone: '9800000001' } });
 });
 
+test('the fee stays hand-written when no consultation item names this doctor (a follow-up, another doctor’s)', async ({ page }) => {
+  const b = await mockBackend(page);
+  const item = (id: string, name: string): Rec => ({ _id: id.repeat(12), partnerId: CLINIC, kind: 'consultation', name, priceMinor: 50000, gstRate: 0, isActive: true, adminDisabled: false });
+  b.catalogue = [item('e1', 'Follow-up consultation'), item('e2', 'Consultation · Dr Rao')];
+  await signIn(page);
+  await newVisit(page, { self: 'Meena Iyer' });
+  await choices(page).getByRole('link', { name: 'Appointment now (walk-in)' }).click();
+  await page.getByRole('group', { name: 'Which branch?' }).getByRole('button', { name: /MG Road/ }).click();
+  await page.getByRole('button', { name: 'Book Dr Kavya at 10:15, MG Road' }).click();
+  await expect(page.getByRole('list', { name: 'Items' })).toHaveText(/^Consultation · Dr Kavya · ₹500\.00$/);
+  // In a visit the receipt points to no list row: the buttons are the way.
+  await expect(page.getByText('Create bill', { exact: false })).toHaveCount(0);
+});
+
 test('a server without the clinic lookup yet (404): + New goes on, the number typed twice', async ({ page }) => {
   const b = await mockBackend(page);
   b.noLookup = true;

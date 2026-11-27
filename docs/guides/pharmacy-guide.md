@@ -15,12 +15,59 @@ Some pages work only after Jansetu switches them on. Each section ends with a **
 3. Type the **6-digit code** and tap **Verify and sign in**.
 
 Only the Jansetu team adds a pharmacy or changes its mobile number. Your menu is on the left, under **Pharmacy**. **Sign out** is at the bottom.
+On a phone, **Home** and **Menu** are the two buttons at the top. Tap **Menu** for every other page; it closes when you open one.
+
+## Your home
+
+Home is your counter. At the top are four big buttons:
+
+| Button | What it does |
+|---|---|
+| **+ New** | Start a visit: the patient first, then what they need |
+| **Find patient** | The same first step, to find someone and see today's visits |
+| **Sell medicines** | Open New sale |
+| **Today** | Everything of the day |
+
+Under them:
+
+- **Collected today ₹…**: money received today. The next line shows only the ways money came in (cash, UPI, card, wallet). **To collect ₹…** is money still owed by patients (in orange when it is more than ₹0). A refund made today has its own line.
+- **Waiting for you**: prescriptions to review, unpaid sales, doctor bookings and lab tests waiting for payment, lab reports ready, medicines low in stock. Tap a line to open it.
+- **Today's register**: the latest 10 entries, newest first, each with its time, the patient, what it was, the amount and whether it is paid. Tap an entry to open it. **See all of today** opens the Today page.
+- **My to-dos** (see below).
+
+**Switch:** none for Home, Today and to-dos. Each choice under + New needs the switch of its own page (below).
+
+## + New: a visit, step by step
+
+1. Tap **+ New**. Type the patient's **mobile number** (or a name) and tap **Find**.
+2. The page says **This number is on Jansetu**, with the owner's name partly hidden, or **This number is new to Jansetu**.
+3. Tap **This person** and type their name. Or tap **Someone else (family member)** for a child or parent who uses this phone: type their name and the relation. For a new number, type the number again.
+4. Tap **Next**. Choose what they need: **See a doctor now (video)**, **Book a doctor for later**, **Book a lab test** or **Sell medicines**.
+5. That page opens with the patient already filled in (**Patient: Asha Demo · 98…**). Tick **Patient agreed to this booking** and carry on. **Change** goes back to step 1 with the number kept.
+
+**Same patient again** (small, under the number box) appears for 30 minutes after a visit, for a second thing for the same person.
+
+**Example, medicines in cash:** + New → number → **Find** → **This person** → name → **Next** → **Sell medicines** → tick the agreement → find the medicine → **Add** → **Next: check the sale** → **Create sale** → **Cash** → **Mark paid** → **Yes, it is paid** → **Done**.
+
+## Today
+
+The whole day's register, newest first, 50 at a time (**Show more**). Pick another **Day** to see an earlier day. **Search the day** finds a visit by name, phone (4 or more digits) or reference. The money and waiting lines are the same as on Home.
+
+**Switch:** none.
+
+## To-dos
+
+At the bottom of Home. Type a to-do and tap **Add**; tick it when done. Everyone at your pharmacy sees the same list, with who added each one.
+
+**Switch:** none.
+
 
 ## Where is what
 
 | Menu | What is there |
 |---|---|
-| Home | A link to every page |
+| Home | Your counter: big buttons, today's money and register, to-dos |
+| Today | Every entry of a day, with search |
 | New sale | Sell medicines at your counter |
 | Orders | Orders from the app and from your counter |
 | Prescription review | Orders waiting for a pharmacist's check |
@@ -41,7 +88,7 @@ Sell medicines at the counter.
 1. **Customer**: choose **A customer of your pharmacy** and search by name or phone. Or choose **Walk-in customer** and type the name and mobile number. Tick that the customer agreed to be added.
 2. **Medicines**: use **Find a medicine in your stock** and set each quantity. You can attach a prescription photo or PDF.
 3. Tap **Next: check the sale**, then **Create sale**.
-4. Under **Payment at the counter**, choose **Cash** or **UPI** and tap **Mark paid**.
+4. Under **Payment at the counter**, tap how they paid (**Cash**, **UPI** or **Card**; nothing is chosen for you), then **Mark paid**.
 
 If a medicine needs a prescription, the pharmacist approves it first (**Review the prescription**). After the sale you can print the bill or start a new sale.
 

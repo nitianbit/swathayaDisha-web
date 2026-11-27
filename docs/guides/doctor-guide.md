@@ -15,6 +15,48 @@ Some pages work only after Jansetu switches them on. Each section ends with a **
 3. Type the **6-digit code** and tap **Verify and sign in**.
 
 Your first sign-in with a new mobile number creates your doctor account. Patients can book you, and you can take instant consultations, once Jansetu has verified you. **Home** shows **Verified** or **Waiting for verification**.
+On a phone, **Home** and **Menu** are the two buttons at the top. Tap **Menu** for every other page; it closes when you open one.
+
+## Your home
+
+Home is your whole day in one place. At the top are the big buttons **+ New**, **Find patient**, **Today**, and **Bills** (only when you own a clinic that is verified).
+
+Under them:
+
+- **Today's appointments** in time order, from every place: your clinics, online, and those booked for you by pharmacies and labs. The chips **All**, each clinic, **Online** and **Booked by partners** filter the list. When today is empty, your next appointment is shown.
+- **Waiting for you**: prescriptions to write, appointments waiting, lab reports ready, unpaid bills. Tap a line to open it.
+- **Earned today ₹…**, and your own clinic's money when it has bills that day.
+- At your own clinic, a desk appointment's row has **Bill**: it opens the short bill with your fee on it.
+- **My to-dos**: only you see them.
+
+If Jansetu has not verified you yet, Home shows your status and your to-dos only.
+
+**Switch:** none for Home, Today and to-dos.
+
+## + New: book for a patient
+
+1. Tap **+ New**. Type the patient's **mobile number** and tap **Find**. The page says whether the number is on Jansetu.
+2. Tap **This person** or **Someone else (family member)**, then **Next**.
+3. Choose **Clinic appointment**, **Online consultation (video or call)**, **Lab test** or **Follow-up**.
+   - **Clinic appointment**: tap the clinic, a day and a free time, then **Book 17:00 on Fri, 27 Nov, 2026 at …**. It appears in that clinic's reception list; the patient pays at the clinic.
+   - **Online consultation**: tap **Video** or the phone call, a day and a free time, then **Book …**. The patient pays in the Jansetu app within 30 minutes.
+   - **Lab test**: your Book lab test page, with the patient filled in.
+   - **Follow-up**: your completed consultations with that number in the last 14 days.
+
+If a booking's answer is lost, **Send again** sends the same request; **Check whether it was booked** looks it up.
+
+## Today
+
+The whole day, newest first, with search by name, phone (4 or more digits) or reference.
+
+**Switch:** none.
+
+## To-dos
+
+At the bottom of Home. Type a to-do and tap **Add**; tick it when done. Your to-dos are private: only you see them.
+
+**Switch:** none.
+
 
 ## Where is what
 
@@ -22,7 +64,8 @@ Your menu is on the left, under **Doctor**.
 
 | Menu | What is there |
 |---|---|
-| Home | Your status, offers waiting, next appointments |
+| Home | Your day: big buttons, today's appointments, what waits, earnings, to-dos |
+| Today | Every entry of a day, with search |
 | Consult now | Go online and accept instant consultations |
 | Appointments | Your consultations; a patient's records |
 | Schedule | Weekly hours and leave days |
