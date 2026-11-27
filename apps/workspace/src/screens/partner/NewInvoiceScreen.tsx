@@ -331,6 +331,8 @@ export const wholeWords = (name: string) => new RegExp(`(^|[^\\p{L}\\p{M}\\p{N}]
 
 const offeredById = (catalogue: readonly CatalogueItem[], id: string) => catalogue.find((i) => i._id === id && i.isActive && !i.adminDisabled);
 
+const FOLLOW_UP_ITEM = /\bfollow[\s\p{Pd}]*up\b/iu;
+
 /** A bill line from a catalogue item (its name, price and GST rate kept; only quantity and discount change). */
 const catalogueLine = (it: CatalogueItem): LineDraft => ({
   key: lineKey(), item: { _id: it._id, name: it.name, priceMinor: it.priceMinor, gstRate: it.gstRate, sac: it.sac },
@@ -350,9 +352,9 @@ function InvoiceForm({ partner, branches, catalogue, doctors, doctorsError, busy
         return it ? [catalogueLine(it)] : [];
       }), ...(prefill.handLines ?? []).map((l): LineDraft => {
         // Only a catalogue line that names this doctor and matches the booked fee can replace the hand line.
-        const named = l.doctor ? wholeWords(l.doctor) : null;
+        const named = l.doctor?.trim() ? wholeWords(l.doctor) : null;
         const item = named && catalogue.find((i) => i.kind === 'consultation' && i.isActive && !i.adminDisabled
-          && i.priceMinor === l.priceMinor && named.test(i.name.normalize('NFC')));
+          && i.priceMinor === l.priceMinor && !FOLLOW_UP_ITEM.test(i.name) && named.test(i.name.normalize('NFC')));
         return item ? catalogueLine(item)
           : { key: lineKey(), description: l.description, sac: '', qty: '1', price: paiseToInput(l.priceMinor), discount: '', gstRate: '0' };
       })] }

@@ -495,6 +495,7 @@ export default {
   /** An online consultation he booked: the patient has not paid in the app yet. */
   'dash.payInApp': 'Waiting for the patient to pay in the app',
   'dash.bill': 'Bill',
+  'dash.checkingBill': 'Checking for a bill…',
   /** A bill already made for that appointment (opens it). */
   'dash.billed': 'Billed',
   'dash.billPaid': 'Paid',
@@ -519,6 +520,7 @@ export default {
   'visit.afterReload': 'The page was reloaded while this booking was waiting for confirmation. Its details are no longer available to send again.',
   'visit.checkByKey': 'Check whether it was booked',
   'visit.stillUnknown': 'The server could not confirm this booking yet. Check again before making another booking.',
+  'visit.checkUnavailable': 'This server does not support checking a booking by its request key yet. Use Appointments to look for the booking. This request is still open.',
   'visit.found': 'We found the appointment made by this request.',
   'visit.openAppointment': 'Open appointment',
   'visit.resume.clinic': 'Continue clinic booking',

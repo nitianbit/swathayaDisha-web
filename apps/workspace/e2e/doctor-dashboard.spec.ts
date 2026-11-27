@@ -33,6 +33,8 @@ interface Backend {
   loseFollowUp?: boolean;
   loseBooking?: 'clinic' | 'online';
   delayConfirmation?: boolean;
+  receiptUnavailable?: boolean;
+  billReadFails?: boolean;
 }
 
 const at = (time: string) => new Date(`${DAY}T${time}:00+05:30`).toISOString();
@@ -121,6 +123,7 @@ async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean; 
     }
     if (p === '/patients/lookup') return ok(route, { exists: true, holderNameMasked: 'A*** D***' });
     if (p === '/visit-requests/check' && method === 'POST') {
+      if (b.receiptUnavailable) return json(route, 404, { error: 404, message: 'Not found' });
       return ok(route, { appointmentId: b.delayConfirmation ? null : recorded.get(`${body?.kind}:${body?.requestKey}`) ?? null });
     }
     if (p === '/clinic-appointments' && method === 'POST') {
@@ -186,7 +189,12 @@ async function mockBackend(page: Page, o: { owner?: boolean; nonSolo?: boolean; 
       if (!b.owner) return fail(route, 404, 'CLINIC_NOT_FOUND', 'Clinic not found');
       const sub = p.slice('/clinic'.length);
       if (sub === '/catalogue') return ok(route, []);
-      if (sub === '/invoices' && method === 'GET') return ok(route, b.bills, 200, { pagination: { total: b.bills.length, nextCursor: null } });
+      if (sub === '/invoices' && method === 'GET') {
+        const appointmentId = url.searchParams.get('appointmentId');
+        if (appointmentId && b.billReadFails) return fail(route, 503, 'UNAVAILABLE', 'Bills are temporarily unavailable');
+        const rows = appointmentId ? b.bills.filter((i) => i.appointmentId === appointmentId) : b.bills;
+        return ok(route, rows, 200, { pagination: { total: rows.length, nextCursor: null } });
+      }
       if (sub === '/invoices' && method === 'POST') {
         const x = body as { branchId: string; appointmentId?: string; customer: Rec; items: Rec[]; idempotencyKey: string; doctorId?: string };
         const total = x.items.reduce((n, l) => n + (l.unitPriceMinor as number) * (l.qty as number), 0);
@@ -321,10 +329,12 @@ test('an online consultation: the patient pays in the Jansetu app within 30 minu
 
 test('he bills the account holder for a family visit at the non-solo clinic he owns', async ({ page }) => {
   const b = await mockBackend(page, { nonSolo: true });
-  Object.assign(b.rows[0]!, { dependentId: bid(50), customer: { phone: PHONE, name: null }, bill: null });
+  Object.assign(b.rows[0]!, { dependentId: bid(50), customer: { phone: PHONE, name: null }, bill: undefined });
   await signIn(page);
   // Only his own clinic's appointment has Bill (Demo Care's reception bills its own).
   await expect(list(page).getByRole('button', { name: 'Bill' })).toHaveCount(1);
+  expect(b.calls.filter((c) => c.path.startsWith('/specialists/me/clinic/invoices?')).map((c) => c.path))
+    .toEqual([`/specialists/me/clinic/invoices?appointmentId=${bid(1)}&limit=25`]);
   await list(page).getByRole('listitem').filter({ hasText: 'Ravi Demo' }).getByRole('button', { name: 'Bill' }).click();
   await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
   await expect(page.getByLabel('Mobile number', { exact: true })).toHaveValue(PHONE);
@@ -354,9 +364,15 @@ test('he bills the account holder for a family visit at the non-solo clinic he o
 
 test('an earlier paid bill stays attached to today’s visit even when the register has no bill for today', async ({ page }) => {
   const b = await mockBackend(page);
-  Object.assign(b.rows[0]!, { bill: { invoiceId: bid(51), number: 51, serial: 'DSKIN/2627/0051', state: 'paid' } });
+  b.rows[0]!.bill = undefined;
+  b.billReadFails = true;
+  b.bills.push({ _id: bid(51), appointmentId: bid(1), lifecycleState: 'paid', issuedAt: '2026-11-25T04:00:00.000Z', paidMinor: 70000 });
   await signIn(page);
   const own = list(page).getByRole('listitem').filter({ hasText: 'Ravi Demo' });
+  await expect(own.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+  await expect(own.getByRole('button', { name: 'Bill', exact: true })).toHaveCount(0);
+  b.billReadFails = false;
+  await own.getByRole('button', { name: 'Try again', exact: true }).click();
   await expect(own.getByRole('link', { name: 'Paid', exact: true })).toHaveAttribute('href', `#/doctor/clinic/invoices/${bid(51)}`);
   await expect(own.getByRole('button', { name: 'Bill', exact: true })).toHaveCount(0);
 });
@@ -417,6 +433,14 @@ for (const kind of ['clinic', 'online', 'follow-up'] as const) {
     await page.getByRole('link', { name: 'Check your appointments' }).click();
     await page.getByRole('link', { name: `Continue ${kind} booking` }).click();
     await expect(page.getByText(/Its details are no longer available to send again/)).toBeVisible();
+    if (kind === 'online') {
+      b.receiptUnavailable = true;
+      await page.getByRole('button', { name: 'Check whether it was booked' }).click();
+      await expect(page.getByText(/This server does not support checking a booking by its request key yet/)).toBeVisible();
+      expect(await stored(page)).toContain(key);
+      expect(attempts()).toHaveLength(1);
+      b.receiptUnavailable = false;
+    }
     b.delayConfirmation = true;
     await page.getByRole('button', { name: 'Check whether it was booked' }).click();
     await expect(page.getByText(/could not confirm this booking yet/)).toBeVisible();
@@ -428,9 +452,10 @@ for (const kind of ['clinic', 'online', 'follow-up'] as const) {
     expect(await stored(page)).not.toContain(key);
     expect(await stored(page)).not.toMatch(/Asha Recovery|9876543210/);
     expect(attempts()).toHaveLength(1);
-    expect(b.calls.filter((c) => c.path === '/specialists/me/visit-requests/check').map(({ body }) => body)).toEqual([
-      { kind, requestKey: key }, { kind, requestKey: key },
-    ]);
+    const checks = b.calls.filter((c) => c.path === '/specialists/me/visit-requests/check');
+    expect(checks).toHaveLength(kind === 'online' ? 3 : 2);
+    expect(checks.every((call) => call.method === 'POST')).toBe(true);
+    expect(checks.map(({ body }) => body)).toEqual(checks.map(() => ({ kind, requestKey: key })));
   });
 }
 

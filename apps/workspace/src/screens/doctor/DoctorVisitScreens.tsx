@@ -152,7 +152,8 @@ function RestoredBooking({ d, kind, requestKey }: { d: DoctorContext; kind: Doct
     <Alert tone="warn">
       {t('visit.afterReload')}
       {check.isSuccess && <p>{t('visit.stillUnknown')}</p>}
-      {check.isError && <p>{homeWords(check.error)}</p>}
+      {check.isError && <p>{check.error instanceof ApiError && check.error.status === 404
+        ? t('visit.checkUnavailable') : homeWords(check.error)}</p>}
       <div className="ws-actions">
         <Button busy={check.isPending} onClick={() => check.mutate()}>{t('visit.checkByKey')}</Button>
         <Link className="j-btn j-btn--secondary" to="/doctor/appointments">{t('visit.checkAppointments')}</Link>

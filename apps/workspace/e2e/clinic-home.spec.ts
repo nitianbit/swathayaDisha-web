@@ -26,6 +26,7 @@ type Rec = Record<string, unknown>;
 interface Me { _id: string; partnerId: string; name: string; role: 'owner' | 'staff'; permissions: string[]; branchIds: string[] }
 interface Backend { calls: { method: string; path: string; body: Rec | null }[]; me: Me; live: boolean; appts: Rec[]; register: Rec[]; bills: Rec[]; todayForbidden?: boolean;
   catalogue?: Rec[];
+  hideBookedRows?: boolean;
   /** A server without r40d's lookup (404, no code). */
   noLookup?: boolean }
 
@@ -101,7 +102,7 @@ async function mockBackend(page: Page, me: Me = owner): Promise<Backend> {
     if (sub === '/clinic/appointments' && method === 'GET') {
       const from = q.get('from')!; const to = q.get('to')!; const doc = q.get('doctorId');
       const inDay = (iso: string) => iso >= at(from, '00:00') && iso < at(to, '23:59');
-      return json(route, 200, { success: true, data: b.appts.filter((a) => !doc || a.doctorId === doc),
+      return json(route, 200, { success: true, data: b.hideBookedRows ? [] : b.appts.filter((a) => !doc || a.doctorId === doc),
         busy: busy.filter((x) => (!doc || x.doctorId === doc) && inDay(x.from)) });
     }
     if (sub === '/clinic/appointments' && method === 'POST') {
@@ -296,7 +297,12 @@ test('an appointment for later never offers a time when the doctor is busy elsew
   await expect(times.getByRole('button')).toHaveText(['11:00', '11:30']);
   await expect(page.getByText('Times when the doctor is busy elsewhere are not shown.')).toBeVisible();
   await times.getByRole('button', { name: '11:30' }).click();
+  b.hideBookedRows = true;
   await page.getByRole('button', { name: 'Book Dr Kavya at 11:30, MG Road' }).click();
+  await expect(page.getByText('The appointment is booked. Its details could not be read yet.')).toBeVisible();
+  await expect(page.getByText(/Make its bill with.*in the day list/)).toHaveCount(0);
+  b.hideBookedRows = false;
+  await page.getByRole('button', { name: 'Make the bill', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
   expect(books(b)[0]).toMatchObject({ slotId: slotId(D1, BR1, NEXT, '11:30') });
   // Today names the appointment's day (it is not today's).
@@ -306,7 +312,10 @@ test('an appointment for later never offers a time when the doctor is busy elsew
 
 test('Find patient by name: today’s appointments (also one booked on an earlier day)', async ({ page }) => {
   const b = await mockBackend(page);
-  b.catalogue = [{ _id: 'ab'.repeat(12), kind: 'consultation', name: 'Consultation · Dr Kavyan', priceMinor: 50000, gstRate: 0, isActive: true }];
+  b.catalogue = [
+    { _id: 'ab'.repeat(12), kind: 'consultation', name: 'Consultation · Dr Kavyan', priceMinor: 50000, gstRate: 0, isActive: true },
+    { _id: 'ac'.repeat(12), kind: 'consultation', name: 'Follow-up · Dr Kavya', priceMinor: 50000, gstRate: 0, isActive: true },
+  ];
   b.appts.push({ bookingId: '81'.padEnd(24, '0'), bookingDate: '20261126', bookingTime: '10:30', status: 'confirmed', doctorId: D1, doctorName: 'Dr Kavya', branchId: BR1,
     fee: 500, payAtClinic: true, source: 'desk', paidOnline: false, patient: { name: 'Asha Rao', phone: '9800000001', dependentId: null }, bill: null });
   await signIn(page);
@@ -322,6 +331,7 @@ test('Find patient by name: today’s appointments (also one booked on an earlie
   await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
   await expect(page.getByRole('list', { name: 'Items' })).toContainText('Consultation · Dr Kavya · ₹500.00');
   await expect(page.getByRole('list', { name: 'Items' })).not.toContainText('Dr Kavyan');
+  await expect(page.getByRole('list', { name: 'Items' })).not.toContainText('Follow-up');
   await page.getByRole('button', { name: 'Issue bill for ₹500.00' }).click();
   expect(b.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/invoices')!.body).toMatchObject({
     appointmentId: '81'.padEnd(24, '0'), customer: { name: 'Asha Rao', phone: '9800000001' } });

@@ -344,7 +344,7 @@ function DeskDay({ ctx, visit }: { ctx: ScopeContext; visit: VisitPatient | null
         {gaveUp && !pending && <Alert tone="ok">{gaveUp}</Alert>}
         {receipt ? (
           <>
-            <Receipt ctx={ctx} receipt={receipt} memory={memory} row={rows.find((r) => r.bookingId === receipt.booking.bookingId)} />
+            <Receipt ctx={ctx} receipt={receipt} memory={memory} row={bookedRow} showBilling={false} />
             {!holdsAny(ctx.actor, ['invoices.create']) ? <Link className="j-btn j-btn--primary" to="/">{t('desk.visit.done')}</Link>
               // WQ57c: the bill waits for the booked row; when it cannot be read (or is not there yet), say so and read it again.
               : !bookedRow && (list.isError ? <ErrorState message={messageOf(list.error)} onRetry={() => void list.refetch()} />
@@ -647,7 +647,9 @@ interface ReceiptView {
  * never from what this device remembers: after a reload the details are gone. Until the row is read, the receipt points
  * to the row's "Create bill".
  */
-function Receipt({ ctx, receipt, memory, row }: { ctx: ScopeContext; receipt: ReceiptView; memory: SessionMemory; row?: ClinicAppointment }) {
+function Receipt({ ctx, receipt, memory, row, showBilling = true }: {
+  ctx: ScopeContext; receipt: ReceiptView; memory: SessionMemory; row?: ClinicAppointment; showBilling?: boolean;
+}) {
   const b = receipt.booking;
   // WQ57b: the server's patient (the booked row read back), never the names typed for the booking.
   const name = row?.patient?.name ?? receipt.family?.name ?? t('desk.thePatient');
@@ -662,9 +664,9 @@ function Receipt({ ctx, receipt, memory, row }: { ctx: ScopeContext; receipt: Re
       {' '}{t('desk.receipt.fee', { fee: formatRupees(b.fee ?? 0) })}
       {receipt.created ? <> {t('desk.receipt.created')}</> : null}
       {' '}{t('desk.receipt.notified')}
-      {row?.patient?.phone ? null : holdsAny(ctx.actor, ['invoices.create']) ? <>{' '}{t('desk.receipt.makeBill')}</> : null}
+      {showBilling && !row?.patient?.phone && holdsAny(ctx.actor, ['invoices.create']) && <>{' '}{t('desk.receipt.makeBill')}</>}
       {/* WQ57: the next step is the bill (the main button, the doctor's fee on it). */}
-      {row?.patient?.phone && <div className="ws-actions"><BillLink ctx={ctx} memory={memory} prefill={prefillOf(row)} className="j-btn j-btn--primary" /></div>}
+      {showBilling && row?.patient?.phone && <div className="ws-actions"><BillLink ctx={ctx} memory={memory} prefill={prefillOf(row)} className="j-btn j-btn--primary" /></div>}
     </Alert>
   );
 }

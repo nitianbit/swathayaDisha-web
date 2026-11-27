@@ -14,7 +14,7 @@ import { useFrontDesk, type FrontDesk } from '../front/desk.tsx';
 import { BigActions, Failed, MoneyLine, PendingStrip, todayKey, Todos } from '../front/home.tsx';
 import { openBill } from '../partner/billing.tsx';
 import { feeLine } from '../partner/clinic.tsx';
-import { usePartnerScope } from '../partner/scope.tsx';
+import { usePartnerScope, type ScopeContext } from '../partner/scope.tsx';
 import { offersKey, rupeesOf, useClinics, useDoctor, useDoctorProfile, useOwnedClinic, useUpcomingAppointments, type DoctorContext } from './doctor.tsx';
 import { appointmentLabel } from './AppointmentsScreen.tsx';
 import { useDoctorPresence } from './presence.tsx';
@@ -122,13 +122,12 @@ function sourceWords(a: ListedAppointment): string {
 }
 
 function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
-  const { api, memory } = useSession();
+  const { api } = useSession();
   const dash = useMemo(() => doctorDashboardApi(api), [api]);
   const day = istToday();
   const clinics = useClinics(d);
   const { owned } = useOwnedClinic(d.user.id);
   const ctx = usePartnerScope();
-  const navigate = useNavigate();
   const list = useQuery({ queryKey: [...d.key, 'dash', 'list', day], queryFn: () => dash.appointments({ from: day, to: day }), staleTime: 0, refetchOnMount: 'always' });
   const reg = useQuery({ queryKey: [...todayKey(desk, day), 'doctor-day'], queryFn: () => wholeDay(desk, day), staleTime: 0, refetchOnMount: 'always' });
   const next = useUpcomingAppointments(d, 14);
@@ -166,9 +165,6 @@ function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
               const time = at ? formatClock(at.getTime()) : a.bookingTime;
               const name = names.get(a._id.toLowerCase()) ?? null;
               const deskRow = a.clinicDesk;
-              const bill = a.bill?.state === 'cancelled' ? null : a.bill;
-              // His own clinic's desk appointment: he makes its bill here (the short bill) unless it was cancelled or billed.
-              const billable = !!ctx && !!deskRow && deskRow.partnerId.toLowerCase() === ownId && a.bill !== undefined && a.status !== 'cancelled';
               return (
                 <li key={a._id} className="appt-row">
                   {/* The row opens the appointment (join, mark done, records) on Appointments. */}
@@ -179,16 +175,8 @@ function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
                   <span className="appt-source">{sourceWords(a)}</span>
                   <Badge tone={a.status === 'pending' ? 'warn' : a.status === 'confirmed' || a.status === 'completed' ? 'ok' : undefined}>{APPOINTMENT_STATUS_LABEL[a.status] ?? a.status}</Badge>
                   {a.status === 'pending' && a.paymentStatus !== 'paid' && a.source === 'doctor_assisted' && <span className="ws-muted">{t('dash.payInApp')}</span>}
-                  {billable && bill && (
-                    <Link className="j-btn j-btn--secondary" to={`/doctor/clinic/invoices/${bill.invoiceId}`}>{bill.state === 'paid' ? t('dash.billPaid') : t('dash.billed')}</Link>
-                  )}
-                  {billable && !bill && deskRow && (
-                    // The bill is the account holder's (r39c `customer`; until then the bill asks the mobile it was booked with).
-                    <Button variant="secondary" onClick={() => openBill(ctx!, memory, { link: { kind: 'appointment', id: a._id }, branchId: deskRow.branchId, doctorId: d.user.id,
-                      name: a.customer?.name ?? (a.dependentId ? '' : name ?? ''), phone: a.customer?.phone ?? '', label: name ? `${time} · ${name}` : time, simple: true,
-                      ...(a.price ? { handLines: [feeLine(d.user.name, a.price)] } : {}) }, navigate)}>
-                      {t('dash.bill')}
-                    </Button>
+                  {ctx?.scope.kind === 'doctor' && deskRow && deskRow.partnerId.toLowerCase() === ownId && a.status !== 'cancelled' && (
+                    <AppointmentBillAction ctx={ctx} d={d} appointment={a} branchId={deskRow.branchId} name={name} time={time} />
                   )}
                 </li>
               );
@@ -198,5 +186,46 @@ function TodayAppointments({ d, desk }: { d: DoctorContext; desk: FrontDesk }) {
       {list.data?.truncated && <Alert tone="warn">{t('dash.truncated')}</Alert>}
       <p><Link to="/doctor/appointments">{t('doctorHome.allAppointments')}</Link></p>
     </section>
+  );
+}
+
+/** r39c does not attach bill state to appointment rows. Its invoice filter works across issue dates. */
+async function findAppointmentBill(ctx: ScopeContext, appointmentId: string) {
+  let cursor: string | undefined;
+  do {
+    const page = await ctx.billing.invoices({ appointmentId, limit: 25, cursor });
+    const bill = page.items.find((invoice) => invoice.appointmentId?.toLowerCase() === appointmentId.toLowerCase()
+      && invoice.lifecycleState !== 'cancelled');
+    if (bill) return { invoiceId: bill._id, state: bill.lifecycleState };
+    cursor = page.nextCursor ?? undefined;
+  } while (cursor);
+  return null;
+}
+
+function AppointmentBillAction({ ctx, d, appointment: a, branchId, name, time }: {
+  ctx: ScopeContext; d: DoctorContext; appointment: ListedAppointment; branchId: string; name: string | null; time: string;
+}) {
+  const { memory } = useSession();
+  const navigate = useNavigate();
+  const linked = useQuery({
+    queryKey: [...ctx.key, 'invoices', 'appointment', a._id],
+    queryFn: () => findAppointmentBill(ctx, a._id),
+    enabled: a.bill === undefined,
+    retry: false,
+    staleTime: 0,
+  });
+  const bill = a.bill === undefined ? linked.data : a.bill;
+  if (a.bill === undefined && linked.isError) return <Failed error={linked.error} onRetry={() => void linked.refetch()} />;
+  if (bill === undefined || (a.bill === undefined && linked.isFetching)) return <Loading label={t('dash.checkingBill')} />;
+  if (bill && bill.state !== 'cancelled') {
+    return <Link className="j-btn j-btn--secondary" to={`/doctor/clinic/invoices/${bill.invoiceId}`}>{bill.state === 'paid' ? t('dash.billPaid') : t('dash.billed')}</Link>;
+  }
+  return (
+    <Button variant="secondary" onClick={() => openBill(ctx, memory, {
+      link: { kind: 'appointment', id: a._id }, branchId, doctorId: d.user.id,
+      name: a.customer?.name?.trim() || (a.dependentId ? '' : name ?? ''), phone: a.customer?.phone ?? '',
+      label: name ? `${time} · ${name}` : time, simple: true,
+      ...(a.price ? { handLines: [feeLine(d.user.name, a.price)] } : {}),
+    }, navigate)}>{t('dash.bill')}</Button>
   );
 }

@@ -3272,10 +3272,14 @@ appointments" list (the home's list is today's appointments, `doctor-dashboard.s
 - Clinic billing follows the clinic verified by the billing API. A family visit's bill uses the account holder's name and
   phone. When a detail is missing, the form asks for it before issuing the bill. The appointment response shows the current
   linked bill even if it was made or paid on an earlier day. A cancelled bill permits a replacement.
+  On backend stage `eb0548d6`, which omits the bill field, the web checks the doctor's scoped invoice list by appointment
+  without a date filter. Bill creation waits for that check, and a failed read offers Try again.
 - A booking whose answer was lost retains its request key and original details in session memory. The doctor can check
   Appointments and continue the same booking upon return. A full reload keeps only the request key. Check whether it was
   booked looks up that exact request, opens the matching appointment when found and releases the old request. An inconclusive
   answer keeps the request open.
+  Backend stage `eb0548d6` does not yet expose the exact request check. The web directs the doctor to Appointments and
+  retains the request key when the server cannot perform the check.
 - The doctor chooses a clinic even if only one is offered. The Bills menu explains which workspace to use when the
   doctor owns several clinics, and a failed appointment or clinic read offers Try again.
 - Follow-up uses the date the server granted. Doctor-created desk bookings identify who booked them. Rows and single
@@ -3284,8 +3288,11 @@ appointments" list (the home's list is today's appointments, `doctor-dashboard.s
   (month to date) and use the same range after an edit.
 - Verification for `e12cca6` with clinic stage `a65c5a4` merged. Type check, 548 unit tests and both same-origin
   builds passed. The focused doctor run passed 97 cases with one planned skip. The full workspace run passed 1233
-  cases with nine planned skips. Independent source reviews approved the web and backend. The paired stage update
-  awaits the isolated database run for backend `39d9a74`.
+  cases with nine planned skips. Independent source reviews approved the web and backend. Backend `39d9a74` is the
+  local follow-up that supplies exact request confirmation after reload.
+
+WQ57d clinic follow-up. A same-price catalogue entry for a follow-up cannot replace the consultation fee. The clinic's
+visit receipt leaves billing actions to the visit flow while it waits for the booked appointment to appear.
 
 ## Follow-ups
 
