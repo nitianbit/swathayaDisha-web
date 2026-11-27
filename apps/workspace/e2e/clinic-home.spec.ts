@@ -35,10 +35,12 @@ const staff = (branchIds: string[], ...permissions: string[]): Me => ({ _id: STA
 const slotId = (d: string, b: string, date: string, time: string) => `5${d.slice(1, 2)}${b.slice(1, 2)}${date.replace(/-/g, '')}${time.replace(':', '')}`.padEnd(24, '0');
 const at = (date: string, time: string) => new Date(Date.parse(`${date}T${time}:00+05:30`)).toISOString();
 
-async function mockBackend(page: Page, me: Me = owner): Promise<Backend> {
+async function mockBackend(page: Page, me: Me = owner, opts: { regular?: boolean } = {}): Promise<Backend> {
   await page.clock.setFixedTime(NOW);
   const b: Backend = { calls: [], me, live: false, appts: [], register: [], bills: [] };
-  const partner = { _id: CLINIC, kind: 'clinic', name: 'Sunrise Clinic', contact: { phone: '9000000008' }, verification: { state: 'verified' }, taxRegime: 'unregistered',
+  const partner = { _id: CLINIC, kind: 'clinic', name: 'Sunrise Clinic', contact: { phone: '9000000008' }, verification: { state: 'verified' },
+    // WQ58b: a GST-registered clinic (regular, Maharashtra) where a test asks for one.
+    ...(opts.regular ? { taxRegime: 'regular', gstin: '27ABCDE1234F1Z5' } : { taxRegime: 'unregistered' }),
     invoiceSeries: { prefix: 'SC' }, activeOwnerCount: 1, isActive: true };
   const branches = [
     { _id: BR1, partnerId: CLINIC, name: 'MG Road', address: { line1: '1 MG Rd', city: 'Pune', state: 'Maharashtra', stateCode: '27', pincode: '411001' }, services: { inClinic: true }, isActive: true },
@@ -349,6 +351,44 @@ test('the fee stays hand-written when no consultation item names this doctor (a 
   await expect(page.getByRole('list', { name: 'Items' })).toHaveText(/^Consultation · Dr Kavya · ₹500\.00$/);
   // In a visit the receipt points to no list row: the buttons are the way.
   await expect(page.getByText('Create bill', { exact: false })).toHaveCount(0);
+});
+
+/** WQ58b: a walk-in with Dr Kavya at MG Road, straight to the short bill. */
+async function walkInBill(page: Page) {
+  await signIn(page);
+  await newVisit(page, { self: 'Meena Iyer' });
+  await choices(page).getByRole('link', { name: 'Appointment now (walk-in)' }).click();
+  await page.getByRole('group', { name: 'Which branch?' }).getByRole('button', { name: /MG Road/ }).click();
+  await page.getByRole('button', { name: 'Book Dr Kavya at 10:15, MG Road' }).click();
+  await expect(page.getByRole('heading', { name: 'New bill' })).toBeVisible();
+}
+const billLine = (b: Backend) => ((b.calls.find((c) => c.method === 'POST' && c.path === '/partner-workspace/invoices')!.body as Rec).items as Rec[])[0]!;
+
+test('WQ58b: at a GST-registered clinic the fee is exempt (SAC 9993) unless the clerk chooses Charge GST', async ({ page }) => {
+  const b = await mockBackend(page, owner, { regular: true });
+  await walkInBill(page);
+  const items = page.getByRole('list', { name: 'Items' });
+  await expect(items).toContainText('Consultation · Dr Kavya · ₹500.00');
+  await items.getByRole('button', { name: 'Charge GST' }).click();
+  await expect(items.getByLabel('GST rate')).toHaveValue('18');
+  await expect(page.getByRole('button', { name: 'Issue bill for ₹590.00' })).toBeVisible();
+  await items.getByRole('button', { name: 'Exempt from GST' }).click();
+  await expect(items.getByLabel('GST rate')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Issue bill for ₹500.00' })).toBeVisible();
+  await items.getByRole('button', { name: 'Charge GST' }).click();
+  await page.getByRole('button', { name: 'Issue bill for ₹590.00' }).click();
+  await expect(page.getByText(/^Bill SC\/2627\/0001 issued\./)).toBeVisible();
+  expect(billLine(b)).toMatchObject({ description: 'Consultation · Dr Kavya', unitPriceMinor: 50000, gstRate: 18, sac: '9993' });
+  expect(billLine(b)).not.toHaveProperty('taxTreatment');
+});
+
+test('WQ58b: a consultation item naming the doctor with no treatment (before r42) keeps the fee exempt', async ({ page }) => {
+  const b = await mockBackend(page, owner, { regular: true });
+  b.catalogue = [{ _id: 'e3'.repeat(12), partnerId: CLINIC, kind: 'consultation', name: 'Consultation · Dr Kavya', priceMinor: 50000, gstRate: 0, isActive: true, adminDisabled: false }];
+  await walkInBill(page);
+  await page.getByRole('button', { name: 'Issue bill for ₹500.00' }).click();
+  await expect(page.getByText(/^Bill SC\/2627\/0001 issued\./)).toBeVisible();
+  expect(billLine(b)).toEqual({ catalogItemId: 'e3'.repeat(12), description: 'Consultation · Dr Kavya', sac: '9993', qty: 1, unitPriceMinor: 50000, gstRate: 0, taxTreatment: 'exempt' });
 });
 
 test('a server without the clinic lookup yet (404): + New goes on, the number typed twice', async ({ page }) => {
