@@ -480,6 +480,27 @@ for (const kind of ['clinic', 'online', 'follow-up'] as const) {
   });
 }
 
+test('WQ56c (r41): giving up a booking that was in fact made answers `used`: the booking is shown, nothing is given up', async ({ page }) => {
+  const b = await mockBackend(page, { onlyOwn: true });
+  b.loseBooking = 'clinic';
+  await signIn(page);
+  await newVisit(page, 'Asha Recovery');
+  await page.getByRole('navigation', { name: 'What does the patient need?' }).getByRole('link', { name: 'Clinic appointment' }).click();
+  await page.getByRole('group', { name: 'Which clinic?' }).getByRole('button', { name: 'Dr Arjun Skin Clinic' }).click();
+  await page.getByRole('button', { name: '12:00', exact: true }).click();
+  await page.getByRole('button', { name: /^Book.*12:00/ }).click();
+  await expect(page.getByRole('button', { name: 'Give it up' })).toBeVisible();
+  const key = String(b.calls.find((c) => c.method === 'POST' && c.path === '/specialists/me/clinic-appointments')!.body!.requestKey);
+  await page.reload();
+  await page.goto('/#/doctor/new/clinic');
+  await page.getByRole('button', { name: 'Give it up' }).click();
+  await expect(page.getByText('We found the appointment made by this request.')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open appointment' })).toHaveAttribute('href', `#/doctor/appointments?open=${b.rows.at(-1)!._id}`);
+  expect(b.calls.filter((c) => c.path.includes('/by-key/')).map((c) => `${c.method} ${c.path}`))
+    .toEqual([`POST /specialists/me/clinic-appointments/by-key/${key}/abandon`]);
+  expect(await stored(page)).not.toContain(key);
+});
+
 test('WQ56c: a booking lost before the server, then a reload: checked by its key, given up, and booked again', async ({ page }) => {
   const b = await mockBackend(page, { onlyOwn: true });
   b.dropBeforeServer = true;

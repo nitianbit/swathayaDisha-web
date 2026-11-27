@@ -3307,7 +3307,7 @@ visit receipt leaves billing actions to the visit flow while it waits for the bo
 
 ### WQ56c a lost doctor booking settled by its key (2026-11-27, branch `wq56c/doctor-keyed-check` from web stage fd22d0e; backend r41)
 
-r41 adds `GET /specialists/me/clinic-appointments/by-key/:key` and `…/me/consultations/by-key/:key` (an online consultation's
+r41 (backend stage 1c597511) adds `GET /specialists/me/clinic-appointments/by-key/:key` and `…/me/consultations/by-key/:key` (an online consultation's
 and a follow-up's), each with `POST …/abandon`, answering `{state:'used', booking} | {state:'abandoned'} | {state:'unknown'}`.
 The placeholder `POST /me/visit-requests/check` (never on the server) is gone: `doctorDashboardApi().bookingByKey` and
 `abandonBooking`, and `keyedBookingId` for the appointment it made.
@@ -3318,7 +3318,9 @@ The placeholder `POST /me/visit-requests/check` (never on the server) is gone: `
   ever: found, it settles with "Open appointment"; given up, nothing was or can be booked with it and + New is free again.
 - e2e: each kind (clinic, online, follow-up) lost, reloaded, checked (not known yet, kept), then found (settled, nothing
   about the patient stored); an online booking lost before the server, reloaded, checked, given up (`…/abandon`), and
-  + New opens again.
+  + New opens again; a give-up of a booking that was in fact made answers `used` and shows it (nothing given up).
+- Checked against r41 1c597511: the paths, `{state, booking}` with `bookingId` (the desk view, or the consultation's), abandon
+  answering `used`. Typecheck, Vitest 548/548, doctor specs 159/159 (dashboard, tools, lab, wallet, records).
 
 ## Follow-ups
 
