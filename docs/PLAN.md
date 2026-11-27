@@ -3273,7 +3273,8 @@ appointments" list (the home's list is today's appointments, `doctor-dashboard.s
   phone. When a detail is missing, the form asks for it before issuing the bill. The appointment response shows the current
   linked bill even if it was made or paid on an earlier day. A cancelled bill permits a replacement.
   On backend stage `eb0548d6`, which omits the bill field, the web checks the doctor's scoped invoice list by appointment
-  without a date filter. Bill creation waits for that check, and a failed read offers Try again.
+  without a date filter. Bill creation waits for a valid invoice response, and a failed read offers Try again. A
+  continuation cursor must match the server's timestamp-and-ID format before the web sends it.
 - A booking whose answer was lost retains its request key and original details in session memory. The doctor can check
   Appointments and continue the same booking upon return. A full reload keeps only the request key. Check whether it was
   booked looks up that exact request, opens the matching appointment when found and releases the old request. An inconclusive
@@ -3286,10 +3287,10 @@ appointments" list (the home's list is today's appointments, `doctor-dashboard.s
   pending tasks open the relevant record. The next appointment appears when today is empty, and the filter chips scroll.
 - Online booking shows the fee. The earnings breakdown, statement and CSV start with the same India-date period
   (month to date) and use the same range after an edit.
-- Verification for `e12cca6` with clinic stage `a65c5a4` merged. Type check, 548 unit tests and both same-origin
-  builds passed. The focused doctor run passed 97 cases with one planned skip. The full workspace run passed 1233
-  cases with nine planned skips. Independent source reviews approved the web and backend. Backend `39d9a74` is the
-  local follow-up that supplies exact request confirmation after reload.
+- Verification for `66dc4bb` with clinic stage `a65c5a4` merged and the `eb0548d6` stage backend contract. Type check,
+  548 unit tests and both same-origin builds passed. The focused doctor and reception run passed 10 cases. The full
+  workspace run passed 621 desktop and 612 tablet cases, with nine planned skips. Independent source review approved
+  the web candidate. Backend `39d9a74` is the local follow-up that supplies exact request confirmation after reload.
 
 WQ57d clinic follow-up. A same-price catalogue entry for a follow-up cannot replace the consultation fee. The clinic's
 visit receipt leaves billing actions to the visit flow while it waits for the booked appointment to appear.
