@@ -86,10 +86,10 @@ export {
   allowedGstRates, catalogueAdminApi, chargesGst, classifyDocument, customerGstinProblem, DOCUMENT_KIND_LABEL, GST_RATES,
   dueOf, INVOICE_PHONE_PATTERN, INVOICE_STATE_LABEL, INVOICE_STATES, invoicePdfName, MAX_PAYMENT_SPLITS, paidOf, paymentProblem, takesPayment, ITEM_KINDS_FOR, ITEM_REQUEST_KEY_PATTERN, usesVisitModes, MAX_BILL_MINOR, MAX_CANCEL_REASON, MAX_CATALOGUE_SEARCH, MAX_CODE, MAX_DESCRIPTION,
   MAX_ITEM_NAME, MAX_LINE_DESCRIPTION, MAX_LINES, MAX_NOTE, MAX_PREPARATION, MAX_PRICE_MINOR, MAX_QTY, MAX_REFERENCE, MAX_SAC,
-  MAX_SAMPLE_TYPE, paiseToInput, paiseToRupees, partnerBillingApi, PAYMENT_MODES, previewInvoice, registrationProblem,
+  MAX_SAMPLE_TYPE, paiseToInput, paiseToRupees, partnerBillingApi, PAYMENT_MODES, previewInvoice, TAX_TREATMENTS, EXEMPT_HEALTHCARE_SAC, registrationProblem,
   rupeesToPaise, STATE_CODE_PATTERN, taxRateProblem,
 } from './partnerInvoices.ts';
-export type {
+export type { TaxTreatment,
   CatalogueItem, CatalogueItemKind, CatalogueItemUpdate, CatalogueKeyAbandon, ClinicDoctor, DocumentKind, GstRate, Invoice, InvoiceCustomer, InvoiceEvent,
   InvoiceGender, InvoiceLine, InvoicePaymentMode, InvoicePreview, InvoiceQuery, InvoiceState, InvoiceSupplier, InvoiceTotals,
   LinePreview, NewCatalogueItem, NewInvoice, NewInvoiceLine, PaymentAnswer, PaymentInput, PaymentSplit, RefundInput, SupplierTax, VisitMode,

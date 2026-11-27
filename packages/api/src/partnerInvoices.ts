@@ -65,6 +65,8 @@ export interface CatalogueItem {
   mrpMinor?: number;
   gstRate: GstRate;
   sac?: string;
+  /** r42: absent = taxable. A clinic's 0% consultation is exempt with SAC 9993. */
+  taxTreatment?: TaxTreatment;
   /** Labs only (clinic items have none). */
   visitModes?: VisitMode[];
   reportTatHours?: number;
@@ -79,6 +81,15 @@ export interface CatalogueItem {
   createRequestKey?: string;
 }
 
+/**
+ * r42 (§26.25): a line or item's GST treatment: `taxable` (as before; absent means taxable) or `exempt` (a healthcare
+ * service by a clinical establishment: at 0%, shown "Exempt (SAC 9993)" on a tax invoice, never taxed).
+ */
+export type TaxTreatment = 'taxable' | 'exempt';
+export const TAX_TREATMENTS: readonly TaxTreatment[] = ['taxable', 'exempt'];
+/** r42 `EXEMPT_HEALTHCARE_SAC`: the SAC of an exempt healthcare service (a clinic's consultation fee). */
+export const EXEMPT_HEALTHCARE_SAC = '9993';
+
 /** `createCatalogueItemSchema`. */
 export interface NewCatalogueItem {
   kind: CatalogueItemKind;
@@ -92,6 +103,8 @@ export interface NewCatalogueItem {
   mrpMinor?: number;
   gstRate: GstRate;
   sac?: string;
+  /** r42: exempt only at 0% (400 `EXEMPT_RATE_NOT_ZERO`); a clinic's 0% consultation without one comes back exempt. */
+  taxTreatment?: TaxTreatment;
   /** Labs: one or more. Clinics: none. */
   visitModes?: VisitMode[];
   reportTatHours?: number;
@@ -144,6 +157,8 @@ export interface InvoiceLine {
   unitPriceMinor: number;
   discountMinor: number;
   gstRate: GstRate;
+  /** r42: `exempt` on a tax invoice's exempt line (stored only then; absent: taxable). */
+  taxTreatment?: TaxTreatment;
   /** qty × unit price − discount (the taxable value of the line). */
   amountMinor: number;
 }
@@ -151,6 +166,8 @@ export interface InvoiceTotals {
   subtotalMinor: number;
   discountMinor: number;
   taxableMinor: number;
+  /** r42: the exempt lines' value (present only when a tax invoice has one); `taxableMinor` is then the taxable lines only. */
+  exemptMinor?: number;
   cgstMinor: number;
   sgstMinor: number;
   igstMinor: number;
@@ -216,6 +233,8 @@ export interface NewInvoiceLine {
   unitPriceMinor: number;
   discountMinor?: number;
   gstRate: GstRate;
+  /** r42: absent = taxable; a linked line names none (it takes the item's). */
+  taxTreatment?: TaxTreatment;
 }
 export type InvoiceGender = 'male' | 'female' | 'other';
 /** `createInvoiceSchema`. The request key travels in the BODY (`idempotencyKey`), not in a header. */
@@ -405,7 +424,8 @@ export function previewInvoice(
   const documentKind = classifyDocument(supplier, items);
   const rateProblem = taxRateProblem(documentKind);
   const problems: string[] = [];
-  const t = { subtotalMinor: 0, discountMinor: 0, taxableMinor: 0, cgstMinor: 0, sgstMinor: 0, igstMinor: 0 };
+  const t = { subtotalMinor: 0, discountMinor: 0, taxableMinor: 0, exemptMinor: 0, cgstMinor: 0, sgstMinor: 0, igstMinor: 0 };
+  let exemptLine = false;
   const lines = items.map((item): LinePreview => {
     const discount = item.discountMinor ?? 0;
     const gross = item.unitPriceMinor * item.qty;
@@ -417,7 +437,9 @@ export function previewInvoice(
     const taxMinor = Math.round((amountMinor * item.gstRate) / 100);
     t.subtotalMinor += problem && problem !== rateProblem ? 0 : gross;
     t.discountMinor += problem && problem !== rateProblem ? 0 : discount;
-    t.taxableMinor += amountMinor;
+    // r42: on a tax invoice an exempt line's value is exempt, not taxable (it is at 0%: no tax either way).
+    if (item.taxTreatment === 'exempt' && documentKind === 'tax_invoice') { t.exemptMinor += amountMinor; exemptLine = true; }
+    else t.taxableMinor += amountMinor;
     // Q16a `computeTotals`: CGST and SGST are each charged at half the rate and rounded on their own (always equal;
     // their sum can differ by a paisa from the line's tax rounded once).
     const half = sameState ? Math.round((amountMinor * item.gstRate) / 200) : undefined;
@@ -430,7 +452,9 @@ export function previewInvoice(
     if (problem && !problems.includes(problem)) problems.push(problem);
     return { amountMinor, taxMinor, ...(half !== undefined ? { halfMinor: half } : {}), problem };
   });
-  const totals: InvoiceTotals = { ...t, totalMinor: t.taxableMinor + t.cgstMinor + t.sgstMinor + t.igstMinor, currency: 'INR' };
+  const { exemptMinor, ...rest } = t;
+  const totals: InvoiceTotals = { ...rest, ...(exemptLine ? { exemptMinor } : {}),
+    totalMinor: t.taxableMinor + exemptMinor + t.cgstMinor + t.sgstMinor + t.igstMinor, currency: 'INR' };
   if (totals.totalMinor > MAX_BILL_MINOR || totals.subtotalMinor > MAX_BILL_MINOR) problems.push(words('bill.problem.billTooLarge'));
   const reg = registrationProblem(documentKind, supplier.gstin, branchStateCode);
   if (reg) problems.push(reg);

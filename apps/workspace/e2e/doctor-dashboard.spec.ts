@@ -379,7 +379,7 @@ test('he bills the account holder for a family visit at the non-solo clinic he o
   await page.getByRole('button', { name: 'Issue bill for ₹700.00' }).click();
   await expect(page.getByText(/^Bill DSKIN\/2627\/0001 issued\./)).toBeVisible();
   expect(b.calls.find((c) => c.method === 'POST' && c.path === '/specialists/me/clinic/invoices')!.body).toMatchObject({
-    appointmentId: bid(1), branchId: OWNBR, customer: { name: 'Asha Holder', phone: PHONE }, items: [{ description: 'Consultation · Dr Arjun Demo', unitPriceMinor: 70000, qty: 1 }] });
+    appointmentId: bid(1), branchId: OWNBR, customer: { name: 'Asha Holder', phone: PHONE }, items: [{ description: 'Consultation · Dr Arjun Demo', unitPriceMinor: 70000, qty: 1 , gstRate: 0, taxTreatment: 'exempt', sac: '9993' }] });
   const pay = page.getByRole('group', { name: 'Record payment' });
   await pay.getByRole('button', { name: 'Cash', exact: true }).click();
   await pay.getByRole('button', { name: 'Record ₹700.00 paid' }).click();

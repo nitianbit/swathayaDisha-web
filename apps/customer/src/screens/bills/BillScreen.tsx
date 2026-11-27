@@ -73,7 +73,8 @@ function BillView({ bill: b, events }: { bill: Bill; events: BillEvent[] }) {
               <span className="row-between"><strong>{l.description}</strong><span>{rupees(l.amountMinor)}</span></span>
               <span className="muted">
                 {l.qty} × {rupees(l.unitPriceMinor)}{l.discountMinor > 0 ? ` − ${t('bill.lineDiscount', { amount: rupees(l.discountMinor) })}` : ''}
-                {b.documentKind === 'tax_invoice' ? ` · GST ${l.gstRate}%` : ''}{l.sac ? ` · SAC ${l.sac}` : l.hsn ? ` · HSN ${l.hsn}` : ''}
+                {l.taxTreatment === 'exempt' ? ` · ${l.sac ? t('bill.exemptSac', { sac: l.sac }) : t('bill.exempt')}`
+                  : <>{b.documentKind === 'tax_invoice' ? ` · GST ${l.gstRate}%` : ''}{l.sac ? ` · SAC ${l.sac}` : l.hsn ? ` · HSN ${l.hsn}` : ''}</>}
               </span>
             </li>
           ))}
@@ -82,6 +83,8 @@ function BillView({ bill: b, events }: { bill: Bill; events: BillEvent[] }) {
           <dt>{t('bill.subtotal')}</dt><dd>{rupees(totals.subtotalMinor)}</dd>
           {totals.discountMinor > 0 && <><dt>{t('bill.discount')}</dt><dd>−{rupees(totals.discountMinor)}</dd></>}
           {gstSplit(totals).length > 0 && <><dt>{t('bill.taxable')}</dt><dd>{rupees(totals.taxableMinor)}</dd></>}
+          {/* WQ58 (r42): exempt lines add up apart from the taxable value (never shown as ₹0.00). */}
+          {!!totals.exemptMinor && <><dt>{t('bill.exemptValue')}</dt><dd>{rupees(totals.exemptMinor)}</dd></>}
           {gstSplit(totals).map((g) => <Fragment key={g.label}><dt>{g.label}</dt><dd>{rupees(g.minor)}</dd></Fragment>)}
           <dt>{t('common.total')}</dt><dd><strong>{rupees(totals.totalMinor)}</strong></dd>
         </dl>

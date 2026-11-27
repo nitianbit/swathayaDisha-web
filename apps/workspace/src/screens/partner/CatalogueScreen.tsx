@@ -4,7 +4,7 @@ import {
   allowedGstRates, ApiError, catalogueAdminApi, chargesGst, holdsAny, ITEM_KINDS_FOR, MAX_CATALOGUE_SEARCH, MAX_CODE, MAX_DESCRIPTION, MAX_ITEM_NAME,
   MAX_PREPARATION, MAX_PRICE_MINOR, MAX_SAC, MAX_SAMPLE_TYPE, paiseToInput, rupeesToPaise, TAX_REGIME_LABEL, tooLongWords, usesVisitModes,
   type CatalogueItem, type CatalogueItemKind, type CatalogueItemUpdate, type GstRate, type NewCatalogueItem, type Partner,
-  type PartnerKind, type VisitMode,
+  type PartnerKind, type TaxTreatment, type VisitMode,
 } from '@jansetu/api';
 import { Alert, Badge, Button, Empty, ErrorState, Loading, shared, TextArea, TextField } from '@jansetu/ui';
 import { ConfirmAction } from '../../components/ConfirmAction.tsx';
@@ -15,7 +15,7 @@ import {
   afterFailure, beginAttempt, keyedLookup, newRequestKey, ownsKey, resolveStored, startOp, stillCurrent, wasAbandoned, type PendingOp,
 } from '../../requests.ts';
 import { useSession } from '../../session.tsx';
-import { itemKindLabel, money, useCatalogue, visitModeLabel } from './billing.tsx';
+import { exemptWords, itemKindLabel, money, useCatalogue, visitModeLabel } from './billing.tsx';
 import { NoSuchPartner, PartnerPageHeading, scopeIdentity, usePartnerScope, useWorkspacePartner, type ScopeContext } from './scope.tsx';
 import { t, type PartnerKey } from '../../i18n/partner/index.ts';
 
@@ -24,7 +24,12 @@ const MODES: VisitMode[] = ['home', 'lab'];
 interface Draft {
   kind: CatalogueItemKind; name: string; code: string; description: string; preparation: string; sampleType: string;
   includes: string; price: string; mrp: string; gstRate: string; sac: string; visitModes: VisitMode[]; tat: string;
+  /** r42: '' = not chosen (the server's usual: a clinic's new 0% consultation is exempt). */
+  taxTreatment: '' | TaxTreatment;
 }
+
+/** A refusal in words: r42's exempt-at-0% rule said plainly, else the server's message. */
+const catalogueWords = (err: unknown) => (err instanceof ApiError && err.code === 'EXEMPT_RATE_NOT_ZERO' ? t('catalogue.error.exemptRate') : messageOf(err));
 
 /** The form's view of an item (or of a new one for this kind of partner). */
 export function draftOf(item?: CatalogueItem, partnerKind: PartnerKind = 'lab'): Draft {
@@ -35,6 +40,7 @@ export function draftOf(item?: CatalogueItem, partnerKind: PartnerKind = 'lab'):
     sac: item?.sac ?? '',
     visitModes: item ? MODES.filter((m) => item.visitModes?.includes(m)) : usesVisitModes(partnerKind) ? ['lab'] : [],
     tat: item?.reportTatHours === undefined ? '' : String(item.reportTatHours),
+    taxTreatment: item?.taxTreatment ?? '',
   };
 }
 
@@ -49,7 +55,7 @@ const FIELD_KEY = {
   kind: 'catalogue.field.kind', name: 'catalogue.field.name', code: 'catalogue.field.code', description: 'catalogue.field.description',
   preparation: 'catalogue.field.preparation', sampleType: 'catalogue.field.sampleType', includes: 'catalogue.field.includes',
   price: 'catalogue.field.price', mrp: 'catalogue.field.mrp', gstRate: 'catalogue.field.gstRate', sac: 'catalogue.field.sac',
-  visitModes: 'catalogue.field.visitModes', tat: 'catalogue.field.tat',
+  visitModes: 'catalogue.field.visitModes', tat: 'catalogue.field.tat', taxTreatment: 'catalogue.field.taxTreatment',
 } as const satisfies Record<keyof Draft, PartnerKey>;
 const fieldLabel = (k: keyof Draft) => t(FIELD_KEY[k]);
 
@@ -97,6 +103,11 @@ export function itemBody(s: DraftState<Draft>, rates: readonly GstRate[], kind: 
   const rate = Number(d.gstRate) as GstRate;
   if (!rates.includes(rate) && dirty.has('gstRate')) errors.gstRate = t('catalogue.error.gstRate');
   else full.gstRate = rate;
+  // r42: exempt only at 0% (the server refuses it too: EXEMPT_RATE_NOT_ZERO); not chosen: not sent (the server's usual).
+  if (d.taxTreatment) {
+    if (d.taxTreatment === 'exempt' && rate !== 0) errors.taxTreatment = t('catalogue.error.exemptRate');
+    else full.taxTreatment = d.taxTreatment;
+  }
 
   if (usesVisitModes(kind)) {
     if (d.visitModes.length === 0) errors.visitModes = t('catalogue.error.visitModes');
@@ -115,6 +126,7 @@ export function itemBody(s: DraftState<Draft>, rates: readonly GstRate[], kind: 
     // i18n-ignore: field names of the request body, not words
     name: 'name', code: 'code', description: 'description', preparation: 'preparation', sampleType: 'sampleType', sac: 'sac',
     includes: 'includes', price: 'priceMinor', mrp: 'mrpMinor', gstRate: 'gstRate', visitModes: 'visitModes', tat: 'reportTatHours',
+    taxTreatment: 'taxTreatment',
   };
   const body: CatalogueItemUpdate = {};
   for (const k of dirty) {
@@ -260,7 +272,7 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
       const next = afterFailure(attempt, err, messageOf(err));
       if (mounted.current) {
         setPending(next ?? undefined);
-        if (!next) setCreateRefused(messageOf(err)); // refused, nothing added: the form keeps what was typed
+        if (!next) setCreateRefused(catalogueWords(err)); // refused, nothing added: the form keeps what was typed
         else setEditing((e) => (e === 'new' ? null : e)); // locked: only "send again" from here
       } else if (next) memory.set(slot, next); else memory.delete(slot);
     } finally {
@@ -358,7 +370,7 @@ function Catalogue({ ctx }: { ctx: ScopeContext }) {
                     <td>{i.name}{i.code ? <span className="ws-muted"> · {i.code}</span> : null}</td>
                     <td>{itemKindLabel(i.kind)}</td>
                     <td>{money(i.priceMinor)}{i.mrpMinor !== undefined && i.mrpMinor !== i.priceMinor ? <span className="ws-muted"> {t('catalogue.mrpOf', { mrp: money(i.mrpMinor) })}</span> : null}</td>
-                    <td>{i.gstRate}%{p && i.gstRate > 0 && !chargesGst(p) ? <> <Badge tone="warn">{t('catalogue.cannotBeBilled')}</Badge></> : null}</td>
+                    <td>{i.taxTreatment === 'exempt' ? exemptWords(i.sac) : `${i.gstRate}%`}{p && i.gstRate > 0 && !chargesGst(p) ? <> <Badge tone="warn">{t('catalogue.cannotBeBilled')}</Badge></> : null}</td>
                     {kind === 'lab' && <>
                       <td>{(i.visitModes ?? []).map(visitModeLabel).join(', ') || '—'}</td>
                       <td>{i.reportTatHours !== undefined ? t('catalogue.hours', { n: i.reportTatHours }) : '—'}</td>
@@ -441,6 +453,19 @@ function ItemForm({ ctx, partner, item, onCancel, onSaved, onCreate, createBusy,
    */
   const kept = useRef(new Set<keyof Draft>());
   const setField = <K extends keyof Draft>(k: K, v: Draft[K]) => { kept.current.delete(k); draft.set(k, v); };
+  /** r42: not chosen, the server makes a clinic's new consultation at 0% exempt, so the box shows it ticked. */
+  const exemptChecked = d.taxTreatment ? d.taxTreatment === 'exempt' : !item && kind === 'clinic' && d.kind === 'consultation' && Number(d.gstRate) === 0;
+  const toggleExempt = (on: boolean) => {
+    kept.current.delete('taxTreatment');
+    if (on) kept.current.delete('gstRate');
+    draft.update((x) => ({ ...x, taxTreatment: on ? 'exempt' : 'taxable', ...(on && Number(x.gstRate) !== 0 ? { gstRate: '0' } : {}) }));
+  };
+  // A rate above 0 on an exempt item makes it taxable (sent with the rate), so the server never refuses EXEMPT_RATE_NOT_ZERO.
+  const setRate = (v: string) => {
+    kept.current.delete('gstRate');
+    if (Number(v) !== 0 && d.taxTreatment === 'exempt') kept.current.delete('taxTreatment');
+    draft.update((x) => ({ ...x, gstRate: v, ...(Number(v) !== 0 && x.taxTreatment === 'exempt' ? { taxTreatment: 'taxable' as const } : {}) }));
+  };
   const text = (k: TextKey) => ({ value: d[k], error: errors[k], maxLength: LIMITS[k], onChange: (e: { target: { value: string } }) => setField(k, e.target.value) });
 
   // Editing: a refreshed item moves untouched fields along; a field changed here AND there is reset for review.
@@ -489,7 +514,7 @@ function ItemForm({ ctx, partner, item, onCancel, onSaved, onCreate, createBusy,
         } catch (readErr) {
           setError(t('catalogue.notSavedUnread', { reason: err.message, readError: messageOf(readErr) }));
         }
-      } else setError(messageOf(err));
+      } else setError(catalogueWords(err));
     } finally {
       setBusy(false);
       void queryClient.invalidateQueries({ queryKey: [...ctx.key, 'catalogue'] });
@@ -523,7 +548,7 @@ function ItemForm({ ctx, partner, item, onCancel, onSaved, onCreate, createBusy,
           <div className="j-field">
             <label htmlFor="item-gst">{t('catalogue.form.gstRate')}</label>
             <select id="item-gst" value={d.gstRate} aria-describedby="item-gst-hint" aria-invalid={errors.gstRate ? true : undefined}
-              onChange={(e) => setField('gstRate', e.target.value)}>
+              onChange={(e) => setRate(e.target.value)}>
               {rateOptions.map((r) => <option key={r} value={r}>{allowed.includes(r) ? `${r}%` : t('catalogue.form.rateNotBillable', { rate: r })}</option>)}
             </select>
             <span id="item-gst-hint" className="j-field__hint">
@@ -532,6 +557,16 @@ function ItemForm({ ctx, partner, item, onCancel, onSaved, onCreate, createBusy,
             {errors.gstRate && <span className="j-field__error">{errors.gstRate}</span>}
           </div>
           <TextField label={t('catalogue.form.sac')} {...text('sac')} />
+          {/* WQ58 (r42): exempt health care is at 0% (choosing it sets 0%; a rate above 0 makes the item taxable). */}
+          <div className="j-field">
+            <label className="ws-check">
+              <input type="checkbox" checked={exemptChecked} aria-describedby={errors.taxTreatment ? 'item-exempt-error' : 'item-exempt-hint'}
+                aria-invalid={errors.taxTreatment ? true : undefined} onChange={(e) => toggleExempt(e.target.checked)} />
+              {t('catalogue.form.exempt')}
+            </label>
+            <span id="item-exempt-hint" className="j-field__hint">{t('catalogue.form.exemptHint')}</span>
+            {errors.taxTreatment && <span id="item-exempt-error" className="j-field__error">{errors.taxTreatment}</span>}
+          </div>
         </div>
         {usesVisitModes(kind) && (
           <>

@@ -2875,6 +2875,22 @@ its Switch line (none; each + New choice keeps its own page's switch). The menu 
 that nothing is chosen for you. Word and PDF rebuilt in `~/Desktop/SwasthaDisha/Jansetu-user-guides` with
 `docs/guides/md2html.py` and `soffice` (as WQ53).
 
+## WQ58 GST-exempt consultations (2026-11-27, branch `wq58/gst-exempt` from web stage b3cb9e7; backend r42 5c6d32b4, §26.25)
+
+- **Fee line.** `feeLine` (partner/clinic.tsx: clinic desk, the doctor's own-clinic bill, the visit bill) now carries `taxTreatment: 'exempt'` and `sac: EXEMPT_HEALTHCARE_SAC` ('9993', one constant in `@jansetu/api`). The bill form sends both on the hand line at 0%. A hand line the person adds stays as before (no treatment).
+- **Catalogue lines.** They take the item's treatment and send it when the item names one, so a change is refused as `CATALOGUE_PRICE_CHANGED` (worded as today). The form compares the treatment too when the catalogue is read again ("{name} is now ₹X, exempt from GST").
+- **Preview.** `previewInvoice` mirrors r42. On a tax invoice an exempt line adds to `exemptMinor`, which is present only when there is such a line; `taxableMinor` covers taxable lines only. Bills of supply and commercial invoices are unchanged.
+- **Showing exempt.** The bill view's GST column says "Exempt (SAC 9993)", or "Exempt" when there is no SAC. Totals gain "Exempt value" in both apps: workspace `Totals` and the customer `BillScreen`. The row is never shown at ₹0.00. The short bill and the form's catalogue line say exempt only on a tax invoice; a bill of supply has no GST to be exempt from.
+- **Catalogue toggle.** A checkbox "Exempt from GST (healthcare)":
+  - Ticking it sets the rate to 0%. Choosing a rate above 0 on an exempt item unticks it and sends `taxTreatment: 'taxable'` with the rate, so an owner is never stuck on `EXEMPT_RATE_NOT_ZERO`. That refusal (and the client check) reads "An exempt item must be at 0% GST."
+  - A new clinic consultation at 0% shows the box ticked and sends nothing, because the server makes it exempt with SAC 9993. Unticking it sends 'taxable'.
+  - The list's GST column shows "Exempt (SAC 9993)" for exempt items.
+- Decided alone:
+  - The customer app words exempt lines as the printed bill does.
+  - Linked lines send the item's treatment only when the item names one (absent means taxable, so it is not sent).
+  - An exempt hand line shows "GST: Exempt (SAC 9993)" instead of the rate picker.
+- Seen, not changed: in the new partner-invoices test, a customer name typed straight after opening New bill (right after catalogue edits) was sometimes lost on a slow run. The test now types it after adding the item. This may be the form remounting on a catalogue refetch; worth a look.
+
 ## WQ31 UI translation, round 6a: the foundation (2026-11-25, branch `wq31/i18n-foundation`)
 
 Specification: [I18N_PLAN.md](I18N_PLAN.md) (WQ30); its recommended answers stand as ASSUMED, Q1–Q5 are with the owner.
@@ -3368,6 +3384,7 @@ The placeholder `POST /me/visit-requests/check` (never on the server) is gone: `
 
 | Date | Packet | Checks |
 |---|---|---|
+| 2026-11-27 | WQ58 GST-exempt consultations (r42) | typecheck clean; Vitest 549/549 (new r42 preview test). Related specs (partner-invoices, clinic-home, clinic-desk, doctor-dashboard) gave 175 passes; 3 load-timing failures passed when rerun three times with 2 workers. Customer bills 12/12. Full workspace run through pw-slot: 1241 passed, 9 skipped. Full customer run: 282 passed. New e2e: a mixed clinic bill in both apps (Exempt (SAC 9993), Exempt value, no ₹0 row); the exempt toggle; a rate above 0 sends taxable; EXEMPT_RATE_NOT_ZERO in plain words; a changed treatment refused as a price change. |
 | 2026-11-27 | WQ57d reconciled with stage fd22d0e | Stage's clinic billing fix (f115aa5) already keeps the hand-written fee unless an item names this doctor at the fee, and hides the receipt's "Create bill" sentence in a visit (`showBilling`): the WQ57d code edits were dropped; only a spec stays (a follow-up item and another doctor's item leave the fee hand-written). typecheck clean; Vitest 548/548; clinic-home and clinic-desk 71/71 + 3 skipped. |
 | 2026-11-27 | WQ57c independent clinic billing review corrections (`f115aa5`) | Type check, 546 unit tests and both same-origin web builds passed. The full workspace run had 1218 passes, 9 skips and one records-access timeout. The timeout passed when rerun alone. The new catalogue test demonstrated the wrong doctor on the prior build. |
 | 2026-11-27 | WQ57c merged with web stage 0f69bf2 (WQ56) | typecheck clean; Vitest 546/546; the full suite via pw-slot.sh 1219/1219 + 9 skipped (20.1 min) on a temporary config (port 5568, deleted). `feeLine` lives in `partner/clinic.tsx` (with `prefillOf`); the doctor screens import it from there. |

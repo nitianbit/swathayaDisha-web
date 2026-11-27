@@ -108,6 +108,31 @@ test('an unpaid bill across states shows IGST and says where to pay', async ({ p
   await expect(page.getByText('Doctor', { exact: true })).toHaveCount(0);
 });
 
+test('WQ58 (r42): a mixed bill shows the exempt consultation and its exempt value apart, so the totals add up', async ({ page }) => {
+  const backend = await mockBackend(page);
+  Object.assign(backend.bills[UNPAID]!, {
+    documentKind: 'tax_invoice',
+    items: [
+      { description: 'Consultation · Dr Rao', sac: '9993', qty: 1, unitPriceMinor: 50000, discountMinor: 0, gstRate: 0, taxTreatment: 'exempt', amountMinor: 50000 },
+      { description: 'Dressing', qty: 1, unitPriceMinor: 25000, discountMinor: 0, gstRate: 18, amountMinor: 25000 },
+    ],
+    totals: { subtotalMinor: 75000, discountMinor: 0, taxableMinor: 25000, exemptMinor: 50000, cgstMinor: 2250, sgstMinor: 2250, igstMinor: 0, totalMinor: 79500, currency: 'INR' },
+  });
+  await signIn(page);
+  await page.getByRole('link', { name: /CarePlus Clinic/ }).click();
+  await expect(page.getByText('1 × ₹500.00 · Exempt (SAC 9993)', { exact: true })).toBeVisible();
+  await expect(page.getByText('1 × ₹250.00 · GST 18%', { exact: true })).toBeVisible();
+  const totals = page.getByLabel('Totals');
+  await expect(totals).toContainText('Taxable₹250.00');
+  await expect(totals).toContainText('Exempt value₹500.00');
+  await expect(totals).toContainText('Total₹795.00');
+  // A bill with no exempt line has no "Exempt value" row (never ₹0.00).
+  await page.getByRole('link', { name: 'Bills' }).first().click();
+  await page.getByRole('link', { name: /Sunrise Diagnostics/ }).click();
+  await expect(page.getByLabel('Totals')).toContainText('Total₹1,062.00');
+  await expect(page.getByLabel('Totals')).not.toContainText('Exempt');
+});
+
 test('a list that fails to load shows the server’s message and tries again', async ({ page }) => {
   const backend = await mockBackend(page);
   backend.failList = 1;
